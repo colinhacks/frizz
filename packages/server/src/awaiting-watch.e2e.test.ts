@@ -771,3 +771,104 @@ test("workflows held for approval are reported as held, and never as a pass", as
     assert.match(h.delivered[0], /✅ CI PASSED on acme\/app#391 — 1 check green, 1 skipped\./)
   } finally { h.close() }
 })
+
+// ---- THE POLL SPAWNS A BOUNDED NUMBER OF CHILDREN --------------------------------------------------
+// Reported 2026-09-04 off a fork-rate alarm on the maintainer's machine: the sweep fans out over every
+// armed watcher at once, and each ref then shelled out to `gh` twice (`gh pr view` + `gh run list`), so
+// one poll launched 2N subprocesses in the same tick, every 60s, for as long as the watchers were armed.
+//
+// The fan-out itself is NOT the defect and must stay unbounded — the GraphQL half coalesces the whole
+// tick into batches of 20, so capping the fan-out would only split one request into several. What has to
+// be bounded is the `gh` FALLBACK, and the reason it matters is that the batch fails as a unit: an
+// expired token or a network blip sends every ref down the fallback in the same tick at once.
+async function fanoutHarness(prCount: number, review: () => Promise<unknown>) {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-prwatch-fanout-"))
+  const at = new Date(Date.now() - 60_000).toISOString()
+  writeFileSync(join(dir, `${SESSION}.jsonl`), line({
+    type: "assistant", timestamp: at, sessionId: SESSION, uuid: "p1",
+    message: { role: "assistant", content: [{ type: "text", text: "PRs are up." }] },
+  }))
+  const storage = createStorage(join(dir, "ui.db"), "p")
+  storage.setSetting("signoffNudge", "off")
+  storage.upsertSession({
+    slug: SLUG, session_id: SESSION, thread_name: `frizz-${SLUG}`, spawned_at: at,
+    last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: at, title_auto: 1,
+    title: SLUG, state: "open", meta: null, seen_at: null, transcript_id: null,
+  } as SessionRow)
+  const tailer = createTailer({
+    project: { cwdSlug: "x" } as Project,
+    storage, bus: new Bus(), sessionLogDir: dir,
+    onChange: () => {}, paneDead: () => false,
+  })
+  storage.setBackend(SLUG, "claude")
+  storage.setClaudeRuntime(SLUG, "broker")
+  for (let i = 0; i < prCount; i++) {
+    storage.armPrWatch({
+      id: `prw_${i}`, slug: SLUG, owner: "acme", repo: "app", number: 400 + i,
+      createdAtMs: Date.parse(at), expiresAtMs: Date.parse(at) + 2 * 3600_000,
+    })
+  }
+  tailer.tick()
+  let clock = Date.now()
+  // What the `gh` fallback would cost, counted the way the alarm counted it: how many are in flight at
+  // the same instant, not how many ran. Each call yields to the event loop, so real overlap is visible.
+  let inFlight = 0
+  let peak = 0
+  let calls = 0
+  const s = createScheduler({
+    wakeQuietWindowMs: 0,
+    storage,
+    tailer,
+    resume: async () => {},
+    log: () => {},
+    now: () => clock,
+    fetchPr: async () => {
+      calls++
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      try {
+        await new Promise((r) => setTimeout(r, 1))
+        return { state: "OPEN", mergedAt: null, rollup: [], head: "sha-aaa", workflowRuns: [] } as never
+      } finally { inFlight-- }
+    },
+    fetchGithubReview: review as never,
+  })
+  return {
+    stats: () => ({ calls, peak }),
+    tick: async () => { clock += 90_000; await s.tick() },
+    close: () => { void s.stop(); tailer.stop(); storage.close(); rmSync(dir, { recursive: true, force: true }) },
+  }
+}
+
+test("a GraphQL failure across the whole batch does not become 2N `gh` children in one tick", async () => {
+  const h = await fanoutHarness(12, async () => ({
+    status: "error", failure: { kind: "network", message: "GitHub GraphQL request failed" },
+  }))
+  try {
+    await h.tick()
+    const { calls, peak } = h.stats()
+    assert.equal(calls, 12, "every armed PR still gets its status read — the bound is a queue, not a drop")
+    assert.ok(peak <= 4, `at most 4 fallback fetches in flight at once, saw ${peak}`)
+    assert.equal(peak, 4, "…and the bound is actually reached, so the assertion above is not vacuous")
+  } finally { h.close() }
+})
+
+test("a poll the rate-limit guard deferred spends nothing — no HTTP, and no `gh` behind its back", async () => {
+  const h = await fanoutHarness(12, async () => ({ status: "deferred" }))
+  try {
+    await h.tick()
+    assert.equal(h.stats().calls, 0, "a defer means do not spend on GitHub this tick, by any transport")
+  } finally { h.close() }
+})
+
+test("the ordinary poll shells out to nothing at all: the status rides the batched query", async () => {
+  const h = await fanoutHarness(12, async () => ({
+    status: "ok",
+    activity: [],
+    pr: { state: "OPEN", mergedAt: null, rollup: [], head: "sha-aaa", checkSuites: [], labels: [], reviewRequests: [] },
+  }))
+  try {
+    await h.tick()
+    assert.equal(h.stats().calls, 0, "the fallback is for a shape surprise, not for the happy path")
+  } finally { h.close() }
+})

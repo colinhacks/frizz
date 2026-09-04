@@ -892,6 +892,38 @@ function isQuestionAnswerFenceId(fenceId: string): boolean {
  *  reason: this is somebody else's API and the answer changes on a human's timescale. */
 const PR_WATCH_POLL_MS = 60_000
 
+/** How many `gh` children the STATUS FALLBACK may have in flight at once (2026-09-04).
+ *
+ *  THE BOUND IS ON THE SUBPROCESS, NOT ON THE FAN-OUT, and that is the whole design. The poll fans out
+ *  over every armed PR at once and must keep doing so: the GraphQL half coalesces those calls in a
+ *  microtask into batches of 20, so an unbounded fan-out is ONE request where a fan-out capped at 8
+ *  would be three — paying more of somebody else's rate limit to fix a problem the batch does not have.
+ *  What is genuinely unbounded is `defaultFetchPr`, which is two `gh` children per PR; and because the
+ *  GraphQL half fails for the WHOLE batch at once (an expired token, a network blip, a shape surprise),
+ *  every ref reaches the fallback in the same tick or none does. That is the storm: N armed watchers
+ *  becoming 2N `gh` processes inside one second, each of them several forks, once a minute for as long
+ *  as the cause stands. Four at a time turns it into a queue. */
+const PR_STATUS_FALLBACK_LIMIT = 4
+
+/** A slot allocator: `run(fn)` waits until fewer than `limit` calls are in flight. The released slot is
+ *  handed STRAIGHT to the next waiter rather than counted down and re-acquired, so a caller arriving in
+ *  the same tick as a release cannot slip past the limit. */
+function concurrencyGate(limit: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0
+  const waiting: (() => void)[] = []
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active < limit) active++
+    else await new Promise<void>((resolve) => waiting.push(resolve))
+    try {
+      return await fn()
+    } finally {
+      const next = waiting.shift()
+      if (next) next()
+      else active--
+    }
+  }
+}
+
 const SIGNOFF_FENCE_PREFIX = "signoff"
 const SIGNOFF_HINT_KEY = "signoff:rest"
 const SIGNOFF_NUDGE_MAX = 2
@@ -2214,6 +2246,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     reviewers?: string[]
   }
   const prWatchPolledAt = new Map<string, number>() // refKey → last fetch, shared across threads
+  const prStatusFallback = concurrencyGate(PR_STATUS_FALLBACK_LIMIT)
 
   function readPrWatchHeld(raw: unknown): PrWatchHeld | undefined {
     if (!raw || typeof raw !== "object") return undefined
@@ -2361,10 +2394,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // `fetchPr` REMAINS THE FALLBACK, and it is not vestigial: an injected fetcher (every scheduler
       // test that predates this) returns activity with no `pr`, and so does a response frizz cannot
       // interpret. Falling back there keeps a watcher polling rather than going quiet on a shape
-      // surprise — which is the failure mode this whole source exists to prevent.
+      // surprise — which is the failure mode this whole source exists to prevent. It runs through
+      // `prStatusFallback` because it is the poll's only subprocess and a batch fails all at once; see
+      // PR_STATUS_FALLBACK_LIMIT.
       let snapshot: PrStatus | undefined
+      let deferred = false
       try {
         const result = normalizeReviewResult(await fetchGithubReview(ref))
+        if (result.status === "deferred") deferred = true
         if (result.status === "ok") {
           activity.set(key, result.activity)
           if (result.pr) snapshot = { ...result.pr, rollup: result.pr.rollup as PrStatus["rollup"] }
@@ -2379,8 +2416,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           failure: { kind: "network", message: err instanceof Error ? err.message : String(err) },
         }, nowMs)
       }
+      // A DEFERRED BATCH IS NOT A FALLBACK CASE. `deferred` is the fetcher's rate-limit budget guard
+      // saying "do not spend on GitHub this tick" — so shelling out to `gh` for the same PR spends the
+      // very allowance the guard just protected, through two subprocesses instead of a share of one
+      // batched request. Silence is what a defer is FOR; `st`/`acts` are both absent, the loop below
+      // skips the ref, and the next poll asks again once the budget recovers.
       try {
-        const pr = snapshot ?? await fetchPr(ref)
+        const pr = snapshot ?? (deferred ? undefined : await prStatusFallback(() => fetchPr(ref)))
         if (pr) {
           status.set(key, githubWatchStatus(pr, new Date(nowMs).toISOString()))
           meta.set(key, { labels: pr.labels, reviewRequests: pr.reviewRequests })
