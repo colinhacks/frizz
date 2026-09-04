@@ -719,13 +719,25 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
   // managed by transcript-live.ts keyed on this hook's cache observer — the card wires nothing itself.
   //
   // FROZEN ONCE THE CARD IS LEAVING, which is what makes CardSlot's "fades out AT FULL HEIGHT" true of
-  // the CONTENT and not just the CSS. Steering the agent dismisses the card and appends the optimistic
-  // bubble to this same cache in one commit, and the default window below re-anchors on the human's
-  // most recent turn — which the bubble now IS. Measured on a real steer: the card grew 58px at 27ms
-  // (the bubble), then dropped 276px at 77ms as everything the human had been reading collapsed behind
-  // "Load earlier messages", then unmounted at 342ms. Every card beneath it was shoved down, then up,
-  // then up again, inside one 200ms fade — the up-and-down jitter the operator reported. The card is
-  // going away; the last frame before the dismissal is the one it should dissolve on.
+  // the CONTENT and not just the CSS. Steering the agent dismisses the card, and two separate writes
+  // then reshape it while it is fading. Measured on a real worker, with the websocket frames logged
+  // beside the card's height:
+  //
+  //   t+27ms   539 -> 597   the optimistic bubble is appended to this same transcript cache
+  //   t+159ms               a /ws transcript push arrives carrying the LANDED user record
+  //   t+170ms  597 -> 321   the window re-cuts to that record; everything above it goes behind
+  //                         "Load earlier messages"
+  //   t+342ms  unmount
+  //
+  // The re-cut is NOT the optimistic bubble — `lastHumanTurnIndex` skips `queued` messages (9f570461),
+  // so the bubble cannot move the window. It is the worker's own echo of the message, seconds ahead of
+  // the board dropping the card. b90997c8's message blamed the bubble; that was wrong, and the
+  // difference matters, because the bubble is ours to withhold and the push is not. A simulated worker
+  // — which never echoes — reproduces the +58 and never the collapse, which is the control.
+  //
+  // Every card beneath this one was therefore shoved down, then up, then up again, inside one 200ms
+  // fade: the up-and-down jitter the operator reported. The card is going away; the last frame before
+  // the dismissal is the one it should dissolve on.
   const frozenTranscript = useRef(q.data)
   if (!leaving) frozenTranscript.current = q.data
   const transcript = leaving ? frozenTranscript.current : q.data
