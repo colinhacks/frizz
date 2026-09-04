@@ -32,6 +32,7 @@ import type { Storage } from "./storage.ts"
 import type { AgentBackend, NormalizedEvent } from "./backend/types.ts"
 import { parseDeliveryLedger, projectDeliveryLedger, suppressCancelledDeliveries, attachmentPromptText } from "./delivery-ledger.ts"
 import { editedFilesOf } from "./edited-files.ts"
+import { repoCarriedEditedFiles } from "./repo-files.ts"
 import { stripDeliveryMarkers } from "./delivery-marker.ts"
 import { RELAYED_MARKER, relayNotificationBlock } from "./completion-relay.ts"
 import { CODEX_FIRST_FINAL_TITLE_TRANSPORT, CODEX_LEGACY_FIRST_FINAL_TITLE_TRANSPORT, parseCodexLine, createCodexBackend, extractCodexFrizzTitle } from "./backend/codex.ts"
@@ -4081,8 +4082,10 @@ export function readLatestThreadTranscriptPage(
     transcriptKey: snapshot.transcriptKey,
     // Over the WHOLE projection, not the window — see EditedFile in @frizz/shared. The project dir is
     // what scopes the SHELL-write reading: a redirect names any path the worker felt like, and only the
-    // ones inside this checkout belong on the rail (edited-files.ts).
-    editedFiles: editedFilesOf(projected, project.dir),
+    // ones inside this checkout belong on the rail (edited-files.ts). Then git drops whatever the
+    // repository would not carry — scratch, build output — leaving the rail an account of repo work
+    // (repo-files.ts).
+    editedFiles: repoCarriedEditedFiles(project.dir, editedFilesOf(projected, project.dir)),
   }
 }
 
