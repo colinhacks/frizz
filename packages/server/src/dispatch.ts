@@ -530,10 +530,10 @@ export function claudeMcpConfig(mcp?: FrizzMcp, project?: WorkerMcpServers): Cla
     // FRIZZ_THREAD_SLUG is the MCP server's CALLER IDENTITY — the channel through which a tool could act
     // on its own thread. The MCP server is spawned per worker and nothing in the MCP protocol carries a
     // caller identity, so its env is the only place this can come from; a resume keeps the same slug, so
-    // it stays correct for the whole life of the thread. No SHIPPED tool reads it today (the one that
-    // did, a worker-armed heartbeat, was removed 2026-08-02 in favour of the operator's stop hook, which
-    // the board arms directly). Kept because it costs one line and is the whole prerequisite for any
-    // future thread-scoped tool.
+    // it stays correct for the whole life of the thread. TEN tools read it (`title`, `ask`, `unask`,
+    // `done`, `watch`, `unwatch`, `watch_pr`, `timer`, `goal`, `activity`) and every one of them fails
+    // without it — the comment here said "No SHIPPED tool reads it today" long after that stopped being
+    // true, and the codex side went unfixed behind that belief until 2026-09-04.
     // FRIZZ_SERVER_LOCK and FRIZZ_PROJECT_ID (frizzMcpEnv) are what make the tools work in a project
     // the singleton did NOT launch from: the first says where the one published lock is, the second
     // says whose board to act on. Both omitted ⇒ the script keeps its original behaviour (this

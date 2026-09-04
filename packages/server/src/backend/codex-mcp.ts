@@ -5,15 +5,15 @@ import { FRIZZ_MCP, frizzMcpEnv, type FrizzMcp } from "./types.ts"
 // `--mcp-config` JSON on the worker's argv; codex has no such flag, so it rides a `-c` TOML override
 // on the APP-SERVER's argv instead.
 //
-// WHY THE APP-SERVER'S ARGV AND NOT THE PER-THREAD CONFIG BAG. `thread/start` takes an untyped
-// `config` object (it already carries `bypass_hook_trust` + `hooks`), and putting `mcp_servers` there
-// is the obvious-looking move. It does not work: MCP servers are PROCESS-level, so a per-conversation
-// override has nothing to attach to. Measured against codex-cli 0.146.0 by driving the real bridge —
-// the model answered the literal word `NOTOOL`, its own report that the tool was not in its registry.
-// The argv override does mount a callable tool, proven by an out-of-band marker file only a real
-// invocation can write. Both results are reproducible via
-// `packages/server/src/backend/_live_codex_mcp_inject.mts`; read its header before changing anything
-// here.
+// WHY THE APP-SERVER'S ARGV. On codex-cli 0.146.0 it was the ONLY channel that worked: putting
+// `mcp_servers` in `thread/start`'s untyped `config` bag mounted nothing, and the model answered the
+// literal word `NOTOOL` — its own report that the tool was not in its registry. That measurement is
+// reproducible via `packages/server/src/backend/_live_codex_mcp_inject.mts`.
+//
+// THAT IS NO LONGER TRUE, and this file now uses BOTH channels. Re-measured against codex-cli 0.153.2,
+// the per-thread override works and gives each thread its own MCP child with its own env — which is
+// the only way to tell the server WHO IS CALLING. See `codexThreadMcpConfig` below for what that
+// unblocks and why the argv mount is still here.
 //
 // The app-server is PER-PROJECT (its socket key is sha256(stateDir + projectId)), so one process-level
 // mount serves every codex thread in that project with the right FRIZZ_STATE_DIR. Note the app-server
@@ -74,6 +74,52 @@ export function codexMcpConfigArgs(frizzMcp?: FrizzMcp, nodeBin: string = proces
   // moment of use rather than never offered. See the header.
   args.push("-c", `default_tools_approval_mode=${tomlString("approve")}`)
   return args
+}
+
+/**
+ * The PER-THREAD `mcp_servers` override for one thread's `thread/start` (and `thread/resume`) config —
+ * the same mount as the argv one above, plus the one thing the argv can never carry: WHO IS CALLING.
+ *
+ * WHY THIS EXISTS AT ALL. The app-server is per-PROJECT and serves every codex thread in it, so the
+ * argv mount's env is shared by all of them and cannot name a thread. `FRIZZ_THREAD_SLUG` was therefore
+ * simply absent on codex, and every frizz tool that acts on the CALLER'S OWN thread — `title`, `ask`,
+ * `done`, `watch`, `watch_pr`, `unask`, `unwatch`, `timer`, `goal`, `activity`, ten call sites through
+ * `threadSlug()` in cc-worker/bin/frizz-mcp.mjs — failed at the moment of use with "this frizz MCP
+ * server was not told which thread it belongs to". Only `spawn_thread` worked. That is most of the
+ * worker contract: a codex worker could not name its own thread, register a question, or sign off, and
+ * one of them said so in its own final message ("Frizz's completion registration also failed because
+ * the server lacked FRIZZ_THREAD_SLUG; the fence below is the sign-off").
+ *
+ * WHY IT WORKS NOW AND DID NOT BEFORE. The header above says a per-conversation `mcp_servers` override
+ * "does not work: MCP servers are PROCESS-level". That was measured on codex-cli 0.146.0 and it was
+ * true then. It is FALSE on 0.153.2, re-measured against the real binary: `thread/start` accepts the
+ * override, codex spawns one MCP process per (server × thread), and the child gets that thread's env —
+ * two threads started with different slugs produced two children each reporting its own. It also merges
+ * with `~/.codex/config.toml` rather than replacing it.
+ *
+ * THE ARGV MOUNT STAYS. It is what a thread with no per-thread config still gets — a resume handled by
+ * the app-server that already holds the thread cannot retarget its MCP child, and an adopted or
+ * pre-upgrade thread never had one. Those degrade to exactly today's behaviour (tools present, no
+ * identity) instead of losing the tools outright.
+ *
+ * `default_tools_approval_mode` is repeated ON THE ENTRY, not inherited from the top-level argv key:
+ * it is a member of codex's per-server config, and on 0.153.2 a server entry without it was refused
+ * with "MCP tool call requires approval, but approval policy is never" under the identical argv that
+ * approved the entry carrying it.
+ */
+export function codexThreadMcpConfig(frizzMcp: FrizzMcp | undefined, slug: string, nodeBin: string = process.execPath): Record<string, unknown> {
+  if (!frizzMcp) return {}
+  return {
+    mcp_servers: {
+      [FRIZZ_MCP.name]: {
+        // The ABSOLUTE node path, for the same reason the argv mount pins it — see codexMcpConfigArgs.
+        command: nodeBin,
+        args: [frizzMcp.scriptPath],
+        env: frizzMcpEnv({ ...frizzMcp, slug }),
+        default_tools_approval_mode: "approve",
+      },
+    },
+  }
 }
 
 /**

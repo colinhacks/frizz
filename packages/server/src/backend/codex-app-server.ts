@@ -34,6 +34,7 @@ import {
   type CodexAppServerHost,
 } from "./codex-app-server-host.ts"
 import { nativeListenCodexAppServerHost } from "./codex-app-server-native.ts"
+import { codexThreadMcpConfig } from "./codex-mcp.ts"
 import type { FrizzMcp } from "./types.ts"
 import { log as frizzLog } from "../logging.ts"
 
@@ -1895,7 +1896,7 @@ export class CodexAppServerBridge {
           : { sandbox: startedSandbox }),
         ...(input.baseInstructions ? { baseInstructions: input.baseInstructions } : {}),
         ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {}),
-        ...(input.config ? { config: input.config } : {}),
+        ...this.threadConfig(input.threadSlug, input.config),
         ephemeral,
       }))
       if (response.thread.ephemeral !== ephemeral) throw new Error("Codex app-server returned an incompatible persistence mode")
@@ -1945,6 +1946,11 @@ export class CodexAppServerBridge {
         excludeTurns: true,
         approvalsReviewer: "user",
         ...this.resumeSandboxOverride(binding),
+        // A resume by an app-server that ALREADY holds this thread keeps the MCP child it started
+        // with, so this changes nothing there. It matters on a resume by a FRESH app-server — the
+        // one after a daemon death or a frizz restart — which is exactly when the thread would
+        // otherwise come back with no caller identity for the rest of its life.
+        ...this.threadConfig(threadSlug),
       })
       const response = ThreadResponse.parse(rawResponse)
       if (response.thread.id !== binding.codex_thread_id || response.thread.ephemeral) {
@@ -1992,6 +1998,9 @@ export class CodexAppServerBridge {
         excludeTurns: true,
         approvalsReviewer: "user",
         ...adoptionOverride,
+        // Adoption is the first time frizz owns this rollout, so it is also the first chance to give
+        // the thread a frizz MCP mount that knows its slug. Same reasoning as the resume above.
+        ...this.threadConfig(input.threadSlug),
       })
       const response = ThreadResponse.parse(rawResponse)
       if (response.thread.id !== input.codexThreadId || response.thread.ephemeral) {
@@ -2948,6 +2957,24 @@ export class CodexAppServerBridge {
    * what some process (a terminal `codex resume`, a config default) last did to the SHARED rollout,
    * never what frizz asked for.
    */
+  /**
+   * The `config` bag for one thread's `thread/start` / `thread/resume`: frizz's MCP server mounted
+   * PER THREAD so it knows who is calling, plus whatever the caller passed.
+   *
+   * This is the only channel that can carry a caller identity on codex. The argv mount on the
+   * app-server is process-wide and serves every thread in the project, so `FRIZZ_THREAD_SLUG` was
+   * simply absent and every tool that acts on the caller's own thread failed at the moment of use —
+   * see `codexThreadMcpConfig` for the list and the measurement. Returns `{}` when there is nothing
+   * to send, so a caller with no config and no resolved MCP descriptor sends no `config` key at all,
+   * exactly as before.
+   *
+   * The caller's own config wins on a key collision: this is a default, not an override.
+   */
+  private threadConfig(threadSlug: string, callerConfig?: Record<string, unknown>): { config?: Record<string, unknown> } {
+    const config = { ...codexThreadMcpConfig(this.options.frizzMcp, threadSlug), ...callerConfig }
+    return Object.keys(config).length ? { config } : {}
+  }
+
   private resumeSandboxOverride(
     row: Pick<BindingRow, "thread_slug" | "frizz_session_id" | "sandbox" | "intended_sandbox">,
   ): { sandbox: CodexSandboxMode; approvalPolicy: string } {

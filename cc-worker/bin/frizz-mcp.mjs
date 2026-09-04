@@ -1040,9 +1040,13 @@ async function callRpc(procedure, body) {
 function threadSlug() {
   const slug = process.env.FRIZZ_THREAD_SLUG || process.env.FRIZZ_THREAD
   if (!slug) {
+    // Ten tools resolve their caller through here, so the message must not name one of them. It said
+    // "so it cannot arm a goal for it" for every single one — which read as a bug in `goal` no matter
+    // which tool the worker had actually called, and sent at least one worker off debugging the wrong
+    // thing after `title` failed on a codex thread.
     throw new Error(
       "this frizz MCP server was not told which thread it belongs to (no FRIZZ_THREAD_SLUG), so it cannot " +
-      "arm a goal for it. This is a frizz bug — report it rather than working around it.",
+      "act on the caller's own thread. This is a frizz bug — report it rather than working around it.",
     )
   }
   return slug

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { codexMcpConfigArgs } from "./codex-mcp.ts"
+import { codexMcpConfigArgs, codexThreadMcpConfig } from "./codex-mcp.ts"
 import { FRIZZ_MCP } from "./types.ts"
 
 // These pin the SHAPE of the `-c` overrides. The shape is otherwise only observable by running a real
@@ -76,4 +76,32 @@ test("codexMcpConfigArgs: every emitted value is a well-formed `key=value` overr
   for (const v of values(codexMcpConfigArgs({ scriptPath: "/p/s.mjs", stateDir: "/d" }, "/node"))) {
     assert.match(v, /^[a-z_]+(\.[a-z-]+)*=/, `malformed override: ${v}`)
   }
+})
+
+// ---- the PER-THREAD mount: the only channel that can name the caller ----
+
+test("codexThreadMcpConfig: mounts the frizz server with THIS thread's slug in its env", () => {
+  const config = codexThreadMcpConfig(
+    { scriptPath: "/plugin/bin/frizz-mcp.mjs", stateDir: "/state", serverLock: "/lock/server.lock", projectId: "proj-1" },
+    "compiled-hono",
+    "/abs/node",
+  )
+  const entry = (config.mcp_servers as Record<string, any>)[FRIZZ_MCP.name]
+  assert.ok(entry, "the frizz server is mounted for the thread")
+  assert.equal(entry.command, "/abs/node") // absolute, never bare "node" — the app-server's PATH varies
+  assert.deepEqual(entry.args, ["/plugin/bin/frizz-mcp.mjs"])
+  // THE POINT OF THE WHOLE MOUNT. Without this, `title`/`ask`/`done`/`watch`/`timer`/`goal`/`activity`
+  // all fail with "this frizz MCP server was not told which thread it belongs to".
+  assert.equal(entry.env.FRIZZ_THREAD_SLUG, "compiled-hono")
+  // …and the project half still rides along, so a tenant's worker reaches the right lock and board.
+  assert.equal(entry.env.FRIZZ_SERVER_LOCK, "/lock/server.lock")
+  assert.equal(entry.env.FRIZZ_PROJECT_ID, "proj-1")
+  // Per-SERVER, not inherited from the top-level argv key: an entry without it was refused on 0.153.2
+  // with "MCP tool call requires approval, but approval policy is never".
+  assert.equal(entry.default_tools_approval_mode, "approve")
+})
+
+test("codexThreadMcpConfig: no descriptor ⇒ an EMPTY bag, so no `config` key is sent at all", () => {
+  // Degrades to exactly the pre-2026-09-04 behaviour rather than sending a half-built mount.
+  assert.deepEqual(codexThreadMcpConfig(undefined, "compiled-hono", "/abs/node"), {})
 })

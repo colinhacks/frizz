@@ -266,9 +266,13 @@ export interface FrizzMcp {
   projectId?: string
   // The thread this MCP server belongs to, passed through as FRIZZ_THREAD_SLUG so a tool CAN act on its
   // OWN thread. Nothing in the MCP protocol identifies the caller, and the server is spawned per worker,
-  // so its env is the only channel for this. Optional, and currently read by no shipped tool:
-  // `spawn_thread` does not need to know who called it, and the one that did — a worker-armed heartbeat
-  // — was removed 2026-08-02 in favour of the operator's stop hook. See dispatch.ts for why it stays.
+  // so its env is the only channel for this.
+  //
+  // IT IS LOAD-BEARING NOW. This once read "currently read by no shipped tool", which was true when the
+  // only tool was `spawn_thread`. Ten tools resolve their caller through it today — `title`, `ask`,
+  // `unask`, `done`, `watch`, `unwatch`, `watch_pr`, `timer`, `goal`, `activity` — and every one of
+  // them FAILS without it. Absent on codex until 2026-09-04, because the codex mount is process-wide
+  // (see codex-mcp.ts `codexThreadMcpConfig` for what that cost and how it is carried now).
   slug?: string
 }
 
