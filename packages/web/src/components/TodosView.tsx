@@ -717,9 +717,60 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
   const q = useTranscript(thread.id, { poll: false })
   // Freshness (subscription within the socket budget, activity-edge refetch beyond it) is centrally
   // managed by transcript-live.ts keyed on this hook's cache observer — the card wires nothing itself.
+  //
+  // FROZEN ONCE THE CARD IS LEAVING, which is what makes CardSlot's "fades out AT FULL HEIGHT" true of
+  // the CONTENT and not just the CSS. Steering the agent dismisses the card and appends the optimistic
+  // bubble to this same cache in one commit, and the default window below re-anchors on the human's
+  // most recent turn — which the bubble now IS. Measured on a real steer: the card grew 58px at 27ms
+  // (the bubble), then dropped 276px at 77ms as everything the human had been reading collapsed behind
+  // "Load earlier messages", then unmounted at 342ms. Every card beneath it was shoved down, then up,
+  // then up again, inside one 200ms fade — the up-and-down jitter the operator reported. The card is
+  // going away; the last frame before the dismissal is the one it should dissolve on.
+  const frozenTranscript = useRef(q.data)
+  if (!leaving) frozenTranscript.current = q.data
+  const transcript = leaving ? frozenTranscript.current : q.data
+  // …and the BOX is pinned for the duration of the exit, which is the same invariant enforced rather
+  // than merely intended. Freezing the transcript is not enough on its own: the composer collapses the
+  // moment the send clears it (32px for a one-line steer, 20px more per wrapped line), and a board delta
+  // arriving mid-fade can drop the resting banner. Every one of those shoves the whole queue beneath a
+  // card that is already on its way out.
+  //
+  // The height to pin is the one from the frame BEFORE the dismissal, and it is tracked by a
+  // ResizeObserver rather than measured at render: the composer grows as the human types and the card
+  // does not re-render for a keystroke, so a render-time reading is stale by exactly the lines they just
+  // wrote — measured, that pinned a 559px card at 539px and shrank it anyway. `borderBoxSize` rather
+  // than reading offsetHeight back, so the callback never forces a layout inside the observer.
+  const cardRootRef = useRef<HTMLDivElement>(null)
+  const restingHeight = useRef(0)
+  useEffect(() => {
+    const el = cardRootRef.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver((entries) => {
+      // Once the exit pin is written the height is ours, not the content's — stop tracking, or the
+      // shrink the pin exists to absorb would overwrite the height being held.
+      if (el.style.height) return
+      const box = entries[0]?.borderBoxSize?.[0]
+      if (box) restingHeight.current = box.blockSize
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    const el = cardRootRef.current
+    if (!el) return
+    if (!leaving) {
+      el.style.height = ""
+      el.style.overflow = ""
+      return
+    }
+    if (restingHeight.current > 0) {
+      el.style.height = `${restingHeight.current}px`
+      el.style.overflow = "hidden"
+    }
+  })
   // Raw server order — each message renders its `parts` in block order (fidelity). Memoized so the
   // windowing/useLiveAnswering below line up on identity.
-  const messages = useMemo(() => q.data?.messages ?? [], [q.data])
+  const messages = useMemo(() => transcript?.messages ?? [], [transcript])
   // THE LAST THING THE AGENT SAID, for the same reason the thread view computes it: any ```awaiting fence
   // above it states a wait that has already resolved, and draws nothing at all. Hoisted to the top of the
   // component because the collapse walk below needs it too, and a settled fence-only message renders
@@ -918,7 +969,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
   // already drawing. Over `messages`, not the window: an answer scrolled above the fold is still on this
   // card's page and a second copy of it at the tail is the duplicate either way.
   const inFlightAnswers = useMemo(() => unrenderedAnswers(messages, thread.answersInFlight), [messages, thread.answersInFlight])
-  const hasMore = visibleStart > 0 || q.data?.hasEarlier === true
+  const hasMore = visibleStart > 0 || transcript?.hasEarlier === true
 
   useLayoutEffect(() => {
     const pending = pendingViewportAnchor.current
@@ -977,7 +1028,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
   }, [bottomScrollReserve, messages, visibleStartId])
 
   useEffect(() => {
-    const transcriptKey = q.data?.transcriptKey
+    const transcriptKey = transcript?.transcriptKey
     if (!transcriptKey) return
     const priorKey = transcriptKeyRef.current
     transcriptKeyRef.current = transcriptKey
@@ -996,7 +1047,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
       anchoringHeld.current = false
       resumeNativeAnchoring()
     }
-  }, [q.data?.transcriptKey])
+  }, [transcript?.transcriptKey])
 
   useEffect(() => () => {
     if (anchoringHeld.current) {
@@ -1026,7 +1077,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
       return
     }
 
-    const cursor = q.data?.beforeCursor
+    const cursor = transcript?.beforeCursor
     if (!cursor) {
       if (visibleStart > 0) {
         const targetStartId = messages[0]?.sourceId
@@ -1036,7 +1087,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
       return
     }
 
-    const expectedKey = q.data?.transcriptKey
+    const expectedKey = transcript?.transcriptKey
     if (!expectedKey) return
     setLoadingEarlier(true)
     try {
@@ -1109,8 +1160,10 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
     <ThreadSlugContext.Provider value={thread.id}>
     <QueueDismissContext.Provider value={queueDismiss}>
     {/* NO overflow-hidden: it would clip the sticky header out of stickiness. The header carries
-        rounded-t so the card's top corners still look clipped; the root's BLOCK_RADIUS handles the bottom. */}
+        rounded-t so the card's top corners still look clipped; the root's BLOCK_RADIUS handles the bottom.
+        (The exit pin below does add one, for the fade's duration only, where stickiness is moot.) */}
     <div
+      ref={cardRootRef}
       data-queue-card-root={thread.id}
       data-queue-leaving={leaving}
       // viewTransitionName: while this thread is the primed return target of a /full exit
@@ -1279,7 +1332,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
               >
                 {loadingEarlier
                   ? "Loading earlier messages…"
-                  : q.data?.reachedTurnBoundary === false
+                  : transcript?.reachedTurnBoundary === false
                     ? "Continue loading this turn"
                     : "Load earlier messages"}
               </button>
