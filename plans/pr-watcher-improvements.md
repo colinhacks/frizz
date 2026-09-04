@@ -1,6 +1,8 @@
 # The registered PR watcher: what it missed on 2026-09-04, and what to change
 
-Status: ASSESSMENT + PROPOSALS. Written 2026-09-04 after the maintainer reported that the watcher on thread `clone-node-and-find-the-least` (project `nub`) had let reviews and CI failures pass without notifying the worker. Nothing here is built. Every figure below was read off this machine's own `~/.frizz/ui.db`, the thread's transcript, and GitHub's API for the two PRs involved.
+Status: ASSESSMENT + PROPOSALS. Written 2026-09-04 after the maintainer reported that the watcher on thread `clone-node-and-find-the-least` (project `nub`) had let reviews and CI failures pass without notifying the worker.
+
+**FOUR OF THE EIGHT WERE BUILT the same day** — the maintainer picked P2, P4 (its board half only), P6 and P7, and they landed as `262037ab`, `18b5bc10`, `df645e07` and `24cec001`. What each one turned out to be is recorded under its own heading below; the root cause of the false green (D2) is not what this document first guessed, and that correction is the most important thing here. **P1, P3, P5 and P4's progress-report half were NOT built** and are still live proposals. Every figure below was read off this machine's own `~/.frizz/ui.db`, the thread's transcript, and GitHub's API for the two PRs involved.
 
 The headline: the watcher's polling is fine — it caught a CI failure 48s after the job went red. The defects are in **when the news is allowed to reach the worker**, in **what counts as a verdict**, and in **what the watcher is blind to**. Two of the three reports it did send on the day were factually wrong, and the one that mattered arrived 10m late.
 
@@ -47,6 +49,8 @@ The asymmetry is stark. A shell the worker started reaches it in seconds. A buil
 
 ### D2 — The first report on a fresh PR is a false green
 
+> **BUILT (`262037ab`), and the cause was NOT what this section first said.** The skip count is only half of it. The other half is that Node's real 29-check matrix was held at GitHub's fork-approval gate: a gated workflow concludes `ACTION_REQUIRED` at the check SUITE and produces **no check run at all**, so it is absent from `statusCheckRollup` entirely. The rollup did not look complete because the checks had finished — it looked complete because the missing half was invisible. Frizz was already fetching the answer (`gh run list --commit <sha>` lists all 8, and `failedCheckNames` was skipping past them). `skipped` is now counted apart from `passed`, a pass needs a real `SUCCESS`, and a gated head reads as running and reports in its own right.
+
 `githubWatchStatus` ([`scheduler.ts:226`](../packages/server/src/scheduler.ts)) reduces the rollup to `entries.length === 0 ? "none" : failed > 0 ? "failing" : running > 0 ? "running" : "passing"`. Every terminal entry that did not fail counts as passed — including `skipped`.
 
 At 15:13:03Z, #65795's head `d52830ae` had exactly 15 check runs, and every one of them was GitHub-App plumbing:
@@ -74,6 +78,8 @@ The head is already carried in the CI stamp (`<head>:<verdict>:<failing jobs>`),
 
 ### D4 — "Running" is indistinguishable from "broken"
 
+> **HALF BUILT (`24cec001`).** The board half landed: a watched PR's CI now reads on the ops strip under the prompt box, which is on screen while the thread WORKS. The worker-facing progress report was not picked and is still a proposal.
+
 `running` is deliberately not news, and on a small repo that is right — the verdict lands in a couple of minutes. On nodejs/node the matrix takes about 1h 30m. #65795 has been running since 15:39Z with no report, and the next one is due whenever all 29 checks settle.
 
 For 1h 40m, a worker resting on that watcher and a maintainer reading the board see the same thing from Frizz: silence. There is no reading that separates "CI is grinding, 15 of 29 done" from "the watcher is dead." That ambiguity *is* the complaint.
@@ -95,6 +101,8 @@ Labels are not cosmetic on nodejs/node — `needs-ci`, `commit-queue-failed`, `a
 The conflict case is the sharpest: `githubWatchStatus` already computes `merge: "conflicting" | "blocked" | "mergeable" | "unknown"` from data it already fetched, and then nothing uses it as a trigger. A PR that develops a merge conflict is silent until something else happens to it.
 
 ### D7 — Two network round-trips per PR per poll
+
+> **BUILT (`18b5bc10`).** Measured against the live API: 4 PRs across 3 repos now come back in ONE HTTP request and no subprocesses. Status and activity for one PR price at the same 1 GraphQL point together as apart.
 
 `fetchPr` shells out to `gh pr view` once per PR; `fetchGithubReview` runs a batched GraphQL query covering up to 20 refs. With 7 armed watchers on this machine that is ~8 status subprocesses and 1 GraphQL call per minute. It works, but it is the ceiling on both a faster poll and the extra timeline items D3 and D6 need.
 
