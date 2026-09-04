@@ -11,6 +11,7 @@ import { useLocalFileCodeLinks } from "../lib/localFileCode.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { splitFrontmatter } from "../lib/frontmatter.ts"
 import { localFileDir } from "../lib/markdownTargets.ts"
+import { CodeBody } from "./CodeBody.tsx"
 import { Sheet } from "./ui/Sheet.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 
@@ -56,22 +57,16 @@ export function OpenAction({ path }: { path: string }) {
   )
 }
 
-// The document's frontmatter, one muted line per entry with the key set in mono — the way a file
-// listing shows metadata, not the way a heading shows a title. Values are left as written: this is a
-// glance at what the file declares, not a YAML parser.
-export function Frontmatter({ lines }: { lines: string[] }) {
+// The document's frontmatter is YAML, so render it through the same grammar and token palette as a
+// `.yaml` source file. CodeBody keeps the text byte-for-byte while the pre preserves nesting/indentation;
+// the former hand-rolled "text before the first colon is a key" treatment flattened both.
+export function Frontmatter({ source }: { source: string }) {
   return (
-    <div className="mb-4 rounded-md border border-border/60 bg-panel-2/40 px-3 py-2 text-[12px] leading-5 text-muted">
-      {lines.map((line, i) => {
-        const cut = line.indexOf(":")
-        const key = cut > 0 ? line.slice(0, cut) : null
-        return (
-          <div key={i} className="break-words">
-            {key ? <><span className="font-mono-keep text-fg/60">{key}</span>{line.slice(cut)}</> : line}
-          </div>
-        )
-      })}
-    </div>
+    <CodeBody
+      text={source}
+      language="yaml"
+      className="mb-4 whitespace-pre-wrap break-words rounded-md border border-border/60 bg-panel-2/40 px-3 py-2 font-mono-keep text-[12px] leading-5 text-muted"
+    />
   )
 }
 
@@ -111,7 +106,7 @@ export function MarkdownDrawer({ id, path, title, depth, widthDepth }: { id: num
               <div className="text-[13px] text-red-400/90">Couldn’t read this file: {(body.error as Error).message}</div>
             ) : html ? (
               <>
-                {front && <Frontmatter lines={front} />}
+                {front && <Frontmatter source={front} />}
                 <div ref={ref} className="md-body" dangerouslySetInnerHTML={inner} />
                 {body.data?.truncated && (
                   <p className="mt-4 border-t border-border/60 pt-3 text-[12px] text-muted">

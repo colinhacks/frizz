@@ -213,7 +213,7 @@ export function FileViewerPanel({ slug, path }: { slug: string; path: string }) 
           )
         ) : html ? (
           <>
-            {front && <Frontmatter lines={front} />}
+            {front && <Frontmatter source={front} />}
             <div ref={renderedRef} className="md-body" dangerouslySetInnerHTML={inner} />
           </>
         ) : (

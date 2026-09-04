@@ -46,6 +46,16 @@ const sessionId = `${slug}-0000-4000-8000-00000000000`.slice(0, 36)
 const docs = "/tmp/frizz-md-reader-demo"
 mkdirSync(join(docs, "nested"), { recursive: true })
 writeFileSync(join(docs, "guide.md"), [
+  "---",
+  "title: Reader guide",
+  "draft: false",
+  "tags:",
+  "  - Frizz",
+  "  - Markdown",
+  "owner:",
+  '  name: "Docs team" # nested YAML stays nested',
+  "---",
+  "",
   "# Reader guide",
   "",
   "This paragraph is HARD-WRAPPED at a column, the way most README files on disk are written,",
