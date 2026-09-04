@@ -61,11 +61,11 @@ test("the queue card holds its tail cards until the transcript window has loaded
   assert.match(todos, /\{!q\.isLoading && showsRegisteredDoneCard\(thread, /)
   assert.match(todos, /\{!q\.isLoading && showsRestedCard\(thread, /)
   // The thread view's eager branch is what renders while ITS window loads (count === 0 on both production
-  // callers), and it drew the same chain alone at the top of an empty pane. Same hold, both halves of it —
-  // the spacer gate and the chain — or the slot opens before the rung.
+  // callers), and it drew the same ladder alone at the top of an empty pane. Same hold, both halves of it —
+  // the spacer gate and the ladder — or the slot opens before the rung.
   assert.match(source, /const tailReady = !q\.isLoading/)
-  assert.match(source, /\{tailReady && \(\(thread\?\.providerFault/, "the plain path's spacer gate waits for the transcript")
-  assert.match(source, /\{!tailReady \? null : thread\?\.providerFault && !thread\.foreign \? \(/, "…and so does the chain it opens for")
+  assert.match(source, /\{tailReady && runtimeStatusRung\(runtimeStatus\) !== null && \(/, "the plain path's spacer gate waits for the transcript")
+  assert.match(source, /\{tailReady && \(\n\s*<RuntimeStatusLadder/, "…and so does the ladder it opens for")
 })
 
 // THE CARD NEVER LEARNS ABOUT STALENESS. It used to: a `stale` branch stripped the frame and printed the

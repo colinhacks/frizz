@@ -63,7 +63,7 @@ import { FOREGROUND_MARK_AFTER_MS, foregroundToolIsRunning, hasRunningToolIndica
 import { formatRuntimeElapsed, formatToolDuration } from "../lib/durationLabels.ts"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { useNowMs } from "../lib/liveClock.ts"
-import { CHILD_OPEN_TITLE, CHILD_QUIET_SHELL_TITLE, CHILD_RESTED_DOT_CLASS, CHILD_RESTED_TITLE, CHILD_STALE_DOT_CLASS, CHILD_STALE_TITLE, childOpSubtree, mergeBackgroundShells, shellLinesLabel, visibleChildOps, type TranscriptShellRecord } from "../lib/childOps.ts"
+import { CHILD_OPEN_TITLE, CHILD_QUIET_SHELL_TITLE, CHILD_RESTED_DOT_CLASS, CHILD_RESTED_TITLE, CHILD_STALE_DOT_CLASS, CHILD_STALE_TITLE, checksCounterLabel, childOpSubtree, mergeBackgroundShells, shellLinesLabel, visibleChildOps, type TranscriptShellRecord } from "../lib/childOps.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
 import { agentCompletionCall, subAgentCompletionOutcome } from "../lib/subAgentCompletion.ts"
 import { agentReading } from "../lib/agentReading.ts"
@@ -84,7 +84,7 @@ import { settledAskView } from "../lib/interactionQuestion.ts"
 import { FRAMED_IMAGE, ImageFrame } from "./ImageFrame.tsx"
 // The resting card, shared with the queue (TodosView passes it the event-Snooze; these two surfaces
 // deliberately pass no action — see the module header).
-import { AwaitingBackgroundCard, AwaitingWaitTable, hasAwaitingWaitRows, showsRestingCard } from "./AwaitingBackgroundCard.tsx"
+import { AwaitingBackgroundCard, AwaitingWaitTable, hasAwaitingWaitRows, showsRestingCard, watchStatusLine } from "./AwaitingBackgroundCard.tsx"
 import { lastRest } from "../lib/restAnchor.ts"
 import { SnoozeCard, showsSnoozeCard } from "./SnoozeCard.tsx"
 // Re-exported from their new homes so existing importers (TodosView, the fixtures) keep one
@@ -221,15 +221,6 @@ function ChatView({ slug, virtualized }: { slug: string; virtualized: boolean })
   const thread = threadBySlug(board, slug)
   const running = thread?.runtime === "running" || thread?.runtime === "spawning"
   const copyTerminalCommand = useCopyTerminalCommand(slug)
-  // The safety-net readout for a session frozen at a native AskUserQuestion — "answer it in your
-  // external terminal". That is the WRONG thing to say once frizz OWNS the question: the broker path
-  // journals the same tool call as an answerable interaction, which renders as the question card just
-  // above, and pointing the operator at a terminal while an answerable copy sits on screen is worse
-  // than saying nothing. So the net stands down whenever this thread has a pending interaction, and
-  // still covers the sessions it exists for — pre-contract, adopted, or foreign threads that reach the
-  // tool with no broker to intercept it.
-  const frozenAsk = thread?.pendingInteraction ? undefined : thread?.pendingAsk
-
 
   // Freshness is centrally managed (transcript-live.ts keeps every observed transcript live); `poll`
   // only gates the SSE-fallback interval for a running thread.
@@ -297,6 +288,8 @@ function ChatView({ slug, virtualized }: { slug: string; virtualized: boolean })
   const registeredDone = showsRegisteredDoneCard(thread, lastAgentIdx >= 0 ? presentationMessages[lastAgentIdx]?.text : undefined)
   // The RESIDUAL rung: a rest that carries no other card at all (RestedCard). Same final-message key.
   const restedCard = showsRestedCard(thread, lastAgentIdx >= 0 ? presentationMessages[lastAgentIdx]?.text : undefined)
+  // Everything the runtime-status ladder needs that it cannot work out itself — see runtimeStatusRung.
+  const runtimeStatus: RuntimeStatusState = { thread, showWorking, registeredDone, restedCard }
   // Question-block interactivity in the thread view: EVERY ask stays answerable, wherever it sits —
   // scroll back to a question a sub-agent return / the agent's own continuation buried and answer it in
   // place. answeringForMessage wires each ask's chips AND its own bottom Send button (scoped to just
@@ -518,66 +511,28 @@ function ChatView({ slug, virtualized }: { slug: string; virtualized: boolean })
               // (rendered after the working/pending indicators, below) — not interleaved here.
               (m) => !!m.queued,
             )}
-            {/* Same rule as the virtualized path's runtime-status row: the Working… rung is a quiet meta
-                line that joins the tight run under a meta tail; every card rung keeps STEP. */}
-            {/* showsRestingCard, NOT the raw awaitingBackground flag: the chain below renders the resting
-                card through that predicate, and gating the slot on the bare flag opened it for a
-                bg-snoozed thread — every branch then rendered null and the slot was an empty gap at the
-                transcript's end (the gate-vs-renderer mismatch of 2026-08-25, one surface over). */}
-            {/* AND NOT BEFORE THE TRANSCRIPT. This branch is what renders while the window is still loading
-                (count === 0 on both production callers), so without the hold it drew the whole chain — the
-                resting card above all — alone at the top of an empty pane and then replaced it with the
-                transcript a beat later: the tail describes the END of the transcript and mounts with it,
-                exactly as the queue card holds its tail (TodosView). */}
-            {tailReady && ((thread?.providerFault && !thread.foreign) || (thread?.limitPause && !thread.foreign) || frozenAsk || thread?.runtime === "perm-prompt" || showWorking || showsSnoozeCard(thread) || showsRestingCard(thread) || registeredDone || restedCard) && (
-              <VSpace h={
-                showWorking && !thread?.providerFault && !thread?.limitPause && !frozenAsk && thread?.runtime !== "perm-prompt"
-                  ? workingIndicatorGap(activityMessages.map((entry) => entry.message))
-                  : STEP
-              } />
+            {/* THE RUNTIME-STATUS SLOT, through the one ladder the virtualized path draws too — see
+                runtimeStatusRung. The gate, the spacing and the rungs are all that one answer, so this
+                path cannot disagree with the other about which card a thread gets.
+                NOT BEFORE THE TRANSCRIPT, though: this branch is what renders while the window is still
+                loading (count === 0 on both production callers), so without the hold it drew the whole
+                ladder — the resting card above all — alone at the top of an empty pane and then replaced
+                it with the transcript a beat later. The tail describes the END of the transcript and
+                mounts with it, exactly as the queue card holds its tail (TodosView). */}
+            {tailReady && runtimeStatusRung(runtimeStatus) !== null && (
+              <VSpace h={runtimeStatusGapFor(runtimeStatus, activityMessages.map((entry) => entry.message))} />
             )}
-            {/* A frozen native AskUserQuestion takes precedence over the generic perm banner and the
-                Working… spinner — it's the salient state (the safety net). Background sub-agents/shells
-                are NOT surfaced here anymore: they live in the anchored ops strip (below), which is
-                visible even mid-turn. A provider auth fault outranks everything: nothing else in the
-                thread can make progress until the credential is restored. */}
-            {!tailReady ? null : thread?.providerFault && !thread.foreign ? (
-              <ProviderFaultCard
+            {tailReady && (
+              <RuntimeStatusLadder
+                state={runtimeStatus}
                 slug={slug}
-                sessionId={thread.sessionId}
-                fault={thread.providerFault}
                 retryText={lastUserIdx >= 0 ? messages[lastUserIdx]?.text : undefined}
+                onTerminal={copyTerminalCommand}
+                liveRuntimeStart={liveRuntimeStart}
+                liveActivityLabel={liveActivityLabel}
+                liveToolRun={liveToolRun}
               />
-            ) : thread?.limitPause && !thread.foreign ? (
-              <LimitPauseCard slug={slug} sessionId={thread.sessionId} pause={thread.limitPause} />
-            ) : frozenAsk ? (
-              <PendingAskCard ask={frozenAsk} onTerminal={copyTerminalCommand} />
-            ) : thread?.runtime === "perm-prompt" ? (
-              <PermPromptBanner onTerminal={copyTerminalCommand} />
-            ) : showWorking ? (
-              <WorkingIndicator since={thread?.lastUserAt} startedAt={liveRuntimeStart} activityLabel={liveActivityLabel} run={liveToolRun} />
-            ) : showsSnoozeCard(thread) ? (
-              // The human parked THIS thread on a wall clock, and the park outranks the benign resting
-              // card below — once snoozed, "awaiting background work" is not what the bottom of the
-              // transcript should lead with. Loses to every harder state above, same as that card.
-              <SnoozeCard thread={thread!} />
-            ) : showsRestingCard(thread) ? (
-              // The rest itself, stated. Last in the chain because every branch above is a HARDER
-              // reading of the same slot; this one is the benign case and never outranks them. The
-              // predicate is what keeps it off a thread that is not actually resting or that the human
-              // has already parked — see showsRestingCard.
-              <AwaitingBackgroundCard thread={thread!} />
-            ) : registeredDone ? (
-              // THE THREAD'S OWN ENDING, for a sign-off that came in as a tool call rather than a fence: the
-              // same card the fence draws (FenceCard), in the slot the fence would have occupied at the
-              // transcript's end. Last because `done` refuses while anything above could still be true — an
-              // open question or an armed watch blocks the verb — so a thread showing this is at rest with
-              // nothing left to wait on.
-              <FenceCard fenceKind="done" body={thread!.lastFence!.body} hints={[]} />
-            ) : restedCard ? (
-              // NOTHING ELSE APPLIES, and the bottom of the thread still has to say so — see RestedCard.
-              <RestedCard thread={thread!} />
-            ) : null}
+            )}
             {/* SIBLING of the chain above, not a branch in it. Those are mutually exclusive because they
                 all describe the ONE thing currently blocking; a policy denial already happened and
                 blocks nobody now, so it can coexist and must not compete for the same slot. */}
@@ -680,6 +635,119 @@ type VirtualThreadRow =
   | { key: "runtime-status"; kind: "runtime-status" }
   | { key: string; kind: "queued"; message: ChatMessage; messageIndex: number; gap: number }
 
+// THE RUNTIME-STATUS LADDER — ONE slot at the transcript's end, nine mutually exclusive rungs, hardest
+// reading first, and ONE renderer for all of it.
+//
+// The transcript draws this slot from two places: the virtualized path's `runtime-status` row, and the
+// eager path in ChatView (reachable at count === 0, where there is no virtualizer to hang a row on).
+// Both drew their own copy of the ladder, and each ALSO carried its own copy of two derived facts — is
+// any rung showing (the slot's gate), and is `working` the rung that won (the spacing above it, which is
+// a quiet meta line for that rung and a card's STEP for every other). Six hand-mirrored copies of one
+// ladder, and the rung order repeated inside four of them.
+//
+// That is the awaiting card's own bug (2026-09-04: "it'll re-render the awaiting card in a totally
+// different fucking way") one level up: the SAME slot, drawn by more than one piece of code, so which
+// one you get depends on the thread's state rather than on anything the reader did. Nothing had drifted
+// yet — the copies still agreed, rung for rung — but every one of them had to be edited in lockstep
+// forever, and that is not a property to rely on. So the ladder is stated ONCE, here: `runtimeStatusRung`
+// decides which rung wins, and everything else is derived from that answer rather than re-deriving it.
+type RuntimeStatusRung = "provider-fault" | "limit-pause" | "pending-ask" | "perm-prompt" | "working" | "snooze" | "resting" | "registered-done" | "rested"
+
+/** What each caller knows that the ladder cannot work out for itself. `registeredDone`/`restedCard` are
+ *  keyed on the final assistant message, which each path computes off its own list. */
+interface RuntimeStatusState {
+  thread: ThreadViewData | undefined
+  showWorking: boolean
+  registeredDone: boolean
+  restedCard: boolean
+}
+
+/** The safety-net readout for a session frozen at a native AskUserQuestion — "answer it in your external
+ *  terminal". That is the WRONG thing to say once frizz OWNS the question: the broker path journals the
+ *  same tool call as an answerable interaction, which renders as a question card in the transcript, and
+ *  pointing the operator at a terminal while an answerable copy sits on screen is worse than saying
+ *  nothing. So the net stands down whenever this thread has a pending interaction, and still covers the
+ *  sessions it exists for — pre-contract, adopted, or foreign threads that reach the tool with no broker
+ *  to intercept it. */
+function frozenPendingAsk(thread: ThreadViewData | undefined): PendingAsk | undefined {
+  return thread?.pendingInteraction ? undefined : thread?.pendingAsk
+}
+
+/** WHICH RUNG WINS, or null when the slot draws nothing at all. The order is the ladder: a provider auth
+ *  fault outranks everything (nothing in the thread can make progress until the credential is restored),
+ *  a frozen ask outranks the generic perm banner and the Working… spinner, the human's own park outranks
+ *  the benign resting card, and `rested` is the residual. Background sub-agents and shells are NOT here:
+ *  they live in the anchored ops strip, which stays visible mid-turn. */
+function runtimeStatusRung({ thread, showWorking, registeredDone, restedCard }: RuntimeStatusState): RuntimeStatusRung | null {
+  if (thread?.providerFault && !thread.foreign) return "provider-fault"
+  if (thread?.limitPause && !thread.foreign) return "limit-pause"
+  if (frozenPendingAsk(thread)) return "pending-ask"
+  if (thread?.runtime === "perm-prompt") return "perm-prompt"
+  if (showWorking) return "working"
+  if (showsSnoozeCard(thread)) return "snooze"
+  // showsRestingCard, NOT the raw awaitingBackground flag: gating on the bare flag opened the slot for a
+  // bg-snoozed thread, every rung then drew null, and the slot was an empty gap at the transcript's end
+  // (the gate-vs-renderer mismatch of 2026-08-25 — which is exactly what one predicate for both prevents).
+  if (showsRestingCard(thread)) return "resting"
+  if (registeredDone) return "registered-done"
+  if (restedCard) return "rested"
+  return null
+}
+
+/** The SPACE above the slot. Only the Working… rung is a quiet meta line rather than a card, so only it
+ *  joins the tight run under a meta tail; every card rung keeps STEP. */
+function runtimeStatusGapFor(state: RuntimeStatusState, messages: readonly ChatMessage[]): number {
+  return runtimeStatusRung(state) === "working" ? workingIndicatorGap(messages) : STEP
+}
+
+function RuntimeStatusLadder({
+  state,
+  slug,
+  retryText,
+  onTerminal,
+  liveRuntimeStart,
+  liveActivityLabel,
+  liveToolRun,
+}: {
+  state: RuntimeStatusState
+  slug: string
+  /** The human's last ask, for the fault card's retry. */
+  retryText: string | undefined
+  onTerminal: () => void
+  liveRuntimeStart: string | undefined
+  liveActivityLabel: string | undefined
+  liveToolRun: { tools: readonly TranscriptToolCall[]; at?: string } | undefined
+}) {
+  const thread = state.thread
+  switch (runtimeStatusRung(state)) {
+    case "provider-fault":
+      return <ProviderFaultCard slug={slug} sessionId={thread!.sessionId} fault={thread!.providerFault!} retryText={retryText} />
+    case "limit-pause":
+      return <LimitPauseCard slug={slug} sessionId={thread!.sessionId} pause={thread!.limitPause!} />
+    case "pending-ask":
+      return <PendingAskCard ask={frozenPendingAsk(thread)!} onTerminal={onTerminal} />
+    case "perm-prompt":
+      return <PermPromptBanner onTerminal={onTerminal} />
+    case "working":
+      return <WorkingIndicator since={thread?.lastUserAt} startedAt={liveRuntimeStart} activityLabel={liveActivityLabel} run={liveToolRun} />
+    case "snooze":
+      return <SnoozeCard thread={thread!} />
+    case "resting":
+      return <AwaitingBackgroundCard thread={thread!} />
+    // THE THREAD'S OWN ENDING, for a sign-off that came in as a tool call rather than a fence: the same
+    // card the fence draws, in the slot the fence would have occupied at the transcript's end. Below
+    // everything because `done` refuses while anything above could still be true — an open question or an
+    // armed watch blocks the verb — so a thread showing this is at rest with nothing left to wait on.
+    case "registered-done":
+      return <FenceCard fenceKind="done" body={thread!.lastFence!.body} hints={[]} />
+    // NOTHING ELSE APPLIES, and the bottom of the thread still has to say so — see RestedCard.
+    case "rested":
+      return <RestedCard thread={thread!} />
+    default:
+      return null
+  }
+}
+
 function VirtualizedThreadTranscript({
   slug,
   transcriptRef,
@@ -761,30 +829,16 @@ function VirtualizedThreadTranscript({
   const registeredDone = showsRegisteredDoneCard(thread, lastAgentIdx >= 0 ? messages[lastAgentIdx]?.text : undefined)
   // The RESIDUAL rung: a rest that carries no other card at all (RestedCard). Same final-message key.
   const restedCard = showsRestedCard(thread, lastAgentIdx >= 0 ? messages[lastAgentIdx]?.text : undefined)
-  const hasRuntimeStatus = Boolean(
-    (thread?.providerFault && !thread.foreign)
-      || (thread?.limitPause && !thread.foreign)
-      || (thread?.pendingInteraction ? undefined : thread?.pendingAsk)
-      || thread?.runtime === "perm-prompt"
-      || showWorking
-      || showsSnoozeCard(thread)
-      // showsRestingCard, not the raw flag — see the non-virtualized gate; on the bare flag a bg-snoozed
-      // thread grew an empty runtime-status ROW here (null in a padded div) at the transcript's end.
-      || showsRestingCard(thread)
-      || registeredDone
-      || restedCard,
+  // Everything the runtime-status ladder needs that it cannot work out itself — see runtimeStatusRung.
+  // The row EXISTS when some rung wins, and its own gap is that same answer: the eager path derives both
+  // from the identical call, so the two cannot disagree about which card this thread gets.
+  const runtimeStatus: RuntimeStatusState = { thread, showWorking, registeredDone, restedCard }
+  const hasRuntimeStatus = runtimeStatusRung(runtimeStatus) !== null
+  // The deps are runtimeStatus's FIELDS, not the object: it is a fresh literal every render.
+  const runtimeStatusGap = useMemo(
+    () => runtimeStatusGapFor({ thread, showWorking, registeredDone, restedCard }, activityMessages.map((entry) => entry.message)),
+    [activityMessages, showWorking, thread, registeredDone, restedCard],
   )
-  // Which rung of the runtime-status ladder (rendered below, hardest reading first) wins. Only its
-  // Working… rung is a quiet meta row rather than a card, and only that rung joins the tight run —
-  // see workingIndicatorGap.
-  const runtimeStatusGap = useMemo(() => {
-    const workingWins = showWorking
-      && !(thread?.providerFault && !thread.foreign)
-      && !(thread?.limitPause && !thread.foreign)
-      && !(thread?.pendingInteraction ? undefined : thread?.pendingAsk)
-      && thread?.runtime !== "perm-prompt"
-    return workingWins ? workingIndicatorGap(activityMessages.map((entry) => entry.message)) : STEP
-  }, [activityMessages, showWorking, thread])
   // EVERY OPEN QUESTION, at the thread's CURRENT rest while it is at rest, and at the rest it was asked
   // at while it is mid-flight (mid-prose placement is retired — see lib/questionShadow). Passing
   // `atRest` is what keeps a question the human replied PAST from stranding above their reply while the
@@ -1340,30 +1394,18 @@ function VirtualizedThreadTranscript({
               </MessageRow>
             ) : row.kind === "runtime-status" ? (
               <div className="px-6" style={{ paddingTop: runtimeStatusGap }}>
-                {thread?.providerFault && !thread.foreign ? (
-                  <ProviderFaultCard slug={slug} sessionId={thread.sessionId} fault={thread.providerFault} retryText={lastUserIdx >= 0 ? messages[lastUserIdx]?.text : undefined} />
-                ) : thread?.limitPause && !thread.foreign ? (
-                  <LimitPauseCard slug={slug} sessionId={thread.sessionId} pause={thread.limitPause} />
-                ) : (thread?.pendingInteraction ? undefined : thread?.pendingAsk) ? (
-                  <PendingAskCard ask={thread!.pendingAsk!} onTerminal={copyTerminalCommand} />
-                ) : thread?.runtime === "perm-prompt" ? (
-                  <PermPromptBanner onTerminal={copyTerminalCommand} />
-                ) : showWorking ? (
-                  <WorkingIndicator since={thread?.lastUserAt} startedAt={liveRuntimeStart} activityLabel={liveActivityLabel} run={liveToolRun} />
-                ) : showsSnoozeCard(thread) ? (
-                  // See the non-virtualized chain above: the human's own park, above the resting card.
-                  <SnoozeCard thread={thread!} />
-                ) : showsRestingCard(thread) ? (
-                  // See the non-virtualized chain above: last branch, benign case, no Snooze here.
-                  <AwaitingBackgroundCard thread={thread!} />
-                ) : registeredDone ? (
-                  // See the non-virtualized chain above: the registered sign-off's own card, last rung.
-                  <FenceCard fenceKind="done" body={thread!.lastFence!.body} hints={[]} />
-                ) : restedCard ? (
-                  // See the non-virtualized chain above: the residual rung.
-                  <RestedCard thread={thread!} />
-                ) : null}
-                {/* Sibling, not a branch — see the runtime-status block above. */}
+                <RuntimeStatusLadder
+                  state={runtimeStatus}
+                  slug={slug}
+                  retryText={lastUserIdx >= 0 ? messages[lastUserIdx]?.text : undefined}
+                  onTerminal={copyTerminalCommand}
+                  liveRuntimeStart={liveRuntimeStart}
+                  liveActivityLabel={liveActivityLabel}
+                  liveToolRun={liveToolRun}
+                />
+                {/* SIBLING of the ladder, not a rung in it. Those are mutually exclusive because they all
+                    describe the ONE thing currently blocking; a policy denial already happened and blocks
+                    nobody now, so it can coexist and must not compete for the same slot. */}
                 {thread?.permPolicy ? (
                   <div className="mt-3">
                     <PermPolicyDenialCard policy={thread.permPolicy} denies={thread.permDenies} />
@@ -4054,6 +4096,13 @@ export function BackgroundOpsStrip({
           state="running"
           density="sheet"
           startedAt={w.createdAt}
+          // WHAT ITS CI SAYS, in the same column a shell's line count takes — because this strip is on
+          // screen while the thread WORKS, and the card that rendered the full reading is only drawn at
+          // rest. A watcher row used to say a ref and an age, which is the one pair that cannot answer
+          // "is anything wrong with it". Absent until the first poll answers, never a fabricated 0.
+          counter={checksCounterLabel(w.github)}
+          counterTone={w.github?.checks === "failing" ? "danger" : undefined}
+          counterTitle={w.github ? `${w.target} — ${watchStatusLine(w.github)}` : undefined}
           onOpen={() => window.open(githubRefUrl(w.target) ?? `https://github.com/${w.target.replace("#", "/pull/")}`, "_blank", "noreferrer,noopener")}
         />
       ))}
