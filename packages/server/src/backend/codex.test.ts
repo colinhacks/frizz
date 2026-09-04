@@ -29,6 +29,32 @@ const tuiSingleTurn = readFileSync(join(FIX_DIR, "tui-single-turn.jsonl"), "utf8
 const execWrapperCommonTools = readFileSync(join(FIX_DIR, "exec-wrapper-common-tools.jsonl"), "utf8")
 const execLines = execTwoTurn.split("\n").filter((l) => l.trim())
 
+// ---- REAL captured rollout fixtures (codex-cli 0.153.2, 2026-09-04) ----
+// The schema codex moved to: every semantic event now rides ONE `event_msg/item_completed` envelope
+// carrying a typed `item`, and the flat `agent_message` / `user_message` / `sub_agent_activity`
+// payloads the fixtures above are built on are no longer written at all. Frizz read only the flat
+// spelling, so on this rollout it folded ZERO assistant text, ZERO user turns and ZERO sub-agents —
+// the thread went in-flight and came to rest (the turn brackets did NOT move) while the board showed
+// no title, no preview, no fences and no children.
+// multi-agent-0153: a slice of the orchestrator's own rollout — its opening prompt, the title-carrying
+// commentary, one child's whole life (spawn → started → completed), a roster, and two item/response_item
+// TWINS (Reasoning, CommandExecution) that must not be counted twice. child-turn-0153: one child's
+// bracketed turn, which is where a `final_answer` phase and a `task_complete` live.
+// Redacted: the fernet dispatch blobs, `encrypted_content`, the home dir, and prose over 240 chars.
+const multiAgent0153 = readFileSync(join(FIX_DIR, "multi-agent-0153.jsonl"), "utf8")
+const childTurn0153 = readFileSync(join(FIX_DIR, "child-turn-0153.jsonl"), "utf8")
+// The first fixture line of a given rollout record type, over an arbitrary fixture.
+function firstLineIn(text: string, pred: (rec: any) => boolean): string {
+  for (const l of text.split("\n")) {
+    if (!l.trim()) continue
+    try {
+      if (pred(JSON.parse(l))) return l
+    } catch {}
+  }
+  throw new Error("no fixture line matched")
+}
+const itemOf = (r: any) => r?.payload?.item
+
 // Fold a whole rollout string into a fresh accumulator via the backend's authoritative foldLine.
 function foldAll(text: string) {
   const backend = createCodexBackend()
@@ -265,6 +291,62 @@ test("parseCodexLine: event_msg/user_message → a genuine (non-synthetic) user-
   assert.equal(evs[0].kind, "user-message")
   assert.equal((evs[0] as any).synthetic, false)
   assert.match((evs[0] as any).text, /FRIZZ-SENTINEL/) // the real first prompt carried a sentinel
+})
+
+// ==== the codex >=0.153 `item_completed` envelope (the same mapping, respelled) ====
+
+test("parseCodexLine: item_completed/AgentMessage commentary → assistant-text{final:false}, text from content[]", () => {
+  const line = firstLineIn(multiAgent0153, (r) => itemOf(r)?.type === "AgentMessage" && itemOf(r).phase === "commentary")
+  const evs = parseCodexLine(line)
+  assert.equal(evs.length, 1)
+  assert.equal(evs[0].kind, "assistant-text")
+  assert.equal((evs[0] as any).final, false)
+  // The whole point: the title signal reaches the extractor, which only ever sees assistant-text.
+  assert.match((evs[0] as any).text, /^<!-- frizz title="Investigate compiled JavaScript routing" -->/)
+})
+
+test("parseCodexLine: item_completed/AgentMessage final_answer → assistant-text{final:true} (the fence-bearing one)", () => {
+  const line = firstLineIn(childTurn0153, (r) => itemOf(r)?.type === "AgentMessage" && itemOf(r).phase === "final_answer")
+  const evs = parseCodexLine(line)
+  assert.equal(evs.length, 1)
+  assert.deepEqual({ kind: evs[0].kind, final: (evs[0] as any).final }, { kind: "assistant-text", final: true })
+  assert.match((evs[0] as any).text, /^Completed \[buildtime-extraction/)
+})
+
+test("parseCodexLine: item_completed/UserMessage → a genuine (non-synthetic) user-message", () => {
+  const line = firstLineIn(multiAgent0153, (r) => itemOf(r)?.type === "UserMessage")
+  const evs = parseCodexLine(line)
+  assert.equal(evs.length, 1)
+  assert.equal(evs[0].kind, "user-message")
+  assert.equal((evs[0] as any).synthetic, false)
+  assert.match((evs[0] as any).text, /^Your scratch directory is/)
+})
+
+test("parseCodexLine: every OTHER item type stays dropped — an item and its response_item twin are one event", () => {
+  // Reasoning and CommandExecution appear BOTH as an item and as the response_item this parser already
+  // reads. Counting the item as well would paint every codex tool call and reasoning block twice.
+  const reasoningItem = firstLineIn(multiAgent0153, (r) => itemOf(r)?.type === "Reasoning")
+  const commandItem = firstLineIn(multiAgent0153, (r) => itemOf(r)?.type === "CommandExecution")
+  assert.deepEqual(parseCodexLine(reasoningItem), [])
+  assert.deepEqual(parseCodexLine(commandItem), [])
+  // Counted against the RAW records rather than a hard-coded number, so the invariant survives a
+  // fixture edit: one event per response_item, and the item twins add nothing.
+  const records = multiAgent0153.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+  const responseItems = (type: string) => records.filter((r) => r.type === "response_item" && r.payload?.type === type).length
+  const kinds = allEvents(multiAgent0153).map((e) => e.kind)
+  assert.equal(kinds.filter((k) => k === "reasoning").length, responseItems("reasoning"))
+  assert.equal(kinds.filter((k) => k === "tool-call").length, responseItems("function_call") + responseItems("custom_tool_call"))
+  // …and the twins really are present, so this is not passing vacuously.
+  assert.ok(records.some((r) => itemOf(r)?.type === "Reasoning") && records.some((r) => itemOf(r)?.type === "CommandExecution"))
+})
+
+test("foldLine: a 0.153 rollout yields the frizz title, the human's opening turn and the visible text without the marker", () => {
+  const state = foldAll(multiAgent0153)
+  assert.equal(state.aiTitle, "Investigate compiled JavaScript routing")
+  assert.equal(state.autoTitleSource, "frizz")
+  assert.match(state.firstUserText ?? "", /^Your scratch directory is/)
+  // The transport comment is metadata, never chat: the preview starts at the agent's own first word.
+  assert.match(state.lastAssistant ?? "", /^I’m mapping the existing router/)
 })
 
 test("parseCodexLine: response_item/function_call → tool-call with call_id + JSON-parsed arguments", () => {

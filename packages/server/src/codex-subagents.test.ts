@@ -228,3 +228,49 @@ test("a rotated/truncated child rollout re-reads from the top instead of skippin
   h.tracker.poll(Date.parse("2026-07-23T21:31:10.000Z"))
   assert.equal(h.retired.find((r) => r.id === "call_BIk9hxjEKDawwE5ic0iHYPM8")?.at, "2026-07-23T21:31:00.000Z")
 })
+
+// ---- codex >=0.153: the same three signals, respelled onto `item_completed` ----
+// Codex stopped writing the flat `sub_agent_activity` record the fixture above is built on, so on a
+// 0.153 rollout the tracker saw a run of `spawn_agent` calls and NOTHING else: no slot was ever
+// created, `liveCount` stayed 0, and a worker orchestrating seventeen children showed none on the
+// board. The item form also adds a `completed` kind the flat one never had.
+const MA0153 = readFileSync(join(import.meta.dirname, "backend/codex.fixtures/multi-agent-0153.jsonl"), "utf8")
+const MA0153_LINES = MA0153.split("\n").filter((l) => l.trim())
+const BUN = "/root/bun_mechanics"
+const BUN_CALL = "call_0m1yOvy72xu8aOT9iq5Uxy3I"
+
+test("0.153: an item_completed/SubAgentActivity `started` surfaces the child under its spawn call_id", () => {
+  const h = harness()
+  for (const line of MA0153_LINES) {
+    // Stop before the `completed`, so this asserts the live half on its own.
+    if (line.includes('"kind":"completed"')) break
+    h.tracker.onLine(line)
+  }
+
+  assert.equal(h.tracker.liveCount(), 1)
+  const bun = h.live.get(BUN_CALL)
+  assert.ok(bun, "the child is keyed by the spawn's call_id, which the item carries as its own `id`")
+  assert.equal(bun.label, "bun_mechanics")
+  assert.equal(bun.subagentType, "gpt-6-astra/high")
+})
+
+test("0.153: a `completed` kind retires the child directly, without waiting on its rollout", () => {
+  const h = harness() // no child rollouts registered at all — the item is the only evidence there is
+  for (const line of MA0153_LINES) h.tracker.onLine(line)
+  h.tracker.poll(Date.parse("2026-09-04T18:52:00.000Z"))
+
+  assert.equal(h.tracker.liveCount(), 0)
+  assert.deepEqual(h.retired.map((r) => ({ id: r.id, status: r.status })), [{ id: BUN_CALL, status: "completed" }])
+  // Retired at codex's own instant, not at the poll's.
+  assert.equal(h.retired[0].at, JSON.parse(MA0153_LINES.find((l) => l.includes('"kind":"completed"'))!).timestamp)
+})
+
+test("0.153: an `interacted` for a child we never saw start is ignored, not invented", () => {
+  // The fixture's `interacted` names /root/generated_dispatch, whose `started` is not in this slice.
+  // Inventing a slot from a path alone would give a child with no rollout to observe — unretirable,
+  // and it would pin the parent out of the queue forever.
+  const h = harness()
+  for (const line of MA0153_LINES) h.tracker.onLine(line)
+  assert.ok(![...h.live.keys(), ...h.retired.map((r) => r.id)].some((id) => id.includes("xCccg87")))
+  assert.equal(BUN, "/root/bun_mechanics") // the one child this slice does follow end to end
+})

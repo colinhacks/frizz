@@ -250,6 +250,10 @@ export function extractCodexFrizzTitle(text: string, allowLegacy = true): CodexF
 //   event_msg/turn_aborted        → turn-end             (an INTERRUPTED turn's only bracket → idle)
 //   event_msg/agent_message       → assistant-text(final = phase==="final_answer")  (text in .message)
 //   event_msg/user_message        → user-message (genuine human turn; codex has no synthetic peer echo)
+//   event_msg/item_completed      → the >=0.153 spelling of the two above, as a typed `item`:
+//                                   item.AgentMessage → assistant-text, item.UserMessage → user-message.
+//                                   Every other item type is a duplicate of a response_item this parser
+//                                   already reads (see the case for the full list and why).
 //   response_item/function_call        → tool-call  (args JSON in .arguments, id in .call_id)
 //   response_item/function_call_output → tool-result (output in .output, id in .call_id)
 //   response_item/custom_tool_call        → tool-call  (freeform tools — apply_patch: .input is the raw
@@ -385,6 +389,36 @@ export function parseCodexLine(line: string): NormalizedEvent[] {
         // "system"), so a user_message is ALWAYS a genuine human turn (synthetic:false → bumps the row).
         return [{ kind: "user-message", at, text, synthetic: false }]
       }
+      // Codex >= 0.153 folded every semantic event onto ONE `item_completed` envelope carrying a typed
+      // `item`, and stopped emitting the flat `agent_message` / `user_message` / `sub_agent_activity`
+      // payloads above (verified across the whole 0.153.2 corpus on this machine: 0 of each, and 789
+      // item_completed). The turn BRACKETS did not move — task_started/task_complete/turn_aborted and
+      // token_count are still flat — which is exactly why the regression was so quiet: a codex thread
+      // still went in-flight and still came to rest, so the board looked alive while every word the
+      // agent said, the human's own opening prompt, the `<!-- frizz title -->` signal and every
+      // done/awaiting/question fence fell on the floor. Both spellings are read, because the old ones
+      // are still on disk in every rollout written before the upgrade and the foreign scan folds those.
+      case "item_completed": {
+        const item = p.item && typeof p.item === "object" ? (p.item as Record<string, unknown>) : undefined
+        switch (item?.type) {
+          case "AgentMessage": {
+            const text = codexItemText(item.content)
+            if (!text) return []
+            // Same phase discrimination as the flat form above: only final_answer may carry a fence.
+            return [{ kind: "assistant-text", at, text, final: item.phase === "final_answer" }]
+          }
+          case "UserMessage":
+            return [{ kind: "user-message", at, text: codexItemText(item.content) || undefined, synthetic: false }]
+          // EVERY OTHER ITEM TYPE IS A DUPLICATE, and must stay dropped under the no-double-count rule
+          // (§6 above). Reasoning, CommandExecution, FileChange, McpToolCall, Extension and
+          // CollabAgentToolCall each have a `response_item` twin that this parser already reads —
+          // counting the item as well would paint every codex tool call and reasoning block twice.
+          // ContextCompaction is the top-level `compacted` envelope's twin. SubAgentActivity is a
+          // different axis entirely and rides parseCodexSubAgentLine, never this union.
+          default:
+            return []
+        }
+      }
       default:
         return []
     }
@@ -502,8 +536,11 @@ function parseCodexAgentReport(content: unknown): { final: boolean; body: string
 //   • response_item/function_call name="spawn_agent" — arguments {task_name, model, reasoning_effort,
 //     agent_type, message}. `message` is FERNET-ENCRYPTED, so a codex dispatch has NO readable prompt.
 //   • event_msg/sub_agent_activity — ALWAYS keyed (agent_path, agent_thread_id, event_id, kind,
-//     occurred_at_ms). `kind` is one of exactly three values: "started" | "interacted" | "interrupted"
-//     — there is NO "completed" kind, which is why liveness comes from the child's own rollout.
+//     occurred_at_ms). `kind` was one of exactly three values on the FLAT (<=0.152) record: "started" |
+//     "interacted" | "interrupted" — no "completed", which is why liveness came from the child's own
+//     rollout. The >=0.153 `SubAgentActivity` item DOES emit "completed" (16 of them beside 16 spawns in
+//     one real rollout), so the fold now gets the answer directly; the rollout inference stays as the
+//     backstop for a child codex never reports on, and for every older rollout still on disk.
 //     `event_id` is always the PARENT's tool call_id (spawn_agent→started, send_message/followup_task
 //     →interacted), so it joins a `started` back to the spawn that caused it.
 //   • `agent_thread_id` is the child's own codex rollout id → findRolloutsByIds locates its transcript.
@@ -524,6 +561,12 @@ export type CodexSubAgentSignal =
   // The parent sent the child more work (send_message / followup_task): a finished child re-opens.
   | { kind: "interacted"; at?: string; path: string; threadId: string }
   | { kind: "interrupted"; at?: string; path: string; threadId: string }
+  // The child FINISHED, said so by codex itself. Only the >=0.153 `SubAgentActivity` item carries this
+  // (the flat `sub_agent_activity` payload it replaced had no such kind, which is the whole reason the
+  // tracker learned to infer liveness from the child's own turn brackets). That inference still runs and
+  // is still the backstop for a child codex never reports on; this is simply the authoritative answer
+  // when it arrives, and it arrives seconds before the fold could reach the same conclusion.
+  | { kind: "finished"; at?: string; path: string; threadId: string }
   // A list_agents snapshot — the only authoritative per-child status the PARENT rollout ever carries.
   | { kind: "roster"; at?: string; agents: { path: string; status: CodexAgentStatus }[] }
 
@@ -540,6 +583,7 @@ export function parseCodexSubAgentLine(line: string, toolNameFor: (callId: strin
   // every rejected spawn invisible.)
   if (
     !s.includes("sub_agent_activity") &&
+    !s.includes("SubAgentActivity") &&
     !s.includes("spawn_agent") &&
     !s.includes("list_agents") &&
     !s.includes("function_call_output")
@@ -557,14 +601,28 @@ export function parseCodexSubAgentLine(line: string, toolNameFor: (callId: strin
   if (!p) return undefined
   const pt = typeof p.type === "string" ? p.type : undefined
 
-  if (rec.type === "event_msg" && pt === "sub_agent_activity") {
-    const path = typeof p.agent_path === "string" ? p.agent_path : ""
-    const threadId = typeof p.agent_thread_id === "string" ? p.agent_thread_id : ""
-    const callId = typeof p.event_id === "string" ? p.event_id : ""
+  // The two spellings of the same signal. FLAT (<=0.152): event_msg/sub_agent_activity, the call id on
+  // `event_id`. ITEM (>=0.153): event_msg/item_completed wrapping a `SubAgentActivity`, the call id on
+  // the item's own `id` — verified to be the spawn's `call_id` on 17 of 17 dispatches in a real
+  // orchestration rollout, which is what keeps a `started` joinable to the pending spawn metadata.
+  // Both are read: the old rollouts are still on disk and the foreign scan still folds them.
+  const activity =
+    rec.type === "event_msg" && pt === "sub_agent_activity"
+      ? { fields: p, callId: typeof p.event_id === "string" ? p.event_id : "" }
+      : rec.type === "event_msg" && pt === "item_completed" && p.item && typeof p.item === "object" && (p.item as Record<string, unknown>).type === "SubAgentActivity"
+        ? { fields: p.item as Record<string, unknown>, callId: typeof (p.item as Record<string, unknown>).id === "string" ? ((p.item as Record<string, unknown>).id as string) : "" }
+        : undefined
+  if (activity) {
+    const f = activity.fields
+    const path = typeof f.agent_path === "string" ? f.agent_path : ""
+    const threadId = typeof f.agent_thread_id === "string" ? f.agent_thread_id : ""
     if (!path) return undefined
-    if (p.kind === "started") return threadId && callId ? { kind: "started", at, callId, path, threadId } : undefined
-    if (p.kind === "interacted") return { kind: "interacted", at, path, threadId }
-    if (p.kind === "interrupted") return { kind: "interrupted", at, path, threadId }
+    if (f.kind === "started") return threadId && activity.callId ? { kind: "started", at, callId: activity.callId, path, threadId } : undefined
+    if (f.kind === "interacted") return { kind: "interacted", at, path, threadId }
+    if (f.kind === "interrupted") return { kind: "interrupted", at, path, threadId }
+    // `completed` exists only on the item form. Its `id` is a synthetic "subagent-completed-<thread>"
+    // rather than a call id, so it is matched by PATH like interacted/interrupted, never by call id.
+    if (f.kind === "completed") return { kind: "finished", at, path, threadId }
     return undefined
   }
 
@@ -654,6 +712,23 @@ function imageField(output: unknown): { image?: string } {
     if (url?.startsWith("data:image/")) return { image: url }
   }
   return {}
+}
+
+// The text of an `item_completed` item's `content` array, in order. Codex spells the part type with a
+// CAPITAL on an AgentMessage (`{type:"Text",text}`) and lowercase on a UserMessage (`{type:"text",text}`)
+// — both appear in the same rollout — so the comparison is case-insensitive rather than two branches
+// that would each go stale on the next casing change. Anything that is not a text part is skipped: an
+// image or attachment part carries no words for the preview, the title signal or a fence.
+function codexItemText(content: unknown): string {
+  if (!Array.isArray(content)) return ""
+  const parts: string[] = []
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue
+    const c = part as { type?: unknown; text?: unknown }
+    if (typeof c.type !== "string" || c.type.toLowerCase() !== "text") continue
+    if (typeof c.text === "string") parts.push(c.text)
+  }
+  return parts.join("")
 }
 
 // Legacy function-call results are strings. Unified custom-tool results are an ordered response-content

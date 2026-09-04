@@ -318,23 +318,30 @@ function userRecordText(rec: Record<string, unknown>): string {
   return ""
 }
 
-// A codex rollout's own user-message records. Codex writes the human turn TWICE in two shapes, and both
-// count as evidence the text reached it:
-//   • `event_msg` / `user_message`  — payload.message, a plain string. This is the one the transcript
-//     renderer treats as the authoritative human turn (see backend/codex.ts), 232 in this corpus.
+// A codex rollout's own user-message records. Codex writes the human turn TWICE, and both count as
+// evidence the text reached it:
+//   • the SEMANTIC record — `event_msg` / `user_message` (payload.message, a plain string) up to codex
+//     0.152, and `event_msg` / `item_completed` wrapping a `UserMessage` item (item.content[]) from
+//     0.153. This is the one the transcript renderer treats as the authoritative human turn (see
+//     backend/codex.ts, which reads both spellings for the same reason).
 //   • `response_item` / `message` role:"user" — payload.content[], the model-facing copy, 424 here.
-// Deliberately narrow on both so a claude record can never fall down this branch, and vice versa.
+//     UNCHANGED across the 0.153 rewrite, which is the only reason this ledger kept working through it.
+// Deliberately narrow on all three so a claude record can never fall down this branch, and vice versa.
 function isCodexUserMessage(r: Record<string, unknown>): boolean {
-  const payload = r.payload as { type?: unknown; role?: unknown } | undefined
+  const payload = r.payload as { type?: unknown; role?: unknown; item?: unknown } | undefined
   if (!payload) return false
   if (r.type === "event_msg" && payload.type === "user_message") return true
+  if (r.type === "event_msg" && payload.type === "item_completed") {
+    return (payload.item as { type?: unknown } | undefined)?.type === "UserMessage"
+  }
   return payload.type === "message" && payload.role === "user"
 }
 
 function codexUserMessageText(r: Record<string, unknown>): string {
-  const payload = r.payload as { content?: unknown; message?: unknown } | undefined
+  const payload = r.payload as { content?: unknown; message?: unknown; item?: unknown } | undefined
   if (typeof payload?.message === "string") return payload.message
-  const content = payload?.content
+  const item = payload?.item as { content?: unknown } | undefined
+  const content = item?.content ?? payload?.content
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
   return content

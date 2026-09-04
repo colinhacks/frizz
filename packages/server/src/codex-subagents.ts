@@ -16,9 +16,13 @@ import type { CodexSubAgentSignal } from "./backend/codex.ts"
 // consumer (board ops strip, `hasLiveOps`, the completion-hold dialog, the drill-in drawer, the
 // sidebar) works on codex threads with no further change.
 //
-// LIVENESS IS THE HARD PART. `sub_agent_activity` has no "completed" kind (corpus-verified: only
-// started/interacted/interrupted), and `list_agents` — the one authoritative status snapshot — appears
-// only when the model happens to call it. But each child is itself a codex thread with its own rollout
+// LIVENESS IS THE HARD PART — it was, at least, before codex >=0.153 started reporting it. The FLAT
+// `sub_agent_activity` record had no "completed" kind (corpus-verified: only started/interacted/
+// interrupted), and `list_agents` — the one authoritative status snapshot — appears only when the model
+// happens to call it. The `SubAgentActivity` ITEM that replaced it does emit "completed", which arrives
+// here as a `finished` signal and retires the slot directly. Everything below still runs: it is the
+// backstop for a child codex never reports on, and the ONLY liveness there is for the older rollouts
+// still on disk. But each child is itself a codex thread with its own rollout
 // that brackets turns with the very task_started/task_complete `parseCodexLine` already understands.
 // So a child is LIVE while its own rollout's turn is open, and done when it brackets closed. That
 // matches codex's own accounting exactly: a child observed completing its second turn at 21:35:25 was
@@ -174,6 +178,16 @@ export function createCodexSubAgentTracker(deps: CodexSubAgentDeps): CodexSubAge
       case "interrupted": {
         const slot = slots.get(sig.path)
         if (slot) retire(slot, sig.at, "killed")
+        return
+      }
+      case "finished": {
+        // Codex said the child is done. Authoritative, and it lands a beat before folding the child's
+        // own rollout could reach the same verdict — but it does NOT replace that fold: a child codex
+        // never reports on still has to retire, and every pre-0.153 rollout on disk carries no such
+        // record at all. Retiring is idempotent (`retire` no-ops on a slot that is not live), so the
+        // two paths racing on the same child is the ordinary case, not a conflict.
+        const slot = slots.get(sig.path)
+        if (slot) retire(slot, sig.at, "completed")
         return
       }
       case "roster": {
