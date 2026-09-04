@@ -7,6 +7,19 @@ const GH_MAX_BUFFER = 1024 * 1024
 const REQUEST_TIMEOUT_MS = 30_000
 const MAX_REFS_PER_REQUEST = 20
 const RATE_LIMIT_RESERVE = 100
+// ONE POLL, ONE REQUEST (2026-09-04). This query used to ask only for reviews and comments, and a
+// second, unbatched pair of `gh` subprocesses per PR — `gh pr view` plus `gh run list --commit` — read
+// the status beside it. Folding the status in costs NOTHING measurable: the whole query, status and
+// activity for a PR together, prices at 1 GraphQL point (measured against nodejs/node#65795), the same
+// as the activity alone, because GitHub charges per connection traversed and these all hang off one
+// pull request. Twenty PRs still cost 20 points and now spawn no children at all.
+//
+// The caps are per PR and deliberately generous: a red matrix on a big repo is 60+ contexts, and a
+// truncated rollup would silently drop a failing job.
+const ROLLUP_CAP = 100
+const CHECK_SUITE_CAP = 50
+const LABEL_CAP = 30
+const REVIEW_REQUEST_CAP = 20
 
 export interface GithubReviewRef {
   owner: string
@@ -48,8 +61,34 @@ export interface GithubReviewFailure {
   retryAt?: string
 }
 
+/** THE PR ITSELF, from the same query that read its review activity — everything the watcher needs to
+ *  decide a verdict, in the shapes `gh pr view --json …` produced when the poll shelled out for them.
+ *  That is not a coincidence and it is worth relying on: the CLI's `statusCheckRollup` is a thin pass-
+ *  through of the very GraphQL nodes below, so the entries carry the same field names and the scheduler's
+ *  `RollupEntry` reads either without a translation layer.
+ *
+ *  `checkSuites` is the one field with no `gh pr view` equivalent, and it is the reason a gated PR can be
+ *  seen at all: a workflow held for a maintainer's approval concludes `ACTION_REQUIRED` at the SUITE and
+ *  produces no check run, so it appears nowhere in the rollup. It was previously reached with a second
+ *  subprocess (`gh run list --commit <sha>`); now it rides along. */
+export interface GithubPrSnapshot {
+  state: string
+  mergedAt: string | null
+  mergeable?: string
+  reviewDecision?: string
+  head?: string
+  rollup: unknown[]
+  checkSuites: { status?: string; conclusion?: string; workflowName?: string }[]
+  labels: string[]
+  /** Reviewers with a request outstanding — a user's login, or a team's name. */
+  reviewRequests: string[]
+}
+
 export type GithubReviewFetchResult =
-  | { status: "ok"; activity: GithubReviewActivity[] }
+  // `pr` is absent only when the caller injected a fetcher that does not produce one (every test seam
+  // that predates 2026-09-04 does). The poll falls back to its own `gh` fetch in exactly that case, so an
+  // older injected fetcher keeps working rather than reporting a PR with no status at all.
+  | { status: "ok"; activity: GithubReviewActivity[]; pr?: GithubPrSnapshot }
   | { status: "deferred" }
   | { status: "error"; failure: GithubReviewFailure }
 
@@ -147,6 +186,59 @@ export function parseGithubReviewActivities(raw: unknown): GithubReviewActivity[
   return out
 }
 
+const strings = (nodes: unknown, pick: (n: Record<string, unknown>) => unknown): string[] =>
+  (Array.isArray(nodes) ? nodes : []).flatMap((node) => {
+    if (!node || typeof node !== "object") return []
+    const value = pick(node as Record<string, unknown>)
+    return typeof value === "string" && value ? [value] : []
+  })
+
+/** Pure shape normalizer for the status half, beside `parseGithubReviewActivities` and held to the same
+ *  standard: a missing field degrades one reading, never the whole snapshot, and nothing is fabricated.
+ *  `undefined` when the response carries no usable pull request — the caller then keeps its previous
+ *  reading rather than acting on an invented one. */
+export function parseGithubPrSnapshot(pr: unknown): GithubPrSnapshot | undefined {
+  if (!pr || typeof pr !== "object") return undefined
+  const p = pr as Record<string, any>
+  // A SHAPE SURPRISE IS INDETERMINATE, exactly as the `gh` path reads it: no string `state` means frizz
+  // cannot say whether this PR is open, and a fabricated "OPEN with no checks" would arm a verdict.
+  if (typeof p.state !== "string" || !p.state) return undefined
+  const commit = Array.isArray(p.commits?.nodes) ? p.commits.nodes[0]?.commit : undefined
+  const contexts = commit?.statusCheckRollup?.contexts?.nodes
+  return {
+    state: p.state,
+    mergedAt: typeof p.mergedAt === "string" ? p.mergedAt : null,
+    ...(typeof p.mergeable === "string" ? { mergeable: p.mergeable } : {}),
+    ...(typeof p.reviewDecision === "string" ? { reviewDecision: p.reviewDecision } : {}),
+    ...(typeof commit?.oid === "string" && commit.oid ? { head: commit.oid as string } : {}),
+    rollup: (Array.isArray(contexts) ? contexts : []).flatMap((node: unknown) => {
+      if (!node || typeof node !== "object") return []
+      const n = node as Record<string, any>
+      // The parent workflow's name, which `gh pr view` supplies as `workflowName` on every CheckRun and
+      // which `failedCheckNames` falls back to when a job has none of its own.
+      const workflowName = n.checkSuite?.workflowRun?.workflow?.name
+      return [typeof workflowName === "string" && workflowName ? { ...n, workflowName } : n]
+    }),
+    checkSuites: (Array.isArray(commit?.checkSuites?.nodes) ? commit.checkSuites.nodes : [])
+      .flatMap((node: unknown) => {
+        if (!node || typeof node !== "object") return []
+        const n = node as Record<string, any>
+        const workflowName = n.workflowRun?.workflow?.name
+        return [{
+          ...(typeof n.status === "string" ? { status: n.status } : {}),
+          ...(typeof n.conclusion === "string" ? { conclusion: n.conclusion } : {}),
+          ...(typeof workflowName === "string" && workflowName ? { workflowName } : {}),
+        }]
+      }),
+    labels: strings(p.labels?.nodes, (n) => n.name),
+    // A User answers to `login` and a Team to `name`; the row is the reviewer either way.
+    reviewRequests: strings(p.reviewRequests?.nodes, (n) => {
+      const r = n.requestedReviewer as Record<string, unknown> | undefined
+      return r?.login ?? r?.name
+    }),
+  }
+}
+
 // Every new review and comment wakes the watcher, whoever filed it. Most PR review today arrives from
 // an app — Pullfrog, Copilot, CodeRabbit, Greptile — and the ones that post their findings as a
 // CONVERSATION COMMENT rather than a formal review were exactly what an actor-type filter swallowed.
@@ -170,8 +262,20 @@ function buildQuery(refs: GithubReviewRef[]): { query: string; variables: Record
     fields.push(`
       ref${index}: repository(owner: $owner${index}, name: $repo${index}) {
         pullRequest(number: $number${index}) {
+          state mergedAt mergeable reviewDecision
           reviews(last: 50) { nodes { id url state submittedAt body author { login __typename } } }
           comments(last: 50) { nodes { id url createdAt body author { login __typename } } }
+          labels(first: ${LABEL_CAP}) { nodes { name } }
+          reviewRequests(first: ${REVIEW_REQUEST_CAP}) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } } } }
+          commits(last: 1) { nodes { commit {
+            oid
+            statusCheckRollup { contexts(first: ${ROLLUP_CAP}) { nodes {
+              __typename
+              ... on CheckRun { name status conclusion detailsUrl completedAt checkSuite { workflowRun { workflow { name } } } }
+              ... on StatusContext { context state targetUrl createdAt }
+            } } }
+            checkSuites(first: ${CHECK_SUITE_CAP}) { nodes { status conclusion workflowRun { workflow { name } } } }
+          } } }
         }
       }`)
   })
@@ -379,7 +483,8 @@ export function createGithubReviewFetcher(deps: GithubReviewFetcherDeps = {}): G
         return
       }
       const activity = parseGithubReviewActivities({ data: { repository: { pullRequest: pr } } })
-      results.set(refKey(ref), { status: "ok", activity })
+      const snapshot = parseGithubPrSnapshot(pr)
+      results.set(refKey(ref), { status: "ok", activity, ...(snapshot ? { pr: snapshot } : {}) })
     })
     return results
   }

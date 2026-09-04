@@ -74,7 +74,17 @@ export interface PrStatus {
   head?: string
   // Workflow runs queried by the PR's exact head SHA. statusCheckRollup can omit a fork-gated
   // ACTION_REQUIRED run, so the exact-head runs are what let a watcher NAME the jobs that went red.
+  //
+  // ONLY THE `gh` FALLBACK FILLS THIS. The batched GraphQL poll reads the head's CHECK SUITES in the
+  // same request instead (`checkSuites` below) — the same facts, one round trip, no subprocess.
   workflowRuns?: WorkflowRun[]
+  /** The head's check suites, from the batched poll. Same role as `workflowRuns` and the same shape as
+   *  far as anything here reads it: a conclusion and a workflow name. */
+  checkSuites?: WorkflowRun[]
+  /** Everything else the one query now brings back, for the triggers that read PR state rather than CI.
+   *  Absent on the `gh` fallback, which does not ask for them. */
+  labels?: string[]
+  reviewRequests?: string[]
 }
 
 export interface WorkflowRun {
@@ -293,7 +303,11 @@ export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchSt
     else if (rollupEntrySkipped(conclusion)) skipped++
     else passed++
   }
-  const gate = gatedWorkflowNames(pr.workflowRuns ?? [])
+  // The batched poll's check suites, or the `gh` fallback's workflow runs — whichever this reading came
+  // from. They answer the same two questions (what is gated, what went red outside the rollup) with the
+  // same two fields, so everything downstream reads one list and never asks which fetch produced it.
+  const aux = pr.checkSuites ?? pr.workflowRuns ?? []
+  const gate = gatedWorkflowNames(aux)
   const state = pr.state === "MERGED" ? "merged" as const : pr.state === "CLOSED" ? "closed" as const : "open" as const
   // FAILING WINS OVER GATED. A red job is news the worker acts on now; an unapproved workflow beside it
   // is context, and it is carried in `gating` either way rather than deciding the verdict.
@@ -318,7 +332,7 @@ export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchSt
     skipped,
     gated: gate.total,
     gating: gate.names,
-    failing: failedCheckNames(entries, pr.workflowRuns ?? []).names,
+    failing: failedCheckNames(entries, aux).names,
     merge,
     state,
     polledAt,
@@ -2270,23 +2284,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     const activity = new Map<string, GithubReviewActivity[]>()
     await Promise.all([...refs].map(async ([key, ref]) => {
       prWatchPolledAt.set(key, nowMs)
-      try {
-        const pr = await fetchPr(ref)
-        if (pr) {
-          status.set(key, githubWatchStatus(pr, new Date(nowMs).toISOString()))
-          publishGithubStatus(key, pr, nowMs)
-          recordStatusSuccess(key)
-        }
-      } catch (err) {
-        // Once per distinct failure, then a count — the same rule the review check uses, because a
-        // status poll that cannot read the PR fails identically every 60s for as long as the cause
-        // stands, and a log that repeats it 1,440 times a day is one nobody reads.
-        recordStatusFailure(key, err instanceof Error ? err.message : String(err), nowMs)
-      }
+      // ONE REQUEST FOR BOTH HALVES (2026-09-04). The review fetch and the status fetch used to be two
+      // independent trips per PR — a batched GraphQL query, plus `gh pr view` and `gh run list` as
+      // subprocesses — which on this machine's 7 armed watchers meant 14 children a minute for facts that
+      // hang off the same pull request and price at the same 1 GraphQL point together as apart. The
+      // status now rides the query that was already being made, so a poll of 20 PRs is one HTTP request
+      // and no children.
+      //
+      // `fetchPr` REMAINS THE FALLBACK, and it is not vestigial: an injected fetcher (every scheduler
+      // test that predates this) returns activity with no `pr`, and so does a response frizz cannot
+      // interpret. Falling back there keeps a watcher polling rather than going quiet on a shape
+      // surprise — which is the failure mode this whole source exists to prevent.
+      let snapshot: PrStatus | undefined
       try {
         const result = normalizeReviewResult(await fetchGithubReview(ref))
         if (result.status === "ok") {
           activity.set(key, result.activity)
+          if (result.pr) snapshot = { ...result.pr, rollup: result.pr.rollup as PrStatus["rollup"] }
           // RECOVERY IS SAID OUT LOUD, and it also clears the suppression counter. Without this the
           // failure entry for a ref lives forever, so a PR that failed once and then healed keeps
           // suppressing its own diagnostics and the operator is never told the outage ended.
@@ -2297,6 +2311,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           status: "error",
           failure: { kind: "network", message: err instanceof Error ? err.message : String(err) },
         }, nowMs)
+      }
+      try {
+        const pr = snapshot ?? await fetchPr(ref)
+        if (pr) {
+          status.set(key, githubWatchStatus(pr, new Date(nowMs).toISOString()))
+          publishGithubStatus(key, pr, nowMs)
+          recordStatusSuccess(key)
+        }
+      } catch (err) {
+        // Once per distinct failure, then a count — the same rule the review check uses, because a
+        // status poll that cannot read the PR fails identically every 60s for as long as the cause
+        // stands, and a log that repeats it 1,440 times a day is one nobody reads.
+        recordStatusFailure(key, err instanceof Error ? err.message : String(err), nowMs)
       }
     }))
 

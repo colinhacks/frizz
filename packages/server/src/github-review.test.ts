@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { createGithubReviewFetcher } from "./github-review.ts"
+import { createGithubReviewFetcher, parseGithubPrSnapshot } from "./github-review.ts"
 
 const ref = (number: number) => ({ owner: "nubjs", repo: "nub", number })
 
@@ -230,4 +230,94 @@ test("review fetcher invalidates a rejected token so the next batch asks gh agai
   if (rejected.status === "error") assert.equal(rejected.failure.kind, "gh-auth")
   assert.deepEqual(await fetcher(ref(544)), { status: "ok", activity: [] })
   assert.equal(tokenCalls, 2)
+})
+
+// ---- THE STATUS HALF, folded into the same query (2026-09-04) ------------------------------------
+//
+// The poll read the PR's status through two `gh` subprocesses per PR — `gh pr view` for the rollup and
+// `gh run list --commit <sha>` for the gated and fork-omitted runs — beside this GraphQL batch. Both
+// halves hang off the same pull request and price at the same 1 point together as apart, so the status
+// now rides the query that was already being made.
+//
+// THE FIXTURE BELOW IS THE REAL RESPONSE SHAPE, trimmed. It was read off nodejs/node#65796 on
+// 2026-09-04, whose head then carried NINE workflows held at GitHub's fork-approval gate and an EMPTY
+// rollup — the exact reading that used to come back as "no checks" while Node's whole matrix sat
+// waiting for a maintainer to press the button.
+test("the snapshot carries the rollup, the gate, the labels and the review requests", () => {
+  const snapshot = parseGithubPrSnapshot({
+    state: "OPEN",
+    mergedAt: null,
+    mergeable: "MERGEABLE",
+    reviewDecision: "REVIEW_REQUIRED",
+    labels: { nodes: [{ name: "crypto" }, { name: "c++" }, { name: "needs-ci" }] },
+    reviewRequests: { nodes: [
+      { requestedReviewer: { __typename: "User", login: "richardlau" } },
+      { requestedReviewer: { __typename: "Team", name: "crypto-reviewers" } },
+      { requestedReviewer: null }, // a reviewer the token cannot see: dropped, never rendered as blank
+    ] },
+    commits: { nodes: [{ commit: {
+      oid: "4f2868190a2b7f19e5b5c2d7e0f1a3b4c5d6e7f8",
+      statusCheckRollup: { contexts: { nodes: [
+        { __typename: "CheckRun", name: "lint-js-and-md", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://github.com/x/y/actions/runs/1/job/2", checkSuite: { workflowRun: { workflow: { name: "Linters" } } } },
+        { __typename: "StatusContext", context: "ci/external", state: "PENDING", targetUrl: "https://ci.example/1" },
+      ] } },
+      checkSuites: { nodes: [
+        { status: "COMPLETED", conclusion: "ACTION_REQUIRED", workflowRun: { workflow: { name: "Test Linux" } } },
+        { status: "COMPLETED", conclusion: "ACTION_REQUIRED", workflowRun: { workflow: { name: "Test macOS" } } },
+        { status: "COMPLETED", conclusion: "SUCCESS", workflowRun: { workflow: { name: "Label PRs" } } },
+        { status: "QUEUED", conclusion: null, workflowRun: null }, // a suite with no run yet: no name to take
+      ] },
+    } }] },
+  })
+
+  assert.ok(snapshot)
+  assert.equal(snapshot.state, "OPEN")
+  assert.equal(snapshot.head, "4f2868190a2b7f19e5b5c2d7e0f1a3b4c5d6e7f8")
+  assert.equal(snapshot.mergeable, "MERGEABLE")
+  assert.equal(snapshot.reviewDecision, "REVIEW_REQUIRED")
+  assert.deepEqual(snapshot.labels, ["crypto", "c++", "needs-ci"])
+  assert.deepEqual(snapshot.reviewRequests, ["richardlau", "crypto-reviewers"], "a user answers to login, a team to name")
+  // The rollup entries keep GitHub's own field names, which is what lets `RollupEntry` read the GraphQL
+  // nodes and the `gh` output without a translation layer between them.
+  assert.deepEqual(snapshot.rollup[0], {
+    __typename: "CheckRun", name: "lint-js-and-md", status: "COMPLETED", conclusion: "SUCCESS",
+    detailsUrl: "https://github.com/x/y/actions/runs/1/job/2",
+    checkSuite: { workflowRun: { workflow: { name: "Linters" } } },
+    workflowName: "Linters", // flattened, because `gh pr view` supplies it and `failedCheckNames` reads it
+  })
+  assert.deepEqual(snapshot.checkSuites, [
+    { status: "COMPLETED", conclusion: "ACTION_REQUIRED", workflowName: "Test Linux" },
+    { status: "COMPLETED", conclusion: "ACTION_REQUIRED", workflowName: "Test macOS" },
+    { status: "COMPLETED", conclusion: "SUCCESS", workflowName: "Label PRs" },
+    { status: "QUEUED" },
+  ])
+})
+
+// A SHAPE SURPRISE IS INDETERMINATE, never "open with no checks" — the same rule the `gh` path has read
+// by since 2026-08-25. Inventing a state here would arm a verdict on a PR frizz cannot actually see.
+test("a response with no usable pull request yields no snapshot, so the poll keeps its last reading", () => {
+  for (const bad of [undefined, null, {}, { state: "" }, { state: 7 }, "OPEN"]) {
+    assert.equal(parseGithubPrSnapshot(bad), undefined, JSON.stringify(bad))
+  }
+  // A PR with a state and nothing else is still usable — every other field degrades to empty on its own.
+  const bare = parseGithubPrSnapshot({ state: "MERGED" })
+  assert.deepEqual(bare, { state: "MERGED", mergedAt: null, rollup: [], checkSuites: [], labels: [], reviewRequests: [] })
+})
+
+test("the batched query asks for the status half too, so no PR needs a second trip", async () => {
+  let body: any
+  const fetcher = createGithubReviewFetcher({
+    getToken: async () => "t",
+    request: async (_input, init) => {
+      body = JSON.parse(String(init?.body))
+      return response({ data: { ref0: { pullRequest: { state: "OPEN", reviews: { nodes: [] }, comments: { nodes: [] } } }, rateLimit: { cost: 1, remaining: 4_999, resetAt: "2026-09-04T18:00:00Z", limit: 5_000 } } })
+    },
+    now: () => Date.parse("2026-09-04T17:00:00Z"),
+  })
+  const result = await fetcher(ref(65796))
+  for (const field of ["state", "mergedAt", "mergeable", "reviewDecision", "labels", "reviewRequests", "statusCheckRollup", "checkSuites", "oid"]) {
+    assert.ok(body.query.includes(field), `the query no longer asks for ${field}`)
+  }
+  assert.equal(result.status, "ok")
+  assert.equal(result.status === "ok" && result.pr?.state, "OPEN", "the snapshot rides back with the activity")
 })
