@@ -252,6 +252,16 @@ test("a pr-watch status line round-trips through its own parser", () => {
       { ref: "acme/app.js#12", kind: "ci", verdict: "failing", failing: ["build", "test (macos)"] }],
     ["ci red, no named jobs", { target: "acme/app#12", checks: { verdict: "failing", passed: 0, failed: 1, failing: [] } },
       { ref: "acme/app#12", kind: "ci", verdict: "failing", failing: [] }],
+    // The skip clause is written only when there ARE skips, so a green line with none is byte-identical
+    // to every one already sitting in a transcript and must still parse without a `skipped` field.
+    ["ci green, skips counted apart", { target: "acme/app#12", checks: { verdict: "passing", passed: 3, failed: 0, failing: [], skipped: 12 } },
+      { ref: "acme/app#12", kind: "ci", verdict: "passing", passed: 3, skipped: 12, failing: [] }],
+    ["ci green, no skips — the pre-2026-09-04 wording, unchanged", { target: "acme/app#12", checks: { verdict: "passing", passed: 3, failed: 0, failing: [], skipped: 0 } },
+      { ref: "acme/app#12", kind: "ci", verdict: "passing", passed: 3, failing: [] }],
+    ["ci gated", { target: "nodejs/node#65795", checks: { verdict: "gated", passed: 3, failed: 0, failing: [], gated: 8, gating: ["Test Linux", "Test macOS"] } },
+      { ref: "nodejs/node#65795", kind: "ci", verdict: "gated", gated: 8, gating: ["Test Linux", "Test macOS"] }],
+    ["ci gated, one workflow and no names", { target: "acme/app#12", checks: { verdict: "gated", passed: 0, failed: 0, failing: [], gated: 1, gating: [] } },
+      { ref: "acme/app#12", kind: "ci", verdict: "gated", gated: 1, gating: [] }],
   ] as [string, Parameters<typeof prWatchWakeMessage>[0], unknown][]) {
     assert.deepEqual(parsePrWatchWake(prWatchWakeMessage(input)), want, name)
   }
@@ -456,6 +466,8 @@ test("every wake frizz composes is recognized by a parser — none may reach the
     ["limit model switch", limitModelSwitchSteer("Fable 5", "Opus")],
     ["pr merged", prWatchWakeMessage({ target: "nubjs/nub#777", merged: true })],
     ["pr checks", prWatchWakeMessage({ target: "nubjs/nub#777", checks: { verdict: "failing", passed: 1, failed: 1, failing: ["typecheck"] } })],
+    ["pr checks green with skips", prWatchWakeMessage({ target: "nubjs/nub#777", checks: { verdict: "passing", passed: 3, failed: 0, failing: [], skipped: 12 } })],
+    ["pr checks gated", prWatchWakeMessage({ target: "nubjs/nub#777", checks: { verdict: "gated", passed: 0, failed: 0, failing: [], gated: 8, gating: ["Test Linux"] } })],
     ["review activity", formatGithubWakeSteer(single)],
     ["park expired", parkExpiredWakeMessage(parkStatus)],
     ["park expired, nothing listed", parkExpiredWakeMessage([])],

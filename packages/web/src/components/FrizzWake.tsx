@@ -358,12 +358,26 @@ function PrWatchStatusDivider({ wake, sourceId, at }: { wake: PrWatchWake; sourc
   // ONE CASE TREATMENT ON THE LINE — petite caps end to end, ref included (see the note on the review
   // divider's label). `PR` and `CI` are already uppercase, so they render as full caps and stay legible
   // as the acronyms they are.
-  const lead = wake.kind === "ci" ? `CI ${wake.verdict === "passing" ? "passed" : "failed"} on ` : `PR ${wake.kind} on `
-  // The failing jobs ride INSIDE the truncating span: naming them is the most useful thing a red line can
-  // do, and losing the tail of a long list costs nothing the verdict has not already said.
-  const jobs = wake.kind === "ci" && wake.verdict === "failing" && wake.failing.length ? `: ${wake.failing.join(", ")}` : ""
-  const checks = wake.kind === "ci" && wake.verdict === "passing" && wake.passed !== undefined
-    ? `${wake.passed} ${wake.passed === 1 ? "check" : "checks"} green`
+  // `gated` is neither of the two verdicts and must not be drawn as one — the ternary that stood here
+  // read "passing ? passed : failed", so an approval-gated line would have said CI FAILED.
+  const ciLead = wake.kind === "ci"
+    ? wake.verdict === "passing" ? "passed" : wake.verdict === "failing" ? "failed" : "awaiting approval"
+    : ""
+  const lead = wake.kind === "ci" ? `CI ${ciLead} on ` : `PR ${wake.kind} on `
+  // The failing jobs — and the held workflows, which are the same thing said about a gate — ride INSIDE
+  // the truncating span: naming them is the most useful thing either line can do, and losing the tail of
+  // a long list costs nothing the verdict has not already said.
+  const jobs = wake.kind !== "ci" ? ""
+    : wake.verdict === "failing" && wake.failing.length ? `: ${wake.failing.join(", ")}`
+    : wake.verdict === "gated" && wake.gating.length ? `: ${wake.gating.join(", ")}`
+    : ""
+  const checks = wake.kind !== "ci" ? null
+    : wake.verdict === "passing" && wake.passed !== undefined
+      // The skips ride with the tally rather than replacing it. A green line that hides them is how "15
+      // checks green" got said about 3 real successes (nodejs/node#65795, 2026-09-04).
+      ? `${wake.passed} ${wake.passed === 1 ? "check" : "checks"} green${wake.skipped ? `, ${wake.skipped} skipped` : ""}`
+    : wake.verdict === "gated"
+      ? `${wake.gated} ${wake.gated === 1 ? "workflow" : "workflows"} held`
     : null
   return (
     <WakeDivider

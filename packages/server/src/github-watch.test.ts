@@ -52,6 +52,74 @@ test("the verdict and the counts read the rollup the way `evalRollup` does", () 
   assert.deepEqual([s.running, s.passed, s.failed], [1, 2, 0])
 })
 
+// ---- what "passing" is allowed to mean (2026-09-04) ----
+//
+// THE REGRESSION THESE PIN, in the shape it actually arrived in. nodejs/node#65795 was opened at
+// 2026-09-04T15:12Z and frizz's first report, 62s later, read "✅ CI PASSED — 15 checks green". The
+// commit was never built: Node's real 29-check matrix was held at GitHub's fork-approval gate and the
+// 15 entries in the rollup were 12 `SKIPPED` no-ops plus 3 label bots. Both halves had to be wrong at
+// once for the sentence to be composed, so both are pinned separately below and then together.
+
+test("a workflow held for approval is not a pass — it is CI that has not started", () => {
+  const s = githubWatchStatus(pr({
+    rollup: [check({ status: "COMPLETED", conclusion: "SUCCESS", name: "label" })],
+    workflowRuns: [
+      { workflowName: "Test Linux", status: "completed", conclusion: "ACTION_REQUIRED" },
+      { workflowName: "Test macOS", status: "completed", conclusion: "ACTION_REQUIRED" },
+      { workflowName: "Test Linux", status: "completed", conclusion: "ACTION_REQUIRED" }, // a re-queued gate, one workflow
+    ],
+  }), AT)
+  assert.equal(s.checks, "running", "gated CI has not settled, so the thread stays parked exactly as it does mid-run")
+  assert.equal(s.gated, 2, "the same workflow held twice is one workflow")
+  assert.deepEqual(s.gating, ["Test Linux", "Test macOS"], "named, because a count does not say what is being withheld")
+  assert.deepEqual(s.failing, [], "a pending approval is not a failure and must never be listed as one")
+})
+
+test("a rollup that only skipped has run nothing, so it is `none` rather than green", () => {
+  const s = githubWatchStatus(pr({
+    rollup: [
+      check({ status: "COMPLETED", conclusion: "SKIPPED", name: "notable-change" }),
+      check({ status: "COMPLETED", conclusion: "STALE", name: "fast-track" }),
+    ],
+  }), AT)
+  assert.equal(s.checks, "none")
+  assert.deepEqual([s.passed, s.skipped], [0, 2], "a skip is terminal and not a failure, and it is not a pass either")
+})
+
+test("skips are counted apart from passes, so a green tally cannot be padded with them", () => {
+  const s = githubWatchStatus(pr({
+    rollup: [
+      check({ status: "COMPLETED", conclusion: "SUCCESS", name: "build" }),
+      check({ status: "COMPLETED", conclusion: "SKIPPED", name: "stale-comment" }),
+      check({ status: "COMPLETED", conclusion: "SKIPPED", name: "fast-track" }),
+    ],
+  }), AT)
+  assert.equal(s.checks, "passing", "something did genuinely pass")
+  assert.deepEqual([s.passed, s.skipped], [1, 2])
+})
+
+test("nodejs/node#65795, verbatim: the reading that produced `15 checks green` now reads as gated", () => {
+  // The real rollup, 2026-09-04T15:13:03Z on head d52830ae: 3 real bot successes, 12 skips.
+  const rollup = [
+    check({ status: "COMPLETED", conclusion: "SUCCESS", name: "label" }),
+    check({ status: "COMPLETED", conclusion: "SUCCESS", name: "Resolve contributor status" }),
+    check({ status: "COMPLETED", conclusion: "SUCCESS", name: "Apply contributor guidance" }),
+    ...["notable-change", "fast-track", "stale-comment", "Notify on Review Wanted"].flatMap((name) =>
+      [0, 1, 2].map(() => check({ status: "COMPLETED", conclusion: "SKIPPED", name }))),
+  ]
+  // …and the 8 workflows GitHub was holding, which produced no check run at all and so appear nowhere
+  // in that rollup. `gh run list --commit <sha>` is where they are, and frizz already fetches it.
+  const workflowRuns = ["Test Linux", "Test macOS", "Linters", "Coverage Windows", "Build from tarball",
+    "Test Shared libraries", "Test and upload documentation to artifacts", "First commit message adheres to guidelines"]
+    .map((workflowName) => ({ workflowName, status: "completed", conclusion: "ACTION_REQUIRED" }))
+
+  assert.equal(githubWatchStatus(pr({ rollup }), AT).checks, "passing",
+    "the rollup ALONE still reads green — which is exactly why the rollup alone was never enough")
+  const s = githubWatchStatus(pr({ rollup, workflowRuns }), AT)
+  assert.equal(s.checks, "running", "with the gate visible, nothing about this commit is a pass")
+  assert.deepEqual([s.passed, s.skipped, s.gated], [3, 12, 8])
+})
+
 test("a failure outranks anything still running, and the failing jobs are NAMED", () => {
   const s = githubWatchStatus(pr({
     rollup: [

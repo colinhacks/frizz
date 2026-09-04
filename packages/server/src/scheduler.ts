@@ -151,6 +151,12 @@ export function ghPrViewArgs(ref: PrRef): string[] {
 // This is the REFERENCE reading of a rollup. `githubWatchStatus` below re-derives the same verdict
 // beside its counts rather than calling it, so this stays exported and unit-tested as the thing that
 // reading must not be allowed to drift from.
+//
+// IT READS THE ROLLUP AND NOTHING ELSE, which is a real limit and not an oversight: a workflow held at
+// `action_required` for a maintainer's approval produces NO check run, so it is absent from the rollup
+// entirely and `done` here says true over CI that has not started. `githubWatchStatus` is given the
+// head's workflow runs as well and can see it; this cannot. Anything that needs the true verdict must
+// go through that one.
 export function evalRollup(rollup: RollupEntry[]): { done: boolean; ok: boolean } {
   if (!Array.isArray(rollup) || rollup.length === 0) return { done: false, ok: false }
   let pending = false
@@ -183,6 +189,44 @@ function rollupEntryFailed(conclusion: string | undefined, state: string | undef
     state === "FAILURE" ||
     state === "ERROR"
   )
+}
+
+// A check that reached a terminal state without asserting anything — GitHub's own `SKIPPED` (a path
+// filter or an `if:` that did not match) and `STALE` (superseded before it ran). Neither is a failure,
+// so neither may make the rollup pending; neither is evidence of a green build either, so neither may
+// be counted as a pass. Both were counted as passes until 2026-09-04, which is half of how "15 checks
+// green" got said about a commit nothing had built (see below).
+function rollupEntrySkipped(conclusion: string | undefined): boolean {
+  return conclusion === "SKIPPED" || conclusion === "STALE"
+}
+
+// WORKFLOWS HELD FOR A MAINTAINER'S APPROVAL, named. `action_required` on a workflow RUN is GitHub's
+// "Approve and run" gate — the default for a first-time contributor and for any fork PR in a repo that
+// requires approval. The gated run produces no check run at all, so nothing about it reaches the
+// rollup: `statusCheckRollup` simply does not mention the eight workflows that are waiting.
+//
+// That is the other half of the false green. On nodejs/node#65795 (2026-09-04 15:12Z) the head carried
+// 8 gated workflows — Test Linux, Test macOS, Linters, Coverage Windows, Build from tarball — and a
+// rollup of 15 entries that were 12 `SKIPPED` no-ops plus 3 label bots. Every entry present was
+// terminal and none had failed, so the poll reported "✅ CI PASSED — 15 checks green" about a commit
+// whose real 29-check matrix had not been allowed to start and never did run on it.
+//
+// Frizz was already fetching the answer: `defaultFetchPr` lists the head's workflow runs to name failed
+// jobs, and the gated ones are in that same list. `failedCheckNames` skips them because a pending
+// approval is not a failure, which is right — but until this they were then dropped on the floor rather
+// than reported as the distinct, and very actionable, state they are.
+export function gatedWorkflowNames(runs: WorkflowRun[] = [], cap = 8): { names: string[]; total: number } {
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!run || typeof run !== "object") continue
+    if (run.conclusion !== "ACTION_REQUIRED") continue
+    const name = (run.workflowName ?? run.name)?.trim()
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    names.push(name)
+  }
+  return { names: names.slice(0, cap), total: names.length }
 }
 
 // Which checks actually failed. "❌ CI failed on owner/repo#N" told a worker only that SOMETHING went
@@ -223,11 +267,20 @@ export function failedCheckNames(rollup: RollupEntry[], runs: WorkflowRun[] = []
 // yet, which `evalRollup` already treats as pending — but a PR with no CI at all would then wait
 // forever for checks that are never coming, so the two are split here: `none` lets the thread queue
 // immediately, `running` is what parks it.
+//
+// A PASS NOW REQUIRES SOMETHING TO HAVE ACTUALLY PASSED, and nothing may be waiting for approval
+// (2026-09-04). Both halves are the same defect read twice: the old reading answered "did anything
+// present go red?" when the question is "did this commit get built?". Skips and label bots are not a
+// build, and a workflow nobody has approved has not run. `gated` folds into `running` rather than
+// earning a fifth verdict word — the queue rule (board.ts, groups.ts) asks only whether CI has SETTLED,
+// and a gated PR has not — but it is counted and named separately, because "waiting for a maintainer to
+// press Approve and run" is a different instruction to the worker than "wait".
 export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchStatus {
   const entries = Array.isArray(pr.rollup) ? pr.rollup.filter((c) => c && typeof c === "object") : []
   let running = 0
   let passed = 0
   let failed = 0
+  let skipped = 0
   for (const c of entries) {
     const status = typeof c.status === "string" ? c.status : undefined
     const state = typeof c.state === "string" ? c.state : undefined
@@ -237,11 +290,18 @@ export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchSt
     const terminal = status ? status === "COMPLETED" : state ? state !== "PENDING" && state !== "EXPECTED" : false
     if (!terminal) running++
     else if (rollupEntryFailed(conclusion, state)) failed++
+    else if (rollupEntrySkipped(conclusion)) skipped++
     else passed++
   }
+  const gate = gatedWorkflowNames(pr.workflowRuns ?? [])
   const state = pr.state === "MERGED" ? "merged" as const : pr.state === "CLOSED" ? "closed" as const : "open" as const
+  // FAILING WINS OVER GATED. A red job is news the worker acts on now; an unapproved workflow beside it
+  // is context, and it is carried in `gating` either way rather than deciding the verdict.
   const checks: GithubWatchStatus["checks"] =
-    entries.length === 0 ? "none" : failed > 0 ? "failing" : running > 0 ? "running" : "passing"
+    failed > 0 ? "failing"
+    : running > 0 || gate.total > 0 ? "running"
+    : passed > 0 ? "passing"
+    : "none" // no rollup at all, or one that is entirely skips: nothing has run and nothing is coming
   // MERGEABILITY, in GitHub's own three words plus the review gate. `blocked` is deliberately coarse:
   // a required review and a failing required check are reported the same way, and frizz has no business
   // claiming to tell them apart.
@@ -255,6 +315,9 @@ export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchSt
     running,
     passed,
     failed,
+    skipped,
+    gated: gate.total,
+    gating: gate.names,
     failing: failedCheckNames(entries, pr.workflowRuns ?? []).names,
     merge,
     state,
@@ -2131,12 +2194,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (!Array.isArray(h.items)) return undefined
     const items = h.items.flatMap((i: unknown) => (GithubWakeItem.safeParse(i).success ? [i as GithubWakeItem] : []))
     const c = h.checks && typeof h.checks === "object" ? h.checks as Record<string, unknown> : undefined
-    const checks: PrWatchChecks | undefined = c && (c.verdict === "passing" || c.verdict === "failing")
+    const checks: PrWatchChecks | undefined = c && (c.verdict === "passing" || c.verdict === "failing" || c.verdict === "gated")
       ? {
         verdict: c.verdict,
         passed: Number(c.passed) || 0,
         failed: Number(c.failed) || 0,
         failing: Array.isArray(c.failing) ? c.failing.filter((x: unknown): x is string => typeof x === "string") : [],
+        // Absent on a report held across the 2026-09-04 upgrade. Read as 0/[] rather than defaulted at
+        // the formatter, so a folded-forward report says exactly what its own poll saw and no more.
+        skipped: Number(c.skipped) || 0,
+        gated: Number(c.gated) || 0,
+        gating: Array.isArray(c.gating) ? c.gating.filter((x: unknown): x is string => typeof x === "string") : [],
       }
       : undefined
     return { items, omitted: Number(h.omitted) || 0, ...(checks ? { checks } : {}) }
@@ -2290,7 +2358,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // said. The worker sat waiting on a watcher that had already spent its only transition, which is
       // the exact class of dead wait this whole grammar exists to make impossible. Red again on a NEW
       // commit is the most actionable news a watcher has, and it was the one thing it could not say.
-      const terminal = st && (st.checks === "passing" || st.checks === "failing") ? st.checks : undefined
+      //
+      // AND `gated` IS A THIRD REPORTABLE STATE (2026-09-04). It is not a verdict — nothing has run — but
+      // it is the one CI reading that will never resolve on its own, so silence about it is the dead wait
+      // this grammar exists to prevent: the workflows sit unapproved until a maintainer presses the
+      // button, and the worker's only move is to go and ask. It ranks BELOW a real verdict: a red job
+      // beside a gated workflow is still the news, and `githubWatchStatus` already resolves that.
+      const terminal = st && (st.checks === "passing" || st.checks === "failing")
+        ? st.checks
+        : st && st.gated > 0 ? "gated" as const : undefined
       // `<head>:<verdict>:<failing jobs>`, so EVERY distinct failure speaks and only an unchanged reading
       // is quiet. The commit alone was not enough: a job re-run on the same head, or a slower job going
       // red after the first, is a second failure the worker has to hear about and neither moves the SHA.
@@ -2370,7 +2446,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         items: items.slice(-REVIEW_STEER_CAP),
         omitted: (held?.omitted ?? 0) + (fresh.length - named.length) + Math.max(0, items.length - REVIEW_STEER_CAP),
         ...(checksChanged && terminal
-          ? { checks: { verdict: terminal, passed: st!.passed, failed: st!.failed, failing: st!.failing } }
+          ? {
+            checks: {
+              verdict: terminal,
+              passed: st!.passed,
+              failed: st!.failed,
+              failing: st!.failing,
+              skipped: st!.skipped,
+              gated: st!.gated,
+              gating: st!.gating,
+            },
+          }
           : held?.checks ? { checks: held.checks } : {}),
       }
       const review = carried.items.length > 0

@@ -83,7 +83,7 @@ const CASES: Case[] = [
     live: {
       watches: [{
         id: "github:parity:acme/app#391", kind: "github", target: "acme/app#391", state: "armed", createdAt: ago(12),
-        github: { checks: "running", running: 3, passed: 12, failed: 0, failing: [], merge: "blocked", state: "open", polledAt: ago(1) },
+        github: { checks: "running", running: 3, passed: 12, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "blocked", state: "open", polledAt: ago(1) },
       }],
     },
   },

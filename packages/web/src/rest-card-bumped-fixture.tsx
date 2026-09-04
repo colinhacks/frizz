@@ -42,7 +42,7 @@ const watches: ThreadView["watches"] = [
     target: "colinhacks/zod#6492",
     state: "armed",
     createdAt: minutesAgo(95),
-    github: { checks: "passing", running: 0, passed: 9, failed: 0, failing: [], merge: "mergeable", state: "open", polledAt: minutesAgo(1) },
+    github: { checks: "passing", running: 0, passed: 9, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "mergeable", state: "open", polledAt: minutesAgo(1) },
   },
   {
     id: "timer:b:tmr_d168bd81099d",

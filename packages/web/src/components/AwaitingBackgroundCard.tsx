@@ -26,7 +26,7 @@
 // and the parent genuinely resumes; measured 15/15 times on a live worker thread, with idle windows as
 // short as 0.13s. This card is what makes that alternation legible.)
 import { Fragment, useEffect, useState, type ReactNode } from "react"
-import { Bot, ChevronRight, CircleCheck, CircleDashed, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, TerminalSquare } from "lucide-react"
+import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, TerminalSquare } from "lucide-react"
 import type { AwaitingHint, GithubWatchStatus, ThreadView, ThreadWatchView } from "@frizz/shared"
 import { awaitingFenceTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
@@ -311,6 +311,12 @@ function ChecksGlyph({ status }: { status: GithubWatchStatus | undefined }) {
   if (status.state === "closed") return <GitPullRequestClosed size={12} className={ON_CAP} style={{ color: PRIMER.fgDanger }} />
   if (status.checks === "failing") return <CircleX size={12} className={ON_CAP} style={{ color: PRIMER.fgDanger }} />
   if (status.checks === "passing") return <CircleCheck size={12} className={ON_CAP} style={{ color: PRIMER.fgSuccess }} />
+  // GATED CI DOES NOT SPIN. `checks` reads `running` for it — correctly, since nothing has settled — but
+  // the spinner promises motion that is not happening: those workflows are stopped until a maintainer
+  // approves them. GitHub draws its own "action required" mark in the attention colour rather than the
+  // in-progress arc, so this does too, and it stays a static 12px lucide circle like the two verdicts
+  // above it, on the same cap-band correction.
+  if (status.gated > 0 && status.running === 0) return <CircleAlert size={12} className={ON_CAP} style={{ color: PRIMER.fgAttention }} />
   if (status.checks === "running") return <ChecksInProgress />
   return <CircleDashed size={12} className={`${ON_CAP} text-muted/60`} />
 }
@@ -325,8 +331,15 @@ function ChecksGlyph({ status }: { status: GithubWatchStatus | undefined }) {
 export function checkCountLine(status: GithubWatchStatus): string {
   const parts = [
     status.failed > 0 ? `${status.failed} failing` : null,
+    // AWAITING APPROVAL SITS WITH THE FAILURES, not with the successes, because it is the count that
+    // decides what the human does: a gated workflow needs somebody to press a button, and no amount of
+    // waiting produces one. It outranks "in progress" for the same reason failing does.
+    status.gated > 0 ? `${status.gated} awaiting approval` : null,
     status.running > 0 ? `${status.running} in progress` : null,
     status.passed > 0 ? `${status.passed} successful` : null,
+    // LAST, and only when there is something to qualify. A skip is not a result; it is here so a lone
+    // "3 successful" beside 12 of them cannot read as a full green build.
+    status.skipped > 0 ? `${status.skipped} skipped` : null,
   ].filter((p): p is string => p !== null)
   return parts.join(", ")
 }

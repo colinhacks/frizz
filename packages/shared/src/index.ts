@@ -1090,7 +1090,19 @@ export const TimerPromptText = z.string().trim().min(1).max(TIMER_PROMPT_MAX)
  *  hairline divider from — change the wording of a line here and change it there in the same edit. */
 export function prWatchWakeMessage(input: {
   target: string
-  checks?: { verdict: "passing" | "failing"; passed: number; failed: number; failing: string[] }
+  checks?: {
+    verdict: "passing" | "failing" | "gated"
+    passed: number
+    failed: number
+    failing: string[]
+    /** Terminal but asserted nothing — printed beside a green tally so a rollup of skips can never again
+     *  read as a build. Optional: a report held across the 2026-09-04 upgrade carries neither this nor
+     *  the two below, and folding one forward must not invent them. */
+    skipped?: number
+    /** `gated` only: how many workflows GitHub is holding for an approval, and which. */
+    gated?: number
+    gating?: string[]
+  }
   review?: string
   merged?: boolean
   closed?: boolean
@@ -1103,11 +1115,26 @@ export function prWatchWakeMessage(input: {
   }
   if (input.checks) {
     const c = input.checks
-    lines.push(
-      c.verdict === "passing"
-        ? `\u2705 CI PASSED on ${input.target} — ${c.passed} check${c.passed === 1 ? "" : "s"} green.`
-        : `\u274c CI FAILED on ${input.target}${c.failing.length ? `: ${c.failing.join(", ")}` : ""}.`,
-    )
+    if (c.verdict === "gated") {
+      // THE ONE REPORT THAT NAMES ITS OWN DEAD END. Every other line here says what CI did; this says CI
+      // has not been allowed to start, and no amount of waiting changes that — a human has to press the
+      // button. A worker parked on the watcher alone would sit out its whole `for:` and learn nothing.
+      const held = c.gated ?? c.gating?.length ?? 0
+      lines.push(
+        `⏸️ CI on ${input.target} is WAITING FOR APPROVAL — ${held} workflow${held === 1 ? "" : "s"} held${c.gating?.length ? `: ${c.gating.join(", ")}` : ""}.`,
+        "",
+        "Nothing has run on this commit. GitHub holds a fork or first-time contributor's workflows until a"
+          + " maintainer approves them, so this does not clear on its own — ask for the approval rather than"
+          + " waiting on it.",
+      )
+    } else if (c.verdict === "passing") {
+      // The skip count rides beside the green tally because leaving it out is how "15 checks green" got
+      // said about 3 label bots and 12 skips (nodejs/node#65795, 2026-09-04).
+      const skipped = c.skipped ?? 0
+      lines.push(`\u2705 CI PASSED on ${input.target} — ${c.passed} check${c.passed === 1 ? "" : "s"} green${skipped > 0 ? `, ${skipped} skipped` : ""}.`)
+    } else {
+      lines.push(`\u274c CI FAILED on ${input.target}${c.failing.length ? `: ${c.failing.join(", ")}` : ""}.`)
+    }
   }
   if (input.review) {
     if (lines.length) lines.push("")
@@ -1583,6 +1610,19 @@ export const GithubWatchStatus = z.object({
   running: z.number().int().nonnegative(),
   passed: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
+  /** Checks that reached a terminal state without asserting anything — GitHub's `SKIPPED` and `STALE`.
+   *  Counted apart from `passed` since 2026-09-04: they were folded into it, so a rollup of 12 skipped
+   *  no-ops and 3 label bots rendered and reported as "15 checks green". Defaulted, because a reading
+   *  written before that date carries neither this nor `gated`. */
+  skipped: z.number().int().nonnegative().default(0),
+  /** Workflows held at `action_required` — GitHub's "Approve and run" gate on a fork or first-time
+   *  contributor's PR. They produce NO check run, so they are absent from the rollup entirely and the
+   *  poll cannot see them there; the head's workflow runs are where they show up. Non-zero means CI has
+   *  not started and will not until a maintainer presses the button. */
+  gated: z.number().int().nonnegative().default(0),
+  /** The gated workflow NAMES, capped — "Test Linux, Test macOS, Linters" says what is being withheld,
+   *  where a bare count does not. */
+  gating: z.array(z.string()).max(8).default([]),
   /** The failing job NAMES, capped — what a human actually needs to decide whether to look. */
   failing: z.array(z.string()).max(8).default([]),
   merge: GithubMergeState,
@@ -3669,11 +3709,18 @@ export function parseGithubWakeSteer(text: string): GithubWakeSteer | null {
 export type PrWatchWake =
   | { ref: string; kind: "merged" | "closed" }
   // `passed` is absent on a failure because the FORMATTER does not write it — a red line names the
-  // failing jobs, not the tally. Never invent a field the text does not carry.
-  | { ref: string; kind: "ci"; verdict: "passing" | "failing"; passed?: number; failing: string[] }
+  // failing jobs, not the tally. Never invent a field the text does not carry. `skipped` is absent on a
+  // green line that had none, for the same reason: the formatter omits the clause entirely.
+  | { ref: string; kind: "ci"; verdict: "passing" | "failing"; passed?: number; skipped?: number; failing: string[] }
+  // CI HELD FOR AN APPROVAL, which is neither a pass nor a failure and must not be drawn as one.
+  | { ref: string; kind: "ci"; verdict: "gated"; gated: number; gating: string[] }
 
 const PR_WATCH_FINISHED = new RegExp(String.raw`^⏰ (${WAKE_REF}) was (MERGED|CLOSED)\.$`)
-const PR_WATCH_CI_PASSED = new RegExp(String.raw`^✅ CI PASSED on (${WAKE_REF}) — (\d+) checks? green\.$`)
+// The skip clause is OPTIONAL because the formatter omits it when nothing was skipped — a green line
+// with no skips reads exactly as it did before 2026-09-04, so every delivery already in a transcript
+// still parses.
+const PR_WATCH_CI_PASSED = new RegExp(String.raw`^✅ CI PASSED on (${WAKE_REF}) — (\d+) checks? green(?:, (\d+) skipped)?\.$`)
+const PR_WATCH_CI_GATED = new RegExp(String.raw`^⏸️ CI on (${WAKE_REF}) is WAITING FOR APPROVAL — (\d+) workflows? held(?:: (.+?))?\.$`)
 const PR_WATCH_CI_FAILED = new RegExp(String.raw`^❌ CI FAILED on (${WAKE_REF})(?:: (.+?))?\.$`)
 
 /** The PR-watch status part of a delivered wake, or `null` when the text carries none.
@@ -3688,7 +3735,16 @@ export function parsePrWatchWake(text: string): PrWatchWake | null {
     const done = PR_WATCH_FINISHED.exec(line)
     if (done) return { ref: done[1], kind: done[2] === "MERGED" ? "merged" : "closed" }
     const passed = PR_WATCH_CI_PASSED.exec(line)
-    if (passed) return { ref: passed[1], kind: "ci", verdict: "passing", passed: Number(passed[2]), failing: [] }
+    if (passed) {
+      return {
+        ref: passed[1], kind: "ci", verdict: "passing", passed: Number(passed[2]), failing: [],
+        ...(passed[3] ? { skipped: Number(passed[3]) } : {}),
+      }
+    }
+    const gated = PR_WATCH_CI_GATED.exec(line)
+    // Same comma-split caveat as the failing branch below, and the same cost: a workflow whose name
+    // contains ", " is listed as two. Never the divider, never the verdict.
+    if (gated) return { ref: gated[1], kind: "ci", verdict: "gated", gated: Number(gated[2]), gating: gated[3] ? gated[3].split(", ") : [] }
     const failed = PR_WATCH_CI_FAILED.exec(line)
     // The formatter joins the job names with ", ", so a job whose own name contains a comma-space splits
     // wrong here. It costs a label that lists one job as two — never the divider, and never the verdict.
