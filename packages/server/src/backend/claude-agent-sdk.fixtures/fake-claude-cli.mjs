@@ -102,9 +102,13 @@ process.on("SIGTERM", () => {
   process.exit(0)
 })
 
+// Both spellings: the SDK passed `--session-id <id>` through 0.3.207 and `--session-id=<id>` from
+// 0.3.260 (measured 2026-09-04). The real CLI accepts either; a fixture that read only the two-token
+// form fell back to its default session id and every daemon test failed on session ownership.
 function optionValue(flag) {
   const index = args.indexOf(flag)
-  return index >= 0 ? args[index + 1] : undefined
+  if (index >= 0) return args[index + 1]
+  return args.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1)
 }
 
 function handleHostControl(message) {

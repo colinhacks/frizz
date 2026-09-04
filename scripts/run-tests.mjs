@@ -74,7 +74,15 @@ const runner = spawn(
     `--test-reporter-destination=${receivedPath}`,
     ...targets,
   ],
-  { cwd: root, stdio: "inherit", env: { ...process.env, FRIZZ_TEST_LEDGER: ledgerPath } },
+  {
+    cwd: root,
+    stdio: "inherit",
+    // A suite must never provision a runtime: that is half a gigabyte per pin into whatever HOME the
+    // test sandboxed. Every server a test boots runs the machine's PATH `claude`/`codex` unless the
+    // test names a stand-in, exactly as before 2026-09-04; runtimes.test.ts covers the provisioner
+    // itself against a local registry. Set FRIZZ_RUNTIMES yourself to override.
+    env: { FRIZZ_RUNTIMES: "path", ...process.env, FRIZZ_TEST_LEDGER: ledgerPath },
+  },
 );
 
 runner.on("error", (err) => {

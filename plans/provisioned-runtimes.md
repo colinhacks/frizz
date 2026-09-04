@@ -50,3 +50,13 @@ The Playwright model: pin in the package, fetch on first use, verify, fall back 
 ## Size of the work
 
 A medium feature: a `runtimes.ts` provisioner (fetch, verify, extract, sweep), the resolution order wired into the two spawn paths and the login utility, launcher readout for the download, the Codex gate simplified to exact, the conformance test repointed, README copy, and a real-artifact verification on macOS, Linux and Windows — the Windows leg is the one that has bitten every time, and the `gcloud-vm` skill exists for it.
+
+## Built 2026-09-04 — what landed, and where it departs from the shape above
+
+Built the same day, on the `provisioned-runtimes` branch, and merged to `main`. `packages/server/src/runtimes.ts` is the module; `ARCHITECTURE.md` § Provisioned runtimes is the current description. Three departures from the shape above, each deliberate:
+
+- **Fetched at BOOT, not at first dispatch.** Every consumer of the executable — the broker bridge, the app-server daemon, the auth probes, the login utility, the quota readers — takes it as a plain string out of the context, and the context is built once at boot. Resolving in a `runtimes` boot phase before the context reuses that plumbing untouched; a lazy first-dispatch fetch would have made every one of those sites async. The cost is one download of both pins on a machine's first boot (~530 MB here, well under a minute on a normal connection), reported through the launcher readout; every later boot is a marker read.
+- **No reuse of the vendors' own versioned installs.** `~/.local/share/claude/versions/` and `~/.codex/packages/standalone/releases/` are pruned on their own schedules, and a pin that can vanish under a running server is worse than one download.
+- **The sweep keeps only the current pin**, not the previous one too — the cache root is regenerable by definition, and a rollback re-downloads.
+
+And one finding that changed the pin itself: **the SDK-matched Claude Code must be CURRENT, not merely matched.** The first end-to-end run provisioned 2.1.207 — the build the SDK Frizz had sat on since July was built against — and the very first worker failed with `API Error: 400 Claude Code 2.1.207 does not support this model; version 2.1.251 or newer is required`. A model's minimum CLI is enforced server-side, so a stale pin is a broken worker, not a conservative one. The SDK was bumped to 0.3.260 (Claude Code 2.1.260, the same build the maintainer's own terminal runs) as part of landing this, and `runtimes.test.ts` pins the pair to the SDK's manifest so the two cannot drift apart again. The lesson for every future bump: bump the SDK when a model lands, and treat "the worker refuses the default model" as the signal that the pin is overdue.
