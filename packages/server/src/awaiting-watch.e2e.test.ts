@@ -872,3 +872,70 @@ test("the ordinary poll shells out to nothing at all: the status rides the batch
     assert.equal(h.stats().calls, 0, "the fallback is for a shape surprise, not for the happy path")
   } finally { h.close() }
 })
+
+// AN ARCHIVED THREAD'S WATCHER IS ARMED BUT NOT POLLED.
+//
+// The row deliberately stays armed — an archived thread can be reopened, and the watch is still the
+// worker's own outstanding intent — so the poll SKIPS the thread rather than settling the row. What it
+// used to do first was fetch the PR anyway and throw the reading away, and nothing bounds how long that
+// runs: `markOwnDone` refuses while a watcher is armed, but ARCHIVING has no such gate, so a thread
+// parked on a 180d watcher could be archived and go on polling GitHub for six months.
+test("a watcher on an archived thread stays armed and stops costing GitHub anything", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-prwatch-archived-"))
+  const at = new Date(Date.now() - 60_000).toISOString()
+  const storage = createStorage(join(dir, "ui.db"), "p")
+  storage.setSetting("signoffNudge", "off")
+  const seed = (slug: string, session: string, number: number) => {
+    writeFileSync(join(dir, `${session}.jsonl`), line({
+      type: "assistant", timestamp: at, sessionId: session, uuid: `u-${slug}`,
+      message: { role: "assistant", content: [{ type: "text", text: "PR is up." }] },
+    }))
+    storage.upsertSession({
+      slug, session_id: session, thread_name: `frizz-${slug}`, spawned_at: at,
+      last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: at, title_auto: 1,
+      title: slug, state: "open", meta: null, seen_at: null, transcript_id: null,
+    } as SessionRow)
+    storage.setBackend(slug, "claude")
+    storage.setClaudeRuntime(slug, "broker")
+    storage.armPrWatch({
+      id: `prw_${slug}`, slug, owner: "acme", repo: "app", number,
+      createdAtMs: Date.parse(at), expiresAtMs: Date.parse(at) + 180 * 24 * 3600_000,
+    })
+  }
+  seed("live-thread", "sess-live", 401)
+  seed("shelved-thread", "sess-shelved", 402)
+  storage.setState("shelved-thread", "archived")
+  const tailer = createTailer({
+    project: { cwdSlug: "x" } as Project,
+    storage, bus: new Bus(), sessionLogDir: dir,
+    onChange: () => {}, paneDead: () => false,
+  })
+  tailer.tick()
+  let clock = Date.now()
+  const fetched: string[] = []
+  const s = createScheduler({
+    wakeQuietWindowMs: 0,
+    storage,
+    tailer,
+    resume: async () => {},
+    log: () => {},
+    now: () => clock,
+    fetchPr: async (ref) => { fetched.push(`pr:${ref.owner}/${ref.repo}#${ref.number}`); return undefined },
+    fetchGithubReview: async (ref) => { fetched.push(`review:${ref.owner}/${ref.repo}#${ref.number}`); return [] as never },
+  })
+  try {
+    clock += 90_000
+    await s.tick()
+    assert.deepEqual(
+      fetched.filter((f) => f.startsWith("review:")),
+      ["review:acme/app#401"],
+      "only the live thread's PR is read — #402 belongs to an archived thread",
+    )
+    assert.ok(!fetched.some((f) => f.endsWith("#402")), "and no transport reaches #402, not even the `gh` fallback")
+    // The row is UNTOUCHED, because the thread can come back.
+    const shelved = storage.listPrWatches("shelved-thread", { armedOnly: true })
+    assert.equal(shelved.length, 1, "the watcher is still armed, ready for a reopen")
+  } finally {
+    void s.stop(); tailer.stop(); storage.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -2369,8 +2369,27 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (armed.length === 0) return
     // ONE FETCH PER PR, however many threads watch it. Two workers on the same PR is the ordinary shape
     // of a review round, and paying GitHub twice for one answer is how a rate limit arrives.
+    //
+    // AND NOT AT ALL FOR AN ARCHIVED THREAD (2026-09-04). The row stays ARMED, deliberately — an archived
+    // thread can be reopened and the watch is still the worker's own outstanding intent, which is why the
+    // loop below skips rather than settles it. But the fetch that fed that skip was already made: every
+    // reading for an archived thread's PR was computed and thrown away. Nothing gates archiving the way
+    // `done` is gated (markOwnDone REFUSES while a watcher is armed; archiving does not), so a thread
+    // parked on a 180d watcher can be archived and go on polling GitHub for six months for readings no
+    // thread can receive. Skipped per WATCHER, not per ref, so a PR a live thread also watches still
+    // costs exactly one fetch.
+    const threadLive = new Map<string, boolean>()
+    const isThreadLive = (slug: string): boolean => {
+      const cached = threadLive.get(slug)
+      if (cached !== undefined) return cached
+      const row = deps.storage.getSession(slug)
+      const live = !!row && row.state !== "archived" && row.archived !== 1
+      threadLive.set(slug, live)
+      return live
+    }
     const refs = new Map<string, PrRef>()
     for (const w of armed) {
+      if (!isThreadLive(w.thread_slug)) continue
       const key = `${w.owner}/${w.repo}#${w.number}`
       const last = prWatchPolledAt.get(key) ?? 0
       if (nowMs - last < PR_WATCH_POLL_MS) continue
