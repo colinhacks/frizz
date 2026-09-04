@@ -2517,11 +2517,21 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
             if (turnReasoning) {
               turnReasoning.text = `${turnReasoning.text}\n\n${text}`
               turnReasoning.durationMs = (turnReasoning.durationMs ?? 0) + stepMs
+              // NO `cur = null` HERE. This step pushed nothing: it appended to a block already sitting
+              // UPSTREAM in `out`, so closing the open assistant message cannot move any content below
+              // anything — it only starts a second message that renders in the very same place.
+              //
+              // Codex thinks before nearly every tool call (~1:1 across the corpus), so nulling on the
+              // append fragmented every batch into singletons. Measured on a real 17-child orchestration
+              // rollout: 104 tool calls in 84 runs, 73 of them ONE call — a column of "Ran 1 tool call"
+              // rows where the reader should see "Ran 9 tool calls" (maintainer 2026-09-04: "Tool call
+              // collapsing is also totally broken"). Only the CREATE below closes the message, which is
+              // the case the comment above was ever describing.
             } else {
               turnReasoning = { sourceId, role: "assistant", kind: "reasoning", text, tools: [], parts: [], at: ev.at, ...(stepMs ? { durationMs: stepMs } : {}) }
               out.push(turnReasoning)
+              cur = null
             }
-            cur = null
             pendingCaption = codexReasoningCaption(text) ?? pendingCaption
           }
           break

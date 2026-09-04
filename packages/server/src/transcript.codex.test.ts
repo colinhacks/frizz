@@ -1347,3 +1347,34 @@ test("pageProjectedTranscript walks past frizz's own deliveries to the human's m
     "here is the handoff",
   ])
 })
+
+// ---- tool-call collapsing across a turn's reasoning steps ----
+// Codex thinks immediately before nearly every tool call (~1:1 across the corpus), and a turn's
+// reasoning steps COALESCE into one block positioned where the FIRST step appeared. Every later step
+// therefore pushes nothing — it appends upstream — so closing the open assistant message on it split
+// each batch into a column of "Ran 1 tool call" rows (maintainer 2026-09-04: "Tool call collapsing is
+// also totally broken"). Measured on a real 17-child orchestration rollout: 104 calls in 84 runs, 73
+// of them a single call.
+function codexThinkThenRun(pairs: number): string {
+  const out: string[] = [JSON.stringify({ timestamp: "2026-09-04T18:47:27.000Z", type: "event_msg", payload: { type: "task_started" } })]
+  for (let i = 0; i < pairs; i++) {
+    const at = `2026-09-04T18:47:${String(30 + i * 2).padStart(2, "0")}.000Z`
+    out.push(JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: `**Step ${i}**` }] } }))
+    out.push(JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "custom_tool_call", name: "exec", call_id: `c${i}`, input: JSON.stringify({ command: `echo ${i}` }) } }))
+    out.push(JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "custom_tool_call_output", call_id: `c${i}`, output: `${i}` } }))
+  }
+  return out.join("\n") + "\n"
+}
+
+test("codex: a turn's tool calls collapse into ONE group even though a reasoning step precedes each", () => {
+  const msgs = projectCodexTranscript(codexThinkThenRun(6))
+  const reasoning = msgs.filter((m) => m.kind === "reasoning")
+  assert.equal(reasoning.length, 1, "the turn's six steps coalesce into one train-of-thought block")
+  assert.match(reasoning[0].text, /\*\*Step 0\*\*[\s\S]*\*\*Step 5\*\*/, "every step lands in that one block")
+
+  const groups = msgs.flatMap((m) => m.parts.filter((p) => p.kind === "tools"))
+  assert.equal(groups.length, 1, "all six calls collapse into a single card group")
+  assert.equal(groups[0].kind === "tools" ? groups[0].tools.length : 0, 6)
+  // …and the group still sits BELOW the reasoning block the turn opened with.
+  assert.ok(msgs.indexOf(reasoning[0]) < msgs.findIndex((m) => m.parts.some((p) => p.kind === "tools")))
+})
