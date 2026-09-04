@@ -21,6 +21,7 @@
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const [home, _socket, projectDir] = process.argv.slice(2)
 if (!home || !projectDir) throw new Error("usage: seed-dup-bg-shell.mjs <home> <unused> <projectDir>")
@@ -29,8 +30,11 @@ const cwdSlug = projectDir.replace(/[/.]/g, "-")
 const transcriptDir = path.join(home, ".claude", "projects", cwdSlug)
 fs.mkdirSync(transcriptDir, { recursive: true })
 
-const dbDir = fs.readdirSync(path.join(home, ".frizz", "projects"))[0]
-const db = path.join(home, ".frizz", "projects", dbDir, "ui.db")
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 
 // Recent, so the rows read as live work rather than an ancient thread.
 const base = Date.now() - 8 * 60_000
@@ -78,8 +82,8 @@ for (const t of threads) {
   fs.writeFileSync(path.join(transcriptDir, `${t.sessionId}.jsonl`), t.records.map((r) => JSON.stringify({ ...r, sessionId: t.sessionId })).join("\n") + "\n")
   execFileSync("sqlite3", [
     db,
-    `INSERT INTO session (slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived)
-     VALUES ('${t.slug}', '${t.sessionId}', 'frizz-${t.slug}', '${T(0)}', '${t.title}', 0, 'claude', 'opus', 'high', 'auto', 'open', 0, 0, 0)`,
+    `INSERT INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived)
+     VALUES (${sessionVals}'${t.slug}', '${t.sessionId}', 'frizz-${t.slug}', '${T(0)}', '${t.title}', 0, 'claude', 'opus', 'high', 'auto', 'open', 0, 0, 0)`,
   ])
   console.log(`seeded ${t.slug} (${t.sessionId})`)
 }

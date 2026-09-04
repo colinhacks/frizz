@@ -18,6 +18,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { globSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -28,8 +29,11 @@ if (!home) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects — is the stack booted?`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 // The MCP server locates the running frizz from `<state-dir>/server.lock`, so this must be the sandbox's
 // project dir, not the maintainer's real one.
 const stateDir = dirname(db)
@@ -90,8 +94,8 @@ function check(label, actual, expected) {
 const slug = "legacy-mcp-thread"
 const at = new Date().toISOString()
 sql(
-  `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
-   VALUES ('${slug}', '33333333-3333-4333-8333-333333333333', 'frizz-${slug}', '${at}', 'Legacy MCP thread', 'claude', 'opus', 'high', 'default', '${at}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
+   VALUES (${sessionVals}'${slug}', '33333333-3333-4333-8333-333333333333', 'frizz-${slug}', '${at}', 'Legacy MCP thread', 'claude', 'opus', 'high', 'default', '${at}')`,
 )
 
 async function callTool(script, name, args) {

@@ -20,8 +20,9 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { execFileSync } from "node:child_process"
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -32,8 +33,11 @@ if (!home) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const stateDir = join(db, "..")
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
@@ -82,8 +86,8 @@ function seed({ slug, sessionId, title, prompt, dispatches, closing }) {
   writeFileSync(brokerRecordPath(sessionId), JSON.stringify({ sessionId, daemonPid: daemon.pid, socketPath: join(stateDir, "claude-broker", `${slug}.sock`) }))
   execFileSync("sqlite3", [
     db,
-    `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
-     VALUES ('${slug}', '${sessionId}', '${threadName}', '${at(0)}', '${title}', 'claude', 'broker', 'opus', 'high', 'default', '${at(2)}')`,
+    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
+     VALUES (${sessionVals}'${slug}', '${sessionId}', '${threadName}', '${at(0)}', '${title}', 'claude', 'broker', 'opus', 'high', 'default', '${at(2)}')`,
   ])
   console.log(`seeded ${slug} → ${sessionId}`)
 }

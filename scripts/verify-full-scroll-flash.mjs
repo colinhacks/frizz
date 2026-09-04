@@ -24,6 +24,7 @@ import { basename, join } from "node:path"
 import { tmpdir } from "node:os"
 import puppeteer from "puppeteer"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")))
 const { home, url } = flags
@@ -38,13 +39,11 @@ if (!home || !url) {
 }
 mkdirSync(shotDir, { recursive: true })
 
-// One unified database per HOME since a995792e (`~/.frizz/ui.db`, rows keyed by project_id); the
-// per-project `projects/<id>/ui.db` is the pre-cutover layout, kept so an older sandbox still seeds.
-const unifiedDb = join(home, ".frizz/ui.db")
-const db = existsSync(unifiedDb) ? unifiedDb : globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz`)
-const projectId = flags.projectId ?? basename(globSync(join(home, ".frizz/projects/*"))[0] ?? "")
-const hasProjectId = execFileSync("sqlite3", [db, "PRAGMA table_info(session)"], { encoding: "utf8" }).includes("|project_id|")
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// `--projectId` still wins: a stack with more than one registered project needs to say which.
+const projectId = flags.projectId ?? sandbox.projectId
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns({ ...sandbox, projectId })
 const SLUG = "verify-scroll-flash"
 const SESSION = "scrlfla0-0000-4000-8000-000000000000"
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
@@ -85,8 +84,8 @@ if (flags.source) {
   }
 }
 writeFileSync(jsonl, seed.map((r) => JSON.stringify(r)).join("\n") + "\n")
-execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (${hasProjectId ? "project_id, " : ""}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode)
-  VALUES (${hasProjectId ? `'${projectId}', ` : ""}'${SLUG}', '${SESSION}', 'frizz-${SLUG}', '${now()}', 'Scroll flash', 'claude', 'opus', 'high', 'default')`])
+execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode)
+  VALUES (${sessionVals}'${SLUG}', '${SESSION}', 'frizz-${SLUG}', '${now()}', 'Scroll flash', 'claude', 'opus', 'high', 'default')`])
 const api = createRpcClient(url)
 
 let failures = 0

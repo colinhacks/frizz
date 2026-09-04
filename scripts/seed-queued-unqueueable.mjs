@@ -12,9 +12,10 @@
 // Follows the frizz-stack recipe: a session row + a JSONL the tailer reads.
 // Usage: node scripts/seed-queued-unqueueable.mjs --home=/abs/temp-home --port=NNNN
 import { execFileSync } from "node:child_process"
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -25,8 +26,11 @@ if (!home || !port) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 
@@ -69,8 +73,8 @@ const ledger = JSON.stringify([
 
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, delivery_ledger)
-   VALUES ('${SLUG}', '${SESSION_ID}', '${threadName}', '${at(0)}', 'Fix the tier-boundary rounding', 'claude', 'opus', 'high', 'default', '${ledger.replace(/'/g, "''")}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, delivery_ledger)
+   VALUES (${sessionVals}'${SLUG}', '${SESSION_ID}', '${threadName}', '${at(0)}', 'Fix the tier-boundary rounding', 'claude', 'opus', 'high', 'default', '${ledger.replace(/'/g, "''")}')`,
 ])
 
 const api = createRpcClient(`http://127.0.0.1:${port}/`)

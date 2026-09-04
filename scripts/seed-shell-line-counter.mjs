@@ -19,6 +19,7 @@
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const [home, socket, projectDir] = process.argv.slice(2)
 if (!home) throw new Error("usage: seed-shell-line-counter.mjs <home> <socket> <projectDir>")
@@ -60,8 +61,11 @@ const transcriptDir = path.join(home, ".claude", "projects", cwdSlug)
 fs.mkdirSync(transcriptDir, { recursive: true })
 fs.mkdirSync(path.join(home, "tasks"), { recursive: true })
 
-const dbDir = fs.readdirSync(path.join(home, ".frizz", "projects"))[0]
-const db = path.join(home, ".frizz", "projects", dbDir, "ui.db")
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 
 const base = Date.now() - 14 * 60_000
 const T = (ms) => new Date(base + ms).toISOString()
@@ -101,8 +105,8 @@ function seed({ slug, sessionId, title, records }) {
   fs.writeFileSync(path.join(transcriptDir, `${sessionId}.jsonl`), records.map((r) => JSON.stringify({ ...r, sessionId })).join("\n") + "\n")
   execFileSync("sqlite3", [
     db,
-    `INSERT INTO session (slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived)
-     VALUES ('${slug}', '${sessionId}', 'frizz-${slug}', '${T(0)}', '${title}', 0, 'claude', 'opus', 'high', 'auto', 'open', 0, 0, 0)`,
+    `INSERT INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived)
+     VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${T(0)}', '${title}', 0, 'claude', 'opus', 'high', 'auto', 'open', 0, 0, 0)`,
   ])
   console.log(`seeded ${slug} (${sessionId})`)
 }

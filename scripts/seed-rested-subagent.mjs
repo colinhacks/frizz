@@ -15,8 +15,9 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync, writeFileSync, utimesSync } from "node:fs"
 import { join } from "node:path"
-import { globSync } from "node:fs"
+
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const args = process.argv.slice(2)
 const opt = (k, d) => { const hit = args.find((a) => a.startsWith(`--${k}=`)); return hit ? hit.slice(k.length + 3) : d }
@@ -108,9 +109,12 @@ for (const n of [1, 2, 3, 4, 6]) {
 }
 
 // ── the registry row + a live dummy pane, so the tailer treats it as a real thread ────────────────
-const dbs = globSync(join(home, ".frizz", "projects", "*", "ui.db"))
-if (dbs.length !== 1) { console.error("expected exactly one sandbox ui.db, got", dbs); process.exit(1) }
-execFileSync("sqlite3", [dbs[0], `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, state, backend, model, effort, permission_mode, title_auto, unread, exited, archived) VALUES ('${SLUG}', '${SESSION}', 'frizz-${SLUG}', '${at(-900)}', 'Sweep the grants corpus', 'open', 'claude', 'opus', 'high', 'bypassPermissions', 0, 0, 0, 0)`])
+const sandbox = resolveSandboxDb(home)
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
+const db = sandbox.db
+execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, state, backend, model, effort, permission_mode, title_auto, unread, exited, archived) VALUES (${sessionVals}'${SLUG}', '${SESSION}', 'frizz-${SLUG}', '${at(-900)}', 'Sweep the grants corpus', 'open', 'claude', 'opus', 'high', 'bypassPermissions', 0, 0, 0, 0)`])
 
 // ── let the tailer fold it, then report what the BOARD says ───────────────────────────────────────
 const api = createRpcClient(`http://127.0.0.1:${port}/`)

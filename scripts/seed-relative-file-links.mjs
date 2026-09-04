@@ -11,8 +11,9 @@
 //
 // Usage: node scripts/seed-relative-file-links.mjs --home=/abs/temp-home [--project=/abs/dir]
 import { execFileSync } from "node:child_process"
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -23,8 +24,11 @@ if (!home) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const cwdSlug = project.replace(/[/.]/g, "-")
 const jsonlDir = join(home, ".claude", "projects", cwdSlug)
 mkdirSync(jsonlDir, { recursive: true })
@@ -96,7 +100,7 @@ writeFileSync(join(jsonlDir, `${sessionId}.jsonl`), records.map((r) => JSON.stri
 
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
-   VALUES ('${slug}', '${sessionId}', 'frizz-${slug}', '${now()}', 'relative file links', 'claude', 'opus', 'high', 'default', '${now()}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
+   VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${now()}', 'relative file links', 'claude', 'opus', 'high', 'default', '${now()}')`,
 ])
 console.log(`seeded ${slug} → ${sessionId} (scratch ${join(project, scratch)})`)

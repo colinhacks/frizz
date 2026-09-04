@@ -15,6 +15,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, writeFileSync, globSync } from "node:fs"
 import { basename, join } from "node:path"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -25,17 +26,9 @@ if (!home || !port) {
   process.exit(1)
 }
 
-// One unified database per HOME since a995792e (`~/.frizz/ui.db`, rows keyed by project_id); the
-// per-project `projects/<id>/ui.db` is the pre-cutover layout, kept so an older sandbox still seeds.
-const unifiedDb = join(home, ".frizz/ui.db")
-const db = existsSync(unifiedDb) ? unifiedDb : globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz — is the stack booted?`)
-// The broker record still lives under the PROJECT's state dir, whichever layout the database took.
-const stateDir = existsSync(unifiedDb) ? globSync(join(home, ".frizz/projects/*"))[0] : join(db, "..")
-if (!stateDir) throw new Error(`no project state dir under ${home}/.frizz/projects — is the stack booted?`)
-// The project this row belongs to: the launcher's id, which is the name of its state directory.
-const projectId = basename(stateDir)
-const hasProjectId = execFileSync("sqlite3", [db, "PRAGMA table_info(session)"], { encoding: "utf8" }).includes("|project_id|")
+const sandbox = resolveSandboxDb(home)
+const { db, stateDir } = sandbox
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 mkdirSync(join(stateDir, "claude-broker"), { recursive: true })
@@ -56,8 +49,8 @@ const spawnedAt = ago(10)
 // The row FIRST: setOwnThreadTimer refuses a slug that is not registered.
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (${hasProjectId ? "project_id, " : ""}slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
-   VALUES (${hasProjectId ? `'${projectId}', ` : ""}'${slug}', '${sessionId}', 'frizz-${slug}', '${spawnedAt}', 'timer park · release hold', 'claude', 'broker', 'opus', 'high', 'default', '${spawnedAt}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
+   VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${spawnedAt}', 'timer park · release hold', 'claude', 'broker', 'opus', 'high', 'default', '${spawnedAt}')`,
 ])
 writeFileSync(
   join(stateDir, "claude-broker", `${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}.json`),

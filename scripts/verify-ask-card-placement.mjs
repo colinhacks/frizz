@@ -11,9 +11,10 @@
 //
 // Prints the slug + sessionId to drive the browser check against.
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, readdirSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const [home, _socket, port, slugArg] = process.argv.slice(2)
 if (!home || !port) throw new Error("usage: <tempHome> <unused> <port> [slug] [--no-ask]")
@@ -69,14 +70,15 @@ writeFileSync(join(transcriptDir, `${sessionId}.jsonl`), `${lines.join("\n")}\n`
 // ---- 2. a live pane so the row reads as a running session ------------------------------------------
 
 // ---- 3. the session row + the pending interaction --------------------------------------------------
-const projectsRoot = join(home, ".frizz", "projects")
-const projectId = readdirSync(projectsRoot)[0]
-if (!projectId) throw new Error("the stack has not created its project state dir yet")
-const db = join(projectsRoot, projectId, "ui.db")
+const sandbox = resolveSandboxDb(home)
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
+const { db, projectId } = sandbox
 const sql = (text) => execFileSync("sqlite3", [db, text], { encoding: "utf8" })
 
-sql(`INSERT INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, state)
-     VALUES ('${slug}', '${sessionId}', 'frizz-${slug}', '${t(0)}', 'Ask card placement probe', 'claude', 'opus', 'xhigh', 'auto', 'open')`)
+sql(`INSERT INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, state)
+     VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${t(0)}', 'Ask card placement probe', 'claude', 'opus', 'xhigh', 'auto', 'open')`)
 
 if (!withAsk) {
   console.log(JSON.stringify({ slug, sessionId, projectId, ask: false, url: `http://127.0.0.1:${port}/thread/${slug}/full` }))

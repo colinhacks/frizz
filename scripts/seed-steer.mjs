@@ -6,9 +6,10 @@
 // it needs a populated board.
 //
 //   node scripts/seed-steer.mjs <tempHome> <unused> <projectDir> [count=25] [inFlight=0]
-import { mkdirSync, writeFileSync, readdirSync, realpathSync } from "node:fs"
+import { mkdirSync, writeFileSync, realpathSync } from "node:fs"
 import { join } from "node:path"
 import { execFileSync } from "node:child_process"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const [home, _socket, projectDirArg, countArg, inFlightArg] = process.argv.slice(2)
 // The server resolves its project dir through realpath, so on macOS `/tmp/x` becomes `/private/tmp/x`
@@ -29,9 +30,11 @@ if (!home || !projectDir) {
   process.exit(1)
 }
 
-const projRoot = join(home, ".frizz", "projects")
-const projId = readdirSync(projRoot)[0]
-const db = join(projRoot, projId, "ui.db")
+const sandbox = resolveSandboxDb(home)
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
+const db = sandbox.db
 const cwdSlug = projectDir.replace(/\//g, "-")
 const jsonlDir = join(home, ".claude", "projects", cwdSlug)
 mkdirSync(jsonlDir, { recursive: true })
@@ -68,8 +71,8 @@ for (let i = 0; i < count; i++) {
   writeFileSync(join(jsonlDir, `${sessionId}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n")
 
   sql.push(
-    `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, state) ` +
-    `VALUES ('${slug}','${sessionId}','frizz-${slug}','${ts(700)}','${title}','claude','opus','high','default','active');`,
+    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, state) ` +
+    `VALUES (${sessionVals}'${slug}','${sessionId}','frizz-${slug}','${ts(700)}','${title}','claude','opus','high','default','active');`,
   )
 }
 execFileSync("sqlite3", [db, sql.join("\n")], { stdio: "inherit" })

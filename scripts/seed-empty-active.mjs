@@ -6,9 +6,10 @@
 // them under "inactive" (Done) and Active stays empty.
 //
 // Usage: node scripts/seed-empty-active.mjs --home=/abs/temp-home
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -19,8 +20,11 @@ if (!home) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 
@@ -43,8 +47,8 @@ for (const [i, s] of done.entries()) {
   writeFileSync(join(jsonlDir, `${s.sessionId}.jsonl`), records.map((r) => JSON.stringify(r)).join("\n") + "\n")
   execFileSync("sqlite3", [
     db,
-    `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at, archived, state, exited)
-     VALUES ('${s.slug}', '${s.sessionId}', 'frizz-${s.slug}', '${at(i)}', '${s.title}', 'claude', 'opus', 'high', 'default', '${at(i + 1)}', 1, 'archived', 1)`,
+    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at, archived, state, exited)
+     VALUES (${sessionVals}'${s.slug}', '${s.sessionId}', 'frizz-${s.slug}', '${at(i)}', '${s.title}', 'claude', 'opus', 'high', 'default', '${at(i + 1)}', 1, 'archived', 1)`,
   ])
   console.log(`seeded ${s.slug} → done`)
 }

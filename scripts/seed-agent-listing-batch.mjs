@@ -10,8 +10,9 @@
 // Follows the frizz-stack recipe: a session row + a transcript the tailer reads.
 // Usage: node scripts/seed-agent-listing-batch.mjs --home=/abs/temp-home
 import { execFileSync } from "node:child_process"
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -22,8 +23,11 @@ if (!home) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 
 const SLUG = "agent-listing-batch"
 const ROLLOUT_ID = "019842aa-0000-4000-9000-00000000a9e5"
@@ -70,7 +74,7 @@ writeFileSync(join(shard, `rollout-2026-07-31T10-00-00-${ROLLOUT_ID}.jsonl`), li
 const threadName = `frizz-${SLUG}`
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (slug, session_id, agent_session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
-   VALUES ('${SLUG}', '${ROLLOUT_ID}', '${ROLLOUT_ID}', '${threadName}', '${at(0)}', 'Fold the roster poll into the run', 'codex', 'gpt-5-codex', 'high', 'default', '${at(3)}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, agent_session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
+   VALUES (${sessionVals}'${SLUG}', '${ROLLOUT_ID}', '${ROLLOUT_ID}', '${threadName}', '${at(0)}', 'Fold the roster poll into the run', 'codex', 'gpt-5-codex', 'high', 'default', '${at(3)}')`,
 ])
 console.log(`seeded ${SLUG} → ${ROLLOUT_ID}`)

@@ -13,8 +13,9 @@
 // Usage: nub scripts/seed-watched-pr-checks.mjs --home=/abs/temp-home
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, writeFileSync, globSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -25,8 +26,11 @@ if (!home) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects — is the stack booted?`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 
@@ -132,8 +136,10 @@ for (const [n, c] of CASES.entries()) {
     const m = /^([^/]+)\/([^#]+)#(\d+)$/.exec(ref)
     execFileSync("sqlite3", [
       db,
-      `INSERT OR REPLACE INTO pr_watch (id, thread_slug, owner, repo, number, state, created_at, settled_at, cursor)
-       VALUES ('prw-${c.slug}-${n2}', '${c.slug}', '${m[1]}', '${m[2]}', ${m[3]}, 'armed', ${Date.parse(at)}, NULL, NULL)`,
+      // `project_id` is NOT NULL on every keyed table, not just `session` — the same prefix pair serves
+      // them all, because the value is the project either way.
+      `INSERT OR REPLACE INTO pr_watch (${sessionCols}id, thread_slug, owner, repo, number, state, created_at, settled_at, cursor)
+       VALUES (${sessionVals}'prw-${c.slug}-${n2}', '${c.slug}', '${m[1]}', '${m[2]}', ${m[3]}, 'armed', ${Date.parse(at)}, NULL, NULL)`,
     ])
   }
   execFileSync("sqlite3", [
@@ -142,14 +148,14 @@ for (const [n, c] of CASES.entries()) {
     // reports `exited` for it and nothing downstream reads as a rest. The broker arm needs a discovery
     // record whose pid is alive, or the daemon probe answers "gone" and drops the thread's background
     // shells — correctly, which is exactly why this seeder writes one (see brokerRecord below).
-    `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
-     VALUES ('${c.slug}', '${sessionId}', 'frizz-${c.slug}', '${at}', '${c.title}', 'claude', 'broker', 'opus', 'high', 'default', '${at}')`,
+    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
+     VALUES (${sessionVals}'${c.slug}', '${sessionId}', 'frizz-${c.slug}', '${at}', '${c.title}', 'claude', 'broker', 'opus', 'high', 'default', '${at}')`,
   ])
   console.log(`seeded ${c.slug}`)
 }
 
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO settings (key, value) VALUES ('waker.github.status.v1', '${JSON.stringify(BOOK).replace(/'/g, "''")}')`,
+  `INSERT OR REPLACE INTO settings (${sessionCols}key, value) VALUES (${sessionVals}'waker.github.status.v1', '${JSON.stringify(BOOK).replace(/'/g, "''")}')`,
 ])
 console.log("seeded the watched-PR status book")

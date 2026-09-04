@@ -12,6 +12,7 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, globSync, mkdirSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -22,14 +23,11 @@ if (!home) {
   process.exit(1)
 }
 
-// One unified database per HOME since a995792e (`~/.frizz/ui.db`, rows keyed by project_id); the
-// per-project `projects/<id>/ui.db` is the pre-cutover layout, kept so an older sandbox still seeds.
-const unifiedDb = join(home, ".frizz/ui.db")
-const db = existsSync(unifiedDb) ? unifiedDb : globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz`)
-// The project this row belongs to: the launcher's id, which is the name of its state directory.
-const projectId = flags.projectId ?? basename(globSync(join(home, ".frizz/projects/*"))[0] ?? "")
-const hasProjectId = execFileSync("sqlite3", [db, "PRAGMA table_info(session)"], { encoding: "utf8" }).includes("|project_id|")
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// `--projectId` still wins: a stack with more than one registered project needs to say which.
+const projectId = flags.projectId ?? sandbox.projectId
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns({ ...sandbox, projectId })
 const cwdSlug = cwd.replace(/[/.]/g, "-")
 const jsonlDir = join(home, ".claude", "projects", cwdSlug)
 mkdirSync(jsonlDir, { recursive: true })
@@ -136,7 +134,7 @@ writeFileSync(join(jsonlDir, `${sessionId}.jsonl`), records.map((r) => JSON.stri
 
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (${hasProjectId ? "project_id, " : ""}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
-   VALUES (${hasProjectId ? `'${projectId}', ` : ""}'${slug}', '${sessionId}', 'frizz-${slug}', '${now()}', 'markdown reader', 'claude', 'opus', 'high', 'default', '${now()}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
+   VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${now()}', 'markdown reader', 'claude', 'opus', 'high', 'default', '${now()}')`,
 ])
 console.log(`seeded ${slug} → ${sessionId} (docs under ${docs})`)

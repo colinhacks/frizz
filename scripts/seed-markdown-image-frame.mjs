@@ -17,8 +17,9 @@
 //
 // Usage: nub scripts/seed-markdown-image-frame.mjs --home=/abs/temp-home --shot=/abs/real.png [--slug=x]
 import { execFileSync } from "node:child_process"
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -29,8 +30,11 @@ if (!home || !shot) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const cwdSlug = cwd.replace(/[/.]/g, "-")
 const jsonlDir = join(home, ".claude", "projects", cwdSlug)
 mkdirSync(jsonlDir, { recursive: true })
@@ -88,7 +92,7 @@ writeFileSync(join(jsonlDir, `${sessionId}.jsonl`), records.map((r) => JSON.stri
 
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived, rested_at)
-   VALUES ('${slug}', '${sessionId}', 'frizz-${slug}', '${now()}', 'Markdown image frames', 0, 'claude', 'opus', 'high', 'default', 'open', 1, 0, 0, '${now()}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived, rested_at)
+   VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${now()}', 'Markdown image frames', 0, 'claude', 'opus', 'high', 'default', 'open', 1, 0, 0, '${now()}')`,
 ])
 console.log(`seeded ${slug} → ${sessionId} (markdown + bare-path + inline + missing, shot=${shot})`)

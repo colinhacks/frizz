@@ -10,6 +10,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const [home, _socket, slug = "fanout"] = process.argv.slice(2)
 if (!home) throw new Error("usage: seed-subagent-fanout.mjs <tempHome> <unused> [slug]")
@@ -71,8 +72,12 @@ transcript("aGrandB", [assistant([{ type: "text", text: "Reading the migration."
 sidecar("aGreat", { agentType: "general-purpose", description: "Trace one cache collision", toolUseId: "toolu_great", parentAgentId: "aGrandA", spawnDepth: 3 })
 transcript("aGreat", [assistant([{ type: "text", text: "Still tracing." }])])
 
-const db = readdirSync(join(home, ".frizz", "projects")).map((id) => join(home, ".frizz", "projects", id, "ui.db"))[0]
-execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, title_auto, backend, state, unread, exited, archived, claude_runtime)
-  VALUES ('${slug}', '${SESSION}', 'frizz-${slug}', '${at}', 'Review the resolver change', 0, 'claude', 'open', 0, 0, 0, 'broker')`])
+const sandbox = resolveSandboxDb(home)
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
+const db = sandbox.db
+execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, title_auto, backend, state, unread, exited, archived, claude_runtime)
+  VALUES (${sessionVals}'${slug}', '${SESSION}', 'frizz-${slug}', '${at}', 'Review the resolver change', 0, 'claude', 'open', 0, 0, 0, 'broker')`])
 
 console.log(JSON.stringify({ slug, session: SESSION, logDir, db }))

@@ -14,11 +14,12 @@
 // Follows the frizz-stack recipe: a session row + a JSONL the REAL tailer reads. No pane, no process:
 // liveness comes from the row.
 // Usage: nub scripts/seed-rest-divider-positions.mjs --home=/abs/temp-home --port=NNNN
-import { globSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import { SIGNOFF_NUDGE_MARKER } from "../packages/shared/src/index.ts"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -29,8 +30,11 @@ if (!home || !port) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 
@@ -70,8 +74,8 @@ const records = [
 writeFileSync(join(jsonlDir, `${sessionId}.jsonl`), records.map((r) => JSON.stringify(r)).join("\n") + "\n")
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
-   VALUES ('${slug}', '${sessionId}', 'frizz-${slug}', '${at(0)}', 'Rest divider positions', 'claude', 'opus', 'high', 'default', '${at(33)}')`,
+  `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
+   VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${at(0)}', 'Rest divider positions', 'claude', 'opus', 'high', 'default', '${at(33)}')`,
 ])
 
 const api = createRpcClient(`http://127.0.0.1:${port}/`)

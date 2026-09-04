@@ -8,11 +8,12 @@
 // hand-written string that merely looks like one.
 //
 // Usage: nub scripts/seed-recurring-prompt-glyphs.mjs --home=/abs/temp-home --port=NNNN
-import { mkdirSync, writeFileSync, globSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import { restPromptMessage, schedulePromptMessage, wakeDeliveryToken } from "../packages/shared/src/index.ts"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(
   process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")),
@@ -23,8 +24,11 @@ if (!home || !port) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects — is the stack booted?`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 
@@ -111,8 +115,8 @@ for (const [n, c] of CASES.entries()) {
   // worker needs no process at all.
   execFileSync("sqlite3", [
     db,
-    `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
-     VALUES ('${c.slug}', '${sessionId}', 'frizz-${c.slug}', '${at}', '${c.title}', 'claude', 'opus', 'high', 'default', '${at}')`,
+    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, rested_at)
+     VALUES (${sessionVals}'${c.slug}', '${sessionId}', 'frizz-${c.slug}', '${at}', '${c.title}', 'claude', 'opus', 'high', 'default', '${at}')`,
   ])
 
   // Arm through the REAL RPC the panel itself calls, so the rows are shaped exactly as production makes them.

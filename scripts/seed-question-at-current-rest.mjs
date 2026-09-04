@@ -29,8 +29,8 @@ const transcriptDir = path.join(home, ".claude", "projects", cwdSlug)
 fs.mkdirSync(transcriptDir, { recursive: true })
 
 // ONE server, EVERY project: the tables live in the unified `~/.frizz/ui.db` and are scoped by
-// `project_id`, not in a per-project file. (Several older seed-*.mjs still point at the pre-unification
-// `projects/<id>/ui.db`, which now exists but is empty — an insert there succeeds and renders nothing.)
+// `project_id`, not in a per-project file. This script takes its project id as an argument, so it
+// names the file directly; the seeds that have to DISCOVER one go through scripts/lib/sandbox-db.mjs.
 const db = path.join(home, ".frizz", "ui.db")
 
 const T = (n) => new Date(Date.UTC(2026, 7, 31, 19, n, 0)).toISOString()

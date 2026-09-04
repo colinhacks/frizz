@@ -20,9 +20,10 @@
 // Usage (from ui/, against a running scripts/adhoc-stack.mjs — pass ITS home):
 //   nub scripts/seed-rested-child-bands.mjs --port=4930 --home=<stack home>
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, globSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const args = process.argv.slice(2)
 const opt = (k, d) => { const hit = args.find((a) => a.startsWith(`--${k}=`)); return hit ? hit.slice(k.length + 3) : d }
@@ -36,9 +37,11 @@ const logDir = join(home, ".claude", "projects", cwdSlug)
 mkdirSync(logDir, { recursive: true })
 const at = (offsetSec) => new Date(Date.now() + offsetSec * 1000).toISOString()
 
-const dbs = globSync(join(home, ".frizz", "projects", "*", "ui.db"))
-if (dbs.length !== 1) { console.error("expected exactly one sandbox ui.db, got", dbs); process.exit(1) }
-const db = dbs[0]
+const sandbox = resolveSandboxDb(home)
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
+const db = sandbox.db
 
 // One fixture thread: write its transcript, give it a live dummy pane, register the row. `spawnedAt`
 // is staggered so the rail order is stable and readable in the screenshot.
@@ -47,7 +50,7 @@ function seed({ slug, session, title, records, ageSec }) {
   mkdirSync(join(sessionDir, "subagents"), { recursive: true })
   const rows = records(join(sessionDir, "subagents"))
   writeFileSync(join(logDir, `${session}.jsonl`), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`)
-  execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, state, backend, model, effort, permission_mode, title_auto, unread, exited, archived) VALUES ('${slug}', '${session}', 'frizz-${slug}', '${at(ageSec)}', '${title}', 'open', 'claude', 'opus', 'high', 'bypassPermissions', 0, 0, 0, 0)`])
+  execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, state, backend, model, effort, permission_mode, title_auto, unread, exited, archived) VALUES (${sessionVals}'${slug}', '${session}', 'frizz-${slug}', '${at(ageSec)}', '${title}', 'open', 'claude', 'opus', 'high', 'bypassPermissions', 0, 0, 0, 0)`])
 }
 
 const assistant = (content, ts, stop = "end_turn") => ({ type: "assistant", timestamp: ts, message: { id: `m${Math.random().toString(36).slice(2)}`, role: "assistant", stop_reason: stop, content } })

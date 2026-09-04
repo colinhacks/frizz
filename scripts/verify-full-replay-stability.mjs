@@ -15,10 +15,11 @@
 //   node scripts/verify-full-replay-stability.mjs --home=/abs/temp-home \
 //     --url=http://127.0.0.1:PORT/ --source=/abs/real.jsonl [--park=800] [--replay=200] [--seed-lines=600]
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, appendFileSync, globSync, readFileSync } from "node:fs"
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import puppeteer from "puppeteer"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const flags = Object.fromEntries(process.argv.slice(2).filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("=")))
 const { home, url, source } = flags
@@ -33,8 +34,11 @@ if (!home || !url || !source) {
 }
 mkdirSync(shotDir, { recursive: true })
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects`)
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const SLUG = `replay-${parkTarget}`
 const SESSION = `replay${String(parkTarget).padStart(3, "0")}-0000-4000-8000-000000000000`.slice(0, 36)
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
@@ -62,8 +66,8 @@ if (replay.length === 0) throw new Error(`nothing to replay: ${records.length} r
 console.log(`source ${source}: ${records.length} records — seeding ${seed.length}, replaying ${replay.length}`)
 
 writeFileSync(jsonl, seed.join("\n") + "\n")
-execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode)
-  VALUES ('${SLUG}', '${SESSION}', 'frizz-${SLUG}', '${new Date().toISOString()}', 'Replay ${parkTarget}px', 'claude', 'opus', 'high', 'default')`])
+execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode)
+  VALUES (${sessionVals}'${SLUG}', '${SESSION}', 'frizz-${SLUG}', '${new Date().toISOString()}', 'Replay ${parkTarget}px', 'claude', 'opus', 'high', 'default')`])
 
 // A one-line label for the record that just landed, so a drift report names its own cause.
 const label = (line) => {

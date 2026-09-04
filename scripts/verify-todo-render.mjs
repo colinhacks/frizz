@@ -14,10 +14,11 @@
 //
 // Usage: nub scripts/verify-todo-render.mjs --port=4931 --home=/abs/temp-home [--shots=/abs/dir]
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, readdirSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const args = process.argv.slice(2)
 const opt = (k, d) => { const hit = args.find((a) => a.startsWith(`--${k}=`)); return hit ? hit.slice(k.length + 3) : d }
@@ -112,14 +113,17 @@ const codexRecords = [
 ]
 writeFileSync(join(codexDir, `rollout-2026-07-29T12-00-00-${CODEX_SESSION}.jsonl`), codexRecords.join("\n") + "\n")
 
-const projects = join(home, ".frizz", "projects")
-const db = join(projects, readdirSync(projects)[0], "ui.db")
+const sandbox = resolveSandboxDb(home)
+const { db } = sandbox
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
 const seed = (slug, sessionId, title, backend, model) => {
   const threadName = `frizz-${slug}`
   execFileSync("sqlite3", [db, `DELETE FROM session WHERE slug = '${slug}';`])
   execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session
-    (slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, unread, exited, archived, title_auto, runtime_generation, profile_revision)
-    VALUES ('${slug}', '${sessionId}', '${threadName}', '${now}', '${title}', '${backend}', '${model}', 'high', 'default', 0, 0, 0, 0, 0, 0);`])
+    (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, model, effort, permission_mode, unread, exited, archived, title_auto, runtime_generation, profile_revision)
+    VALUES (${sessionVals}'${slug}', '${sessionId}', '${threadName}', '${now}', '${title}', '${backend}', '${model}', 'high', 'default', 0, 0, 0, 0, 0, 0);`])
   return threadName
 }
 const threadName = seed(SLUG, SESSION_ID, "Todo render check", "claude", "opus")

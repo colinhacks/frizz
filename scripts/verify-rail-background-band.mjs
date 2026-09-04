@@ -12,9 +12,10 @@
 // code path, which is exactly the part under test.
 //
 // Usage: nub scripts/verify-rail-background-band.mjs --url=http://127.0.0.1:4931/ --home=/tmp/frizz-adhoc-home-X
-import { mkdirSync, writeFileSync, appendFileSync, readdirSync } from "node:fs"
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const args = process.argv.slice(2)
 const opt = (k, d) => { const hit = args.find((a) => a.startsWith(`--${k}=`)); return hit ? hit.slice(k.length + 3) : d }
@@ -46,9 +47,11 @@ const failures = []
 // The sandbox project dir the stack created, and the Claude transcript dir keyed by the project's cwd
 // slug. Both are discovered rather than guessed: the stack picks the project id, and the slug is the
 // project dir with every non-alphanumeric turned into a dash (Claude Code's own convention).
-const projectsRoot = join(home, ".frizz", "projects")
-const projectId = readdirSync(projectsRoot)[0]
-const db = new DatabaseSync(join(projectsRoot, projectId, "ui.db"))
+const sandbox = resolveSandboxDb(home)
+// The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
+// such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
+const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
+const db = new DatabaseSync(sandbox.db)
 const projectDir = process.cwd()
 const cwdSlug = projectDir.replace(/[^a-zA-Z0-9]/g, "-")
 const transcriptDir = join(home, ".claude", "projects", cwdSlug)
@@ -93,8 +96,8 @@ try {
 
   // 2. The session row that binds slug → transcript. The sanctioned fixture write: the row IS
   //    the fixture, and everything read off it afterwards is the real pipeline.
-  db.prepare(`INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, state, permission_mode)
-              VALUES (?, ?, ?, ?, ?, 'claude', 'open', 'default')`)
+  db.prepare(`INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, state, permission_mode)
+              VALUES (${sessionVals}?, ?, ?, ?, ?, 'claude', 'open', 'default')`)
     .run(SLUG, SESSION_ID, THREAD_NAME, at(-70_000), "Wire up the preview server")
 
   // 3b. THE CONTROL — the same rest, but on a dispatched Agent instead of a Bash. Everything else about
@@ -132,8 +135,8 @@ try {
     timestamp: at(-10_000),
     message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Dispatched the audit; waiting on it." }] },
   }))
-  db.prepare(`INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, state, permission_mode)
-              VALUES (?, ?, ?, ?, ?, 'claude', 'open', 'default')`)
+  db.prepare(`INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, backend, state, permission_mode)
+              VALUES (${sessionVals}?, ?, ?, ?, ?, 'claude', 'open', 'default')`)
     .run(CTRL_SLUG, CTRL_SESSION_ID, CTRL_THREAD_NAME, at(-70_000), "Audit the broker crash paths")
 
   // 3. Let the tailer notice. It watches the transcript dir, but a row's runtime is only re-derived on
