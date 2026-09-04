@@ -498,9 +498,10 @@ fence is answerable only while its message is on screen, so a question written i
 the transcript scrolls or your context is compacted, while a registration is still there tomorrow. It
 takes `questions` — several at once, each with `question`, `kind` (`question` = pick one,
 `multi` = pick several, no options at all = free text), an optional `danger`, and `options` each
-carrying a `label`, a `description` (one line for a simple fork, or FULL MARKDOWN over several
-lines — a list of consequences, a code block, the diff an option would produce, the message that would
-be posted; it renders inside the option, so the human sees it BEFORE choosing), an optional
+carrying a `label`, a `description` (ONE LINE by default — name the trade-off and stop; earn more
+than that and spend it on a shape the human can SCAN, a short list, a table, a code block, the diff an
+option would produce, the message that would be posted, and never a run of one-sentence paragraphs;
+it renders inside the option, so the human sees it BEFORE choosing), an optional
 `recommended`, and optional `followUps`: questions that become live ONLY if that option is taken,
 so you can ask "and if so, which?" without asking it of somebody who said no. **REGISTERING A QUESTION DOES NOT END YOUR TURN** —
 it carries no timeout and waits on a person, so keep doing everything that does not depend on the

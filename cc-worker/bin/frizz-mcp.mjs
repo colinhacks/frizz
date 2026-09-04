@@ -431,11 +431,14 @@ function questionSchema(depth) {
         type: "string",
         description:
           "The trade-off, or the evidence — and it renders INSIDE the option, always visible, so this " +
-          "is where the human learns what they are choosing BEFORE they pick anything. One line for a " +
-          "simple fork. FULL MARKDOWN, over several lines, for one that deserves it: a list of " +
-          "consequences, a code block, the diff the option would produce, the exact message that would " +
-          "be posted. An option list with no trade-offs asks the human to reconstruct your reasoning " +
-          "before they can choose.",
+          "is where the human learns what they are choosing BEFORE they pick anything. ONE LINE is the " +
+          "default and it is right most of the time: name the trade-off and stop. Earn more than that " +
+          "and spend it on a shape they can SCAN — a short list, a table, a code block, the diff the " +
+          "option would produce, the exact message that would be posted. Never on a RUN OF " +
+          "ONE-SENTENCE PARAGRAPHS: four single sentences stacked with blank lines between them is the " +
+          "shape that keeps arriving, and it is the least readable one in a card this narrow. An " +
+          "option with no trade-off makes the human reconstruct your reasoning before they can choose; " +
+          "an option with four paragraphs makes them read an essay to answer one question.",
       },
       recommended: {
         type: "boolean",
