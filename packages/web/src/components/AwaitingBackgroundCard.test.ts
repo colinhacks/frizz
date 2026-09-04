@@ -18,12 +18,13 @@ const agent = (state: "running" | "stale") => ({ id: "toolu_a", label: "Audit th
 // A live sub-agent OF a sub-agent (depth 2 = a grandchild, 3 = a great-grandchild).
 const nested = (depth: number) => ({ id: `toolu_d${depth}`, label: "Trace the cache key", startedAt: "2026-07-28T09:00:00.000Z", state: "running" as const, depth })
 const shell = (state: "running") => ({ id: "toolu_s", taskId: "bzvtnt3ig", label: "vite dev", startedAt: "2026-07-28T09:00:00.000Z", state })
-// An OWNED SESSION thread, because the card decides its own Snooze off exactly that
-// (threadLifecycleAvailability) as of 2026-08-31 — a bare `{id, subAgents, bgShells}` is not a thread
-// anyone can act on, and a fixture that omitted the ownership fields would silently pin the card's
-// no-verb branch while claiming to test the ordinary one.
+// An OWNED SESSION thread AT REST ON ITS OWN PARK, because those are the two things the card decides
+// its Snooze off: `threadLifecycleAvailability` (2026-08-31 — a bare `{id, subAgents, bgShells}` is not
+// a thread anyone can act on) and `showsRestingCard` (2026-09-04 — the card now draws at every runtime,
+// through ChatView's fence block, and offers the park only where there is a rest to park). A fixture
+// omitting either would silently pin the card's no-verb branch while claiming to test the ordinary one.
 const thread = (subAgents: unknown[], bgShells: unknown[]) =>
-  ({ id: "demo-thread", sessionId: "sess-demo", kind: "session", subAgents, bgShells } as unknown as Parameters<typeof AwaitingBackgroundCard>[0]["thread"])
+  ({ id: "demo-thread", sessionId: "sess-demo", kind: "session", awaitingBackground: true, runtime: "turn-idle", subAgents, bgShells } as unknown as Parameters<typeof AwaitingBackgroundCard>[0]["thread"])
 
 // A DECLARED shell wait — what a worker's `watch: <handle>` fence hint becomes server-side.
 const shellWatch = (target: string) => ({ id: `shell:demo:${target}`, kind: "shell" as const, target, state: "armed" as const, createdAt: "2026-07-28T09:00:00.000Z" })
@@ -132,6 +133,53 @@ test("an empty or absent title falls back to the derived heading", () => {
   const done = { ...thread([agent("running")], []), lastFence: { kind: "done" as const, body: "", hints: [{ kind: "title" as const, value: "Landed" }] } } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"]
   assert.match(text(done), /Awaiting/)
   assert.doesNotMatch(text(done), /Landed/)
+})
+
+// ---- ONE CARD, EVERY RUNTIME (2026-09-04) --------------------------------------------------------
+// The awaiting FENCE used to draw a second card of its own in ChatView whenever the thread was not at
+// rest on it — its own heading rule, its own glyph, its own prose fallback, its own PR chips — so
+// steering a worker re-shaped the card under the human ("I'll steer an agent with a new message, and
+// it'll re-render the awaiting card in a totally different fucking way"). That card is gone; FenceCard
+// renders THIS one, handing in the fence it parsed. What these pin is the two things that made that
+// possible, because both are reachable only from that caller.
+
+test("the fence is a PARAMETER, so one card states a fence the board no longer holds", () => {
+  // The bumped thread exactly: the timers survive in their own registry, `lastFence` does not — the
+  // tailer clears it on the user record that bumps the thread — and the shell is only nameable because
+  // the fence's own hints came in with it.
+  const bumped = { ...thread([], [shell("running")]), watches: [timerWatch()] } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"]
+  const hints = [{ kind: "title" as const, value: "0.6.0 release hold" }, { kind: "shell" as const, value: "bzvtnt3ig" }]
+  // The BODY stays empty in every case here, for the reason the unified-card block below states: prose
+  // goes through the markdown sanitizer, which needs a real DOM this runner does not have. The heading,
+  // the rows and the placeholder are all DOM-free, and they are what these pin.
+  const html = renderToStaticMarkup(createElement(AwaitingBackgroundCard, { thread: bumped, fence: { body: "", hints } }))
+  assert.match(html.replace(/<[^>]+>/g, ""), /0\.6\.0 release hold/, "the worker's own heading, off the fence handed in")
+  assert.match(html, /data-wait-row="bzvtnt3ig" data-wait-kind="shell"/, "…and its shell rows off the same hints")
+  assert.match(html, /data-wait-kind="timer"/, "the registry rows are still the thread's")
+  // The thread's OWN fence never wins over one handed in: at a bump they disagree, and the caller is
+  // the one holding the fence the card is about.
+  const stale = { ...bumped, lastFence: { kind: "awaiting", body: "", hints: [{ kind: "title", value: "Something else" }] } } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"]
+  const overridden = renderToStaticMarkup(createElement(AwaitingBackgroundCard, { thread: stale, fence: { body: "", hints } })).replace(/<[^>]+>/g, "")
+  assert.match(overridden, /0\.6\.0 release hold/)
+  assert.doesNotMatch(overridden, /Something else/)
+})
+
+// A SUB-AGENT'S OWN TRANSCRIPT has no owning thread — no board row, so no rows and no verb — and a fence
+// still has to card there. It is also the ONE place the card can have neither prose nor rows, which is
+// what the placeholder sentence is for: a bare heading says less than a sentence does.
+test("a card with no thread is still the card: its heading, no rows, no verb", () => {
+  const bare = renderToStaticMarkup(createElement(AwaitingBackgroundCard, { fence: { body: "", hints: [{ kind: "title", value: "Three-platform CI run" }] } }))
+  assert.match(bare.replace(/<[^>]+>/g, ""), /Three-platform CI run/)
+  assert.match(bare, /data-awaiting-background/)
+  assert.doesNotMatch(bare, /data-wait-kind/, "no thread, no live work, no rows")
+  assert.doesNotMatch(bare, /Snooze/, "…and nothing to park")
+  // Neither shape may card as blank.
+  const empty = renderToStaticMarkup(createElement(AwaitingBackgroundCard, { fence: { body: "", hints: [] } })).replace(/<[^>]+>/g, "")
+  assert.match(empty, /Awaiting/)
+  assert.match(empty, /Waiting for an external update\./)
+  // …but a card with ROWS says nothing of the kind — the rows are what it has to say.
+  const rowed = render({ ...thread([agent("running")], []) } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"])
+  assert.doesNotMatch(rowed, /Waiting for an external update/)
 })
 
 // ---- ONE ROW PER THING, GROUPED BY KIND ----------------------------------------------------------

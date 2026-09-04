@@ -12,8 +12,8 @@
 // Usage: nub scripts/seed-timer-park.mjs --home=/abs/temp-home --port=NNNN
 import { execFileSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdirSync, writeFileSync, globSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, mkdirSync, writeFileSync, globSync } from "node:fs"
+import { basename, join } from "node:path"
 import { createRpcClient } from "./lib/rpc-client.mjs"
 
 const flags = Object.fromEntries(
@@ -25,9 +25,17 @@ if (!home || !port) {
   process.exit(1)
 }
 
-const db = globSync(join(home, ".frizz/projects/*/ui.db"))[0]
-if (!db) throw new Error(`no ui.db under ${home}/.frizz/projects — is the stack booted?`)
-const stateDir = join(db, "..")
+// One unified database per HOME since a995792e (`~/.frizz/ui.db`, rows keyed by project_id); the
+// per-project `projects/<id>/ui.db` is the pre-cutover layout, kept so an older sandbox still seeds.
+const unifiedDb = join(home, ".frizz/ui.db")
+const db = existsSync(unifiedDb) ? unifiedDb : globSync(join(home, ".frizz/projects/*/ui.db"))[0]
+if (!db) throw new Error(`no ui.db under ${home}/.frizz — is the stack booted?`)
+// The broker record still lives under the PROJECT's state dir, whichever layout the database took.
+const stateDir = existsSync(unifiedDb) ? globSync(join(home, ".frizz/projects/*"))[0] : join(db, "..")
+if (!stateDir) throw new Error(`no project state dir under ${home}/.frizz/projects — is the stack booted?`)
+// The project this row belongs to: the launcher's id, which is the name of its state directory.
+const projectId = basename(stateDir)
+const hasProjectId = execFileSync("sqlite3", [db, "PRAGMA table_info(session)"], { encoding: "utf8" }).includes("|project_id|")
 const jsonlDir = join(home, ".claude", "projects", cwd.replace(/[/.]/g, "-"))
 mkdirSync(jsonlDir, { recursive: true })
 mkdirSync(join(stateDir, "claude-broker"), { recursive: true })
@@ -43,13 +51,13 @@ const ahead = (mins) => new Date(Date.now() + mins * 60_000).toISOString()
 
 const slug = "timer-park"
 const sessionId = `${slug}-0000-4000-8000-000000000000`.slice(0, 36)
-const at = ago(3)
+const spawnedAt = ago(10)
 
 // The row FIRST: setOwnThreadTimer refuses a slug that is not registered.
 execFileSync("sqlite3", [
   db,
-  `INSERT OR REPLACE INTO session (slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
-   VALUES ('${slug}', '${sessionId}', 'frizz-${slug}', '${at}', 'timer park · release hold', 'claude', 'broker', 'opus', 'high', 'default', '${at}')`,
+  `INSERT OR REPLACE INTO session (${hasProjectId ? "project_id, " : ""}slug, session_id, thread_name, spawned_at, title, backend, claude_runtime, model, effort, permission_mode, rested_at)
+   VALUES (${hasProjectId ? `'${projectId}', ` : ""}'${slug}', '${sessionId}', 'frizz-${slug}', '${spawnedAt}', 'timer park · release hold', 'claude', 'broker', 'opus', 'high', 'default', '${spawnedAt}')`,
 ])
 writeFileSync(
   join(stateDir, "claude-broker", `${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}.json`),
@@ -61,6 +69,20 @@ const api = createRpcClient(`http://127.0.0.1:${port}/`)
 await api.waitForHealth()
 const t1 = await api.mutate("setOwnThreadTimer", { slug, prompt: "Re-check: tip quiet, frozen-lockfile install green, typecheck green", fireAt: ahead(34) })
 const t2 = await api.mutate("setOwnThreadTimer", { slug, prompt: "Poke the release workflow if no new run appeared", fireAt: ahead(52) })
+
+// THE REST COMES AFTER THE TIMERS, and that ordering is load-bearing rather than cosmetic. A real
+// worker arms its timers during the turn and rests once they are armed, so `createdAt < restedAt` for
+// every row it declared — and the card CUTS its rows at the rest instant whenever it is drawn at a rest
+// the thread has been bumped past (AwaitingWaitOptions.notAfter). Backdated three minutes, as this was,
+// every timer the script arms looks like work the REPLY started: the card showed two rows at rest and
+// none the moment a follow-up landed, which is a defect in the FIXTURE that reads exactly like one in
+// the product.
+//
+// AND IT KEEPS ITS MILLISECONDS. The other instants here floor to the second for readability; this one
+// may not, because the cut is a STRICT `>` against a timer's own millisecond-precision `created_at` —
+// flooring moves the rest up to 999ms into the past and drops the very rows it was ordered after.
+const at = new Date().toISOString()
+execFileSync("sqlite3", [db, `UPDATE session SET rested_at = '${at}' WHERE slug = '${slug}'`])
 
 // The worker's rest, in the CURRENT fence grammar: YAML frontmatter naming the armed ids, then prose.
 const fence = [

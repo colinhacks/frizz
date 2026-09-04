@@ -1,39 +1,16 @@
 import { RETIRED_AWAITING_KINDS, type AwaitingHint } from "@frizz/shared"
 import { githubRefUrl } from "./githubRef.ts"
-import { formatSnoozeWake } from "./snooze.ts"
 
-/** The awaiting card's TITLE when no hint is parkable — which, since the 2026-08-15 grammar dropped the
- *  last parkable kind, is EVERY awaiting fence (see awaitingParkAction). The card still wants the heading
- *  its `done` sibling has, it just has nothing to offer.
- *
- *  A LAST RESORT, not the usual heading: a fence that named its own `title:` heads itself with that on
- *  both surfaces (awaitingFenceTitle, honoured by the resting card's awaitingBackgroundLabel and by the
- *  fence card's own parkTitle). This is what is left when the worker named none. */
+/** The awaiting card's TITLE when the worker named none — which is most fences. It is true of every
+ *  park on the board and specific to none, so it is a LAST RESORT: a fence that wrote its own `title:`
+ *  heads the card with that instead (awaitingFenceTitle, read by awaitingBackgroundLabel). */
 export const AWAITING_FALLBACK_TITLE = "Awaiting"
 
-/** The verb every park button wears. It is deliberately ONE word for every kind: the card's TITLE
- *  already names the specific wait ("Awaiting human"), and the explainer already spells out the
- *  effect, so the button only has to say what it does (maintainer 2026-07-24). */
-export const AWAITING_PARK_BUTTON = "Snooze"
-/** NO AWAITING FENCE OFFERS A PARK ACTION ANY MORE, so this is always null.
- *
- *  It used to turn two hint kinds into a button: a future `timer: <instant>` became "Scheduled snooze",
- *  and `human:` became "Awaiting human". Both kinds are deleted (2026-08-15) — nothing ever fired a human
- *  gate, and a timer is now a row a worker creates through `mcp__frizz__timer` and names by id. The
- *  human's lever is the ordinary Snooze on the resting card, which never depended on a fence.
- *
- *  Kept as a function rather than deleted at every call site so the card keeps ONE shape; every caller
- *  already handles null (that is the PR path, which has rendered without a button since 2026-08-13). */
-export function awaitingParkAction(
-  _hints: readonly AwaitingHint[],
-  _nowMs = Date.now(),
-): { title: string; explainer: string; toastVerb: string; timerUntil: string | null } | null {
-  return null
-}
-
-function lowerCalendarLead(value: string): string {
-  return value.replace(/^(Today|Tomorrow)/, (day) => day.toLowerCase())
-}
+/** What the card says when the fence carries NO prose — an empty body, or one that was nothing but
+ *  machinery lines, which never reach the reader. Only reachable on a card that also has no rows (a
+ *  fence in a sub-agent's own transcript), and it exists because a card that is a bare heading says
+ *  less than a sentence does. */
+export const AWAITING_NO_PROSE = "Waiting for an external update."
 
 /** The PRs this fence is parked on, in fence order, deduped — clickable, because the fence line is the
  *  only place the ref exists and a card that names a PR without reaching it is a dead end (maintainer
@@ -111,29 +88,20 @@ export function reasonSentence(reason: string): string {
  *  command on earth, and a miss costs one capital letter rather than a wrong name. */
 const LOWERCASE_BY_NAME = new Set(["npm", "npx", "pnpm", "nub", "nubx", "gh", "git", "node", "bun", "tsc", "vite", "curl", "ssh"])
 
-// THE CARD'S PROSE, and under the structural grammar the BODY IS NOT PART OF IT.
+// THE CARD'S PROSE, and under the structural grammar the FRONTMATTER IS NOT PART OF IT.
 //
 // A fence's frontmatter is structure and nothing else, so anything left in `body` ABOVE the `---` is a
 // line the parser did NOT recognise — a worker still writing the deleted `watch:`, or a typo. (The live
 // keys are the plural YAML sequences of 2026-08-24: `shells:`/`agents:`/`timers:`/`prs:` plus `for:`.)
-// Joining that into the
-// card's sentence printed raw fence syntax at the human: "watch: bvg44v4ij — CI on #1227 is running…"
-// (maintainer 2026-08-16: "why the fuck is the awaiting block looking like this?"). It is not prose, it
-// is a malformed declaration — the worker gets BUMPED for it (scheduler SOURCE 12), which is where that
-// belongs, and the card says what it can rather than showing the machinery.
+// Joining that into the card's sentence printed raw fence syntax at the human: "watch: bvg44v4ij — CI on
+// #1227 is running…" (maintainer 2026-08-16: "why the fuck is the awaiting block looking like this?").
+// It is not prose, it is a malformed declaration — the worker gets BUMPED for it (scheduler SOURCE 12),
+// which is where that belongs, and the card says what it can rather than showing the machinery.
 //
-// `body` is still taken when there is no `reason:` at all — which since 2026-08-17 is the ORDINARY case
-// rather than the legacy one: a worker's handoff belongs below the `---`, and `reason:` was retired at
-// the 2026-08-24 YAML cutover. A fence older than the delimiter put its whole handoff in the body too.
-// Neither shape may card as blank.
-export function awaitingPresentationLine(body: string): string {
-  const prose = stripFenceSyntax(body)
-  return prose ? prose : "Waiting for an external update."
-}
-
-/** The same prose for a surface that can honestly render NOTHING — the unified resting card, whose
- *  heading and rows already state the wait, so an empty handoff wants no placeholder sentence and no
- *  divider above one. Null exactly when the fence carries no prose (or only unparsed fence syntax). */
+// NULL, not a placeholder sentence: the card's heading and rows already state the wait, so an empty
+// handoff wants no filler and no divider above one. The one card that has neither — a fence in a
+// sub-agent's own transcript, with no thread and so no rows — says AWAITING_NO_PROSE instead, and that
+// is the card's call to make rather than this function's.
 export function awaitingProseBlock(body: string | undefined): string | null {
   return body ? stripFenceSyntax(body) || null : null
 }

@@ -47,7 +47,6 @@ import { lastAskIndex, messagePresentationText } from "../lib/messagePresentatio
 import { stampHostFor } from "../lib/stampHost.ts"
 import { snoozePresetInstant, formatSnoozeWake } from "../lib/snooze.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
-import { AWAITING_FALLBACK_TITLE, AWAITING_PARK_BUTTON, awaitingParkAction, awaitingPresentationLine, prWatchRefs } from "../lib/awaitingPresentation.ts"
 import { ICON_LABEL_NUDGE } from "../lib/iconAlign.ts"
 import { prefs } from "../lib/prefs.ts"
 import { canAdoptThread } from "../lib/adoption.ts"
@@ -3641,27 +3640,24 @@ export function InlineVisualization({ file }: { file: string }) {
 
 // A SIGNAL fence rendered as a card in place of the raw ```done / ```awaiting block (the fence
 // language IS the state; the body is the message). `done` → a compact presentation-only success card;
-// its thread's Archive lives in the stable lifecycle footer. `awaiting` → the SAME card shape: a
-// heading naming the wait (the worker's own `title:`, else "Awaiting"), the body prose, then the resting
-// card's own wait table — the same rows, off the same thread — for a fence whose thread is not at rest
-// on it (see the FALLBACK note at the table below), then the park button + its explainer.
+// its thread's Archive lives in the stable lifecycle footer. `awaiting` → THE RESTING CARD ITSELF
+// (AwaitingBackgroundCard), which is the whole point: one component draws that card on every surface and
+// at every runtime, so steering a worker cannot re-shape it. See the branch below.
 // `notAfter` — the rest's instant, when this fence is drawn at a rest the thread is running past
 // (Message's `restedAt`): the wait table then lists what the worker rested on, not what its reply has
 // started since. Absent on every other surface, where the table reads the thread as it is.
 export function FenceCard({ fenceKind, body, hints, wrap, notAfter }: { fenceKind: FenceKind; body: string; hints: AwaitingHint[]; wrap?: boolean; notAfter?: string }) {
-  const html = useMarkdownHtml(body)
-  const awaitingLine = awaitingPresentationLine(body)
-  // BLOCK markdown, not inline. The fence's prose is arbitrary Markdown since frontmatter landed
+  // BLOCK markdown, not inline. A fence's prose is arbitrary Markdown since frontmatter landed
   // (2026-08-17), and inline rendering flattened a worker's paragraphs and lists into one run — the shape
-  // a handoff most often takes. `done` has rendered as blocks all along; this is the same treatment.
+  // a handoff most often takes.
   //
-  // AND THE CLASS HAS TO FOLLOW THE RENDERER. That change swapped the markdown call and left every one
-  // of these bodies on `md-inline`, which styles only code/strong/em/links — so a `<ul>` arrived with
+  // AND THE CLASS HAS TO FOLLOW THE RENDERER. That change swapped the markdown call and left these
+  // bodies on `md-inline`, which styles only code/strong/em/links — so a `<ul>` arrived with
   // Tailwind's preflight reset still on it and a handoff's bullet list came out as flat unmarked lines
   // that read as a run of labels (maintainer 2026-08-19: "renders as light gray labels?"). `md-body` is
   // the block sheet; inside a card `.card-md` pulls it to the card's own 13px and lets the colour inherit,
   // which is why no CARD_BODY rides alongside it.
-  const awaitingHtml = useMarkdownHtml(awaitingLine)
+  const html = useMarkdownHtml(body)
   // The owning thread's slug — set by the thread view AND the queue card — so the confirm button
   // resolves its thread and renders on both surfaces (null in a sub-agent's own transcript → no button).
   const slug = useContext(ThreadSlugContext)
@@ -3671,13 +3667,12 @@ export function FenceCard({ fenceKind, body, hints, wrap, notAfter }: { fenceKin
   const queueDismiss = useContext(QueueDismissContext)
   const board = useBoard()
   // Resolve the owning thread + whether whole-thread lifecycle actions are applicable (session, not
-  // foreign). Shared by both branches: the done card's Mark-as-done button and the awaiting card's
-  // confirm-park button only render for a real, actionable session thread (null in the queue card /
-  // sub-agent transcript, where there's no ThreadSlugContext → the fence renders card-only).
+  // foreign). Shared by both branches: the done card's Mark-as-done button renders only for a real,
+  // actionable session thread, and the awaiting card needs the thread for its rows (null in a sub-agent
+  // transcript, where there's no ThreadSlugContext → the fence renders card-only).
   const fenceThread = slug ? threadBySlug(board, slug) : undefined
   const lifecycle = fenceThread ? threadLifecycleAvailability(fenceThread) : undefined
-  // `archive` and `snooze` move together (owned session, not yet done), so one flag gates BOTH fence
-  // actions. Deliberately NOT `footer`: that stays true on a done thread — whose strip now renders as a
+  // Deliberately NOT `footer`: that stays true on a done thread — whose strip now renders as a
   // "Done" readout — and keying on it here would grow a live Mark-as-done button on the done fence of a
   // thread that is already archived.
   const canAct = !!(fenceThread && lifecycle?.archive)
@@ -3712,174 +3707,29 @@ export function FenceCard({ fenceKind, body, hints, wrap, notAfter }: { fenceKin
       </TranscriptCard>
     )
   }
-  // Same shell as the done card above — heading, then the prose, then the action. The heading names
-  // the WAIT ("PR watcher armed"), which is what the old right-rail button label was doing badly: it
-  // read as the button's verb when it was really the card's identity (maintainer 2026-07-24) — and why
-  // the heading is now a STATE rather than the imperative "Arm watcher" that replaced it (2026-07-29).
-  // With no parkable hint there's no action to name, so it falls back to a plain "Awaiting".
+  // AND THE ```awaiting FENCE IS THE RESTING CARD — one component, not a second card that agrees with it
+  // by hand (AwaitingBackgroundCard). It rendered as its own card until 2026-09-04, with its own heading
+  // rule, its own glyph rule, its own prose fallback, its own wrap rule and its own PR chips, so the SAME
+  // fence drew one shape while the thread rested on it and a visibly different one the moment the human
+  // steered the worker: "I'll steer an agent with a new message, and it'll re-render the awaiting card in
+  // a totally different fucking way. This doesn't make any sense at all." The only thing that may differ
+  // is the SNOOZE, which the card drops itself once there is no rest to park (maintainer, same message:
+  // "you can remove the snooze button and stuff because the interactive elements obviously are no longer
+  // interactive").
   //
-  // THE WORKER'S OWN `title:` WINS, exactly as it does on the resting card (awaitingBackgroundLabel):
-  // only the worker knows what this particular wait IS, and "Awaiting" is true of every park and
-  // specific to none (maintainer 2026-08-26: "let's let the agent specify its own title for these
-  // awaiting cards"). That ruling landed on the resting card alone, so a fence whose thread is NOT at
-  // rest — mid-turn, event-snoozed, or already moved past the fence — dropped the title the worker
-  // wrote and headed itself "Awaiting" instead. The two surfaces render the same fence; they may not
-  // disagree about its name.
-  const parkAction = awaitingParkAction(hints)
-  const parkTitle = awaitingFenceTitle(hints) ?? parkAction?.title ?? AWAITING_FALLBACK_TITLE
-  // A watch is active observation, not elapsed time. Keep the hourglass for a hold on the clock and give
-  // a PR wait its own scanning mark; the scheduler-facing key itself stays out of the prose.
-  const AwaitingIcon = hints.some((hint) => hint.kind === "pr") ? Radar : Hourglass
-  // The PRs the watcher is actually on, as LINKS. The title states the wait and the body is the
-  // worker's own prose, so without these the one thing the card is ABOUT — which PR? — was unreachable:
-  // the hint is the only place the ref exists, and the prose usually names a bare "#15524" or nothing
-  // (maintainer 2026-07-31, "obviously this should have a link to the PR being watched"). ONE ref rides
-  // the title row in the same `aside` slot the GitHub wake card uses for its ref; SEVERAL get a wrapped
-  // row of their own under the prose, because `aside` is shrink-0 and a six-PR fence would shove the
-  // heading off a narrow queue card.
-  const watched = prWatchRefs(hints)
-  // …and ONLY the refs the wait table below does not already row. A registered PR is a github row down
-  // there — verdict glyph, counts, the same link — so a chip for it too would be one PR twice on a card
-  // that has been trimmed for exactly that. What is left for a chip is a `prs:` entry nothing registered.
-  const rowedRefs = new Set((fenceThread?.watches ?? []).filter((w) => w.kind === "github" && w.state === "armed").map((w) => w.target))
-  const unrowed = watched.filter((w) => !rowedRefs.has(w.ref))
-  // TWO CARDS SAYING "AWAITING" IS ONE TOO MANY. Since a PR wait stopped carrying a park action
-  // (2026-08-13), this card falls back to a bare "Awaiting" heading — and directly beneath it the
-  // resting card says "Awaiting background work", lists the watched PRs with their live check state, and
-  // carries the only control. The maintainer read the pair as a duplicate, and it is: the heading is the
-  // only part that repeats (2026-08-13, with a screenshot of the two stacked).
+  // The fence is passed in rather than read off the thread: the board holds `lastFence` only while the
+  // fence is the worker's last word, and the two surfaces that reach here are exactly the ones where it
+  // is not — a thread running past the rest, and one the human bg-snoozed.
   //
-  // So when the resting card is actually SHOWING, this fence renders NOTHING AT ALL — not chrome, not
-  // prose. Since 2026-08-24 the resting card is the UNIFIED card (maintainer: "the rendered message at
-  // the top of the card, followed by a horizontal divider, followed by all of the awaited items"): it
-  // reads the fence's body off the thread and opens on it, so anything drawn here — even the bare
-  // prose this branch used to leave standing — is the same handoff twice on one screen. The PR links
-  // ride the card's own github rows.
+  // `fenceThread` is undefined in a sub-agent's own transcript, where the card has no rows and no verb.
   //
-  // Guarded on showsRestingCard, not on `awaitingBackground` alone: the card is suppressed while the
-  // rest is event-snoozed (and for any non-idle runtime), and the fence must keep stating the wait
-  // there or the transcript ends on nothing and reads as "the agent died".
-  //
-  // A FALLBACK, not the mechanism. Every transcript surface that owns a thread skips the fence BLOCK
-  // before it reaches here (Message's `restingCardShown`), because a null returned from this component
-  // still spends the block spacer above it. This guard only catches a caller that did not pass the flag.
-  const restingCardStatesIt = parkAction === null && fenceThread != null && showsRestingCard(fenceThread)
-  if (restingCardStatesIt) return null
-  return (
-    // WRAPPED AT ANY CHARACTER, for the reason the resting card's heading already is: this label is
-    // worker-authored now, and the header's wrap-don't-truncate rule was written for code-authored
-    // kinds that carry no unbreakable token. A `title:` naming a branch, a URL or a base64 id is one,
-    // and here it shares the row with a PR ref in `aside`, which is shrink-0.
-    <TranscriptCard data-awaiting-fence icon={AwaitingIcon} label={<span className="[overflow-wrap:anywhere]">{parkTitle}</span>} aside={unrowed.length === 1 ? <WatchedRef watch={unrowed[0]} /> : undefined}>
-      <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={awaitingHtml} />
-      {unrowed.length > 1 && (
-        // `gap-x-3` rather than a punctuation separator: the refs are a set of targets, not a sentence,
-        // and a wrapped "·" stranded at a line end reads as a typo. They wrap onto as many lines as the
-        // card's width needs — six refs take three rows on a phone-width queue card without overflowing
-        // it. `mt-2` (against the prose's own 20px leading) is what makes the block read as its own
-        // group rather than as one more line of the paragraph.
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-          {unrowed.map((watch) => (
-            <WatchedRef key={watch.ref} watch={watch} />
-          ))}
-        </div>
-      )}
-      {/* WHAT IT IS WAITING ON — the resting card's own table, grouped by kind, a row per thing with its
-          live state and drill-in. ONLY ON THIS BRANCH: when the resting card is showing it owns the wait
-          entirely and the branch above drops this card so the two do not both state it. This is the
-          FALLBACK — the fence is the worker's last word but the thread is NOT at rest on it: mid-turn on
-          a follow-up the human sent while the worker was still working, or woken by the very shell it
-          named and working on. It used to print the fence's machinery here instead, one muted line of
-          runtime ids — "shell b7w140a81   for 45m" — and a shell wait is the one that meets this branch
-          most, because it is the one that resumes mid-turn (maintainer 2026-08-27, with a screenshot:
-          "for shells, I keep on seeing this fucking disgusting thing"). The registered rows come off the
-          thread; the fence's OWN `shells:` come off `hints`, because the board only rows a declared
-          shell while the fence is the worker's last word, and this card is drawn precisely when it no
-          longer is — the bump cleared it, and with it the shell row, on 2026-08-28 (see
-          AwaitingWaitOptions). No `for:` readout either: the resting card never shows one, and the two
-          surfaces render the same fence. Null in a sub-agent's own transcript (no thread) and null when
-          nothing is live. */}
-      {fenceThread && <AwaitingWaitTable thread={fenceThread} hints={hints} notAfter={notAfter} divider />}
-      {canAct && fenceThread && <AwaitingParkButton thread={fenceThread} hints={hints} />}
-    </TranscriptCard>
-  )
-}
-
-// One watched PR reference. A worker writes each `prs:` entry by hand, so a ref that isn't
-// `owner/repo#N` still says WHAT is being watched — it degrades to muted text in the same position
-// rather than to a dead link or to nothing at all.
-//
-// A valid ref carries `data-gh-ref`, so the app-wide hovercard layer (GithubHovercards) opens the PR's
-// card on it exactly as on a `#123` in prose — the fence line is the only place the ref exists, and
-// the card is what tells the reader which PR that is without leaving. Pre-noted at render, as prose
-// is, so the first hover is never blank.
-function WatchedRef({ watch }: { watch: { ref: string; url: string | null } }) {
-  useEffect(() => {
-    if (watch.url) noteGithubRefs([watch.ref])
-  }, [watch.url, watch.ref])
-  if (!watch.url) return <span className="text-[12px] text-muted">{watch.ref}</span>
-  return (
-    <a href={watch.url} target="_blank" rel="noreferrer noopener" data-gh-ref={watch.ref} className={`${CARD_LINK} text-[12px]`}>
-      {watch.ref}
-    </a>
-  )
-}
-
-// The awaiting card's HUMAN-IN-THE-LOOP park button, sitting under the prose with its effect spelled
-// out in muted text beside it. IT NO LONGER RENDERS: awaitingParkAction has returned null for every
-// fence since the 2026-08-15 grammar, and the paragraph below describes the world it was written for.
-// The worker's ```awaiting fence already auto-arms the durable wake (a `timer: <instant>` fired at its
-// instant; a `pr-watch:` watcher woke on any new PR activity, bot or human — both spellings retired) AND
-// already files the thread into the dimmed Snoozed band — this button lets the human EXPLICITLY commit a
-// USER-OWNED snooze on top, so the park carries a concrete wake time and is durable across fence
-// changes. It NEVER suppresses the auto-armed wake: a user snooze is a board-presentation concern
-// only (board.ts), independent of the scheduler. The button says only "Snooze"; its kind → title +
-// explainer + snooze target policy lives in lib/awaitingPresentation.ts (awaitingParkAction), where
-// it is unit-tested.
-function AwaitingParkButton({ thread, hints }: { thread: ThreadViewData; hints: readonly AwaitingHint[] }) {
-  const [busy, setBusy] = useState(false)
-  // On the queue, confirming the park dismisses THIS card through the user-initiated auto-scroll exit
-  // (like Snooze); null in the drawer, where the card just leaves the board.
-  const queueDismiss = useContext(QueueDismissContext)
-  const action = awaitingParkAction(hints)
-  if (!action) return null
-  const apply = () => {
-    // A future timer snoozes to its exact instant; kinds without a declared time use the default preset.
-    const until = action.timerUntil ?? snoozePresetInstant(prefs.snoozePreset)
-    setBusy(true)
-    rpc
-      .setThreadSnooze({ slug: thread.id, sessionId: thread.sessionId ?? "", until })
-      .then(() => {
-        showToast(`${action.toastVerb} · ${formatSnoozeWake(until)}`)
-        queueDismiss?.dismiss()
-      })
-      .catch((error) => showToast(`Couldn’t snooze: ${(error as Error).message.slice(0, 80)}`))
-      .finally(() => setBusy(false))
-  }
-  return (
-    // Button FIRST, explainer immediately to its right and centered against it (maintainer
-    // 2026-07-29) — the pair reads as one control with its caption, and the verb starts on the same
-    // left edge as the card's kind header and body. The explainer still takes the remaining width and
-    // wraps its OWN lines there (flex-1 + min-w-0) rather than pushing the button onto a line of its
-    // own, so a two-line sentence on a narrow queue card leaves the control intact.
-    <CardActions>
-      <button
-        type="button"
-        onClick={apply}
-        disabled={busy}
-        aria-label={AWAITING_PARK_BUTTON}
-        title={action.explainer}
-        onMouseDown={(e) => e.preventDefault()}
-        // Same white primary chrome as the done card's Mark-as-done: parking is this card's verb, and
-        // the recessed grey it used to wear read as a secondary/disabled affordance beside it.
-        className={`whitespace-nowrap disabled:opacity-45 ${CARD_PRIMARY_ACTION}`}
-      >
-        {busy && <Loader2 size={11} className="animate-spin" />}
-        {AWAITING_PARK_BUTTON}
-      </button>
-      <span className={CARD_ACTION_EXPLAINER}>{action.explainer}</span>
-    </CardActions>
-  )
+  // A FALLBACK GUARD, not the mechanism: when the thread IS at rest on this fence the transcript skips
+  // the fence BLOCK before it reaches here (Message's `restingCardShown`), because a null returned from
+  // this component still spends the block spacer above it. This only catches a caller that did not pass
+  // the flag — and it must stay a null rather than a second card, or the tail's card and this one draw
+  // the same wait twice.
+  if (fenceThread && showsRestingCard(fenceThread)) return null
+  return <AwaitingBackgroundCard thread={fenceThread} fence={{ body, hints }} notAfter={notAfter} />
 }
 
 // A permission-blocked agent is INVISIBLE in the transcript (the turn is parked mid-tool_use, so no

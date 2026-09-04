@@ -3,9 +3,7 @@ import test from "node:test"
 import { SetThreadSnoozeInput } from "@frizz/shared"
 import {
   AWAITING_FALLBACK_TITLE,
-  AWAITING_PARK_BUTTON,
-  awaitingParkAction,
-  awaitingPresentationLine,
+  AWAITING_NO_PROSE,
   awaitingProseBlock,
   prWatchRefs,
   awaitingWaitClause,
@@ -23,31 +21,12 @@ const now = Date.parse("2026-07-21T18:00:00.000Z")
 // derived from whatever instant the worker had typed. All of it is gone with the kinds — a worker no
 // longer describes its wait in prose frizz has to parse back, it NAMES things frizz can look up, and it
 // writes exactly one line for a human. So there is nothing left to synthesize and nothing to get wrong.
-
-test("no fence offers a park action any more — the worker's own tools own the wait", () => {
-  // `timer:` used to become "Scheduled snooze" and `human:` "Awaiting human". Both kinds are deleted:
-  // nothing ever fired a human gate, and a timer is a row set through `mcp__frizz__timer`. The human's
-  // lever is the ordinary Snooze on the resting card, which never depended on a fence.
-  for (const hints of [
-    [{ kind: "timer" as const, value: "tmr_a1b2c3" }, { kind: "for" as const, value: "2h" }],
-    [{ kind: "shell" as const, value: "bzvtnt3ig" }, { kind: "for" as const, value: "2h" }],
-    [{ kind: "pr" as const, value: "acme/app#391" }, { kind: "for" as const, value: "2h" }],
-    [],
-  ]) {
-    assert.equal(awaitingParkAction(hints), null, `${JSON.stringify(hints)} must offer no park button`)
-  }
-})
-
-// THE CARD'S SENTENCE IS THE FENCE'S BODY, and there is no longer any other source. `awaitingHintSentence`
-// read a `reason:` hint and lived here until 2026-08-24, when `reason:` was retired with the YAML cutover
-// — and because `lastFence` is re-derived from the transcript on every fold rather than persisted, even a
-// fence written years ago re-parses under the current grammar, so nothing can mint that hint any more. A
-// reader that cannot fire is not compatibility, it is a second answer to a question with one answer.
-test("the card's line is the fence body, and an empty fence still says something", () => {
-  assert.equal(awaitingPresentationLine("Waiting on the three-platform run."), "Waiting on the three-platform run.")
-  assert.equal(awaitingPresentationLine("   "), "Waiting for an external update.")
-  assert.equal(awaitingPresentationLine(""), "Waiting for an external update.")
-})
+//
+// `awaitingParkAction` — the reader that turned a hint kind into a button — went with the last caller on
+// 2026-09-04: it had returned null for every fence since 2026-08-15, and the awaiting card it fed was
+// folded into the resting card (AwaitingBackgroundCard), whose park is the ordinary Snooze and has never
+// depended on a fence. `awaitingPresentationLine` went the same day, for the same reason: ONE card reads
+// the body now, through awaitingProseBlock, and it decides for itself what an empty one says.
 
 test("prWatchRefs surfaces every watched PR as a link target, in fence order", () => {
   const refs = prWatchRefs([
@@ -85,21 +64,24 @@ test("an unrecognized fence line never becomes prose", () => {
   // The exact shape from the screenshot: a stale `watch:` fell into the body beside real prose. Until
   // 2026-08-24 the card dodged it by preferring the `reason:` hint; `reason:` is retired, so the body is
   // now the only source and the filter has to be explicit.
-  assert.equal(awaitingPresentationLine(`watch: bvg44v4ij\n${REASON}`), REASON)
-  assert.doesNotMatch(awaitingPresentationLine(`watch: bvg44v4ij\n${REASON}`), /watch:/)
+  assert.equal(awaitingProseBlock(`watch: bvg44v4ij\n${REASON}`), REASON)
+  assert.doesNotMatch(awaitingProseBlock(`watch: bvg44v4ij\n${REASON}`) ?? "", /watch:/)
   // The retired SINGULAR keys and the live plural ones are both machinery, and neither may card.
-  assert.equal(awaitingPresentationLine("pr: acme/app#1\nreason: waiting on your merge"), "Waiting for an external update.")
-  assert.equal(awaitingPresentationLine("prs: [acme/app#1]\nfor: 2h"), "Waiting for an external update.")
+  assert.equal(awaitingProseBlock("pr: acme/app#1\nreason: waiting on your merge"), null)
+  assert.equal(awaitingProseBlock("prs: [acme/app#1]\nfor: 2h"), null)
   // …but a handoff that merely CONTAINS a colon is prose, and eating it would be the opposite bug.
-  assert.equal(awaitingPresentationLine("Note: the macOS leg is the flaky one."), "Note: the macOS leg is the flaky one.")
+  assert.equal(awaitingProseBlock("Note: the macOS leg is the flaky one."), "Note: the macOS leg is the flaky one.")
 })
 
-// …but a fence puts its handoff in the BODY — the fences written before the grammar had a `reason:` did,
+// …and a fence puts its handoff in the BODY — the fences written before the grammar had a `reason:` did,
 // and so does every fence written since the `---` delimiter landed on 2026-08-17 and `reason:` was retired
-// on 2026-08-24. Neither may card as blank, so the body is the fallback when there is nothing better.
+// on 2026-08-24. A body that survives the filter is the card's whole opening stratum; one that does not
+// leaves the card to say AWAITING_NO_PROSE, and only where it has no rows to say it with either.
 test("a fence with no reason still shows its body rather than carding blank", () => {
-  assert.equal(awaitingPresentationLine("PR is open and CI is green."), "PR is open and CI is green.")
-  assert.equal(awaitingPresentationLine(""), "Waiting for an external update.")
+  assert.equal(awaitingProseBlock("PR is open and CI is green."), "PR is open and CI is green.")
+  assert.equal(awaitingProseBlock(""), null)
+  assert.equal(awaitingProseBlock("   "), null)
+  assert.equal(AWAITING_NO_PROSE, "Waiting for an external update.")
 })
 
 // THE RAIL'S WAIT CLAUSE. The sidebar row is a TITLE and nothing else (maintainer 2026-08-19), so what

@@ -145,28 +145,56 @@ test("every transcript surface cuts staleness at the same index", () => {
   assert.doesNotMatch(source, /\n\s+messageRendersNothing,\n/, "no row builder may take the position-blind predicate")
 })
 
-// THE FALLBACK IS THE RESTING CARD'S TABLE, NOT THE FENCE'S MACHINERY. A live fence whose thread is not
-// at rest on it — mid-turn on a follow-up the human sent while the worker was still working, or woken by
-// the very shell it named — reaches FenceCard rather than the resting card, and until 2026-08-28 that
-// branch printed the fence's items as one muted line of runtime ids ("shell b7w140a81   for 45m"). A
-// shell wait met it most, because a shell wait is the one that resumes mid-turn (maintainer 2026-08-27,
-// with a screenshot: "for shells, I keep on seeing this fucking disgusting thing"). The board synthesizes
-// the same watch rows whether or not the thread is idle, so the card draws the same table the resting
-// card does, off the same thread.
-test("the fallback fence card draws the wait table and never the raw ids", () => {
+// ONE AWAITING CARD, EVERY RUNTIME (2026-09-04). A live fence whose thread is NOT at rest on it — mid-turn
+// on a follow-up the human sent, woken by the very shell it named, or bg-snoozed — reaches FenceCard
+// rather than the tail's resting card. It used to draw a SECOND card there, agreeing with the resting one
+// by hand: its own heading rule ("Awaiting", never "Background shells running"), its own glyph (a radar
+// for a PR wait), its own empty-body placeholder, its own wrap rule, and its own PR chips. So steering a
+// worker re-shaped the card under the human (maintainer 2026-09-04: "I'll steer an agent with a new
+// message, and it'll re-render the awaiting card in a totally different fucking way. This doesn't make
+// any sense at all"). Now there is one component, and the ONLY thing that may vary with the runtime is
+// the Snooze, which that component withholds itself where there is no rest to park.
+test("the awaiting fence renders the resting card itself, not a second card beside it", () => {
   const card = source.match(/export function FenceCard\([\s\S]*?\n}/)?.[0]
   assert.ok(card, "FenceCard must exist")
   const code = card.replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
-  // …AND OFF THE FENCE'S OWN HINTS. The board rows a declared shell only while the fence is the worker's
-  // last word, and the tailer clears that on the very user record that bumps the thread — so a table
-  // read off `thread.watches` alone lost the shell row at the bump while the PR and timer rows (rows in
+  // THE FENCE IS PASSED IN, not read off the thread: the board holds `lastFence` only while the fence is
+  // the worker's last word, and the tailer clears it on the very user record that bumps the thread — so a
+  // card reading the thread alone lost the shell row at the bump while the PR and timer rows (rows in
   // their own registries) survived (maintainer 2026-08-28: "it hides the background shell for some
   // reason"). `notAfter` is the rest's instant when the card is drawn at a rest the thread moved past.
-  assert.match(code, /<AwaitingWaitTable thread=\{fenceThread\} hints=\{hints\} notAfter=\{notAfter\} divider \/>/, "the resting card's own table, off the same thread and the fence's own hints")
+  assert.match(code, /return <AwaitingBackgroundCard thread=\{fenceThread\} fence=\{\{ body, hints \}\} notAfter=\{notAfter\} \/>/, "the resting card itself, stating this fence")
+  // Nothing about the awaiting card may be built HERE — a heading, a glyph, a prose call, a chip. Every
+  // one of those was a place the two cards could disagree, and one of them is how each difference got in.
+  assert.doesNotMatch(code, /Hourglass|Radar|TerminalSquare/, "the glyph is the card's, and it follows the card's title")
+  assert.doesNotMatch(code, /awaitingFenceTitle|AWAITING_FALLBACK_TITLE|parkTitle/, "the heading is the card's")
+  assert.doesNotMatch(code, /awaitingPresentationLine|awaitingProseBlock|prWatchRefs|WatchedRef/, "the prose and the PR chips are the card's")
+  assert.doesNotMatch(code, /AwaitingWaitTable|AwaitingParkButton/, "…and so is the wait table and any verb under it")
   assert.doesNotMatch(code, /awaitingItemLabels|awaitingForLabel|itemLabels|forLabel/, "no label line of ids and a duration")
-  // A `prs:` entry that the table already rows as a github watch gets no chip as well — one PR, one place.
-  assert.match(code, /const unrowed = watched\.filter\(\(w\) => !rowedRefs\.has\(w\.ref\)\)/)
-  assert.doesNotMatch(code, /watched\.length|watched\[0\]|watched\.map/, "every chip site reads the unrowed set")
+})
+
+// …and the pieces the fence card used to own are now the resting card's, once each.
+test("the resting card owns the heading, the glyph, the prose and the chips", () => {
+  const cardSource = readFileSync(new URL("./AwaitingBackgroundCard.tsx", import.meta.url), "utf8")
+  // To the END of the file, not to the first column-0 `}`: the props type closes on one of those, so a
+  // lazy match would stop at the signature and every assertion below would pass on the type alone.
+  const at = cardSource.indexOf("export function AwaitingBackgroundCard(")
+  const card = at >= 0 ? cardSource.slice(at) : undefined
+  assert.ok(card, "AwaitingBackgroundCard must exist")
+  const code = card.replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+  // The fence it STATES is a parameter, defaulting to the thread's own — that default is the at-rest
+  // case, and the parameter is what lets one card also state a fence the board has already dropped.
+  assert.match(code, /const stated = fence \?\? \(thread\?\.lastFence\?\.kind === "awaiting" \? thread\.lastFence : undefined\)/)
+  assert.match(code, /awaitingBackgroundLabel\(work, hints\)/, "the heading reads the stated fence's hints")
+  assert.match(code, /icon=\{shellsAlone\(work\) \? TerminalSquare : Hourglass\}/, "two titles, two glyphs, and no third")
+  assert.match(code, /const prose = awaitingProseBlock\(stated\?\.body\)/)
+  assert.match(code, /const unrowed = unrowedWatchRefs\(work, hints\)/, "a PR the table already rows gets no chip — one PR, one place")
+  // THE SNOOZE IS THE ONE THING THE RUNTIME MAY CHANGE, and it is withheld rather than re-styled: a
+  // thread running past the rest, or one already bg-snoozed, has no rest for the mutation to park.
+  assert.match(code, /const snoozable = notAfter === undefined && thread !== undefined && showsRestingCard\(thread\) && threadLifecycleAvailability\(thread\)\.snooze/)
+  // Nothing else may key on the runtime. A second `showsRestingCard` call inside this card is how a
+  // heading, a glyph or a truncation rule would start varying with it again.
+  assert.equal(code.match(/showsRestingCard\(/g)?.length, 1, "the runtime reaches exactly one decision, and it is the Snooze")
 })
 
 // A FENCELESS REST KEEPS ITS CARD PAST THE BUMP (2026-08-28). A worker that rests on registered rows
