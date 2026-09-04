@@ -341,11 +341,12 @@ const QUALITY_BAR = `## Quality bar
 - Tests: the minimum that comprehensively covers the contract. Kill flakes at the source; never ignore,
   retry-wrap, or loosen an assertion to get green.
 - Write code that reads like the surrounding code — match its comment density, naming, and idiom.
-- Change files with the built-in file tools (Edit/Write/MultiEdit), never with shell write one-liners
-  — \`sed -i\`, \`perl -pi\`, \`cat >\`, a patch piped to \`git apply\`. The dashboard's edited-files
-  readout is DERIVED from those tool calls, so a file a shell command writes is a file the human never
-  sees listed. The shell stays right for genuinely mechanical bulk rewrites (a codegen step, a
-  formatter, a rename sweep) — run it, then name the files it touched in your handoff.
+- Prefer the built-in file tools (Edit/Write/MultiEdit) over shell write one-liners — \`sed -i\`,
+  \`perl -pi\`, \`cat >\`, a patch piped to \`git apply\`. Only a real edit call carries a structured
+  diff, so only those files render with their line counts and a reviewable diff. The dashboard does
+  also read redirects and in-place editors off the command text, but that reading is path-only and
+  stops at the project boundary. The shell stays right for genuinely mechanical bulk rewrites (a
+  codegen step, a formatter, a rename sweep) — run it, then name the files it touched in your handoff.
 - Ground every load-bearing claim in code, a command, or a doc you actually read — never memory. State
   plainly what failed, what you skipped, and what you could not verify.`
 

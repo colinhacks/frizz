@@ -4079,8 +4079,10 @@ export function readLatestThreadTranscriptPage(
     hasEarlier: canonicalStart > 0,
     reachedTurnBoundary: true,
     transcriptKey: snapshot.transcriptKey,
-    // Over the WHOLE projection, not the window — see EditedFile in @frizz/shared.
-    editedFiles: editedFilesOf(projected),
+    // Over the WHOLE projection, not the window — see EditedFile in @frizz/shared. The project dir is
+    // what scopes the SHELL-write reading: a redirect names any path the worker felt like, and only the
+    // ones inside this checkout belong on the rail (edited-files.ts).
+    editedFiles: editedFilesOf(projected, project.dir),
   }
 }
 

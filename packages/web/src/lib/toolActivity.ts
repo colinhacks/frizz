@@ -709,6 +709,12 @@ export interface FileWritingTool {
  * apply_patch the server could not reconstruct (a `Delete File`, a multi-file hunk) still arrives named
  * Edit with the file as its `detail`, which is why the name check is the fallback rather than dead code.
  * A Bash `rm`/`mv` is deliberately not inspected — the digest counts file tools, not shell side effects.
+ *
+ * Nor is a Bash WRITE, which is where this parts company with the fullscreen rail's own list: that one
+ * does read redirects and in-place editors out of the command text (server/edited-files.ts), because it
+ * has the project dir to resolve a relative target against and the filesystem to reject one that was
+ * never written. This runs in the browser with neither, and a per-turn count that swept in `/dev/null`
+ * and every `/tmp` capture would be less true than one that counts file tools and says so.
  */
 export function editedFileCount(tools: readonly FileWritingTool[]): number {
   const files = new Set<string>()
