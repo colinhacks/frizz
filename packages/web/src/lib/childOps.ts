@@ -82,6 +82,34 @@ export function shellLinesLabel(lines: number | undefined): string | undefined {
   return `${compactCount(lines) ?? "0"} lines`
 }
 
+// THE SAME COUNTER, FOR A WATCHED PR — what its CI says, in the width the shell row's line count gets.
+//
+// It exists because the full reading had only one home. `checkCountLine` renders "1 failing, 2 in
+// progress, 31 successful" on the AWAITING CARD, which is drawn for a thread at REST — so a thread that
+// was working showed nothing at all about a PR it was watching, and the operator had to ask (2026-09-04:
+// "It does not appear to me that the PR watcher is working well here"). This strip runs under the prompt
+// box on the queue card AND the thread drawer, spinning or not, so the row was already on screen; it
+// just had nothing to say.
+//
+// ONE NUMBER, not the breakdown. The counter column is a glance — it answers "should I look?" and the
+// full sentence rides its tooltip. The order is the same severity order the card's line uses, so the two
+// surfaces can never lead on different numbers: what is red first, then what is waiting on a human, then
+// what is still moving, then what passed.
+export function checksCounterLabel(status: {
+  checks: string; failed: number; gated: number; running: number; passed: number; state: string
+} | undefined): string | undefined {
+  // Not polled yet is not a reading. The row's own liveness mark already says the watcher is armed.
+  if (!status) return undefined
+  if (status.state !== "open") return status.state
+  if (status.failed > 0) return `${status.failed} failed`
+  // "held" rather than "gated": the row has ~10 characters, and the operator's question is whether
+  // something is stuck, not which GitHub noun describes it.
+  if (status.gated > 0) return `${status.gated} held`
+  if (status.running > 0) return `${status.running} running`
+  if (status.passed > 0) return `${status.passed} green`
+  return undefined // a PR with no CI at all — nothing to count, and "0" would imply otherwise
+}
+
 // 947 → "947", 13476 → "13.5k", 132000 → "132k", 2400000 → "2.4M". A raw six-digit token count next to
 // a truncated label is noise; the magnitude is the whole reading. The decimal survives up to three
 // significant figures and is dropped past them, where it would only be adding width.

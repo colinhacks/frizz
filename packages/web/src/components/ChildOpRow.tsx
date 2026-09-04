@@ -4,6 +4,7 @@ import { BoxSpinner } from "./BoxSpinner.tsx"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
 import { compactElapsedSince } from "../lib/durationLabels.ts"
 import { useNowMs } from "../lib/liveClock.ts"
+import { PRIMER } from "../lib/primer.ts"
 import {
   CHILD_ARROW,
   CHILD_ARROW_CLASS,
@@ -63,6 +64,7 @@ export function ChildOpRow({
   startedAt,
   counter,
   counterTitle,
+  counterTone,
   parentSlug,
   onOpen,
   onDismiss,
@@ -94,6 +96,13 @@ export function ChildOpRow({
   // whose surface does not poll for one.
   counter?: string
   counterTitle?: string
+  // THE ONE COUNTER THAT MAY OUTRANK THE ROW'S OWN DIMNESS. Every reading in this column is `text-muted/40`,
+  // deliberately — a strip of live work is scanned, not read, and "1.2k lines" earns no more ink than the
+  // age beside it. A watched PR whose CI has gone RED is the exception: it is the number that decides what
+  // the human does next, and rendered in the column's uniform grey it was indistinguishable from a
+  // timestamp (caught reading back this row's own first screenshot, 2026-09-04). Absent ⇒ the column's
+  // grey, which is what every other row still takes.
+  counterTone?: "danger"
   // Drill-in marker: keeps an open ThreadSheet for this slug from self-dismissing on the pointer-down,
   // so the child transcript STACKS over its parent instead of replacing it (see ThreadSheet).
   parentSlug?: string
@@ -178,7 +187,11 @@ export function ChildOpRow({
   // — and the counter falls in beside it, separated by the same `·` the progress label already uses.
   const reading: ReactNode = counter || elapsed ? (
     <span className="ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-muted/40">
-      {counter && <span data-child-op-counter title={counterTitle}>{counter}</span>}
+      {counter && (
+        // The tone rides a Primer colour rather than a Tailwind red, because the same fact is drawn in
+        // the same colour on the awaiting card two surfaces away (ChecksGlyph → PRIMER.fgDanger).
+        <span data-child-op-counter title={counterTitle} style={counterTone === "danger" ? { color: PRIMER.fgDanger } : undefined}>{counter}</span>
+      )}
       {counter && elapsed && <span aria-hidden className="text-muted/25">·</span>}
       {elapsed && <span title={`Working for ${elapsed}`}>{elapsed}</span>}
     </span>
