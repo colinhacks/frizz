@@ -1,6 +1,6 @@
 # Provisioned runtimes — Frizz should own a pinned Claude Code and Codex
 
-Written 2026-09-04, as the answer to one question from the maintainer: should Frizz provision its own copy of Claude Code and Codex instead of driving whichever version is on the user's PATH? The answer is yes, and the shape matters more than the yes. Nothing here is built. It is a record at a point in time, read [`plans/README.md`](README.md) first.
+Written 2026-09-04, as the answer to one question from the maintainer: should Frizz provision its own copy of Claude Code and Codex instead of driving whichever version is on the user's PATH? The answer is yes, and the shape matters more than the yes. It was built the same day — the last section records what landed and where it departs from the shape proposed here. It is a record at a point in time, read [`plans/README.md`](README.md) first.
 
 Every claim below was read off the checkout on the day it was written — the versions, the sizes, the resolution paths — not from memory.
 
