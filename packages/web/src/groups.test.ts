@@ -970,7 +970,12 @@ test("sessionIndicatorKind: a declared wait draws the quiet dot in the ACTIVE ba
 // actively running rail if it's only awaiting a PR with green CI"). The frontmatter key is `prs:` since
 // the 2026-08-24 YAML cutover; the singular `pr:` it replaced and the older `pr-watch:` are both retired
 // (RETIRED_AWAITING_KINDS). The WIRE kind stays singular, which is why the fixtures build `kind: "pr"`.
-test("sessionIndicatorKind: a watched PR that has SETTLED reads at-rest; one still running keeps the dot", () => {
+// REWRITTEN 2026-09-04. This pinned the rule that a watched PR wore whatever mark its CHECKS implied —
+// the blue dot while CI ran, the bare-rest ellipsis once it settled — so the rail drew two different
+// marks for one state and neither of them said "GitHub". The BAND logic it also pinned is unchanged and
+// still asserted below; only the MARK moved (maintainer: "the GitHub icon should show up anytime that
+// an agent is awaiting a PR").
+test("sessionIndicatorKind: a watched PR wears GitHub's mark whether its checks are running or settled", () => {
   const watching = (checks: "running" | "passing" | "failing" | "none", over: Partial<ThreadView> = {}) => thread({
     kind: "session", runtime: "turn-idle", awaitingBackground: true,
     watches: [{
@@ -979,22 +984,59 @@ test("sessionIndicatorKind: a watched PR that has SETTLED reads at-rest; one sti
     }],
     ...over,
   })
-  // CI green, so the server has already banded it back into the queue — and the mark now agrees with the
-  // band instead of contradicting it.
+  // CI green, so the server has already banded it back into the queue. The mark names the SUBJECT of the
+  // wait, which the band cannot: the row is a queue handoff AND it is about a pull request.
   const green = watching("passing", { needsYou: true })
-  assert.equal(sessionIndicatorKind(green), "rest", "nothing is running: the ordinary at-rest ellipsis")
-  assert.equal(queued(green), true, "…and it is a queue handoff, which is what the rest mark says")
+  assert.equal(sessionIndicatorKind(green), "pr", "a settled PR is still a PR, not a bare rest")
+  assert.equal(queued(green), true, "…and it is still a queue handoff — the BAND is unchanged by the mark")
   // Red is settled too — the wait is over either way, and the human is the one who acts next.
-  assert.equal(sessionIndicatorKind(watching("failing", { needsYou: true })), "rest")
+  assert.equal(sessionIndicatorKind(watching("failing", { needsYou: true })), "pr")
   // A PR with NO checks at all never had CI to wait for.
-  assert.equal(sessionIndicatorKind(watching("none", { needsYou: true })), "rest")
-  // CI STILL RUNNING is the case the dot exists for, and the server excuses it from the queue for the
-  // same reason (board.heldByRunningChecks) — so the row sits in the Active band, marked as alive.
+  assert.equal(sessionIndicatorKind(watching("none", { needsYou: true })), "pr")
+  // CI STILL RUNNING used to be the one case that drew the dot, and the server excuses it from the queue
+  // (board.heldByRunningChecks) — so the row still sits in the Active band. It just no longer claims to
+  // be this machine's own background work while it does.
   const live = watching("running", { needsYou: false })
-  assert.equal(sessionIndicatorKind(live), "background", "something IS moving")
-  assert.deepEqual(partitionActive([live]).running.map((t) => t.id), [live.id], "and it bands ACTIVE")
-  // A settled watcher beside a live shell still has motion behind it — the shell's.
-  assert.equal(sessionIndicatorKind(watching("passing", { needsYou: true, bgShells: [shell()] })), "background")
+  assert.equal(sessionIndicatorKind(live), "pr")
+  assert.deepEqual(partitionActive([live]).running.map((t) => t.id), [live.id], "and it still bands ACTIVE")
+  // A LIVE SHELL BESIDE THE WATCH does not take the mark back. A dev server the thread also left running
+  // is not what it is WAITING for, and the dot would name the incidental half of the rest.
+  assert.equal(sessionIndicatorKind(watching("passing", { needsYou: true, bgShells: [shell()] })), "pr")
+})
+
+// THE MARK IS THE WAIT'S, NOT THE BAND'S — the whole point of the 2026-09-04 change. Every shape that is
+// "at rest with a PR out" gets the octocat, and every state that is NOT that keeps its own mark.
+test("sessionIndicatorKind: a PR wait is marked from the REGISTERED watch, and yields to every louder state", () => {
+  const armed = [{ id: "github:t:o/r#9", kind: "github" as const, target: "o/r#9", state: "armed" as const, createdAt: "2026-09-04T00:00:00.000Z" }]
+  // A watch and NO fence at all — the shape the worker contract steers toward, and the one the old
+  // fence-only reading missed entirely.
+  assert.equal(sessionIndicatorKind(thread({ kind: "session", runtime: "turn-idle", needsYou: true, watches: armed })), "pr")
+  // …and a `prs:` fence with nothing registered still reads, so a fence written before the watch lands
+  // (or by a worker whose MCP predates it) does not fall back to the ellipsis.
+  assert.equal(sessionIndicatorKind(thread({
+    kind: "session", runtime: "turn-idle", needsYou: true,
+    lastFence: { kind: "awaiting", body: "", hints: [{ kind: "pr", value: "o/r#9" }] },
+  })), "pr")
+  // A ref that is only whitespace names nothing and must not light the mark.
+  assert.equal(sessionIndicatorKind(thread({
+    kind: "session", runtime: "turn-idle", needsYou: true,
+    lastFence: { kind: "awaiting", body: "", hints: [{ kind: "pr", value: "   " }] },
+  })), "rest")
+  // EVERY LOUDER STATE WINS. A turn in flight and a live sub-agent are motion; an ask is the human's;
+  // a limit kill and a stall are dead threads whose next action is Retry; a done fence is a dismissal.
+  const withWatch = (over: Partial<ThreadView>) => sessionIndicatorKind(thread({ kind: "session", runtime: "turn-idle", needsYou: true, watches: armed, ...over }))
+  assert.equal(withWatch({ runtime: "running" }), "working")
+  assert.equal(sessionIndicatorKind(thread({ kind: "session", runtime: "turn-idle", needsYou: false, watches: armed, subAgents: liveSub })), "working")
+  // …but a RESTED QUEUE HANDOFF never reaches the working branch (restedQueueHandoff), and for that row
+  // the PR is the truer of the two rests. The children keep their spinners on their own child rows.
+  assert.equal(withWatch({ subAgents: liveSub }), "pr")
+  assert.equal(withWatch({ pendingQuestion: true }), "needs-input")
+  assert.equal(withWatch({ runtime: "exited", sessionId: "s", limitPause: { backend: "claude", window: "session", at: "2026-09-04T00:00:00.000Z", autoResume: true } }), "limit")
+  assert.equal(withWatch({ lastFence: { kind: "done", body: "shipped", hints: [] } }), "done")
+  // EXITED stays a stall: the process is gone, Retry is the next action, and offersRetry reads this
+  // same ladder — so letting the octocat win here would silently take the recovery verb off the row.
+  assert.equal(withWatch({ runtime: "exited", sessionId: "s" }), "stalled")
+  assert.equal(offersRetry(thread({ kind: "session", runtime: "exited", sessionId: "s", needsYou: true, watches: armed })), true)
 })
 
 // AN ARMED TIMER IS MOTION THE SAME WAY RUNNING CI IS: a wake with a known terminal instant that frizz
@@ -1039,7 +1081,10 @@ test("isSnoozed: an event-snoozed rest parks in Snoozed — behind a PR watch, a
   // UNSNOOZED, the same two shapes read exactly as before: the queued one below the rule with its own
   // mark, the excused-but-cardless one in the Active band.
   assert.equal(sectionOf({ ...greenPr, bgSnoozed: undefined, needsYou: true }), "active")
-  assert.equal(sessionIndicatorKind({ ...greenPr, bgSnoozed: undefined, needsYou: true }), "rest")
+  // The queued PR wears GitHub's mark since 2026-09-04 (it read "rest" before). The SNOOZED twin above
+  // still reads "snoozed" — isSnoozed is checked first, so the park keeps the band and its own tooltip,
+  // and the Sidebar picks the octocat within that arm from the same waitNamesPr predicate.
+  assert.equal(sessionIndicatorKind({ ...greenPr, bgSnoozed: undefined, needsYou: true }), "pr")
   assert.equal(sectionOf({ ...shellOnly, bgSnoozed: undefined }), "active")
   assert.equal(sessionIndicatorKind({ ...shellOnly, bgSnoozed: undefined }), "background")
 })

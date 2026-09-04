@@ -425,8 +425,21 @@ html[data-font="sans"] .frizz-op-dot-slot { --op-dot-nudge: 0em; }
   text-box: trim-both cap alphabetic;
 }
 .frizz-rail-dot {
-  width: calc(15px * 0.31);
-  height: calc(15px * 0.31);
+  /* 5px, A WHOLE ODD NUMBER — not `calc(15px * 0.31)` = 4.65px, which is the same half-pixel trap
+     scripts/verify-rail-status-glyphs.mjs already gates the SVG marks on ("an ODD size lands on the
+     grid … which is why every mark here is 9 or 11 and none is 10"). The dot escaped that gate only
+     because the check reads `[data-rail-glyph] svg` and this mark is a <span>; the gate now measures it
+     too. StatusBox has a 13px CONTENT box, so a centred mark is inset (13 - d)/2 — a whole number only
+     when d is odd. At 4.65px that inset was 4.175px, so the disc started on a fraction of a pixel at
+     every scale and the rasteriser smeared it; at zoom the smear became a visible displacement
+     (measured off the maintainer's own screenshot, 2026-09-04: 0.227px left and 0.227px low on a
+     6.6x crop — "this is also not perfectly centered").
+     The 0.35px of extra diameter is deliberate and was checked, not tolerated: it is what makes the
+     edges crisp, and it leaves the dot inside the weight band its neighbours occupy (the reason 0.31
+     was chosen in the first place — see the same script's note on a solid disc being far heavier per
+     unit of diameter than an outlined glyph). */
+  width: 5px;
+  height: 5px;
   border-radius: 9999px;
   background: var(--color-shell);
   animation: frizz-rail-dot-pulse 1.25s ease-in-out infinite;

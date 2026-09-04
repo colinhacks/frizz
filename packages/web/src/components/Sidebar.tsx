@@ -8,7 +8,7 @@ import { store, openThread, scrollToQueueCard, queueCardTargetY, pushSubAgentDra
 import { rpc } from "../api/rpc.ts"
 import { useBoard, asThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
-import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, isPinned, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt } from "../groups.ts"
+import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, isPinned, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
@@ -24,7 +24,7 @@ import { ProviderMark } from "./ProviderMark.tsx"
 import { STATUS_CHIP } from "../lib/status.ts"
 import { retrySession } from "../lib/retrySession.ts"
 import { formatSnoozedUntil, formatAutoSnoozedUntil, formatUserSnooze } from "../lib/snooze.ts"
-import { awaitingProse, awaitingWaitClause, prWatchRefs } from "../lib/awaitingPresentation.ts"
+import { awaitingProse, awaitingWaitClause } from "../lib/awaitingPresentation.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
 import { activeSidebarSection, queueNavigationSettled, railRevealDelta, type SidebarSectionGeometry } from "../lib/sidebarScrollspy.ts"
@@ -1050,6 +1050,46 @@ function stackParked(tip: string | null, parked: string): string {
 // in sync for a distinction the band already draws, and the shell really is still running.
 const shellDot = <StatusBox><span aria-hidden className="frizz-rail-dot" data-running-indicator="thread-background" /></StatusBox>
 
+// THE OCTOCAT IS THE ONE MARK IN THIS FAMILY WHOSE INK IS NOT CENTRED IN ITS OWN VIEWBOX, so it is the
+// one that needs a correction rather than just an odd size. `items-center justify-center` centres the
+// glyph's BOX in the 13px content box — which it does correctly — and the mark still reads left, because
+// lucide's github path is asymmetric inside its 24-unit grid: the head/body/legs path is centred, but the
+// TAIL sweeps out to x=1 while nothing balances it on the right, so the ink ends at 21.01 instead of 23.
+//
+// MEASURED as the four CLEARANCES between the ink and the box's inner edge, which is the reading that
+// matches the complaint ("icon spacing is broken"). At the shipped 9px:
+//
+//   nudge              L      R      T      B     L−R     T−B
+//   none             2.75   3.50   2.75   2.75   -0.75   0.00   ← the mark hugs the left wall
+//   x only  (ships)  3.13   3.12   2.75   2.75   +0.01   0.00
+//   x and y          3.13   3.12   3.13   2.38   +0.01  +0.75   ← rejected; see below
+//
+// ONE LUCIDE GRID UNIT, sideways only — `size / 24`, not a hand-fitted decimal. One unit is exactly what
+// the geometry asks for (the ink bbox centre sits 0.99 units left of the box's 12), and deriving it from
+// `size` means it survives a resize of the mark, which a pinned 0.375px would not.
+//
+// NO VERTICAL NUDGE, and this is the part worth keeping, because the obvious instrument argues for one.
+// An intensity-weighted centroid reads the glyph 0.33px HIGH — the head is a thick closed loop while the
+// legs beneath it are single strokes, so the mark's MASS genuinely sits above its middle. Correcting to
+// that centroid moves the whole glyph down and turns a vertical clearance that was exactly balanced
+// (2.75 / 2.75) into 3.13 / 2.38: the legs then crowd the bottom wall while the ears gain a gap, which
+// is the same defect being fixed sideways, recreated on the other axis. The top-heaviness is intrinsic
+// to the LOGO and cannot be translated away — only redistributed — so the bbox stays balanced and the
+// residual mass offset stands. Rendered side by side at dsf 8 the untouched vertical is plainly better.
+const PR_MARK_SIZE = 9
+const PR_MARK_NUDGE = PR_MARK_SIZE / 24
+
+// THE ONE MARK FOR "THIS THREAD IS WAITING ON A PULL REQUEST", drawn by both arms that can reach that
+// state — the parked one in the Snoozed band and the queued one below it — for the same reason shellDot
+// is shared: the PR is the fact, and which band the row happens to sit in is only how it is presented
+// (maintainer 2026-09-04: "the GitHub icon should show up anytime that an agent is awaiting a PR").
+//
+const githubMark = (
+  <StatusBox>
+    <Github size={PR_MARK_SIZE} className="text-muted/70" style={{ transform: `translateX(${PR_MARK_NUDGE}px)` }} />
+  </StatusBox>
+)
+
 function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: string | null } {
   const kind = sessionIndicatorKind(t)
   if (kind === "archived") return { node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted/75" /></StatusBox>, tip: "Done" }
@@ -1100,9 +1140,15 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
       tip: `Paused by the ${p?.backend === "codex" ? "Codex" : "Claude"} ${which} — ${resume}`,
     }
   }
+  // AWAITING A PR, IN THE QUEUE — the same octocat the Snoozed arm draws, on the rows that never park.
+  // A PR wait deliberately stays a visible queue handoff (parkedAwaitingHint excludes it), so this is
+  // where MOST PR waits actually live, and until 2026-09-04 every one of them wore either the shell's
+  // blue dot (checks still running) or the bare-rest ellipsis (checks settled). The tooltip is the
+  // fence's own clause, which names the ref — "waiting on acme/app#391" — so the hover reaches the PR.
+  if (kind === "pr") return { node: githubMark, tip: popover(t, "At rest") }
   if (kind === "snoozed") {
     const hourglass = <StatusBox><Hourglass size={9} className="text-muted/70" /></StatusBox>
-    const github = <StatusBox><Github size={9} className="text-muted/70" /></StatusBox>
+    const github = githubMark
     // A snoozed row whose fence names a PR (`prs:` since the 2026-08-24 YAML cutover; `pr:` and `pr-watch:`
     // before it, both retired) is snoozed FOR A PR, and the rail says so with GitHub's mark instead of the
     // hourglass. The hourglass means "parked on the clock", and for a watch the clock is only the
@@ -1115,8 +1161,11 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
     // event-snooze that replaced the awaiting card's own "PR watcher armed" Snooze on 2026-08-13; it
     // dropped the queue card without parking the thread until isSnoozed learned to read `bgSnoozed`).
     // All were previously indistinguishable from a plain timer park.
-    const watched = t.lastFence?.kind === "awaiting" ? prWatchRefs(t.lastFence.hints) : []
-    const parkMark = watched.length > 0 ? github : hourglass
+    // ONE answer to "does this wait name a PR", shared with the queued arm below (groups.waitNamesPr).
+    // It reads the REGISTERED watch as well as the fence, so a row parked on a watch it never fenced
+    // stops wearing the clock — the fence-only reading was why the mark looked like a property of the
+    // Snoozed band rather than of the wait.
+    const parkMark = waitNamesPr(t) ? github : hourglass
     // A snoozed row carries its whole "what it is waiting for" story HERE, in the popover — the rail row itself
     // is a title and nothing else. The two time-based holds are ONE concept — a snooze (park until a wall-clock instant) — sharing the same
     // parkMark + single-line layout. They differ only in WHO resolves the park at the deadline, which
@@ -1146,7 +1195,10 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
     const eventSnoozed = t.bgSnoozed === true ? "Snoozed until the background work returns" : null
     // Canonical blocked+timer status can arrive from an older/pre-session snapshot without a fence.
     if (t.lastFence?.kind !== "awaiting") {
-      if (eventSnoozed) return { node: shellDot, tip: eventSnoozed }
+      // The event-snooze reaches here for a rest on a shell, a timer OR a registered PR watch, and only
+      // the first of those is a shell. A watch the worker never fenced has no hints to read, so the dot
+      // was the default by omission rather than by decision.
+      if (eventSnoozed) return { node: waitNamesPr(t) ? github : shellDot, tip: eventSnoozed }
       const timed = typeof t.revalidate === "string" ? formatAutoSnoozedUntil(t.revalidate) : null
       return { node: hourglass, tip: timed ?? "Auto-snoozed until a scheduled check" }
     }
@@ -1161,7 +1213,12 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
     // to say the shape in prose too — "Waiting on its own background work" — which restated vaguely
     // what the clause says exactly ("waiting on 2 background shells and a timer"), and was the only
     // place the popover's text was hand-written per arm instead of derived.
-    const mark = hk === "pr"
+    // A PR IN THE WAIT WINS THE GLYPH OUTRIGHT — it is no longer one of the leading-kind arms. `hk`
+    // reads the FIRST hint the worker happened to write, so a fence naming a shell before its PR drew
+    // the shell's dot for a wait GitHub resolves; the same wait written the other way round drew the
+    // octocat. One state, two marks, decided by fence order. The kinds below still rank among
+    // themselves, because none of them is the subject of the wait the way a PR is.
+    const mark = waitNamesPr(t)
       ? github
       : hk === "shell" || hk === "agent"
         ? shellDot

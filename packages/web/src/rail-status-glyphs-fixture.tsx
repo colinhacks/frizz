@@ -67,6 +67,11 @@ const STATES: { kind: string; t: ThreadView }[] = [
   // second copy of the `background` dot two entries up and leave the park glyph unmeasured.
   { kind: "snoozed", t: { ...base, id: "snoozed", runtime: "turn-idle", needsYou: false, lastFence: { kind: "awaiting", body: "", hints: [{ kind: "timer", value: "tmr_a1b2c3d4e5f6" }] } } as unknown as ThreadView },
   { kind: "archived", t: { ...base, id: "archived", state: "archived", runtime: "exited", needsYou: false } as unknown as ThreadView },
+  // AWAITING A PR (2026-09-04). A REGISTERED watch and no fence, deliberately: that is the shape the
+  // worker contract now steers workers toward, and it is the one the rail used to miss entirely. The
+  // octocat is the only mark here whose ink is not symmetric about its own viewBox centre, so it is the
+  // one that needs a measured nudge rather than an odd size — see PR_MARK_NUDGE in Sidebar.tsx.
+  { kind: "pr", t: { ...base, id: "pr", runtime: "turn-idle", needsYou: true, watches: [{ id: "wch_1", kind: "github", target: "colinhacks/frizz#1", state: "armed", createdAt: "2026-09-04T09:00:00.000Z" }] } as unknown as ThreadView },
 ]
 
 createRoot(document.getElementById("root")!).render(

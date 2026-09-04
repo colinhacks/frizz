@@ -159,3 +159,42 @@ test("a shell-only rest event-snoozed off its resting card keeps the shell's blu
   assert.doesNotMatch(html, HOURGLASS)
   assert.equal(sessionIndicatorFor({ ...base, id: "watching-thread", ...t } as ThreadView).tip, "Snoozed until the background work returns")
 })
+
+// ── the 2026-09-04 widening: the octocat belongs to the WAIT, not to the Snoozed band ───────────────
+//
+// Everything above tests a PARKED row, because until now the Snoozed band was the only place GitHub's
+// mark could appear at all. That was the bug the maintainer reported: "it's kind of weird that this only
+// shows up on a snoozed card … the GitHub icon should show up anytime that an agent is awaiting a PR".
+// These pin the two shapes that used to miss it.
+
+const armedWatch = (target: string) => [{
+  id: `github:t:${target}`, kind: "github" as const, target, state: "armed" as const, createdAt: "2026-09-04T00:00:00.000Z",
+}]
+
+test("a QUEUED thread awaiting a PR wears GitHub's mark — no snooze involved", () => {
+  // The common case by far: parkedAwaitingHint deliberately refuses to park a PR wait so the watch stays
+  // a visible queue handoff, so MOST PR waits live here. This row wore the bare-rest ellipsis (checks
+  // settled) or the shell's blue dot (checks running) before — never anything that said GitHub.
+  const html = row({
+    needsYou: true,
+    lastFence: { kind: "awaiting", body: "CI is green; waiting on review.", hints: [watch("acme/app#391")] },
+  } as Partial<ThreadView>)
+  assert.match(html, GITHUB)
+  assert.match(html, /data-rail-glyph="pr"/, "and it resolves to the PR kind, not rest or background")
+  assert.doesNotMatch(html, HOURGLASS, "it is not parked on a clock")
+  assert.doesNotMatch(html, SHELL_DOT, "and a PR is not this machine's own background work")
+})
+
+test("a REGISTERED watch with no fence at all still wears GitHub's mark", () => {
+  // The shape the worker contract now steers toward — `mcp__frizz__watch_pr` creates the row the
+  // scheduler polls, and the `prs:` fence line only echoes it. Reading the fence alone (which every arm
+  // did before) meant a worker that registered a watch and then rested without fencing got the ellipsis.
+  const html = row({ needsYou: true, watches: armedWatch("acme/app#391") } as Partial<ThreadView>)
+  assert.match(html, GITHUB)
+  assert.match(html, /data-rail-glyph="pr"/)
+  // …and the same is true once the human snoozes that row: the Snoozed arm reads the registry too now,
+  // so it no longer falls back to the hourglass just because there was no fence to read.
+  const snoozed = row({ snoozedUntil: FAR_FUTURE, watches: armedWatch("acme/app#391") } as Partial<ThreadView>)
+  assert.match(snoozed, GITHUB)
+  assert.doesNotMatch(snoozed, HOURGLASS)
+})

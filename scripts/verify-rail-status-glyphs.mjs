@@ -106,8 +106,14 @@ try {
 
   // Read every mark's rendered glyph size straight off the DOM before the pixel pass — the odd-size rule
   // is a property of the markup, not of the capture, so it is checked where it is cheap and exact.
-  const sizes = await page.$$eval("[data-rail-glyph] svg", (svgs) =>
-    svgs.map((s) => ({ name: s.closest("[data-rail-glyph]").getAttribute("data-rail-glyph"), w: s.getBoundingClientRect().width })),
+  //
+  // NOT JUST THE SVGs. This read `[data-rail-glyph] svg` alone until 2026-09-04, so the one mark in the
+  // family that is NOT an SVG — the background dot, a bare <span> — was never gated, and it had been
+  // shipping at `calc(15px * 0.31)` = 4.65px: the exact defect the rule below describes, in the exact
+  // place the rule was written to prevent it (maintainer: "this is also not perfectly centered"). Any
+  // mark that stands INSIDE the box is measured now, whatever element draws it.
+  const sizes = await page.$$eval("[data-rail-glyph] svg, [data-rail-glyph] .frizz-rail-dot", (marks) =>
+    marks.map((s) => ({ name: s.closest("[data-rail-glyph]").getAttribute("data-rail-glyph"), w: s.getBoundingClientRect().width })),
   )
   for (const { name, w } of sizes) {
     if (ODD_SIZE_EXEMPT.has(name) || UNGATED.has(name)) continue

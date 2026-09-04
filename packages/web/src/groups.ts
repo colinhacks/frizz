@@ -620,11 +620,57 @@ function restingOnLiveBackgroundWork(t: ThreadView): boolean {
   )
 }
 
+/** AWAITING A PULL REQUEST — the one wait whose subject is not on this machine at all, and since
+ *  2026-09-04 a mark of its own wherever it lands.
+ *
+ *  GitHub's mark used to render in exactly ONE place: the Snoozed band, for a parked row whose fence
+ *  happened to name `prs:`. Every other PR wait wore something that said nothing about GitHub — a
+ *  watched PR with CI still running drew the shell's blue dot (restingOnLiveBackgroundWork below counts
+ *  running checks as motion), and one whose checks had SETTLED fell all the way through to the bare-rest
+ *  ellipsis. So the rail drew three different marks for one state, and the only one that named the state
+ *  was the one behind a park (maintainer 2026-09-04: "it's kind of weird that this only shows up on a
+ *  snoozed card … the GitHub icon should show up anytime that an agent is awaiting a PR").
+ *
+ *  THE REGISTERED WATCH IS THE PRIMARY SIGNAL, not the fence. `mcp__frizz__watch_pr` creates the row
+ *  the scheduler actually polls, and it is what survives a compaction and a restart; the `prs:` fence
+ *  line only ECHOES it (the worker contract: "Register FIRST: this line states the wait, it does not
+ *  create one"). Reading the fence alone — which is all the Snoozed arm ever did — therefore misses a
+ *  worker that registered a watch and then rested without fencing, which is the shape the contract now
+ *  steers workers toward. Both are read here so neither shape loses the mark.
+ *
+ *  Gated on `turn-idle` so it means AWAITING and nothing else: a thread mid-turn keeps its spinner (a
+ *  watch does not stop the work), and an EXITED one stays a stall — its process is gone, Retry is the
+ *  next action, and offersRetry reads this same ladder, so taking the stall would silently strip the
+ *  recovery verb off the row.
+ *
+ *  NO SUB-AGENT CARVE-OUT, deliberately, and it took a wrong assertion to see why. `working` is resolved
+ *  ABOVE this, so a thread with a live child already spins before it can get here — the ONLY shape that
+ *  reaches this line with a child still out is the rested QUEUE HANDOFF (restedQueueHandoff: the server
+ *  queued it and its own turn is over), which by long-standing rule reads as rested rather than as
+ *  motion. For that row "awaiting a PR" is simply the truer of the two rests, and the children keep
+ *  their own spinners on their own indented rows. Excluding them here bought nothing and cost the mark
+ *  exactly where it says the most. */
+export function awaitingPrWatch(t: ThreadView): boolean {
+  if (t.runtime !== "turn-idle") return false
+  return waitNamesPr(t)
+}
+
+/** Does this thread's wait name a PULL REQUEST at all — the question ALONE, with no opinion about
+ *  whether the thread is otherwise free to wear GitHub's mark. Split out because the Snoozed arm asks
+ *  exactly this and nothing more: a parked row has already earned its band, and all the rail is
+ *  choosing there is hourglass-or-octocat. Keeping one answer is what stops the two surfaces drawing
+ *  different marks for one thread — the Snoozed arm read only the fence until 2026-09-04, so a row
+ *  parked on a REGISTERED watch it never fenced wore the clock. */
+export function waitNamesPr(t: Pick<ThreadView, "watches" | "lastFence">): boolean {
+  if ((t.watches ?? []).some((w) => w.kind === "github" && w.state === "armed")) return true
+  return t.lastFence?.kind === "awaiting" && t.lastFence.hints.some((h) => h.kind === "pr" && h.value.trim() !== "")
+}
+
 // One status-priority decision shared by the sidebar renderer and its tests. The order is important:
 // an archived row at rest stays archived even if stale attention metadata lingers; a real human ask
 // stays a question after the worker exits; live work stays working; and a completed handoff stays a
 // check instead of being mislabelled as a crash merely because `needsYou` also puts it in the queue.
-export type SessionIndicatorKind = "archived" | "needs-input" | "working" | "background" | "done" | "stalled" | "limit" | "snoozed" | "rest"
+export type SessionIndicatorKind = "archived" | "needs-input" | "working" | "background" | "pr" | "done" | "stalled" | "limit" | "snoozed" | "rest"
 
 // NO RAIL MARK FOR AN ARMED STOP HOOK, and the reason is worth keeping because one shipped briefly
 // (2026-08-02, removed the same day — maintainer: "the whole point of a stop hook is that it means the
@@ -695,6 +741,12 @@ export function sessionIndicatorKind(t: ThreadView): SessionIndicatorKind {
   // (an unknown phrasing, an aged-out fault) is still a limit kill, and the tip says which story holds.
   if (t.limitPause && t.foreign !== true) return "limit"
   if (t.lastFence?.kind === "done" && atRest(t)) return "done"
+  // AWAITING A PR — GitHub's own mark, in whichever band the row sits (awaitingPrWatch). ABOVE the
+  // background dot because a watched PR is not this machine's work: a dev server the thread also left
+  // running is not what it is waiting FOR, and the dot said "something here is alive" about a wait whose
+  // subject is a review queue somewhere else. BELOW the done fence and the limit kill, which are both
+  // later facts than the park — a killed or dismissed thread is not awaiting anything.
+  if (awaitingPrWatch(t)) return "pr"
   // Below the two DECLARED states on purpose. A worker that fenced ```done while a server it never
   // killed keeps running is a one-click dismissal, not live work (FRIZZ.md: "name it in the body and
   // fence anyway"), and a parked ```awaiting is the human's gate — either story outranks "something it
