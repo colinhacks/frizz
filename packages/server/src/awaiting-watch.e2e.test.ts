@@ -347,6 +347,14 @@ async function prHarness() {
   // The head commit the rollup describes. A push moves it, which is what makes a repeat verdict news.
   let head = "sha-aaa"
   let activity: { id: string; actor: string; kind: "review" | "comment"; at: string }[] = []
+  // The PR's own state, beside its CI. `undefined` for labels/reviewers is the "this poll never read
+  // them" case the baseline rule turns on, and it is the shape the `gh` fallback really serves.
+  let mergeable = "MERGEABLE"
+  let labels: string[] | undefined
+  let reviewRequests: string[] | undefined
+  // The head's check suites, where a workflow held for a maintainer's approval lives. It never reaches
+  // the rollup, so a gated PR is invisible without this.
+  let checkSuites: Record<string, unknown>[] = []
   let clock = Date.now()
   const delivered: string[] = []
   const s = createScheduler({
@@ -356,7 +364,7 @@ async function prHarness() {
     resume: async (_slug, message) => { delivered.push(message) },
     log: () => {},
     now: () => clock,
-    fetchPr: async () => ({ state: prState, mergedAt: null, mergeable: "MERGEABLE", rollup, head, workflowRuns: [] } as never),
+    fetchPr: async () => ({ state: prState, mergedAt: null, mergeable, rollup, head, workflowRuns: [], checkSuites, labels, reviewRequests } as never),
     fetchGithubReview: async () => activity as never,
   })
   return {
@@ -365,6 +373,10 @@ async function prHarness() {
     setPrState: (next: string) => { prState = next },
     push: (sha: string) => { head = sha },
     setActivity: (next: typeof activity) => { activity = next },
+    setMergeable: (next: string) => { mergeable = next },
+    setLabels: (next: string[] | undefined) => { labels = next },
+    setReviewRequests: (next: string[] | undefined) => { reviewRequests = next },
+    setGated: (names: string[]) => { checkSuites = names.map((workflowName) => ({ status: "COMPLETED", conclusion: "ACTION_REQUIRED", workflowName })) },
     // Each tick steps past the per-PR poll floor, so every call really re-reads GitHub.
     tick: async () => { clock += 90_000; await s.tick() },
     /** Run the clock past the watcher's own `expiresAtMs` without eighty ticks to get there. */
@@ -633,4 +645,129 @@ test("a fence naming a timer that was never registered is corrected, off a real 
     assert.match(delivered[0], /`timers: \[none\]` — NOT RUNNING/, "and it says WHICH line is wrong, in the key the worker must write")
     assert.match(delivered[0], /nothing that could wake you/, "…and that a wait on nothing is not a wait")
   } finally { void s.stop(); tailer.stop(); storage.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+// ---- THE PR ITSELF, not its CI (2026-09-04) -------------------------------------------------------
+//
+// The watcher reported reviews, comments and the check rollup, and was blind to everything else — so a
+// PR that developed a merge conflict, gained a `blocked` label or had a reviewer requested said nothing
+// until something else happened to it. `mergeable` was computed on every single poll and then never read
+// as a trigger at all.
+//
+// THE BASELINE RULE IS THE HALF THAT MATTERS. A PR's existing labels are not news: the worker put most
+// of them there, and announcing the state of the world on first sight would spend a turn re-telling it
+// what it already did. So the first poll RECORDS and says nothing, exactly as the review baseline does.
+test("a PR's existing state is recorded on the first poll, never announced", async () => {
+  const h = await prHarness()
+  try {
+    h.setLabels(["c++", "needs-ci"])
+    h.setReviewRequests(["richardlau"])
+    h.setMergeable("CONFLICTING")
+    await h.tick()
+    assert.deepEqual(h.delivered, [], "everything already on the PR at registration is the worker's own news")
+
+    // …and now it is a baseline, so the next MOVE speaks.
+    h.setLabels(["c++", "needs-ci", "blocked"])
+    await h.tick()
+    assert.equal(h.delivered.length, 1)
+    assert.match(h.delivered[0], /🔔 acme\/app#391: labels \+blocked\./)
+  } finally { h.close() }
+})
+
+test("a conflict, a label moving and a reviewer requested each wake the worker, and together they are one line", async () => {
+  const h = await prHarness()
+  try {
+    h.setLabels(["needs-ci"])
+    h.setReviewRequests([])
+    await h.tick() // baseline
+    h.delivered.length = 0
+
+    // A CONFLICT APPEARING is work the worker has to do, and it was silent until now.
+    h.setMergeable("CONFLICTING")
+    await h.tick()
+    assert.equal(h.delivered.length, 1)
+    assert.match(h.delivered[0], /now CONFLICTS with the base branch/)
+    h.delivered.length = 0
+
+    // …and it does not repeat. A conflict that is still there is not a second conflict. (Asserted on
+    // LENGTH, not against a literal `[]`: node:assert/strict narrows the subject to the expected type,
+    // and `never[]` would make every later read of this array a type error.)
+    await h.tick()
+    assert.equal(h.delivered.length, 0, "an unchanged reading stays quiet")
+
+    // ONE POLL, THREE FACTS, ONE LINE. A label edit must not get the weight of a headline.
+    h.setLabels(["blocked"])
+    h.setReviewRequests(["richardlau"])
+    await h.tick()
+    assert.equal(h.delivered.length, 1)
+    const stateLines = h.delivered[0].split("\n").filter((l: string) => l.startsWith("🔔"))
+    assert.equal(stateLines.length, 1, "the clauses share one line")
+    assert.match(stateLines[0], /labels \+blocked, −needs-ci; review requested from richardlau/)
+    // The conflict is NOT restated: it was reported when it appeared and has not changed since.
+    assert.ok(!stateLines[0].includes("CONFLICTS"))
+  } finally { h.close() }
+})
+
+// A poll that cannot read a field must not overwrite what the last one knew. The `gh` fallback fetches
+// no labels, so a fallback poll between two real ones would otherwise reset the baseline to "unknown"
+// and make the poll after it announce every label on the PR as newly added.
+test("a poll that never read the labels leaves the baseline alone", async () => {
+  const h = await prHarness()
+  try {
+    h.setLabels(["needs-ci"])
+    await h.tick() // baseline
+    h.delivered.length = 0
+
+    h.setLabels(undefined) // this poll did not ask
+    await h.tick()
+    assert.equal(h.delivered.length, 0)
+
+    h.setLabels(["needs-ci"]) // …and the same labels are still not news
+    await h.tick()
+    assert.deepEqual(h.delivered, [], "an unread poll must not turn the next one into a false announcement")
+  } finally { h.close() }
+})
+
+// ---- CI HELD FOR AN APPROVAL ----------------------------------------------------------------------
+// The regression that started all of this, driven end to end: nodejs/node#65795's whole matrix sat at
+// GitHub's fork-approval gate while the rollup carried nothing but label bots, and the watcher's first
+// word was "✅ CI PASSED — 15 checks green".
+test("workflows held for approval are reported as held, and never as a pass", async () => {
+  const h = await prHarness()
+  try {
+    // The rollup as it really was: three real bot successes and a pile of skips. Nothing built anything.
+    h.setChecks([
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "label" },
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "Resolve contributor status" },
+      { status: "COMPLETED", conclusion: "SKIPPED", name: "notable-change" },
+      { status: "COMPLETED", conclusion: "SKIPPED", name: "fast-track" },
+    ])
+    h.setGated(["Test Linux", "Test macOS", "Linters"])
+    await h.tick()
+    assert.equal(h.delivered.length, 1)
+    assert.match(h.delivered[0], /⏸️ CI on acme\/app#391 is WAITING FOR APPROVAL — 3 workflows held: Test Linux, Test macOS, Linters\./)
+    assert.ok(!h.delivered[0].includes("CI PASSED"), "nothing here is a pass")
+    // It says what the worker must DO, because waiting is the one thing that cannot resolve this.
+    assert.match(h.delivered[0], /ask for the approval rather than waiting on it/)
+    h.delivered.length = 0
+
+    // Still gated: not a second event.
+    await h.tick()
+    assert.equal(h.delivered.length, 0, "a gate that is still shut is not news again")
+
+    // APPROVED, and the real matrix runs: no verdict yet, so still nothing to say.
+    h.setGated([])
+    h.setChecks([{ status: "IN_PROGRESS", name: "test-linux" }])
+    await h.tick()
+    assert.equal(h.delivered.length, 0, "CI merely starting is not a verdict")
+
+    // …and now it genuinely passes, with the skips counted apart from the greens.
+    h.setChecks([
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "test-linux" },
+      { status: "COMPLETED", conclusion: "SKIPPED", name: "fast-track" },
+    ])
+    await h.tick()
+    assert.equal(h.delivered.length, 1)
+    assert.match(h.delivered[0], /✅ CI PASSED on acme\/app#391 — 1 check green, 1 skipped\./)
+  } finally { h.close() }
 })

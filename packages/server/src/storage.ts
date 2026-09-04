@@ -383,8 +383,10 @@ export interface ThreadTimerRow {
 /** One row of `pr_watch` — a PR this thread asked to be told about, registered by tool call.
  *
  *  UNLIKE EVERY OTHER REGISTRY HERE IT DOES NOT FIRE ONCE. A timer rings and is spent; this one stays
- *  armed and reports repeatedly — CI turning green or red, and every later review or comment — until the
- *  worker drops it or the PR merges. That is the whole ask (maintainer 2026-08-14: "it should get
+ *  armed and reports repeatedly — CI turning green or red or being held for an approval, every later
+ *  review or comment, and since 2026-09-04 the PR's own state moving (a label, a conflict, a review
+ *  request) — until the worker drops it or the PR merges. The cursor below carries the baseline for all
+ *  of them. That is the whole ask (maintainer 2026-08-14: "it should get
  *  notified when CI either succeeds or failed and on follow-up reviews and comments"), and it is why the
  *  row carries a CURSOR rather than a settled flag: the question is never "has it happened" but "has
  *  anything happened since I last said so". */
@@ -1063,8 +1065,9 @@ export const STORAGE_SCHEMA = `
     -- happens whether or not anything is written down (maintainer: "We should have a tool for this. The
     -- agent should have a tool to register a PR watcher").
     --
-    -- REPEATING, not one-shot. It reports CI turning green or red and every later review or comment, so
-    -- it stays armed and carries a cursor; only a merge or a close settles it.
+    -- REPEATING, not one-shot. It reports CI turning green or red (or being held for an approval),
+    -- every later review or comment, and the PR's own state moving — a label, a conflict, a review
+    -- request — so it stays armed and carries a cursor; only a merge or a close settles it.
     CREATE TABLE IF NOT EXISTS pr_watch (
       id          TEXT PRIMARY KEY,
       project_id  TEXT NOT NULL,

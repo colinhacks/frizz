@@ -1103,6 +1103,10 @@ export function prWatchWakeMessage(input: {
     gated?: number
     gating?: string[]
   }
+  /** What changed about the PR itself — a conflict appearing, a label moving, a reviewer being asked.
+   *  ONE LINE for all of them, joined with semicolons, because each is a clause and not a headline: a
+   *  separate line per fact would give a label edit the same weight as a red build. */
+  changes?: string[]
   review?: string
   merged?: boolean
   closed?: boolean
@@ -1136,12 +1140,17 @@ export function prWatchWakeMessage(input: {
       lines.push(`\u274c CI FAILED on ${input.target}${c.failing.length ? `: ${c.failing.join(", ")}` : ""}.`)
     }
   }
+  if (input.changes?.length) {
+    if (lines.length) lines.push("")
+    lines.push(`🔔 ${input.target}: ${input.changes.join("; ")}.`)
+  }
   if (input.review) {
     if (lines.length) lines.push("")
     lines.push(input.review)
   }
-  lines.push("", "(Registered PR watcher — STILL ARMED. It reports again on the next CI change, review or" +
-    " comment. Drop it with `mcp__frizz__watch_pr` when it stops mattering.)")
+  lines.push("", "(Registered PR watcher — STILL ARMED. It reports again on the next CI change, review," +
+    " comment, label, conflict or review request. Drop it with `mcp__frizz__watch_pr` when it stops" +
+    " mattering.)")
   return lines.join("\n")
 }
 
@@ -3721,6 +3730,24 @@ const PR_WATCH_FINISHED = new RegExp(String.raw`^⏰ (${WAKE_REF}) was (MERGED|C
 // still parses.
 const PR_WATCH_CI_PASSED = new RegExp(String.raw`^✅ CI PASSED on (${WAKE_REF}) — (\d+) checks? green(?:, (\d+) skipped)?\.$`)
 const PR_WATCH_CI_GATED = new RegExp(String.raw`^⏸️ CI on (${WAKE_REF}) is WAITING FOR APPROVAL — (\d+) workflows? held(?:: (.+?))?\.$`)
+const PR_WATCH_STATE = new RegExp(String.raw`^🔔 (${WAKE_REF}): (.+)\.$`)
+
+/** The PR's own state moving — a conflict appearing, a label added or dropped, a reviewer requested.
+ *
+ *  ITS OWN PARSER RATHER THAN A `PrWatchWake` VARIANT, because it coexists with one: a poll that sees CI
+ *  go red AND a label move says both, and `parsePrWatchWake` returns the FIRST line it recognizes. Two
+ *  parsers means two dividers, which is what the CI line and the review steer already do down the same
+ *  delivery. The clauses are kept as ONE opaque string: they are prose frizz composed for the worker,
+ *  and the chat's job is to show them, not to re-derive what they meant. */
+export interface PrWatchStateWake { ref: string; detail: string }
+
+export function parsePrWatchStateWake(text: string): PrWatchStateWake | null {
+  for (const raw of text.split("\n")) {
+    const m = PR_WATCH_STATE.exec(raw.trim())
+    if (m) return { ref: m[1], detail: m[2] }
+  }
+  return null
+}
 const PR_WATCH_CI_FAILED = new RegExp(String.raw`^❌ CI FAILED on (${WAKE_REF})(?:: (.+?))?\.$`)
 
 /** The PR-watch status part of a delivered wake, or `null` when the text carries none.

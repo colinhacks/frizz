@@ -2198,8 +2198,21 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   /** WHAT THE WATCHER'S LATEST REPORT SAYS, structurally — the inputs its message was built from — so a
    *  poll that finds more news while that report is still waiting can mint one that says all of it
    *  (see the re-mint in evalPrWatches). Written at every mint; read only while a report is undelivered. */
-  interface PrWatchHeld { items: GithubWakeItem[]; omitted: number; checks?: PrWatchChecks }
-  interface PrWatchCursor { seen: string[]; checks?: string; report?: number; held?: PrWatchHeld }
+  interface PrWatchHeld { items: GithubWakeItem[]; omitted: number; checks?: PrWatchChecks; changes?: string[] }
+  /** `merge`, `labels` and `reviewers` are the PR's own state as of the last poll, and they are a
+   *  BASELINE before they are a trigger: absent (a watcher armed before 2026-09-04, or a poll that fell
+   *  back to `gh`, which does not fetch them) means "not known", so the next poll records them and says
+   *  nothing. Reporting a PR's existing labels as news the first time frizz looks at them would spend a
+   *  turn on facts the worker put there itself — the same rule the review baseline already follows. */
+  interface PrWatchCursor {
+    seen: string[]
+    checks?: string
+    report?: number
+    held?: PrWatchHeld
+    merge?: string
+    labels?: string[]
+    reviewers?: string[]
+  }
   const prWatchPolledAt = new Map<string, number>() // refKey → last fetch, shared across threads
 
   function readPrWatchHeld(raw: unknown): PrWatchHeld | undefined {
@@ -2221,7 +2234,47 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         gating: Array.isArray(c.gating) ? c.gating.filter((x: unknown): x is string => typeof x === "string") : [],
       }
       : undefined
-    return { items, omitted: Number(h.omitted) || 0, ...(checks ? { checks } : {}) }
+    const changes = Array.isArray(h.changes) ? h.changes.filter((x: unknown): x is string => typeof x === "string") : undefined
+    return { items, omitted: Number(h.omitted) || 0, ...(checks ? { checks } : {}), ...(changes?.length ? { changes } : {}) }
+  }
+
+  /** A list of strings off a cursor, or `undefined` for "this poll never knew" — which is a third state
+   *  and not the same as an empty list. A PR with no labels and a poll that could not read them must not
+   *  compare equal, or the first real reading would announce every label as newly added. */
+  const readCursorList = (raw: unknown): string[] | undefined =>
+    Array.isArray(raw) ? raw.filter((x: unknown): x is string => typeof x === "string") : undefined
+
+  /** What changed about the PR ITSELF since the last poll — everything the watcher now sees that is
+   *  neither CI nor a comment. Each entry is one clause of the wake's own sentence.
+   *
+   *  ONLY THE DIRECTIONS THAT ARE ACTIONABLE, deliberately. A PR that starts conflicting is work the
+   *  worker must do; one that stops conflicting stopped because somebody did that work, and telling them
+   *  is a wake spent on their own commit. A review REQUESTED names who is now expected to look; a
+   *  request withdrawn does not need a turn. Labels go both ways because on a real project they are the
+   *  state machine — `needs-ci`, `blocked`, `author ready`, `commit-queue-failed` — and losing one is as
+   *  much news as gaining it. */
+  function prStateChanges(
+    cursor: PrWatchCursor,
+    merge: string | undefined,
+    labels: string[] | undefined,
+    reviewers: string[] | undefined,
+  ): string[] {
+    const out: string[] = []
+    if (merge === "conflicting" && cursor.merge !== undefined && cursor.merge !== "conflicting") {
+      out.push("now CONFLICTS with the base branch")
+    }
+    if (labels && cursor.labels) {
+      const added = labels.filter((l) => !cursor.labels!.includes(l))
+      const removed = cursor.labels.filter((l) => !labels.includes(l))
+      // The minus is U+2212, matching the plus in width so a list of both reads as one column.
+      const parts = [...added.map((l) => `+${l}`), ...removed.map((l) => `−${l}`)]
+      if (parts.length) out.push(`labels ${parts.join(", ")}`)
+    }
+    if (reviewers && cursor.reviewers) {
+      const added = reviewers.filter((r) => !cursor.reviewers!.includes(r))
+      if (added.length) out.push(`review requested from ${added.join(", ")}`)
+    }
+    return out
   }
 
   function readPrWatchCursor(raw: string | null): PrWatchCursor {
@@ -2230,7 +2283,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (!parsed || typeof parsed !== "object") return { seen: [] }
       const seen = Array.isArray(parsed.seen) ? parsed.seen.filter((x: unknown): x is string => typeof x === "string") : []
       const held = readPrWatchHeld(parsed.held)
-      return { seen, checks: typeof parsed.checks === "string" ? parsed.checks : undefined, report: Number(parsed.report) || 0, ...(held ? { held } : {}) }
+      const labels = readCursorList(parsed.labels)
+      const reviewers = readCursorList(parsed.reviewers)
+      return {
+        seen,
+        checks: typeof parsed.checks === "string" ? parsed.checks : undefined,
+        report: Number(parsed.report) || 0,
+        ...(held ? { held } : {}),
+        ...(typeof parsed.merge === "string" ? { merge: parsed.merge } : {}),
+        ...(labels ? { labels } : {}),
+        ...(reviewers ? { reviewers } : {}),
+      }
     } catch {
       return { seen: [] }
     }
@@ -2282,6 +2345,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
     const status = new Map<string, GithubWatchStatus>()
     const activity = new Map<string, GithubReviewActivity[]>()
+    /** The PR's own state, which `GithubWatchStatus` does not carry — it is a CI projection, and these
+     *  are triggers rather than a readout. `undefined` for a ref the `gh` fallback served, which does not
+     *  ask for them; that is the "not known" the baseline rule turns on. */
+    const meta = new Map<string, { labels?: string[]; reviewRequests?: string[] }>()
     await Promise.all([...refs].map(async ([key, ref]) => {
       prWatchPolledAt.set(key, nowMs)
       // ONE REQUEST FOR BOTH HALVES (2026-09-04). The review fetch and the status fetch used to be two
@@ -2316,6 +2383,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         const pr = snapshot ?? await fetchPr(ref)
         if (pr) {
           status.set(key, githubWatchStatus(pr, new Date(nowMs).toISOString()))
+          meta.set(key, { labels: pr.labels, reviewRequests: pr.reviewRequests })
           publishGithubStatus(key, pr, nowMs)
           recordStatusSuccess(key)
         }
@@ -2445,13 +2513,27 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ...(a.url ? { url: a.url } : {}),
       }))
 
+      // THE PR ITSELF — a conflict appearing, a label moving, a reviewer being asked — read against the
+      // same baseline discipline as the review activity above. On the FIRST poll, and on the first poll
+      // after this landed (an older cursor carries none of these), the reading is RECORDED and nothing is
+      // said: a PR's existing labels are not news, and announcing them would spend a turn re-telling the
+      // worker what it did itself.
+      const prMeta = meta.get(key)
+      const changes = firstPoll ? [] : prStateChanges(cursor, st?.merge, prMeta?.labels, prMeta?.reviewRequests)
+
       const nextCursor: PrWatchCursor = {
         seen: acts ? [...new Set([...cursor.seen, ...acts.map((a) => a.id)])].slice(-REVIEW_SEEN_CAP) : cursor.seen,
         // The STAMP, so the next poll compares against the commit as well as the colour.
         checks: stamp ?? cursor.checks,
         report: cursor.report ?? 0,
+        // Each of these advances only when this poll actually READ it. A `gh`-fallback poll knows the
+        // merge verdict but not the labels, and overwriting a known baseline with "not known" would make
+        // the poll after it announce every label on the PR.
+        ...(st?.merge ? { merge: st.merge } : cursor.merge ? { merge: cursor.merge } : {}),
+        ...(prMeta?.labels ? { labels: prMeta.labels } : cursor.labels ? { labels: cursor.labels } : {}),
+        ...(prMeta?.reviewRequests ? { reviewers: prMeta.reviewRequests } : cursor.reviewers ? { reviewers: cursor.reviewers } : {}),
       }
-      if (!checksChanged && fresh.length === 0) {
+      if (!checksChanged && fresh.length === 0 && changes.length === 0) {
         // Nothing to say, but the baseline moved: record what was seen so the FIRST poll's backlog is
         // never re-reported, and so a later comment is measured against today rather than against the
         // registration.
@@ -2485,6 +2567,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
             },
           }
           : held?.checks ? { checks: held.checks } : {}),
+        // The state clauses fold forward the same way the review items do, and are DEDUPED on the way:
+        // a report superseded before delivery may already have said "now CONFLICTS", and the poll that
+        // replaces it re-derives that clause from a cursor the superseded report never got to advance.
+        ...((() => {
+          const all = [...(held?.changes ?? []), ...changes]
+          const merged = [...new Set(all)]
+          return merged.length ? { changes: merged } : {}
+        })()),
       }
       const review = carried.items.length > 0
         ? formatGithubWakeSteer({ ref: key, items: carried.items, omitted: carried.omitted })
@@ -2494,8 +2584,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       enqueuePrWatchWake(row, w.id, report, prWatchWakeMessage({
         target: key,
         ...(carried.checks ? { checks: carried.checks } : {}),
+        ...(carried.changes?.length ? { changes: carried.changes } : {}),
         ...(review ? { review } : {}),
-      }), `pr-watch ${key}${carried.checks ? ` CI ${carried.checks.verdict}` : ""}${review ? " review" : ""}`, nowMs)
+      }), `pr-watch ${key}${carried.checks ? ` CI ${carried.checks.verdict}` : ""}${carried.changes?.length ? " state" : ""}${review ? " review" : ""}`, nowMs)
       deps.storage.setPrWatchCursor(w.id, JSON.stringify({ ...nextCursor, report, held: carried }))
     }
   }

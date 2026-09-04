@@ -30,7 +30,7 @@
 // accent ref, the corner glyph) with no hierarchy between them.
 import { useId, useState } from "react"
 import { AlarmClock, Bell, Github, Hourglass, MessageCircleOff, TerminalSquare } from "lucide-react"
-import { isGithubWakeBacklog, parseGithubWakeSteer, parseLimitModelSwitchWake, parseLimitResumeWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchWake, parseQuestionsCancelledWake, parseShellDoneWake, parseTimerWake, type GithubWakeSteer, type LimitWindow, type ParkWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
+import { isGithubWakeBacklog, parseGithubWakeSteer, parseLimitModelSwitchWake, parseLimitResumeWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchStateWake, parsePrWatchWake, parseQuestionsCancelledWake, parseShellDoneWake, parseTimerWake, type GithubWakeSteer, type LimitWindow, type ParkWake, type PrWatchStateWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
 import { CARD_BODY, QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
 import { VSpace } from "./rhythm.tsx"
 import { WakeDivider } from "./WakeDivider.tsx"
@@ -82,9 +82,9 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
   // recognizes and draws as the human's own card before it ever asks whether frizz delivered the turn.
   const cancelled = parseQuestionsCancelledWake(text)
   if (cancelled) return <QuestionsCancelledDivider count={cancelled.count} sourceId={sourceId} at={at} />
-  // ONE DELIVERY, UP TO TWO PARTS. A poll that saw CI flip AND a comment land composes both into one
-  // message (prWatchWakeMessage), and each is its own event, so each gets its own hairline. The status
-  // part goes first because that is the order the scheduler wrote them in.
+  // ONE DELIVERY, UP TO THREE PARTS. A poll that saw CI flip, a label move AND a comment land composes
+  // all of it into one message (prWatchWakeMessage), and each is its own event, so each gets its own
+  // hairline. They render in the order the scheduler wrote them: verdict, PR state, review activity.
   const status = parsePrWatchWake(text)
   // The SERVER's parse wins, because it is the only one that cannot be a build behind the formatter
   // that wrote this text (see TranscriptMessage.wakeSteer). Parsing here is the fallback for a legacy
@@ -96,13 +96,18 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
   // that is what keeps an already-open tab on an older bundle rendering the whole text rather than
   // silently dropping the CI verdict it would not know to draw. Here the status lines come off first
   // (each is exactly what `parsePrWatchWake` recognizes on its own) and the remainder is the steer.
-  const steer = served ?? parseGithubWakeSteer(status ? text.split("\n").filter((line) => !parsePrWatchWake(line)).join("\n") : text)
+  // The PR's own state moving is a THIRD part of the same delivery, on the same footing: its own line,
+  // its own hairline, stripped from the steer's input like the status line beside it.
+  const state = parsePrWatchStateWake(text)
+  const steer = served ?? parseGithubWakeSteer(
+    status || state ? text.split("\n").filter((line) => !parsePrWatchWake(line) && !parsePrWatchStateWake(line)).join("\n") : text,
+  )
   // Neither part recognized — a legacy transcript, a timer or limit wake, a format this build predates —
   // still gets first-party chrome. Only the structured lines are lost, never the text. This one stays a
   // CARD: there is arbitrary prose to show, and a divider is a one-line shape.
   // NOT `self-end`: right-justification is the human's side of the conversation, and that placement is
   // most of what made a watcher notification read as something the operator sent.
-  if (!steer && !status) {
+  if (!steer && !status && !state) {
     return (
       <div data-frizz-msg={sourceId} data-frizz-wake className="min-w-0 max-w-[85%]">
         <TranscriptCard icon={Bell} label="Frizz">
@@ -111,7 +116,7 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
       </div>
     )
   }
-  if (status) {
+  if (status || state) {
     // ONE ELEMENT, AND A REAL STEP BETWEEN THE TWO HAIRLINES. This branch used to return a bare
     // fragment, which got both of them wrong at once. Every surface that stacks messages charges the
     // gap BETWEEN them itself — the queue card and the virtualized thread with an explicit VSpace, the
@@ -128,9 +133,16 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
     // whole premise — so the pitch between them must not say which delivery carried them.
     return (
       <div data-frizz-wake className="flex flex-col">
-        <PrWatchStatusDivider wake={status} sourceId={sourceId} at={at} />
-        {/* The second part takes no sourceId: `data-frizz-msg` is the chat's per-message handle (scroll
-            anchor, React key) and two rendered nodes must never claim one id. */}
+        {/* Only the FIRST part takes the sourceId: `data-frizz-msg` is the chat's per-message handle
+            (scroll anchor, React key) and two rendered nodes must never claim one id. The parts render
+            in the order the scheduler wrote them — CI verdict, then PR state, then review activity. */}
+        {status && <PrWatchStatusDivider wake={status} sourceId={sourceId} at={at} />}
+        {state && (
+          <>
+            {status && <VSpace />}
+            <PrWatchStateDivider wake={state} sourceId={status ? undefined : sourceId} at={at} />
+          </>
+        )}
         {steer && (
           <>
             <VSpace />
@@ -402,6 +414,39 @@ function PrWatchStatusDivider({ wake, sourceId, at }: { wake: PrWatchWake; sourc
           <span className="shrink-0 tabular-nums">{checks}</span>
         </>
       )}
+    </WakeDivider>
+  )
+}
+
+// ---- THE PR-STATE HAIRLINE -------------------------------------------------------------------------
+// The PR itself moving — a conflict appearing, a label added or dropped, a reviewer requested. Same
+// watcher, same chrome and the same one-line shape as the two dividers around it, because it is the
+// same class of event: something happened on a PR nobody in this thread was looking at.
+//
+// The detail is rendered as frizz WROTE it, one opaque string, and it rides INSIDE the truncating span:
+// the clauses are ordered by how much they matter (a conflict first, then labels, then a review
+// request), so clipping from the right loses the least important one — which is the whole reason
+// `prStateChanges` builds them in that order.
+function PrWatchStateDivider({ wake, sourceId, at }: { wake: PrWatchStateWake; sourceId?: string; at?: string }) {
+  const href = githubRefUrl(wake.ref)
+  const ref = href ? (
+    <a href={href} target="_blank" rel="noreferrer noopener" className={DIVIDER_LINK}>{wake.ref}</a>
+  ) : (
+    <span>{wake.ref}</span>
+  )
+  return (
+    <WakeDivider
+      icon={Github}
+      sourceId={sourceId}
+      marker="github"
+      at={at}
+      ariaLabel={href ? undefined : `PR updated on ${wake.ref}: ${wake.detail}`}
+    >
+      <span className="min-w-0 truncate">
+        {"PR updated on "}
+        {ref}
+        {`: ${wake.detail}`}
+      </span>
     </WakeDivider>
   )
 }

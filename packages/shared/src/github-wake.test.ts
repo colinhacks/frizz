@@ -8,6 +8,7 @@ import {
   parseLimitModelSwitchWake,
   parseParkWake,
   parsePrWatchExpiredWake,
+  parsePrWatchStateWake,
   parsePrWatchWake,
   parseShellDoneWake,
   parseTimerWake,
@@ -454,7 +455,7 @@ test("parsePrWatchExpiredWake: the lapsed watcher's ref is the whole of what a r
 // fixture's claim to hold "every wake frizz delivers".
 const RECOGNIZERS = [
   parseShellDoneWake, parseTimerWake, parseLimitResumeWake, parseLimitModelSwitchWake, parsePrWatchWake, parseGithubWakeSteer,
-  parseParkWake, parsePrWatchExpiredWake,
+  parseParkWake, parsePrWatchExpiredWake, parsePrWatchStateWake,
 ] as const
 
 test("every wake frizz composes is recognized by a parser — none may reach the verbatim fallback", () => {
@@ -469,6 +470,7 @@ test("every wake frizz composes is recognized by a parser — none may reach the
     ["pr checks green with skips", prWatchWakeMessage({ target: "nubjs/nub#777", checks: { verdict: "passing", passed: 3, failed: 0, failing: [], skipped: 12 } })],
     ["pr checks gated", prWatchWakeMessage({ target: "nubjs/nub#777", checks: { verdict: "gated", passed: 0, failed: 0, failing: [], gated: 8, gating: ["Test Linux"] } })],
     ["review activity", formatGithubWakeSteer(single)],
+    ["pr state moved", prWatchWakeMessage({ target: "nubjs/nub#777", changes: ["now CONFLICTS with the base branch"] })],
     ["park expired", parkExpiredWakeMessage(parkStatus)],
     ["park expired, nothing listed", parkExpiredWakeMessage([])],
     ["park finished", parkFinishedWakeMessage(parkStatus, true)],
@@ -483,4 +485,52 @@ test("every wake frizz composes is recognized by a parser — none may reach the
 test("a shape no parser knows still reaches the fallback, so its text survives", () => {
   const future = "⏰ Frizz has invented a wake shape this build predates.\n\nAnd whatever it says, the text must survive."
   assert.ok(RECOGNIZERS.every((parse) => !parse(future)))
+})
+
+// ---- THE PR'S OWN STATE (2026-09-04) --------------------------------------------------------------
+//
+// The watcher saw reviews, comments and the check rollup, and nothing else — so a PR that developed a
+// merge conflict, gained a `blocked` label or had a reviewer requested said nothing at all until
+// something else happened to it. `mergeable` was even computed on every poll and then never read as a
+// trigger. These pin the line that carries all three.
+test("a pr-state line round-trips, and one poll's clauses stay one line", () => {
+  for (const [name, changes, detail] of [
+    ["a conflict appearing", ["now CONFLICTS with the base branch"], "now CONFLICTS with the base branch"],
+    ["labels both ways", ["labels +blocked, −needs-ci"], "labels +blocked, −needs-ci"],
+    ["a reviewer requested", ["review requested from richardlau"], "review requested from richardlau"],
+    ["all of it at once", ["now CONFLICTS with the base branch", "labels +blocked", "review requested from richardlau, nodejs/crypto-reviewers"],
+      "now CONFLICTS with the base branch; labels +blocked; review requested from richardlau, nodejs/crypto-reviewers"],
+  ] as [string, string[], string][]) {
+    const text = prWatchWakeMessage({ target: "nodejs/node#65796", changes })
+    assert.deepEqual(parsePrWatchStateWake(text), { ref: "nodejs/node#65796", detail }, name)
+    // Every clause is on ONE line: a label edit must not be given the weight of a headline.
+    assert.equal(text.split("\n").filter((l) => l.startsWith("🔔")).length, 1, name)
+  }
+})
+
+// The three parts coexist down one delivery, and the chat draws a hairline per part — so each parser
+// must find its own line and ignore the other two, in whatever combination a poll produced.
+test("a wake carrying CI, PR state and review activity yields all three parts", () => {
+  const text = prWatchWakeMessage({
+    target: "nodejs/node#65796",
+    checks: { verdict: "failing", passed: 30, failed: 1, failing: ["x86_64-darwin: with shared libraries / build"] },
+    changes: ["labels +commit-queue-failed"],
+    review: formatGithubWakeSteer(single),
+  })
+  assert.deepEqual(parsePrWatchWake(text), {
+    ref: "nodejs/node#65796", kind: "ci", verdict: "failing",
+    failing: ["x86_64-darwin: with shared libraries / build"],
+  })
+  assert.deepEqual(parsePrWatchStateWake(text), { ref: "nodejs/node#65796", detail: "labels +commit-queue-failed" })
+  assert.deepEqual(parseGithubWakeSteer(text.slice(text.indexOf(formatGithubWakeSteer(single)))), single)
+})
+
+test("prose that merely mentions a PR is not a state wake", () => {
+  for (const not of [
+    "🔔 something happened.",
+    "Reading nodejs/node#65796: the labels moved.",
+    formatGithubWakeSteer(single),
+  ]) {
+    assert.equal(parsePrWatchStateWake(not), null, not.slice(0, 40))
+  }
 })

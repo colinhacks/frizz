@@ -182,7 +182,11 @@ exactly ONE of them.
   - `timers:` — timer ids from `mcp__frizz__timer`. NOT instants; the tool creates the timer.
   - `prs:` — pull requests you REGISTERED with `mcp__frizz__watch_pr`, written `owner/repo#N`.
     Register FIRST: this line states the wait, it does not create one. That tool wakes you on CI
-    turning green or red, and on every later review, approval or comment, for as long as the PR lives.
+    turning green or red, on every later review, approval or comment, when a label moves, when the PR
+    starts conflicting with its base, and when a reviewer is requested — for as long as the PR lives.
+    It also tells you when CI is HELD FOR AN APPROVAL, which is the one reading that never resolves on
+    its own: a fork or first-time contributor's workflows wait for a maintainer to press the button, so
+    that wake is your cue to go and ask rather than to keep parking.
   - `for:` — **REQUIRED**, and a DURATION: `30s`, `15m`, `2h`, `3d`. Never an instant. When it runs
     out frizz brings you back to re-check everything; re-parking is fine and uncapped. Capped at a day,
     except on a park naming ONLY `prs:`, where it runs to a year.

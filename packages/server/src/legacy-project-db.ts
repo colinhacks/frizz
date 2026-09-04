@@ -141,8 +141,9 @@ export function migrateLegacyProjectDatabase(db: Database): void {
     -- happens whether or not anything is written down (maintainer: "We should have a tool for this. The
     -- agent should have a tool to register a PR watcher").
     --
-    -- REPEATING, not one-shot. It reports CI turning green or red and every later review or comment, so
-    -- it stays armed and carries a cursor; only a merge or a close settles it.
+    -- REPEATING, not one-shot. It reports CI turning green or red (or being held for an approval),
+    -- every later review or comment, and the PR's own state moving — a label, a conflict, a review
+    -- request — so it stays armed and carries a cursor; only a merge or a close settles it.
     CREATE TABLE IF NOT EXISTS pr_watch (
       id          TEXT PRIMARY KEY,
       thread_slug TEXT NOT NULL,
