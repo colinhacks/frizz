@@ -22,7 +22,11 @@ import {
   timerPromptMessage,
   splitWakeDeliveries,
   stripWakeDeliveryToken,
+  stripWakeTrailer,
   wakeDeliveryToken,
+  PR_WATCH_ARMED_TRAILER,
+  PR_WATCH_SPENT_TRAILER,
+  SHELL_DONE_TRAILER,
   type GithubWakeSteer,
 } from "./index.ts"
 
@@ -533,4 +537,62 @@ test("prose that merely mentions a PR is not a state wake", () => {
   ]) {
     assert.equal(parsePrWatchStateWake(not), null, not.slice(0, 40))
   }
+})
+
+// ---- THE AGENT-FACING TRAILER NEVER REACHES THE OPERATOR (2026-09-04) -----------------------------
+//
+// The dividers drop the trailer by never rendering it — but that only holds for a delivery some parser
+// RECOGNIZED, and the browser is the half that routinely cannot. A tab is a build behind whenever frizz
+// restarts under it, so the first delivery in a shape its bundle predates falls through to the verbatim
+// card and prints "(Registered PR watcher — STILL ARMED … drop it with `mcp__frizz__watch_pr`)" at the
+// operator. That is exactly what happened to a conflict wake an hour after the state line shipped
+// (maintainer 2026-09-04: "why am I still seeing shit like this? This should just never show up").
+//
+// So the trailer comes off in the DISPLAY PROJECTION, on the side that composed it and can never be a
+// build behind itself — which makes the leak impossible for a tab of any age, and for wake shapes not
+// written yet. These pin that, and pin that stripping it costs no parser its anchor.
+test("every trailer frizz appends comes off the display projection", () => {
+  for (const [name, text, trailer] of [
+    ["still armed", prWatchWakeMessage({ target: "nubjs/nub#879", changes: ["now CONFLICTS with the base branch"] }), PR_WATCH_ARMED_TRAILER],
+    ["watcher spent", prWatchWakeMessage({ target: "nubjs/nub#879", merged: true }), PR_WATCH_SPENT_TRAILER],
+    ["shell done", shellDoneMessage({ taskId: "bzvtnt3ig", label: "the churn suite", status: "completed" }), SHELL_DONE_TRAILER],
+  ] as [string, string, string][]) {
+    assert.ok(text.includes(trailer), `${name}: the producer no longer writes the constant it is pinned by`)
+    const shown = stripWakeTrailer(text)
+    assert.ok(!shown.includes(trailer), `${name}: the trailer survived the projection`)
+    assert.ok(!shown.includes("mcp__frizz__"), `${name}: a raw tool name reached the operator`)
+    assert.ok(shown.trim().length > 0, `${name}: the projection ate the news with the boilerplate`)
+  }
+})
+
+// The strip runs BEFORE the chat parses, so a parser that lost its anchor would trade the boilerplate
+// for a lost divider — the same defect wearing the other face.
+test("stripping the trailer leaves every parser's anchor intact", () => {
+  const state = prWatchWakeMessage({ target: "nodejs/node#65796", changes: ["labels +blocked"] })
+  assert.deepEqual(parsePrWatchStateWake(stripWakeTrailer(state)), { ref: "nodejs/node#65796", detail: "labels +blocked" })
+  const ci = prWatchWakeMessage({ target: "nodejs/node#65796", checks: { verdict: "passing", passed: 3, failed: 0, failing: [] } })
+  assert.deepEqual(parsePrWatchWake(stripWakeTrailer(ci)), { ref: "nodejs/node#65796", kind: "ci", verdict: "passing", passed: 3, failing: [] })
+  const merged = prWatchWakeMessage({ target: "nodejs/node#65796", merged: true })
+  assert.deepEqual(parsePrWatchWake(stripWakeTrailer(merged)), { ref: "nodejs/node#65796", kind: "merged" })
+  const shell = shellDoneMessage({ label: "vite --port 5199", status: "failed" })
+  assert.deepEqual(parseShellDoneWake(stripWakeTrailer(shell)), { label: "vite --port 5199", outcome: "failed" })
+  const review = prWatchWakeMessage({ target: "nubjs/nub#587", review: formatGithubWakeSteer(single) })
+  assert.deepEqual(parseGithubWakeSteer(stripWakeTrailer(review)), single)
+})
+
+// THE TIMER'S TRAILER IS THE ONE THAT STAYS. `parseTimerWake` matches ON it — a fired one-off is the
+// worker's own arbitrary prose, and that parenthetical is the only anchor saying which timer this was —
+// so a strip here would cost the divider the trailer exists to draw.
+test("the timer's trailer is left alone, because its parser is what drops it", () => {
+  const fired = timerPromptMessage("Re-check the promoted artifact.", "2026-08-24T09:50:00.000Z")
+  assert.equal(stripWakeTrailer(fired), fired)
+  assert.equal(parseTimerWake(fired)?.prompt, "Re-check the promoted artifact.")
+})
+
+test("prose that merely quotes a trailer keeps it, and a trailer mid-message is not a trailer", () => {
+  const quoted = `A worker asking about its own wake: ${PR_WATCH_ARMED_TRAILER} — what does that mean?`
+  assert.equal(stripWakeTrailer(quoted), quoted)
+  assert.equal(stripWakeTrailer("nothing frizz composed"), "nothing frizz composed")
+  // Nothing composes a body-less trailer, but an empty bubble is a worse failure than the boilerplate.
+  assert.equal(stripWakeTrailer(PR_WATCH_ARMED_TRAILER), PR_WATCH_ARMED_TRAILER)
 })

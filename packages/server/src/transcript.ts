@@ -21,6 +21,7 @@ import {
   stripHumanGapNote,
   stripWakeDeliveryToken,
   stripWakeTimeHeader,
+  stripWakeTrailer,
   type GithubWakeSteer,
   type TranscriptMessage,
   type TranscriptPage,
@@ -194,6 +195,13 @@ function userDisplayText(text: string, first: boolean): string | undefined {
   // (scheduler.withClock, then context's delivery token) and each is anchored to end-of-text.
   projected = stripWakeTimeHeader(projected)
   projected = stripHumanGapNote(projected)
+  // And frizz's own agent-facing trailer LAST, once the two riders above have uncovered it. The dividers
+  // never render it, but a divider only happens for a delivery the browser's parsers RECOGNIZE — and a
+  // tab is a build behind whenever frizz restarts under it, so a wake in a shape its bundle predates
+  // falls through to the raw-text card and prints "STILL ARMED … drop it with `mcp__frizz__watch_pr`" at
+  // the operator. Stripping it HERE — on the side that composed it, and can never be behind itself —
+  // makes that impossible for a tab of any age and for wake shapes not written yet.
+  projected = stripWakeTrailer(projected)
   return projected === text ? undefined : projected
 }
 

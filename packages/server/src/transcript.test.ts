@@ -7,7 +7,7 @@ import { projectStateDir } from "./frizz-paths.ts"
 import { projectRetiredBackgroundOps, projectTranscriptPeerNames } from "./transcript.ts"
 import { relayMessage } from "./completion-relay.ts"
 import type { TranscriptMessage } from "@frizz/shared"
-import { DISPATCH_TASK_BANNER_MARKER, formatGithubWakeSteer, GITHUB_DISPATCH_UI_BOUNDARY, humanGapNote, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_QUESTION_LEAD, PARK_CORRECTION_RETIRED_LEAD, parseRecurringPrompt, restPromptMessage, wakeDeliveryToken, type GithubWakeSteer } from "@frizz/shared"
+import { DISPATCH_TASK_BANNER_MARKER, formatGithubWakeSteer, GITHUB_DISPATCH_UI_BOUNDARY, humanGapNote, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_QUESTION_LEAD, PARK_CORRECTION_RETIRED_LEAD, parseRecurringPrompt, prWatchWakeMessage, restPromptMessage, wakeDeliveryToken, wakeTimeHeader, type GithubWakeSteer } from "@frizz/shared"
 import {
   coalescedQueuedKeys,
   createTranscriptFold,
@@ -94,6 +94,31 @@ test("Claude wake delivery hides the wake token in the bubble while the stored t
   assert.equal(wake.wake, true)
   // …and a limit wake is not a GitHub wake, so there is no structured steer to hand over.
   assert.equal(wake.wakeSteer, undefined)
+})
+
+// A REGISTERED PR WATCHER'S WAKE, exactly as the scheduler composes and delivers it: the news, frizz's
+// own agent-facing trailer, the clock line, the delivery token. The trailer is the one the operator saw
+// in full on 2026-09-04 — "why am I still seeing shit like this? This should just never show up" —
+// because the tab rendering it was an hour older than the state line it could not parse, so the delivery
+// fell through the chat's parsers to the verbatim card and printed the boilerplate.
+//
+// The chat's parsers are not the defence, because the browser is the half that is routinely behind. THIS
+// is: the display projection runs on the side that composed the trailer, so it can never be a build
+// behind it, and a tab of any age gets a body with no worker instructions in it.
+test("a PR watcher's wake shows the news and not the agent-facing trailer frizz appended", () => {
+  const news = prWatchWakeMessage({ target: "nubjs/nub#879", changes: ["now CONFLICTS with the base branch"] })
+  const clock = wakeTimeHeader(Date.parse("2026-09-04T22:31:00.000Z"), "2026-09-04T22:21:00.000Z")
+  const delivered = `${news}\n\n${clock}\n\n${wakeDeliveryToken(wakeId)}`
+  const raw = [
+    JSON.stringify({ type: "user", timestamp: "2026-09-04T22:00:00.000Z", message: { content: "orientation\n\nTASK:\nthe original task" } }),
+    JSON.stringify({ type: "assistant", timestamp: "2026-09-04T22:21:00.000Z", message: { id: "m1", content: [{ type: "text", text: "on it" }] } }),
+    JSON.stringify({ type: "user", timestamp: "2026-09-04T22:31:00.000Z", message: { content: delivered } }),
+  ].join("\n")
+  const wake = parseTranscript(raw).at(-1)!
+  assert.equal(wake.wake, true)
+  assert.equal(wake.text, delivered, "the worker keeps every byte — the outbox acks on the token, and the trailer is written for it")
+  assert.equal(wake.displayText, "\u{1F514} nubjs/nub#879: now CONFLICTS with the base branch.")
+  assert.doesNotMatch(wake.displayText!, /STILL ARMED|mcp__frizz__/, "worker instructions reached the operator")
 })
 
 // The router appends the clock note to the WORKER's copy only, and says so — but the chat renders the

@@ -1076,6 +1076,28 @@ export const TimerPromptText = z.string().trim().min(1).max(TIMER_PROMPT_MAX)
  *  why frizz is the one saying it. The second matters because the agent has a runtime notification for
  *  exactly this event and will reasonably wonder why it did not arrive: it only ever reaches a RUNNING
  *  turn, so a shell that finishes behind a rested worker is never reported by anyone else. */
+// ---- THE AGENT-FACING TRAILERS, AS CONSTANTS ------------------------------------------------------
+// Each of these is a paragraph frizz writes FOR THE WORKER at the end of a wake it composed: what the
+// registration is, whether it is still armed, and which tool drops it. A human reading the transcript
+// has no watcher to re-register and no tool to call, so none of it is ever news to them.
+//
+// THEY ARE CONSTANTS SO ONE FUNCTION CAN STRIP ALL OF THEM (`stripWakeTrailer`, beside the rest of the
+// wake grammar). The dividers already drop the trailer by never rendering it — but that only holds for
+// a delivery some parser RECOGNIZED, and the browser is the half that routinely cannot: a tab is a
+// build behind whenever frizz restarts under it, so the first delivery in a shape its bundle predates
+// falls through to the raw-text card and prints this boilerplate to the operator (maintainer
+// 2026-09-04, on a conflict wake an hour-old tab could not parse: "this should just never show up").
+// Stripping in the display projection makes that impossible for a tab of ANY age, and for any wake
+// shape, including the ones not written yet.
+//
+// The WORKER's copy is untouched — the projection narrows what is shown, never what was delivered.
+export const PR_WATCH_SPENT_TRAILER = "(This watcher is spent — there is nothing further to report on a finished PR.)"
+export const PR_WATCH_ARMED_TRAILER = "(Registered PR watcher — STILL ARMED. It reports again on the next CI change, review,"
+  + " comment, label, conflict or review request. Drop it with `mcp__frizz__watch_pr` when it stops"
+  + " mattering.)"
+export const SHELL_DONE_TRAILER = "(Frizz sends this because it finished after you came to rest, where your runtime's own completion"
+  + " notification does not reach you. Read its output if you still need it.)"
+
 /** What frizz delivers when a REGISTERED PR WATCHER has something to report.
  *
  *  Two things can move and the message names which: CI reaching a terminal verdict, and new review or
@@ -1114,7 +1136,7 @@ export function prWatchWakeMessage(input: {
   const lines: string[] = []
   if (input.merged || input.closed) {
     lines.push(`\u23f0 ${input.target} was ${input.merged ? "MERGED" : "CLOSED"}.`, "")
-    lines.push("(This watcher is spent — there is nothing further to report on a finished PR.)")
+    lines.push(PR_WATCH_SPENT_TRAILER)
     return lines.join("\n")
   }
   if (input.checks) {
@@ -1148,9 +1170,7 @@ export function prWatchWakeMessage(input: {
     if (lines.length) lines.push("")
     lines.push(input.review)
   }
-  lines.push("", "(Registered PR watcher — STILL ARMED. It reports again on the next CI change, review," +
-    " comment, label, conflict or review request. Drop it with `mcp__frizz__watch_pr` when it stops" +
-    " mattering.)")
+  lines.push("", PR_WATCH_ARMED_TRAILER)
   return lines.join("\n")
 }
 
@@ -1158,9 +1178,7 @@ export function shellDoneMessage(shell: { taskId?: string; label: string; status
   const what = shell.taskId ? `\`${shell.taskId}\` — ${shell.label}` : shell.label
   const verb = shell.status === "failed" ? "FAILED" : shell.status === "killed" ? "was STOPPED" : "finished"
   return (
-    `\u23f0 Your background shell ${verb}: ${what}.\n\n` +
-    "(Frizz sends this because it finished after you came to rest, where your runtime's own completion" +
-    " notification does not reach you. Read its output if you still need it.)"
+    `\u23f0 Your background shell ${verb}: ${what}.\n\n${SHELL_DONE_TRAILER}`
   )
 }
 
@@ -3330,6 +3348,34 @@ const WAKE_TIME_HEADER_TAIL = /\n+⏱ \d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: — you l
 /** Display projection: a frizz wake without the clock line frizz appended for the worker. */
 export function stripWakeTimeHeader(text: string): string {
   return text.replace(WAKE_TIME_HEADER_TAIL, "")
+}
+
+// The trailers frizz writes for the WORKER at the end of a wake it composed, declared with their
+// producers above. Every one of them is a sentence about a registration the reader does not hold and a
+// tool the reader cannot call.
+//
+// THE TIMER'S TRAILER IS DELIBERATELY NOT HERE. `parseTimerWake` matches ON it — a fired one-off is the
+// worker's own arbitrary prose, and that parenthetical is the only anchor saying which timer this was —
+// so stripping it upstream would cost the divider it is there to draw. It comes off in the parser
+// instead, which is the same outcome by the other route.
+const WAKE_TRAILERS = [PR_WATCH_ARMED_TRAILER, PR_WATCH_SPENT_TRAILER, SHELL_DONE_TRAILER]
+
+/** Display projection: a frizz wake without the agent-facing trailer frizz appended for the worker.
+ *
+ *  Anchored to END-OF-TEXT, after the clock line and the delivery token have already come off (see
+ *  `userDisplayText`, which composes the three in that order — the order they were appended in). Exact
+ *  strings, never a shape: a paragraph that merely LOOKS like a trailer — a worker quoting one back, a
+ *  human pasting one into a bug report — keeps it, and only the bytes frizz itself wrote are dropped. */
+export function stripWakeTrailer(text: string): string {
+  for (const trailer of WAKE_TRAILERS) {
+    const at = text.lastIndexOf(trailer)
+    if (at < 0 || text.slice(at + trailer.length).trim() !== "") continue
+    const head = text.slice(0, at).trimEnd()
+    // A wake whose whole body IS the trailer keeps it. Nothing composes one today, but showing an empty
+    // bubble is a worse failure than showing the boilerplate, and it is one line to make impossible.
+    return head === "" ? text : head
+  }
+  return text
 }
 
 /** The gap the HUMAN left before replying, as a line frizz appends to their message.

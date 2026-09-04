@@ -30,7 +30,7 @@
 // accent ref, the corner glyph) with no hierarchy between them.
 import { useId, useState } from "react"
 import { AlarmClock, Bell, Github, Hourglass, MessageCircleOff, TerminalSquare } from "lucide-react"
-import { isGithubWakeBacklog, parseGithubWakeSteer, parseLimitModelSwitchWake, parseLimitResumeWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchStateWake, parsePrWatchWake, parseQuestionsCancelledWake, parseShellDoneWake, parseTimerWake, type GithubWakeSteer, type LimitWindow, type ParkWake, type PrWatchStateWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
+import { isGithubWakeBacklog, parseGithubWakeSteer, parseLimitModelSwitchWake, parseLimitResumeWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchStateWake, parsePrWatchWake, parseQuestionsCancelledWake, parseShellDoneWake, parseTimerWake, stripWakeTrailer, type GithubWakeSteer, type LimitWindow, type ParkWake, type PrWatchStateWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
 import { CARD_BODY, QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
 import { VSpace } from "./rhythm.tsx"
 import { WakeDivider } from "./WakeDivider.tsx"
@@ -111,7 +111,11 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
     return (
       <div data-frizz-msg={sourceId} data-frizz-wake className="min-w-0 max-w-[85%]">
         <TranscriptCard icon={Bell} label="Frizz">
-          <div className={`${CARD_BODY} whitespace-pre-wrap [overflow-wrap:anywhere]${wrap ? ` ${QUEUE_WRAP}` : ""}`}>{text}</div>
+          {/* The trailer comes off HERE too, so the file's rule ("dropped in every case") is true of the
+              one branch that renders arbitrary text. The server strips it in the display projection and
+              this is normally a no-op — but this branch exists precisely for a delivery the parsers
+              missed, and that is exactly when the boilerplate used to reach the operator. */}
+          <div className={`${CARD_BODY} whitespace-pre-wrap [overflow-wrap:anywhere]${wrap ? ` ${QUEUE_WRAP}` : ""}`}>{stripWakeTrailer(text)}</div>
         </TranscriptCard>
       </div>
     )

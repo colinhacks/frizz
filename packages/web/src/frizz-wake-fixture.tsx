@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { formatGithubWakeSteer, limitModelSwitchSteer, limitResumeSteer, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, prWatchWakeMessage, questionsCancelledWakeMessage, shellDoneMessage, timerPromptMessage } from "@frizz/shared"
+import { formatGithubWakeSteer, limitModelSwitchSteer, limitResumeSteer, parkExpiredWakeMessage, parkFinishedWakeMessage, PR_WATCH_ARMED_TRAILER, prWatchExpiredWakeMessage, prWatchWakeMessage, questionsCancelledWakeMessage, shellDoneMessage, timerPromptMessage } from "@frizz/shared"
 import type { ChatMessage } from "./hooks.ts"
 import { Message } from "./components/ChatView.tsx"
 import "./styles.css"
@@ -102,10 +102,22 @@ const messages: ChatMessage[] = [
   // A REGISTERED WATCHER whose own `for:` ran out. The ref is the only thing on the line a reader can
   // act on, so it is the link.
   wake("w19", prWatchExpiredWakeMessage("nubjs/nub#777")),
+  // THE PR ITSELF MOVING — a conflict, a label, a reviewer requested. Same watcher and the same class of
+  // event as the two hairlines above, and the clauses of one poll stay on ONE line: a label edit must
+  // not be given the weight of a red build.
+  wake("w20", prWatchWakeMessage({ target: "nubjs/nub#879", changes: ["now CONFLICTS with the base branch"] })),
+  wake("w21", prWatchWakeMessage({ target: "nodejs/node#65796", changes: ["labels +blocked, −needs-ci", "review requested from richardlau"] })),
   // The FALLBACK still has to work: a wake this build cannot read keeps its first-party card and loses
   // no text. Nothing frizz composes lands here any more, so this is a legacy transcript or a format a
   // future frizz writes and this build has never seen.
   wake("w15", "⏰ Frizz has invented a wake shape this build predates.\n\n(And whatever it says, the text must survive — the card is what guarantees that.)"),
+  // …AND ITS BODY IS STILL NOT ALLOWED TO CARRY FRIZZ'S TRAILER. This is the leak, reproduced: the
+  // fallback is reached exactly when a tab is a build behind the wake it was sent, and a tab is a build
+  // behind whenever frizz restarts under it — so this is the ONE branch where the agent-facing
+  // parenthetical ever reached an operator, and it did, an hour after the PR-state line shipped
+  // (maintainer 2026-09-04: "why am I still seeing shit like this? This should just never show up").
+  // The card below must show the sentence and NOT the trailer under it.
+  wake("w15b", `⏰ Frizz has invented a wake shape this build predates.\n\n${PR_WATCH_ARMED_TRAILER}`),
 ]
 
 function Fixture() {
@@ -114,7 +126,7 @@ function Fixture() {
       <section className="mx-auto flex max-w-[760px] flex-col border border-border bg-panel px-5 py-4 shadow-xl shadow-black/30 sm:px-7">
         <header className="border-b border-border pb-3">
           <h1 className="text-[16px] font-semibold text-fg">Frizz wakes — every shape frizz speaks in</h1>
-          <p className="mt-0.5 text-[12px] text-muted">Review activity, a finished PR, a CI verdict, both at once, a background shell, a usage window, a fired timer, a park that ran out or finished, a lapsed watcher — and the unparsed fallback.</p>
+          <p className="mt-0.5 text-[12px] text-muted">Review activity, a finished PR, a CI verdict, both at once, the PR&rsquo;s own state moving, a background shell, a usage window, a fired timer, a park that ran out or finished, a lapsed watcher — and the unparsed fallback, with and without frizz&rsquo;s agent-facing trailer.</p>
         </header>
         <div className="flex flex-1 flex-col gap-3.5 py-5">
           {messages.map((message) => <Message key={message.sourceId} m={message} />)}
