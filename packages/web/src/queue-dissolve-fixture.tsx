@@ -3,8 +3,11 @@ import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
+import { sendEagerFollowUp } from "./lib/eagerComposerSubmission.ts"
 import { store } from "./store.ts"
 import "./styles.css"
+
+const queryClient = new QueryClient()
 
 // Browser QA for the DISSOLVE-in-place queue-card collapse + the dismissal auto-scroll: resolving a card
 // (Mark as done, or answering its question chips) dissolves it with blur+scale (receding from centre);
@@ -108,7 +111,7 @@ window.fetch = async (input, init) => {
   // starts; model that by pruning the thread so the resolve() 8s guard never reappears the card.
   if (url.pathname === "/_frizz/rpc/followUp") {
     const slug = slugFromBody(init)
-    if (slug && store.board) {
+    if (slug && !lagBoard.has(slug) && store.board) {
       store.board = { ...store.board, threads: store.board.threads.filter((t) => t.id !== slug) } as BoardSnapshot
     }
     return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })
@@ -117,6 +120,38 @@ window.fetch = async (input, init) => {
     return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })
   }
   return originalFetch(input, init)
+}
+
+// Slugs whose board is deliberately made to LAG behind the send (see __steerFromElsewhere). A card the
+// operator steers from its own composer is dismissed optimistically and gone in 200ms; a send that does
+// NOT dismiss leaves the card sitting in the queue until the server reports the turn, which is the
+// seconds-long window the transcript writes used to reshape it in.
+const lagBoard = new Set<string>()
+
+// QA hook: a send that does NOT dismiss this card — Retry and Restart worker, both in the card's own
+// header, plus the rail's hover Retry. All three go through sendEagerFollowUp in production, so this
+// drives the real path rather than a stand-in for it; going through the function rather than a button
+// keeps the fixture from pinning which header carries the verb.
+;(window as unknown as { __steerFromElsewhere: (slug: string, text: string) => void }).__steerFromElsewhere = (slug, text) => {
+  lagBoard.add(slug)
+  sendEagerFollowUp(queryClient, slug, text)
+}
+
+// …and the write that actually re-cut the card's window: the worker's own echo of that message, arriving
+// over /ws as a LANDED (un-`queued`) user record. api/transcript-live.ts publishes the push into this
+// same ["transcript", slug] cache entry, so writing it here is what the socket does.
+;(window as unknown as { __pushLandedTurn: (slug: string, text: string) => void }).__pushLandedTurn = (slug, text) => {
+  queryClient.setQueryData<ReturnType<typeof transcriptFor>>(["transcript", slug], (prev) => {
+    const card = CARDS.find((c) => c.id === slug) ?? CARDS[0]
+    const base = prev ?? transcriptFor(card.id, card.title)
+    return {
+      ...base,
+      messages: [
+        ...base.messages.filter((m) => !(m as TranscriptMessage & { queued?: boolean }).queued),
+        { sourceId: `${slug}-landed`, role: "user", text, tools: [], parts: [] } as TranscriptMessage,
+      ],
+    }
+  })
 }
 
 // QA hook: prune a thread from the board WITHOUT any user action on the card — a pure board
@@ -140,7 +175,7 @@ function Fixture() {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <QueryClientProvider client={new QueryClient()}>
+  <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Fixture />
     </TooltipProvider>

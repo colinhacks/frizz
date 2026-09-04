@@ -55,11 +55,26 @@ The re-cut is the worker's own echo of the injected message — the LANDED, un-`
 
 **There is no `threadTranscript` RPC in that window.** The transcript is PUSHED over `/ws`; an HTTP-response listener sees only `markRead`. That cost one wrong theory here and will cost the next one too.
 
-## Open — the one uncovered instance of the SAME defect, and it is not a performance bug
+## The same defect through a send that does NOT dismiss — found here, fixed here
 
-**A queue card re-cuts its window on a human turn the card did not send.** The transcript freeze is gated on `leaving`, which only `resolve()` sets, which only the card's own controls call. A steer sent from the thread drawer, from `/full`, from a second tab — or frizz's own delivery of a registered-question answer, which [`messagePresentation.ts`](../packages/web/src/lib/messagePresentation.ts) deliberately counts as the human — lands the same push, re-cuts the same window, and the card's departure follows seconds later. Identical visible sequence to the bug that was fixed, reached through a door the fix does not cover.
+`b90997c8` gated the freeze on `leaving`, which only `resolve()` sets, which only a DISMISSAL calls. But not every send dismisses, and the ones that do not are on the queue card's own header: **Retry** and **Restart worker** both route through `sendEagerFollowUp` ([`retrySession.ts`](../packages/web/src/lib/retrySession.ts), [`restartWorker.ts`](../packages/web/src/lib/restartWorker.ts)) and neither calls `onResolve`. The rail's hover-revealed Retry is the same send from the other side of the screen.
 
-It is left open because the obvious repair is a PRODUCT change, not a rendering one: make the queue treat "steered from anywhere" as leaving, which [`lib/steering.ts`](../packages/web/src/lib/steering.ts) already records for the rail (`markSteered` runs on every surface's send). That would dismiss the card the instant the steer commits instead of when the board catches up — better, probably, but it is a change to what dismissal MEANS and belongs to whoever owns that decision.
+That is not a hypothetical door. `offersRetry` shows the pill on stalled and limit-killed threads, and both are hard queue members — the card's own banner reads *"Stalled — the agent's process exited mid-turn. Retry, in the header, re-sends the last message."* So the documented recovery verb for a stalled card was the one send that made the card jitter, and with nothing dismissing it the jitter had seconds to play instead of 200ms.
+
+The fix widens the freeze to a `frozen` prop = `leaving || isOptimisticallySteering(thread, steeredAt[id])`, reusing the stamp [`lib/steering.ts`](../packages/web/src/lib/steering.ts) already keeps to move the rail row to Active on send. It is self-limiting three ways: `isOptimisticallySteering` yields to any server activity newer than the stamp, `markSteered`'s own 12s timer repaints at the cap, and a failed send calls `clearSteered`. The height PIN deliberately stays on `leaving` alone — it exists for the composer a card clears on its own send, and a card that is not leaving can still be typed into, where `height` + `overflow:hidden` would clip.
+
+Measured both halves, each against a pre-fix control:
+
+| what was driven | pre-fix | post-fix |
+| --- | --- | --- |
+| the real Retry pill, real stalled queue card, real stack | 498 → **556** at t+63ms (the optimistic bubble) | **498**, all 157 frames |
+| fixture, with the worker's echo pushed into `["transcript", slug]` | 918 → **962** → **359** (bubble, then the window re-cut) | **918**, every frame |
+
+Neither half alone shows both movements: the real stack has no live worker to echo the message back, and the fixture has no real button. Together they cover the pair. Pinned by the second test in [`queueSteerDissolve.e2e.test.ts`](../packages/web/src/components/queueSteerDissolve.e2e.test.ts), which fails on the pre-fix code.
+
+**Still uncovered, deliberately: a steer sent from a SECOND TAB.** `markSteered` is per-tab browser state, so tab A gets the echo with no stamp to freeze on. Closing that needs a server-side signal rather than a wider read of this one, and it is a rarer case than the one that was fixed.
+
+One thing found on the way and left alone: `appendQueuedMessage` smooth-scrolls the window to the document bottom unless the caller opts out, and only the queue card's own send does ([`TodosView.tsx`](../packages/web/src/components/TodosView.tsx) passes `scrollToBottom: false`). So Retry on a queue card scrolls the queue to the bottom. That is deliberate ("chat replies commit to the conversation tail"), it is not the reported jitter, and it predates all of this — noted because it will look like jitter to whoever measures next with `getBoundingClientRect` instead of `offsetTop`.
 
 ## Measured and dismissed — do not re-investigate these
 

@@ -16,6 +16,7 @@ import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { carriesDoneRegistration, collapseMiddleRuns, opensQueueSegment, queueCollapseSegments, segmentFolds, supersededAskIndices, survivesQueueCollapse } from "../lib/queueCollapse.ts"
 import { pairAllAnswers, unrenderedAnswers } from "../lib/answersMessage.ts"
 import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
+import { isOptimisticallySteering, useSteeredAt } from "../lib/steering.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
 import { allFencesShadowed, registeredStandingAt } from "../lib/questionShadow.ts"
 import { FenceCard, LimitPauseCard, Message, PermPolicyDenialCard, PermPromptBanner, PendingAskCard, VSpace, STEP, messageTailIsMeta, messageHeadIsMeta, messageRendersNothing, messageHasRenderableText, lastAssistantIndex } from "./ChatView.tsx"
@@ -260,6 +261,26 @@ export function TodosView() {
   // arm set so their first held frame is full-height and the transition can run.
   const isLeaving = (slug: string) => (presentIds.has(slug) ? leaving.has(slug) : armedRef.current.has(slug))
 
+  // …and a card's CONTENT freezes on a wider condition than its fade does, because `leaving` is fed only
+  // by resolve() — a DISMISSAL — while the writes that reshape a card are fired by the SEND. Not every
+  // send dismisses, and the ones that do not are on this card's own header: Retry and Restart worker both
+  // go through sendEagerFollowUp (lib/retrySession, lib/restartWorker) and neither calls onResolve, so a
+  // stalled or limit-killed card — a hard queue member, which is exactly when those buttons show — takes
+  // the optimistic bubble and then the worker's echo while sitting still in the queue. The rail's own
+  // hover Retry is the same send from the other side of the screen. Without this the card re-cuts its
+  // window in place exactly as it did before b90997c8: same jitter, and a longer window to see it in,
+  // since nothing is dismissing the card to cut the show short.
+  //
+  // The stamp lib/steering.ts already keeps (what moves the rail row to Active on send) is the one signal
+  // every one of those doors raises, so it is what this reads. It is per-TAB, so a steer sent from a
+  // second window is still uncovered — that one wants a server-side signal, not this.
+  //
+  // Self-limiting by construction: isOptimisticallySteering yields the moment server truth reports any
+  // activity newer than the stamp, markSteered's own 12s timer repaints at the cap, and a send that fails
+  // calls clearSteered. So a card that does NOT end up leaving is frozen for the delivery, not forever.
+  const steeredAt = useSteeredAt()
+  const isFrozen = (thread: ThreadView) => isLeaving(thread.id) || isOptimisticallySteering(thread, steeredAt[thread.id])
+
   // Render list = the board's queue, PLUS any held (departed, mid-fade) card re-inserted at its
   // last-known position so it stays mounted and fades in place instead of vanishing. Cards that finished
   // their exit (goneRef) are excluded whether or not the board has caught up — that instant removal is
@@ -485,7 +506,7 @@ export function TodosView() {
           {renderItems.map((item, i) => (
             <Fragment key={item.id}>
               <CardSlot slug={item.id} leaving={isLeaving(item.id)}>
-                <QueueCard thread={item} leaving={isLeaving(item.id)} onResolve={resolve} onUnresolve={unresolve} />
+                <QueueCard thread={item} leaving={isLeaving(item.id)} frozen={isFrozen(item)} onResolve={resolve} onUnresolve={unresolve} />
               </CardSlot>
               {/* The inter-card hairline rule, a SIBLING of the slots rather than a child of the card
                   above it: the rule separates two cards, so it belongs between them in the markup, and a
@@ -682,7 +703,7 @@ function IntermediateSummary({ toolCount, onExpand }: { toolCount: number; onExp
 // changed, instead of every mounted card — and each card's transcript is further guarded by the
 // memoized Message. `onResolve` takes the slug (stable useCallback in TodosView) so this card's props
 // never churn identity render-to-render.
-const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnresolve }: { thread: ThreadView; leaving: boolean; onResolve: (slug: string) => void; onUnresolve: (slug: string) => void }) {
+const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, onUnresolve }: { thread: ThreadView; leaving: boolean; frozen: boolean; onResolve: (slug: string) => void; onUnresolve: (slug: string) => void }) {
   // Tracks only vtReturnTarget (valtio re-renders on accessed keys alone), so the memo'd card
   // re-renders just when a /full exit primes or clears it — see the root div's viewTransitionName.
   const vtSnap = useSnapshot(store)
@@ -718,10 +739,11 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
   // Freshness (subscription within the socket budget, activity-edge refetch beyond it) is centrally
   // managed by transcript-live.ts keyed on this hook's cache observer — the card wires nothing itself.
   //
-  // FROZEN ONCE THE CARD IS LEAVING, which is what makes CardSlot's "fades out AT FULL HEIGHT" true of
-  // the CONTENT and not just the CSS. Steering the agent dismisses the card, and two separate writes
-  // then reshape it while it is fading. Measured on a real worker, with the websocket frames logged
-  // beside the card's height:
+  // FROZEN ONCE THE CARD IS ON ITS WAY OUT, which is what makes CardSlot's "fades out AT FULL HEIGHT"
+  // true of the CONTENT and not just the CSS. `frozen` is deliberately wider than `leaving` — see
+  // isFrozen in TodosView for the doors it covers. Steering the agent dismisses the card, and two
+  // separate writes then reshape it while it is fading. Measured on a real worker, with the websocket
+  // frames logged beside the card's height:
   //
   //   t+27ms   539 -> 597   the optimistic bubble is appended to this same transcript cache
   //   t+159ms               a /ws transcript push arrives carrying the LANDED user record
@@ -739,10 +761,14 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
   // fade: the up-and-down jitter the operator reported. The card is going away; the last frame before
   // the dismissal is the one it should dissolve on.
   const frozenTranscript = useRef(q.data)
-  if (!leaving) frozenTranscript.current = q.data
-  const transcript = leaving ? frozenTranscript.current : q.data
+  if (!frozen) frozenTranscript.current = q.data
+  const transcript = frozen ? frozenTranscript.current : q.data
   // …and the BOX is pinned for the duration of the exit, which is the same invariant enforced rather
-  // than merely intended. Freezing the transcript is not enough on its own: the composer collapses the
+  // than merely intended. This half stays on `leaving` alone, unlike the freeze above: it exists for the
+  // composer THIS card clears on its own send, and a card steered from elsewhere never clears one. Held
+  // wider it would clamp a card that may still be typed into — height plus overflow:hidden clips growing
+  // content, and the steered-from-elsewhere card is one the operator can still reach.
+  // Freezing the transcript is not enough on its own: the composer collapses the
   // moment the send clears it (32px for a one-line steer, 20px more per wrapped line), and a board delta
   // arriving mid-fade can drop the resting banner. Every one of those shoves the whole queue beneath a
   // card that is already on its way out.
@@ -1688,8 +1714,8 @@ const QueueCard = memo(function QueueCard({ thread, leaving, onResolve, onUnreso
 // mounted (and its draft/collapse/transcript state intact) unless its actual server payload changed.
 // Deltas retain identity for untouched rows, so the JSON path is only the reconnect/keyframe fallback.
 function queueCardPropsEqual(
-  previous: Readonly<{ thread: ThreadView; leaving: boolean; onResolve: (slug: string) => void; onUnresolve: (slug: string) => void }>,
-  next: Readonly<{ thread: ThreadView; leaving: boolean; onResolve: (slug: string) => void; onUnresolve: (slug: string) => void }>,
+  previous: Readonly<{ thread: ThreadView; leaving: boolean; frozen: boolean; onResolve: (slug: string) => void; onUnresolve: (slug: string) => void }>,
+  next: Readonly<{ thread: ThreadView; leaving: boolean; frozen: boolean; onResolve: (slug: string) => void; onUnresolve: (slug: string) => void }>,
 ): boolean {
-  return previous.leaving === next.leaving && previous.onResolve === next.onResolve && previous.onUnresolve === next.onUnresolve && (previous.thread === next.thread || JSON.stringify(previous.thread) === JSON.stringify(next.thread))
+  return previous.leaving === next.leaving && previous.frozen === next.frozen && previous.onResolve === next.onResolve && previous.onUnresolve === next.onUnresolve && (previous.thread === next.thread || JSON.stringify(previous.thread) === JSON.stringify(next.thread))
 }
