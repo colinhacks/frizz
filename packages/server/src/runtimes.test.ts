@@ -106,12 +106,12 @@ before(async () => {
 
 after(() => server.close())
 
-const claudeCoords: RuntimeCoordinates = { pkg: "@anthropic-ai/claude-agent-sdk-darwin-arm64", packageVersion: "0.3.207", label: "2.1.207", binary: "claude" }
+const claudeCoords: RuntimeCoordinates = { pkg: "@anthropic-ai/claude-agent-sdk-darwin-arm64", packageVersion: CLAUDE_AGENT_SDK_VERSION, label: CLAUDE_CODE_VERSION, binary: "claude" }
 const codexCoords: RuntimeCoordinates = { pkg: "@openai/codex", packageVersion: "0.153.2-darwin-arm64", label: "0.153.2", binary: "codex" }
 
 const claudeTgz = tarball([
   { name: "package/package.json", data: Buffer.from('{"name":"stub"}') },
-  { name: "package/claude", data: Buffer.from("#!/bin/sh\necho 2.1.207 (stub)\n"), mode: 0o755 },
+  { name: "package/claude", data: Buffer.from("#!/bin/sh\necho stub-claude\n"), mode: 0o755 },
 ])
 
 function scratch(): string {
@@ -180,22 +180,22 @@ test("provision: downloads once, verifies, lands the binary under the label, the
   const before = registry.requests.length
   const first = await provisionRuntime("claude", { root, coordinates: claudeCoords, registry: registry.url, onProgress: (m) => messages.push(m) })
   assert.equal(first.fetched, true)
-  assert.equal(first.bin, join(root, "claude", "2.1.207", "claude"))
-  assert.equal(readFileSync(first.bin, "utf8").includes("2.1.207"), true)
+  assert.equal(first.bin, join(root, "claude", CLAUDE_CODE_VERSION, "claude"))
+  assert.equal(readFileSync(first.bin, "utf8").includes("stub-claude"), true)
   if (process.platform !== "win32") assert.equal(statSync(first.bin).mode & 0o111, 0o111)
-  const marker = JSON.parse(readFileSync(join(root, "claude", "2.1.207", "provisioned.json"), "utf8")) as Record<string, string>
+  const marker = JSON.parse(readFileSync(join(root, "claude", CLAUDE_CODE_VERSION, "provisioned.json"), "utf8")) as Record<string, string>
   assert.equal(marker.integrity, integrityOf(claudeTgz))
   assert.equal(marker.binary, "claude")
   assert.equal(registry.requests.length - before, 2, "one manifest read and one tarball download")
   assert.ok(messages.some((m) => m.startsWith("downloading")), messages.join(" | "))
   assert.equal(messages.at(-1), "ready")
-  assert.equal(existsSync(join(root, "claude", `.partial-2.1.207-${process.pid}`)), false)
+  assert.equal(existsSync(join(root, "claude", `.partial-${CLAUDE_CODE_VERSION}-${process.pid}`)), false)
 
   const second = await provisionRuntime("claude", { root, coordinates: claudeCoords, registry: registry.url })
   assert.equal(second.fetched, false)
   assert.equal(second.bin, first.bin)
   assert.equal(registry.requests.length - before, 2, "the second call reads the marker and fetches nothing")
-  assert.equal(provisionedBinary("claude", root, "2.1.207"), first.bin)
+  assert.equal(provisionedBinary("claude", root, CLAUDE_CODE_VERSION), first.bin)
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -223,7 +223,7 @@ test("provision: an integrity mismatch discards everything and leaves no pin beh
     provisionRuntime("claude", { root, coordinates: claudeCoords, registry: registry.url }),
     /integrity mismatch/u,
   )
-  assert.equal(existsSync(join(root, "claude", "2.1.207")), false)
+  assert.equal(existsSync(join(root, "claude", CLAUDE_CODE_VERSION)), false)
   assert.deepEqual(readdirSync(join(root, "claude")), [], "no partial survives a failed download")
   rmSync(root, { recursive: true, force: true })
 })
@@ -232,21 +232,21 @@ test("provision: a package that unpacks without its binary is refused", async ()
   const root = scratch()
   registry.set(claudeCoords.pkg, claudeCoords.packageVersion, tarball([{ name: "package/package.json", data: Buffer.from("{}") }]))
   await assert.rejects(provisionRuntime("claude", { root, coordinates: claudeCoords, registry: registry.url }), /without a claude binary/u)
-  assert.equal(existsSync(join(root, "claude", "2.1.207")), false)
+  assert.equal(existsSync(join(root, "claude", CLAUDE_CODE_VERSION)), false)
   rmSync(root, { recursive: true, force: true })
 })
 
 test("sweep: retires the other versions and a stale partial, keeps the pin and a fresh partial", () => {
   const root = scratch()
-  for (const label of ["2.1.207", "2.1.180", ".partial-2.1.207-1", ".partial-2.1.207-2"]) {
+  for (const label of [CLAUDE_CODE_VERSION, "2.1.180", ".partial-2.1.207-1", ".partial-2.1.207-2"]) {
     mkdirSync(join(root, "claude", label), { recursive: true })
     writeFileSync(join(root, "claude", label, "x"), "")
   }
   const old = Date.now() - 2 * 24 * 60 * 60 * 1000
   utimesSync(join(root, "claude", ".partial-2.1.207-1"), old / 1000, old / 1000)
-  const removed = sweepRuntimes("claude", root, "2.1.207")
+  const removed = sweepRuntimes("claude", root, CLAUDE_CODE_VERSION)
   assert.deepEqual(removed.map((p) => p.slice(root.length + 1)).sort(), [join("claude", ".partial-2.1.207-1"), join("claude", "2.1.180")])
-  assert.ok(existsSync(join(root, "claude", "2.1.207")))
+  assert.ok(existsSync(join(root, "claude", CLAUDE_CODE_VERSION)))
   assert.ok(existsSync(join(root, "claude", ".partial-2.1.207-2")))
   assert.deepEqual(sweepRuntimes("codex", root, "0.153.2"), [], "a backend with no directory sweeps nothing")
   rmSync(root, { recursive: true, force: true })

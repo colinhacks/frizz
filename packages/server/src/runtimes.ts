@@ -49,9 +49,15 @@ import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./backend/codex-app-server.t
 import { frizzRoots } from "./frizz-paths.ts"
 
 /** The Claude Agent SDK Frizz bundles. Must equal packages/claude-agent-sdk-runtime's dependency. */
-export const CLAUDE_AGENT_SDK_VERSION = "0.3.207"
-/** The Claude Code build that SDK was built against — its package.json `claudeCodeVersion`. */
-export const CLAUDE_CODE_VERSION = "2.1.207"
+export const CLAUDE_AGENT_SDK_VERSION = "0.3.260"
+/** The Claude Code build that SDK was built against — its package.json `claudeCodeVersion`.
+ *
+ *  Keep this CURRENT when bumping, not merely matched: the first provisioned build (2.1.207, the SDK
+ *  Frizz had sat on since July) refused the default model outright — `API Error: 400 Claude Code
+ *  2.1.207 does not support this model; version 2.1.251 or newer is required` — because a model's
+ *  minimum CLI is enforced server-side. The pin makes Frizz's lag the worker's lag; a stale pin is a
+ *  broken worker, not a conservative one. */
+export const CLAUDE_CODE_VERSION = "2.1.260"
 /** The Codex build Frizz audited the app-server protocol against. One coordinate, owned there. */
 export const CODEX_VERSION = CODEX_APP_SERVER_SUPPORTED_VERSION
 
