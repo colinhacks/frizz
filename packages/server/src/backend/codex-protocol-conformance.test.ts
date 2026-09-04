@@ -22,6 +22,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./codex-app-server.ts"
+import { provisionedBinary, runtimesRoot } from "../runtimes.ts"
+
+// The binary Frizz actually runs: its own provisioned pin when this machine has one (runtimes.ts),
+// else whatever PATH offers. The pin IS the audited version by construction, so on a provisioned
+// machine this test no longer skips merely because the operator's own `codex` has moved on.
+const codexBin = provisionedBinary("codex", runtimesRoot(), CODEX_APP_SERVER_SUPPORTED_VERSION) ?? "codex"
 
 /** Every request frizz issues, and the exact param keys it puts on the wire. Kept beside the call
  *  sites it mirrors: thread/start :1653, thread/resume :1707 :1748 :2346, turn/start :1803,
@@ -46,7 +52,7 @@ const FRIZZ_SENDS: Record<string, readonly string[]> = {
 
 function installedCodexVersion(): string | null {
   try {
-    return execFileSync("codex", ["--version"], { encoding: "utf8", timeout: 20_000 }).trim().split(/\s+/).pop() ?? null
+    return execFileSync(codexBin, ["--version"], { encoding: "utf8", timeout: 20_000 }).trim().split(/\s+/).pop() ?? null
   } catch {
     return null
   }
@@ -56,7 +62,7 @@ function installedCodexVersion(): string | null {
 function protocolParams(): Map<string, Set<string>> {
   const dir = mkdtempSync(join(tmpdir(), "frizz-codex-schema-"))
   try {
-    execFileSync("codex", ["app-server", "generate-json-schema", "--experimental", "--out", dir], {
+    execFileSync(codexBin, ["app-server", "generate-json-schema", "--experimental", "--out", dir], {
       encoding: "utf8",
       timeout: 120_000,
     })

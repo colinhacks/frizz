@@ -44,6 +44,7 @@ import { serverAddressPathForStateDir } from "./frizz-paths.ts"
 import { pidIsAlive } from "./project-identity.ts"
 import { createBootProgressPublisher } from "./boot-progress.ts"
 import { log as frizzLog } from "./logging.ts"
+import { describeRuntime, resolveRuntimes, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
 import { createTenantMap } from "./tenants.ts"
 import { openFrizzDatabase, type FrizzDatabase, type OpenFrizzDatabaseOptions } from "./frizz-db.ts"
 import { startTenantPrime, type TenantPrimeRun } from "./tenant-prime.ts"
@@ -57,6 +58,7 @@ export const SERVER_FORCE_EXIT_MS = 5_000
 
 export type ServerStartupPhase =
   | "launch ownership"
+  | "runtimes"
   | "database"
   | "context"
   | "GitHub initialization"
@@ -91,6 +93,8 @@ type ViteServer = import("vite").ViteDevServer
 export interface StartServerRuntime {
   /** The unified database (frizz-db.ts); a rollback test substitutes an in-memory one. */
   openDatabase(options: OpenFrizzDatabaseOptions): FrizzDatabase
+  /** The pinned Claude Code and Codex (runtimes.ts); a fixture substitutes stand-ins without a download. */
+  resolveRuntimes(options: ResolveRuntimesOptions): Promise<ResolvedRuntimes>
   createContext(options: ContextOptions): AppContext | Promise<AppContext>| Promise<AppContext>
   initGithub(ctx: AppContext): Promise<void>
   createApp(ctx: AppContext, options: AppOptions): ReturnType<typeof createApp>
@@ -120,6 +124,7 @@ export interface StartServerRuntime {
 
 const defaultStartServerRuntime: StartServerRuntime = {
   openDatabase: openFrizzDatabase,
+  resolveRuntimes,
   createContext,
   initGithub,
   createApp,
@@ -175,7 +180,8 @@ export class ServerStartupError extends Error {
 export interface StartOptions {
   dev?: boolean
   port?: number
-  claudeBin?: string // injectable dispatch executable (used by tests / a stand-in)
+  claudeBin?: string // injectable dispatch executable (used by tests / a stand-in); skips provisioning
+  codexBin?: string // same seam for the Codex app-server executable
   // The dev supervisor owns signals itself and asks the child to close explicitly. Standalone/prod
   // callers keep the historical signal behavior by leaving this enabled.
   installSignalHandlers?: boolean
@@ -558,6 +564,9 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
   // launching context, handed to every tenant through contextOptions, and closed by the storage phase
   // of shutdown — after the launching project's storage, which is the last tenant standing by then.
   let frizzDb: FrizzDatabase | undefined
+  // The resolved Claude Code and Codex executables (the "runtimes" phase); read lazily by the tenant
+  // map's contextOptions, which is built before the phase runs.
+  let runtimes: ResolvedRuntimes | undefined
   // Named, incremental boot progress for whatever launcher is waiting on /health (boot-progress.ts).
   const bootProgress = createBootProgressPublisher(project.stateDir)
   let ctx: AppContext | undefined
@@ -628,7 +637,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     },
     // serverLockPath is the LAUNCHING project's: it is the only `server.lock` this process publishes
     // (see "status publication"), so it is the only file a tenant's worker can read the port out of.
-    contextOptions: { claudeBin: opts.claudeBin, serverLockPath: serverLockPathFor(project), activeTenants, teardownProject, launchProjectId: project.id, get database() { return frizzDb?.db } },
+    contextOptions: { get claudeBin() { return runtimes?.claude.bin ?? opts.claudeBin }, get codexBin() { return runtimes?.codex.bin ?? opts.codexBin }, serverLockPath: serverLockPathFor(project), activeTenants, teardownProject, launchProjectId: project.id, get database() { return frizzDb?.db } },
     // Each project's app carries ITS OWN owner proof, so /health stays honest per project rather than
     // answering for whichever one happened to launch the server. The transports are per project for a
     // blunter reason: a socket is a live feed of ONE board, so sharing the launcher's would push its
@@ -920,13 +929,28 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
 
   try {
     await phase("launch ownership", () => undefined)
+    // The executables every backend below will run. First boot on a machine downloads the pins (a few
+    // hundred MB, once per pin), and the launcher's readout follows it through bootProgress; after
+    // that the phase is a marker read. An explicit executable skips it; a failure falls back to PATH
+    // with a warning rather than refusing to boot (runtimes.ts).
+    runtimes = await phase("runtimes", () => runtime.resolveRuntimes({
+      claudeBin: opts.claudeBin,
+      codexBin: opts.codexBin,
+      log: (level, message) => frizzLog[level]("server", message),
+      onProgress: (backend, message) => bootProgress(`runtimes: ${backend} ${message}`),
+    }))
+    for (const backend of ["claude", "codex"] as const) frizzLog.info("server", `runtimes: ${describeRuntime(backend, runtimes[backend])}`)
+    // A provisioned Claude Code must not update itself out from under the pin. Every worker, and every
+    // `claude auth status` / `claude auth login` Frizz runs, inherits the server's environment.
+    if (runtimes.claude.source === "provisioned") process.env.DISABLE_AUTOUPDATER = "1"
     // Committed through the ledger callback, like the context below: an injected failure right after
     // this phase throws before the assignment would run, and the rollback must still find the handle.
     frizzDb = await phase("database", () => runtime.openDatabase({ stateDir: project.stateDir }), (value) => { frizzDb = value })
     ctx = await phase(
       "context",
       () => runtime.createContext({
-        claudeBin: opts.claudeBin,
+        claudeBin: runtimes!.claude.bin,
+        codexBin: runtimes!.codex.bin,
         project,
         database: frizzDb!.db,
         serverLockPath: serverLockPathFor(project),

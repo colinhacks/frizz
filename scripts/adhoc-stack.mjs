@@ -17,6 +17,7 @@
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { frizzPaths } from "../packages/server/src/frizz-paths.ts"
 
 const args = process.argv.slice(2)
 const flag = (k) => args.includes(`--${k}`)
@@ -51,6 +52,12 @@ const home = reuseHome ?? mkdtempSync(join(tmpdir(), "frizz-adhoc-home-"))
 mkdirSync(join(home, ".frizz"), { recursive: true })
 const realHome = process.env.HOME
 process.env.HOME = home
+// The pinned Claude Code and Codex (runtimes.ts) live under the cache root, which the sandbox HOME
+// just moved — so without this every stack would download both pins again. Point the sandbox at the
+// machine's real copies; a stack that must exercise provisioning itself sets FRIZZ_RUNTIMES_DIR.
+if (!process.env.FRIZZ_RUNTIMES && !process.env.FRIZZ_RUNTIMES_DIR) {
+  process.env.FRIZZ_RUNTIMES_DIR = join(frizzPaths({ home: realHome }).cache, "runtimes")
+}
 if (creds) {
   // The agent CLIs read their own credentials out of HOME. `.frizz/builds` rides along so a stack that
   // promotes an artifact starts warm instead of rebuilding from cold.
