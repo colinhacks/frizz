@@ -26,6 +26,14 @@ import {
   type ClaudeDiagnostic,
   type ClaudeQueryEvent,
 } from "./claude-agent-sdk-protocol.ts"
+import { CLAUDE_AGENT_SDK_VERSION } from "../runtimes.ts"
+
+/** A flag's value in either spelling the SDK has used: `--flag value` (≤ 0.3.207) or `--flag=value` (0.3.260+). */
+function flagValue(argv: readonly string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag)
+  if (index >= 0) return argv[index + 1]
+  return argv.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1)
+}
 
 const serverRequire = createRequire(import.meta.url)
 const runtimePackagePath = fileURLToPath(new URL("../../../claude-agent-sdk-runtime/package.json", import.meta.url))
@@ -56,22 +64,22 @@ interface Harness {
 }
 
 test("Agent SDK and its Zod 4 peer are pinned behind a runtime-only membrane while the server remains on Zod 3", () => {
-  assert.equal(sdkPackage.version, "0.3.207")
-  assert.equal(runtimePackage.dependencies?.["@anthropic-ai/claude-agent-sdk"], "0.3.207")
+  assert.equal(sdkPackage.version, CLAUDE_AGENT_SDK_VERSION)
+  assert.equal(runtimePackage.dependencies?.["@anthropic-ai/claude-agent-sdk"], CLAUDE_AGENT_SDK_VERSION)
   assert.equal(runtimePackage.dependencies?.zod, "4.4.3")
   assert.equal(runtimeZodPackage.version, "4.4.3")
   assert.match(serverZodPackage.version ?? "", /^3\./)
   assert.notEqual(runtimeRequire.resolve("zod"), serverRequire.resolve("zod"))
   assert.deepEqual(Object.keys(claudeRuntime), ["query"], "no Zod schema or provider union crosses the runtime membrane")
   assert.deepEqual(sdkPackage.optionalDependencies, {
-    "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-linux-x64-musl": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.207",
-    "@anthropic-ai/claude-agent-sdk-win32-arm64": "0.3.207",
+    "@anthropic-ai/claude-agent-sdk-linux-x64": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-linux-arm64": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-linux-x64-musl": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-darwin-x64": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-darwin-arm64": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-win32-x64": CLAUDE_AGENT_SDK_VERSION,
+    "@anthropic-ai/claude-agent-sdk-win32-arm64": CLAUDE_AGENT_SDK_VERSION,
   })
   assert.equal(claudeAgentSdkFoundationEnabled({}), false)
   assert.equal(claudeAgentSdkFoundationEnabled({ [CLAUDE_AGENT_SDK_FOUNDATION_FLAG]: "true" }), false)
@@ -141,7 +149,7 @@ test("real SDK + fake executable: init owns the requested session, input streams
     // cwd read the project's first heading. That fix restored project+local only, so the operator's own
     // scope stayed dark in broker sessions until 2026-08-16; see the factory for that differential.
     assert.ok(argv.includes("--setting-sources=user,project,local"), `argv had: ${argv.filter((a) => a.startsWith("--setting-sources")).join(",") || "no --setting-sources flag"}`)
-    assert.equal(argv[argv.indexOf("--session-id") + 1], SESSION_ID)
+    assert.equal(flagValue(argv, "--session-id"), SESSION_ID)
     assert.deepEqual(startup.environment, {
       frizzFakeInheritedPresent: false,
       frizzFakeOverridePresent: false,
@@ -283,8 +291,8 @@ test("resume selection uses the explicit owned UUID and never falls back to a ne
     await collectThrough(harness.handle, "result")
     const records = await waitForCapture(harness.capturePath, (rows) => rows.some((row) => row.kind === "user-input"))
     const argv = records.find((row) => row.kind === "startup")?.argv as string[]
-    assert.equal(argv[argv.indexOf("--resume") + 1], SESSION_ID)
-    assert.equal(argv.includes("--session-id"), false)
+    assert.equal(flagValue(argv, "--resume"), SESSION_ID)
+    assert.equal(flagValue(argv, "--session-id"), undefined)
   } finally {
     await harness.close()
   }

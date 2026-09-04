@@ -17,6 +17,14 @@ import { describeClaudeBrokerDiagnostic } from "./claude-broker-diagnostics.ts"
 import { CLAUDE_INPUT_DROP_DIAGNOSTIC_PREFIX, type ClaudeQueryEvent } from "./claude-agent-sdk-protocol.ts"
 import { WORKER_MAX_CONCURRENT_SUBAGENTS, WORKER_MAX_SUBAGENTS, WORKER_MAX_WEB_SEARCHES } from "./types.ts"
 
+/** Did this argv resume a transcript? Either spelling: `--resume <id>` (SDK ≤ 0.3.207) or `--resume=<id>` (0.3.260+). */
+const resumes = (argv: readonly string[] | undefined, sessionId?: string): boolean => {
+  const args = argv ?? []
+  const index = args.indexOf("--resume")
+  const value = index >= 0 ? args[index + 1] : args.find((arg) => arg.startsWith("--resume="))?.slice("--resume=".length)
+  return value !== undefined && (sessionId === undefined || value === sessionId)
+}
+
 const fakeCli = fileURLToPath(new URL("./claude-agent-sdk.fixtures/fake-claude-cli.mjs", import.meta.url))
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -143,9 +151,9 @@ test("followUp: freshProcess retires the live daemon and cold-resumes; a plain f
     // with it. This is the difference between recovering the thread and losing it.
     await waitForStartups(2)
     const replacement = startups()[1]
-    assert.ok(replacement.argv?.includes("--resume"), "the replacement cold-resumes the on-disk transcript")
-    assert.ok(replacement.argv?.includes(sessionId), "…for this exact session")
-    assert.ok(!startups()[0].argv?.includes("--resume"), "…where the original was a fresh start, so the two are genuinely different processes")
+    assert.ok(resumes(replacement.argv), "the replacement cold-resumes the on-disk transcript")
+    assert.ok(resumes(replacement.argv, sessionId), "…for this exact session")
+    assert.ok(!resumes(startups()[0].argv), "…where the original was a fresh start, so the two are genuinely different processes")
   } finally {
     bridge.releaseSession(slug, sessionId, "session-deleted")
     bridge.close()
@@ -211,8 +219,8 @@ test("retireDaemon retires the process without ending the conversation, and the 
     await waitForStartups(2)
     const replacement = startups()[1]
     assert.equal(modeOf(replacement.argv), "bypassPermissions", "THE POINT: the new process carries the operator's new mode")
-    assert.ok(replacement.argv?.includes("--resume"), "…and resumes the conversation rather than starting a blank one")
-    assert.ok(replacement.argv?.includes(sessionId), "…for this exact session")
+    assert.ok(resumes(replacement.argv), "…and resumes the conversation rather than starting a blank one")
+    assert.ok(resumes(replacement.argv, sessionId), "…for this exact session")
 
     // Retiring what is already gone is not an error and must not CLAIM one: the router turns this false
     // into "saved for the next resume" rather than "takes effect on the next turn", and those are
