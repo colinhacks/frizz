@@ -61,23 +61,21 @@ const AGE_FLOOR_MS = 24 * 60 * 60 * 1000
 
 /** When npm first served this version, or undefined if the registry will not say.
  *  The publish time lives only in the FULL packument, so this is fetched lazily — only for a package
- *  that is actually behind — and a failure degrades to "age unknown" rather than failing the check. */
+ *  that is actually behind — and a failure degrades to "age unknown" rather than failing the check.
+ *
+ *  BOTH backends read it from here, including Codex, whose packument is 13 MB because every platform
+ *  build is another version of the same package. That size was why this first asked GitHub for the
+ *  matching `rust-v<version>` release instead — which was wrong twice over. The unauthenticated API is
+ *  rate-limited per IP and rejects a caller it does not like, so the lookup failed INTERMITTENTLY, and
+ *  since an unknown age reads as not-eligible the check answered "hold, the registry would not say"
+ *  for a release that was simply four hours short (observed 2026-09-05). A daily check that silently
+ *  degrades to a permanent hold is worse than a slow one. The npm time is also the RIGHT clock: the
+ *  floor is enforced by the installer against the npm publish, which trails the GitHub release by
+ *  minutes. Measured cost of the honest source: 0.75 s. */
 async function npmPublishedAt(pkg, version) {
   try {
     const doc = await registry(pkg.replace("/", "%2F"))
     const at = doc.time?.[version]
-    return typeof at === "string" ? Date.parse(at) : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** Codex's packument is 13 MB, so its age comes from the release the npm publish follows instead. */
-async function codexPublishedAt(version) {
-  try {
-    const response = await fetch(`https://api.github.com/repos/openai/codex/releases/tags/rust-v${version}`)
-    if (!response.ok) return undefined
-    const at = (await response.json()).published_at
     return typeof at === "string" ? Date.parse(at) : undefined
   } catch {
     return undefined
@@ -145,7 +143,7 @@ async function codexLine() {
   const [missing, age] = behind
     ? await Promise.all([
         Promise.all(CODEX_PLATFORMS.map(async (p) => (await published("@openai/codex", `${version}-${p}`)) ? null : p)).then((r) => r.filter(Boolean)),
-        codexPublishedAt(version).then(ageVerdict),
+        npmPublishedAt("@openai/codex", version).then(ageVerdict),
       ])
     : [[], ageVerdict(undefined)]
   return {

@@ -154,7 +154,13 @@ test("real SDK + fake executable: init owns the requested session, input streams
       frizzFakeInheritedPresent: false,
       frizzFakeOverridePresent: false,
       clientApp: "frizz/claude-agent-sdk-foundation",
-      entrypoint: "sdk-ts",
+      // The SDK's own marker for how it launched the CLI, observed rather than set: Frizz never reads
+      // or writes CLAUDE_CODE_ENTRYPOINT, and the fixture only echoes it back. It rode in this snapshot
+      // as `sdk-ts` until the 0.3.261 bump renamed it to `sdk-cli` (2026-09-05). It stays asserted
+      // because the value of this deepEqual is that it is TOTAL — every variable the CLI receives is
+      // named here, which is what makes "no secret leaked" a proof rather than a spot check — so a
+      // vendor rename should land as a visible diff, not be waved through by a loosened matcher.
+      entrypoint: "sdk-cli",
       pathPresent: true,
       homePresent: true,
       nodeOptionsPresent: false,
