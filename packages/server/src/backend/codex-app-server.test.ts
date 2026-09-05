@@ -468,7 +468,11 @@ test("bridge is the sole codex transport (always enabled) and negotiates exact i
     experimentalApi: true,
     requestAttestation: false,
     mcpServerOpenaiFormElicitation: false,
-    optOutNotificationMethods: ["turn/diff/updated"],
+    optOutNotificationMethods: [
+      "turn/diff/updated", "item/agentMessage/delta", "item/reasoning/summaryTextDelta",
+      "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
+      "item/commandExecution/outputDelta", "thread/tokenUsage/updated", "account/rateLimits/updated",
+    ],
   })
   assert.ok(h.processes[0]!.inbound.some((message) => message.method === "initialized"))
   assert.equal(h.processes[0]!.inbound.some((message) => "jsonrpc" in message), false)
@@ -1417,6 +1421,62 @@ test("JSONL parsing preserves partial records and closes on malformed or flooded
   versionedProcess.send({ jsonrpc: "2.0", method: "unknown/notification", params: {} })
   await waitFor(() => versionedProcess.killed, "versioned envelope disconnect")
   versioned.close()
+})
+
+for (const scenario of ["large item", "delta burst", "coalesced records"] as const) test(`${scenario} does not detach a live turn`, async () => {
+  const h = harness()
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "large-items", sessionId: "large-items-session", cwd: h.dir })
+    const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "work" })
+    const process = h.processes[0]!
+    if (scenario !== "large item") {
+      process.sendBatch(Array.from({ length: 1000 }, () => ({
+        method: "item/commandExecution/outputDelta", params: { delta: "x".repeat(scenario === "delta burst" ? 64 : 1024) },
+      })))
+    }
+    // MCP output, image payloads and completed tool items can legitimately exceed 256 KiB.
+    const line = JSON.stringify({ method: "item/completed", params: {
+      threadId: binding.codexThreadId, turnId,
+      item: { type: "mcpToolCall", id: "large-result", result: { content: [{ type: "text", text: "é".repeat(300_000) }] } },
+    } }) + "\n"
+    const bytes = Buffer.from(line)
+    if (scenario === "large item") {
+      process.sendRaw(bytes.subarray(0, 300_001))
+      process.sendRaw(bytes.subarray(300_001))
+    }
+    process.completeActiveTurn()
+    await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "completion after large tool output")
+    assert.equal(process.killed, false)
+    assert.equal(h.bridge.binding(binding.threadSlug, binding.sessionId)?.state, "active")
+  } finally { h.close() }
+})
+
+test("inbound line bounds reject complete and unfinished oversized records with payload-free diagnostics", async () => {
+  for (const complete of [false, true]) {
+    const h = harness()
+    try {
+      await h.bridge.startDisposableSession({ threadSlug: "oversized", sessionId: "oversized-session", cwd: h.dir })
+      const process = h.processes[0]!
+      const line = JSON.stringify({ method: "item/completed", params: { secret: "provider-secret", text: "x".repeat(8 * 1024 * 1024) } })
+      process.sendRaw(line + (complete ? "\n" : ""))
+      await waitFor(() => process.killed, "oversized record disconnect")
+      assert.ok(h.diagnostics.some(event => (event as Message).event === "protocol-failure"))
+      assert.ok(!JSON.stringify(h.diagnostics).includes("provider-secret"))
+    } finally { h.close() }
+  }
+})
+
+test("opted-out method names never bypass request or envelope validation", async () => {
+  const h = harness()
+  try {
+    await h.bridge.startDisposableSession({ threadSlug: "notification-only", sessionId: "notification-only-session", cwd: h.dir })
+    const process = h.processes[0]!
+    process.request("not-a-notification", "turn/diff/updated", {})
+    await waitFor(() => process.clientResponses.some(r => r.id === "not-a-notification"), "unsupported request rejected")
+    assert.equal((process.clientResponses.find(r => r.id === "not-a-notification")!.error as Message).code, -32601)
+    process.send({ jsonrpc: "2.0", method: "turn/diff/updated", params: {} })
+    await waitFor(() => process.killed, "invalid opted-out envelope rejected")
+  } finally { h.close() }
 })
 
 test("stderr diagnostics are byte-only and never retain provider or token text", async () => {

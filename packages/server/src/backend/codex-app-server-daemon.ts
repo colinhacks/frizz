@@ -70,7 +70,7 @@ function readConfig(): DaemonConfig {
 
 /** Split a byte stream into complete JSONL lines. Over-long lines are dropped, never truncated into
  *  a half-message that would desync the peer's parser. */
-function lineReader(onLine: (line: string) => void): (chunk: Buffer | string) => void {
+function lineReader(onLine: (line: string) => void, onOverflow: () => void): (chunk: Buffer | string) => void {
   const decoder = new StringDecoder("utf8")
   let buffer = ""
   let overflowed = false
@@ -82,10 +82,15 @@ function lineReader(onLine: (line: string) => void): (chunk: Buffer | string) =>
       const line = buffer.slice(0, index)
       buffer = buffer.slice(index + 1)
       if (overflowed) { overflowed = false; continue }
+      if (Buffer.byteLength(line) > MAX_LINE_BYTES) { onOverflow(); continue }
       const trimmed = line.trim()
       if (trimmed) onLine(trimmed)
     }
-    if (Buffer.byteLength(buffer) > MAX_LINE_BYTES) { buffer = ""; overflowed = true }
+    if (Buffer.byteLength(buffer) > MAX_LINE_BYTES) {
+      buffer = ""
+      if (!overflowed) onOverflow()
+      overflowed = true
+    }
   }
 }
 
@@ -283,7 +288,9 @@ function main(): void {
     queuedLines = []
     queuedBytes = 0
     dropped = 0
-    sock.on("data", lineReader(readClientLine))
+    sock.on("data", lineReader(line => {
+      if (!sock.destroyed) readClientLine(line)
+    }, () => sock.destroy()))
     const drop = (): void => {
       if (client !== sock) return
       client = null
@@ -316,7 +323,15 @@ function main(): void {
     })
   }
 
-  child.stdout.on("data", lineReader(readServerLine))
+  child.stdout.on("data", lineReader(readServerLine, () => {
+    // Losing a lifecycle/approval frame must not look like a lossless stream. Detach without
+    // killing the worker; the next hello forces the bridge to reconcile against provider state.
+    dropped++
+    const lostClient = client
+    client = null
+    lostClient?.destroy()
+    armIdleExit()
+  }))
   child.stderr.resume() // drained and discarded; the client sees stderr only via its own attachment
   // The app-server child itself ended — the single most important cause to distinguish. A non-zero
   // code is a codex panic/OOM; a signal is an external kill. Either way every turn inside it (the

@@ -165,11 +165,21 @@ export const CLIENT_CAPABILITIES = Object.freeze({
   experimentalApi: true,
   requestAttestation: false,
   mcpServerOpenaiFormElicitation: false,
-  // The cumulative turn diff is unused here (file approvals use item/fileChange/*). Real turns
-  // emit ~484 KB snapshots, exceeding our 256 KB frame limit and disconnecting EVERY thread on
-  // the shared bridge while the workers keep running. Suppress it at the producer, not by raising
-  // transport limits or weakening approval validation. Native listeners negotiate on every attach.
-  optOutNotificationMethods: ["turn/diff/updated"],
+  // Unused cumulative diff snapshots caused project-wide disconnects under the old 256 KiB frame
+  // limit. Suppress them at the producer regardless of the inbound budget; file approvals use
+  // item/fileChange/*, not these snapshots. Native listeners negotiate on every attach.
+  optOutNotificationMethods: [
+    "turn/diff/updated",
+    // Prose, reasoning, output and usage are read from the rollout, not this control connection.
+    // A replay/burst of these used to consume the 256-record queue before lifecycle events drained.
+    "item/agentMessage/delta",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/summaryPartAdded",
+    "item/reasoning/textDelta",
+    "item/commandExecution/outputDelta",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+  ],
 })
 // ---- sandbox: the app-server spells the SAME axis two different ways ----
 // `thread/start` and `thread/resume` take the plain `sandbox: SandboxMode` string frizz already uses.
@@ -265,8 +275,11 @@ const SANDBOX_CONFIRM_TIMEOUT_MS = 8_000
 const SANDBOX_NOOP_GRACE_MS = 750
 
 const MAX_JSONL_BYTES = 256 * 1024
+// Tool items and RPC replies carry full output, not just control fields. Match the daemon's 8 MiB
+// line budget; keep outbound requests and approval diffs on their separate, smaller limits.
+const MAX_INBOUND_JSONL_BYTES = 8 * 1024 * 1024
 const MAX_INBOUND_RECORDS = 256
-const MAX_INBOUND_QUEUED_BYTES = MAX_JSONL_BYTES * 2
+const MAX_INBOUND_QUEUED_BYTES = MAX_INBOUND_JSONL_BYTES * 2
 const MAX_OUTBOUND_REQUESTS = 128
 const MAX_STDERR_BYTES = 16 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000
@@ -514,6 +527,7 @@ export type CodexAppServerDiagnostic =
   | { event: "turn-auto-resumed"; threadSlug: string; interruptedTurnId: string }
   | { event: "daemon-reforked"; reason: string }
   | { event: "daemon-events-dropped"; dropped: number }
+  | { event: "protocol-failure"; detail: string }
   | { event: "auth-account-refreshed" }
   // The app-server this bridge had been talking to is gone and a fresh one replaced it — every turn
   // that was running inside it (parents AND their sub-agents) died. `deathReason` is the dead daemon's
@@ -649,17 +663,19 @@ class JsonlRpcConnection {
   private consume(chunk: Buffer | string): void {
     if (this.closed) return
     this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk)
-    if (Buffer.byteLength(this.buffer, "utf8") > MAX_JSONL_BYTES * 2) {
-      this.fail("protocol", new Error("Codex app-server JSONL buffer exceeded its limit"))
-      return
-    }
     while (true) {
       const newline = this.buffer.indexOf("\n")
-      if (newline < 0) return
+      if (newline < 0) {
+        // Bound the unfinished RECORD, not the OS chunk: one chunk may contain many valid lines.
+        if (Buffer.byteLength(this.buffer, "utf8") > MAX_INBOUND_JSONL_BYTES) {
+          this.fail("protocol", new Error("Codex app-server JSONL buffer exceeded its limit"))
+        }
+        return
+      }
       const line = this.buffer.slice(0, newline)
       this.buffer = this.buffer.slice(newline + 1)
       if (line.trim().length === 0) continue
-      if (Buffer.byteLength(line, "utf8") > MAX_JSONL_BYTES) {
+      if (Buffer.byteLength(line, "utf8") > MAX_INBOUND_JSONL_BYTES) {
         this.fail("protocol", new Error("Codex app-server JSONL message exceeded its limit"))
         return
       }
@@ -669,6 +685,15 @@ class JsonlRpcConnection {
       } catch {
         this.fail("protocol", new Error("Codex app-server emitted invalid JSONL"))
         return
+      }
+      // Old daemon generations retain their original initialize capabilities. Discard only the
+      // opted-out NOTIFICATIONS locally too; a request/response or invalid envelope still reaches
+      // normal validation. Never discard approval or turn/item lifecycle events.
+      if (message !== null && typeof message === "object" && !Array.isArray(message)) {
+        const envelope = message as JsonObject
+        if (!("id" in envelope) && !("jsonrpc" in envelope)
+          && typeof envelope.method === "string"
+          && CLIENT_CAPABILITIES.optOutNotificationMethods.includes(envelope.method)) continue
       }
       const bytes = Buffer.byteLength(line, "utf8")
       if (
@@ -783,6 +808,8 @@ class JsonlRpcConnection {
 
   private fail(reason: "exit" | "error" | "protocol", error: Error): void {
     if (this.closed) return
+    // Every caller supplies a fixed local error, never provider text or the failed payload.
+    if (reason === "protocol") this.diagnostic?.({ event: "protocol-failure", detail: error.message })
     this.closed = true
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer)

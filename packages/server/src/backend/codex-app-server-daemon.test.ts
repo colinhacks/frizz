@@ -72,6 +72,12 @@ process.stdin.on("data", (c) => {
         }
       }, m.params.afterMs)
       process.stdout.write(JSON.stringify({ id: m.id, result: {} }) + "\\n")
+    } else if (m.method === "oversizedLater") {
+      setTimeout(() => {
+        process.stdout.write(JSON.stringify({ method: "item/completed", params: { text: "x".repeat(9 * 1024 * 1024) } }) + "\\n")
+        process.stdout.write(JSON.stringify({ method: "turn/completed", params: { marker: "after-oversized" } }) + "\\n")
+      }, 100)
+      process.stdout.write(JSON.stringify({ id: m.id, result: {} }) + "\\n")
     } else if (m.method === "emitLater") {
       setTimeout(() => {
         process.stdout.write(JSON.stringify({ method: "turn/completed", params: { marker: m.params.marker } }) + "\\n")
@@ -252,6 +258,27 @@ test("codex daemon: a notification emitted while nobody is attached is queued, n
   } finally {
     killCodexAppServerDaemon(h.stateDir, PROJECT)
   }
+})
+
+test("codex daemon: an oversized provider record reports loss without killing the worker or losing the next line", async () => {
+  const h = harness()
+  try {
+    const first = await daemonCodexAppServerHost(options(h))
+    const c1 = client(first.process)
+    await c1.request("initialize", {})
+    const exited = new Promise<void>(resolve => first.process.on("exit", () => resolve()))
+    await c1.request("oversizedLater")
+    await Promise.race([exited, delay(5000).then(() => { throw new Error("oversized record did not detach") })])
+    const second = await daemonCodexAppServerHost(options(h))
+    const c2 = client(second.process)
+    await delay(300)
+    assert.equal(second.generation, first.generation, "worker survives the lost record")
+    assert.equal(second.droppedWhileDetached, 1, "one oversized record is one reported loss")
+    assert.ok(c2.notifications.some(n => n.method === "turn/completed"), "the following lifecycle record is preserved")
+    const reply = await c2.request("ping", { echo: "still-running" })
+    assert.equal((reply.result as { echo: string }).echo, "still-running")
+    second.process.kill()
+  } finally { killCodexAppServerDaemon(h.stateDir, PROJECT) }
 })
 
 test("codex daemon: killing the daemon tears down the app-server and prunes the record", async () => {
