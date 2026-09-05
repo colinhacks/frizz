@@ -53,6 +53,11 @@ export type NormalizedEvent =
   // the child's output, NOT this session's, so the fold treats it as activity and nothing more.
   // Codex-only: Claude delivers both upward shapes as ordinary (synthetic) user records instead.
   | { kind: "agent-report"; at?: string; author: string; text: string; final: boolean }
+  // A PARENT instruction arriving in this CHILD session. Codex records the plaintext envelope but
+  // Fernet-encrypts the payload in current builds, so `text` is absent there; preserving the event
+  // still lets the child's drawer show WHEN another task/steer arrived instead of silently skipping
+  // the entire turn. An older/future build that records plaintext carries it verbatim.
+  | { kind: "agent-instruction"; at?: string; author: string; text?: string; encrypted: boolean }
   | { kind: "title"; title: string } // backend's own session auto-title (ai-title / codex thread title)
   // Context COMPACTION: the harness replaced the conversation with a summary, so everything above this
   // point is gone from the agent's context. Both providers record it (Claude: a system/compact_boundary

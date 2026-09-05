@@ -551,11 +551,23 @@ test("parseCodexLine: a child's inter-agent message → agent-report, FINAL_ANSW
   ])
 })
 
-test("parseCodexLine: only a DESCENDANT's message is a report — the outbound shape and unknown types yield nothing", () => {
-  // What a CHILD's own rollout carries: the parent addressing it. Verified empty-payloaded in a real
-  // child rollout, and rendering it in the parent would attribute the parent's own words to a child.
-  assert.deepEqual(parseCodexLine(interAgent("/root", "/root/bun_project_survey", "NEW_TASK", "")), [])
-  assert.deepEqual(parseCodexLine(interAgent("/root", "/root/bun_project_survey", "MESSAGE", "steer")), [])
+test("parseCodexLine: a parent's instruction is preserved in the CHILD transcript, including the encrypted-body limitation", () => {
+  // What a CHILD's own rollout carries: the parent addressing it. Current Codex records an empty
+  // plaintext payload plus an encrypted_content sibling; retain the arrival rather than dropping the
+  // whole turn. A plaintext payload remains displayable for older/future Codex builds.
+  assert.deepEqual(parseCodexLine(interAgent("/root", "/root/bun_project_survey", "NEW_TASK", "")), [{
+    kind: "agent-instruction",
+    at: "2026-07-31T01:00:39.106Z",
+    author: "/root",
+    encrypted: true,
+  }])
+  assert.deepEqual(parseCodexLine(interAgent("/root", "/root/bun_project_survey", "MESSAGE", "steer")), [{
+    kind: "agent-instruction",
+    at: "2026-07-31T01:00:39.106Z",
+    author: "/root",
+    text: "steer",
+    encrypted: true,
+  }])
   // A sibling/unrelated path is not a descendant of ours either.
   assert.deepEqual(parseCodexLine(interAgent("/other/child", "/root", "FINAL_ANSWER", "x")), [])
   // A future message type is not rendered blind, and a record with no readable block yields nothing.

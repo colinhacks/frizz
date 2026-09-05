@@ -58,6 +58,13 @@ function seed(storage: Storage): void {
   storage.armThreadWatch({ id: `${storage.projectId}-watch`, slug: "alpha-thread", kind: "shell", target: "sh1", createdAtMs: 1, expiresAtMs: 9e12 })
   storage.askThreadQuestion({ id: `${storage.projectId}-q`, slug: "alpha-thread", spec: "{}", askedAtMs: 1 })
   storage.markThreadDone("alpha-thread", "done body", 1)
+  storage.recordSubAgentSteer({
+    slug: "alpha-thread",
+    subAgentId: "child",
+    deliveryId: `${storage.projectId}-steer`,
+    message: `steer from ${storage.projectId}`,
+    sentAtMs: 1,
+  })
   storage.reserveAdoptionClaim({ slug: "gamma-thread", attemptToken: UUID, sessionId: `adopt-${storage.projectId}`, reservedAtMs: 1, leaseExpiresAtMs: 2 })
 }
 
@@ -94,6 +101,7 @@ test("two projects in one database never see each other's rows", () => {
   assert.equal(a.getPrWatch("project-b-pr"), undefined)
   assert.equal(a.getThreadWatch("project-b-watch"), undefined)
   assert.equal(a.getThreadQuestion("project-b-q"), undefined)
+  assert.deepEqual(a.listSubAgentSteers("alpha-thread", "child").map((s) => s.delivery_id), ["project-a-steer"])
   assert.equal(a.dueThreadTimers(1e13).length, 1)
   assert.equal(a.expiredPrWatches(1e13).length, 1)
   assert.equal(a.expiredThreadWatches(1e13).length, 1)
@@ -162,6 +170,7 @@ test("every mutating method touches only its own project", () => {
     ["withdrawThreadQuestion", () => a.withdrawThreadQuestion("alpha-thread", "project-b-q", 5)],
     ["clearThreadDone", () => a.clearThreadDone("alpha-thread")],
     ["markThreadDone", () => a.markThreadDone("beta-thread", "b", 2)],
+    ["recordSubAgentSteer", () => a.recordSubAgentSteer({ slug: "beta-thread", subAgentId: "child", deliveryId: "project-a-steer-2", message: "new", sentAtMs: 2 })],
     ["retireOp", () => a.retireOp("beta-thread", "sess-beta-thread", "op-2")],
     ["unretireOp", () => a.unretireOp("alpha-thread", "sess-alpha-thread", "op-1")],
     ["setSetting", () => a.setSetting("font", "sans")],

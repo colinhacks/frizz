@@ -468,16 +468,30 @@ export function parseCodexLine(line: string): NormalizedEvent[] {
     // rollout were dropped on the floor, so a codex thread running a dozen children showed a run of
     // Spawn-agent cards and then nothing ever coming back.
     //
-    // DIRECTION GUARD: the same record type carries the parent's outbound NEW_TASK/MESSAGE in the
-    // CHILD's rollout. Only a message from a DESCENDANT is a report to us — and the outbound form is
-    // worthless anyway, its `Payload:` being empty because the real body rides the sibling
-    // `encrypted_content` block (verified against a real child rollout).
+    // DIRECTION GUARD: the same record type carries the parent's NEW_TASK/MESSAGE in the CHILD's
+    // rollout. That direction is not a report, but it is not worthless: even when Codex encrypts the
+    // body, its timestamp is the only durable evidence in the child's own transcript that another
+    // instruction arrived. Preserve it as an agent-instruction so the drawer can mark the turn.
     if (pt === "agent_message") {
       const author = typeof p.author === "string" ? p.author : ""
       const recipient = typeof p.recipient === "string" ? p.recipient : ""
-      if (!author || !recipient || !author.startsWith(`${recipient}/`)) return []
-      const report = parseCodexAgentReport(p.content)
-      return report ? [{ kind: "agent-report", at, author, text: report.body, final: report.final }] : []
+      if (!author || !recipient) return []
+      const message = parseCodexAgentMessage(p.content)
+      if (!message) return []
+      if (author.startsWith(`${recipient}/`)) {
+        if (message.type !== "FINAL_ANSWER" && message.type !== "MESSAGE") return []
+        return [{ kind: "agent-report", at, author, text: message.body, final: message.type === "FINAL_ANSWER" }]
+      }
+      if (recipient.startsWith(`${author}/`) && (message.type === "NEW_TASK" || message.type === "MESSAGE")) {
+        return [{
+          kind: "agent-instruction",
+          at,
+          author,
+          ...(message.body ? { text: message.body } : {}),
+          encrypted: message.encrypted,
+        }]
+      }
+      return []
     }
     // response_item/message (the duplicate API echo) is intentionally dropped.
     return []
@@ -506,24 +520,25 @@ export function parseCodexLine(line: string): NormalizedEvent[] {
 // MESSAGEs are empty, their text riding the sibling `encrypted_content` block instead. Suppressing the
 // empty ones would hide mid-flight progress entirely, and it would cost nothing to show: the report
 // line renders no excerpt of the body by design (maintainer 2026-07-29), so the divider IS the signal.
-function parseCodexAgentReport(content: unknown): { final: boolean; body: string } | undefined {
+function parseCodexAgentMessage(content: unknown): { type: string; body: string; encrypted: boolean } | undefined {
   if (!Array.isArray(content)) return undefined
   let text: string | undefined
+  let encrypted = false
   for (const block of content) {
     if (!block || typeof block !== "object") continue
     const b = block as { type?: unknown; text?: unknown }
+    if (b.type === "encrypted_content") encrypted = true
     if (b.type === "input_text" && typeof b.text === "string") {
       text = b.text
-      break
     }
   }
   if (!text) return undefined
   const type = text.match(/^Message Type:[ \t]*(\S+)/)?.[1]
-  if (type !== "FINAL_ANSWER" && type !== "MESSAGE") return undefined
+  if (!type) return undefined
   const marker = text.match(/^Payload:[ \t]*$/m)
   if (!marker || marker.index === undefined) return undefined
   const body = text.slice(marker.index + marker[0].length).replace(/^\n/, "").trim()
-  return { final: type === "FINAL_ANSWER", body }
+  return { type, body, encrypted }
 }
 
 // ---- codex MULTI-AGENT signals (sub-agent visibility) ----

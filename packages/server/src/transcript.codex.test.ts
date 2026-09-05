@@ -468,11 +468,11 @@ test("a codex child's mid-flight MESSAGE draws the peer report line, linked to i
   assert.equal(report?.peerDispatchId, "spawn2", "the DISPATCH id is what the drawer resolves")
 })
 
-test("codex inter-agent records that are not a child reporting up surface nothing", () => {
-  // OUTBOUND (the shape a CHILD's own rollout carries): recipient is the descendant, and its plaintext
-  // Payload is empty anyway — the real body rides the sibling encrypted block.
+test("codex inter-agent records distinguish incoming child instructions from irrelevant shapes", () => {
+  // INBOUND from the child's perspective: the encrypted body cannot be shown, but the arrival itself
+  // must be visible in the child drawer.
   const outbound = rollout([agentMessage("/root", "/root/bun_survey", "NEW_TASK", "")])
-  assert.deepEqual(projectCodexTranscript(outbound), [])
+  assert.match(projectCodexTranscript(outbound)[0].text, /Task instructions received/)
   // A child that reports before any spawn card exists (a resumed rollout) degrades to nothing rather
   // than inventing a completion divider with no dispatch to drill into.
   const orphan = rollout([agentMessage("/root/gone", "/root", "FINAL_ANSWER", "done")])
@@ -1321,6 +1321,37 @@ test("codex peer messages render as message cards; an encrypted body explains it
   assert.equal(followed.sendTo, "batch2_plan")
   assert.equal(sent.sendType, undefined)
   assert.equal(plain.sendBody, "check the staging deploy too")
+})
+
+test("a Codex child's drawer marks its original task and later follow-up at their exact arrival points", () => {
+  const instruction = (type: "NEW_TASK" | "MESSAGE", timestamp: string, body = "") => ({
+    timestamp,
+    type: "response_item",
+    payload: {
+      type: "agent_message",
+      author: "/root",
+      recipient: "/root/mocha",
+      content: [
+        { type: "input_text", text: `Message Type: ${type}\nTask name: /root/mocha\nSender: /root\nPayload:\n${body}` },
+        { type: "encrypted_content", data: "gAAAA-opaque" },
+      ],
+    },
+  })
+  const messages = parseCodexTranscript(rollout([
+    instruction("NEW_TASK", "2026-09-05T12:15:18.000Z"),
+    { timestamp: "2026-09-05T12:15:19.000Z", type: "event_msg", payload: { type: "agent_message", phase: "commentary", message: "Reading the first task." } },
+    instruction("NEW_TASK", "2026-09-05T12:20:00.000Z"),
+    { timestamp: "2026-09-05T12:20:01.000Z", type: "event_msg", payload: { type: "agent_message", phase: "commentary", message: "Reading the follow-up." } },
+  ]))
+
+  assert.deepEqual(messages.map((message) => message.text), [
+    "Task instructions received. Codex encrypted the message body, so Frizz can't display it.",
+    "Reading the first task.",
+    "Follow-up instructions received. Codex encrypted the message body, so Frizz can't display it.",
+    "Reading the follow-up.",
+  ])
+  assert.deepEqual(messages.map((message) => message.role), ["user", "assistant", "user", "assistant"])
+  assert.equal(messages[2].at, "2026-09-05T12:20:00.000Z")
 })
 
 // Codex names its tools in snake_case and ships no display name, so the generic branch used to title

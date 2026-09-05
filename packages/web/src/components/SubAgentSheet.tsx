@@ -246,11 +246,11 @@ function SubAgentSteerFooter({
     // than losing what was typed — the one thing a dropped steer must never do, and the likeliest
     // failure is the honest one: the child settled between the render and the send.
     setMessage("")
-    rpc.subAgentSteer({ slug, id: subId, message: text })
+    rpc.subAgentSteer({ slug, id: subId, message: text, deliveryId: crypto.randomUUID() })
       .then(() => {
-        // There is no optimistic bubble to append: measured, the CLI hands an addressed message to
-        // the child's model WITHOUT persisting a user record in its transcript, so the steer is
-        // legitimately invisible until the child reacts. A refetch is the honest signal.
+        // The provider does not persist addressed input in the child's JSONL, so the server journals
+        // accepted drawer steers and merges them into this transcript. Refetch that durable record;
+        // do not fabricate an optimistic bubble before delivery succeeds.
         void qc.invalidateQueries({ queryKey: ["subAgentTranscript", slug, subId] })
         showToast("Steer sent")
       })

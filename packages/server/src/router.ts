@@ -151,7 +151,7 @@ import { liveThreadsForBackend, runProviderLogout } from "./backend/account-acti
 import { threadProfileOptions, validateThreadProfile } from "./backend/thread-profiles.ts"
 import { adoptionRuntimeBinding, type AdoptionPaneLookup, type ExpectedAdoptionPane } from "./adoption-recovery.ts"
 import { parsePrRef, readGithubStatusBook, GITHUB_STATUS_SETTING } from "./awaiting.ts"
-import { isBrokerClaudeRow, type SessionRow, type Storage } from "./storage.ts"
+import { isBrokerClaudeRow, type SessionRow, type Storage, type SubAgentSteerRow } from "./storage.ts"
 import type { SessionTelemetry } from "./tailer.ts"
 import { providerResumeCommand } from "./external-terminal.ts"
 import { backgroundShellLineCount, readBackgroundShellOutput } from "./background-shell-output.ts"
@@ -687,6 +687,33 @@ function setProjectIconFromFile(id: string, file: string): ProjectCard {
 // both safe and the point (a monorepo's threads and a sibling project's threads referencing the same
 // upstream issue pay for it once).
 const githubHovercards = createGithubHovercardService()
+
+function mergeSubAgentSteers(messages: TranscriptMessage[], steers: SubAgentSteerRow[]): TranscriptMessage[] {
+  if (!steers.length) return messages
+  const merged = [...messages]
+  for (const steer of steers) {
+    const at = new Date(steer.sent_at).toISOString()
+    // Future broker versions may start persisting addressed input. Prefer the provider's native record
+    // when the same text appears at the same instant rather than rendering Frizz's journal copy too.
+    const duplicate = messages.some((message) => {
+      if (message.role !== "user" || message.text.trim() !== steer.message.trim() || !message.at) return false
+      return Math.abs(Date.parse(message.at) - steer.sent_at) <= 5_000
+    })
+    if (duplicate) continue
+    const message: TranscriptMessage = {
+      sourceId: `subagent-steer:${steer.delivery_id}`,
+      role: "user",
+      text: steer.message,
+      tools: [],
+      parts: [{ kind: "text", text: steer.message }],
+      at,
+    }
+    const next = merged.findIndex((candidate) => candidate.at !== undefined && Date.parse(candidate.at) > steer.sent_at)
+    if (next === -1) merged.push(message)
+    else merged.splice(next, 0, message)
+  }
+  return merged
+}
 
 export function createRouter(ctx: AppContext) {
   const frizzDir = join(ctx.project.dir, ".frizz")
@@ -1397,7 +1424,10 @@ export function createRouter(ctx: AppContext) {
         // A CODEX sub-agent is itself a codex thread, so its "output file" is a rollout in codex's own
         // schema — parse it with the codex reader or the drawer renders empty.
         const read = info.outputFormat === "codex" ? readCodexTranscriptFile : readTranscriptFile
-        const messages = info.outputFile ? read(info.outputFile) : []
+        const messages = mergeSubAgentSteers(
+          info.outputFile ? read(info.outputFile) : [],
+          ctx.storage.listSubAgentSteers(input.slug, input.id),
+        )
         const steer = subAgentSteerable(input.slug, input.id)
         const stop = subAgentStoppable(input.slug, input.id)
         return {
@@ -1424,7 +1454,7 @@ export function createRouter(ctx: AppContext) {
     // predicate). So an ungated steer is not a no-op, it is a misdelivery. `subAgentSteerable` is the
     // single predicate that decides, and the drawer's prompt box is rendered off the same answer.
     subAgentSteer: mutation({
-      input: z.object({ slug: ThreadSlug, id: z.string(), message: z.string().min(1), deliveryId: z.string().optional() }).strict(),
+      input: z.object({ slug: ThreadSlug, id: z.string(), message: z.string().min(1), deliveryId: z.string().min(1).max(200).optional() }).strict(),
       output: z.object({ delivered: z.boolean() }),
       handler: async ({ input }) => {
         const target = subAgentSteerable(input.slug, input.id)
@@ -1433,12 +1463,24 @@ export function createRouter(ctx: AppContext) {
         }
         const bridge = ctx.claudeBroker
         if (!bridge) throw new Error("Claude session broker is unavailable; cannot steer this sub-agent")
+        const deliveryId = input.deliveryId ?? randomUUID()
+        const sentAtMs = Date.now()
         await bridge.steerSubAgent({
           threadSlug: input.slug,
           sessionId: target.sessionId,
           subAgentId: input.id,
           text: input.message,
-          deliveryId: input.deliveryId,
+          deliveryId,
+        })
+        // The provider deliberately does not write addressed input into the child's transcript. Frizz
+        // has the plaintext here, so journal it only after delivery succeeds and merge it into future
+        // drawer reads. INSERT OR IGNORE makes a retried transport id one visible message.
+        ctx.storage.recordSubAgentSteer({
+          slug: input.slug,
+          subAgentId: input.id,
+          deliveryId,
+          message: input.message,
+          sentAtMs,
         })
         ctx.board.refresh()
         return { delivered: true }

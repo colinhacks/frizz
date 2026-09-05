@@ -28,6 +28,8 @@ function harness(subAgent: (slug: string, id: string) => SubAgentInfo, opts: {
   backgroundShell?: () => { command?: string; outputFile?: string; state: "running" | "done" } | undefined
   // Make the real provider stop FAIL, to pin that a failed stop must not retire the row.
   stopThrows?: Error
+  // Make addressed delivery fail, to pin that an unaccepted steer never becomes transcript history.
+  steerThrows?: Error
   // The live subtree hanging off the stopped row, deepest-first — what the tailer reads off sidecars.
   descendantTasks?: string[]
   // Task ids whose stop throws, to pin that a descendant frizz cannot end is COUNTED and stated
@@ -80,7 +82,7 @@ function harness(subAgent: (slug: string, id: string) => SubAgentInfo, opts: {
     ...(opts.backgroundShell ? { backgroundShell: opts.backgroundShell } : {}),
     ...(opts.descendantTasks ? { subAgentDescendantTasks: () => [...opts.descendantTasks!] } : {}),
   }
-  const steers: { threadSlug: string; sessionId: string; subAgentId: string; text: string }[] = []
+  const steers: { threadSlug: string; sessionId: string; subAgentId: string; text: string; deliveryId?: string }[] = []
   const stops: { threadSlug: string; sessionId: string; taskId: string }[] = []
   // Every message frizz delivered into the worker's own conversation. For these tests that is only ever
   // the shell-kill notice — the one thing the provider does not tell a worker itself.
@@ -101,7 +103,8 @@ function harness(subAgent: (slug: string, id: string) => SubAgentInfo, opts: {
     } : {}),
     getSettings: () => ({ permissionMode: "auto" }) as unknown as Settings,
     claudeBroker: {
-      steerSubAgent: async (input: { threadSlug: string; sessionId: string; subAgentId: string; text: string }) => {
+      steerSubAgent: async (input: { threadSlug: string; sessionId: string; subAgentId: string; text: string; deliveryId?: string }) => {
+        if (opts.steerThrows) throw opts.steerThrows
         steers.push(input)
       },
       stopSubAgent: async (input: { threadSlug: string; sessionId: string; taskId: string }) => {
@@ -162,15 +165,52 @@ test("subAgentSteer delivers into the CHILD, addressed by its dispatch tool_use 
   const h = harness(() => RUNNING_DIRECT)
   try {
     seed(h.storage, "t")
-    const result = await h.router.subAgentSteer.handler({ input: { slug: "t", id: "toolu_child", message: "look at the other file instead" } })
+    const result = await h.router.subAgentSteer.handler({ input: {
+      slug: "t",
+      id: "toolu_child",
+      message: "look at the other file instead",
+      deliveryId: "delivery-visible",
+    } })
     assert.deepEqual(result, { delivered: true })
     assert.deepEqual(h.steers, [{
       threadSlug: "t",
       sessionId: "sid-t",
       subAgentId: "toolu_child",
       text: "look at the other file instead",
-      deliveryId: undefined,
+      deliveryId: "delivery-visible",
     }])
+    assert.deepEqual(h.storage.listSubAgentSteers("t", "toolu_child"), [{
+      thread_slug: "t",
+      subagent_id: "toolu_child",
+      delivery_id: "delivery-visible",
+      message: "look at the other file instead",
+      sent_at: h.storage.listSubAgentSteers("t", "toolu_child")[0].sent_at,
+    }])
+
+    const transcript = await h.router.subAgentTranscript.handler({ input: { slug: "t", id: "toolu_child" } })
+    assert.equal(transcript.messages.length, 1)
+    assert.equal(transcript.messages[0].role, "user")
+    assert.equal(transcript.messages[0].text, "look at the other file instead")
+    assert.equal(transcript.messages[0].sourceId, "subagent-steer:delivery-visible")
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("a failed broker delivery is not journaled as a steer the child received", async () => {
+  const h = harness(() => RUNNING_DIRECT, { steerThrows: new Error("broker rejected the target") })
+  try {
+    seed(h.storage, "t")
+    await assert.rejects(
+      () => h.router.subAgentSteer.handler({ input: {
+        slug: "t",
+        id: "toolu_child",
+        message: "never delivered",
+        deliveryId: "delivery-failed",
+      } }),
+      /broker rejected the target/,
+    )
+    assert.deepEqual(h.storage.listSubAgentSteers("t", "toolu_child"), [])
   } finally {
     h.cleanup()
   }

@@ -450,6 +450,19 @@ export interface ThreadQuestionRow {
   settled_at: number | null
 }
 
+/** One operator-authored steer that Frizz delivered into a sub-agent from its drawer.
+ *
+ * The Claude broker accepts the plaintext but does not write a user record into the child's JSONL,
+ * so without this tiny delivery journal the drawer permanently forgets the operator's own message.
+ * `delivery_id` is the transport idempotency key: a retried RPC is one visible message, not two. */
+export interface SubAgentSteerRow {
+  thread_slug: string
+  subagent_id: string
+  delivery_id: string
+  message: string
+  sent_at: number
+}
+
 // ---- THE PER-THREAD REGISTRIES, READ WHOLE -------------------------------------------------------
 // Five little tables hang off a thread — its timers, its PR watchers, its watches, its questions, its
 // completion — and the board reads all five for EVERY row it assembles. One query per thread per table
@@ -722,6 +735,10 @@ export interface Storage {
   threadDoneBySlug(): Map<string, { body: string; doneAt: number }>
   /** Forget it, so the thread is no longer done. */
   clearThreadDone(slug: string): boolean
+  // ---- OPERATOR STEERS INTO SUB-AGENT DRAWERS -----------------------------------------------------
+  /** Persist only AFTER the broker accepts delivery. Idempotent by delivery id. */
+  recordSubAgentSteer(row: { slug: string; subAgentId: string; deliveryId: string; message: string; sentAtMs: number }): void
+  listSubAgentSteers(slug: string, subAgentId: string): SubAgentSteerRow[]
   // ---- THE BUILT-IN SIGN-OFF NUDGE ----------------------------------------------------------------
   // Count one delivered nudge against this thread. It only ever INCREMENTS — the count is cleared by
   // `resetSignoffNudges` when the thread signs off, and by nothing else. It used to reset whenever a
@@ -1175,12 +1192,26 @@ export const STORAGE_SCHEMA = `
       done_at     INTEGER NOT NULL,
       PRIMARY KEY (project_id, thread_slug)
     );
+    -- Operator-authored steers sent from a sub-agent drawer. The Claude broker intentionally does not
+    -- persist these as user records in the child's provider transcript, but Frizz possesses the text
+    -- at delivery time and the drawer must not forget what the operator sent.
+    CREATE TABLE IF NOT EXISTS subagent_steer (
+      project_id  TEXT NOT NULL,
+      thread_slug TEXT NOT NULL,
+      subagent_id TEXT NOT NULL,
+      delivery_id TEXT NOT NULL,
+      message     TEXT NOT NULL,
+      sent_at     INTEGER NOT NULL,
+      PRIMARY KEY (project_id, thread_slug, subagent_id, delivery_id)
+    );
+    CREATE INDEX IF NOT EXISTS subagent_steer_timeline
+      ON subagent_steer(project_id, thread_slug, subagent_id, sent_at);
 `
 
 /** Every table this module owns, for the importer and the project purge. */
 export const STORAGE_TABLES = [
   "session", "settings", "tombstone", "adoption_claim", "adoption_retired_attempt", "retired_op",
-  "thread_timer", "pr_watch", "thread_watch", "thread_question", "thread_done",
+  "thread_timer", "pr_watch", "thread_watch", "thread_question", "thread_done", "subagent_steer",
 ] as const
 
 /** Idempotent; run by every createStorage and by frizz-db.ts before an import. */
@@ -1757,6 +1788,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
   `)
   const delThreadQuestions = scope.prepare("DELETE FROM thread_question WHERE project_id = @project_id AND thread_slug = ?")
   const delThreadDone = scope.prepare("DELETE FROM thread_done WHERE project_id = @project_id AND thread_slug = ?")
+  const delSubAgentSteers = scope.prepare("DELETE FROM subagent_steer WHERE project_id = @project_id AND thread_slug = ?")
   const markThreadDoneStmt = scope.prepare(`
     INSERT INTO thread_done (project_id, thread_slug, body, done_at) VALUES (@project_id, ?, ?, ?)
     ON CONFLICT(project_id, thread_slug) DO UPDATE SET body = excluded.body, done_at = excluded.done_at
@@ -1768,6 +1800,17 @@ export function createStorage(source: string | Database, projectId: string): Sto
     "SELECT thread_slug, body, done_at FROM thread_done WHERE project_id = @project_id",
   )
   const clearThreadDoneStmt = scope.prepare("DELETE FROM thread_done WHERE project_id = @project_id AND thread_slug = ?")
+  const recordSubAgentSteerStmt = scope.prepare(`
+    INSERT OR IGNORE INTO subagent_steer (
+      project_id, thread_slug, subagent_id, delivery_id, message, sent_at
+    ) VALUES (@project_id, @slug, @subAgentId, @deliveryId, @message, @sentAtMs)
+  `)
+  const listSubAgentSteersStmt = scope.prepare<[string, string], SubAgentSteerRow>(`
+    SELECT thread_slug, subagent_id, delivery_id, message, sent_at
+    FROM subagent_steer
+    WHERE project_id = @project_id AND thread_slug = ? AND subagent_id = ?
+    ORDER BY sent_at, rowid
+  `)
   // Only a PROMPTLESS snooze expires here. One that carries a prompt still owes the thread a bump, and
   // the scheduler — not the board — clears it once that wake reaches a terminal state. Erasing it on
   // elapse (the board refreshes far more often than the waker ticks) would drop the follow-up entirely.
@@ -1847,6 +1890,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     delThreadWatches.run(existing.slug)
     delThreadQuestions.run(existing.slug)
     delThreadDone.run(existing.slug)
+    delSubAgentSteers.run(existing.slug)
     delSession.run(existing.slug)
     return existing
   }
@@ -2484,6 +2528,8 @@ export function createStorage(source: string | Database, projectId: string): Sto
       return bySlug
     },
     clearThreadDone: (slug) => clearThreadDoneStmt.run(slug).changes > 0,
+    recordSubAgentSteer: (row) => { recordSubAgentSteerStmt.run(row) },
+    listSubAgentSteers: (slug, subAgentId) => listSubAgentSteersStmt.all(slug, subAgentId),
     dropThreadWatch: (slug, id, settledAtMs) => dropThreadWatchStmt.run(settledAtMs, id, slug).changes === 1,
     settleThreadWatch: (id, settledAtMs, state = "settled") => settleThreadWatchStmt.run(state, settledAtMs, id).changes === 1,
     armThreadTimer: (timer) => void armTimerStmt.run(timer),

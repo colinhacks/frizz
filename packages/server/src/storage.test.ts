@@ -58,6 +58,29 @@ test("storage close is idempotent", () => {
   assert.doesNotThrow(() => s.close(), "competing shutdown paths cannot close SQLite twice")
 })
 
+test("sub-agent drawer steers are durable, idempotent, ordered, and project-scoped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-storage-steers-"))
+  const path = join(dir, "ui.db")
+  const first = createStorage(path, "first")
+  const second = createStorage(path, "second")
+  try {
+    first.recordSubAgentSteer({ slug: "thread", subAgentId: "child", deliveryId: "b", message: "second", sentAtMs: 20 })
+    first.recordSubAgentSteer({ slug: "thread", subAgentId: "child", deliveryId: "a", message: "first", sentAtMs: 10 })
+    first.recordSubAgentSteer({ slug: "thread", subAgentId: "child", deliveryId: "a", message: "duplicate", sentAtMs: 30 })
+    second.recordSubAgentSteer({ slug: "thread", subAgentId: "child", deliveryId: "a", message: "other project", sentAtMs: 5 })
+
+    assert.deepEqual(first.listSubAgentSteers("thread", "child").map((r) => [r.delivery_id, r.message]), [
+      ["a", "first"],
+      ["b", "second"],
+    ])
+    assert.deepEqual(second.listSubAgentSteers("thread", "child").map((r) => r.message), ["other project"])
+  } finally {
+    first.close()
+    second.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("insertSessionIfAbsent atomically preserves the winner and writes backend identity in one claim", () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-storage-claim-"))
   const path = join(dir, "ui.db")
@@ -810,12 +833,14 @@ test("allSessions: a rolled-back transaction never leaves the cache holding data
 test("forgetSession: DELETEs the row and returns it; the slug is gone", () => {
   const s = store()
   s.upsertSession(row({ slug: "phantom", session_id: "sid-1" }))
+  s.recordSubAgentSteer({ slug: "phantom", subAgentId: "child", deliveryId: "d1", message: "follow up", sentAtMs: 1 })
   assert.ok(s.getSession("phantom"), "row exists before forget")
 
   const forgotten = s.forgetSession("phantom")
   assert.equal(forgotten?.slug, "phantom")
   assert.equal(forgotten?.session_id, "sid-1")
   assert.equal(s.getSession("phantom"), undefined, "the row is hard-deleted")
+  assert.deepEqual(s.listSubAgentSteers("phantom", "child"), [], "its child-message journal is deleted too")
   assert.equal(s.allSessions().length, 0)
 })
 

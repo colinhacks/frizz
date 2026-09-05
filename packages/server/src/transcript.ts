@@ -2356,6 +2356,10 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
   // very next telemetry record — 2282/2282 across the corpus) to be rewritten with the real bracket.
   let lastContextTokens: number | undefined
   let openCompaction: { message: TranscriptMessage; preTokens?: number } | null = null
+  // A child's first inbound NEW_TASK is its original assignment; every later one is a follow-up.
+  // Codex encrypts both payloads today, so sequence is the only honest distinction the projection can
+  // make. The marker remains useful: it pins the arrival to the exact point in the child's timeline.
+  let agentInstructionCount = 0
   // Codex may omit Frizz's requested first-final marker, then provide one on a later finalized
   // response. Strip an exact first-line marker from every final so a valid recovery signal never
   // leaks into rendered prose. Ordinary examples remain literal unless they occupy that control slot.
@@ -2613,6 +2617,24 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
             ...(dispatch?.call.agentId ? { peerDispatchId: dispatch.call.agentId } : {}),
             tools: [],
             parts: [],
+            at: ev.at,
+          })
+          break
+        }
+        case "agent-instruction": {
+          cur = null
+          turnReasoning = null
+          const first = agentInstructionCount++ === 0
+          const text = ev.text || (ev.encrypted
+            ? `${first ? "Task" : "Follow-up"} instructions received. Codex encrypted the message body, so Frizz can't display it.`
+            : `${first ? "Task" : "Follow-up"} instructions received.`)
+          out.push({
+            sourceId,
+            role: "user",
+            text,
+            displayText: text,
+            tools: [],
+            parts: [{ kind: "text", text }],
             at: ev.at,
           })
           break
@@ -2969,7 +2991,7 @@ function codexPeerMessageCall(label: string, target: string | undefined, obj: Re
   const body = !redacted
     ? undefined
     : encrypted
-      ? "_Codex encrypts inter-agent message bodies — the text is not recoverable from the rollout. Open the recipient's own thread to read what it received._"
+      ? "_Codex encrypts inter-agent message bodies — the text is not recoverable from the rollout. The recipient's transcript marks when it arrived, but can't display the encrypted text._"
       : capToolInput(redacted)
   return {
     name: label,

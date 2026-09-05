@@ -25,9 +25,14 @@ const rpcResult = (result: unknown) =>
 const childMessages = [
   { sourceId: "c1", role: "user", text: "Sweep every call site of the renamed board projection helper and report the stale imports.", tools: [], parts: [{ kind: "text", text: "Sweep every call site of the renamed board projection helper and report the stale imports." }] },
   { sourceId: "c2", role: "assistant", text: "Starting the sweep. I'll grep for the old helper name first, then read each hit.", tools: [], parts: [{ kind: "text", text: "Starting the sweep. I'll grep for the old helper name first, then read each hit." }] },
-  { sourceId: "c3", role: "assistant", text: "", tools: [{ name: "Grep", detail: "projectThreadRow", status: "completed" }], parts: [{ kind: "tools", tools: [{ name: "Grep", detail: "projectThreadRow", status: "completed" }] }] },
-  { sourceId: "c4", role: "assistant", text: "", tools: [{ name: "Read", detail: "packages/server/src/board.ts", status: "completed" }], parts: [{ kind: "tools", tools: [{ name: "Read", detail: "packages/server/src/board.ts", status: "completed" }] }] },
-  { sourceId: "c5", role: "assistant", text: "Three call sites still import the old name. Checking whether the delta path re-exports it before I touch anything.", tools: [], parts: [{ kind: "text", text: "Three call sites still import the old name. Checking whether the delta path re-exports it before I touch anything." }] },
+  // Native Codex records WHEN this arrived, but encrypts the payload before either transcript sees it.
+  { sourceId: "c3", role: "user", text: "Follow-up instructions received. Codex encrypted the message body, so Frizz can't display it.", tools: [], parts: [{ kind: "text", text: "Follow-up instructions received. Codex encrypted the message body, so Frizz can't display it." }] },
+  { sourceId: "c4", role: "assistant", text: "I received the follow-up. Checking the queue divider semantics next.", tools: [], parts: [{ kind: "text", text: "I received the follow-up. Checking the queue divider semantics next." }] },
+  // A steer sent from this drawer is Frizz-owned plaintext and survives as the exact user bubble.
+  { sourceId: "subagent-steer:fixture", role: "user", text: "Focus the second pass on the queue divider semantics.", tools: [], parts: [{ kind: "text", text: "Focus the second pass on the queue divider semantics." }] },
+  { sourceId: "c5", role: "assistant", text: "", tools: [{ name: "Grep", detail: "projectThreadRow", status: "completed" }], parts: [{ kind: "tools", tools: [{ name: "Grep", detail: "projectThreadRow", status: "completed" }] }] },
+  { sourceId: "c6", role: "assistant", text: "", tools: [{ name: "Read", detail: "packages/server/src/board.ts", status: "completed" }], parts: [{ kind: "tools", tools: [{ name: "Read", detail: "packages/server/src/board.ts", status: "completed" }] }] },
+  { sourceId: "c7", role: "assistant", text: "Three call sites still import the old name. Checking whether the delta path re-exports it before I touch anything.", tools: [], parts: [{ kind: "text", text: "Three call sites still import the old name. Checking whether the delta path re-exports it before I touch anything." }] },
 ]
 
 // EXACTLY the router's own answers, per state — copied from router.ts's subAgentSteerable so a drift
