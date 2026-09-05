@@ -199,7 +199,16 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
           aria-modal={narrow || undefined}
           aria-describedby={undefined}
           tabIndex={-1}
-          onEscapeKeyDown={handleDialogEscape}
+          onEscapeKeyDown={(event) => {
+            // Plain sheets are invisible to Radix's layer stack. Defer to DrawerStack when one
+            // sits above this dialog, including its exit animation, or one Escape closes BOTH.
+            // Do not stop propagation here: the top plain sheet still needs this key.
+            if (store.drawers.at(-1)?.id !== id) {
+              event.preventDefault()
+              return
+            }
+            handleDialogEscape(event)
+          }}
           // A non-modal Radix layer also dismisses on any pointer-down OUTSIDE its content. Two
           // cases must not self-dismiss: (1) this sheet is BURIED under another drawer layer (a
           // sub-agent/doc sheet stacked over it, or a lateral swap in flight) — only the TOPMOST

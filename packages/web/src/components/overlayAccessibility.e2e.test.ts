@@ -5,6 +5,73 @@ import test from "node:test"
 // without requiring a listener; local/live verification supplies a disposable URL and session row.
 const baseUrl = process.env.FRIZZ_OVERLAY_E2E_URL
 const threadSlug = process.env.FRIZZ_OVERLAY_E2E_SLUG ?? "overlay-e2e"
+const nestedThreadSlug = process.env.FRIZZ_OVERLAY_E2E_NESTED_SLUG
+
+// Seed with scripts/seed-nested-subagents.mjs against the disposable stack's HOME, then set
+// FRIZZ_OVERLAY_E2E_NESTED_SLUG=nested-subagents alongside FRIZZ_OVERLAY_E2E_URL.
+test("Escape unwinds nested subagent drawers without dismissing their session", {
+  skip: !baseUrl || !nestedThreadSlug,
+  timeout: 90_000,
+}, async () => {
+  const { default: puppeteer } = await import("puppeteer")
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] })
+  try {
+    const page = await browser.newPage()
+    // adhoc-stack runs without the launcher supervisor. Only its unrelated status probe is stubbed;
+    // the board, transcript, drawer components and keyboard dispatch all run through the real app.
+    await page.setRequestInterception(true)
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/_frizz/control/status") {
+        void request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ protocol: 1, state: "ready", updateRestart: false }) })
+      } else void request.continue()
+    })
+    const errors: string[] = []
+    page.on("pageerror", (error) => errors.push(String(error)))
+    page.on("console", (message) => { if (message.type() === "error") errors.push(`${message.text()} ${message.location().url}`) })
+    const drawers = () => page.evaluate(async () => {
+      const path = "/src/store.ts"
+      const { store } = await import(path)
+      return store.drawers.map((drawer: { kind: string; closing?: boolean }) => ({ kind: drawer.kind, closing: !!drawer.closing }))
+    })
+    for (const [width, font] of [[1440, "sans"], [390, "sans"], [1440, "mono"], [390, "mono"]] as const) {
+      await page.setViewport({ width, height: 900 })
+      await page.goto(`${baseUrl}/thread/${nestedThreadSlug}`, { waitUntil: "domcontentloaded" })
+      await page.waitForSelector(`[data-subagent-parent="${nestedThreadSlug}"]`)
+      await page.evaluate((font) => { document.documentElement.dataset.font = font }, font)
+      await page.evaluate(async (slug) => {
+        const path = "/src/store.ts"
+        const { pushDrawer } = await import(path)
+        pushDrawer("thread", slug)
+      }, nestedThreadSlug)
+      const child = '[role="dialog"] [aria-label^="Open sub-agent transcript:"]'
+      await page.waitForSelector(child)
+      await page.click(child)
+      await page.waitForFunction(async () => {
+        const path = "/src/store.ts"
+        const { store } = await import(path)
+        return store.drawers.length === 2
+      })
+      await page.keyboard.press("Escape")
+      await page.waitForFunction(async () => {
+        const path = "/src/store.ts"
+        const { store } = await import(path)
+        return store.drawers.length < 2
+      })
+      assert.deepEqual(await drawers(), [{ kind: "thread", closing: false }], "one Escape leaves the session drawer open")
+      assert.ok(await page.$('[role="dialog"]'))
+      assert.ok(new URL(page.url()).pathname.endsWith(`/thread/${nestedThreadSlug}`))
+      if (process.env.FRIZZ_OVERLAY_E2E_SHOTS) {
+        await page.screenshot({ path: `${process.env.FRIZZ_OVERLAY_E2E_SHOTS}/escape-${width}-${font}.png` })
+      }
+      await page.keyboard.press("Escape")
+      await page.waitForFunction(() => !document.querySelector('[role="dialog"]'))
+      assert.deepEqual(await drawers(), [], "the next Escape closes the session")
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
 
 test("dialog portals, nested Select Escape, and thread tabs keep their keyboard contracts", {
   skip: !baseUrl,
