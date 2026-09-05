@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFileSync, mkdirSync } from "node:fs"
+import { projectCodexTranscript } from "../../../server/src/transcript.ts"
 
 const baseUrl = process.env.FRIZZ_INTERMEDIATE_COLLAPSE_E2E_URL
 
@@ -33,6 +35,57 @@ const launch = async () => {
 }
 
 const variant = (v: string) => new URL(`/intermediate-collapse-fixture.html?variant=${v}`, baseUrl).href
+
+test("Codex narrated tool batches collapse between the opening and final answer, and expand losslessly", {
+  skip: !baseUrl,
+  timeout: 120_000,
+}, async () => {
+  const raw = readFileSync(process.env.FRIZZ_CODEX_REPLAY ?? new URL("../../../server/src/backend/codex.fixtures/exec-two-turn.jsonl", import.meta.url), "utf8")
+  const messages = projectCodexTranscript(raw)
+  const lastUser = messages.findLastIndex((m) => m.role === "user")
+  const prose = messages.slice(lastUser + 1).filter((m) => m.role === "assistant" && !m.kind && m.text)
+  assert.ok(prose.length >= 3, "the projector must preserve intermediate prose as separate collapse candidates")
+  const middle = prose.slice(1, -1)
+  const { browser, page, errors } = await launch()
+  try {
+    await page.setRequestInterception(true)
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/codex-replay.json") void request.respond({ contentType: "application/json", body: JSON.stringify({ messages }) })
+      else void request.continue()
+    })
+    for (const font of ["sans", "mono"]) {
+      for (const width of [1100, 390]) {
+        await page.setViewport({ width, height: 1000, deviceScaleFactor: 2 })
+        await page.goto(new URL("/intermediate-collapse-fixture.html?src=/codex-replay.json", baseUrl).href, { waitUntil: "networkidle0" })
+        await page.evaluate((font) => { document.documentElement.dataset.font = font }, font)
+        await page.waitForSelector(SEL, { timeout: 5000 }).catch(async (error) => {
+          console.error({ font, width, errors, body: await page.$eval("body", (el) => el.innerText) })
+          throw error
+        })
+        for (const message of middle) {
+          assert.equal(await page.$(`[data-transcript-source-id="${message.sourceId}"]`), null, `intermediate narration leaked: ${message.text.slice(0, 70)}`)
+        }
+        for (const anchor of [prose[0], prose.at(-1)!]) {
+          assert.ok(await page.$(`[data-transcript-source-id="${anchor.sourceId}"]`), "opening and closing prose remain visible")
+        }
+        if (process.env.FRIZZ_CODEX_SHOTS) {
+          mkdirSync(process.env.FRIZZ_CODEX_SHOTS, { recursive: true })
+          await page.screenshot({ path: `${process.env.FRIZZ_CODEX_SHOTS}/${font}-${width}.png`, fullPage: true })
+          const bottom = await page.$eval(`[data-transcript-source-id="${prose.at(-1)!.sourceId}"]`, (el) => (el.querySelector("p") ?? el).getBoundingClientRect().bottom)
+          await page.screenshot({ path: `${process.env.FRIZZ_CODEX_SHOTS}/${font}-${width}-collapse.png`, clip: { x: 0, y: 0, width, height: Math.ceil(bottom + 16) } })
+        }
+        await page.click(SEL)
+        await page.waitForFunction((sel) => !document.querySelector(sel), {}, SEL)
+        const expandedIds = await page.$$eval("[data-transcript-source-id]", (els) => els.map((el) => el.getAttribute("data-transcript-source-id")))
+        for (const message of prose) assert.ok(expandedIds.includes(message.sourceId!), "expansion restores every prose message")
+      }
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+    assert.equal(browser.process()?.exitCode, 0, "the owned browser exited")
+  }
+})
 
 test("the collapsed intermediate run is a hairline divider that names its tool calls and nothing else", {
   skip: !baseUrl,

@@ -2360,7 +2360,12 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
   // response. Strip an exact first-line marker from every final so a valid recovery signal never
   // leaks into rendered prose. Ordinary examples remain literal unless they occupy that control slot.
 
-  const openAssistant = (at: string | undefined, sourceId: string): TranscriptMessage => {
+  const openAssistant = (at: string | undefined, sourceId: string, prose = false): TranscriptMessage => {
+    // Each complete prose event starts a new message if this one already has prose. Keeping a turn in
+    // `cur` makes its opening, intermediate captions and final answer one collapse anchor:
+    // the queue can hide the tools, but none of the narration between them. Tool-only
+    // batches still coalesce, and their first prose stays attached to the work it describes.
+    if (prose && cur?.text) cur = null
     if (cur) return cur
     cur = { sourceId, role: "assistant", text: "", tools: [], parts: [], at }
     out.push(cur)
@@ -2382,7 +2387,7 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
           // final-only so normal commentary headings remain ordinary prose.
           let text = extractCodexFrizzTitle(ev.text, ev.final).text
           if (text) {
-            const m = openAssistant(ev.at, sourceId)
+            const m = openAssistant(ev.at, sourceId, true)
             pushTextPart(m, text)
             m.text = m.text ? `${m.text}\n\n${text}` : text
           }
@@ -2647,7 +2652,7 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
           if (finalText !== undefined) finalText = extractCodexFrizzTitle(finalText).text
           const ft = finalText?.trim()
           if (ft && !sawFinalAnswer && ft !== lastFinalText?.trim()) {
-            const m = openAssistant(ev.at, sourceId)
+            const m = openAssistant(ev.at, sourceId, true)
             pushTextPart(m, finalText!)
             m.text = m.text ? `${m.text}\n\n${finalText!}` : finalText!
             sawFinalAnswer = true

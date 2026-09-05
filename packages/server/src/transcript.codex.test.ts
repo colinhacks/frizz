@@ -65,11 +65,12 @@ test("Codex title transport is hidden from first commentary and every finalized 
   ])
   const msgs = parseCodexTranscript(raw)
   // Each turn's task_complete closes it with the rest divider (an `event`, not a bubble).
-  assert.deepEqual(msgs.map((m) => m.boundary ?? m.role), ["user", "assistant", "rest", "user", "assistant", "rest"])
-  assert.equal(msgs[1].text, "I’m checking the queue.\n\nFirst visible answer")
-  assert.doesNotMatch(JSON.stringify(msgs[1]), /Fix queue focus/)
-  assert.equal(msgs[4].text, "Second visible answer")
-  assert.doesNotMatch(JSON.stringify(msgs[4]), /Quoted later marker/)
+  assert.deepEqual(msgs.map((m) => m.boundary ?? m.role), ["user", "assistant", "assistant", "rest", "user", "assistant", "rest"])
+  assert.equal(msgs[1].text, "I’m checking the queue.")
+  assert.equal(msgs[2].text, "First visible answer")
+  assert.doesNotMatch(JSON.stringify(msgs), /Fix queue focus/)
+  assert.equal(msgs[5].text, "Second visible answer")
+  assert.doesNotMatch(JSON.stringify(msgs[5]), /Quoted later marker/)
 })
 
 test("Codex commentary keeps an ordinary leading H1 while hiding only the new attribute transport", () => {
@@ -123,10 +124,10 @@ test("a second codex bracket for one turn does not stack a second rule", () => {
 
 test("codex fixture (exec-two-turn): two turns; multi-tool run; empty output dropped; commentary interleaves", () => {
   const msgs = parseCodexTranscript(execTwoTurn)
-  assert.equal(msgs.length, 6)
+  assert.equal(msgs.length, 9)
   assert.deepEqual(
     msgs.map((m) => m.boundary ?? m.role),
-    ["user", "assistant", "rest", "user", "assistant", "rest"],
+    ["user", "assistant", "rest", "user", "assistant", "assistant", "assistant", "assistant", "rest"],
   )
 
   // Turn 1: two exec calls in one run → one coalesced tools band, results back-filled by call_id.
@@ -141,28 +142,29 @@ test("codex fixture (exec-two-turn): two turns; multi-tool run; empty output dro
   assert.match(t1.text, /```done\nall-good\n```/)
 
   // Turn 2: commentary before each tool → text/tools/text/tools/text/tools/text interleave.
-  const t2 = msgs[4]
+  const t2 = msgs.slice(4, 8)
   assert.deepEqual(
-    t2.tools.map((t) => t.command),
+    t2.flatMap((m) => m.tools).map((t) => t.command),
     ["date", "ls", "wc -l hello.txt"],
   )
-  assert.match(t2.tools[1].output ?? "", /hello\.txt/) // the ls listing
+  assert.match(t2[1].tools[0].output ?? "", /hello\.txt/) // the ls listing
   assert.deepEqual(
-    t2.parts.map((p) => p.kind),
-    ["text", "tools", "text", "tools", "text", "tools", "text"],
+    t2.map((m) => m.parts.map((p) => p.kind)),
+    [["text", "tools"], ["text", "tools"], ["text", "tools"], ["text"]],
   )
   // The final answer's ```awaiting fence rides the assistant prose.
-  assert.match(t2.text, /```awaiting/)
+  assert.match(t2[3].text, /```awaiting/)
 })
 
 test("codex fixture (tui-apply-patch): the full tool surface — reads, a write, apply_patch EDITS, ls, git — all render", () => {
   const msgs = parseCodexTranscript(tuiApplyPatch)
-  assert.equal(msgs.length, 3) // …the third being the turn's rest divider
+  assert.equal(msgs.length, 10)
+  assert.equal(msgs.at(-1)?.boundary, "rest")
   const a = msgs[1]
   assert.equal(a.role, "assistant")
 
   // Shell commands render as Bash cards carrying their output.
-  const bash = a.tools.filter((t) => t.command)
+  const bash = msgs.flatMap((m) => m.tools).filter((t) => t.command)
   assert.deepEqual(
     bash.map((t) => t.command),
     ["cat hello.txt", "printf 'codex-was-here' > note.txt", "cat greeter.js", "ls -la", "git status"],
@@ -172,14 +174,14 @@ test("codex fixture (tui-apply-patch): the full tool surface — reads, a write,
 
   // apply_patch edits (codex custom_tool_call) render as Edit diff cards — the whole point of the
   // custom_tool_call extension; without it these two edits would be invisible.
-  const edits = a.tools.filter((t) => t.edit)
+  const edits = msgs.flatMap((m) => m.tools).filter((t) => t.edit)
   assert.equal(edits.length, 2)
   assert.ok(edits.every((t) => t.name === "Edit" && t.edit?.file.endsWith("greeter.js")))
   // The successful patch flips "hi " → "hello " in greet().
   assert.ok(edits.some((t) => /hello " \+ name/.test(t.edit?.new ?? "")))
 
   // The final answer (the ```done fence) rides the assistant prose.
-  assert.match(a.text, /```\ndone\ne2e-tools-ok\n```/)
+  assert.match(msgs.at(-2)!.text, /```\ndone\ne2e-tools-ok\n```/)
 })
 
 test("codex fixture (exec wrapper): common nested tools expose command, input, result, and failures", () => {
@@ -234,6 +236,31 @@ test("codex fixture (exec wrapper): common nested tools expose command, input, r
   ])
   assert.equal(a.tools[8].input, "Fixture complete.")
   assert.match(a.text, /FRIZZ_TOOL_RENDER_FIXTURE_DONE/)
+})
+
+test("Codex narration remains independently collapsible across reasoning, including a bracket-only final answer", () => {
+  for (const bracketOnly of [false, true]) {
+    const events: Parameters<typeof rollout>[0] = [
+      { type: "event_msg", payload: { type: "user_message", message: "Fix the drawer" } },
+    ]
+    for (const [i, text] of ["Tracing the drawer", "Reading the stack", "Checking the fix"].entries()) {
+      events.push(
+        { type: "event_msg", payload: { type: "agent_message", phase: "commentary", message: text } },
+        { type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "**Inspecting the handler**" }] } },
+        { type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: `call-${i}`, arguments: JSON.stringify({ cmd: `echo ${i}` }) } },
+        { type: "response_item", payload: { type: "function_call_output", call_id: `call-${i}`, output: `Process exited with code 0\nOutput:\n${i}` } },
+      )
+    }
+    if (!bracketOnly) events.push({ type: "event_msg", payload: { type: "agent_message", phase: "final_answer", message: "Fixed the drawer" } })
+    events.push({ type: "event_msg", payload: { type: "task_complete", last_agent_message: "Fixed the drawer" } })
+    const messages = projectCodexTranscript(rollout(events))
+    const prose = messages.filter((m) => m.role === "assistant" && !m.kind && m.text)
+    assert.deepEqual(prose.map((m) => m.text), ["Tracing the drawer", "Reading the stack", "Checking the fix", "Fixed the drawer"])
+    assert.equal(messages.filter((m) => m.kind === "reasoning").length, 1)
+    assert.equal(messages.flatMap((m) => m.tools).length, 3)
+    assert.equal(new Set(prose.map((m) => m.sourceId)).size, 4)
+    assert.equal(messages.at(-1)?.boundary, "rest")
+  }
 })
 
 test("real 0.144.1 exec wrapper shapes preserve cwd, yielded session, poll target, duration, and plan progress", () => {
@@ -983,7 +1010,7 @@ test("codex turn-end fallback: a commentary-only turn's answer (only on task_com
   const msgs = parseCodexTranscript(raw)
   const a = msgs.find((m) => m.role === "assistant")!
   assert.match(a.text, /working on it/)
-  assert.match(a.text, /the real answer/) // would be DROPPED under the old !turnHasText gate
+  assert.equal(msgs.at(-2)?.text, "the real answer") // independent of the commentary, never dropped
 })
 
 test("codex turn-end: the ordinary case never double-renders the final answer echoed on task_complete", () => {
