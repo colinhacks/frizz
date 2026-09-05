@@ -382,6 +382,7 @@ test("bridge is the sole codex transport (always enabled) and negotiates exact i
     experimentalApi: true,
     requestAttestation: false,
     mcpServerOpenaiFormElicitation: false,
+    optOutNotificationMethods: ["turn/diff/updated"],
   })
   assert.ok(h.processes[0]!.inbound.some((message) => message.method === "initialized"))
   assert.equal(h.processes[0]!.inbound.some((message) => "jsonrpc" in message), false)

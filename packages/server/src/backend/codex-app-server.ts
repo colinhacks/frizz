@@ -164,6 +164,11 @@ export const CLIENT_CAPABILITIES = Object.freeze({
   experimentalApi: true,
   requestAttestation: false,
   mcpServerOpenaiFormElicitation: false,
+  // The cumulative turn diff is unused here (file approvals use item/fileChange/*). Real turns
+  // emit ~484 KB snapshots, exceeding our 256 KB frame limit and disconnecting EVERY thread on
+  // the shared bridge while the workers keep running. Suppress it at the producer, not by raising
+  // transport limits or weakening approval validation. Native listeners negotiate on every attach.
+  optOutNotificationMethods: ["turn/diff/updated"],
 })
 // ---- sandbox: the app-server spells the SAME axis two different ways ----
 // `thread/start` and `thread/resume` take the plain `sandbox: SandboxMode` string frizz already uses.
