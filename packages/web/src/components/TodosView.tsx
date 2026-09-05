@@ -1326,33 +1326,6 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
           bigger gap for the prompt box under it. At the standard pb-5 the button floated midway and read
           as an appendage of the prompt box instead. */}
       <div className={`px-5 pt-5 ${showSendAnswers ? "pb-2" : "pb-5"}`}>
-        <InteractionStack
-          thread={thread}
-          className="mb-4"
-        />
-        {/* A frozen native AskUserQuestion (safety net) renders the REAL question read-only so the human
-            knows exactly what's asked without opening anything; it takes precedence over the generic
-            perm banner. Otherwise a permission-blocked agent has NO message to show (turn parked
-            mid-tool_use) — say so explicitly. Both route the answer to the terminal tab. */}
-        {/* Stands down when frizz OWNS the question: a broker-path AskUserQuestion is journaled as an
-            answerable interaction and already rendered by InteractionStack above, so pointing the
-            operator at a terminal here would duplicate it with worse advice. */}
-        {(thread.pendingInteraction ? undefined : thread.pendingAsk) ? (
-          <div className="mb-4">
-            <PendingAskCard ask={thread.pendingAsk!} onTerminal={copyTerminalCommand} />
-          </div>
-        ) : thread.runtime === "perm-prompt" ? (
-          <div className="mb-4">
-            <PermPromptBanner onTerminal={copyTerminalCommand} />
-          </div>
-        ) : null}
-        {/* What frizz's permission policy REFUSED on the worker's behalf. Sits BELOW the gates above:
-            those are things waiting on the human, this is something already handled for them. */}
-        {thread.permPolicy ? (
-          <div className="mb-4">
-            <PermPolicyDenialCard policy={thread.permPolicy} denies={thread.permDenies} />
-          </div>
-        ) : null}
         {messages.length === 0 ? (
           <p className="text-[13px] text-muted">{q.isLoading ? "Loading…" : thread.statusText || "No message yet."}</p>
         ) : (
@@ -1565,14 +1538,57 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
             })()}
           </div>
         )}
+        {/* THE GATES GO AT THE TAIL, under the work that ran into them — the same correction the thread
+            view made to its own ask row on 2026-08-02, arrived at here two surfaces later.
+            They sat pinned ABOVE the transcript until 2026-09-05, on the reasoning that a turn parked
+            mid-tool_use has "no message to sit under". That premise is only true of an empty thread. In
+            every real occurrence the agent had already been working for a while, so the gate rendered
+            above the human's OWN opening prompt: a "Run a command?" card asking to approve work whose
+            reason sat 22 tool calls below it, and a screenshot of exactly that (maintainer 2026-09-05:
+            "the ask-permission prompts are showing up before my initial message that spawned the
+            thread"). A gate is the NEWEST thing on the card, like every other trailing control, and it
+            is unreadable anywhere but next to the command that provoked it.
+            The relative order within the group is unchanged — answerable interactions, then the
+            terminal-bound safety nets, then what the policy already refused — and it matches the thread
+            view's ladder, where the ask row precedes the pending-ask/perm-prompt rungs.
+            HELD UNTIL THE TRANSCRIPT LOADS, for the tail cards' own reason below, and one of its own:
+            these carry BUTTONS. Drawn under the "Loading…" line they paint, then jump a full transcript
+            height when the messages mount above them — with Grant/Deny moving out from under a cursor
+            already on its way to them. */}
+        {!q.isLoading && (
+          <>
+            <InteractionStack thread={thread} className="mt-4" />
+            {/* A frozen native AskUserQuestion (safety net) renders the REAL question read-only so the
+                human knows exactly what's asked without opening anything; it takes precedence over the
+                generic perm banner. Otherwise a permission-blocked agent has NO message to show (turn
+                parked mid-tool_use) — say so explicitly. Both route the answer to the terminal tab. */}
+            {/* Stands down when frizz OWNS the question: a broker-path AskUserQuestion is journaled as an
+                answerable interaction and already rendered by InteractionStack above, so pointing the
+                operator at a terminal here would duplicate it with worse advice. */}
+            {(thread.pendingInteraction ? undefined : thread.pendingAsk) ? (
+              <div className="mt-4">
+                <PendingAskCard ask={thread.pendingAsk!} onTerminal={copyTerminalCommand} />
+              </div>
+            ) : thread.runtime === "perm-prompt" ? (
+              <div className="mt-4">
+                <PermPromptBanner onTerminal={copyTerminalCommand} />
+              </div>
+            ) : null}
+            {/* What frizz's permission policy REFUSED on the worker's behalf. Sits BELOW the gates above:
+                those are things waiting on the human, this is something already handled for them. */}
+            {thread.permPolicy ? (
+              <div className="mt-4">
+                <PermPolicyDenialCard policy={thread.permPolicy} denies={thread.permDenies} />
+              </div>
+            ) : null}
+          </>
+        )}
         {/* AFTER the transcript, not before it (maintainer 2026-07-24). This banner describes the state
             the thread reached by resting at the END of that transcript — it is the newest thing on the
             card, so it belongs at the bottom, adjacent to the composer, where every other trailing
             control lives. Above the messages it read as a header for a turn that hadn't happened yet.
-            The gates above (pendingAsk / perm-prompt) stay pinned at the top: they
-            exist precisely because the turn parked mid-tool_use and there IS no message to sit under.
-            No priority guard needed here — deriveAwaitingBackground already returns false for every one
-            of those states (board.ts).
+            No priority guard needed against the gates above — deriveAwaitingBackground already returns
+            false for every one of those states (board.ts).
             THE SAME PREDICATE THE FENCE CARD READS (showsRestingCard), not `awaitingBackground` alone.
             The fence card renders nothing while this banner shows, and it decides that with
             showsRestingCard — which also reads the event-snooze. Keying this banner on the bare flag let
