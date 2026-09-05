@@ -579,9 +579,55 @@ function saidDone(tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDo
 function threadSaidDone(
   storage: Storage,
   slug: string,
-  tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDone" | "lastUserAt">,
+  tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDone" | "lastUserAt" | "lastAssistantAt">,
+  armedAt?: string | null,
 ): boolean {
-  return saidDone(tele) || registeredDoneFence(storage.getThreadDone(slug), tele.lastUserAt) !== undefined
+  const registered = registeredDoneFence(storage.getThreadDone(slug), tele.lastUserAt) !== undefined
+  const fenced = saidDone(tele)
+  if (!registered && !fenced) return false
+  return !armReopenedTheLoop(storage, slug, tele, registered, fenced, armedAt)
+}
+
+/** ARMING A GOAL AFTER THE SIGN-OFF IS THE HUMAN REOPENING THE LOOP — and it is the one form of "new
+ *  work from the human" that `threadSaidDone` could not see.
+ *
+ *  Both sign-off readings above take their lifetime from the human's last word in the TRANSCRIPT
+ *  (`lastUserAt` for a registered done, the final assistant message for a fenced one). Arming a Goal
+ *  writes no transcript record, so a human who armed one on a thread that had already signed off got a
+ *  panel reading "Goal (on)" over a trigger that could never fire: the rest pass and the beat both
+ *  declined, nothing in the UI said why, and the only way out was to type a message. Observed
+ *  2026-09-05 on `design-nub-static-server` — the worker registered a done at 23:00:44Z, the human
+ *  re-armed at 23:20:54Z, and the thread sat there while its operator read it as frozen.
+ *
+ *  The comparison is against the sign-off the arm is meant to override — the registered done's own
+ *  instant, and (for a fenced one, which carries no instant of its own) the message that holds it,
+ *  whichever is later. An arm OLDER than the sign-off changes nothing, which is the ordinary case and
+ *  the one that keeps the loop terminable: a worker signs off under a Goal armed long before, and that
+ *  done still ends the arrangement. Each re-arm reopens exactly once — the worker's next sign-off is
+ *  necessarily later than it, so it silences the loop again. */
+function armReopenedTheLoop(
+  storage: Storage,
+  slug: string,
+  tele: Pick<SessionTelemetry, "lastAssistantAt">,
+  registered: boolean,
+  fenced: boolean,
+  armedAt: string | null | undefined,
+): boolean {
+  const armed = armedAt ? Date.parse(armedAt) : Number.NaN
+  if (!Number.isFinite(armed)) return false
+  let signedOffAt = Number.NEGATIVE_INFINITY
+  if (registered) {
+    const doneAt = storage.getThreadDone(slug)?.doneAt
+    if (doneAt !== undefined) signedOffAt = Math.max(signedOffAt, doneAt)
+  }
+  if (fenced) {
+    const fencedAt = Date.parse(tele.lastAssistantAt ?? "")
+    // A fenced done with no readable instant cannot be dated, so it is never overridden — declining to
+    // reopen is the direction that cannot loop.
+    if (!Number.isFinite(fencedAt)) return false
+    signedOffAt = Math.max(signedOffAt, fencedAt)
+  }
+  return Number.isFinite(signedOffAt) && armed > signedOffAt
 }
 
 /** This thread's ARMED timer ids — the other registry a \`timer:\` line is checked against. */
@@ -594,13 +640,18 @@ function armedTimerIdsOf(storage: Storage, slug: string): ReadonlySet<string> {
  *  the trigger talking to itself.
  *
  *  A PENDING QUESTION IS NOT ONE OF THEM, since 2026-08-16 — see the header block. It was a third limb,
- *  switchable off by the panel's "Autonomous mode", and the switch and the limb went together. */
+ *  switchable off by the panel's "Autonomous mode", and the switch and the limb went together.
+ *
+ *  `armedAt` is the Goal's own generation, and it reaches the done reading only — see
+ *  `armReopenedTheLoop`. An `awaiting` fence is untouched by it: that park says what the rest is
+ *  waiting for, which re-arming answers nothing about. */
 function restMessageIsSignedOff(
   storage: Storage,
   slug: string,
   tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDone" | "bgShells" | "subAgents">,
   _registeredPrWatches: ReadonlySet<string> = new Set(),
   _armedTimerIds: ReadonlySet<string> = new Set(),
+  armedAt?: string | null,
 ): boolean {
   // AN `awaiting` FENCE ENDS THE GOAL'S BUSINESS WITH THIS REST, honoured or not — and the "or not" is
   // the whole point of widening this from `parkIsHonoured` to the fence's mere presence.
@@ -620,7 +671,7 @@ function restMessageIsSignedOff(
   // A worker that writes a garbage fence is therefore NOT left alone: it is bumped once per rest, by the
   // source whose message is about fences.
   if (tele.lastFence?.kind === "awaiting") return true
-  return threadSaidDone(storage, slug, tele)
+  return threadSaidDone(storage, slug, tele, armedAt)
 }
 
 /** What frizz can actually see running for this thread, in the shape `unaccountedItems` checks against.
@@ -1280,7 +1331,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (isStopHookFenceId(item.fenceId)) {
       const armed = armedRest(row)
       if (!armed || item.fenceId !== stopHookFenceId(armed.armedAt, tele.lastAssistantAt ?? "")) return "superseded"
-      if (restMessageIsSignedOff(deps.storage, item.slug, tele, registeredPrWatchesOf(deps.storage, item.slug), armedTimerIdsOf(deps.storage, item.slug))) return "superseded"
+      if (restMessageIsSignedOff(deps.storage, item.slug, tele, registeredPrWatchesOf(deps.storage, item.slug), armedTimerIdsOf(deps.storage, item.slug), armed.armedAt)) return "superseded"
       return tele.turn === "idle" ? "current-idle" : "current-busy"
     }
     // A post-compaction delivery is bound to the generation AND to the exact compaction it was queued
@@ -2964,7 +3015,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // not stalled at all. Needs no stored state: the flag is folded off the FINAL assistant message,
       // so anything the thread says or receives afterwards reopens it.
       const beatTele = deps.tailer.get(row.slug)
-      if (beatTele && threadSaidDone(deps.storage, row.slug, beatTele)) continue
+      if (beatTele && threadSaidDone(deps.storage, row.slug, beatTele, armed.armedAt)) continue
       // NOTHING ELSE SILENCES A BEAT — not a pending question, not a rest fence. A beat asks "it has been
       // an hour", which neither of those answers. The operator's question hold used to reach here and was
       // deleted with the switch that armed it (2026-08-16, see the header block).
@@ -3079,7 +3130,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // `restMessageIsSignedOff` and the header block).
       // Per-rest, and that is what makes it free: every fact it reads rides the FINAL assistant message,
       // so the next word on the thread re-opens the trigger with nothing stored to clear.
-      if (restMessageIsSignedOff(deps.storage, row.slug, tele, registeredPrWatchesOf(deps.storage, row.slug), armedTimerIdsOf(deps.storage, row.slug))) continue
+      if (restMessageIsSignedOff(deps.storage, row.slug, tele, registeredPrWatchesOf(deps.storage, row.slug), armedTimerIdsOf(deps.storage, row.slug), armed.armedAt)) continue
       // A SETTLEMENT WAKE OWNS THIS REST (2026-09-02). An answer the human just gave, or the questions
       // this very Goal's arming cancelled, is already on its way through evalQuestionAnswers — a wake
       // that ends the rest by itself, and whose message is the news. The Goal firing beside it is the

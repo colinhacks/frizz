@@ -765,6 +765,69 @@ test("stop hook: a REGISTERED done ends the arrangement exactly as the fence doe
   } finally { reopened.close() }
 })
 
+// RE-ARMING THE GOAL IS NEW WORK FROM THE HUMAN, and it was the one form of it the sign-off reading
+// could not see: `threadSaidDone` dates the human's last word off the TRANSCRIPT, and arming writes no
+// transcript record. So a human who armed a Goal on a thread that had already signed off got a panel
+// reading "Goal (on)" over a trigger that could never fire, with nothing in the UI saying why and no way
+// out but to type a message. Observed 2026-09-05 on `design-nub-static-server` — the worker registered a
+// done at 23:00:44Z, the human re-armed at 23:20:54Z, and the thread sat there reading as frozen.
+test("stop hook: a Goal armed AFTER the sign-off reopens the loop; one armed before it does not", async () => {
+  // THE FAILING CONTROL, and the property that keeps the loop terminable: the ordinary case is a worker
+  // signing off under a Goal armed long before, and that done still ends the arrangement.
+  const before = scheduler({ pendingQuestion: false }, { now: at("2026-08-02T00:00:05.000Z") })
+  try {
+    before.storage.markThreadDone(before.slug, "- **Shipped** it", Date.parse("2026-08-02T00:00:01.000Z"))
+    await before.s.tick()
+    assert.deepEqual(before.delivered, [], "the arm predates the done, so the done still stands")
+  } finally { before.close() }
+
+  const after = scheduler({ pendingQuestion: false }, { now: at("2026-08-02T00:00:05.000Z") })
+  try {
+    after.storage.markThreadDone(after.slug, "- **Shipped** it", Date.parse("2026-08-02T00:00:01.000Z"))
+    // New words mint a new generation — the operator re-arming the Goal after reading the done card.
+    after.storage.setRecurringPromptBySlug(after.slug, { prompt: "keep going, there is more", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: "2026-08-02T00:00:02.000Z" })
+    await after.s.tick()
+    assert.equal(after.delivered.length, 1, "arming after the sign-off is the human reopening the loop")
+    assert.match(after.delivered[0], /keep going, there is more/)
+  } finally { after.close() }
+
+  // And the FENCED sign-off obeys the same rule, dated by the message that carries it: the fence has no
+  // instant of its own, so the arm is compared against the final assistant word it rides on.
+  const fenced = scheduler(
+    { pendingQuestion: false, lastFence: { kind: "done", body: "shipped", hints: [] }, lastAssistantAt: "2026-08-02T00:00:01.000Z", lastActivityAt: "2026-08-02T00:00:01.000Z" },
+    { now: at("2026-08-02T00:00:05.000Z") },
+  )
+  try {
+    await fenced.s.tick()
+    assert.deepEqual(fenced.delivered, [], "the arm predates the fence")
+    fenced.storage.setRecurringPromptBySlug(fenced.slug, { prompt: "keep going, there is more", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: "2026-08-02T00:00:02.000Z" })
+    await fenced.s.tick()
+    assert.equal(fenced.delivered.length, 1, "a fenced done reopens on a later arm too")
+  } finally { fenced.close() }
+})
+
+// The BEAT reads the same sign-off, so it takes the same reopening — an operator who re-arms an hourly
+// Goal on a finished thread means it to beat again.
+test("heartbeat: a Goal armed after the sign-off beats again", async () => {
+  const silenced = heartbeatScheduler({ lastFence: { kind: "done", body: "shipped", hints: [] } }, { now: at("2026-08-02T01:00:00.000Z") })
+  try {
+    await silenced.s.tick()
+    assert.deepEqual(silenced.delivered, [], "a done thread is not beaten")
+  } finally { silenced.close() }
+
+  // The clock is read past the re-arm plus the interval, because a new generation restarts the beat's
+  // own countdown from the instant it was armed.
+  const rearmed = heartbeatScheduler(
+    { lastFence: { kind: "done", body: "shipped", hints: [] }, lastAssistantAt: "2026-08-02T00:00:00.000Z" },
+    { now: at("2026-08-02T01:00:05.000Z") },
+  )
+  try {
+    rearmed.storage.setRecurringPromptBySlug(rearmed.slug, { prompt: "check the deploy again", stopHook: false, heartbeat: true, postCompaction: false, intervalMs: 3_600_000, armedAt: "2026-08-02T00:00:01.000Z" })
+    await rearmed.s.tick()
+    assert.equal(rearmed.delivered.length, 1, "the re-arm outranks the sign-off it was written over")
+  } finally { rearmed.close() }
+})
+
 // The other three ways a thread waits on a human. None of them is a fence, none of them ever held the
 // stop hook by itself, and there is no longer a setting that makes any of them hold it.
 test("stop hook: a native ask, a permission prompt and a pending question all fire", async () => {
