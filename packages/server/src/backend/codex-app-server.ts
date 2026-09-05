@@ -34,6 +34,7 @@ import {
   type CodexAppServerHost,
 } from "./codex-app-server-host.ts"
 import { nativeListenCodexAppServerHost } from "./codex-app-server-native.ts"
+import { readCodexAccountId } from "./auth-status.ts"
 import { codexThreadMcpConfig } from "./codex-mcp.ts"
 import type { FrizzMcp } from "./types.ts"
 import { log as frizzLog } from "../logging.ts"
@@ -513,6 +514,7 @@ export type CodexAppServerDiagnostic =
   | { event: "turn-auto-resumed"; threadSlug: string; interruptedTurnId: string }
   | { event: "daemon-reforked"; reason: string }
   | { event: "daemon-events-dropped"; dropped: number }
+  | { event: "auth-account-refreshed" }
   // The app-server this bridge had been talking to is gone and a fresh one replaced it — every turn
   // that was running inside it (parents AND their sub-agents) died. `deathReason` is the dead daemon's
   // own exit breadcrumb when it left one (`app-server-exited-code-*`, `self-collected-*`, `signal-*`,
@@ -971,6 +973,8 @@ export interface CodexAppServerBridgeOptions {
   id?: () => string
   requestTimeoutMs?: number
   diagnostic?: (event: CodexAppServerDiagnostic) => void
+  /** Test seam for the current ChatGPT account in auth.json. */
+  codexAuthAccountId?: () => string | undefined
   /**
    * Gate for the auto-resume nudge (B): a thread the human has archived or retired must not be woken
    * by a turn it never asked for. Defaults to allowing every rebind.
@@ -1792,6 +1796,11 @@ export class CodexAppServerBridge {
   private readonly timeoutMs: number
   /** Identity of the app-server PROCESS behind the current connection (see CodexAppServerAttachment). */
   private daemonGeneration = ""
+  /** ChatGPT account the current app-server cached when its process started. */
+  private processAuthAccountId: string | undefined
+  /** Serializes account-driven replacement across concurrent session/turn starts. */
+  private authReplacement: Promise<void> | null = null
+  private readonly turnIdleWaiters = new Set<() => void>()
   /**
    * The handshake a FRESHLY FORKED daemon already gave us and we already rejected — i.e. what the
    * codex binary on disk actually reports. Once we have heard it from a new process there is nothing
@@ -1888,7 +1897,7 @@ export class CodexAppServerBridge {
         throw new Error("Codex app-server thread slug or session id is already bound")
       }
 
-      const connection = await this.ensureConnected()
+      const connection = await this.ensureCurrentAuth()
       const ephemeral = input.ephemeral ?? true
       const startedSandbox = input.permissions ? null : (input.sandbox ?? "read-only")
       const response = ThreadResponse.parse(await connection.request("thread/start", {
@@ -2044,7 +2053,7 @@ export class CodexAppServerBridge {
     const releaseOperation = this.beginOperation()
     this.startingTurns.add(startKey)
     try {
-      const connection = await this.ensureConnected()
+      const connection = await this.ensureCurrentAuth()
       let binding = this.bindingForScope(input.threadSlug, input.sessionId)
       if (!binding) throw new Error("Codex app-server turn requires a bridge-owned session")
       if (binding.connection_epoch !== this.connectionEpoch || binding.state !== "active") {
@@ -2078,6 +2087,7 @@ export class CodexAppServerBridge {
         return { turnId: response.turn.id }
       } finally {
         this.pendingTurnStarts.delete(pendingKey)
+        this.notifyTurnIdleWaiters()
       }
     } finally {
       this.startingTurns.delete(startKey)
@@ -2542,6 +2552,8 @@ export class CodexAppServerBridge {
         this.openingConnection.close()
         this.openingConnection = null
       }
+      this.processAuthAccountId = undefined
+      this.notifyTurnIdleWaiters()
     }
   }
 
@@ -2572,10 +2584,66 @@ export class CodexAppServerBridge {
   }
 
   /**
+   * Codex intentionally snapshots auth.json once per AuthManager. A detached app-server therefore
+   * keeps using the account it started with even after ccbroker atomically switches auth.json. Before
+   * starting new model work, replace that stale process — but only after every turn already running
+   * in the shared per-project process has reached its own completion event.
+   */
+  private async ensureCurrentAuth(): Promise<JsonlRpcConnection> {
+    for (;;) {
+      const desiredAccountId = (this.options.codexAuthAccountId ?? readCodexAccountId)()
+      const connection = await this.ensureConnected()
+      if (!desiredAccountId || this.processAuthAccountId === desiredAccountId) return connection
+      if (!this.authReplacement) {
+        const replacement = this.replaceAppServerForAuthChange()
+        this.authReplacement = replacement
+        void replacement.finally(() => {
+          if (this.authReplacement === replacement) this.authReplacement = null
+        }).catch(() => undefined)
+      }
+      await this.authReplacement
+    }
+  }
+
+  private hasInFlightTurns(): boolean {
+    if (this.pendingTurnStarts.size > 0) return true
+    return Boolean(this.scope.prepare(`
+      SELECT 1 FROM codex_app_server_session
+      WHERE project_id = @project_id AND state = 'active' AND connection_epoch = ? AND current_turn_id IS NOT NULL
+      LIMIT 1
+    `).get(this.connectionEpoch))
+  }
+
+  private whenTurnsIdle(): Promise<void> {
+    if (!this.hasInFlightTurns()) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      this.turnIdleWaiters.add(resolve)
+      // Close the check/register race with a second read after installing the waiter.
+      if (!this.hasInFlightTurns() && this.turnIdleWaiters.delete(resolve)) resolve()
+    })
+  }
+
+  private notifyTurnIdleWaiters(): void {
+    if (this.dbReleased || this.hasInFlightTurns()) return
+    for (const resolve of this.turnIdleWaiters) resolve()
+    this.turnIdleWaiters.clear()
+  }
+
+  private async replaceAppServerForAuthChange(): Promise<void> {
+    while (this.hasInFlightTurns()) await this.whenTurnsIdle()
+    if (this.closed || this.dbReleased) throw new Error("Codex app-server bridge is closed")
+    this.disconnectOwnedProcess()
+    await stopCodexAppServerDaemon(this.options.stateDir ?? this.options.projectDir, this.options.projectId)
+    await this.ensureConnected()
+    this.options.diagnostic?.({ event: "auth-account-refreshed" })
+  }
+
+  /**
    * Attach to an app-server and negotiate.
    *
-   * `refork` is the version-skew recovery, and it is the ONLY thing in frizz that ever ends a Codex
-   * daemon's life. The daemon performs `initialize` once and caches the answer for as long as it
+   * `refork` is the version-skew recovery. Alongside the idle-boundary auth refresh above, it is one
+   * of only two things in frizz that ever ends a Codex daemon's life. The daemon performs `initialize`
+   * once and caches the answer for as long as it
    * lives (up to six hours idle, unbounded while a client keeps reattaching). Bump
    * CODEX_APP_SERVER_SUPPORTED_VERSION and Update & Restart — the ordinary upgrade path — and the
    * surviving daemon happily serves the STALE userAgent to every new generation, so the gate below
@@ -2585,6 +2653,7 @@ export class CodexAppServerBridge {
    * for why a genuinely unsupported codex still fails loudly instead of reforking in a loop.
    */
   private async connect(refork = false): Promise<JsonlRpcConnection> {
+    const authAccountId = (this.options.codexAuthAccountId ?? readCodexAccountId)()
     const attachment = await this.host({
       projectId: this.options.projectId,
       stateDir: this.options.stateDir ?? this.options.projectDir,
@@ -2596,6 +2665,7 @@ export class CodexAppServerBridge {
       clientInfo: CLIENT_INFO,
       capabilities: CLIENT_CAPABILITIES,
       frizzMcp: this.options.frizzMcp,
+      authAccountId,
     })
     const child = attachment.process
     let connection!: JsonlRpcConnection
@@ -2681,6 +2751,7 @@ export class CodexAppServerBridge {
       this.connectionEpoch = negotiated.connectionEpoch
       this.capabilityRevision = negotiated.capabilityRevision
       this.daemonGeneration = attachment.generation
+      this.processAuthAccountId = attachment.authAccountId
       if (this.closed) throw new Error("Codex app-server bridge closed during negotiation")
       this.connection = connection
       this.openingConnection = null
@@ -2730,6 +2801,7 @@ export class CodexAppServerBridge {
     if (this.connection !== connection) return
     const epoch = this.connectionEpoch
     this.connection = null
+    this.processAuthAccountId = undefined
     this.forgetCorrelatedFileItems()
     // No notification can ever arrive on a dead connection, so release every settings waiter now
     // rather than stranding an eager sandbox change until its own timeout. Resolving with `undefined`
@@ -2740,6 +2812,7 @@ export class CodexAppServerBridge {
       UPDATE codex_app_server_session SET state = 'detached', updated_at = ?
       WHERE project_id = @project_id AND connection_epoch = ? AND state = 'active'
     `).run(this.now().toISOString(), epoch)
+    this.notifyTurnIdleWaiters()
     this.options.diagnostic?.({ event: "disconnected", connectionEpoch: epoch, reason })
   }
 
@@ -3746,6 +3819,7 @@ export class CodexAppServerBridge {
         UPDATE codex_app_server_session SET current_turn_id = NULL, auto_resume_count = 0, updated_at = ?
         WHERE project_id = @project_id AND codex_thread_id = ? AND connection_epoch = ? AND current_turn_id = ?
       `).run(this.now().toISOString(), parsed.data.threadId, this.connectionEpoch, parsed.data.turn.id)
+      this.notifyTurnIdleWaiters()
     }
   }
 

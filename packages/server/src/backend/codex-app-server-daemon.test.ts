@@ -112,6 +112,7 @@ function options(h: Harness) {
     clientInfo: CLIENT_INFO as unknown as Record<string, unknown>,
     capabilities: CLIENT_CAPABILITIES as unknown as Record<string, unknown>,
     timeoutMs: 15_000,
+    authAccountId: "account-one",
   }
 }
 
@@ -155,6 +156,8 @@ test("codex daemon: the app-server survives a client detaching, and the next cli
     assert.equal(first.reattached, false, "the first attachment forks the daemon")
     const record = liveDaemonRecord(h.stateDir, PROJECT)
     assert.ok(record, "the daemon published a record")
+    assert.equal(record!.authAccountId, "account-one", "the record pins the account loaded at process start")
+    assert.equal(first.authAccountId, "account-one")
     const childPid = record!.childPid
 
     // Detach exactly the way the bridge does when the frizz runtime is recycled.
@@ -166,6 +169,7 @@ test("codex daemon: the app-server survives a client detaching, and the next cli
     const second = await daemonCodexAppServerHost(options(h))
     assert.equal(second.reattached, true, "the next frizz generation reattaches rather than forking")
     assert.equal(second.generation, first.generation, "same generation == the same app-server process")
+    assert.equal(second.authAccountId, "account-one", "a reattach reports the process's original account")
     assert.equal(liveDaemonRecord(h.stateDir, PROJECT)?.childPid, childPid, "and it is literally the same child")
     second.process.kill()
   } finally {

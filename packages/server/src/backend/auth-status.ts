@@ -104,6 +104,28 @@ export function readCodexAuthState(codexHome = defaultCodexHome()): ProviderAuth
   return apiKey || accessToken ? "authed" : "signed-out"
 }
 
+/**
+ * The ChatGPT account Codex would load from auth.json at process start.
+ *
+ * Codex's AuthManager intentionally keeps one in-memory credential snapshot for the life of an
+ * app-server. Frizz uses this non-secret identifier to notice when an account switch replaced the
+ * file underneath a long-lived listener. Environment authentication takes precedence over the file,
+ * so there is no meaningful ChatGPT account identity to track in that mode.
+ */
+export function readCodexAccountId(codexHome = defaultCodexHome()): string | undefined {
+  if (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.CODEX_ACCESS_TOKEN) return undefined
+  try {
+    const doc = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf8")) as unknown
+    if (!doc || typeof doc !== "object") return undefined
+    const tokens = (doc as Record<string, unknown>).tokens
+    if (!tokens || typeof tokens !== "object") return undefined
+    const accountId = (tokens as Record<string, unknown>).account_id
+    return typeof accountId === "string" && accountId.trim() ? accountId : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // Is the `codex` executable actually runnable? Auth (auth.json/env) says a credential EXISTS; it says
 // nothing about whether the binary a codex dispatch needs is installed. When it is not, the dispatch
 // otherwise proceeds to create thread state and only then fails deep in the app-server with "daemon

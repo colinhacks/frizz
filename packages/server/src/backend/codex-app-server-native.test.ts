@@ -66,6 +66,7 @@ async function fixture(): Promise<Fixture> {
   // exactly what liveNativeRecord() treats as reattachable.
   writeFileSync(nativeRecordPath(stateDir, projectId), JSON.stringify({
     projectId, generation: "gen-fixture", listenerPid: process.pid, socketPath, createdAt: new Date().toISOString(),
+    authAccountId: "account-one",
   }))
 
   return {
@@ -92,6 +93,7 @@ const hostOptions = (f: Fixture) => ({
   clientInfo: {},
   capabilities: {},
   timeoutMs: 10_000,
+  authAccountId: "account-two",
 })
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 150))
@@ -103,6 +105,7 @@ test("reattaches to an existing listener without offering permessage-deflate", a
     await settle()
     assert.equal(attachment.reattached, true, "an existing live record must be joined, not replaced")
     assert.equal(attachment.generation, "gen-fixture", "the generation identifies the PROCESS and must survive a reattach")
+    assert.equal(attachment.authAccountId, "account-one", "a reattach reports the account the listener originally loaded")
     // A rejoin over this transport is ALWAYS lossy: the app-server drops events while unattached, and
     // subscriptions are per-connection so this brand-new socket is subscribed to nothing yet. Claiming
     // 0 here would let the bridge take the warm path and wait forever on a `turn/completed` it was
@@ -161,7 +164,7 @@ test("kill() detaches the attachment and leaves the listener running", async () 
     assert.equal(f.closes, 1, "the WebSocket must be closed")
     assert.equal(exited, true, "a lost attachment surfaces to the bridge as an exit")
     // The listener is untouched — still bound, still discoverable, still reattachable. This is the
-    // property the operator explicitly likes: quitting frizz does not stop Codex.
+// property the operator explicitly likes: quitting frizz does not stop Codex.
     assert.ok(liveNativeRecord(f.stateDir, f.projectId), "the record must survive a detach")
     const again = await nativeListenCodexAppServerHost(hostOptions(f))
     await settle()
@@ -173,9 +176,9 @@ test("kill() detaches the attachment and leaves the listener running", async () 
 
 // ---- lifecycle ownership ---------------------------------------------------------------------------
 // The counterpart to the detach test above: frizz must be able to END a listener it can start, or an
-// upgraded codex can never displace the process holding this project's socket. The one production
-// teardown is `stopCodexAppServerDaemon` (the bridge's version-skew refork), which cannot tell the
-// transports apart — so it is what this drives, not `killNativeListener` directly.
+// upgraded codex or a newly selected account can never displace the process holding this project's
+// socket. Production teardown is `stopCodexAppServerDaemon` (the bridge's version/auth refork), which
+// cannot tell the transports apart — so it is what this drives, not `killNativeListener` directly.
 
 const alive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM" }

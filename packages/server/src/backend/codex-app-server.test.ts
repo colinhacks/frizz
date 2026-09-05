@@ -8,6 +8,7 @@ import assert from "node:assert/strict"
 import Database from "../sqlite.ts"
 import { createInteractionStore, InteractionStoreError } from "../interaction-store.ts"
 import { createStorage, type SessionRow } from "../storage.ts"
+import { directChildHost } from "./codex-app-server-host.ts"
 import {
   CODEX_APP_SERVER_PROTOCOL_REVISION,
   CODEX_APP_SERVER_SUPPORTED_VERSION,
@@ -239,6 +240,8 @@ async function waitFor(predicate: () => boolean, message = "condition", attempts
 function harness(
   version = CODEX_APP_SERVER_SUPPORTED_VERSION,
   setupProcess?: (process: FakeAppServerProcess) => void,
+  codexAuthAccountId?: () => string | undefined,
+  attachmentAccountId?: (requested: string | undefined, attachment: number) => string | undefined,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-codex-app-server-"))
   const dbPath = join(dir, "ui.db")
@@ -262,6 +265,8 @@ function harness(
     return process
   }
   const bridges: CodexAppServerBridge[] = []
+  const directHost = directChildHost(spawn)
+  let attachment = 0
   const newBridge = () => {
     const bridge = new CodexAppServerBridge({
       projectId: "project-1",
@@ -269,11 +274,17 @@ function harness(
       db,
       interactions,
       codexBin: "/opt/codex",
-      spawn,
+      ...(attachmentAccountId
+        ? { host: async (options) => ({
+            ...await directHost(options),
+            authAccountId: attachmentAccountId(options.authAccountId, attachment++),
+          }) }
+        : { spawn }),
       now: () => now,
       id: () => `client-message-${++clientId}`,
       requestTimeoutMs: 1_000,
       diagnostic: (event) => diagnostics.push(event),
+      codexAuthAccountId: codexAuthAccountId ?? (() => undefined),
     })
     bridges.push(bridge)
     return bridge
@@ -295,6 +306,81 @@ function harness(
     },
   }
 }
+
+test("a listener record from before account tracking is replaced once, then upgraded in place", async () => {
+  const h = harness(
+    CODEX_APP_SERVER_SUPPORTED_VERSION,
+    undefined,
+    () => "account-one",
+    (requested, attachment) => attachment === 0 ? undefined : requested,
+  )
+  await h.bridge.startDisposableSession({
+    threadSlug: "legacy-listener", sessionId: "legacy-listener-session", cwd: h.dir, ephemeral: false,
+  })
+  assert.equal(h.processes.length, 2, "an unlabelled legacy listener cannot be trusted to hold the active account")
+  assert.equal(h.processes[0]!.killed, true)
+  assert.equal(h.processes[1]!.killed, false)
+  await h.bridge.startTurn({ threadSlug: "legacy-listener", sessionId: "legacy-listener-session", text: "current account" })
+  assert.equal(h.processes.length, 2, "the replacement records its account and does not churn again")
+  h.close()
+})
+
+test("an existing thread uses a newly activated ChatGPT account on its next turn", async () => {
+  let accountId = "account-one"
+  const h = harness(CODEX_APP_SERVER_SUPPORTED_VERSION, undefined, () => accountId)
+  const binding = await h.bridge.startDisposableSession({
+    threadSlug: "rotated-account",
+    sessionId: "frizz-session-account",
+    cwd: h.dir,
+    ephemeral: false,
+  })
+  await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "first" })
+  h.processes[0]!.completeActiveTurn()
+  await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "first turn completion")
+
+  accountId = "account-two"
+  await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "second" })
+
+  assert.equal(h.processes.length, 2, "the app-server that cached the previous account must be replaced")
+  assert.equal(h.processes[0]!.killed, true)
+  assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "thread/resume"), "the existing rollout must survive the replacement")
+  assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "turn/start"), "the follow-up must run on the replacement")
+  assert.ok(h.diagnostics.some((event) => (event as { event?: string }).event === "auth-account-refreshed"))
+
+  h.processes[1]!.completeActiveTurn()
+  await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "second turn completion")
+  await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "third" })
+  assert.equal(h.processes.length, 2, "an unchanged account must not churn the listener")
+  h.close()
+})
+
+test("an account switch waits for every active turn before replacing the shared app-server", async () => {
+  let accountId = "account-one"
+  const h = harness(CODEX_APP_SERVER_SUPPORTED_VERSION, undefined, () => accountId)
+  const active = await h.bridge.startDisposableSession({
+    threadSlug: "active-before-switch", sessionId: "active-session", cwd: h.dir, ephemeral: false,
+  })
+  const waiting = await h.bridge.startDisposableSession({
+    threadSlug: "waiting-after-switch", sessionId: "waiting-session", cwd: h.dir, ephemeral: false,
+  })
+  await h.bridge.startTurn({ threadSlug: active.threadSlug, sessionId: active.sessionId, text: "still running" })
+
+  accountId = "account-two"
+  let settled = false
+  const nextTurn = h.bridge.startTurn({ threadSlug: waiting.threadSlug, sessionId: waiting.sessionId, text: "use the new account" })
+    .finally(() => { settled = true })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(settled, false, "new work must wait at the safe turn boundary")
+  assert.equal(h.processes.length, 1)
+  assert.equal(h.processes[0]!.killed, false, "the process running an existing turn must not be killed")
+
+  h.processes[0]!.completeActiveTurn()
+  await nextTurn
+  assert.equal(h.processes.length, 2)
+  assert.equal(h.processes[0]!.killed, true)
+  assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "turn/start"))
+  h.close()
+})
 
 function commandParams(threadId: string, turnId: string, over: Record<string, unknown> = {}) {
   return {
@@ -1956,19 +2042,20 @@ function scriptedHostHarness(script: () => { generation: string; reattached: boo
       db,
       interactions,
       codexBin: "/opt/codex",
-      host: async () => {
+      host: async (options) => {
         const process_ = new FakeAppServerProcess()
         // Applied at CREATION: the reconnect's process does not exist until the bridge connects, which
         // is the same call whose reconciliation the status has to steer.
         process_.resumeThreadStatus = nextResumeThreadStatus
         processes.push(process_)
         const { generation, reattached, droppedWhileDetached } = script()
-        return { process: process_, generation, reattached, daemonPid: 4242, droppedWhileDetached }
+        return { process: process_, generation, reattached, daemonPid: 4242, droppedWhileDetached, authAccountId: options.authAccountId }
       },
       now: () => now,
       id: () => `client-message-${++clientId}`,
       requestTimeoutMs: 1_000,
       diagnostic: (event) => diagnostics.push(event),
+      codexAuthAccountId: () => undefined,
     })
     bridges.push(bridge)
     return bridge

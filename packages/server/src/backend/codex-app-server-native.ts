@@ -52,6 +52,8 @@ export interface NativeListenerRecord {
   listenerPid: number
   socketPath: string
   createdAt: string
+  /** Opaque ChatGPT account id present when this listener was spawned. */
+  authAccountId?: string
 }
 
 function nativeDir(stateDir: string): string {
@@ -92,6 +94,7 @@ export function readNativeRecord(stateDir: string, projectId: string): NativeLis
       listenerPid: value.listenerPid,
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
+      ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
     }
   } catch {
     return null
@@ -309,6 +312,7 @@ async function startListener(options: CodexAppServerHostOptions): Promise<Native
     listenerPid: child.pid ?? -1,
     socketPath,
     createdAt: new Date().toISOString(),
+    ...(options.authAccountId ? { authAccountId: options.authAccountId } : {}),
   }
   // Published BEFORE the socket is up: a runtime that dies during startup must still leave the next
   // one a way to find (and if need be reap) the listener it created.
@@ -364,6 +368,7 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
         reattached: true,
         daemonPid: existing.listenerPid,
         droppedWhileDetached: PRESUMED_LOSSY_REJOIN,
+        authAccountId: existing.authAccountId,
       }
     } catch {
       // The record outlived its socket. Drop it and start fresh rather than failing the connect.
@@ -379,6 +384,7 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
       reattached: false,
       daemonPid: record.listenerPid,
       droppedWhileDetached: 0,
+      authAccountId: record.authAccountId,
     }
   } catch (error) {
     // A concurrent frizz may have won the bind between our probe and our spawn ("app-server control
@@ -391,10 +397,11 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
         reattached: true,
         daemonPid: raced.listenerPid,
         droppedWhileDetached: PRESUMED_LOSSY_REJOIN,
+        authAccountId: raced.authAccountId,
       }
     }
     frizzLog.error("codex", `codex app-server native listener unavailable (${(error as Error).message}); falling back to an in-process app-server — turns will NOT survive a frizz restart`)
     const child = spawn(options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp), { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] })
-    return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0 }
+    return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0, authAccountId: options.authAccountId }
   }
 }

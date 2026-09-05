@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { parseClaudeAuthStatusJson, readAuthSnapshot, readClaudeAccountEmail, readClaudeAuthState, readClaudeAuthStatusCli, readClaudePreflightAuth, readCodexAccountEmail, readCodexAuthState, readCodexBinaryState } from "./auth-status.ts"
+import { parseClaudeAuthStatusJson, readAuthSnapshot, readClaudeAccountEmail, readClaudeAuthState, readClaudeAuthStatusCli, readClaudePreflightAuth, readCodexAccountEmail, readCodexAccountId, readCodexAuthState, readCodexBinaryState } from "./auth-status.ts"
 
 // Codex reads env keys BEFORE the file, so a file-based test must run with those keys cleared or an
 // ambient OPENAI_API_KEY in the dev shell would mask the file logic. Clears + restores around fn.
@@ -61,6 +61,36 @@ test("codex: env key present with no auth.json → authed (frizz forwards OPENAI
     process.env.OPENAI_API_KEY = "sk-env"
     // No auth.json in dir — env auth must still read as authed, not signed-out.
     assert.equal(readCodexAuthState(dir), "authed")
+  })
+})
+
+test("codex: account id reads only the non-secret ChatGPT identity", () => {
+  withTmp((dir) => {
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: { access_token: "secret", refresh_token: "also-secret", account_id: "account-one" },
+    }))
+    assert.equal(readCodexAccountId(dir), "account-one")
+  })
+})
+
+test("codex: account id is absent for malformed, tokenless, and API-key auth", () => {
+  withTmp((dir) => {
+    assert.equal(readCodexAccountId(dir), undefined)
+    writeFileSync(join(dir, "auth.json"), "{not json")
+    assert.equal(readCodexAccountId(dir), undefined)
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ tokens: { access_token: "secret" } }))
+    assert.equal(readCodexAccountId(dir), undefined)
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-file", tokens: null }))
+    assert.equal(readCodexAccountId(dir), undefined)
+  })
+})
+
+test("codex: environment auth suppresses an unrelated auth.json account id", () => {
+  withTmp((dir) => {
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ tokens: { account_id: "account-one" } }))
+    process.env.OPENAI_API_KEY = "sk-env"
+    assert.equal(readCodexAccountId(dir), undefined)
   })
 })
 

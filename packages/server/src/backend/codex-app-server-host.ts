@@ -11,12 +11,11 @@
 // the multiplexer was stripped on 2026-08-02; an earlier PTY session broker had been removed as dead
 // code before that.)
 //
-// A long-lived process needs someone to END it. That is what `stopCodexAppServerDaemon` is for, and
-// the one production caller is the bridge's version-skew recovery: a daemon caches its `initialize`
-// handshake FOREVER, so after codex is upgraded on disk the cached userAgent fails the bridge's
-// version gate on every single connect and no amount of retrying can fix it. See
-// codex-app-server.ts's `connect()`. Note that it ends the NATIVE listener too — that caller cannot
-// tell the transports apart, and an out-of-date listener wedges the gate exactly the same way.
+// A long-lived process needs someone to END it. That is what `stopCodexAppServerDaemon` is for. The
+// bridge uses it for version-skew recovery (a daemon caches its `initialize` handshake forever) and
+// at an idle turn boundary after auth.json switches ChatGPT accounts (Codex caches AuthManager too).
+// See codex-app-server.ts's `connect()` / `ensureCurrentAuth()`. It ends the NATIVE listener too — the
+// bridge cannot tell the transports apart, and both kinds of cached process need the same replacement.
 //
 // Shutdown is deliberately NOT such a caller, for either transport. Recycling frizz must leave the
 // app-server (and its in-flight turns) running, which is the whole point of the split above.
@@ -45,6 +44,9 @@ export interface CodexAppServerDaemonRecord {
   childPid: number
   socketPath: string
   createdAt: string
+  /** ChatGPT account loaded by this app-server at process start. Absent for legacy records and
+   *  non-ChatGPT authentication. This is an opaque identifier, never a credential. */
+  authAccountId?: string
 }
 
 export interface CodexAppServerAttachment {
@@ -57,6 +59,8 @@ export interface CodexAppServerAttachment {
    *  Non-zero means the stream we just joined has holes in it — a `turn/completed` or an approval
    *  request may simply be gone — so the caller must NOT treat this as a lossless rejoin. */
   droppedWhileDetached: number
+  /** ChatGPT account loaded when this app-server process was spawned. */
+  authAccountId?: string
 }
 
 export interface CodexAppServerHostOptions {
@@ -67,6 +71,8 @@ export interface CodexAppServerHostOptions {
   env: NodeJS.ProcessEnv
   clientInfo: Record<string, unknown>
   capabilities: Record<string, unknown>
+  /** ChatGPT account present in auth.json immediately before the process is obtained/spawned. */
+  authAccountId?: string
   /** Mounts the unified `frizz` MCP server into this app-server. Absent ⇒ frizz mounts nothing, the
    *  same degradation the claude side has when the descriptor cannot be resolved. */
   frizzMcp?: FrizzMcp
@@ -122,6 +128,7 @@ export function readDaemonRecord(stateDir: string, projectId: string): CodexAppS
       childPid: typeof value.childPid === "number" ? value.childPid : 0,
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
+      ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
     }
   } catch {
     return null
@@ -219,12 +226,11 @@ export function killCodexAppServerDaemon(stateDir: string, projectId: string): v
  * replacement before the old one finishes dying and the corpse deletes the new daemon's socket and
  * record on its way out, leaving a daemon nobody can ever find.
  *
- * It covers BOTH transports because its one caller — the bridge's version-skew recovery — has no idea
- * which one is in play, and the wedge it recovers from is not the daemon's alone. The native listener
- * (FRIZZ_CODEX_NATIVE_LISTEN, codex-app-server-native.ts) is a codex process spawned from the binary as
- * it stood at spawn time, so after an upgrade on disk it keeps reporting the pre-upgrade userAgent on
- * every reattach; leave it running and the "refork" reattaches to the very process that just failed
- * the gate, fails identically, and the bridge stays wedged until someone kills the listener by hand.
+ * It covers BOTH transports because the bridge has no idea which one is in play, and neither stale
+ * state is the daemon's alone. The native listener (FRIZZ_CODEX_NATIVE_LISTEN,
+ * codex-app-server-native.ts) is a codex process spawned from the binary and credential snapshot as
+ * they stood at spawn time. Leave it running after either one changes and the "refork" reattaches to
+ * the stale process, reproducing the same version rejection or old-account selection indefinitely.
  * Each half is inert without its own record and a project can only have one, so calling both is
  * precisely "stop the host that is actually there".
  */
@@ -259,6 +265,7 @@ function forkDaemon(options: CodexAppServerHostOptions): Promise<CodexAppServerD
   const payload = JSON.stringify({
     projectId, socketPath, recordPath: record, codexBin: options.codexBin, cwd: options.cwd,
     env, generation, clientInfo: options.clientInfo, capabilities: options.capabilities,
+    ...(options.authAccountId ? { authAccountId: options.authAccountId } : {}),
     // The argv is built HERE, not in the daemon: the daemon is a bare forked entry that should not have
     // to resolve frizz's MCP descriptors, and building it once keeps this transport identical to the
     // native listener's.
@@ -403,7 +410,7 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
   if (existing) {
     try {
       const attached = await attach(existing, timeoutMs)
-      return { ...attached, generation: existing.generation, reattached: true, daemonPid: existing.daemonPid }
+      return { ...attached, generation: existing.generation, reattached: true, daemonPid: existing.daemonPid, authAccountId: existing.authAccountId }
     } catch {
       // The record outlived its socket (a daemon killed between the pid check and connect). Drop it
       // and fall through to a fresh fork rather than failing the whole connect.
@@ -417,7 +424,7 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
   try {
     const record = await forkDaemon(options)
     const attached = await attach(record, timeoutMs)
-    return { ...attached, generation: record.generation, reattached: false, daemonPid: record.daemonPid }
+    return { ...attached, generation: record.generation, reattached: false, daemonPid: record.daemonPid, authAccountId: record.authAccountId }
   } catch (error) {
     // LAST RESORT, and deliberately not a hard failure. The daemon buys ONE thing — an in-flight turn
     // surviving Update & Restart. Codex itself does not need it: before the daemon existed the
@@ -443,7 +450,7 @@ function inProcessCodexAppServer(options: CodexAppServerHostOptions): CodexAppSe
   // returns false and says nothing. Match POSIX: a teardown must never throw because codex is missing.
   const kill = child.kill.bind(child)
   child.kill = ((signal?: number | NodeJS.Signals) => { try { return kill(signal) } catch { return false } }) as typeof child.kill
-  return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0 }
+  return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0, authAccountId: options.authAccountId }
 }
 
 /** Test/harness seam: keep the historical direct-child behavior, where every connect is a NEW
@@ -458,6 +465,7 @@ export function directChildHost(
     reattached: false,
     daemonPid: process.pid,
     droppedWhileDetached: 0,
+    authAccountId: options.authAccountId,
   })
 }
 
