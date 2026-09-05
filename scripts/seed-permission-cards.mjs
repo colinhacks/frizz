@@ -10,7 +10,7 @@
 // Usage: nub scripts/seed-permission-cards.mjs --home=/abs/temp-home
 import { execFileSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import Database from "../packages/server/src/sqlite.ts"
 import { buildClaudePermissionInteraction } from "../packages/server/src/backend/claude-permission-interactions.ts"
 import { createInteractionStore } from "../packages/server/src/interaction-store.ts"
@@ -26,11 +26,16 @@ if (!home) {
 }
 
 const sandbox = resolveSandboxDb(home)
-const { db } = sandbox
+// `projectId` comes from the resolver, NOT from the database's own parent directory. It was
+// `dirname(db).split("/").pop()`, which the 2026-08-27 move to one machine-wide `~/.frizz/ui.db` turned
+// into the literal string `.frizz` — so every card this script seeded was owned by a project that does
+// not exist, the board derived `pendingInteraction: false` for it, and `pendingInteractionScope` then
+// returned undefined and drew nothing at all. The resolver reads it off the project state dir, which
+// survived the move under both layouts.
+const { db, projectId } = sandbox
 // The unified schema keys every row by project and the column is NOT NULL; the legacy one has no
 // such column. `sessionProjectColumns` yields the right prefix pair for whichever this sandbox is.
 const { cols: sessionCols, vals: sessionVals } = sessionProjectColumns(sandbox)
-const projectId = dirname(db).split("/").pop()
 const cwdSlug = cwd.replace(/[/.]/g, "-")
 const jsonlDir = join(home, ".claude", "projects", cwdSlug)
 mkdirSync(jsonlDir, { recursive: true })
