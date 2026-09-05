@@ -662,15 +662,26 @@ interface RuntimeStatusState {
   restedCard: boolean
 }
 
+/** THE PREMISE BOTH TERMINAL-BOUND SAFETY NETS REST ON: that frizz has nothing answerable to offer, so
+ *  the operator's own terminal is the only way through. A pending typed interaction falsifies it — the
+ *  broker path journals the same escalation as an answerable interaction, which the transcript's ask row
+ *  draws with its real buttons — and pointing someone at a terminal while an answerable copy sits on
+ *  screen is worse than saying nothing.
+ *
+ *  `pendingInteraction`, NOT `actionableInteraction`: the question is whether a card is on SCREEN, and an
+ *  answered request stays pending-and-readable while its provider delivery drains.
+ *
+ *  Both nets still cover the sessions they exist for — pre-contract, adopted or foreign threads that
+ *  reach the tool with no broker to intercept it, and any escalation buildClaudePermissionInteraction
+ *  could not represent — because none of those journals anything. */
+function terminalNetStandsDown(thread: ThreadViewData | undefined): boolean {
+  return thread?.pendingInteraction === true
+}
+
 /** The safety-net readout for a session frozen at a native AskUserQuestion — "answer it in your external
- *  terminal". That is the WRONG thing to say once frizz OWNS the question: the broker path journals the
- *  same tool call as an answerable interaction, which renders as a question card in the transcript, and
- *  pointing the operator at a terminal while an answerable copy sits on screen is worse than saying
- *  nothing. So the net stands down whenever this thread has a pending interaction, and still covers the
- *  sessions it exists for — pre-contract, adopted, or foreign threads that reach the tool with no broker
- *  to intercept it. */
+ *  terminal". */
 function frozenPendingAsk(thread: ThreadViewData | undefined): PendingAsk | undefined {
-  return thread?.pendingInteraction ? undefined : thread?.pendingAsk
+  return terminalNetStandsDown(thread) ? undefined : thread?.pendingAsk
 }
 
 /** WHICH RUNG WINS, or null when the slot draws nothing at all. The order is the ladder: a provider auth
@@ -682,7 +693,11 @@ function runtimeStatusRung({ thread, showWorking, registeredDone, restedCard }: 
   if (thread?.providerFault && !thread.foreign) return "provider-fault"
   if (thread?.limitPause && !thread.foreign) return "limit-pause"
   if (frozenPendingAsk(thread)) return "pending-ask"
-  if (thread?.runtime === "perm-prompt") return "perm-prompt"
+  // The generic banner stands down on the SAME premise the frozen ask does — see terminalNetStandsDown.
+  // It did not until 2026-09-05, and a broker-path escalation sets `runtime: "perm-prompt"` AND journals
+  // an answerable interaction, so the ask row's "Run a command?" card drew with Grant/Deny and this rung
+  // told the operator to go and answer it in a terminal directly underneath.
+  if (thread?.runtime === "perm-prompt" && !terminalNetStandsDown(thread)) return "perm-prompt"
   if (showWorking) return "working"
   if (showsSnoozeCard(thread)) return "snooze"
   // showsRestingCard, NOT the raw awaitingBackground flag: gating on the bare flag opened the slot for a

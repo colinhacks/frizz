@@ -1558,18 +1558,31 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
         {!q.isLoading && (
           <>
             <InteractionStack thread={thread} className="mt-4" />
-            {/* A frozen native AskUserQuestion (safety net) renders the REAL question read-only so the
-                human knows exactly what's asked without opening anything; it takes precedence over the
-                generic perm banner. Otherwise a permission-blocked agent has NO message to show (turn
-                parked mid-tool_use) — say so explicitly. Both route the answer to the terminal tab. */}
-            {/* Stands down when frizz OWNS the question: a broker-path AskUserQuestion is journaled as an
-                answerable interaction and already rendered by InteractionStack above, so pointing the
-                operator at a terminal here would duplicate it with worse advice. */}
-            {(thread.pendingInteraction ? undefined : thread.pendingAsk) ? (
+            {/* THE TERMINAL-BOUND SAFETY NETS, and the ONE premise both of them rest on: that frizz has
+                nothing answerable to offer, so the only way through is the operator's own terminal.
+                A pending typed interaction falsifies that outright — InteractionStack drew the request
+                right above with its real buttons — so BOTH nets stand down on it rather than telling
+                someone to go and type at a session they can resolve with one click.
+                It used to be only the AskUserQuestion net that stood down; the perm-prompt banner below
+                it did not, and a broker-path escalation sets `runtime: "perm-prompt"` AND journals an
+                answerable interaction, so the pair drew together — a "Run a command?" card with
+                Grant/Deny, and directly under it "respond in your external terminal" (visible in the
+                maintainer's 2026-09-05 screenshot, under the placement defect above).
+                `pendingInteraction`, NOT `actionableInteraction`: the question is whether a card is on
+                SCREEN, and an answered request stays pending-and-readable while its delivery drains.
+                Both nets still cover what they exist for — a pre-contract, adopted or foreign session
+                that reaches the tool with no broker to intercept it, and any escalation
+                `buildClaudePermissionInteraction` could not represent, neither of which journals
+                anything. */}
+            {thread.pendingInteraction ? null : thread.pendingAsk ? (
+              // The REAL question, read-only, so the human knows exactly what is asked without opening
+              // anything; it takes precedence over the generic banner below.
               <div className="mt-4">
-                <PendingAskCard ask={thread.pendingAsk!} onTerminal={copyTerminalCommand} />
+                <PendingAskCard ask={thread.pendingAsk} onTerminal={copyTerminalCommand} />
               </div>
             ) : thread.runtime === "perm-prompt" ? (
+              // A permission-blocked agent has NO message to show at all (the turn parked mid-tool_use),
+              // so the banner says so explicitly rather than leaving the card looking idle.
               <div className="mt-4">
                 <PermPromptBanner onTerminal={copyTerminalCommand} />
               </div>
