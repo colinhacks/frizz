@@ -12,8 +12,11 @@
 // So each backend now has one pin, declared here, and Frizz fetches that exact platform binary from
 // the vendor's own npm package into the cache root the first time a server boots without it:
 //
-//   <cache>/runtimes/claude/2.1.207/claude                      (@anthropic-ai/claude-agent-sdk-<os>-<arch>)
-//   <cache>/runtimes/codex/0.153.2/vendor/<triple>/bin/codex    (@openai/codex@<version>-<os>-<arch>)
+// (named by the constants below rather than by a sample version, because a sample one goes stale on
+// every bump and both of these had — claude still read 2.1.207 four pins later)
+//
+//   <cache>/runtimes/claude/<CLAUDE_CODE_VERSION>/claude                (@anthropic-ai/claude-agent-sdk-<os>-<arch>)
+//   <cache>/runtimes/codex/<CODEX_VERSION>/vendor/<triple>/bin/codex    (@openai/codex@<version>-<os>-<arch>)
 //
 // The download is verified against the registry's own sha512 integrity before anything is trusted,
 // the extraction refuses links and paths that escape the version directory, and a version directory

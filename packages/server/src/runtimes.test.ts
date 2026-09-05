@@ -107,7 +107,7 @@ before(async () => {
 after(() => server.close())
 
 const claudeCoords: RuntimeCoordinates = { pkg: "@anthropic-ai/claude-agent-sdk-darwin-arm64", packageVersion: CLAUDE_AGENT_SDK_VERSION, label: CLAUDE_CODE_VERSION, binary: "claude" }
-const codexCoords: RuntimeCoordinates = { pkg: "@openai/codex", packageVersion: "0.153.2-darwin-arm64", label: "0.153.2", binary: "codex" }
+const codexCoords: RuntimeCoordinates = { pkg: "@openai/codex", packageVersion: "0.153.4-darwin-arm64", label: "0.153.4", binary: "codex" }
 
 const claudeTgz = tarball([
   { name: "package/package.json", data: Buffer.from('{"name":"stub"}') },
@@ -209,9 +209,12 @@ test("provision: the Codex package's vendor/<triple>/bin layout is found, siblin
   ])
   registry.set(codexCoords.pkg, codexCoords.packageVersion, tgz)
   const got = await provisionRuntime("codex", { root, coordinates: codexCoords, registry: registry.url })
-  assert.equal(got.bin, join(root, "codex", "0.153.2", "vendor", "aarch64-apple-darwin", "bin", "codex"))
-  assert.ok(existsSync(join(root, "codex", "0.153.2", "vendor", "aarch64-apple-darwin", "codex-path", "rg")))
-  const marker = JSON.parse(readFileSync(join(root, "codex", "0.153.2", "provisioned.json"), "utf8")) as { binary: string }
+  // Off codexCoords.label rather than a repeated literal: these are assertions ABOUT that coordinate,
+  // so they must move with the pin. Three copies of the version had to be hand-edited on the 0.153.4
+  // bump, which is three chances to leave one behind and assert against a directory nothing writes.
+  assert.equal(got.bin, join(root, "codex", codexCoords.label, "vendor", "aarch64-apple-darwin", "bin", "codex"))
+  assert.ok(existsSync(join(root, "codex", codexCoords.label, "vendor", "aarch64-apple-darwin", "codex-path", "rg")))
+  const marker = JSON.parse(readFileSync(join(root, "codex", codexCoords.label, "provisioned.json"), "utf8")) as { binary: string }
   assert.equal(marker.binary, join("vendor", "aarch64-apple-darwin", "bin", "codex"))
   rmSync(root, { recursive: true, force: true })
 })
@@ -248,7 +251,7 @@ test("sweep: retires the other versions and a stale partial, keeps the pin and a
   assert.deepEqual(removed.map((p) => p.slice(root.length + 1)).sort(), [join("claude", ".partial-2.1.207-1"), join("claude", "2.1.180")])
   assert.ok(existsSync(join(root, "claude", CLAUDE_CODE_VERSION)))
   assert.ok(existsSync(join(root, "claude", ".partial-2.1.207-2")))
-  assert.deepEqual(sweepRuntimes("codex", root, "0.153.2"), [], "a backend with no directory sweeps nothing")
+  assert.deepEqual(sweepRuntimes("codex", root, codexCoords.label), [], "a backend with no directory sweeps nothing")
   rmSync(root, { recursive: true, force: true })
 })
 

@@ -446,10 +446,13 @@ test("bridge is the sole codex transport (always enabled) and negotiates exact i
   assert.ok(!args.some((a) => a.includes("chrome-devtools")), "frizz must inject no browser")
   assert.ok(args.some((a) => a === 'default_tools_approval_mode="approve"'), "MCP calls would be cancelled at use")
   assert.equal(h.calls[0]!.binary, "/opt/codex")
+  // Spelled out rather than derived, on purpose: this is the ONE place the audited coordinate has to
+  // be retyped by hand, so a bump that moves the version and forgets the source tag or the commit
+  // fails here instead of shipping a revision that names a build nobody audited.
   assert.deepEqual(CODEX_APP_SERVER_PROTOCOL_REVISION, {
-    packageVersion: "0.153.2",
-    sourceTag: "rust-v0.153.2",
-    sourceCommit: "657a993cbee87acf52d14b758ce49dbd46d1b8eb",
+    packageVersion: "0.153.4",
+    sourceTag: "rust-v0.153.4",
+    sourceCommit: "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
   })
   assert.notEqual(h.calls[0]!.env, process.env, "the child receives a point-in-time environment snapshot")
   // Looked up the way the OS does, because the snapshot is a PLAIN object: `process.env` is a
