@@ -70,12 +70,21 @@ test("Agent dispatch hook tells every helper not to fan out unless its prompt as
 test("Agent dispatch hook tells every helper how to collect a helper of its own", () => {
   const prompt = output(dispatch).updatedInput.prompt as string
   assert.match(prompt, /If your prompt DOES ask you to dispatch a helper/)
-  assert.match(prompt, /completion is delivered to you automatically/)
+  // MEASURED 2026-09-05: a helper does not wake its dispatcher either. A child told to dispatch one
+  // and stop immediately reported `SAW_HELPER_REPLY: no` and was never resumed — so the epilogue's
+  // old promise that "its completion is delivered to you automatically" was false in exactly the
+  // direction that strands a child, and is the sentence a stranded helper reasons its way back to.
+  assert.match(prompt, /a helper cannot wake you either/)
+  assert.match(prompt, /collect it before your turn ends, or do not dispatch it/)
+  assert.doesNotMatch(prompt, /delivered to you automatically/, "a helper's completion does NOT reach a stopped dispatcher")
   assert.match(prompt, /Never hand-roll a wait loop/)
   assert.match(prompt, /SYMLINK/)
   assert.match(prompt, /"type":"result". record is not reliably written/)
   assert.match(prompt, /discard live work and redo it/)
   assert.match(prompt, /description. naming its narrower slice/)
+  // The anti-polling rule survives the correction: judge a helper by what it returns, never by
+  // stat-ing its transcript. What changed is only the false premise that it returns to a stopped one.
+  assert.match(prompt, /Judge a helper only by what it actually returns to you/)
 })
 
 test("Agent dispatch hook keeps the handoff, scratch-file and upward-channel coordination", () => {
@@ -92,6 +101,22 @@ test("Agent dispatch hook keeps the handoff, scratch-file and upward-channel coo
   assert.match(prompt, /write only <path>/)
   assert.match(prompt, /location alone neither permits nor forbids editing/)
   assert.match(prompt, /SendMessage\(\{to: "main"/)
+})
+
+// A child cannot be re-invoked: Claude notifies the DISPATCHER when a helper "stops with no live
+// background children of its own", and never resumes the helper to read that result. A Fable helper
+// on nubjs/nub stranded itself four times in one effort on exactly this, returning "I am waiting for
+// their completion notifications before writing" while its whole investigation sat unwritten. Nothing
+// in the epilogue had ever said so, though DECISIONS.md claimed it did.
+test("Agent dispatch hook tells every helper that nothing can wake it", () => {
+  const prompt = output(dispatch).updatedInput.prompt as string
+  assert.match(prompt, /NOTHING CAN WAKE YOU/)
+  assert.match(prompt, /ending your turn IS your return/)
+  assert.match(prompt, /reports to your DISPATCHER, never to you/)
+  assert.match(prompt, /never end a turn waiting for something to finish/)
+  assert.match(prompt, /collect it in the SAME turn/)
+  // The second half of the same failure: findings that exist only in a return message die with it.
+  assert.match(prompt, /AS YOU GO/)
 })
 
 test("Agent dispatch hook is inert outside a frizz worker session", () => {
