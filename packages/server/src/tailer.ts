@@ -1968,10 +1968,12 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.sawRecords = true
       break
     case "agent-report":
-      // A CHILD reported upward (codex inter-agent agent_message). It is real session motion — the
+    case "agent-instruction":
+      // A CHILD reported upward, or another agent instructed this one (codex inter-agent
+      // agent_message). It is real session motion — the
       // activity-clock bump above is the point, since a parent that spends an hour waiting on children
-      // is working, not stalled — but it is the CHILD's output, so it moves nothing else: not the turn
-      // (the child's arrival does not open one; codex records `trigger_turn:false` and brackets any
+      // is working, not stalled — but it is inter-agent traffic, so it moves nothing else: not the turn
+      // (the arrival does not open one; codex records `trigger_turn:false` and brackets any
       // real wake with its own task_started), not the preview or fence (those belong to THIS agent's
       // final message), and neither rest-time key. The child's own lifecycle rides codex-subagents.ts.
       state.sawRecords = true

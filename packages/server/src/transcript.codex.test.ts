@@ -1351,6 +1351,7 @@ test("a Codex child's drawer marks its original task and later follow-up at thei
     "Reading the follow-up.",
   ])
   assert.deepEqual(messages.map((message) => message.role), ["user", "assistant", "user", "assistant"])
+  assert.deepEqual(messages.map((message) => message.agentInstruction), [true, undefined, true, undefined])
   assert.equal(messages[2].at, "2026-09-05T12:20:00.000Z")
 })
 

@@ -4307,6 +4307,12 @@ export const TranscriptMessage = z.object({
   // disagree. Additive + optional: absent from a legacy transcript or an older server, and the client
   // falls back to `parseGithubWakeSteer` on the text.
   wakeSteer: GithubWakeSteer.optional(),
+  // Input delivered INTO a sub-agent by its coordinator or another agent. It is a user-side turn in
+  // that CHILD's conversation, but it is not the human speaking. The drawer's live projection keeps
+  // these messages even when the ordinary 300-message tail has moved past them — clicking a parent's
+  // "Steered"/"Followed up" divider promises the corresponding instruction remains readable there.
+  // Additive + optional: ordinary thread transcripts never set it.
+  agentInstruction: z.literal(true).optional(),
   // A SUB-AGENT (or peer session) wrote this user turn, not the human — the same defect class `wake`
   // above corrects. Claude Code's agent-to-agent channel (a background child calling
   // `SendMessage({to:"main"})`) delivers UPWARD into the parent's queue like any follow-up, so the

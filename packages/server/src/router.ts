@@ -704,6 +704,7 @@ function mergeSubAgentSteers(messages: TranscriptMessage[], steers: SubAgentStee
       sourceId: `subagent-steer:${steer.delivery_id}`,
       role: "user",
       text: steer.message,
+      agentInstruction: true,
       tools: [],
       parts: [{ kind: "text", text: steer.message }],
       at,

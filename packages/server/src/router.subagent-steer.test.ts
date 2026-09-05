@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BoardSnapshot, Settings } from "@frizz/shared"
@@ -192,6 +192,7 @@ test("subAgentSteer delivers into the CHILD, addressed by its dispatch tool_use 
     assert.equal(transcript.messages[0].role, "user")
     assert.equal(transcript.messages[0].text, "look at the other file instead")
     assert.equal(transcript.messages[0].sourceId, "subagent-steer:delivery-visible")
+    assert.equal(transcript.messages[0].agentInstruction, true)
   } finally {
     h.cleanup()
   }
@@ -211,6 +212,39 @@ test("a failed broker delivery is not journaled as a steer the child received", 
       /broker rejected the target/,
     )
     assert.deepEqual(h.storage.listSubAgentSteers("t", "toolu_child"), [])
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("a provider-recorded Claude steer and Frizz's delivery journal render once", async () => {
+  let outputFile = ""
+  const h = harness(() => ({ ...RUNNING_DIRECT, outputFile }))
+  try {
+    seed(h.storage, "t")
+    outputFile = join(h.ctx.project.dir, "child.jsonl")
+    const message = "inspect the queue divider next"
+    writeFileSync(outputFile, JSON.stringify({
+      type: "user",
+      timestamp: new Date().toISOString(),
+      isMeta: true,
+      isSidechain: true,
+      message: {
+        role: "user",
+        content: `The coordinator sent a message while you were working:\n${message}\n\nAddress this before completing your current task.`,
+      },
+    }) + "\n")
+
+    await h.router.subAgentSteer.handler({ input: {
+      slug: "t",
+      id: "toolu_child",
+      message,
+      deliveryId: "delivery-provider-copy",
+    } })
+    const transcript = await h.router.subAgentTranscript.handler({ input: { slug: "t", id: "toolu_child" } })
+    assert.equal(transcript.messages.filter((entry) => entry.text === message).length, 1)
+    assert.ok(!transcript.messages.some((entry) => entry.sourceId === "subagent-steer:delivery-provider-copy"), "the provider-native record wins")
+    assert.equal(transcript.messages.find((entry) => entry.text === message)?.agentInstruction, true)
   } finally {
     h.cleanup()
   }

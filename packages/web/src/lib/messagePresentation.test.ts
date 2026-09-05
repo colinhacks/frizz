@@ -14,16 +14,18 @@ test("messagePresentationText leaves ordinary messages and HTML comments untouch
   assert.equal(messagePresentationText({ text }), text)
 })
 
-test("lastAskIndex pins the human's latest landed turn, never a queued one or a sub-agent's report", () => {
+test("lastAskIndex pins the human's latest landed turn, never a queued one or an inter-agent message", () => {
   const ask = { role: "user" as const }
   const reply = { role: "assistant" as const }
   const report = { role: "user" as const, peerFrom: "bun_project_survey" }
+  const instruction = { role: "user" as const, agentInstruction: true as const }
   const queued = { role: "user" as const, queued: true }
 
   assert.equal(lastAskIndex([ask, reply]), 0)
   // An orchestrator's children report continuously; each is a `user` row the human never wrote, and
   // letting one win would re-pin the current-ask band to "Sub-agent «…» reported" on every report.
   assert.equal(lastAskIndex([ask, reply, report, report]), 0)
+  assert.equal(lastAskIndex([ask, reply, instruction]), 0)
   // A queued follow-up pins to the bottom until it lands, so it is not the ask either.
   assert.equal(lastAskIndex([ask, report, queued]), 0)
   // A genuine later human turn does take the pin back.
@@ -62,6 +64,7 @@ test("lastHumanTurnIndex: an answer to a REGISTERED question is an interaction, 
 test("lastHumanTurnIndex: every other user record frizz or a child wrote is skipped", () => {
   const goal = delivered("⏰ Frizz: your goal is still armed — keep going.")
   const report = { role: "user" as const, text: "child reporting in", peerFrom: "frizz:high" }
+  const instruction = { role: "user" as const, text: "coordinator follow-up", agentInstruction: true as const }
   const queued = { role: "user" as const, text: "and one more thing", queued: true }
   // Nobody answered — the autonomous-thread cancellation. Frizz's own news, in frizz's own voice, so it
   // is not an interaction however close its delivery path is to the answer above.
@@ -69,11 +72,12 @@ test("lastHumanTurnIndex: every other user record frizz or a child wrote is skip
 
   assert.equal(lastHumanTurnIndex([ask, reply, goal, reply]), 0)
   assert.equal(lastHumanTurnIndex([ask, reply, report]), 0)
+  assert.equal(lastHumanTurnIndex([ask, reply, instruction]), 0)
   assert.equal(lastHumanTurnIndex([ask, reply, queued]), 0)
   assert.equal(lastHumanTurnIndex([ask, reply, cancelled, reply]), 0)
   // A typed steer is an interaction like any other, and takes the anchor back from the answer.
   assert.equal(lastHumanTurnIndex([ask, reply, answer, reply, { role: "user" as const, text: "now push" }]), 4)
   // Nothing the human wrote yet → the whole loaded window, so the card never opens mid-conversation.
-  assert.equal(lastHumanTurnIndex([reply, goal, report]), 0)
+  assert.equal(lastHumanTurnIndex([reply, goal, report, instruction]), 0)
   assert.equal(lastHumanTurnIndex([]), 0)
 })

@@ -568,7 +568,15 @@ test("parseCodexLine: a parent's instruction is preserved in the CHILD transcrip
     text: "steer",
     encrypted: true,
   }])
-  // A sibling/unrelated path is not a descendant of ours either.
+  // A sibling message is just as inbound to the recipient's rollout. Codex writes 248 of these in the
+  // local corpus; path ancestry is not a valid direction guard for lateral sends.
+  assert.deepEqual(parseCodexLine(interAgent("/root/scout", "/root/bun_project_survey", "MESSAGE", "")), [{
+    kind: "agent-instruction",
+    at: "2026-07-31T01:00:39.106Z",
+    author: "/root/scout",
+    encrypted: true,
+  }])
+  // A FINAL_ANSWER from an unrelated path is neither an inbound instruction nor a descendant report.
   assert.deepEqual(parseCodexLine(interAgent("/other/child", "/root", "FINAL_ANSWER", "x")), [])
   // A future message type is not rendered blind, and a record with no readable block yields nothing.
   assert.deepEqual(parseCodexLine(interAgent("/root/x", "/root", "SOMETHING_NEW", "body")), [])
@@ -590,6 +598,18 @@ test("applyEvent: an agent-report is session ACTIVITY and nothing else — it ne
   assert.equal(state.lastAssistantAt, restedAt)
   assert.deepEqual(state.lastFence, fence)
   assert.equal(state.lastAssistant, preview)
+  assert.equal(state.lastUserAt, undefined)
+})
+
+test("applyEvent: an agent instruction is inter-agent activity, never a human answer or turn boundary", () => {
+  const state = newTailState("t", "sid", "/x")
+  applyEvent(state, { kind: "turn-end", at: "2026-07-31T01:00:00.000Z", finalText: "waiting\n\n```question\nPick one\n```" })
+  const restedAt = state.lastAssistantAt
+  applyEvent(state, { kind: "agent-instruction", at: "2026-07-31T01:00:39.106Z", author: "/root/peer", encrypted: true })
+  assert.equal(state.lastActivityAt, "2026-07-31T01:00:39.106Z")
+  assert.equal(state.turn, "idle")
+  assert.equal(state.lastAssistantAt, restedAt)
+  assert.equal(state.lastAssistantHasQuestion, true)
   assert.equal(state.lastUserAt, undefined)
 })
 

@@ -522,6 +522,51 @@ test("latest transcript window pins unresolved background shells that launched b
   )
 })
 
+test("latest transcript window keeps every earlier sub-agent instruction without returning the whole child transcript", () => {
+  const instruction = humanAsk("check the deletion path too", {
+    sourceId: "old-agent-instruction",
+    agentInstruction: true,
+  })
+  const messages = [instruction, ...windowFiller(305)]
+
+  assert.equal(latestWindowStart(messages), 6, "an inter-agent user-side turn is not a human window anchor")
+  const latest = latestTranscriptWindow(messages)
+  assert.equal(latest.length, 301, "one old instruction prefixes the ordinary 300-message tail")
+  assert.equal(latest[0], instruction)
+  assert.equal(latest[1].sourceId, "w-5", "ordinary history before the cap remains excluded")
+})
+
+test("the live Claude fold preserves an old child instruction exactly like the RPC window", () => {
+  const lines = [JSON.stringify({
+    type: "user",
+    timestamp: "2026-09-05T20:54:24.639Z",
+    isMeta: true,
+    isSidechain: true,
+    message: {
+      role: "user",
+      content: "The coordinator sent a message while you were working:\ncheck the deletion path too\n\nAddress this before completing your current task.",
+    },
+  })]
+  for (let i = 0; i < 305; i++) {
+    lines.push(JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-09-05T20:55:00.000Z",
+      message: { id: `a-${i}`, content: [{ type: "text", text: `assistant-${i}` }] },
+    }))
+  }
+  const fold = createTranscriptFold()
+  fold.ingest(lines.join("\n"))
+  fold.finalize()
+
+  const all = fold.allMessages()
+  const live = fold.messages()
+  assert.equal(all.length, 306)
+  assert.equal(live.length, 301)
+  assert.equal(live[0].text, "check the deletion path too")
+  assert.equal(live[0].agentInstruction, true)
+  assert.deepEqual(live, latestTranscriptWindow(all), "WebSocket and RPC producers use one preservation rule")
+})
+
 // THE QUEUE CARD'S ANCHOR. The card windows on the human's last message and shows everything after it,
 // so a latest window that cuts above that message leaves the card opening mid-turn on an assistant
 // sentence answering a question the reader can no longer see. Measured on the maintainer's `nub` board
@@ -553,7 +598,7 @@ test("the latest window reaches back past its cap to keep the human's last messa
   assert.equal(messages.length - start, 321)
 })
 
-test("frizz's own user records are not the human, so the window reaches past every one of them", () => {
+test("Frizz and sub-agents' own user records are not the human, so the window reaches past every one", () => {
   // The exact shape of the card that provoked this: the tail is full of `wake` records (PR-watcher
   // pings, the sign-off reminder, "Keep going" stop-hook prompts) and one undelivered queued send.
   const noise = [
@@ -561,6 +606,7 @@ test("frizz's own user records are not the human, so the window reaches past eve
     ...windowFiller(5, 900),
     humanAsk("Keep going.", { sourceId: "wake-2", wake: true }),
     ...windowFiller(5, 910),
+    humanAsk("peer instruction", { sourceId: "instruction-1", agentInstruction: true }),
     humanAsk("not sent yet", { sourceId: "queued-1", queued: true }),
   ]
   const messages = [...windowFiller(20), humanAsk("the real ask"), ...windowFiller(310, 20), ...noise]
@@ -1039,6 +1085,56 @@ test("SendMessage accepts the recipient/content aliases and a shutdown_request t
   assert.equal(call.sendBody, "please rest")
   assert.equal(call.sendType, "shutdown_request")
   assert.equal(call.sendSummary, undefined)
+})
+
+test("a Claude coordinator steer is visible in the CHILD transcript without provider framing", () => {
+  const body = "Check the storage deletion path too, then rerun the focused tests."
+  const raw = JSON.stringify({
+    type: "user",
+    timestamp: "2026-09-05T20:54:24.639Z",
+    isMeta: true,
+    isSidechain: true,
+    agentId: "a238238359421eef5",
+    message: {
+      role: "user",
+      content: `The coordinator sent a message while you were working:\n${body}\n\nAddress this before completing your current task.`,
+    },
+  })
+
+  const messages = parseTranscript(raw)
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].role, "user")
+  assert.equal(messages[0].text, body)
+  assert.equal(messages[0].agentInstruction, true)
+  assert.equal(messages[0].at, "2026-09-05T20:54:24.639Z")
+})
+
+test("a cross-session peer steer is visible in the CHILD transcript without its security wrapper", () => {
+  const body = "Measure the failure on the real runtime and send back the exact result."
+  const raw = JSON.stringify({
+    type: "user",
+    timestamp: "2026-09-05T21:00:00.000Z",
+    isMeta: true,
+    isSidechain: true,
+    message: {
+      role: "user",
+      content: `Another Claude session sent a message while you were working:\n<agent-message from="frizz:high">\n${body}\n</agent-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.`,
+    },
+  })
+
+  const messages = parseTranscript(raw)
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].role, "user")
+  assert.equal(messages[0].text, body)
+  assert.equal(messages[0].agentInstruction, true)
+})
+
+test("Claude instruction-wrapper recognition is sidechain-only and anchored", () => {
+  const wrapped = "The coordinator sent a message while you were working:\nsecret\n\nAddress this before completing your current task."
+  const mainMeta = JSON.stringify({ type: "user", isMeta: true, isSidechain: false, message: { content: wrapped } })
+  const quoted = JSON.stringify({ type: "user", message: { content: `The human quoted this:\n${wrapped}` } })
+  assert.deepEqual(parseTranscript(mainMeta), [], "main-thread metadata remains invisible")
+  assert.equal(parseTranscript(quoted)[0].text, `The human quoted this:\n${wrapped}`, "ordinary prose is never unwrapped")
 })
 
 test("SendMessage body is capped with a truncation marker", () => {
@@ -1813,6 +1909,21 @@ test("pagination: tool/event-only spans stay attached to their opening user turn
     projected("user", "u1"),
   ]
   assert.deepEqual(pageProjectedTranscript(messages, 4).messages.map((m) => m.sourceId), ["u0", "tool-only", "event-1", "event-2"])
+})
+
+test("pagination: an instruction delivered into a child is not a human turn boundary", () => {
+  const instruction = { ...projected("user", "instruction"), agentInstruction: true as const }
+  const messages = [
+    projected("user", "u0"),
+    projected("assistant", "a0"),
+    instruction,
+    projected("assistant", "a1"),
+    projected("user", "u1"),
+  ]
+  assert.deepEqual(
+    pageProjectedTranscript(messages, 4).messages.map((m) => m.sourceId),
+    ["u0", "a0", "instruction", "a1"],
+  )
 })
 
 test("pagination: no prior user loads all remaining projected history", () => {

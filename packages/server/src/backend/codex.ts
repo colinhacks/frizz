@@ -482,7 +482,12 @@ export function parseCodexLine(line: string): NormalizedEvent[] {
         if (message.type !== "FINAL_ANSWER" && message.type !== "MESSAGE") return []
         return [{ kind: "agent-report", at, author, text: message.body, final: message.type === "FINAL_ANSWER" }]
       }
-      if (recipient.startsWith(`${author}/`) && (message.type === "NEW_TASK" || message.type === "MESSAGE")) {
+      // Everything else addressed to this rollout is an incoming instruction. Most are parent → child,
+      // but Codex also permits sibling → sibling sends (248 real records in the local corpus: 234
+      // MESSAGE + 14 NEW_TASK), whose paths share a parent rather than containing one another. The
+      // recipient's rollout is the only one that records the agent_message, so requiring ancestry here
+      // silently erased every lateral steer from the recipient's drawer.
+      if (author !== recipient && (message.type === "NEW_TASK" || message.type === "MESSAGE")) {
         return [{
           kind: "agent-instruction",
           at,

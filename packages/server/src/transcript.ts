@@ -390,6 +390,39 @@ export function peerSessionQueuedKey(deliveredText: string, pendingKeys: Iterabl
   return undefined
 }
 
+// ---- Instructions delivered INTO a Claude sub-agent ------------------------------------------------
+// Claude writes parent/peer instructions as isMeta user records in the CHILD's own JSONL. The generic
+// isMeta arm correctly drops harness plumbing from a normal thread, but it also erased these messages
+// from the sub-agent drawer — despite the provider preserving their plaintext there. Two stable wrappers
+// exist in the local corpus:
+//
+//   • coordinator → child: 197 records, a fixed preamble/suffix around the exact message;
+//   • peer session → child: 6 records, an <agent-message> nested inside a security-guidance wrapper.
+//
+// Parse only the exact, anchored provider shapes and only when the record itself says isSidechain. An
+// ordinary user quoting either phrase remains ordinary text, and main-session isMeta plumbing stays
+// invisible. Returning the authored BODY (not the provider framing) also lets the drawer-steer journal
+// dedupe a future provider record against the exact text Frizz sent.
+const CLAUDE_COORDINATOR_INSTRUCTION_PREFIX = "The coordinator sent a message while you were working:\n"
+const CLAUDE_COORDINATOR_INSTRUCTION_SUFFIX = "\n\nAddress this before completing your current task."
+const CLAUDE_PEER_INSTRUCTION_PREFIX = "Another Claude session sent a message while you were working:\n"
+
+function claudeSidechainInstruction(text: string): string | undefined {
+  const trimmed = text.trim()
+  if (trimmed.startsWith(CLAUDE_COORDINATOR_INSTRUCTION_PREFIX) && trimmed.endsWith(CLAUDE_COORDINATOR_INSTRUCTION_SUFFIX)) {
+    const body = trimmed.slice(
+      CLAUDE_COORDINATOR_INSTRUCTION_PREFIX.length,
+      -CLAUDE_COORDINATOR_INSTRUCTION_SUFFIX.length,
+    ).trim()
+    return body || undefined
+  }
+  if (!trimmed.startsWith(CLAUDE_PEER_INSTRUCTION_PREFIX)) return undefined
+  const wrapperStart = trimmed.indexOf("<agent-message ", CLAUDE_PEER_INSTRUCTION_PREFIX.length)
+  const wrapperEnd = trimmed.lastIndexOf("</agent-message>")
+  if (wrapperStart < 0 || wrapperEnd < 0) return undefined
+  return parseAgentMessage(trimmed.slice(wrapperStart, wrapperEnd + "</agent-message>".length))?.body.trim() || undefined
+}
+
 // ── The clock backstop ──────────────────────────────────────────────────────────────────────────────
 // The three shapes above are the ones that EXIST. The fold recognizes a delivery by its record shape, so
 // a shape a future harness version invents is unrecognized by construction — and the FIFO backstop only
@@ -860,6 +893,19 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
             const i = out.indexOf(pending.message)
             if (i !== -1) out.splice(i, 1)
           }
+          const instruction = rec.isSidechain === true ? claudeSidechainInstruction(metaText) : undefined
+          if (instruction) {
+            out.push({
+              sourceId,
+              role: "user",
+              text: instruction,
+              agentInstruction: true,
+              tools: [],
+              parts: [{ kind: "text", text: instruction }],
+              at: rec.timestamp,
+            })
+            lastAssistantId = null
+          }
         }
         return
       }
@@ -1087,15 +1133,11 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
   return {
     ingest,
     finalize,
-    // The SAME window the paged reader returns (latestWindowStart), because this is the OTHER producer:
+    // The SAME window the paged reader returns (latestTranscriptWindow), because this is the OTHER producer:
     // the /ws push renders from here while the RPC page renders from there, and a push whose head sat
     // further forward than the page's would splice the human's ask straight back out of a card that had
     // just anchored on it (reconcileLiveMessages replaces the window wholesale).
-    messages: () => {
-      const all = projected()
-      const start = latestWindowStart(all)
-      return start === 0 ? all : all.slice(start)
-    },
+    messages: () => latestTranscriptWindow(projected()),
     allMessages: projected,
     consumedBytes: () => offset + Buffer.byteLength(buffer),
   }
@@ -2633,6 +2675,7 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
             role: "user",
             text,
             displayText: text,
+            agentInstruction: true,
             tools: [],
             parts: [{ kind: "text", text }],
             at: ev.at,
@@ -2736,9 +2779,10 @@ const MAX_PINNED_BACKGROUND_OPERATIONS = 128
 // two disagreed about where a turn starts and only the paginated one was right.
 //
 // `role === "user"` alone is not the human — the same trap pageProjectedTranscript documents. Frizz
-// writes as the user (Goal delivery, sign-off reminder, watcher wake), all carrying `wake`, and a queued
-// send has not been delivered. The measured card had 14 user records in its window and 13 of them were
-// frizz's own; the human's ask sat 13 messages above the head.
+// writes as the user (Goal delivery, sign-off reminder, watcher wake), all carrying `wake`; a queued
+// send has not been delivered; and `agentInstruction` is a coordinator/peer speaking into a CHILD's
+// user side. The measured card had 14 user records in its window and 13 of them were Frizz's own; the
+// human's ask sat 13 messages above the head.
 //
 // THE REACH IS ALL-OR-NOTHING. A partial extension buys no anchor and still ships the extra megabyte, so
 // when the ask is further back than one earlier page's allowance the window stays exactly where it was
@@ -2749,7 +2793,7 @@ export function latestWindowStart(messages: readonly TranscriptMessage[]): numbe
   let boundary = -1
   for (let i = tail - 1; i >= 0; i--) {
     const m = messages[i]
-    if (m.role === "user" && !m.wake && !m.queued) {
+    if (m.role === "user" && !m.wake && !m.queued && !m.agentInstruction) {
       boundary = i
       break
     }
@@ -2769,6 +2813,13 @@ export function latestWindowStart(messages: readonly TranscriptMessage[]): numbe
 export function latestTranscriptWindow(messages: readonly TranscriptMessage[]): TranscriptMessage[] {
   const start = latestWindowStart(messages)
   if (start === 0) return [...messages]
+  // A parent's "Steered" / "Followed up" divider deliberately carries no body and tells the reader to
+  // open the child's drawer. That contract fails if the child's 300-message tail has since moved past
+  // the input: the link opens successfully but the promised message is gone. Keep every earlier
+  // instruction as a small chronological prefix. Codex bodies are encrypted markers (4258 observed,
+  // max 236 in one rollout); Claude's plaintext bodies are rarer (207 observed, max 24), so this stays
+  // far smaller than returning a whole 129 MB child rollout while making every steer reachable.
+  const earlierInstructions = messages.slice(0, start).filter((message) => message.agentInstruction)
   const pinned: TranscriptMessage[] = []
   for (let i = 0; i < start; i++) {
     const message = messages[i]
@@ -2787,7 +2838,7 @@ export function latestTranscriptWindow(messages: readonly TranscriptMessage[]): 
       at: message.at,
     })
   }
-  return [...messages.slice(start), ...pinned.slice(-MAX_PINNED_BACKGROUND_OPERATIONS)]
+  return [...earlierInstructions, ...messages.slice(start), ...pinned.slice(-MAX_PINNED_BACKGROUND_OPERATIONS)]
 }
 
 // Codex currently has two tool protocols: legacy function_call records and the unified custom exec
@@ -4022,11 +4073,12 @@ export function pageProjectedTranscript(
   // important context that needs to be surfaced").
   //
   // A queued send is skipped for a different reason: it has not been delivered, so it is not yet part of
-  // the exchange being summarised.
+  // the exchange being summarised. An `agentInstruction` is also user-side but belongs to a CHILD's
+  // coordinator/peer conversation, never the operator's turn.
   let boundary = 0
   for (let i = anchor - 1; i >= 0; i--) {
     const m = messages[i]
-    if (m.role === "user" && !m.wake && !m.queued) {
+    if (m.role === "user" && !m.wake && !m.queued && !m.agentInstruction) {
       boundary = i
       break
     }
