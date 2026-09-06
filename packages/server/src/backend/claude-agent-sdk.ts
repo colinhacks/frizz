@@ -1770,23 +1770,34 @@ function buildEnvironment(overrides: Readonly<Record<string, string | undefined>
     budget -= cost
     env[key] = value
   }
-  // Frizz's OWN overrides are applied unconditionally and after the caps: they are a bounded handful
-  // (the plugin dir, this thread's slug, the perm dir) and a worker that silently lost one is broken in
-  // ways far harder to diagnose than a dropped ambient variable. A malformed KEY still throws — that is
-  // a frizz bug, not operator input, and it should be loud.
-  const overrideEntries = Object.entries(overrides ?? {})
-  if (overrideEntries.length > MAX_ENV_ENTRIES) throw new ClaudeAgentSdkProtocolError("Claude environment has too many overrides")
+  // Overrides are NOT "frizz's own bounded handful" any more, and every guard below has to be read that
+  // way. The session broker is the sole claude transport, and its daemon hands start() the WHOLE
+  // inherited environment as overrides with the per-thread frizz vars merged on top
+  // (claude-agent-broker.ts) — so what these lines judge is the operator's shell.
+  //
+  // Which means a THROW here is not "loud about a frizz bug": it kills the daemon before it publishes
+  // its record, exactly like the inherit caps above would, and the operator sees every dispatch time out
+  // with "did not become ready" and nothing naming the cause. That is how `ProgramFiles(x86)` bricked
+  // Windows (see ENV_KEY_PATTERN) — and `SKIP_AUTH=1` or a 200 KB ambient value in an ordinary shell
+  // reached the same dead end by the same route. So the VALUE-shaped limits DEGRADE like the inherit
+  // loop's. What still throws is only what frizz's own code can produce and process.env cannot: a
+  // malformed key, and a value that is not text.
+  //
+  // The entry cap trims from the FRONT because the caller merges frizz's own vars LAST: an over-full
+  // shell loses its oldest ambient entries, never FRIZZ_THREAD or the plugin dir, without which a
+  // worker cannot run at all.
+  const overrideEntries = Object.entries(overrides ?? {}).slice(-MAX_ENV_ENTRIES)
   for (const [key, value] of overrideEntries) {
     if (!ENV_KEY_PATTERN.test(key)) throw new ClaudeAgentSdkProtocolError("Claude environment contains an invalid key")
     if (value === undefined) delete env[key]
     else {
       if (typeof value !== "string") throw new ClaudeAgentSdkProtocolError("Claude environment value must be text")
-      if (utf8Bytes(value) > MAX_ENV_VALUE_BYTES) throw new ClaudeAgentSdkProtocolError("Claude environment value is too large")
-      // Very short credential values are invalid in practice and cannot be safely substituted in
-      // diagnostics without turning common one-character strings into an amplification vector.
-      if (SENSITIVE_ENV_KEY.test(key) && value.length > 0 && value.length < 4) {
-        throw new ClaudeAgentSdkProtocolError("Claude sensitive environment value is too short")
-      }
+      if (utf8Bytes(value) > MAX_ENV_VALUE_BYTES) continue
+      // No short-credential check here any more. It existed so the diagnostic redactor could never be
+      // handed a one-character "secret" to substitute — but the redactor already refuses anything under
+      // 4 bytes on its own (createClaudeDiagnosticRedactor), and it reads the MERGED environment, whose
+      // ambient half never passed through this branch. So the throw guarded nothing the redactor did
+      // not already guard, and the only thing it ever actually stopped was an operator's `SKIP_AUTH=1`.
       env[key] = value
     }
   }

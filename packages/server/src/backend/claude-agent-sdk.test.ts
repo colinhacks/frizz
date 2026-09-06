@@ -1205,15 +1205,10 @@ test("input, JSON, environment, and executable boundaries reject unsafe payloads
       session: { kind: "new", sessionId: SESSION_ID },
       env: { "INVALID=KEY": "value" },
     }), /invalid key/)
-    // No "not allowlisted" case any more: overrides are frizz's own, and the worker inherits the
-    // operator's environment by design (worker-env.ts). The remaining guards below are the ones that
-    // still catch a frizz BUG rather than an operator's choice — a malformed key, and a sensitive value
-    // too short to redact safely.
-    assert.throws(() => factory.start({
-      cwd: harness.dir,
-      session: { kind: "new", sessionId: SESSION_ID },
-      env: { ANTHROPIC_API_KEY: "abc" },
-    }), /too short/)
+    // No "not allowlisted" case any more, and no value-shaped throws either: the broker hands the
+    // operator's WHOLE environment down this branch, so anything that throws here kills the daemon
+    // rather than reporting a bug (see buildEnvironment, and the degrade test below). What is left
+    // are the two things only frizz's own code can produce — a malformed key, and a non-text value.
     assert.throws(() => factory.start({
       cwd: harness.dir,
       session: { kind: "new", sessionId: SESSION_ID },
@@ -1248,6 +1243,46 @@ test("a Windows-shaped environment key — ProgramFiles(x86) — is a valid over
   try {
     const ready = await withTimeout(harness.handle.ready(), "session init")
     assert.equal(ready.sessionId, SESSION_ID)
+  } finally {
+    await harness.close()
+  }
+})
+
+test("a short credential value and an oversized value DEGRADE instead of killing the daemon", { timeout: 10_000 }, async () => {
+  // Same shape as the Windows key above, reached by two other routes. Overrides are the operator's whole
+  // shell on the broker path, so `SKIP_AUTH=1` (a sensitive-looking name with a 1-character value) and a
+  // 200 KB ambient value each used to throw during daemon startup — the same invisible "did not become
+  // ready" every dispatch. The short value is now admitted (the diagnostic redactor already refuses to
+  // substitute anything under 4 bytes, which was the whole reason for the check) and the oversized one is
+  // skipped, exactly as the inherit loop skips it.
+  const harness = startHarness("env-degrade", {
+    ANTHROPIC_API_KEY: "abc",
+    FRIZZ_FAKE_OVERRIDE: "x".repeat(200_000),
+  })
+  try {
+    await withTimeout(harness.handle.ready(), "session init")
+    const records = await waitForCapture(harness.capturePath, (rows) => rows.some((row) => row.kind === "startup"))
+    const environment = records.find((row) => row.kind === "startup")?.environment as Record<string, unknown>
+    assert.equal(environment.anthropicApiKeyPresent, true, "a short credential value reaches the worker rather than killing it")
+    assert.equal(environment.frizzFakeOverridePresent, false, "an oversized value is dropped, not thrown on")
+  } finally {
+    await harness.close()
+  }
+})
+
+test("an over-full environment trims its oldest ambient entries and keeps frizz's own", { timeout: 10_000 }, async () => {
+  // A shell carrying more than MAX_ENV_ENTRIES variables used to throw "too many overrides" and take the
+  // daemon with it. It now trims — from the FRONT, because the broker merges the per-thread frizz vars
+  // last, and a worker without FRIZZ_THREAD or its plugin dir is broken in ways an operator cannot see.
+  // FRIZZ_FAKE_OVERRIDE can only arrive as an override (inheritWorkerEnvironment strips every FRIZZ_ key
+  // from the ambient half), so its presence is proof the tail survived the trim.
+  const crowded = Object.fromEntries(Array.from({ length: 600 }, (_, index) => [`AMBIENT_${index}`, "v"]))
+  const harness = startHarness("env-trim", { ...crowded, FRIZZ_FAKE_OVERRIDE: "kept" })
+  try {
+    await withTimeout(harness.handle.ready(), "session init")
+    const records = await waitForCapture(harness.capturePath, (rows) => rows.some((row) => row.kind === "startup"))
+    const environment = records.find((row) => row.kind === "startup")?.environment as Record<string, unknown>
+    assert.equal(environment.frizzFakeOverridePresent, true, "frizz's own overrides survive the trim")
   } finally {
     await harness.close()
   }
