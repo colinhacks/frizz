@@ -1,5 +1,6 @@
 // Replay provider records through a built artifact's real tailer, board, RPC and browser. No live
 // worker is dispatched: the policy-error fixture is captured evidence, not another policy request.
+// VERIFY_PACKAGE=/path/to/installed/frizz exercises the published npm package instead of a source build.
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -73,11 +74,14 @@ try {
   storage.close()
   storage = undefined
 
-  console.log("Building the artifact")
-  const artifact = buildFrizzArtifact(source, join(root, "artifacts"))
+  const packageDir = process.env.VERIFY_PACKAGE ? resolve(process.env.VERIFY_PACKAGE) : undefined
+  console.log(packageDir ? "Verifying the installed npm package" : "Building the artifact")
+  const artifact = packageDir ? {
+    runtimeDir: join(packageDir, "runtime"), webDir: join(packageDir, "web-dist"), digest: undefined,
+  } : buildFrizzArtifact(source, join(root, "artifacts"))
   const boot = async () => {
     output = ""
-    server = spawn(process.execPath, [join(artifact.runtimeDir, "src", "index.js")], {
+    server = spawn(process.execPath, [packageDir ? join(packageDir, "dist", "frizz.js") : join(artifact.runtimeDir, "src", "index.js")], {
       cwd: projectDir,
       env: projectLaunchEnvironment({ ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"),
         FRIZZ_DEV_CHILD: "1", FRIZZ_DEV_PORT: String(port), FRIZZ_WAKERS_OFF: "1", FRIZZ_ORPHAN_REAPER_OFF: "1", FRIZZ_TENANT_PRIME_OFF: "1",
