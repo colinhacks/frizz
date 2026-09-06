@@ -7,7 +7,7 @@ import {
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import watcher from "@parcel/watcher"
-import type { BoardSnapshot, ThreadView, RuntimeState, ThreadRecurringPrompt } from "@frizz/shared"
+import type { BoardSnapshot, ThreadView, RuntimeState, ThreadRecurringPrompt, ProviderError } from "@frizz/shared"
 import { AskedQuestionSchema, BoardDiffer, PermissionMode, SnoozeUntil, ThreadSlug, isDirectSubAgent, questionAnswerMessage, questionsCancelledWakeMessage, type AskedQuestion, type PermissionMode as PermissionModeValue, type QuestionAnswer, type QuestionDismissal } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
@@ -888,6 +888,7 @@ export function deriveNeedsYou(
   // resolves (a question, a done handoff, bare rest). `unconfirmed` is excluded on purpose: a send frizz
   // could not confirm is one the human may need to re-drive, so the ledger's own aging re-surfaces it.
   if (hasFreshDelivery(row, deliveryProcessGone)) return false
+  if (tele?.providerError && !tele.providerError.retrying) return true
   // An unanswered ```question fence in the last assistant message is an EXPLICIT ask — a hard queue
   // member exactly like a native pendingAsk, NOT subject to interaction-clearance. VIEWING a question
   // is not ANSWERING it, so seen_at must never drop it off the stack (the whole point is that threads
@@ -1050,7 +1051,7 @@ export function deriveAwaitingBackground(
   // deriveNeedsYou call for free (a limit pause was a queue EXCUSAL, so it returned false); now that a
   // limit fault is a hard queue MEMBER there, it would flip this fact-flag true — and with it
   // hasLiveOps client-side, spinning a dead thread — unless stopped here explicitly.
-  if (limitPause) return false
+  if (limitPause || tele?.providerError) return false
   // Any hard human gate or completion signal outranks this reason → the thread cards as THAT, not here.
   // A REGISTERED question outranks this card for the same reason a fenced one does: at rest with both
   // outstanding the human should be looking at the QUESTION, which is the actionable thing, and two
@@ -1424,15 +1425,31 @@ function sessionThreadView(
   // those braces: whatever path leaves a done row beside an open question or an armed wait, the board
   // presents the wait, never a finished thread that is also asking or waiting.
   const supersededDone = questions.length > 0 || armedWatches.length > 0 || armedPrWatches.length > 0 || armedTimers.length > 0
-  const done = supersededDone ? undefined : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt)
-  const tele: SessionTelemetry | undefined = done && rawTele ? { ...rawTele, lastFence: done } : rawTele
+  const codexLive = row.codex_runtime === "app-server" ? codexTurnLiveness(row.slug, row.session_id) : undefined
+  const nativeError = codexLive?.providerError
+  // A witnessed failed turn can arrive before the tailer's next read. Do not keep spinning on the
+  // older rollout in that gap, or resurrect a native failure after newer successful rollout output.
+  const nativeFailure = nativeError && !nativeError.retrying && !codexLive?.bridgeTurn
+    && (!rawTele?.lastActivityAt || (nativeError.at !== undefined && nativeError.at >= rawTele.lastActivityAt))
+  // Prefer the journal's canonical timestamp when both channels describe the same terminal error.
+  const sameError = rawTele?.providerError?.message === nativeError?.message && rawTele?.providerError?.code === nativeError?.code
+  const providerError = nativeError?.retrying ? nativeError
+    : nativeFailure ? (sameError ? rawTele?.providerError : nativeError) : rawTele?.providerError
+  const failedTele: SessionTelemetry | undefined = nativeFailure ? {
+    subAgents: [], bgShells: [], ...rawTele,
+    turn: "idle", permPrompt: false, pendingQuestion: false, pendingAsk: undefined, apiFault: true, providerError,
+    lastAssistant: providerError?.message, lastAssistantAt: providerError?.at,
+    lastFence: undefined, lastAssistantAllDone: false,
+  } : rawTele
+  const done = supersededDone || providerError ? undefined : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt)
+  const tele: SessionTelemetry | undefined = done && failedTele ? { ...failedTele, lastFence: done } : failedTele
   // A headless thread mid-turn with nobody driving it is a crash/stall, not a rest. For codex that is
   // an app-server that stopped advancing the rollout; for the broker it is a dead ownerless daemon (its
   // liveness is the daemon record, resolved live). Either way the (exited + in-flight) pair trips the
   // crash-net so the thread cards as "Stalled" instead of spinning `running` forever.
   const headlessStalled =
     row.codex_runtime === "app-server"
-      ? appServerTurnStalled(codexTurnLiveness(row.slug, row.session_id), tele?.lastActivityAt, nowMs)
+      ? !nativeFailure && appServerTurnStalled(codexLive, tele?.lastActivityAt, nowMs)
       : isBrokerClaudeRow(row)
       ? !claudeBrokerDaemonAlive(row.session_id)
       : false
@@ -1535,6 +1552,7 @@ function sessionThreadView(
     // Subscription window exhausted mid-turn — the credential is fine, so this is a WAIT, not a
     // sign-in. Drives the pause card and (while an auto-resume is promised) the queue excusal above.
     limitPause,
+    providerError,
     kind: "session",
     foreign: false,
     lastFence: tele?.lastFence,
@@ -1666,6 +1684,7 @@ function foreignThreadView(sessionId: string, tele: SessionTelemetry, backend: "
     questions: [],
     kind: "session",
     foreign: true,
+    providerError: tele.providerError,
     needsYou: false,
     awaitingBackground: false,
     crashed: false,
@@ -1703,7 +1722,7 @@ export interface BoardManager {
 export type CodexTurnLivenessReader = (
   slug: string,
   sessionId: string,
-) => { bridgeTurn: boolean; ownedSince: string } | undefined
+) => { bridgeTurn: boolean; ownedSince: string; providerError?: ProviderError } | undefined
 
 // Whether a broker-Claude session's ownerless daemon is running right now — the headless-stall signal
 // for a broker row (its parallel of codexTurnLiveness). Absent (tests / bridge-less server) ⇒ assume

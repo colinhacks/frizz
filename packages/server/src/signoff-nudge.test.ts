@@ -13,6 +13,8 @@ import { join } from "node:path"
 import { createStorage, type SessionRow } from "./storage.ts"
 import { applyRecord, newTailState, type SessionTelemetry, type Tailer } from "./tailer.ts"
 import { createScheduler } from "./scheduler.ts"
+import { createCodexBackend } from "./backend/codex.ts"
+import { createWakeDeliveryStore } from "./wake-store.ts"
 
 // `runtime` is opt-in because it changes which delivery path the scheduler takes, and the difference is
 // load-bearing rather than cosmetic. With it absent — the shape every test below it was written in —
@@ -58,6 +60,35 @@ function nudger(tele: Partial<SessionTelemetry>, opts: { setting?: string; runti
     .all(slug) as { message: string }[]
   return { s, storage, slug, delivered, nudges, close: () => { void s.stop(); storage.close(); rmSync(dir, { recursive: true, force: true }) } }
 }
+
+test("Codex failed turns cannot trigger a sign-off reminder or an armed rest Goal", async () => {
+  const fold = newTailState("resting", "sid", "/fixture")
+  createCodexBackend().foldLine(fold, JSON.stringify({ timestamp: "2026-09-06T15:31:27.526Z", type: "event_msg", payload: {
+    type: "task_complete", last_agent_message: null, error: { message: "Rejected", codex_error_info: "cyber_policy" },
+  } }))
+  const h = nudger({ apiFault: fold.apiFault, lastAssistantAt: fold.lastAssistantAt, lastActivityAt: fold.lastActivityAt }, { runtime: "alive" })
+  try {
+    h.storage.setRecurringPromptBySlug(h.slug, { prompt: "Keep going", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: "2026-09-06T15:00:00.000Z" })
+    await h.s.tick()
+    assert.deepEqual(h.delivered, [])
+    assert.equal(h.storage.db.prepare("SELECT count(*) AS n FROM wake_delivery").get()?.n, 0)
+  } finally { h.close() }
+})
+
+test("provider failures supersede sign-off and rest Goal deliveries queued before the failure was decoded", async () => {
+  const at = "2026-08-12T00:00:00.000Z"
+  const h = nudger({ apiFault: true }, { runtime: "alive" })
+  try {
+    h.storage.setRecurringPromptBySlug(h.slug, { prompt: "Keep going", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: at })
+    const outbox = createWakeDeliveryStore(h.storage.scope, { quietWindowMs: 0 })
+    for (const prefix of ["signoff", "stophook"]) {
+      outbox.enqueue({ id: prefix, slug: h.slug, sessionId: "sid", fenceId: prefix === "signoff" ? `signoff:${at}` : `stophook:${at}:${at}`, hintKey: prefix, message: "Do not deliver", reason: "Pre-upgrade failure misread as a rest" }, Date.parse(at))
+    }
+    await h.s.tick()
+    assert.deepEqual(h.delivered, [])
+    assert.deepEqual(h.storage.db.prepare("SELECT state FROM wake_delivery ORDER BY id").all().map((row) => row.state), ["superseded", "superseded"])
+  } finally { h.close() }
+})
 
 test("a rest with no fence is told how to sign off, and the text names all three ways", async () => {
   const h = nudger({})

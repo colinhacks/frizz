@@ -2385,6 +2385,7 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
   // like a Claude one, with the command still a click away in the card body. Consumed by the FIRST card
   // that follows, so a batch is captioned once rather than repeating the same line down the batch.
   let pendingCaption: string | undefined
+  let lastProviderError: { fingerprint: string; message: TranscriptMessage } | undefined
   // Timestamp of the PREVIOUS event (any kind), so each reasoning step's THINKING time is its gap from
   // the event before it. Summed onto the turn's reasoning block as durationMs — a measurement nothing
   // renders any more (see TranscriptMessage.durationMs), kept because it costs nothing and is the only
@@ -2427,6 +2428,23 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
     for (const ev of parseCodexLine(line)) {
       const sourceId = `${identityPrefix}:${lineOffset}:${eventOrdinal++}`
       switch (ev.kind) {
+        case "provider-error": {
+          const fingerprint = JSON.stringify({ ...ev.error, at: undefined })
+          // Older journals can report the same failure separately and again on task_complete.
+          if (fingerprint === lastProviderError?.fingerprint) {
+            // The fold uses the terminal echo's timestamp. Keep the single visible card on that
+            // same stamp, or the runtime-status fallback mistakes it for a different failure.
+            lastProviderError.message.providerError = ev.error
+            lastProviderError.message.at = ev.at
+            break
+          }
+          cur = null
+          turnReasoning = null
+          const message: TranscriptMessage = { sourceId, role: "assistant", kind: "event", text: ev.error.message, providerError: ev.error, tools: [], parts: [], at: ev.at }
+          lastProviderError = { fingerprint, message }
+          out.push(message)
+          break
+        }
         case "assistant-text": {
           // New sessions send the invisible attribute comment in their first commentary message,
           // before any tool call. Strip that transport from every phase. Legacy H1/comment syntax is
@@ -2706,6 +2724,7 @@ export function projectCodexTranscript(raw: string, identityPrefix = "codex"): T
           break
         }
         case "turn-start":
+          lastProviderError = undefined
           sawFinalAnswer = false // a fresh turn opens; a later final_answer sets this
           turnReasoning = null // …and its reasoning steps coalesce into a new block
           break

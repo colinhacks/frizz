@@ -1,4 +1,4 @@
-import type { LimitWindow, PermissionMode } from "@frizz/shared"
+import type { LimitWindow, PermissionMode, ProviderError } from "@frizz/shared"
 import type { FenceView, SubAgentView, BgShellView, PendingAskData, TurnState } from "../tailer.ts"
 
 // A turn cut off by an exhausted SUBSCRIPTION window, as a backend's fold observed it. Carries only
@@ -35,7 +35,8 @@ export type BackendKind = "claude" | "codex"
 // normalized VIEW — the codex-facing seam + the unit-test surface.
 export type NormalizedEvent =
   | { kind: "turn-start"; at?: string } // a turn began (→ in-flight)
-  | { kind: "turn-end"; at?: string; finalText?: string } // a turn finished (→ idle); finalText carries the fence
+  | { kind: "turn-end"; at?: string; finalText?: string; successful?: boolean } // a turn finished (→ idle); finalText carries the fence
+  | { kind: "provider-error"; at?: string; error: ProviderError }
   | { kind: "assistant-text"; at?: string; text: string; final: boolean } // streamed assistant text (final=the answer, not commentary)
   | { kind: "user-message"; at?: string; text?: string; synthetic: boolean } // human turn (synthetic=peer/notification/tool-result echo — never bumps lastUserAt)
   | { kind: "tool-call"; at?: string; id: string; name: string; input: unknown }
@@ -114,7 +115,8 @@ export interface NormalizedTail {
   bgShells: BgShellView[] // codex: always [] (codex has no background-shell tool)
   pendingAsk?: PendingAskData // codex: undefined
   authFault?: "authentication_rejected" // runtime provider-auth rejection (see FoldState.authFault)
-  apiFault?: boolean // the final assistant record is a synthetic API-ERROR record (see FoldState.apiFault)
+  apiFault?: boolean // the turn ended in a provider failure (see FoldState.apiFault)
+  providerError?: ProviderError
   limitFault?: LimitFault // subscription window exhausted mid-turn (see FoldState.limitFault)
   contextTokens?: number // tokens the last request carried (see FoldState.contextTokens)
   contextWindow?: number // the context size this session RUNS IN (see FoldState.contextWindow)
@@ -186,9 +188,10 @@ export interface FoldState {
   // `error:"rate_limit"` — so every OTHER API error (a 400 for a context window the conversation has
   // outgrown, a 500, a transport failure) was indistinguishable from the agent taking a turn and
   // resting. Anything that treats "the agent spoke last" as "the agent rested" needs this, or it
-  // re-prompts a thread whose every turn is failing. Boolean because the discipline of this fold is
-  // that raw provider text never leaves it, and no consumer needs more than the fact.
+  // re-prompts a thread whose every turn is failing. The scheduler needs only this fact; Codex also
+  // carries sanitized display text in providerError so the operator can see why the request failed.
   apiFault?: boolean
+  providerError?: ProviderError
   // Subscription usage-limit pause (auto-resume). Set when the backend records a limit stop — for
   // Claude the synthetic record carrying the structured `error:"rate_limit"` category, never a text
   // match — and cleared by the next real assistant text OR any user record. That clearing rule is

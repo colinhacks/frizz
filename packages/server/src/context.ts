@@ -660,6 +660,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
         // fact. Before this the diagnostic sink was unset and every death — the six-sub-agent loss
         // included — was an unattributable "the thread went quiet." See codex-app-server-diagnostics.ts.
         diagnostic: createCodexDiagnosticSink(project.stateDir, project.id),
+        onStatusChange: () => board?.refresh(),
         // Never wake a thread the human has already put away: a restart-recovery nudge is only for a
         // thread that is still open and still theirs to come back to.
         shouldAutoResume: (slug) => {

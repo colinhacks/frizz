@@ -1329,6 +1329,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     // which is the case that matters: a worker that closed the loop while a bump sat in the outbox must
     // not be handed it anyway.
     if (isStopHookFenceId(item.fenceId)) {
+      if (tele.authFault || tele.apiFault) return "superseded"
       const armed = armedRest(row)
       if (!armed || item.fenceId !== stopHookFenceId(armed.armedAt, tele.lastAssistantAt ?? "")) return "superseded"
       if (restMessageIsSignedOff(deps.storage, item.slug, tele, registeredPrWatchesOf(deps.storage, item.slug), armedTimerIdsOf(deps.storage, item.slug), armed.armedAt)) return "superseded"
@@ -1363,6 +1364,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     // fenceless. A worker that signed off between enqueue and delivery must not then be told how to
     // sign off — which is both useless and, arriving after a ```done, actively confusing.
     if (isSignoffFenceId(item.fenceId)) {
+      if (tele.authFault || tele.apiFault) return "superseded"
       if (item.fenceId !== signoffFenceId(tele.lastAssistantAt ?? "")) return "superseded"
       if (tele.lastFence || tele.pendingQuestion) return "superseded"
       return tele.turn === "idle" ? "current-idle" : "current-busy"

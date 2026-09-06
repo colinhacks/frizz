@@ -2,6 +2,7 @@ import { join } from "node:path"
 import { homedir } from "node:os"
 import { readdirSync, statSync, readFileSync, openSync, readSync, closeSync } from "node:fs"
 import type { PermissionMode } from "@frizz/shared"
+import { codexProviderError } from "./codex-error.ts"
 import { applyEvent } from "../tailer.ts"
 import type { AgentBackend, BuiltCommand, FoldState, NormalizedEvent, ResumeOpts, SpawnOpts } from "./types.ts"
 
@@ -350,8 +351,15 @@ export function parseCodexLine(line: string): NormalizedEvent[] {
         // The final message (with the fence) is authoritative here; agent_message/final_answer usually
         // carries the same text a beat earlier, but task_complete is the definitive turn bracket.
         const finalText = typeof p.last_agent_message === "string" ? p.last_agent_message : undefined
-        return [{ kind: "turn-end", at, finalText }]
+        if (p.error != null) return [
+          { kind: "provider-error", at, error: codexProviderError(p.error, at) },
+          { kind: "turn-end", at },
+        ]
+        return [{ kind: "turn-end", at, finalText, ...(p.error === null ? { successful: true } : {}) }]
       }
+      case "error":
+      case "stream_error":
+        return [{ kind: "provider-error", at, error: codexProviderError(p.error ?? p, at, pt === "stream_error" || p.will_retry === true || p.willRetry === true) }]
       // The OTHER closing bracket. An INTERRUPTED turn (`reason: "interrupted"` — what turn/interrupt
       // produces, now that stopping a Codex thread actually stops it) never reaches task_complete.
       // Without this the rollout's last word stays task_started, so the tailer holds the turn in-flight

@@ -1011,6 +1011,8 @@ export interface CodexAppServerBridgeOptions {
   id?: () => string
   requestTimeoutMs?: number
   diagnostic?: (event: CodexAppServerDiagnostic) => void
+  /** Refreshes live error/retry presentation even when Codex does not write a rollout record. */
+  onStatusChange?: () => void
   /** Test seam for the current ChatGPT account in auth.json. */
   codexAuthAccountId?: () => string | undefined
   /** Test seam for the account-replacement patience bound (AUTH_REPLACEMENT_WAIT_MS). */
@@ -2107,7 +2109,9 @@ export class CodexAppServerBridge {
       }
       if (binding.current_turn_id !== null) throw new Error("Codex app-server session already has an active turn")
       const pendingKey = turnKey(binding)
+      this.providerErrors.delete(input.sessionId)
       this.pendingTurnStarts.add(pendingKey)
+      this.options.onStatusChange?.()
       try {
         const response = TurnResponse.parse(await connection.request("turn/start", {
           threadId: binding.codex_thread_id,
@@ -2888,6 +2892,7 @@ export class CodexAppServerBridge {
     const epoch = this.connectionEpoch
     this.connection = null
     this.processAuthAccountId = undefined
+    this.providerErrors.clear()
     this.forgetCorrelatedFileItems()
     // No notification can ever arrive on a dead connection, so release every settings waiter now
     // rather than stranding an eager sandbox change until its own timeout. Resolving with `undefined`
@@ -3776,13 +3781,14 @@ export class CodexAppServerBridge {
       const binding = this.bindingForCodexThread(parsed.data.threadId)
       if (!binding || binding.state !== "active" || binding.connection_epoch !== this.connectionEpoch || binding.current_turn_id !== parsed.data.turnId) return
       this.providerErrors.set(binding.frizz_session_id, codexProviderError(parsed.data.error, this.now().toISOString(), parsed.data.willRetry))
+      this.options.onStatusChange?.()
       return
     }
     if (method === "item/started") {
       const envelope = ItemStartedNotification.safeParse(rawParams)
       if (!envelope.success) return
       const binding = this.bindingForCodexThread(envelope.data.threadId)
-      if (binding?.state === "active" && binding.connection_epoch === this.connectionEpoch && binding.current_turn_id === envelope.data.turnId) this.providerErrors.delete(binding.frizz_session_id)
+      if (binding?.state === "active" && binding.connection_epoch === this.connectionEpoch && binding.current_turn_id === envelope.data.turnId && this.providerErrors.delete(binding.frizz_session_id)) this.options.onStatusChange?.()
       this.foldExecItem(envelope.data.threadId, envelope.data.item, envelope.data.startedAtMs)
       const item = FileChangeItem.safeParse(envelope.data.item)
       if (!item.success || item.data.status !== "inProgress") return
@@ -3925,6 +3931,7 @@ export class CodexAppServerBridge {
         WHERE project_id = @project_id AND codex_thread_id = ? AND connection_epoch = ? AND current_turn_id = ?
       `).run(this.now().toISOString(), parsed.data.threadId, this.connectionEpoch, parsed.data.turn.id)
       this.notifyTurnIdleWaiters()
+      this.options.onStatusChange?.()
     }
   }
 

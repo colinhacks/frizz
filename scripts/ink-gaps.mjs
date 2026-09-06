@@ -21,6 +21,7 @@
 // Usage:
 //   node scripts/ink-gaps.mjs <url> "<sel-a>,<sel-b>,…" [--dsf=4] [--w=1100] [--h=700] [--wait=2200]
 //     [--pad=2] [--threshold=8] [--before=@/tmp/routine.js] [--hover=<css selector>]
+//     [--software] [--viewport-only] (for a stalled GPU compositor; keep the whole row in the viewport)
 //
 // Selectors are measured in the order given (NOT document order), so the printed gaps follow the
 // strip left to right exactly as you name it. `--hover` parks the pointer on an element first (after
@@ -54,7 +55,7 @@ const selectors = selectorList.split(",").map((s) => s.trim()).filter(Boolean)
 // three minutes). The failure arrives as a bare ProtocolError that reads like a bug in the page.
 const browser = await puppeteer.launch({
   headless: "new",
-  args: ["--no-sandbox", "--force-color-profile=srgb"],
+  args: ["--no-sandbox", "--force-color-profile=srgb", ...(flags.software ? ["--disable-gpu"] : [])],
   protocolTimeout: 600_000,
 })
 try {
@@ -93,6 +94,7 @@ try {
     const b64 = await page.screenshot({
       clip: { x: b.x - PAD, y: b.y - PAD, width: b.w + PAD * 2, height: b.h + PAD * 2 },
       encoding: "base64",
+      captureBeyondViewport: !flags["viewport-only"],
     })
     const ink = await page.evaluate(async (data, threshold) => {
       const img = new Image()

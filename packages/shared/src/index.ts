@@ -2262,6 +2262,17 @@ export const LimitPause = z.object({
 })
 export type LimitPause = z.infer<typeof LimitPause>
 
+// Provider-authored failure data, never inferred from assistant prose. Unknown codes are retained so
+// a new provider error cannot silently turn into an ordinary rest. Render the message as plain text.
+export const ProviderError = z.object({
+  message: z.string(),
+  code: z.string().optional(),
+  details: z.string().optional(),
+  retrying: z.boolean().optional(),
+  at: z.string().optional(),
+})
+export type ProviderError = z.infer<typeof ProviderError>
+
 // One sidebar row: frizz board thread + runtime overlay.
 export const ThreadView = z.object({
   id: ThreadSlug, // slug; filename is <slug>.md
@@ -2364,6 +2375,7 @@ export const ThreadView = z.object({
   // is to WAIT and continue — not to sign in. Same discipline as providerFault: only typed data
   // travels, never the provider's own error text. Optional so old snapshots/servers parse.
   limitPause: LimitPause.optional(),
+  providerError: ProviderError.optional(),
 
   // ---- Session-first fields (ALL optional: absent ⇒ a legacy .frizz-file row / pre-restart server;
   // the client treats such rows as Legacy-shelf material). Deliberately not zod-defaulted so server
@@ -4231,6 +4243,7 @@ export const TranscriptMessage = z.object({
   // search, and transcript logic; shared chat surfaces use this compact form for generated prompts
   // whose machine-facing tail would otherwise dominate the first user bubble.
   displayText: z.string().optional(),
+  providerError: ProviderError.optional(),
   tools: z.array(TranscriptToolCall),
   at: z.string().optional(), // ISO8601
   // Additive message variant. "event" is transcript PUNCTUATION emitted inline at the position a

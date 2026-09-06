@@ -842,6 +842,43 @@ test("board: an EXITED parent resting on a 'running' sub-agent surfaces as a sta
   }
 })
 
+test("board: native Codex failures settle a lagging rollout, converge without duplicates, and cannot replace recovery", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-board-codex-error-"))
+  const project: Project = { dir, id: "p", name: "fixture", label: "fixture", stateDir: dir, cwdSlug: "fixture" }
+  const storage = createStorage(join(dir, "ui.db"), "p")
+  storage.upsertSession(row({ slug: "failed", session_id: "sid", thread_name: "frizz-failed" }))
+  storage.setBackend("failed", "codex")
+  storage.setCodexRuntime("failed", "app-server")
+  const error = { message: "Request rejected", code: "cyber_policy", at: LATER }
+  let current = tele({ turn: "in-flight", lastActivityAt: T0 })
+  let live: { bridgeTurn: boolean; ownedSince: string; providerError: import("@frizz/shared").ProviderError } = { bridgeTurn: false, ownedSince: T0, providerError: error }
+  const tailer = { get: () => current, foreignIds: () => [], subAgent: () => undefined, forget: () => {}, start: () => {}, stop: () => {}, tick: () => {} } satisfies Tailer
+  const board = createBoard(project, storage, new Bus(), tailer, "errors", { codexTurnLiveness: () => live })
+  try {
+    let thread = (await board.snapshot()).threads[0]!
+    assert.equal(thread.runtime, "turn-idle")
+    assert.equal(thread.crashed, false)
+    assert.equal(thread.needsYou, true)
+    assert.deepEqual(thread.providerError, error)
+    const journalError = { ...error, at: T0 }
+    current = tele({ providerError: journalError, apiFault: true, lastActivityAt: T0 })
+    thread = board.refresh().threads[0]!
+    assert.deepEqual(thread.providerError, journalError, "the journal timestamp wins when both channels describe the same error")
+    current = tele({ lastActivityAt: "2026-07-10T00:00:00.000Z" })
+    assert.equal(board.refresh().threads[0]!.providerError, undefined, "newer successful journal activity defeats a stale native failure")
+    live = { ...live, bridgeTurn: true, providerError: { ...error, retrying: true } }
+    current = tele({ turn: "in-flight", lastActivityAt: LATER })
+    thread = board.refresh().threads[0]!
+    assert.equal(thread.runtime, "running")
+    assert.equal(thread.providerError?.retrying, true)
+    assert.equal(thread.needsYou, false)
+  } finally {
+    await board.stop()
+    storage.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("board: a codex app-server thread whose turn died with its app-server cards as a stall, not a spinner", async () => {
   // The live 2026-07-22 failure, end-to-end through board assembly: an app-server thread runs its turn
   // inside the shared codex daemon and has no process of its own to probe, so its runtime comes only

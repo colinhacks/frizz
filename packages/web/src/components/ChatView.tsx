@@ -24,6 +24,7 @@ import { splitQuestionBlocks, parseQuestionBlock, type QuestionKind, type BlockA
 import { splitFenceBlocks, type FenceKind } from "../lib/fenceBlocks.ts"
 import { showsRegisteredDoneCard } from "../lib/registeredDone.ts"
 import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
+import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
 import { parseAnswersCard, pairAllAnswers, unrenderedAnswers, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
 import { fenceStandsFor, registeredStandingAt } from "../lib/questionShadow.ts"
@@ -289,7 +290,7 @@ function ChatView({ slug, virtualized }: { slug: string; virtualized: boolean })
   // The RESIDUAL rung: a rest that carries no other card at all (RestedCard). Same final-message key.
   const restedCard = showsRestedCard(thread, lastAgentIdx >= 0 ? presentationMessages[lastAgentIdx]?.text : undefined)
   // Everything the runtime-status ladder needs that it cannot work out itself — see runtimeStatusRung.
-  const runtimeStatus: RuntimeStatusState = { thread, showWorking, registeredDone, restedCard }
+  const runtimeStatus: RuntimeStatusState = { thread, showWorking, registeredDone, restedCard, errorVisible: providerErrorVisible(presentationMessages, thread?.providerError) }
   // Question-block interactivity in the thread view: EVERY ask stays answerable, wherever it sits —
   // scroll back to a question a sub-agent return / the agent's own continuation buried and answer it in
   // place. answeringForMessage wires each ask's chips AND its own bottom Send button (scoped to just
@@ -651,7 +652,7 @@ type VirtualThreadRow =
 // yet — the copies still agreed, rung for rung — but every one of them had to be edited in lockstep
 // forever, and that is not a property to rely on. So the ladder is stated ONCE, here: `runtimeStatusRung`
 // decides which rung wins, and everything else is derived from that answer rather than re-deriving it.
-type RuntimeStatusRung = "provider-fault" | "limit-pause" | "pending-ask" | "perm-prompt" | "working" | "snooze" | "resting" | "registered-done" | "rested"
+type RuntimeStatusRung = "provider-fault" | "provider-error" | "limit-pause" | "pending-ask" | "perm-prompt" | "working" | "snooze" | "resting" | "registered-done" | "rested"
 
 /** What each caller knows that the ladder cannot work out for itself. `registeredDone`/`restedCard` are
  *  keyed on the final assistant message, which each path computes off its own list. */
@@ -660,6 +661,7 @@ interface RuntimeStatusState {
   showWorking: boolean
   registeredDone: boolean
   restedCard: boolean
+  errorVisible?: boolean
 }
 
 /** THE PREMISE BOTH TERMINAL-BOUND SAFETY NETS REST ON: that frizz has nothing answerable to offer, so
@@ -689,7 +691,8 @@ function frozenPendingAsk(thread: ThreadViewData | undefined): PendingAsk | unde
  *  a frozen ask outranks the generic perm banner and the Working… spinner, the human's own park outranks
  *  the benign resting card, and `rested` is the residual. Background sub-agents and shells are NOT here:
  *  they live in the anchored ops strip, which stays visible mid-turn. */
-function runtimeStatusRung({ thread, showWorking, registeredDone, restedCard }: RuntimeStatusState): RuntimeStatusRung | null {
+function runtimeStatusRung({ thread, showWorking, registeredDone, restedCard, errorVisible }: RuntimeStatusState): RuntimeStatusRung | null {
+  if (thread?.providerError?.retrying) return "provider-error"
   if (thread?.providerFault && !thread.foreign) return "provider-fault"
   if (thread?.limitPause && !thread.foreign) return "limit-pause"
   if (frozenPendingAsk(thread)) return "pending-ask"
@@ -699,6 +702,7 @@ function runtimeStatusRung({ thread, showWorking, registeredDone, restedCard }: 
   // told the operator to go and answer it in a terminal directly underneath.
   if (thread?.runtime === "perm-prompt" && !terminalNetStandsDown(thread)) return "perm-prompt"
   if (showWorking) return "working"
+  if (thread?.providerError) return errorVisible ? null : "provider-error"
   if (showsSnoozeCard(thread)) return "snooze"
   // showsRestingCard, NOT the raw awaitingBackground flag: gating on the bare flag opened the slot for a
   // bg-snoozed thread, every rung then drew null, and the slot was an empty gap at the transcript's end
@@ -737,6 +741,8 @@ function RuntimeStatusLadder({
   switch (runtimeStatusRung(state)) {
     case "provider-fault":
       return <ProviderFaultCard slug={slug} sessionId={thread!.sessionId} fault={thread!.providerFault!} retryText={retryText} />
+    case "provider-error":
+      return <ProviderErrorCard error={thread!.providerError!} />
     case "limit-pause":
       return <LimitPauseCard slug={slug} sessionId={thread!.sessionId} pause={thread!.limitPause!} />
     case "pending-ask":
@@ -847,12 +853,13 @@ function VirtualizedThreadTranscript({
   // Everything the runtime-status ladder needs that it cannot work out itself — see runtimeStatusRung.
   // The row EXISTS when some rung wins, and its own gap is that same answer: the eager path derives both
   // from the identical call, so the two cannot disagree about which card this thread gets.
-  const runtimeStatus: RuntimeStatusState = { thread, showWorking, registeredDone, restedCard }
+  const errorVisible = providerErrorVisible(messages, thread?.providerError)
+  const runtimeStatus: RuntimeStatusState = { thread, showWorking, registeredDone, restedCard, errorVisible }
   const hasRuntimeStatus = runtimeStatusRung(runtimeStatus) !== null
   // The deps are runtimeStatus's FIELDS, not the object: it is a fresh literal every render.
   const runtimeStatusGap = useMemo(
-    () => runtimeStatusGapFor({ thread, showWorking, registeredDone, restedCard }, activityMessages.map((entry) => entry.message)),
-    [activityMessages, showWorking, thread, registeredDone, restedCard],
+    () => runtimeStatusGapFor({ thread, showWorking, registeredDone, restedCard, errorVisible }, activityMessages.map((entry) => entry.message)),
+    [activityMessages, showWorking, thread, registeredDone, restedCard, errorVisible],
   )
   // EVERY OPEN QUESTION, at the thread's CURRENT rest while it is at rest, and at the rest it was asked
   // at while it is mid-flight (mid-prose placement is retired — see lib/questionShadow). Passing
@@ -3279,6 +3286,7 @@ export const Message = memo(function Message({ m, answering, dense, paired, text
   const [answerSheetOpen, setAnswerSheetOpen] = useState(false)
   // An event line (a sub-agent completion) is transcript PUNCTUATION — a quiet full-width line, not a
   // bubble or a tool band. Rendered before the role branches (its role field is nominal).
+  if (m.providerError) return <ProviderErrorCard error={m.providerError} />
   if (m.kind === "event") return <EventLine text={m.text} boundary={m.boundary} sourceId={m.sourceId} at={m.at} />
   // A model-reasoning summary (Codex) — quiet punctuation like an event line, but CLICKABLE to expand
   // the full reasoning. Rendered before the role branches (its role field is nominal, like an event).

@@ -1902,6 +1902,18 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
   // letting it move the clock would only add a way for pure bookkeeping to mask a stall.
   if ("at" in ev && typeof ev.at === "string" && ev.kind !== "context-usage") state.lastActivityAt = ev.at
   switch (ev.kind) {
+    case "provider-error":
+      state.sawRecords = true
+      if (ev.error.retrying) break
+      state.turn = "idle"
+      state.apiFault = true
+      state.providerError = ev.error
+      state.lastAssistant = ev.error.message
+      state.lastFence = undefined
+      state.lastAssistantAllDone = false
+      state.lastAssistantHasQuestion = false
+      if (typeof ev.at === "string") state.lastAssistantAt = ev.at
+      break
     case "turn-start":
       // A turn opened → the agent is working.
       state.sawRecords = true
@@ -1914,6 +1926,10 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.sawRecords = true
       state.turn = "idle"
       if (typeof ev.at === "string") state.lastAssistantAt = ev.at
+      if (ev.finalText !== undefined || ev.successful) {
+        state.apiFault = undefined
+        state.providerError = undefined
+      }
       if (ev.finalText !== undefined) applyFinalText(state, ev.finalText)
       break
     case "assistant-text":
@@ -1922,6 +1938,8 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       // untouched — the turn brackets on turn-start/turn-end, not on a text block. A FINAL block's `at`
       // is the agent's own output time → the rest-time key (turn-end usually carries the same instant).
       state.sawRecords = true
+      state.apiFault = undefined
+      state.providerError = undefined
       if (ev.final) {
         if (typeof ev.at === "string") state.lastAssistantAt = ev.at
         applyFinalText(state, ev.text)
@@ -4925,7 +4943,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // agent. The board reports both, and `boardRuntime` decides which one the row is allowed to draw.
       const pendingQuestion = s.lastAssistantHasQuestion
       const nowMs = now()
-      return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+      return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
     },
     // The CURRENT fresh foreign session ids (mtime within FOREIGN_FRESH_MS, capped), mtime-desc. Kept
     // as the last scan's result — recomputed at most every FOREIGN_SCAN_EVERY ticks.
