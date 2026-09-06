@@ -3116,9 +3116,7 @@ test("tailer: a 0-byte husk at the home path never beats a live sibling", () => 
   writeFileSync(join(h.logDir, `${sid}.jsonl`), "")
   rmSync(join(born, `${sid}.jsonl`))
 
-  // Past the discovery throttle its first bind armed (this row reached its file THROUGH the sweep, so
-  // unlike the home-path cases above it starts with one already set).
-  h.clock.ms = PAST_GRACE + 16_000
+  h.clock.ms = PAST_GRACE + 1000
   t.tick()
   assert.equal(t.get(slug)?.turn, "idle", "the live sibling won; the husk would have read as an empty conversation")
   assert.equal(t.get(slug)?.lastAssistant, "all done")
@@ -3161,6 +3159,49 @@ test("tailer: a bound row that keeps missing backs OFF rather than sweeping ever
   assert.equal(t.get(slug)?.noTranscript ?? false, false, "backing off is not degrading — a bound row is never a boot failure")
 })
 
+// A bind is what RETIRES the discovery throttle, and until this it retired only half of it: the unbound
+// path cleared `discoverMisses` and left `nextDiscoverMs` armed. A row that reached its transcript
+// through the sweep — or simply booted a few seconds before the worker wrote one — therefore carried a
+// deadline up to DISCOVER_RETRY_MAX_MS (15m) into its healthy life, and slept through its FIRST
+// relocation for the remainder of it. That is this branch's own bug arriving by the back door: the same
+// frozen "Thinking…", merely bounded (raised in review of #24; the husk case above had to skip 16s of
+// clock to work around it).
+test("tailer: a bind retires the discovery throttle, so the next relocation is caught on the next tick", () => {
+  const h = harness()
+  const slug = "slow-to-write-then-moved"
+  const sid = "bound-through-the-sweep"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  const t = makeTailer(h)
+
+  // Six past-grace misses with nothing on disk anywhere: 15s, 30s, 60s, 120s, 240s, 480s.
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  for (const step of [15_000, 30_000, 60_000, 120_000, 240_000]) {
+    h.clock.ms += step
+    t.tick()
+  }
+  assert.equal(t.get(slug)?.noTranscript, true, "no transcript anywhere yet — the row is degraded and deep in backoff")
+
+  // The worker finally writes its transcript at the pinned path. Binding is NOT throttled (a row whose
+  // own file gets bytes binds on the next tick however deep its miss streak), so this is unchanged.
+  fixture(h.logDir, sid, [IN_FLIGHT, TOOL])
+  h.clock.ms += 1000
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "in-flight", "bound")
+  assert.equal(t.get(slug)?.noTranscript, false, "and no longer degraded")
+
+  // Now it enters a worktree: Claude Code re-buckets the transcript and the bound path names nothing.
+  const worktree = join(dirname(h.logDir), "-a-project--claude-worktrees-entered")
+  mkdirSync(worktree, { recursive: true })
+  fixture(worktree, sid, [IN_FLIGHT, TOOL, DONE])
+  rmSync(join(h.logDir, `${sid}.jsonl`))
+
+  h.clock.ms += 1000
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle", "found on the NEXT tick, not 480s later behind a throttle the bind should have retired")
+  assert.equal(t.get(slug)?.lastAssistant, "all done")
+})
+
 // ── the rest instant is the TURN's clock, not the file's ───────────────────────────────────────────
 
 // `lastActivityAt` moves on records that leave the turn idle — a Claude `type:"system"` sidecar, a
@@ -3183,7 +3224,7 @@ test("tailer: a trailing system record does not inflate the rest stamp a prime w
   assert.equal(
     h.storage.getSession("t")?.rested_at,
     "2026-07-01T00:00:02.000Z",
-    "the rest is dated by the record that ENDED the turn, exactly as the live edge would have dated it",
+    "the rest is dated by the record that ENDED the turn, not by the sidecar that trailed it",
   )
 })
 

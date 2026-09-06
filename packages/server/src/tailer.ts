@@ -4100,8 +4100,13 @@ export function createTailer(deps: TailerDeps): Tailer {
   // flags the row no-transcript (a boot failure) so the board shows a degraded state, not an eternal
   // spinner.
   function resolveTranscript(state: TailState, row: SessionRow, nowMs: number): boolean {
-    // A BOUND state (offset > 0) is a no-op for as long as its file is still THERE — one `existsSync`,
-    // ahead of the one `consume` is about to pay anyway. What must not be a no-op is the file having
+    // A BOUND state (offset > 0) is a no-op for as long as its file is still THERE — one `existsSync`
+    // per bound row per tick. That is a REAL added syscall, not one `consume` was going to make anyway:
+    // `consume` does stat unconditionally, but its ENOENT and its no-new-bytes both leave through the
+    // same silent return, so it cannot tell the caller which it saw. Measured at ~1.4µs, so the board
+    // this was found on (464 rows) spends ~0.7ms of each 1000ms tick asking. That is the price of the
+    // recovery below and it is worth paying, because a relocation announces itself no other way.
+    // What must not be a no-op is the file having
     // VANISHED: a worker that changes its cwd (EnterWorktree, and any other move of the checkout under
     // a live session) makes Claude Code re-bucket the session transcript into the log dir for the NEW
     // cwd, and the path we bound then names nothing, forever. Nothing downstream can tell — `consume`
@@ -4116,7 +4121,24 @@ export function createTailer(deps: TailerDeps): Tailer {
     // recovery below — written for precisely this "the checkout moved" case — reachable only for a
     // session that had NEVER bound a file.
     if (state.offset > 0) {
-      if (existsSync(state.path)) return true
+      if (existsSync(state.path)) {
+        // A HEALTHY BOUND ROW OWES NO THROTTLE. `nextDiscoverMs`/`discoverMisses` are the memory of a
+        // sweep that came up empty, and a row reading its own file is the evidence that memory is
+        // spent. Nothing else retires them: the unbound path clears the COUNTER on a bind and leaves
+        // the DEADLINE behind, so a row that reached its transcript through the sweep — or simply
+        // booted before the worker had written one — binds still carrying a deadline up to
+        // DISCOVER_RETRY_MAX_MS away. The branch below would then sit out its FIRST relocation for as
+        // much as 15 minutes: the same frozen "Thinking…" this function exists to end, merely bounded.
+        //
+        // THE RULE IS THAT EVERY RESOLUTION RETIRES THE THROTTLE, so it is also applied at each of the
+        // four other places a transcript is resolved (the pinned-path bind below and the three
+        // rebinds), not only here. It has to be in both kinds of place: this branch can only run on a
+        // tick where the file is PRESENT, and a row can bind through the sweep and relocate before any
+        // such tick ever happens — which is exactly the husk case in tailer.test.ts.
+        state.discoverMisses = 0
+        state.nextDiscoverMs = 0
+        return true
+      }
       if (nowMs < state.nextDiscoverMs) return true
       const moved = relocatedTranscript(state)
       // Nothing claims the id anywhere: the transcript is genuinely gone (deleted, or a log dir the
@@ -4160,6 +4182,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       state.noTranscript = false
       state.stallLogged = false
       state.discoverMisses = 0
+      state.nextDiscoverMs = 0
       return true
     }
     // Presence alone isn't enough: a worker that creates `<id>.jsonl` then crashes before writing a
@@ -4173,9 +4196,12 @@ export function createTailer(deps: TailerDeps): Tailer {
     }
     if (size > 0) {
       // Real content present (or just appeared) — clear any prior degraded state and let consume bind it.
+      // The retry DEADLINE goes with the counter: leaving it armed is what made a swept-in row ignore
+      // its next relocation for up to the backoff ceiling (see the bound branch above).
       state.noTranscript = false
       state.stallLogged = false
       state.discoverMisses = 0
+      state.nextDiscoverMs = 0
       return true
     }
     // Empty/missing but still within the grace window → an ordinary just-spawned session (spinner). Wait.
@@ -4199,6 +4225,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       state.noTranscript = false
       state.stallLogged = false
       state.discoverMisses = 0
+      state.nextDiscoverMs = 0
       return true
     }
     const found = discoverTranscriptId(logDir, row.session_id, { nowMs, exclude: claimedIds(row.slug) })
@@ -4226,6 +4253,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       state.noTranscript = false
       state.stallLogged = false
       state.discoverMisses = 0
+      state.nextDiscoverMs = 0
       return true
     }
     // Nothing to bind: the worker never wrote a transcript → degraded/stalled, captured once for triage.
@@ -4718,8 +4746,14 @@ export function createTailer(deps: TailerDeps): Tailer {
   // `bg_snooze_rested_at === rested_at`. A restart could then silently un-arm a snooze the operator
   // set on an awaiting-background card, re-surfacing it for a condition that has not occurred.
   //
-  // Reading the turn-ending record instead makes a bounce IDEMPOTENT: it re-derives the same instant
-  // `onTurnDone` already stamped, the guard sees `at <= stamped`, and nothing is written at all.
+  // Reading the turn-ending record instead makes a bounce IDEMPOTENT, and by CONSTRUCTION rather than
+  // by luck. `lastAssistantAt` moves on a strict SUBSET of the records `lastActivityAt` moves on, so a
+  // re-derived stamp can only ever land at or BEFORE the one the live edge already wrote — never after
+  // it, which is the one direction the guard cannot block. The two DO disagree in the ordinary case
+  // where a `type:"system"` sidecar trailed the `end_turn` inside a single 1s poll window: the live
+  // edge stamped the sidecar's instant, prime derives the agent's own. The guard then sees
+  // `at <= stamped` and writes nothing, which is the right outcome twice over — the bounce changes
+  // nothing, and the instant already stored is the more accurate of the two.
   function onPrimedAtRest(row: SessionRow, state: TailState): void {
     // Only a FOLDED rest counts. `sawRecords` keeps a transcript-less session — whose turn reads idle
     // by default rather than by evidence — from minting a rest it never took.

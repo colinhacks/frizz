@@ -26,7 +26,13 @@ export interface SessionRow {
   unread: number // 0 | 1
   exited: number // 0 | 1
   archived: number // 0 | 1 — user hid the row from the nav; any respawn/resume un-archives
-  rested_at: string | null // ISO8601 — when the agent last came to REST (turn end / worker exit); drives nav order
+  // ISO8601 — when the agent last came to REST. Written on the live in-flight→idle edge and, for a
+  // turn that ended while frizz was not watching, off the prime that folds it (tailer.onPrimedAtRest).
+  // It does NOT drive nav order (this line said so until 2026-09-05): the board sorts on telemetry
+  // (`lastAssistantAt`) and this column is not even on ThreadView. Its two readers are both the
+  // awaiting-background snooze — router.snoozeAwaitingBackground refuses a null, and board.bgSnoozeArmed
+  // holds only while `bg_snooze_rested_at` still equals it.
+  rested_at: string | null
   // 0 | 1 — the stored `title` is a machine GUESS (the prompt chop), not a real name. Display-only:
   // it is what makes the UI show "Spinning up…"/"Untitled thread" instead of an internal-looking slug.
   // It does NOT decide whether a later machine title may land — that is `title_locked` below.
