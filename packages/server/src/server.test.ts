@@ -420,7 +420,7 @@ test("adopt: requires the legacy file, provisions a scratch dir, orientation is 
   assert.equal(row?.permission_mode, "bypassPermissions", "adoption pins the concrete launch permission")
 })
 
-test("cwdSlug: replaces / and . with - (Claude Code project-log convention)", () => {
+test("cwdSlug: replaces every non-alphanumeric character with - (Claude Code project-log convention)", () => {
   assert.equal(cwdSlug("/Users/x/Documents/projects/frizz"), "-Users-x-Documents-projects-frizz")
   assert.equal(cwdSlug("/Users/x/.workshell/wt"), "-Users-x--workshell-wt")
 })

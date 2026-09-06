@@ -113,7 +113,7 @@ export function discoverTranscriptId(logDir: string, sessionId: string, opts: Di
 //
 // Everything above assumes the transcript is SOMEWHERE IN `logDir`. That assumption breaks the moment
 // the operator renames or moves the checkout, because Claude Code shards its store by the cwd a session
-// was BORN in — `~/.claude/projects/<cwd with / and . replaced by ->/` — and a resumed session KEEPS
+// was BORN in — `~/.claude/projects/<cwd with every non-alphanumeric character replaced by ->/` — and a resumed session KEEPS
 // WRITING TO ITS BIRTH BUCKET FOREVER. Frizz derives that bucket from the project's CURRENT path
 // (project.ts cwdSlug), so after a rename every pre-existing thread points at a file that will never
 // exist, the crash-net reads it as "no transcript after 60s — likely a boot failure", and the board

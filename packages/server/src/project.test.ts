@@ -3,7 +3,20 @@ import assert from "node:assert/strict"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { parseRepoLabel, projectFromRegistryEntry } from "./project.ts"
+import { cwdSlug, parseRepoLabel, projectFromRegistryEntry } from "./project.ts"
+
+test("cwdSlug: every non-alphanumeric character becomes '-', on every platform", () => {
+  // The rule Claude Code applies to the cwd to name ~/.claude/projects/<slug>. Every expectation here
+  // is a directory name measured on disk, not derived. The old rule replaced only '/' and '.', which
+  // left a Windows path untouched — `D:\Development\Feature3` stayed `D:\Development\Feature3` — so the
+  // tailer watched a path that never existed, raised "no transcript 60s after dispatch — likely a boot
+  // failure" and marked every Windows thread dead while claude was still working (Windows Server 2022,
+  // frizz 0.8.1, 2026-09-01). The same rule also mis-slugs '_' and ' ' on POSIX.
+  assert.equal(cwdSlug("/Users/x/.workshell"), "-Users-x--workshell")
+  assert.equal(cwdSlug("D:\\Development\\Feature3"), "D--Development-Feature3")
+  assert.equal(cwdSlug("D:\\Development\\frizz\\slug_probe dir"), "D--Development-frizz-slug-probe-dir")
+  assert.equal(cwdSlug("/home/x/my_repo v2"), "-home-x-my-repo-v2")
+})
 
 test("parseRepoLabel: scp-like ssh with .git", () => {
   assert.equal(parseRepoLabel("git@github.com:owner/repo.git"), "owner/repo")

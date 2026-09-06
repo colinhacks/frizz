@@ -148,11 +148,20 @@ function resolveProjectIdentity(
   return { id: ensureProjectIdFile(root, home, git?.id), scope: git?.scope ?? "repository", root }
 }
 
-// Claude Code's per-project session-log dir name: the absolute cwd with every '/' and '.'
-// replaced by '-'. Verified empirically against ~/.claude/projects (e.g. /Users/x/.workshell
-// → -Users-x--workshell). Used later by the JSONL tailer; computed here so the rule lives once.
+// Claude Code's per-project session-log dir name: the absolute cwd with every character that is not
+// A–Z, a–z or 0–9 replaced by '-'. Verified empirically against ~/.claude/projects on both platforms:
+// /Users/x/.workshell → -Users-x--workshell, D:\Development\Feature3 → D--Development-Feature3, and
+// D:\Development\frizz\slug_probe dir → D--Development-frizz-slug-probe-dir (claude 2.1.257).
+//
+// Until 2026-09-01 this replaced only '/' and '.', which is the same thing for a plain POSIX path and
+// a different thing for everything else. A Windows path has neither, so it came back UNCHANGED and the
+// tailer watched ~/.claude/projects/D:\Development\Feature3/<id>.jsonl — a path that never exists.
+// Sixty seconds later every Windows thread was reported as "no transcript 60s after dispatch — likely
+// a boot failure" and shown dead on the board, while claude was still mid-turn in a transcript frizz
+// never opened. '_' and ' ' in a POSIX path went wrong the same way, just more rarely.
+// Used later by the JSONL tailer; computed here so the rule lives once.
 export function cwdSlug(absPath: string): string {
-  return absPath.replace(/[/.]/g, "-")
+  return absPath.replace(/[^A-Za-z0-9]/g, "-")
 }
 
 // The repo-label helpers moved to project-identity.ts, which is an exported subpath: the LAUNCHER
