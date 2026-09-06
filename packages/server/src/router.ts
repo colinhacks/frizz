@@ -144,7 +144,6 @@ import { slugify, resolveSlug, resolveLegacyThreadFile, loadWorkerPrompt, scratc
 import { readCodexModels } from "./backend/codex-models.ts"
 import { codexSandbox } from "./backend/codex.ts"
 import type { CodexSandboxMode } from "./backend/codex-app-server.ts"
-import type { ClaudePermissionMode } from "./backend/claude-agent-sdk-protocol.ts"
 import { readQuota } from "./quota.ts"
 import { readAuthSnapshot } from "./backend/auth-status.ts"
 import { liveThreadsForBackend, runProviderLogout } from "./backend/account-actions.ts"
@@ -1143,7 +1142,11 @@ export function createRouter(ctx: AppContext) {
         sessionId: row.session_id,
         cwd: ctx.project.dir,
         text: `${shellStopNotice(label)} Whatever it wrote before the kill is still readable in its output file.`,
-        permissionMode: (row.permission_mode as ClaudePermissionMode | null) ?? undefined,
+        // `isDaemonAlive` above is a check, not a hold: the daemon can exit before this frame lands,
+        // and followUp then COLD-RESUMES rather than failing. Take the same floor every other fork
+        // takes, so a notice that loses the race cannot be the thing that rebuilds the worker at
+        // Claude's `default` — see coldResumePermission.
+        permissionMode: coldResumePermission(row, ctx.getSettings()),
         model: row.model ?? undefined,
         effort: row.effort ?? undefined,
       })
