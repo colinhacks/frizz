@@ -81,7 +81,7 @@ try {
   } : buildFrizzArtifact(source, join(root, "artifacts"))
   const boot = async () => {
     output = ""
-    server = spawn(process.execPath, [packageDir ? join(packageDir, "dist", "frizz.js") : join(artifact.runtimeDir, "src", "index.js")], {
+    server = spawn(process.execPath, [packageDir ? join(packageDir, "dist", "dev-child.js") : join(artifact.runtimeDir, "src", "index.js")], {
       cwd: projectDir,
       env: projectLaunchEnvironment({ ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"),
         FRIZZ_DEV_CHILD: "1", FRIZZ_DEV_PORT: String(port), FRIZZ_WAKERS_OFF: "1", FRIZZ_ORPHAN_REAPER_OFF: "1", FRIZZ_TENANT_PRIME_OFF: "1",
