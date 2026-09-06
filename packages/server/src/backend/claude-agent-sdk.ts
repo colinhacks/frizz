@@ -63,7 +63,17 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 // canary that guards it cannot drift apart. It is real at runtime but missing from the SDK's `.d.ts`,
 // so nothing in the type system would notice it disappearing — see claude-agent-sdk.cancel.test.ts.
 export const CLAUDE_SDK_CANCEL_METHOD = "cancelAsyncMessage"
-const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+// What the OS can carry in an environment block: a non-empty name with no `=` and no NUL. NOT a POSIX
+// shell identifier, which is what this was until 2026-09-01 (`/^[A-Za-z_][A-Za-z0-9_]*$/`). Every
+// 64-bit Windows environment contains `ProgramFiles(x86)` and `CommonProgramFiles(x86)`, and the
+// broker daemon passes the whole inherited environment to buildEnvironment() as overrides — so on
+// Windows the daemon threw here on startup, never published its record, and every Claude dispatch
+// timed out with "did not become ready" (measured on Windows Server 2022, frizz 0.8.1: three broker
+// deaths in a row, each `uncaught-exception: Claude environment contains an invalid key`). Node
+// itself spawns a child with such a key without complaint; only this check refused it. cmd.exe's
+// hidden `=C:` drive variables never reach process.env (node drops them), so a leading `=` needs no
+// special case.
+const ENV_KEY_PATTERN = /^[^=\0]+$/
 const SENSITIVE_ENV_KEY = /(?:API_KEY|AUTH|BASE_URL|BEARER|COOKIE|CREDENTIAL|OAUTH|PASSWORD|PRIVATE|SECRET|TOKEN)/i
 const MAX_ENV_ENTRIES = 512
 const MAX_ENV_VALUE_BYTES = 128 * 1024

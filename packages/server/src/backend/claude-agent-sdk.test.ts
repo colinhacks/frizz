@@ -1234,6 +1234,25 @@ test("input, JSON, environment, and executable boundaries reject unsafe payloads
   }
 })
 
+test("a Windows-shaped environment key — ProgramFiles(x86) — is a valid override and the session starts", { timeout: 10_000 }, async () => {
+  // Every 64-bit Windows box carries `ProgramFiles(x86)` and `CommonProgramFiles(x86)`, and the broker
+  // daemon hands the WHOLE inherited environment to start() as overrides (claude-agent-broker.ts). The
+  // key rule used to be a POSIX shell identifier, so the daemon threw "invalid key" on startup, never
+  // published its record, and every Claude dispatch on Windows timed out with "did not become ready"
+  // (measured on Windows Server 2022, frizz 0.8.1, 2026-09-01). The OS accepts any name without `=` or
+  // NUL; that is the rule now. The malformed-key guard above (`INVALID=KEY`) still holds.
+  const harness = startHarness("windows-env-key", {
+    "ProgramFiles(x86)": "C:\\Program Files (x86)",
+    "CommonProgramFiles(x86)": "C:\\Program Files (x86)\\Common Files",
+  })
+  try {
+    const ready = await withTimeout(harness.handle.ready(), "session init")
+    assert.equal(ready.sessionId, SESSION_ID)
+  } finally {
+    await harness.close()
+  }
+})
+
 function startHarness(
   scenario: string,
   env: Record<string, string | undefined> = {},
