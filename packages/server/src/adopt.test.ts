@@ -60,6 +60,7 @@ function harness(options: {
   adoptionRuntime?: AdoptionRecoveryRuntime
   preflightAuth?: (kind: string) => Promise<"authed" | "signed-out" | "unknown">
   preflightCodexBinary?: () => Promise<"present" | "missing" | "unknown">
+  settings?: Partial<ReturnType<typeof defaultSettings>>
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-adopt-"))
   const storage = createStorage(join(dir, "ui.db"), "p")
@@ -102,7 +103,7 @@ function harness(options: {
         errorItems: [],
       }
     },
-    getSettings: () => ({ ...defaultSettings(), model: "sonnet", effort: "high" }),
+    getSettings: () => ({ ...defaultSettings(), model: "sonnet", effort: "high", ...options.settings }),
     // Adoption spawns through the broker daemon. The fake records the same facts the
     // assertions below rely on (which slug/session/cwd, and the composed prompt).
     claudeBroker: {
@@ -608,6 +609,32 @@ test("adoptSession: a codex terminal pins the SAME id on agent_session_id, where
   assert.equal(row?.backend, "codex")
   // Codex writes no title record, so there is no name to inherit — the short id stands.
   assert.equal(row?.title, `Session ${ROLLOUT.slice(0, 8)}`)
+})
+
+// The follow-up that triggers a promotion resumes the session with `row.permission_mode`. A row
+// stamped with NOTHING fell through to the bridge's `"default"` — Claude's prompt-on-everything mode,
+// which the worker's perm-policy hook defers on every call — so a terminal session driven from the
+// board turned every Edit into a card (observed 2026-09-03). The promoted row therefore carries the
+// same Settings-driven launch mode a dispatched worker gets.
+test("adoptSession: the promoted row carries the dispatch launch mode, never an empty one", async () => {
+  const CLAUDE_ID = "6543d3fb-e38e-461a-b10a-9c78261b67b2"
+  const ROLLOUT = "01a01b81-bbf3-7841-b704-a7c4b95b7bd7"
+
+  // Shipped default: bypass for claude, danger-full-access for codex.
+  const shipped = harness()
+  await shipped.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
+  await shipped.dispatcher.adoptSession({ sessionId: ROLLOUT, backend: "codex" })
+  assert.equal(shipped.storage.getSession(CLAUDE_ID)?.permission_mode, "bypassPermissions")
+  assert.equal(shipped.storage.getSession(ROLLOUT)?.permission_mode, "bypassPermissions")
+
+  // The one Settings deviation frizz honours for claude — and a restrictive value left by an older
+  // build still coerces to the floor rather than to Claude's `default`.
+  const auto = harness({ settings: { permissionMode: "auto" } })
+  await auto.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
+  assert.equal(auto.storage.getSession(CLAUDE_ID)?.permission_mode, "auto")
+  const restrictive = harness({ settings: { permissionMode: "default" } })
+  await restrictive.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
+  assert.equal(restrictive.storage.getSession(CLAUDE_ID)?.permission_mode, "auto")
 })
 
 test("adoptSession: a session frizz already owns cannot be promoted again, through EITHER id column", async () => {
