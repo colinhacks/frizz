@@ -18,6 +18,22 @@ test("cwdSlug: every non-alphanumeric character becomes '-', on every platform",
   assert.equal(cwdSlug("/home/x/my_repo v2"), "-home-x-my-repo-v2")
 })
 
+test("cwdSlug: past 200 characters claude truncates and hashes, so frizz must too", () => {
+  // Measured the same way: this 215-character cwd produced this directory under ~/.claude/projects
+  // (claude 2.1.263, macOS, 2026-09-05). The suffix is claude's own h*31+c int32 hash of the WHOLE
+  // path in base 36, so an approximation of it watches a bucket that is as empty as the Windows one.
+  const deep =
+    "/private/tmp/slugcap-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccc/dddddddddddddddddddddddddddddddddddddddd/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  const slug = cwdSlug(deep)
+  assert.equal(
+    slug,
+    "-private-tmp-slugcap-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-cccccccccccccccccccccccccccccccccccccccc-dddddddddddddddddddddddddddddddddddddddd-eeeeeeeeeeeeeeeeeeeeeeeee-6aubl3",
+  )
+  assert.equal(slug.slice(0, 200).length, 200, "the cut is at 200, before the hash suffix")
+  // 200 characters exactly is still returned whole — the cut is strictly past the cap, as claude's is.
+  assert.equal(cwdSlug("/" + "a".repeat(199)), "-" + "a".repeat(199))
+})
+
 test("parseRepoLabel: scp-like ssh with .git", () => {
   assert.equal(parseRepoLabel("git@github.com:owner/repo.git"), "owner/repo")
 })

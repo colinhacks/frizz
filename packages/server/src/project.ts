@@ -149,7 +149,8 @@ function resolveProjectIdentity(
 }
 
 // Claude Code's per-project session-log dir name: the absolute cwd with every character that is not
-// A–Z, a–z or 0–9 replaced by '-'. Verified empirically against ~/.claude/projects on both platforms:
+// A–Z, a–z or 0–9 replaced by '-', and then capped at 200 characters (CWD_SLUG_MAX, below — that half
+// of the rule is easy to miss and fails the same way). Verified empirically against ~/.claude/projects:
 // /Users/x/.workshell → -Users-x--workshell, D:\Development\Feature3 → D--Development-Feature3, and
 // D:\Development\frizz\slug_probe dir → D--Development-frizz-slug-probe-dir (claude 2.1.257).
 //
@@ -161,7 +162,25 @@ function resolveProjectIdentity(
 // never opened. '_' and ' ' in a POSIX path went wrong the same way, just more rarely.
 // Used later by the JSONL tailer; computed here so the rule lives once.
 export function cwdSlug(absPath: string): string {
-  return absPath.replace(/[^A-Za-z0-9]/g, "-")
+  const slug = absPath.replace(/[^A-Za-z0-9]/g, "-")
+  if (slug.length <= CWD_SLUG_MAX) return slug
+  return `${slug.slice(0, CWD_SLUG_MAX)}-${Math.abs(cwdSlugHash(absPath)).toString(36)}`
+}
+
+// The second half of the same rule, and the half a plain replace cannot reach: past 200 characters
+// claude cuts the slug and names the bucket with a hash of the WHOLE path instead. Read out of the
+// shipped CLI (2.1.263, `s.length <= 200 ? s : s.slice(0, 200) + "-" + Math.abs(hash(path)).toString(36)`)
+// and then measured — a 215-character cwd produced exactly the directory the test pins. Without this a
+// checkout nested deeply enough fails the same way Windows did: frizz watches the untruncated name,
+// nothing ever appears there, and the crash-net calls a working thread dead.
+const CWD_SLUG_MAX = 200
+
+// Claude Code's own string hash — h*31 + charCode, kept in int32 — reproduced rather than replaced,
+// because the suffix has to name the bucket claude actually writes to, not one frizz finds reasonable.
+function cwdSlugHash(absPath: string): number {
+  let hash = 0
+  for (let i = 0; i < absPath.length; i++) hash = ((hash << 5) - hash + absPath.charCodeAt(i)) | 0
+  return hash
 }
 
 // The repo-label helpers moved to project-identity.ts, which is an exported subpath: the LAUNCHER
