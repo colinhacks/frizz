@@ -1,6 +1,6 @@
 {
   "name": "frizz",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "private": false,
   "description": "A local web UI for running many coding agents at once",
   "keywords": [
