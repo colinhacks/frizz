@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, writeFileSync, appendFileSync, utimesSync, readFileSync, rmSync, openSync, closeSync } from "node:fs"
+import { mkdtempSync, writeFileSync, appendFileSync, utimesSync, readFileSync, rmSync, openSync, closeSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { createStorage, type Storage, type SessionRow } from "./storage.ts"
@@ -2344,6 +2344,79 @@ test("tailer: in-flight → idle fires exactly one turn-done + sets unread", () 
   assert.equal(h.events.filter((e) => e.type === "notify").length, 1)
 })
 
+// A TURN THAT ENDED WHILE FRIZZ WAS NOT WATCHING IS STILL A REST.
+//
+// `rested_at` was written by `onTurnDone` alone, which fires on the LIVE in-flight → idle edge. Prime
+// has no edge — it folds a whole transcript and adopts the turn it finds — so a turn that completed
+// while the server was down was never recorded as a rest at all, and never would be: prime runs once
+// per session per process. A worker is a detached broker daemon that keeps working across a frizz
+// restart by design, so this is the ordinary case on every bounce, not an edge.
+//
+// The column being wrong is not cosmetic: `snoozeAwaitingBackground` (router.ts) refuses a row with a
+// null `rested_at` — "This thread is not at rest; nothing to snooze" — and `bgSnoozeArmed` (board.ts)
+// can never arm one. Found 2026-08-25 on the maintainer's own board: a thread that ended its turn with
+// a ```question fence carried `turn: "idle"` and `rested_at: NULL` after a restart, alone among eleven
+// live threads.
+test("tailer: a prime that lands on a finished turn stamps rested_at (the rest is a FACT, not an event)", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  fixture(h.logDir, "sid", [IN_FLIGHT, TOOL, DONE]) // the whole turn completed while nothing was watching
+  const t = makeTailer(h)
+
+  t.tick() // prime
+  assert.equal(t.get("t")?.turn, "idle")
+  assert.equal(
+    h.storage.getSession("t")?.rested_at,
+    "2026-07-01T00:00:02.000Z",
+    "the rest instant is the folded end-of-turn record, exactly as onTurnDone would have stamped it",
+  )
+  // ...and the EVENT stays suppressed. A rebind can bring back hundreds of historical transcripts on
+  // one tick; a notify each would be hundreds of alerts for work that finished days ago.
+  assert.equal(h.events.filter((e) => e.type === "notify").length, 0, "a silent prime stays silent")
+  assert.equal(h.storage.getSession("t")?.unread, 0, "and does not badge history unread")
+})
+
+test("tailer: a prime never writes the rest BACKWARDS over a newer stamp", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  // The row already carries a LATER rest than anything in this transcript — the state a restart
+  // inherits when nothing happened while frizz was down. Seeded through the setter that owns the
+  // column: `upsertSession` deliberately does not write `rested_at`.
+  h.storage.setRestedAt("t", "2026-07-01T00:05:00.000Z")
+  fixture(h.logDir, "sid", [IN_FLIGHT, TOOL, DONE])
+  const t = makeTailer(h)
+
+  t.tick()
+  assert.equal(h.storage.getSession("t")?.rested_at, "2026-07-01T00:05:00.000Z", "the stored stamp wins")
+})
+
+test("tailer: a prime mid-turn stamps nothing — there is no rest to record", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  fixture(h.logDir, "sid", [IN_FLIGHT, TOOL]) // still working
+  const t = makeTailer(h)
+
+  t.tick()
+  assert.equal(t.get("t")?.turn, "in-flight")
+  assert.equal(h.storage.getSession("t")?.rested_at ?? null, null)
+
+  // ...and the live edge that follows still owns the stamp + the notify, unchanged.
+  appendFileSync(join(h.logDir, "sid.jsonl"), DONE + "\n")
+  t.tick()
+  assert.equal(h.storage.getSession("t")?.rested_at, "2026-07-01T00:00:02.000Z")
+  assert.equal(h.events.filter((e) => e.type === "notify").length, 1, "the live transition still notifies")
+})
+
+test("tailer: a session with no transcript records mints no rest", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  fixture(h.logDir, "sid", []) // the file exists and is empty
+  const t = makeTailer(h)
+
+  t.tick()
+  assert.equal(h.storage.getSession("t")?.rested_at ?? null, null, "idle-by-default is not evidence of a rest")
+})
+
 test("tailer: unread is gated on last_read_at (a read-past turn does not re-badge)", () => {
   const h = harness()
   // user already read at a time AFTER the (only) turn-end record's timestamp
@@ -2874,6 +2947,261 @@ test("tailer: a genuinely missing transcript still degrades — the sibling swee
   h.clock.ms = PAST_GRACE
   t.tick()
   assert.equal(t.get(slug)?.noTranscript, true, "no transcript in ANY bucket is still a boot failure")
+})
+
+// THE ONE THAT SHOWS "Thinking…" FOREVER. Discovery used to be gated behind `state.offset > 0` — it
+// only ran for a session that had NEVER bound a file — so the sibling-bucket recovery above, written
+// for exactly this "the checkout moved" case, could not help a session that moved AFTER binding. And
+// a worker moves its own checkout routinely: `EnterWorktree` changes the cwd, and Claude Code
+// re-buckets the live session's transcript into the log dir for the new one. From that instant the
+// bound path names nothing; `consume` skips a missing file silently, so the fold FREEZES at whatever
+// turn it last held, with no signal anywhere that it has stopped reading.
+//
+// Frozen mid-turn that reading is "in-flight", and `computeTurn` derives it from a trailing user
+// record with NO backstop behind it (unlike the 5s one for an unknown stop_reason), so the board sits
+// on "Thinking…" for a thread that has been at rest for hours and cannot be talked out of it.
+// Measured 2026-08-21 on three live threads at once — three `tail_state` rows pinned to three deleted
+// worktree buckets, one of them reading "Thinking… 1h 1m" against a transcript whose last record was
+// an `end_turn` from the moment the clock started.
+test("tailer: a transcript that moves AFTER binding (the worker changed its cwd) is re-found mid-turn", () => {
+  const h = harness()
+  const slug = "moved-under-a-live-session"
+  const sid = "relocated-mid-turn"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  fixture(h.logDir, sid, [IN_FLIGHT, TOOL])
+  const t = makeTailer(h)
+
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "in-flight", "bound and mid tool_use — the healthy path, untouched")
+
+  // The worker enters a worktree: same session, same file, a different bucket — and the turn it was
+  // in the middle of finishes THERE, where the old binding can never see it.
+  const worktree = join(dirname(h.logDir), "-a-project--claude-worktrees-a-branch")
+  mkdirSync(worktree, { recursive: true })
+  fixture(worktree, sid, [IN_FLIGHT, TOOL, DONE])
+  rmSync(join(h.logDir, `${sid}.jsonl`))
+
+  h.clock.ms = PAST_GRACE + 1000
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle", "the fold follows the file and reads the rest it slept through")
+  assert.equal(t.get(slug)?.lastAssistant, "all done")
+  // A bound row has demonstrably written a transcript, so it must never be flagged as one that never
+  // did: `noTranscript` is what degradeIfNoTranscript turns into runtime "exited" — a yellow [!] and a
+  // Retry — and a thread that merely moved is not a boot failure.
+  assert.equal(t.get(slug)?.noTranscript ?? false, false, "moved is not missing")
+})
+
+test("tailer: a bound transcript that vanishes with nowhere to go keeps its binding rather than degrading", () => {
+  // The other half of the branch above, and the reason it does not simply reuse the unbound path: a
+  // stat that fails on a file which is still there (a read racing a write, a bucket briefly gone) must
+  // cost nothing but a retry. Flagging `noTranscript` here would card a healthy thread "Stalled".
+  const h = harness()
+  const slug = "vanished-with-no-sibling"
+  const sid = "no-bucket-claims-this-one"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  fixture(h.logDir, sid, [IN_FLIGHT, TOOL, DONE])
+  const t = makeTailer(h)
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle")
+
+  rmSync(join(h.logDir, `${sid}.jsonl`))
+  h.clock.ms = PAST_GRACE + 1000
+  t.tick()
+  assert.equal(t.get(slug)?.noTranscript ?? false, false, "a bound row is never a boot failure")
+  assert.equal(t.get(slug)?.turn, "idle", "and its last real derivation stands")
+})
+
+// ── the relocation shapes that are NOT a clean hop ────────────────────────────────────────────────
+//
+// The two tests above move a file once, into a bucket whose contents are a strict superset of the old
+// one — the shape where preserving a byte cursor is trivially correct. These are the shapes where it
+// is not, and they are why the branch re-adopts from the top instead of resuming (raised in review of
+// #24). A name is not evidence about the bytes below the cursor.
+
+// A relocated file is chosen by matching `<id>.jsonl` and nothing else. If its prefix is NOT what we
+// already folded, resuming at the cursor starts the fold mid-file and silently swallows every record
+// below it — the same hazard `hydrateFromCache` refuses to take without `measureFence`/`fenceMatches`.
+test("tailer: a relocated file whose prefix DIFFERS is re-adopted from the top, not resumed at the cursor", () => {
+  const h = harness()
+  const slug = "relocated-onto-a-different-file"
+  const sid = "divergent-prefix"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  fixture(h.logDir, sid, [IN_FLIGHT, TOOL])
+  const t = makeTailer(h)
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "in-flight", "bound, mid-turn")
+  const cursor = statSync(join(h.logDir, `${sid}.jsonl`)).size
+
+  // A DIFFERENT transcript now claims this id one bucket over: its own opening user turn, then enough
+  // padding that the file is comfortably longer than our cursor, then its own rest.
+  const openedLater = JSON.stringify({ type: "user", timestamp: "2026-07-01T00:00:10.000Z", message: { role: "user", content: "a different conversation" } })
+  const padding = JSON.stringify({ type: "assistant", timestamp: "2026-07-01T00:00:11.000Z", message: { stop_reason: "tool_use", content: [{ type: "tool_use", name: "Bash", input: { command: "x".repeat(cursor + 400) } }] } })
+  const restedLater = JSON.stringify({ type: "assistant", timestamp: "2026-07-01T00:00:12.000Z", message: { stop_reason: "end_turn", content: [{ type: "text", text: "the other file's answer" }] } })
+  const elsewhere = join(dirname(h.logDir), "-a-project--claude-worktrees-elsewhere")
+  mkdirSync(elsewhere, { recursive: true })
+  fixture(elsewhere, sid, [openedLater, padding, restedLater])
+  rmSync(join(h.logDir, `${sid}.jsonl`))
+  // The precondition the assertion below rests on: the opening record sits BELOW our cursor, so a
+  // resume-at-cursor could not see it, and the file is long enough that `consume` would not truncation-
+  // reset its way out of the problem either.
+  assert.ok(openedLater.length + 1 < cursor, "the divergent opening record is below the old cursor")
+  assert.ok(statSync(join(elsewhere, `${sid}.jsonl`)).size > cursor, "and the file is longer than it")
+
+  h.clock.ms = PAST_GRACE + 1000
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle")
+  assert.equal(t.get(slug)?.lastAssistant, "the other file's answer")
+  assert.equal(
+    t.get(slug)?.lastUserAt,
+    "2026-07-01T00:00:10.000Z",
+    "the record below the cursor was FOLDED — a resume would have skipped it and kept the old file's user turn",
+  )
+})
+
+// The mirror-image failure, and the one the branch's original comment got wrong: `consume`'s truncation
+// path resets `offset` and `partial` but leaves `primed` TRUE, so a shorter relocated file would replay
+// into a primed state — firing a real turn-done notify for a historical record and letting `onTurnDone`
+// write `rested_at` off it. A false rest, where the bug being fixed was a false "Thinking…".
+test("tailer: a relocated file SHORTER than the cursor replays SILENTLY, with no historical notify", () => {
+  const h = harness()
+  const slug = "relocated-onto-a-shorter-file"
+  const sid = "shorter-than-the-cursor"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  const long = JSON.stringify({ type: "user", timestamp: "2026-07-01T00:00:00.000Z", message: { role: "user", content: "g".repeat(4000) } })
+  fixture(h.logDir, sid, [long, TOOL])
+  const t = makeTailer(h)
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  const cursor = statSync(join(h.logDir, `${sid}.jsonl`)).size
+  const before = h.events.length
+
+  const elsewhere = join(dirname(h.logDir), "-a-project--claude-worktrees-shorter")
+  mkdirSync(elsewhere, { recursive: true })
+  fixture(elsewhere, sid, [IN_FLIGHT, TOOL, DONE]) // a complete, at-rest transcript — just a small one
+  rmSync(join(h.logDir, `${sid}.jsonl`))
+  assert.ok(statSync(join(elsewhere, `${sid}.jsonl`)).size < cursor, "shorter than where we were reading")
+
+  h.clock.ms = PAST_GRACE + 1000
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle", "the shorter file's own derivation stands")
+  assert.equal(t.get(slug)?.lastAssistant, "all done")
+  assert.equal(h.events.length, before, "a re-adoption is a SILENT prime — no turn-done for a historical record")
+})
+
+// One session id legitimately naming two files at once is measured CLI behaviour (discover.ts:185), and
+// `discoverTranscriptDir` breaks that tie on newest-NON-EMPTY for a reason its own note spells out:
+// losing the coin flip renders a truncated conversation. The home candidate has to obey the same rule,
+// or a 0-byte husk sitting at the deterministic path wins on position alone.
+test("tailer: a 0-byte husk at the home path never beats a live sibling", () => {
+  const h = harness()
+  const slug = "husk-at-home"
+  const sid = "two-files-one-id"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  // Born in a sibling bucket, so the bound path is NOT the home path and `home` is a real candidate.
+  const born = join(dirname(h.logDir), "-a-project--claude-worktrees-born-here")
+  mkdirSync(born, { recursive: true })
+  fixture(born, sid, [IN_FLIGHT, TOOL])
+  const t = makeTailer(h)
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "in-flight", "bound in the sibling it was born in")
+
+  // It moves on again — and a 0-byte file appears at the home path at the same moment.
+  const moved = join(dirname(h.logDir), "-a-project--claude-worktrees-moved-on")
+  mkdirSync(moved, { recursive: true })
+  fixture(moved, sid, [IN_FLIGHT, TOOL, DONE])
+  writeFileSync(join(h.logDir, `${sid}.jsonl`), "")
+  rmSync(join(born, `${sid}.jsonl`))
+
+  // Past the discovery throttle its first bind armed (this row reached its file THROUGH the sweep, so
+  // unlike the home-path cases above it starts with one already set).
+  h.clock.ms = PAST_GRACE + 16_000
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle", "the live sibling won; the husk would have read as an empty conversation")
+  assert.equal(t.get(slug)?.lastAssistant, "all done")
+})
+
+// A miss on this branch costs a full readdir + one stat per sibling bucket, synchronously on the tick,
+// and `strandedLogDirs` memoizes only hits — so a permanently deleted bucket re-pays it every interval
+// forever. That is the exact cost the unbound path's backoff was measured and written to bound.
+test("tailer: a bound row that keeps missing backs OFF rather than sweeping every interval", () => {
+  const h = harness()
+  const slug = "permanently-gone"
+  const sid = "no-bucket-will-ever-claim-this"
+  h.storage.upsertSession(row({ slug, session_id: sid }))
+  fixture(h.logDir, sid, [IN_FLIGHT, TOOL, DONE])
+  const t = makeTailer(h)
+  h.clock.ms = PAST_GRACE
+  t.tick()
+  assert.equal(t.get(slug)?.turn, "idle")
+
+  rmSync(join(h.logDir, `${sid}.jsonl`))
+  // Three consecutive misses: 15s, then 30s, then 60s.
+  h.clock.ms = PAST_GRACE + 1_000
+  t.tick()
+  h.clock.ms += 15_000
+  t.tick()
+  h.clock.ms += 30_000
+  t.tick()
+
+  // The file comes back one bucket over. A flat 15s retry would find it on the next quarter-minute;
+  // the backed-off row is not due for another 60s, and must still be waiting at 30s.
+  const elsewhere = join(dirname(h.logDir), "-a-project--claude-worktrees-late")
+  mkdirSync(elsewhere, { recursive: true })
+  fixture(elsewhere, sid, [IN_FLIGHT, TOOL, DONE, TITLE])
+  h.clock.ms += 30_000
+  t.tick()
+  assert.equal(t.get(slug)?.aiTitle, undefined, "still inside the backed-off window — no sweep was paid")
+  h.clock.ms += 31_000
+  t.tick()
+  assert.equal(t.get(slug)?.aiTitle, "x", "and once it IS due, the re-link happens exactly as before")
+  assert.equal(t.get(slug)?.noTranscript ?? false, false, "backing off is not degrading — a bound row is never a boot failure")
+})
+
+// ── the rest instant is the TURN's clock, not the file's ───────────────────────────────────────────
+
+// `lastActivityAt` moves on records that leave the turn idle — a Claude `type:"system"` sidecar, a
+// sub-agent's completion notification, a codex agent-report or compaction. `onTurnDone` reads it safely
+// only because it fires on the EDGE, where the turn-ending record is the last one there is; prime folds
+// the whole file, so the stamp has to come from `lastAssistantAt` or a trailing sidecar inflates it.
+// That matters beyond tidiness: the guard blocks BACKWARD writes only, so an inflated stamp overwrites a
+// correct one, and `bgSnoozeArmed` holds only while `bg_snooze_rested_at === rested_at` — a restart
+// could silently un-arm an operator's snooze (raised in review of #24).
+test("tailer: a trailing system record does not inflate the rest stamp a prime writes", () => {
+  const h = harness()
+  const trailing = JSON.stringify({ type: "system", timestamp: "2026-07-01T00:00:09.000Z", content: "a background child reported in" })
+  h.storage.upsertSession(row())
+  fixture(h.logDir, "sid", [IN_FLIGHT, TOOL, DONE, trailing])
+  const t = makeTailer(h)
+
+  t.tick()
+  assert.equal(t.get("t")?.turn, "idle", "the sidecar leaves the turn where the end_turn put it")
+  assert.equal(t.get("t")?.lastActivityAt, "2026-07-01T00:00:09.000Z", "…while advancing the activity clock")
+  assert.equal(
+    h.storage.getSession("t")?.rested_at,
+    "2026-07-01T00:00:02.000Z",
+    "the rest is dated by the record that ENDED the turn, exactly as the live edge would have dated it",
+  )
+})
+
+test("tailer: re-priming the same rest is idempotent — the stamp an operator's snooze is pinned to holds", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  // The rest was already observed live and stamped; a snooze is armed against that exact instant.
+  h.storage.setRestedAt("t", "2026-07-01T00:00:02.000Z")
+  const trailing = JSON.stringify({ type: "system", timestamp: "2026-07-01T00:00:09.000Z", content: "still chattering" })
+  fixture(h.logDir, "sid", [IN_FLIGHT, TOOL, DONE, trailing])
+  const t = makeTailer(h)
+
+  t.tick() // the bounce
+  assert.equal(
+    h.storage.getSession("t")?.rested_at,
+    "2026-07-01T00:00:02.000Z",
+    "unchanged — so bg_snooze_rested_at still matches and the snooze stays armed",
+  )
 })
 
 test("tailer: a replacement during transcript discovery cannot inherit or transiently expose the stale transcript", () => {

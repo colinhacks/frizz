@@ -154,7 +154,7 @@ const strandedLogDirs = new Set<string>()
  * crash-net uses (a worker that dies before writing a record leaves a permanent 0-byte husk, which must
  * not count as a hit); the mtime is what breaks a two-bucket tie in favour of the file still being
  * appended to. Asking for them separately would double the syscall count of the whole sweep. */
-function mtimeOfNonEmpty(path: string): number | undefined {
+export function mtimeOfNonEmpty(path: string): number | undefined {
   try {
     const st = statSync(path, { throwIfNoEntry: false })
     return st && st.size > 0 ? st.mtimeMs : undefined

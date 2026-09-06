@@ -8,7 +8,7 @@
 // out longhand below.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createIntegrationHarness } from "./harness.ts"
 import {
@@ -650,6 +650,48 @@ test("integration: a structured completion reaches the BOARD, not just the taile
     s.play(event(taskEvent(s.sessionId, { phase: "notification", taskId: "task-1", toolUseId: "toolu_child", status: "completed" })))
     await h.settle()
     assert.equal(h.boardThread("boardmove")?.subAgents?.length ?? 0, 0, "the board's live child list is empty")
+  } finally {
+    h.close()
+  }
+})
+
+// THE REPORTED BUG, END TO END: "frizz shows thinking, but it's not really waiting on anything."
+// A worker changes its own cwd — `EnterWorktree`, or any move of the checkout under a live session —
+// and Claude Code re-buckets that session's transcript into the log dir for the new cwd. The path the
+// tailer bound then names nothing. `consume` skips a missing file in silence, so the fold FREEZES on
+// the last thing it managed to read, and if that was mid-turn the freeze reads "in-flight": the board
+// renders the shimmer against a thread that finished hours ago and nothing can talk it down, because
+// `computeTurn` has no backstop for a trailing user record the way it has one for an unknown
+// stop_reason. Measured 2026-08-21 on the maintainer's own board — three threads at once, their
+// `tail_state` rows pinned to three deleted worktree buckets.
+//
+// Records only, no events: this is the tailer→board path, and a runtime reading would only mask which
+// half is under test (the fold's own `resolveRuntimeTurn` bound has its own cases in ../backend/).
+test("integration: a transcript that moves under a live session stops pinning the board at Working", async () => {
+  const h = createIntegrationHarness()
+  try {
+    const s = h.dispatch("relocated")
+    h.telemetry("relocated") // prime
+
+    s.play(record(userRecord("go", T0)), record(assistantRecord("looking", "tool_use", T1)))
+    await h.settle()
+    assert.equal(h.boardThread("relocated")?.runtime, "running", "mid tool_use IS working — the honest reading")
+
+    // The worker enters a worktree. Same session, same file, a bucket the old binding cannot reach —
+    // and the turn it was in the middle of comes to rest THERE.
+    const bound = join(h.project.dir, "claude-logs", `${s.sessionId}.jsonl`)
+    const worktree = join(h.project.dir, "claude-logs--claude-worktrees-a-branch")
+    mkdirSync(worktree, { recursive: true })
+    writeFileSync(
+      join(worktree, `${s.sessionId}.jsonl`),
+      `${readFileSync(bound, "utf8")}${JSON.stringify(assistantRecord("```done\n- shipped it\n```", "end_turn", T2))}\n`,
+    )
+    rmSync(bound)
+
+    h.advance(1000)
+    await h.settle()
+    assert.equal(h.boardThread("relocated")?.runtime, "turn-idle", "the shimmer goes: the thread is at rest and the board says so")
+    assert.equal(h.telemetry("relocated")?.lastFence?.kind, "done", "…on the message it actually ended with, fence and all")
   } finally {
     h.close()
   }
