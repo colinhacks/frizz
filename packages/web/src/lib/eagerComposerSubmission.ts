@@ -90,6 +90,24 @@ export function enqueueThreadSend(slug: string, run: () => Promise<void>): Promi
 // retried, because the operator typed them in an order and means it.
 export const DELIVERY_RETRY_BACKOFF_MS = [300, 800, 1_800, 3_500] as const
 
+// ── the send deadline ────────────────────────────────────────────────────────────────────────────
+// A follow-up is a bare `fetch` with no deadline of its own, and it runs INSIDE the per-slug FIFO
+// above whose links are `tail.then(run, run)`. So a request the server never answers does not merely
+// lose its own message: it wedges the chain, and every steer typed into that thread afterwards waits
+// behind it forever — optimistic bubble painted, no toast, no rollback, nothing on the wire. Only a
+// reload clears it, and nothing on screen suggests one.
+//
+// Measured 2026-09-05 on `design-nub-static-server`: one `turn/start` blocked server-side for 1h 18m
+// (see codex-app-server.ts `ensureCurrentAuth`), and from the operator's side every later steer was
+// swallowed in silence — "my steers that I was typing into the box were not reopening the thread".
+//
+// The deadline is deliberately far longer than any healthy send: a cold session resume plus a turn
+// start is seconds, and codex sends were measured at p50 3.3s with tails into the minutes. This is not
+// a latency budget, it is the difference between one lost message and a permanently dead composer. An
+// abort is AMBIGUOUS — the text may already have reached the worker — so it is never marked
+// retryable; it rolls back one bubble, and the server's deliveryId ledger dedups a manual re-send.
+export const DELIVERY_SEND_TIMEOUT_MS = 120_000
+
 const wait = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms) })
 
 // `reanchor` runs on every attempt boundary — after a landed send, and again before each backoff.
@@ -122,12 +140,30 @@ export async function withDeliveryRetry(
   }
 }
 
+/** One attempt, under DELIVERY_SEND_TIMEOUT_MS — so a request the server never answers cannot hold the
+ *  per-slug FIFO open behind it. Exported for the test that pins exactly that. */
+export function sendFollowUpAttempt(
+  slug: string,
+  message: string,
+  deliveryId: string,
+  freshProcess?: boolean,
+  interrupt?: boolean,
+  timeoutMs: number = DELIVERY_SEND_TIMEOUT_MS,
+): Promise<void> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new Error("Frizz did not answer this send")), timeoutMs)
+  // Resolve the session id per ATTEMPT from the live board rather than once up front: a thread
+  // re-dispatched mid-retry must bind to its CURRENT session, and the guarded followUp is what turns
+  // a stale id into a clean refusal instead of a misdelivery.
+  return (rpc.followUp(
+    { slug, sessionId: threadBySlug(store.board, slug)?.sessionId ?? "", message, deliveryId, freshProcess, interrupt },
+    { signal: controller.signal },
+  ) as Promise<void>).finally(() => clearTimeout(timer))
+}
+
 function deliverFollowUp(slug: string, message: string, deliveryId: string, freshProcess?: boolean, interrupt?: boolean): Promise<void> {
   return withDeliveryRetry(
-    // Resolve the session id per ATTEMPT from the live board rather than once up front: a thread
-    // re-dispatched mid-retry must bind to its CURRENT session, and the guarded followUp is what turns
-    // a stale id into a clean refusal instead of a misdelivery.
-    () => rpc.followUp({ slug, sessionId: threadBySlug(store.board, slug)?.sessionId ?? "", message, deliveryId, freshProcess, interrupt }) as Promise<void>,
+    () => sendFollowUpAttempt(slug, message, deliveryId, freshProcess, interrupt),
     () => markSteered(slug),
   )
 }

@@ -17,6 +17,7 @@ import {
   type InteractionRequest as InteractionRequestType,
   type ResolveInteractionInput,
   type ThreadSkillSource,
+  type ProviderError,
 } from "@frizz/shared"
 import {
   InteractionStoreError,
@@ -36,6 +37,7 @@ import {
 import { nativeListenCodexAppServerHost } from "./codex-app-server-native.ts"
 import { readCodexAccountId } from "./auth-status.ts"
 import { codexThreadMcpConfig } from "./codex-mcp.ts"
+import { codexProviderError } from "./codex-error.ts"
 import type { FrizzMcp } from "./types.ts"
 import { log as frizzLog } from "../logging.ts"
 
@@ -283,6 +285,14 @@ const MAX_INBOUND_QUEUED_BYTES = MAX_INBOUND_JSONL_BYTES * 2
 const MAX_OUTBOUND_REQUESTS = 128
 const MAX_STDERR_BYTES = 16 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000
+// How long an operator turn waits for a pending account replacement before going ahead on the account
+// the app-server already has. Sized to cover an ordinary idle boundary (a short turn elsewhere in the
+// project finishing) and nothing beyond it — see ensureCurrentAuth for why waiting longer is worse
+// than proceeding.
+const AUTH_REPLACEMENT_WAIT_MS = 20_000
+// The re-read loop terminates on its own whenever auth.json and the process agree; this only bounds the
+// case where they never do.
+const MAX_AUTH_REPLACEMENT_ATTEMPTS = 3
 const BRIDGE_DB_SCHEMA_VERSION = 1
 
 // The app-server inherits frizz's environment minus frizz's own control plane — see worker-env.ts. This
@@ -936,6 +946,7 @@ export interface CodexAppServerSessionBinding {
 // tailer's folded turn "in-flight" forever (the live 2026-07-22 stall — four threads read `running`
 // for hours). The bridge is the authority, so it publishes both halves of the answer.
 export interface CodexAppServerTurnLiveness {
+  providerError?: ProviderError
   /** The bridge is driving a turn for this thread on the CURRENT connection right now. */
   bridgeTurn: boolean
   /**
@@ -1002,6 +1013,8 @@ export interface CodexAppServerBridgeOptions {
   diagnostic?: (event: CodexAppServerDiagnostic) => void
   /** Test seam for the current ChatGPT account in auth.json. */
   codexAuthAccountId?: () => string | undefined
+  /** Test seam for the account-replacement patience bound (AUTH_REPLACEMENT_WAIT_MS). */
+  authReplacementWaitMs?: number
   /**
    * Gate for the auto-resume nudge (B): a thread the human has archived or retired must not be woken
    * by a turn it never asked for. Defaults to allowing every rebind.
@@ -1827,6 +1840,7 @@ export class CodexAppServerBridge {
   private processAuthAccountId: string | undefined
   /** Serializes account-driven replacement across concurrent session/turn starts. */
   private authReplacement: Promise<void> | null = null
+  private readonly authReplacementWaitMs: number
   private readonly turnIdleWaiters = new Set<() => void>()
   /**
    * The handshake a FRESHLY FORKED daemon already gave us and we already rejected — i.e. what the
@@ -1862,6 +1876,9 @@ export class CodexAppServerBridge {
   // durable, and it must not be — a processId belongs to one app-server process, so a stale one
   // surviving a restart would offer an × that addresses a PTY that no longer exists.
   private readonly liveExecs = new Map<string, Map<string, LiveBackgroundExec>>()
+  // Live notices fill the gap before task_complete reaches the durable rollout. Retry notices are
+  // not retained by Codex at all. Session keys and current-turn checks prevent cross-thread leakage.
+  private readonly providerErrors = new Map<string, ProviderError>()
   private activeOperations = 0
   private readonly operationWaiters = new Set<() => void>()
   private shutdownPromise: Promise<void> | null = null
@@ -1872,6 +1889,7 @@ export class CodexAppServerBridge {
     this.makeId = options.id ?? randomUUID
     this.codexBin = options.codexBin ?? "codex"
     this.timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    this.authReplacementWaitMs = options.authReplacementWaitMs ?? AUTH_REPLACEMENT_WAIT_MS
     // Production hosts the app-server on its OWN unix listener (codex-app-server-native.ts) so it
     // outlives this runtime with no frizz-authored daemon that could kill it — see selectCodexHostKind
     // for the per-platform default and the overrides. An injected `spawn` — every unit test and the
@@ -2384,6 +2402,7 @@ export class CodexAppServerBridge {
     return {
       bridgeTurn: onThisConnection && (row.current_turn_id !== null || this.pendingTurnStarts.has(turnKey(row))),
       ownedSince: row.updated_at,
+      providerError: onThisConnection ? this.providerErrors.get(sessionId) : undefined,
     }
   }
 
@@ -2436,6 +2455,7 @@ export class CodexAppServerBridge {
     if (this.closed || this.dbReleased) return false
     const row = this.bindingForScope(threadSlug, sessionId)
     if (!row) return false
+    this.providerErrors.delete(sessionId)
     const ownsCurrentProcess = row.connection_epoch === this.connectionEpoch || this.openingConnection !== null
     try {
       this.forgetCorrelatedFileItems(row.codex_thread_id)
@@ -2615,12 +2635,30 @@ export class CodexAppServerBridge {
    * keeps using the account it started with even after ccbroker atomically switches auth.json. Before
    * starting new model work, replace that stale process — but only after every turn already running
    * in the shared per-project process has reached its own completion event.
+   *
+   * THE WAIT IS BOUNDED, AND WHEN THE BOUND EXPIRES THE TURN GOES AHEAD ON THE ACCOUNT WE HAVE.
+   * "Every turn in this project is idle" is a whole-PROJECT condition and the app-server is shared, so
+   * on a board running several codex threads it can be a long time coming — and until it comes, this
+   * used to hold the operator's own `turn/start` open with no timeout, no error and no way to tell.
+   * Measured 2026-09-05: auth.json changed at 21:45Z, the thread's turn ended at 23:00Z, and every
+   * follow-up typed into it from then on hung inside this wait until the project happened to go
+   * quiet at 00:19Z — 1h 18m of an operator typing steers into a box that answered nothing (the
+   * browser then queued each one behind the last, so not even a reload's worth of them ever left).
+   *
+   * Running one turn on the previous account is a visible, recoverable outcome; hanging the send is
+   * neither. So the replacement stays armed and lands at the next real idle boundary, and every turn
+   * started after it picks up the new account. A replacement that FAILS outright still throws — that
+   * is a broken app-server, not a busy one.
    */
   private async ensureCurrentAuth(): Promise<JsonlRpcConnection> {
-    for (;;) {
+    for (let attempt = 0; ; attempt++) {
       const desiredAccountId = (this.options.codexAuthAccountId ?? readCodexAccountId)()
       const connection = await this.ensureConnected()
       if (!desiredAccountId || this.processAuthAccountId === desiredAccountId) return connection
+      // The loop re-reads auth.json each pass, so it terminates on its own in the ordinary case. The
+      // cap is for the pathological one — a replacement that keeps succeeding while the account keeps
+      // failing to match — which would otherwise spin here forever.
+      if (attempt >= MAX_AUTH_REPLACEMENT_ATTEMPTS) return connection
       if (!this.authReplacement) {
         const replacement = this.replaceAppServerForAuthChange()
         this.authReplacement = replacement
@@ -2628,7 +2666,28 @@ export class CodexAppServerBridge {
           if (this.authReplacement === replacement) this.authReplacement = null
         }).catch(() => undefined)
       }
-      await this.authReplacement
+      if (!await this.awaitAuthReplacement(this.authReplacement)) return connection
+    }
+  }
+
+  /** Await an armed replacement for at most AUTH_REPLACEMENT_WAIT_MS. `false` = it is still waiting for
+   *  the project to go idle, so the caller should proceed rather than hang; a rejection propagates. */
+  private async awaitAuthReplacement(replacement: Promise<void>): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expired = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), this.authReplacementWaitMs)
+      // Never hold the process open on this: it is a patience bound, not work.
+      timer.unref?.()
+    })
+    const settled = replacement.then(() => true)
+    try {
+      return await Promise.race([settled, expired])
+    } finally {
+      if (timer) clearTimeout(timer)
+      // The losing side of the race keeps running. When the TIMEOUT won, nothing is handling this
+      // derived promise, and a replacement that fails afterwards would surface as an unhandled
+      // rejection; a second handler on one the race already settled is harmless.
+      void settled.catch(() => undefined)
     }
   }
 
@@ -3711,9 +3770,19 @@ export class CodexAppServerBridge {
   }
 
   private async handleNotification(connection: JsonlRpcConnection, method: string, rawParams: unknown): Promise<void> {
+    if (method === "error") {
+      const parsed = z.object({ threadId: Opaque, turnId: Opaque, error: z.unknown(), willRetry: z.boolean() }).passthrough().safeParse(rawParams)
+      if (!parsed.success) return
+      const binding = this.bindingForCodexThread(parsed.data.threadId)
+      if (!binding || binding.state !== "active" || binding.connection_epoch !== this.connectionEpoch || binding.current_turn_id !== parsed.data.turnId) return
+      this.providerErrors.set(binding.frizz_session_id, codexProviderError(parsed.data.error, this.now().toISOString(), parsed.data.willRetry))
+      return
+    }
     if (method === "item/started") {
       const envelope = ItemStartedNotification.safeParse(rawParams)
       if (!envelope.success) return
+      const binding = this.bindingForCodexThread(envelope.data.threadId)
+      if (binding?.state === "active" && binding.connection_epoch === this.connectionEpoch && binding.current_turn_id === envelope.data.turnId) this.providerErrors.delete(binding.frizz_session_id)
       this.foldExecItem(envelope.data.threadId, envelope.data.item, envelope.data.startedAtMs)
       const item = FileChangeItem.safeParse(envelope.data.item)
       if (!item.success || item.data.status !== "inProgress") return
@@ -3819,6 +3888,7 @@ export class CodexAppServerBridge {
         return
       }
       if (!this.pendingTurnStarts.has(turnKey(binding))) return
+      this.providerErrors.delete(binding.frizz_session_id)
       this.scope.prepare(`
         UPDATE codex_app_server_session SET current_turn_id = ?, updated_at = ?
         WHERE project_id = @project_id AND codex_thread_id = ? AND connection_epoch = ? AND current_turn_id IS NULL
@@ -3828,6 +3898,14 @@ export class CodexAppServerBridge {
     if (method === "turn/completed") {
       const parsed = TurnCompleted.safeParse(rawParams)
       if (!parsed.success) return
+      const binding = this.bindingForCodexThread(parsed.data.threadId)
+      if (binding?.state === "active" && binding.connection_epoch === this.connectionEpoch && binding.current_turn_id === parsed.data.turn.id) {
+        if (parsed.data.turn.error != null || parsed.data.turn.status === "failed") {
+          this.providerErrors.set(binding.frizz_session_id, codexProviderError(parsed.data.turn.error, this.now().toISOString()))
+        } else {
+          this.providerErrors.delete(binding.frizz_session_id)
+        }
+      }
       for (const item of [...this.correlatedFileItems.values()]) {
         if (item.threadId !== parsed.data.threadId || item.turnId !== parsed.data.turn.id) continue
         const active = await this.invalidateCorrelatedFileApproval(

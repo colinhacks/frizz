@@ -242,6 +242,7 @@ function harness(
   setupProcess?: (process: FakeAppServerProcess) => void,
   codexAuthAccountId?: () => string | undefined,
   attachmentAccountId?: (requested: string | undefined, attachment: number) => string | undefined,
+  authReplacementWaitMs?: number,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-codex-app-server-"))
   const dbPath = join(dir, "ui.db")
@@ -285,6 +286,7 @@ function harness(
       requestTimeoutMs: 1_000,
       diagnostic: (event) => diagnostics.push(event),
       codexAuthAccountId: codexAuthAccountId ?? (() => undefined),
+      ...(authReplacementWaitMs === undefined ? {} : { authReplacementWaitMs }),
     })
     bridges.push(bridge)
     return bridge
@@ -323,6 +325,33 @@ test("a listener record from before account tracking is replaced once, then upgr
   await h.bridge.startTurn({ threadSlug: "legacy-listener", sessionId: "legacy-listener-session", text: "current account" })
   assert.equal(h.processes.length, 2, "the replacement records its account and does not churn again")
   h.close()
+})
+
+test("live Codex error notices are turn-scoped and clear on recovery", async () => {
+  const h = harness()
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "failure", sessionId: "failure-sid", cwd: h.dir, ephemeral: false })
+    await h.bridge.startTurn({ threadSlug: "failure", sessionId: "failure-sid", text: "hello" })
+    const proc = h.processes.at(-1)!
+    const turnId = h.bridge.binding("failure", "failure-sid")!.currentTurnId!
+    proc.notify("error", { threadId: binding.codexThreadId, turnId: "wrong-turn", willRetry: false, error: { message: "Wrong turn" } })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.providerError, undefined)
+    proc.notify("error", { threadId: binding.codexThreadId, turnId, willRetry: true, error: { message: "Reconnecting", codexErrorInfo: "serverOverloaded" } })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.providerError?.retrying, true)
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.bridgeTurn, true)
+    proc.notify("turn/completed", { threadId: binding.codexThreadId, turn: { id: turnId, status: "failed", error: { message: "Policy rejection", codexErrorInfo: "cyberPolicy" } } })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.providerError?.code, "cyber_policy")
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.bridgeTurn, false)
+    assert.equal(h.bridge.turnLiveness("failure", "other-session"), undefined)
+    await h.bridge.startTurn({ threadSlug: "failure", sessionId: "failure-sid", text: "retry" })
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.providerError, undefined)
+    proc.completeActiveTurn()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.providerError, undefined)
+  } finally { h.close() }
 })
 
 test("an existing thread uses a newly activated ChatGPT account on its next turn", async () => {
@@ -379,6 +408,39 @@ test("an account switch waits for every active turn before replacing the shared 
   assert.equal(h.processes.length, 2)
   assert.equal(h.processes[0]!.killed, true)
   assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "turn/start"))
+  h.close()
+})
+
+// AND THE WAIT IS BOUNDED. "Every turn in this project is idle" is a whole-PROJECT condition over a
+// SHARED app-server, so on a board running several codex threads it can be a long time coming — and
+// until it came, the operator's own turn start hung on it with no timeout and no error. Measured
+// 2026-09-05 on `design-nub-static-server`: auth.json changed at 21:45Z, the thread's turn ended at
+// 23:00Z, and every follow-up typed into it hung here until the project happened to go quiet at
+// 00:19Z. Running one turn on the account already loaded is visible and recoverable; hanging the send
+// is neither, so the replacement stays armed and the turn goes ahead.
+test("a turn does not hang on an idle boundary that never comes", async () => {
+  let accountId = "account-one"
+  const h = harness(CODEX_APP_SERVER_SUPPORTED_VERSION, undefined, () => accountId, undefined, 25)
+  const active = await h.bridge.startDisposableSession({
+    threadSlug: "never-finishes", sessionId: "never-finishes-session", cwd: h.dir, ephemeral: false,
+  })
+  const waiting = await h.bridge.startDisposableSession({
+    threadSlug: "typed-into", sessionId: "typed-into-session", cwd: h.dir, ephemeral: false,
+  })
+  // This turn is never completed, so the project never reaches the boundary the replacement waits for.
+  await h.bridge.startTurn({ threadSlug: active.threadSlug, sessionId: active.sessionId, text: "still running" })
+
+  accountId = "account-two"
+  // Raced rather than awaited: without the bound this never settles, and a hung await would take the
+  // whole suite down with no reading of its own.
+  const outcome = await Promise.race([
+    h.bridge.startTurn({ threadSlug: waiting.threadSlug, sessionId: waiting.sessionId, text: "the operator's steer" })
+      .then(() => "started" as const, (error: Error) => `failed: ${error.message}` as const),
+    new Promise<"hung">((resolve) => { setTimeout(() => resolve("hung"), 3_000).unref?.() }),
+  ])
+  assert.equal(outcome, "started", "an operator turn must not wait on unrelated threads forever")
+  assert.equal(h.processes.length, 1, "the process running an existing turn is still not killed")
+  assert.equal(h.processes[0]!.killed, false)
   h.close()
 })
 

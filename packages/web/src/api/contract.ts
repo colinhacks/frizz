@@ -151,7 +151,10 @@ export interface Api {
   interactionCancel(input: CancelInteractionInput): Promise<CancelInteractionResult>
   dispatch(input: DispatchInput): Promise<{ slug: string; sessionId: string }>
   adoptThread(input: AdoptThreadInput): Promise<AdoptThreadResult>
-  followUp(input: FollowUpInput): Promise<void>
+  // `opts` carries the send deadline. A follow-up is the one mutation that can be held open
+  // indefinitely by a server-side wait, and it runs inside a per-slug FIFO — see
+  // lib/eagerComposerSubmission.ts DELIVERY_SEND_TIMEOUT_MS for what that costs without one.
+  followUp(input: FollowUpInput, opts?: RpcCallOpts): Promise<void>
   unqueueFollowUp(input: UnqueueFollowUpInput): Promise<UnqueueFollowUpResult>
   // The ↑ on a queued bubble: stop waiting and make the worker read what is already queued. No message
   // payload — see DeliverQueuedNowInput.

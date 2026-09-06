@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { DELIVERY_RETRY_BACKOFF_MS, beginEagerSubmission, enqueueThreadSend, withDeliveryRetry } from "./eagerComposerSubmission.ts"
+import { DELIVERY_RETRY_BACKOFF_MS, beginEagerSubmission, enqueueThreadSend, sendFollowUpAttempt, withDeliveryRetry } from "./eagerComposerSubmission.ts"
 
 test("eager composer submission clears and paints before its request settles", async () => {
   const order: string[] = []
@@ -140,4 +140,50 @@ test("the steer optimism is re-anchored on every attempt, not just at submit", a
     instant,
   )
   assert.equal(anchors, 3, "two backoff re-anchors plus one when the send finally landed")
+})
+
+// ── the send deadline ────────────────────────────────────────────────────────────────────────────
+// The FIFO above is what makes an unanswered send catastrophic rather than merely lost: its links are
+// `tail.then(run, run)`, so a request that never settles holds every later steer on that thread behind
+// it, forever, with no toast and no rollback. That is what "my steers were not reopening the thread"
+// looked like from the operator's side on 2026-09-05 — the server had one `turn/start` blocked for
+// 1h 18m, and every steer typed after it went nowhere and said nothing.
+test("a send the server never answers gives up, so the steers behind it still go", async () => {
+  const originalFetch = globalThis.fetch
+  const aborted: string[] = []
+  // A server that accepts the request and then never answers — the shape that wedged the chain.
+  globalThis.fetch = ((_input: unknown, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => {
+      aborted.push("first")
+      reject(new Error("aborted"))
+    })
+  })) as typeof fetch
+  try {
+    const order: string[] = []
+    const wedged = enqueueThreadSend("deadline", () =>
+      sendFollowUpAttempt("deadline", "the first steer", "delivery-1", undefined, undefined, 20)
+        .then(() => { order.push("first-ok") }, () => { order.push("first-failed") }))
+    const behind = enqueueThreadSend("deadline", async () => { order.push("second-ran") })
+
+    await wedged
+    await behind
+    assert.deepEqual(aborted, ["first"], "the deadline fires on the request itself, not just locally")
+    assert.deepEqual(order, ["first-failed", "second-ran"], "the send behind a dead one is not stranded")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+// The deadline must never fire on a send that IS being answered — a cold session resume plus a turn
+// start is seconds, and a false abort would roll back a message the worker has already read.
+test("a send that answers within the deadline is untouched by it", async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ result: null }), {
+    status: 200, headers: { "content-type": "application/json" },
+  }))) as typeof fetch
+  try {
+    await sendFollowUpAttempt("deadline", "a healthy steer", "delivery-2", undefined, undefined, 60_000)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
