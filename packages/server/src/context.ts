@@ -18,7 +18,7 @@ import { readQuota } from "./quota.ts"
 import { refreshClaudeQuotaInBackground } from "./backend/claude-quota.ts"
 import { createBoard, type BoardManager } from "./board.ts"
 import { createTailer, defaultLogDir, type Tailer } from "./tailer.ts"
-import { createDispatcher, loadWorkerPrompt, scratchpadOrientation, frizzConfigBlock, claudeMcpConfig, resolveFrizzMcp, workerPluginDir, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
+import { createDispatcher, loadWorkerPrompt, scratchpadOrientation, frizzConfigBlock, claudeMcpConfig, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
 import { createScheduler, type Scheduler, probePrReadable, type PrRef, type PrProbe } from "./scheduler.ts"
 import {
 resumeThread,
@@ -44,7 +44,6 @@ import {
   type ClaudeAgentBrokerBridge,
 } from "./backend/claude-agent-broker-bridge.ts"
 import { createClaudeRuntimeIngest, type ClaudeRuntimeIngest } from "./backend/claude-runtime-ingest.ts"
-import type { ClaudePermissionMode } from "./backend/claude-agent-sdk-protocol.ts"
 import { describeClaudeBrokerDiagnostic, droppedDeliveryId } from "./backend/claude-broker-diagnostics.ts"
 import { cancelDelivery } from "./delivery-ledger.ts"
 import {
@@ -409,11 +408,13 @@ export function deliverClaudeBrokerWake(deps: {
   slug: string
   cwd: string
   row: { session_id: string; model?: string | null; effort?: string | null; permission_mode?: string | null }
+  /** The operator's Settings, for the floor a row with NO persisted mode cold-resumes at (coldResumePermission). */
+  settings: Pick<Settings, "permissionMode">
   deliveryMessage: string
   /** Retire the live daemon first — see the bridge's followUp contract and needsFreshProcessForLimit. */
   freshProcess?: boolean
 }): Promise<void> {
-  const { bridge, slug, cwd, row, deliveryMessage, freshProcess } = deps
+  const { bridge, slug, cwd, row, settings, deliveryMessage, freshProcess } = deps
   const appendSystemPrompt = [
     loadWorkerPrompt("claude"),
     scratchpadOrientation(row.session_id, "claude"),
@@ -424,7 +425,7 @@ export function deliverClaudeBrokerWake(deps: {
     sessionId: row.session_id,
     cwd,
     text: deliveryMessage,
-    permissionMode: (row.permission_mode as ClaudePermissionMode | null) ?? undefined,
+    permissionMode: coldResumePermission(row, settings),
     appendSystemPrompt,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
@@ -920,6 +921,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
           slug,
           cwd: project.dir,
           row,
+          settings: getSettings(storage, home),
           deliveryMessage,
           // Recomputed here rather than carried on the delivery: the outbox stores a message, not a
           // runtime decision, and the tail is the live answer to "is this thread still behind a wall

@@ -1164,12 +1164,37 @@ function restartHarness(subAgents: { state: string }[] = []) {
   h.storage.upsertSession(row(slug))
   h.storage.setBackend(slug, "claude")
   h.storage.setClaudeRuntime(slug, "broker")
-  const calls: { text: string; freshProcess?: boolean }[] = []
+  const calls: { text: string; freshProcess?: boolean; permissionMode?: string }[] = []
   ;(h.ctx as { claudeBroker?: unknown }).claudeBroker = {
-    followUp: async (input: { text: string; freshProcess?: boolean }) => void calls.push(input),
+    followUp: async (input: { text: string; freshProcess?: boolean; permissionMode?: string }) => void calls.push(input),
   }
   return { h, slug, calls }
 }
+
+// A row promoted from the External band by a build that stamped NO permission mode used to hand the
+// bridge `undefined`, which a cold attach turns into Claude's `default` — the prompt-on-everything mode
+// the worker's perm-policy hook defers call by call, so every Edit parked on a card (observed
+// 2026-09-03). The follow-up substitutes the dispatch floor for such a row. It shapes the FORK only: a
+// daemon that outlived the upgrade is rebound as it is (the bridge ignores launch options for a held
+// daemon), and only a process replacement moves it. The stub here stands in for a bridge with no held
+// daemon, which is the case the substitute can reach.
+test("a follow-up on a row with no recorded permission mode cold-resumes at the dispatch floor", async () => {
+  const { h, slug, calls } = restartHarness()
+  assert.equal(h.storage.getSession(slug)?.permission_mode, null, "the legacy row carries no mode")
+  await h.router.followUp.handler({ input: { slug, sessionId: `sid-${slug}`, message: "carry on" } })
+  // This harness's Settings ask for `auto`, so `auto` is the dispatch floor here — and NOT undefined.
+  assert.equal(calls[0]?.permissionMode, "auto", "the dispatch floor, not undefined → default")
+  h.storage.close()
+})
+
+// …and a mode the operator persisted on the thread always wins over that floor.
+test("a follow-up on a row with a persisted permission mode carries that mode", async () => {
+  const { h, slug, calls } = restartHarness()
+  h.storage.setPermissionMode(slug, "bypassPermissions")
+  await h.router.followUp.handler({ input: { slug, sessionId: `sid-${slug}`, message: "carry on" } })
+  assert.equal(calls[0]?.permissionMode, "bypassPermissions")
+  h.storage.close()
+})
 
 test("Restart worker retires the live process, carrying the continuation into the fresh one", async () => {
   const { h, slug, calls } = restartHarness()

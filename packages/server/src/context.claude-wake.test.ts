@@ -26,11 +26,14 @@ const row = {
   effort: "high",
   permission_mode: "bypassPermissions",
 }
+// The operator's Settings ask for `auto` here, so `auto` is the dispatch floor in these tests — chosen
+// to differ from the row's own persisted mode, so a wake that took the wrong one is caught.
+const settings = { permissionMode: "auto" as const }
 
 test("a scheduled wake carries everything a COLD RESUME needs to rebuild the worker", async () => {
   const b = bridge()
   await deliverClaudeBrokerWake({
-    bridge: b, slug: "rested-thread", cwd: process.cwd(), row,
+    bridge: b, slug: "rested-thread", cwd: process.cwd(), row, settings,
     deliveryMessage: "your timer fired",
   })
   assert.equal(b.calls.length, 1)
@@ -52,7 +55,7 @@ test("a failing bridge REJECTS the returned promise so the scheduler can retry",
   await assert.rejects(
     deliverClaudeBrokerWake({
       bridge: { followUp: async () => { throw new Error("the session broker is unavailable") } },
-      slug: "rested-thread", cwd: process.cwd(), row, deliveryMessage: "your timer fired",
+      slug: "rested-thread", cwd: process.cwd(), row, settings, deliveryMessage: "your timer fired",
     }),
     /session broker is unavailable/,
   )
@@ -64,8 +67,30 @@ test("a failing bridge REJECTS the returned promise so the scheduler can retry",
 // kill, which is why the sweep needs no coordination with the scheduler at all.
 test("freshProcess rides through untouched, and defaults to absent", async () => {
   const b = bridge()
-  await deliverClaudeBrokerWake({ bridge: b, slug: "s", cwd: process.cwd(), row, deliveryMessage: "m" })
+  await deliverClaudeBrokerWake({ bridge: b, slug: "s", cwd: process.cwd(), row, settings, deliveryMessage: "m" })
   assert.equal(b.calls[0].freshProcess, undefined)
-  await deliverClaudeBrokerWake({ bridge: b, slug: "s", cwd: process.cwd(), row, deliveryMessage: "m", freshProcess: true })
+  await deliverClaudeBrokerWake({ bridge: b, slug: "s", cwd: process.cwd(), row, settings, deliveryMessage: "m", freshProcess: true })
   assert.equal(b.calls[1].freshProcess, true)
+})
+
+// A row promoted from the External band by a build that stamped NO permission mode used to hand the
+// bridge `undefined`, which a cold resume turns into Claude's `default` — the prompt-on-everything mode
+// the worker's perm-policy hook defers call by call, so every Edit parked on a card (observed
+// 2026-09-03). The follow-up RPC substitutes the dispatch floor for such a row, and a scheduled wake —
+// a timer, a goal, a PR watch, a limit auto-resume — must do the same, or the legacy row converges only
+// when a human happens to type at it.
+test("a scheduled wake of a row with no recorded permission mode cold-resumes at the dispatch floor", async () => {
+  const b = bridge()
+  await deliverClaudeBrokerWake({
+    bridge: b, slug: "legacy", cwd: process.cwd(), row: { ...row, permission_mode: null }, settings,
+    deliveryMessage: "your timer fired",
+  })
+  assert.equal(b.calls[0].permissionMode, "auto", "the dispatch floor, not undefined → default")
+})
+
+// …and the row's own persisted mode always wins over that floor (the case above pins the difference).
+test("a scheduled wake carries a persisted permission mode over the dispatch floor", async () => {
+  const b = bridge()
+  await deliverClaudeBrokerWake({ bridge: b, slug: "s", cwd: process.cwd(), row, settings, deliveryMessage: "m" })
+  assert.equal(b.calls[0].permissionMode, "bypassPermissions")
 })

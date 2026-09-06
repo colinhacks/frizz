@@ -140,11 +140,10 @@ import { openLocalFile, readLocalMarkdown, resolveOpenableFile, readLocalTextFil
 import { openableFileRoots } from "./project.ts"
 import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
 import { createGithubHovercardService } from "./github-hovercard.ts"
-import { slugify, resolveSlug, resolveLegacyThreadFile, loadWorkerPrompt, scratchpadOrientation, frizzConfigBlock } from "./dispatch.ts"
+import { slugify, resolveSlug, resolveLegacyThreadFile, loadWorkerPrompt, scratchpadOrientation, frizzConfigBlock, coldResumePermission } from "./dispatch.ts"
 import { readCodexModels } from "./backend/codex-models.ts"
 import { codexSandbox } from "./backend/codex.ts"
 import type { CodexSandboxMode } from "./backend/codex-app-server.ts"
-import type { ClaudePermissionMode } from "./backend/claude-agent-sdk-protocol.ts"
 import { readQuota } from "./quota.ts"
 import { readAuthSnapshot } from "./backend/auth-status.ts"
 import { liveThreadsForBackend, runProviderLogout } from "./backend/account-actions.ts"
@@ -1143,7 +1142,11 @@ export function createRouter(ctx: AppContext) {
         sessionId: row.session_id,
         cwd: ctx.project.dir,
         text: `${shellStopNotice(label)} Whatever it wrote before the kill is still readable in its output file.`,
-        permissionMode: (row.permission_mode as ClaudePermissionMode | null) ?? undefined,
+        // `isDaemonAlive` above is a check, not a hold: the daemon can exit before this frame lands,
+        // and followUp then COLD-RESUMES rather than failing. Take the same floor every other fork
+        // takes, so a notice that loses the race cannot be the thing that rebuilds the worker at
+        // Claude's `default` — see coldResumePermission.
+        permissionMode: coldResumePermission(row, ctx.getSettings()),
         model: row.model ?? undefined,
         effort: row.effort ?? undefined,
       })
@@ -1832,7 +1835,9 @@ export function createRouter(ctx: AppContext) {
             // Rides through to the SDK as this input's uuid, which the SDK echoes back on the record
             // that delivers it — the ledger then correlates by identity rather than by text.
             deliveryId: input.deliveryId,
-            permissionMode: (row.permission_mode as ClaudePermissionMode | null) ?? undefined,
+            // A persisted per-thread mode, or the dispatch floor for a row that has none — see
+            // coldResumePermission for why a legacy row must not fall through to the bridge's `"default"`.
+            permissionMode: coldResumePermission(row, ctx.getSettings()),
             appendSystemPrompt,
             model: row.model ?? undefined,
             effort: row.effort ?? undefined,

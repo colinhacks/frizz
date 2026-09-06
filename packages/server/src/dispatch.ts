@@ -12,7 +12,7 @@ import {
   slugify,
   threadIdentityName,
   type Settings,
-  type PermissionMode,
+  PermissionMode,
   type ProviderAuth,
 } from "@frizz/shared"
 import { log as frizzLog } from "./logging.ts"
@@ -438,6 +438,19 @@ export const WORKER_DISPATCH_PERMISSION: Record<BackendKind, PermissionMode> = {
 export function workerDispatchPermission(kind: BackendKind, settings: Pick<Settings, "permissionMode">): PermissionMode {
   if (kind === "claude" && settings.permissionMode === "bypassPermissions") return "bypassPermissions"
   return WORKER_DISPATCH_PERMISSION[kind]
+}
+
+// The mode a Claude row COLD-RESUMES with. A persisted per-thread mode always wins; a row with none — a
+// terminal session promoted before adoptSession stamped one — takes the dispatch floor instead of
+// falling through to the bridge's `"default"`, Claude's prompt-on-everything mode, which the worker's
+// perm-policy hook defers call by call (observed 2026-09-03: every Edit became a card). Shared by every
+// path that can fork a process for an existing row — the follow-up RPC and the scheduled wakes (timer,
+// goal, PR watch, limit auto-resume) — so a legacy row converges the same way whichever one wakes it.
+// It shapes a FORK only: a daemon that outlived the upgrade is rebound as it is, and keeps its mode
+// until the operator's permission control or Restart worker replaces the process.
+export function coldResumePermission(row: { permission_mode?: string | null }, settings: Pick<Settings, "permissionMode">): PermissionMode {
+  const saved = PermissionMode.safeParse(row.permission_mode)
+  return saved.success ? saved.data : workerDispatchPermission("claude", settings)
 }
 
 // Canonical value that describes the permission policy the backend ACTUALLY receives. Claude's
@@ -1080,6 +1093,13 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         state: "open",
         meta: null,
         seen_at: null,
+        // The SAME launch mode a dispatched worker gets. The follow-up that triggered this promotion
+        // resumes the session with `row.permission_mode`, and a row with none fell through to the
+        // bridge's `"default"` — Claude's prompt-on-everything mode, which the worker's own perm-policy
+        // hook then DEFERS on every call (`restrictive-mode`), so each Edit became a card. Observed
+        // 2026-09-03 on a terminal session driven from the board: every frizz-sent turn ran at
+        // `default` while the human's own TUI on the same transcript sat at `auto`.
+        permission_mode: workerDispatchPermission(backend, deps.getSettings()),
       })
       deps.storage.setBackend(slug, backend)
       if (backend === "codex") deps.storage.setAgentSession(slug, externalId)

@@ -86,7 +86,7 @@ function harness(subAgent: (slug: string, id: string) => SubAgentInfo, opts: {
   const stops: { threadSlug: string; sessionId: string; taskId: string }[] = []
   // Every message frizz delivered into the worker's own conversation. For these tests that is only ever
   // the shell-kill notice — the one thing the provider does not tell a worker itself.
-  const notices: { threadSlug: string; sessionId: string; text: string }[] = []
+  const notices: { threadSlug: string; sessionId: string; text: string; permissionMode?: string }[] = []
   const codexTerminations: { threadSlug: string; sessionId: string; processId: string; notice?: string }[] = []
   const ctx = {
     project,
@@ -113,9 +113,9 @@ function harness(subAgent: (slug: string, id: string) => SubAgentInfo, opts: {
         stops.push(input)
       },
       isDaemonAlive: () => opts.daemonAlive !== false,
-      followUp: async (input: { threadSlug: string; sessionId: string; text: string }) => {
+      followUp: async (input: { threadSlug: string; sessionId: string; text: string; permissionMode?: string }) => {
         if (opts.followUpThrows) throw opts.followUpThrows
-        notices.push({ threadSlug: input.threadSlug, sessionId: input.sessionId, text: input.text })
+        notices.push({ threadSlug: input.threadSlug, sessionId: input.sessionId, text: input.text, permissionMode: input.permissionMode })
       },
     },
   } as unknown as AppContext
@@ -542,6 +542,11 @@ test("the × STOPS a background shell for real, retires the row, and TELLS the w
     assert.match(h.notices[0]!.text, /^\[frizz\] /, "machine plumbing, hidden from the human's chat")
     assert.match(h.notices[0]!.text, /Watching CI/)
     assert.match(h.notices[0]!.text, /do not wait on it/)
+    // `isDaemonAlive` is a check, not a hold: if the daemon exits before this frame lands, followUp
+    // cold-resumes instead of failing, and an absent mode is the bridge's `"default"` — the
+    // prompt-on-everything mode that turns the rebuilt worker's every call into a card. The notice
+    // carries the dispatch floor for the same reason every other fork does.
+    assert.equal(h.notices[0]!.permissionMode, "auto", "the dispatch floor, not undefined → default")
   } finally {
     h.cleanup()
   }
