@@ -29,7 +29,7 @@ document.documentElement.dataset.font = new URLSearchParams(location.search).get
 
 // ── copies of the rail's atoms (ThreadRow / StatusBox / SectionHeader, Sidebar.tsx) ───────────────
 
-const ROW_ACTION_CLASS = "flex h-[19px] w-[19px] items-center justify-center rounded text-muted/70 outline-none transition-colors hover:bg-panel-2 hover:text-fg"
+const ROW_ACTION_CLASS = "flex h-[19px] w-[19px] items-center justify-center rounded text-muted-70 outline-none transition-colors hover:bg-panel-2 hover:text-fg"
 
 function StatusBox({ children }: { children?: ReactNode }) {
   return (
@@ -40,8 +40,8 @@ function StatusBox({ children }: { children?: ReactNode }) {
 }
 
 const spinner = <BoxSpinner />
-const atRest = <StatusBox><Ellipsis size={10} className="text-muted/70" /></StatusBox>
-const done = <StatusBox><Check size={10} strokeWidth={3} className="text-muted/75" /></StatusBox>
+const atRest = <StatusBox><Ellipsis size={10} className="text-muted-70" /></StatusBox>
+const done = <StatusBox><Check size={10} strokeWidth={3} className="text-muted-75" /></StatusBox>
 
 // ThreadRow's skeleton: marker rail inset (pl-5), indicator column, 13px/19px title, and the two
 // right-edge surfaces — an in-flow rest-time column and the absolute hover-action overlay. `hovered`
@@ -65,7 +65,7 @@ function Row({ indicator, title, restedAge, mark, actions, hovered }: {
           <span className="flex min-w-0 items-baseline gap-3">
             <span className="min-w-0 flex-1 break-words text-[13px] leading-[19px] text-fg/90">{title}</span>
             {restedAge && (
-              <span className={`shrink-0 tabular-nums text-[10.5px] leading-[19px] text-muted/55 ${hovered ? "opacity-0" : ""}`}>{restedAge}</span>
+              <span className={`shrink-0 tabular-nums text-[10.5px] leading-[19px] text-muted-55 ${hovered ? "opacity-0" : ""}`}>{restedAge}</span>
             )}
           </span>
         </span>
@@ -82,10 +82,10 @@ function Row({ indicator, title, restedAge, mark, actions, hovered }: {
 
 function Header({ label, count }: { label: string; count: number }) {
   return (
-    <div className="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] uppercase tracking-wide text-muted/70">
+    <div className="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] uppercase tracking-wide text-muted-70">
       <ChevronRight size={11} />
       <span>{label}</span>
-      <span className="ml-1.5 tabular-nums text-muted/60">{count}</span>
+      <span className="ml-1.5 tabular-nums text-muted-60">{count}</span>
     </div>
   )
 }
@@ -98,7 +98,7 @@ function Rule() {
 // of the rail, directly under the prompt box, above the cue.
 function PromptBoxGhost() {
   return (
-    <div className="mb-5 rounded-lg border border-border/60 bg-panel px-3 py-2.5 text-[13px] text-muted/40">
+    <div className="mb-5 rounded-lg border border-border/60 bg-panel px-3 py-2.5 text-[13px] text-muted-40">
       Dispatch a new thread…
     </div>
   )
@@ -124,7 +124,7 @@ const expandAction = (
 // replaces. Filled because the outline Pin at this size reads as a speck — but the STROKE stays on:
 // lucide's needle is a stroke-only line (`M12 17v5`) with no fill area, so strokeWidth 0 erases it and
 // leaves a headless blob.
-const pinMark = <Pin size={11} fill="currentColor" className="text-muted/55" />
+const pinMark = <Pin size={11} fill="currentColor" className="text-muted-55" />
 
 // ── the shared rail body below the pinned band (identical in both variants) ───────────────────────
 
@@ -162,7 +162,7 @@ function Panel({ title, note, children }: { title: string; note: string; childre
   return (
     <section className="w-[340px] shrink-0">
       <h2 className="mb-1 text-[13px] font-semibold text-fg/90">{title}</h2>
-      <p className="mb-4 min-h-[45px] text-[11px] leading-[15px] text-muted/60">{note}</p>
+      <p className="mb-4 min-h-[45px] text-[11px] leading-[15px] text-muted-60">{note}</p>
       <div className="rounded-xl border border-border/40 p-3">{children}</div>
     </section>
   )
@@ -171,7 +171,7 @@ function Panel({ title, note, children }: { title: string; note: string; childre
 createRoot(document.getElementById("root")!).render(
   <main className="min-h-screen bg-bg px-10 py-10 text-fg">
     <h1 className="mb-1 text-[15px] font-semibold">Pin — a thread out of the rail system, at the very top</h1>
-    <p className="mb-8 max-w-[720px] text-[11.5px] leading-[16px] text-muted/60">
+    <p className="mb-8 max-w-[720px] text-[11.5px] leading-[16px] text-muted-60">
       A pinned thread leaves Rested/Active/Snoozed/Done entirely and holds the top of the rail, above the queue, in the order it was pinned. Its indicator stays live (a pinned thread can still spin, rest, or finish); only its PLACE is frozen. The verb is a hover action on every row, beside the fullscreen door.
     </p>
     <div className="flex items-start gap-10">
@@ -193,20 +193,20 @@ createRoot(document.getElementById("root")!).render(
       <Panel title="The hover verb, beside the fullscreen door" note="Every row: [pin] then [expand], in the existing action strip (the cue's rest time yields on hover, as it already does for Retry). A pinned row swaps in [unpin].">
         <div className="flex flex-col gap-6">
           <div>
-            <p className="mb-1 px-1.5 text-[10.5px] text-muted/50">an ordinary cue row, hovered</p>
+            <p className="mb-1 px-1.5 text-[10.5px] text-muted-50">an ordinary cue row, hovered</p>
             <Row indicator={atRest} title="Fix the cache collision in the resolver" restedAge="2h 10m" hovered actions={<>{pinAction}{expandAction}</>} />
           </div>
           <div>
-            <p className="mb-1 px-1.5 text-[10.5px] text-muted/50">a pinned row, hovered</p>
+            <p className="mb-1 px-1.5 text-[10.5px] text-muted-50">a pinned row, hovered</p>
             <Row indicator={spinner} title="Frizz v2 launch checklist" mark={pinMark} hovered actions={<>{unpinAction}{expandAction}</>} />
           </div>
           <div>
-            <p className="mb-1 px-1.5 text-[10.5px] text-muted/50">the same rows, at rest (marks visible, actions hidden)</p>
+            <p className="mb-1 px-1.5 text-[10.5px] text-muted-50">the same rows, at rest (marks visible, actions hidden)</p>
             <Row indicator={atRest} title="Fix the cache collision in the resolver" restedAge="2h 10m" actions={<>{pinAction}{expandAction}</>} />
             <Row indicator={spinner} title="Frizz v2 launch checklist" mark={pinMark} actions={<>{unpinAction}{expandAction}</>} />
           </div>
           <div>
-            <p className="mb-1 px-1.5 text-[10.5px] text-muted/50">a done thread stays pinned until unpinned — the pin outranks Done</p>
+            <p className="mb-1 px-1.5 text-[10.5px] text-muted-50">a done thread stays pinned until unpinned — the pin outranks Done</p>
             <Row indicator={done} title="Redesign the queue card actions" mark={pinMark} />
           </div>
         </div>

@@ -12,6 +12,7 @@ import {
 import type { LucideIcon } from "lucide-react"
 import { AGE_LADDER_YEARS_FROM_DAYS, compactAge } from "../lib/activityTime.ts"
 import { PRIMER } from "../lib/primer.ts"
+import { githubLabelColors } from "../lib/githubLabelColors.ts"
 
 // The CONTENTS of a GitHub hovercard — the panel GithubHovercards.tsx anchors under a `#123` or a
 // commit hash. Split from the hover machinery so it can be rendered from a fixture with a literal
@@ -110,7 +111,7 @@ const BLOCK_STYLE = {
   add: { backgroundColor: PRIMER.bgSuccessEmphasis, borderColor: PRIMER.bgSuccessEmphasis },
   del: { backgroundColor: PRIMER.bgDangerEmphasis, borderColor: PRIMER.bgDangerEmphasis },
   // The empty block is neutral at 0x33, over Primer's own `--borderColor-default` hairline.
-  none: { backgroundColor: `${PRIMER.bgNeutralEmphasis}33`, borderColor: "#3d444d" },
+  none: { backgroundColor: "color-mix(in srgb, var(--gh-bg-neutral-emphasis) 20%, transparent)", borderColor: "var(--gh-neutral-border)" },
 } as const
 
 function Diffstat({ additions, deletions }: { additions: number; deletions: number }) {
@@ -144,7 +145,7 @@ function StatePill({ card }: { card: GithubRefCard }) {
   return (
     <span
       data-gh-pill
-      className="inline-flex items-baseline gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium text-white"
+      className="inline-flex items-baseline gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium text-[color:var(--gh-on-emphasis)]"
       style={{ backgroundColor: style.bg }}
     >
       {/* ITEMS-BASELINE, not items-center, and the size in `em` rather than px. Every one of these
@@ -166,15 +167,14 @@ function StatePill({ card }: { card: GithubRefCard }) {
   )
 }
 
-// GitHub's label chips: the label's own hex as the text colour, the same hex at low alpha as the
-// fill, and a hairline of it as the border — which is exactly how a `d73a4a` bug label reads red on a
-// dark background without becoming a solid red block.
+// GitHub label hues are API data. The shared treatment preserves each hue as a tint while blending its
+// foreground into the document's semantic ink, which keeps white and pale-yellow labels readable.
 function LabelChip({ name, color }: { name: string; color: string }) {
-  const hex = /^[0-9a-fA-F]{6}$/.test(color) ? `#${color}` : "#8b8f96"
+  const label = githubLabelColors(color)
   return (
     <span
       className="inline-flex items-center rounded-full border px-2 py-[1px] text-[11px] font-medium"
-      style={{ color: hex, backgroundColor: `${hex}26`, borderColor: `${hex}59` }}
+      style={{ color: label.foreground, backgroundColor: label.background, borderColor: label.border }}
     >
       {name}
     </span>

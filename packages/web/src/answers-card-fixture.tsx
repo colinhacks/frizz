@@ -58,43 +58,43 @@ function Fixture() {
   return (
     <div className="mx-auto my-8 flex w-[min(560px,calc(100%-32px))] flex-col gap-6">
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">Answers card (thread width)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Answers card (thread width)</div>
         <div className="flex flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={m} paired={paired} />
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">Answers card (dense / queue width)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Answers card (dense / queue width)</div>
         <div className="flex w-[380px] flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={m} paired={paired} dense />
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">Buried-ask answers (thread width)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Buried-ask answers (thread width)</div>
         <div className="flex flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={buried} />
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">Registered-question answers, with a follow-up and a dismissal</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Registered-question answers, with a follow-up and a dismissal</div>
         <div className="flex flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={registered} />
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">…the same one IN FLIGHT (the seconds before the worker has it)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">…the same one IN FLIGHT (the seconds before the worker has it)</div>
         <div className="flex flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={{ ...registered, queued: true } as unknown as TranscriptMessage} />
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">Buried-ask answers (dense / queue width)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Buried-ask answers (dense / queue width)</div>
         <div className="flex w-[380px] flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={buried} dense />
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted/70">Before — the same text as a raw bubble</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Before — the same text as a raw bubble</div>
         <div className="flex flex-col rounded-lg border border-border bg-panel p-4">
           <Message m={buried} paired={null} />
         </div>

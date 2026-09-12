@@ -217,7 +217,7 @@ test("both panels hang one identical arrow off one shared constant, differing on
     renderToStaticMarkup(createElement(RestartFailureNotice, { update: true, message: "boom", onDismiss: () => undefined })),
   )
   assert.ok(popover.length > 0 && failure.length > 0)
-  assert.equal(popover.replace(" border-border-strong", ""), failure.replace(" border-red-500/45", ""))
+  assert.equal(popover.replace(" border-border-strong", ""), failure.replace(" border-danger-fill/45", ""))
 
   // The utilities the numbers above claim to describe. Three chevrons in this app once drifted into
   // two offsets and two tones by being placed one call site at a time; this is the same guard.

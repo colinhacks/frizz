@@ -547,8 +547,8 @@ export function TodosView() {
         // on renderItems (not items) so the empty state can't flash UNDER the last card while it
         // dissolves.
         <div className="flex flex-col items-center gap-2 pt-2">
-          <Inbox size={40} strokeWidth={1.25} className="text-muted/30" />
-          <div className="text-[13px] text-muted/80">No threads awaiting human input</div>
+          <Inbox size={40} strokeWidth={1.25} className="text-muted-30" />
+          <div className="text-[13px] text-muted-80">No threads awaiting human input</div>
         </div>
       ) : null}
     </div>
@@ -565,7 +565,7 @@ function BoardErrorsBanner({ board }: { board: BoardSnapshot | null }) {
   const legacy = board?.errors ?? []
   if (items.length === 0 && legacy.length === 0) return null
   return (
-    <div className={`mb-6 ${BLOCK_RADIUS} border border-amber-500/25 bg-amber-500/[0.06] px-4 py-2.5 text-[12px] text-amber-200/90`}>
+    <div className={`mb-6 ${BLOCK_RADIUS} border border-attention-fill/25 bg-attention-fill/[0.06] px-4 py-2.5 text-[12px] text-attention-detail-90`}>
       <div className="font-medium mb-0.5">Board errors</div>
       {items.length > 0
         ? items.slice(0, 6).map((it, i) => (
@@ -600,7 +600,7 @@ function RepairButton({ file }: { file: string }) {
     <button
       onClick={() => repair.mutate()}
       disabled={repair.isPending}
-      className="shrink-0 rounded border border-amber-400/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-100 transition-colors hover:bg-amber-500/25 disabled:opacity-50"
+      className="shrink-0 rounded border border-attention/50 bg-attention-fill/10 px-2 py-0.5 text-[11px] font-medium text-attention-soft transition-colors hover:bg-attention-fill/25 disabled:opacity-50"
       title="Prepend minimal frontmatter (title + status: active) so this thread becomes visible again"
     >
       {repair.isPending ? "Repairing…" : "Repair"}
@@ -1277,12 +1277,12 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
             </div>
             <AiRenameButton thread={thread} />
           </div>
-          <LastActive at={lastActiveLabelAt(thread)} fallbackAt={thread.spawnedAt} className="mt-0.5 block truncate text-[11px] leading-tight text-muted/75" />
+          <LastActive at={lastActiveLabelAt(thread)} fallbackAt={thread.spawnedAt} className="mt-0.5 block truncate text-[11px] leading-tight text-muted-75" />
           {/* status_text is worker-authored frontmatter prose — only decision-relevant when the
               thread is actually waiting on the human, so it renders ONLY for needs-human threads (the
               declared awaiting-you state; blocked is now a pure machine-wait and never cards). */}
           {thread.statusText && thread.status === "needs-human" && (
-            <div className="text-[11px] text-muted/80 mt-0.5 truncate" title={thread.statusText}>
+            <div className="text-[11px] text-muted-80 mt-0.5 truncate" title={thread.statusText}>
               {thread.statusText}
             </div>
           )}

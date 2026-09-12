@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./theme.css";
 
 /* Dark, dense orchestration surface. Yellow accent = "awaiting you".
    Mono-forward type system (Cursor/Linear-flavored), 13px base. */
@@ -17,28 +18,14 @@
      while a file click still fell back to the overlay drawer. */
   --breakpoint-split: 1200px;
 
-  --color-bg: #0d0e10;
-  --color-panel: #131519;
-  --color-panel-2: #181b20;
-  --color-elevated: #1c1f25;
-  --color-border: #26282d;
-  --color-border-strong: #33363c;
-  --color-fg: #e6e7e9;
   /* User chat bubble fill — a tick less white than --color-fg so the human's words read as a warm
      off-white card rather than a stark white block, while text (text-bg) stays high-contrast. */
-  --color-user-bubble: #d5d7da;
-  --color-muted: #8b8f96;
-  --color-accent: #e8b923;
-  --color-live: #4ac97e;
   /* A parked PR watcher's mark. Fitted to the accent-yellow/shell-blue pair in OKLCH rather than picked
      — see the .frizz-live-dot--github rule below for the numbers and for why it is violet and not the
      green that fits the same numbers. */
-  --color-watch: #b47feb;
-  --color-idle: #6b7280;
   /* Live-work indicators split by runtime concern: a background SHELL/Monitor pulses blue, a
      sub-agent pulses the accent-yellow. The blue is a clear azure, kept distinct from --color-live
      green and the accent gold so the two live states never blur. */
-  --color-shell: #4a9eff;
 
   /* CODE TOKEN COLOURS — one palette, every code surface in the app.
 
@@ -53,15 +40,6 @@
      tuned set rather than a hand-picked one, and it survives this app's darker background (#0d0e10 vs
      dark-dimmed's own #22272e) with room to spare. Both engines map onto these vars and neither one
      may hard-code a colour: `.hljs-*` below, `ftk-*` in lib/diff/diff.css. */
-  --code-kw: #f47067; /* keywords, doctags, template tags */
-  --code-op: var(--code-kw); /* operators track keywords, as the diff has always drawn them */
-  --code-fn: #dcbdfb; /* function/class names at their definition or call */
-  --code-num: #6cb6ff; /* numbers, literals, attributes, plain variables */
-  --code-str: #96d0ff; /* strings, regexps */
-  --code-type: #f69d50; /* built-ins, declared types, symbols */
-  --code-com: #768390; /* comments and quotes */
-  --code-tag: #8ddb8c; /* markup element and selector names */
-  --code-punct: #adbac7; /* brackets, separators — dark-dimmed's own base text tone */
 
   --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Mono", Consolas,
     Menlo, "DejaVu Sans Mono", monospace;
@@ -617,11 +595,11 @@ a[href] {
   height: var(--sbw);
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c2f35;
+  background: var(--color-scrollbar);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3d44;
+  background: var(--color-scrollbar-hover);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -629,6 +607,26 @@ a[href] {
 .scrollbar-none {
   scrollbar-width: none; /* Firefox */
 }
+
+/* The new selector's 1em chevron shares the cap band in either UI font. The uncorrected
+   mono glyph sat 0.94px below it; baseline + cap avoids a font-specific fitted offset. */
+.appearance-select {
+  align-items: baseline;
+  border-color: var(--color-control-border);
+}
+.appearance-select .select-caret {
+  width: 1em;
+  height: 1em;
+  translate: 0 calc(0.5em - 0.5cap);
+}
+.appearance-select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.mobile-tab-inactive { opacity: var(--inactive-mark-opacity); }
+.sidebar-row-dim { opacity: var(--sidebar-dim-opacity); }
+.sidebar-row-dim:hover, .sidebar-row-dim:focus-within { opacity: var(--row-dim-hover-opacity); }
+.mobile-row-dim { opacity: var(--mobile-dim-opacity); }
 .scrollbar-none::-webkit-scrollbar {
   display: none; /* WebKit/Blink */
 }
@@ -649,7 +647,7 @@ a[href] {
 }
 
 ::selection {
-  background: rgba(232, 185, 35, 0.22);
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
   color: inherit;
 }
 
@@ -1238,7 +1236,7 @@ a[href] {
    (`.md-body .hljs` below, `.frizz-bash-body` in diff.css), because unclassified code should read as
    that surface's own foreground rather than pull a second grey into the card. */
 .md-body .hljs {
-  color: #d5d8dc;
+  color: var(--code-base);
 }
 .hljs .hljs-comment,
 .hljs .hljs-code,
@@ -1313,19 +1311,19 @@ a[href] {
    match the rendered Edit diff's own add/del rows (lib/diff/diff.css) so a diff pasted into prose and
    a diff frizz rendered itself do not read as two different things. */
 .hljs .hljs-addition {
-  color: #b4f1b4;
-  background: rgba(87, 171, 90, 0.15);
+  color: var(--code-add);
+  background: var(--code-add-bg);
 }
 .hljs .hljs-deletion {
-  color: #ffd8d3;
-  background: rgba(229, 83, 75, 0.15);
+  color: var(--code-del);
+  background: var(--code-del-bg);
 }
 /* The `cat -n` line numbers a Read excerpt carries. They are not source and must never compete with
    it: the same tone the rendered diff gives its own gutter, and unselectable-looking but still
    SELECTABLE, because copying the excerpt has always yielded the numbers and quietly changing that
    would break anyone who pastes a line reference out of a card. */
 .frizz-code-gutter {
-  color: #4b4f57;
+  color: var(--code-gutter);
 }
 .md-body blockquote {
   border-left: 2px solid var(--color-border-strong);
@@ -1399,7 +1397,7 @@ a[href] {
 @layer components {
   /* Text inputs. Quiet border, no ring — a soft accent border on focus is the whole affordance. */
   .input {
-    @apply w-full rounded-md border border-border bg-bg px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-accent/60 placeholder:text-muted;
+    @apply w-full rounded-md border border-control-border bg-bg px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-input-focus placeholder:text-muted;
   }
   .btn-ghost {
     @apply px-2.5 py-1.5 rounded-md text-[12px] text-muted transition-colors hover:text-fg hover:bg-panel-2 outline-none;

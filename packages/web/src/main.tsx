@@ -9,6 +9,7 @@ import { connectSync } from "./api/socket.ts"
 import { initTranscriptLive } from "./api/transcript-live.ts"
 import { initSupervisorStatus } from "./api/supervisorStatus.ts"
 import { initFont } from "./lib/font.ts"
+import { initTheme } from "./lib/theme.ts"
 import { installExternalLinkInterceptor } from "./lib/external-links.ts"
 import { installLocalFileLinkInterceptor } from "./lib/local-file-links.ts"
 import { installCodeCopyInterceptor } from "./lib/copy-code.ts"
@@ -46,6 +47,7 @@ export const queryClient = new QueryClient({
 // One multiplexed /ws (board + transcript push + notify); falls back to SSE + polling if /ws is
 // unavailable (a pre-restart server). The socket writes transcript pushes into this queryClient's cache.
 if (!settingsFixture) {
+  initTheme()
   connectSync(queryClient)
   // Observer-driven transcript liveness: any mounted surface observing ["transcript", slug] is kept
   // fresh centrally (socket subscription within budget, activity-edge refetch beyond) — components

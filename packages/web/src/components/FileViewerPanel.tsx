@@ -196,7 +196,7 @@ export function FileViewerPanel({ slug, path }: { slug: string; path: string }) 
         {body.isLoading ? (
           <div className="text-[13px] text-muted">Loading…</div>
         ) : body.error ? (
-          <div className="text-[13px] text-red-400/90">Couldn’t read this file: {(body.error as Error).message}</div>
+          <div className="text-[13px] text-danger-90">Couldn’t read this file: {(body.error as Error).message}</div>
         ) : view === "source" ? (
           raw ? (
             // Highlighted through the same hljs pipeline as every transcript code body (lib/codeBody);
@@ -230,7 +230,7 @@ export function FileViewerPanel({ slug, path }: { slug: string; path: string }) 
         className="shrink-0 flex items-center justify-between gap-3 border-t border-border/60 bg-panel px-5 pt-3"
         style={FOOTER_STYLE}
       >
-        <span className="min-w-0 truncate text-[11px] text-muted/70">Select text and press ⌘I to add it to the chat</span>
+        <span className="min-w-0 truncate text-[11px] text-muted-70">Select text and press ⌘I to add it to the chat</span>
         <OpenAction path={resolved} />
       </div>
     </div>

@@ -63,6 +63,10 @@ const CARDS: { id: string; caption: string; card: GithubRefCard }[] = [
         { name: "bug", color: "d73a4a" },
         { name: "resolver", color: "0e8a16" },
         { name: "good first issue", color: "7057ff" },
+        { name: "pale yellow", color: "fff5b1" },
+        { name: "white", color: "ffffff" },
+        { name: "near black", color: "010101" },
+        { name: "malformed", color: "not-a-color" },
       ],
     },
   },
@@ -252,6 +256,8 @@ function Fixture() {
 
 const font = new URLSearchParams(location.search).get("font")
 document.documentElement.dataset.font = font === "mono" ? "mono" : "sans"
+const theme = new URLSearchParams(location.search).get("theme")
+document.documentElement.dataset.theme = theme === "light" ? "light" : "dark"
 // The autolinker is inert until the board hands it a repo, exactly as in the app.
 setGithubRepo("nubjs/nub")
 createRoot(document.getElementById("root")!).render(<Fixture />)

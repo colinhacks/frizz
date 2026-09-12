@@ -54,10 +54,10 @@ function DirRow({ name, depth }: { name: string; depth: number }) {
   return (
     <div
       data-file-dir={name}
-      className="flex items-baseline text-[12px] leading-5 text-muted/70"
+      className="flex items-baseline text-[12px] leading-5 text-muted-70"
       style={{ paddingLeft: depth * TREE_INDENT }}
     >
-      <span className="flex shrink-0"><Folder size={12} className={`${ON_CAP} text-muted/45`} /></span>
+      <span className="flex shrink-0"><Folder size={12} className={`${ON_CAP} text-muted-45`} /></span>
       {/* ml-[5px], not the row's ml-1.5: lucide's folder inks 11 of its 12 box px, so 6px of box read
           as 7.33px of ink (ink-gaps, dsf 6) against the card rows' 6.5 — and the file rows below it
           are trimmed to the same 6.33 (see FileRow), so the tree's two glyph→name gaps agree. */}
@@ -104,7 +104,7 @@ function FileRow({ file, name, depth }: { file: EditedFile; name: string; depth:
       // -mr-[2px]: this glyph inks only 9 of its 12 box px (1.5px dead each side), so the row's ml-1.5
       // drew 8.33px of ink to the name where the card's rows draw ~6.5 (ink-gaps, dsf 6). The trim
       // lands it at 6.33, the same reading as the directory row above it.
-      mark={<FileDiff size={12} className={`${ON_CAP} -mr-[2px] text-muted/60`} />}
+      mark={<FileDiff size={12} className={`${ON_CAP} -mr-[2px] text-muted-60`} />}
       // The basename is the name and the directory row above it says where; the full path is the
       // tooltip. A 340px rail truncates from the end, and a repo path truncated from the end lost
       // exactly the part that names the file.
@@ -164,7 +164,7 @@ export function FocusRail({ thread }: { thread: ThreadView }) {
     <aside data-focus-rail aria-label="Thread activity" className="flex h-full shrink-0 flex-col overflow-y-auto px-4 [view-transition-name:thread-rail]" style={{ width: RAIL_WIDTH }}>
       <div className="my-auto py-6">
         {groups.length === 0
-          ? <div className="text-[11.5px] text-muted/50">Nothing running, watched or edited yet.</div>
+          ? <div className="text-[11.5px] text-muted-50">Nothing running, watched or edited yet.</div>
           : <WaitGrid groups={groups} divider={false} />}
       </div>
     </aside>

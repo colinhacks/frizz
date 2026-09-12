@@ -87,10 +87,10 @@ export function AiRenameButton({ thread, hidden = false }: { thread: ThreadView;
           revealed ? "opacity-100" : "opacity-0"
         } ${
           rename.error
-            ? "text-red-400 hover:bg-red-500/10"
+            ? "text-danger hover:bg-danger-fill/10"
             : availability.enabled
               ? "text-muted hover:bg-panel-2 hover:text-fg"
-              : "cursor-not-allowed text-muted/50 hover:bg-panel-2"
+              : "cursor-not-allowed text-muted-50 hover:bg-panel-2"
         }`}
       >
         {rename.isPending ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />}

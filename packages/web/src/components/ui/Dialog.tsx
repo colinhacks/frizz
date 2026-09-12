@@ -23,7 +23,7 @@ export function Dialog({
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="overlay-in fixed inset-0 z-[200] bg-black/55 backdrop-blur-[1px]" />
+        <RadixDialog.Overlay className="overlay-in fixed inset-0 z-[200] bg-scrim-55 backdrop-blur-[1px]" />
         <RadixDialog.Content
           aria-modal="true"
           onEscapeKeyDown={handleDialogEscape}

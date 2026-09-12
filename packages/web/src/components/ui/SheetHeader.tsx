@@ -37,7 +37,7 @@ export function SheetHeader({
           </span>
           {meta}
         </div>
-        {subtitle && <span className="truncate text-[10px] text-muted/60">{subtitle}</span>}
+        {subtitle && <span className="truncate text-[10px] text-muted-60">{subtitle}</span>}
       </div>
       {actions}
       <button

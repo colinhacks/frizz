@@ -18,7 +18,7 @@ const listeners = new Set<() => void>()
 let media: MediaQueryList | null = null
 
 function subscribe(callback: () => void): () => void {
-  if (typeof window === "undefined") return () => {}
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {}
   if (!media) {
     media = window.matchMedia(MOBILE_QUERY)
     // ONE MediaQueryList for the whole app, with the components subscribed to it — not one listener per
@@ -31,7 +31,7 @@ function subscribe(callback: () => void): () => void {
 }
 
 function snapshot(): boolean {
-  return media ? media.matches : typeof window !== "undefined" && window.matchMedia(MOBILE_QUERY).matches
+  return media ? media.matches : typeof window !== "undefined" && !!window.matchMedia?.(MOBILE_QUERY).matches
 }
 
 /**

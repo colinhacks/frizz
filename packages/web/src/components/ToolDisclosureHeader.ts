@@ -80,7 +80,7 @@ export function ToolDisclosureHeader({
           title: label,
           onClick: onToggle,
           className:
-            "-m-1 inline-flex shrink-0 items-center justify-center rounded p-1 text-muted outline-none transition-colors hover:text-fg/80 focus-visible:ring-1 focus-visible:ring-fg/60",
+            "-m-1 inline-flex shrink-0 items-center justify-center rounded p-1 text-muted outline-none transition-colors hover:text-fg/80 focus-visible:ring-1 focus-visible:ring-focus-ink-60",
         },
         createElement(ChevronRight, {
           "aria-hidden": true,

@@ -40,7 +40,7 @@ const TRIGGER_VARIANT = {
   ghost:
     "border-transparent bg-transparent hover:border-border hover:bg-panel-2 data-[state=open]:border-border data-[state=open]:bg-panel-2",
   bordered:
-    "w-full justify-between border-border bg-bg hover:bg-panel-2 data-[state=open]:bg-panel-2",
+    "w-full justify-between border-control-border bg-bg hover:bg-panel-2 data-[state=open]:bg-panel-2",
   // A plain VALUE READOUT that must still read as INTERACTIVE: quiet muted text carrying a resting
   // hairline pill (border-border/50) + a stronger caret, so it registers as a dropdown at a glance
   // rather than a static label. The pill fills + brightens on hover/open; the caret sits at ~fg/65 so
@@ -193,7 +193,7 @@ export function Select({
               ? groups.map((g, gi) => (
                   <RadixMenu.Group key={g.label || `g${gi}`}>
                     {g.label && (
-                      <RadixMenu.Label className={`${selectRowPadding(indicatorPosition)} min-w-0 truncate pb-1 pt-2 text-left text-[10px] font-medium uppercase tracking-wide text-muted/60 first:pt-1`}>
+                      <RadixMenu.Label className={`${selectRowPadding(indicatorPosition)} min-w-0 truncate pb-1 pt-2 text-left text-[10px] font-medium uppercase tracking-wide text-muted-60 first:pt-1`}>
                         {g.label}
                       </RadixMenu.Label>
                     )}

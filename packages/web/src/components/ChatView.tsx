@@ -1,4 +1,4 @@
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -51,6 +51,8 @@ import { snoozePresetInstant, formatSnoozeWake } from "../lib/snooze.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { ICON_LABEL_NUDGE } from "../lib/iconAlign.ts"
 import { prefs } from "../lib/prefs.ts"
+import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
+import { isVisualizationThemeAck, visualizationThemeMessage } from "../lib/visualizationThemeProtocol.ts"
 import { canAdoptThread } from "../lib/adoption.ts"
 import { THREAD_TITLE_MAX_LENGTH, manualThreadTitleSeed, threadTitleToCommit } from "../lib/threadTitle.ts"
 import { THREAD_HEADER_CLASS, THREAD_HEADER_CONTROLS_CLASS, THREAD_HEADER_TITLE_CLASS } from "../lib/threadHeaderLayout.ts"
@@ -395,7 +397,7 @@ function ChatView({ slug, virtualized }: { slug: string; virtualized: boolean })
         // py-5, so putting it here is the one place both paths end up with the same gap to the
         // non-scrolling composer footer. 20px of trailing space read as the last row crowding the
         // prompt box; 32px reads as an ending.
-        className="relative min-h-0 flex-1 overflow-y-auto pb-3 outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/60"
+        className="relative min-h-0 flex-1 overflow-y-auto pb-3 outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
       {virtualized && count > 0 ? (
         <VirtualizedThreadTranscript
@@ -1414,7 +1416,7 @@ function VirtualizedThreadTranscript({
                 ) : loadingEarlier ? (
                   <span className="flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Loading earlier messages…</span>
                 ) : (
-                  <button type="button" onClick={requestEarlier} className="rounded-md px-2 py-1 outline-none hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60">
+                  <button type="button" onClick={requestEarlier} className="rounded-md px-2 py-1 outline-none hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60">
                     Load earlier messages
                   </button>
                 )}
@@ -1608,7 +1610,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
                   setTitleDraft(manualThreadTitleSeed(shownTitle, thread.id))
                   setEditingTitle(true)
                 }}
-                className="min-w-0 max-w-full shrink truncate rounded px-0.5 -mx-0.5 font-semibold text-[15px] text-left outline-none transition-colors hover:bg-panel-2 focus-visible:ring-1 focus-visible:ring-fg/60 disabled:cursor-not-allowed disabled:opacity-40"
+                className="min-w-0 max-w-full shrink truncate rounded px-0.5 -mx-0.5 font-semibold text-[15px] text-left outline-none transition-colors hover:bg-panel-2 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {shownTitle}
               </button>
@@ -1619,7 +1621,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
             )}
             <AiRenameButton thread={thread} hidden={editingTitle} />
           </div>
-          <LastActive at={lastActiveLabelAt(thread)} fallbackAt={thread.spawnedAt} className="mt-0.5 block truncate text-[11px] leading-tight text-muted/75" />
+          <LastActive at={lastActiveLabelAt(thread)} fallbackAt={thread.spawnedAt} className="mt-0.5 block truncate text-[11px] leading-tight text-muted-75" />
         </div>
       </div>
       {/* At constrained drawer widths, controls get their own deliberate row. This keeps the
@@ -2120,7 +2122,7 @@ function MinimalToolActivity({ tools, at }: { tools: CollapsedTool[]; at?: strin
         // Shares TRANSCRIPT_META_LABEL_CLASS rather than restating its type scale — this row and
         // the reasoning label alternate in one column, and the two drifted apart while the size was
         // copied here by hand.
-        className={`group flex w-full min-w-0 items-baseline gap-1.5 rounded py-0.5 text-left outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60 ${TRANSCRIPT_META_LABEL_CLASS}`}
+        className={`group flex w-full min-w-0 items-baseline gap-1.5 rounded py-0.5 text-left outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${TRANSCRIPT_META_LABEL_CLASS}`}
       >
         <span
           data-tool-activity-label
@@ -2358,7 +2360,7 @@ export function ToolStatusMeta({ status, backgroundState, liveBackgroundState, e
             : [undefined, undefined]
   const duration = durationMs !== undefined ? formatToolDuration(durationMs) : undefined
   const title = [longLabel, duration].filter(Boolean).join(" · ")
-  const tone = status === "failed" ? "frizz-tool-failed" : status === "cancelled" ? "text-amber-400" : "text-muted/55"
+  const tone = status === "failed" ? "frizz-tool-failed" : status === "cancelled" ? "text-attention" : "text-muted-55"
   return (
     <ToolMetaReading
       tone={tone}
@@ -2445,7 +2447,7 @@ function ToolCard({ name, detail, count, status, backgroundState, liveBackground
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <ToolStatusMeta status={status} backgroundState={backgroundState} liveBackgroundState={liveBackgroundState} exitCode={exitCode} durationMs={durationMs} />
-          {count > 1 && <span className="tabular-nums text-[11px] text-muted/45">×{count}</span>}
+          {count > 1 && <span className="tabular-nums text-[11px] text-muted-45">×{count}</span>}
         </span>
       </div>
     </div>
@@ -2507,7 +2509,7 @@ function SentFilesCard({ images, files, caption, status, durationMs }: { images:
         aria-controls={bodyId}
         aria-expanded={open}
         aria-label={`${open ? "Collapse" : "Expand"} files sent to you${summary ? `: ${summary}` : ""}`}
-        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/60"
+        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="petite-caps frizz-bash-label shrink-0">Sent to you</span>
@@ -2591,7 +2593,7 @@ function BashBlock({
         aria-controls={expandable ? bodyId : undefined}
         aria-expanded={expandable ? open : undefined}
         aria-label={`${expandable ? `${open ? "Collapse" : "Expand"} ` : ""}${prettyToolName(name)}${shownDesc ? `: ${shownDesc}` : ""}`}
-        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/60"
+        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
         <span className="flex min-w-0 items-center gap-2">
           <ToolLiveMark status={status} backgroundState={backgroundState} liveBackgroundState={liveBackgroundState} startedAt={startedAt} />
@@ -2877,7 +2879,7 @@ export function AgentBlock({
               {profile && (
                 <span
                   data-subagent-profile
-                  className="petite-caps frizz-tool-header-caps shrink-0 whitespace-nowrap text-[11.5px] leading-none text-muted/55"
+                  className="petite-caps frizz-tool-header-caps shrink-0 whitespace-nowrap text-[11.5px] leading-none text-muted-55"
                   title={`Sub-agent profile: ${profile}`}
                 >
                   {profile}
@@ -2889,10 +2891,10 @@ export function AgentBlock({
                   row's flex gap while the reading's identical dot ("stopped · 41 min") is spaced by two
                   text spaces, and the two rhythms did not agree — measured 8.91/8.26px of ink against
                   the text one's 6.51/7.01. Trimmed, they read as one chain (6.9/6.3). */}
-              {profile && reading && <span aria-hidden className="petite-caps frizz-tool-header-caps -mx-[2px] shrink-0 text-[11.5px] leading-none text-muted/55">·</span>}
+              {profile && reading && <span aria-hidden className="petite-caps frizz-tool-header-caps -mx-[2px] shrink-0 text-[11.5px] leading-none text-muted-55">·</span>}
               {reading && (
                 <ToolMetaReading
-                  tone={reading.tone === "failed" ? "frizz-tool-failed" : "text-muted/55"}
+                  tone={reading.tone === "failed" ? "frizz-tool-failed" : "text-muted-55"}
                   title={reading.title}
                   label={reading.label}
                   duration={reading.duration}
@@ -3026,7 +3028,7 @@ function SendMessageCard({ to, summary, body, type, status, durationMs }: { to?:
         aria-controls={hasBody ? bodyId : undefined}
         aria-expanded={hasBody ? open : undefined}
         aria-label={`${hasBody ? `${open ? "Collapse" : "Expand"} ` : ""}${label}${to ? ` to ${to}` : ""}`}
-        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/60"
+        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
         disabled={!hasBody}
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -3112,8 +3114,8 @@ function SentContextBody({ body, items }: { body: string; items: SentContextItem
       })}
       {openItem && (
         <span className="mt-2 block cursor-auto rounded-md border border-bg/20 bg-bg/[0.06] px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
-          <span className="block truncate font-mono-keep text-[11px] text-bg/60">{openItem.display}{openItem.startLine !== undefined ? ` · ${openItem.startLine === openItem.endLine ? `line ${openItem.startLine}` : `lines ${openItem.startLine}-${openItem.endLine}`}` : ""}</span>
-          <span className="mt-1 block max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono-keep text-[11.5px] leading-4 text-bg/80">{openItem.text}</span>
+          <span className="block truncate font-mono-keep text-[11px] text-user-bubble-fg/60">{openItem.display}{openItem.startLine !== undefined ? ` · ${openItem.startLine === openItem.endLine ? `line ${openItem.startLine}` : `lines ${openItem.startLine}-${openItem.endLine}`}` : ""}</span>
+          <span className="mt-1 block max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono-keep text-[11.5px] leading-4 text-user-bubble-fg/80">{openItem.text}</span>
         </span>
       )}
     </>
@@ -3198,7 +3200,7 @@ function UserBubble({ text, rawText, queued, deliveryUnconfirmed, deliveryId, so
           // in the app uses. A KEYBOARD focus ring still has to exist, so it keeps the accent — but
           // OFFSET onto the near-black page, which is the only place this yellow reads clean and is how
           // every other focus ring in the app is drawn.
-          className={`relative ${BLOCK_RADIUS} rounded-br-sm bg-user-bubble px-3.5 py-3 text-[14px] whitespace-pre-wrap [overflow-wrap:anywhere] text-bg ${queued ? "opacity-50" : ""} ${unqueueable ? "cursor-pointer transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg" : ""} ${unqueuePending ? "!opacity-30" : ""}`}
+          className={`relative ${BLOCK_RADIUS} rounded-br-sm bg-user-bubble px-3.5 py-3 text-[14px] whitespace-pre-wrap [overflow-wrap:anywhere] text-user-bubble-fg ${queued ? "opacity-50" : ""} ${unqueueable ? "cursor-pointer transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg" : ""} ${unqueuePending ? "!opacity-30" : ""}`}
         >
           {/* Verbatim bytes, but link-shaped runs (a pasted URL, `#123`, a commit hash) render as the
               anchors they would be in agent prose — see LinkifiedText. The anchors stop their own
@@ -3252,7 +3254,7 @@ function UserBubble({ text, rawText, queued, deliveryUnconfirmed, deliveryId, so
           terminal", from when a worker sat in a pane an operator could open; there is no such surface
           now, so it states the fact and leaves the next move to them. */}
       {deliveryUnconfirmed && (
-        <div className="text-[11px] text-amber-400/80">Delivery unconfirmed — no receipt from the worker</div>
+        <div className="text-[11px] text-attention-80">Delivery unconfirmed — no receipt from the worker</div>
       )}
       {/* No "click to unqueue" hint: the hover lift above already says the bubble is live, and a
           label spelling that out is noise on every queued send. Only the IN-FLIGHT retraction gets a
@@ -3540,7 +3542,7 @@ export const Message = memo(function Message({ m, answering, dense, paired, text
           type="button"
           data-mobile-answer-open
           onClick={() => setAnswerSheetOpen(true)}
-          className="flex h-[40px] items-center justify-center rounded-[12px] bg-accent px-4 text-[15px] font-semibold text-bg active:brightness-90"
+          className="flex h-[40px] items-center justify-center rounded-[12px] bg-accent-fill px-4 text-[15px] font-semibold text-on-accent active:brightness-90"
         >
           {askBlocks.length > 1 ? `Answer ${askBlocks.length} questions` : "Answer"}
         </button>
@@ -3617,12 +3619,12 @@ function ProseHtml({ md, wrap }: { md: string; wrap?: boolean }) {
 // passes the tool name + target + status through it, so the card IS the frame — see ImageFrame).
 export function BlockImage({ path, hideCaption, altText, header }: { path: string; hideCaption?: boolean; altText?: string; header?: ReactNode }) {
   const [broken, setBroken] = useState(false)
-  if (broken) return <div className="font-mono-keep text-[12px] text-muted/70 break-all">{path}</div>
+  if (broken) return <div className="font-mono-keep text-[12px] text-muted-70 break-all">{path}</div>
   const base = basename(path)
   return (
     <ImageFrame
       header={header}
-      caption={hideCaption ? undefined : <figcaption className="bg-panel-2 px-2 pb-1.5 font-mono-keep text-[11px] text-muted/60 break-all">{base}</figcaption>}
+      caption={hideCaption ? undefined : <figcaption className="bg-panel-2 px-2 pb-1.5 font-mono-keep text-[11px] text-muted-60 break-all">{base}</figcaption>}
     >
       <img
         src={localImageUrl(path)}
@@ -3672,15 +3674,22 @@ const VIS_THEME_VARIABLES: Record<string, string> = {
   "--accent": "--color-border-strong",
   "--accent-foreground": "--color-fg",
   "--border": "--color-border-strong",
-  "--input": "--color-border-strong",
+  "--input": "--color-control-strong",
   "--ring": "--color-accent",
+  "--destructive": "--viz-destructive",
+  "--viz-series-1": "--viz-series-1",
+  "--viz-series-2": "--viz-series-2",
+  "--viz-series-3": "--viz-series-3",
+  "--viz-series-4": "--viz-series-4",
+  "--viz-series-5": "--viz-series-5",
+  "--viz-series-6": "--viz-series-6",
 }
 
-function visualizationTheme() {
+function visualizationTheme(requestId: number) {
   const root = getComputedStyle(document.documentElement)
   const vars = Object.fromEntries(Object.entries(VIS_THEME_VARIABLES).map(([target, source]) => [target, root.getPropertyValue(source).trim()]))
   vars["--font-size-base"] = getComputedStyle(document.body).fontSize
-  return { type: "frizz-inline-vis-theme", colorScheme: root.colorScheme === "light" ? "light" : "dark", vars }
+  return visualizationThemeMessage(requestId, root.colorScheme === "light" ? "light" : "dark", vars)
 }
 
 // Codex Visualize emits a thread-local HTML fragment plus this directive. The server resolves the
@@ -3692,12 +3701,20 @@ export function InlineVisualization({ file }: { file: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [height, setHeight] = useState(360)
   const [available, setAvailable] = useState<boolean | null>(null)
+  const [appliedSrc, setAppliedSrc] = useState<string | null>(null)
+  const paletteTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const requestId = useRef(0)
+  const loadedSrc = useRef<string | null>(null)
+  const { resolved } = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeSnapshot)
   const src = slug ? `${apiBase()}/local-visualization?slug=${encodeURIComponent(slug)}&file=${encodeURIComponent(file)}` : null
 
   useEffect(() => {
     if (!src) { setAvailable(false); return }
     const controller = new AbortController()
     setAvailable(null)
+    setAppliedSrc(null)
+    loadedSrc.current = null
+    window.clearTimeout(paletteTimeout.current)
     // Probe before mounting so a missing fragment gets a useful fallback instead of a tiny iframe
     // containing a bare HTTP status. HEAD avoids downloading a potentially 2 MB fragment twice.
     void fetch(src, { method: "HEAD", signal: controller.signal }).then((response) => {
@@ -3708,15 +3725,37 @@ export function InlineVisualization({ file }: { file: string }) {
     return () => controller.abort()
   }, [src])
 
+  const sendTheme = useCallback(() => {
+    if (!src || loadedSrc.current !== src) return
+    const nextRequest = ++requestId.current
+    iframeRef.current?.contentWindow?.postMessage(visualizationTheme(nextRequest), "*")
+  }, [src])
+
   useEffect(() => {
     const receive = (event: MessageEvent) => {
-      if (event.source !== iframeRef.current?.contentWindow || event.data?.type !== "frizz-inline-vis-height") return
+      if (event.source !== iframeRef.current?.contentWindow) return
+      if (event.data?.type === "frizz-inline-vis-ready") {
+        sendTheme()
+        return
+      }
+      if (isVisualizationThemeAck(event.data, requestId.current) && src && loadedSrc.current === src) {
+        window.clearTimeout(paletteTimeout.current)
+        setAppliedSrc(src)
+        return
+      }
+      if (event.data?.type !== "frizz-inline-vis-height") return
       const next = Number(event.data.height)
       if (Number.isFinite(next)) setHeight(Math.max(80, Math.min(2400, Math.ceil(next))))
     }
     window.addEventListener("message", receive)
     return () => window.removeEventListener("message", receive)
-  }, [])
+  }, [sendTheme, src])
+
+  useEffect(() => {
+    sendTheme()
+  }, [resolved, sendTheme])
+
+  useEffect(() => () => window.clearTimeout(paletteTimeout.current), [])
 
   if (available === false || !src) {
     return <div role="status" className={`${BLOCK_RADIUS} border border-border bg-panel-2 px-4 py-2.5 text-[12px] text-muted`}>Visualization unavailable: <span className="font-mono-keep break-all">{file}</span></div>
@@ -3728,9 +3767,16 @@ export function InlineVisualization({ file }: { file: string }) {
       src={src}
       title={file.replace(/\.html$/, "").replaceAll("-", " ")}
       sandbox="allow-scripts"
-      onLoad={() => iframeRef.current?.contentWindow?.postMessage(visualizationTheme(), "*")}
+      onLoad={() => {
+        if (!src) return
+        setAppliedSrc(null)
+        loadedSrc.current = src
+        sendTheme()
+        window.clearTimeout(paletteTimeout.current)
+        paletteTimeout.current = window.setTimeout(() => setAvailable(false), 5000)
+      }}
       className="block w-full border-0 bg-transparent"
-      style={{ height }}
+      style={{ height, visibility: appliedSrc === src ? "visible" : "hidden" }}
     />
   )
 }
@@ -4181,7 +4227,7 @@ export function PendingAskCard({ ask, onTerminal }: { ask: PendingAsk; onTermina
       <div className="flex flex-col gap-3">
         {ask.questions.map((q, i) => (
           <div key={i} className="flex flex-col gap-1.5">
-            {q.header && <div className="text-[10px] uppercase tracking-wide text-muted/55">{q.header}</div>}
+            {q.header && <div className="text-[10px] uppercase tracking-wide text-muted-55">{q.header}</div>}
             <div className="min-w-0 text-[12px] font-medium leading-5 text-fg">{q.question}</div>
             {q.options.length > 0 && (
               <div className="flex flex-col gap-1">
@@ -4191,10 +4237,10 @@ export function PendingAskCard({ ask, onTerminal }: { ask: PendingAsk; onTermina
                   // question card's chips have to their card, so a row reads as a row on every surface.
                   <div key={j} className="rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] text-fg/80">
                     <span className="font-medium text-fg/90">{o.label}</span>
-                    {o.description && <span className="text-muted/70"> — {o.description}</span>}
+                    {o.description && <span className="text-muted-70"> — {o.description}</span>}
                   </div>
                 ))}
-                {q.multiSelect && <div className="text-[10px] text-muted/50">select one or more</div>}
+                {q.multiSelect && <div className="text-[10px] text-muted-50">select one or more</div>}
               </div>
             )}
           </div>
@@ -4250,7 +4296,7 @@ function AgentCompletionLine({ call, sourceId, at }: { call: TranscriptToolCall;
             aria-label={`${CHILD_OPEN_TITLE.AGENT}: ${title}`}
             onClick={() => pushSubAgentDrawer(slug!, call.agentId!, { label: title, subagentType: call.subagentType })}
             onMouseDown={(e) => e.preventDefault()}
-            className="min-w-0 truncate rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+            className="min-w-0 truncate rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
           >
             {title}
           </button>
@@ -4314,7 +4360,7 @@ function SubAgentReportLine({ from, unnamed, dispatchId, sourceId, at }: { from:
             aria-label={`${CHILD_OPEN_TITLE.AGENT}${from ? `: ${from}` : ""}`}
             onClick={() => pushSubAgentDrawer(slug!, dispatchId!, { label: "Sub-agent", subagentType: from })}
             onMouseDown={(e) => e.preventDefault()}
-            className="shrink-0 rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+            className="shrink-0 rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
           >
             Sub-agent reported
           </button>
@@ -4345,7 +4391,7 @@ function SubAgentReportLine({ from, unnamed, dispatchId, sourceId, at }: { from:
             aria-label={`${CHILD_OPEN_TITLE.AGENT}: ${label}`}
             onClick={() => pushSubAgentDrawer(slug!, dispatchId!, { label, subagentType: from })}
             onMouseDown={(e) => e.preventDefault()}
-            className="min-w-0 truncate rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+            className="min-w-0 truncate rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
           >
             {label}
           </button>
@@ -4403,7 +4449,7 @@ function SendMessageLine({ to, type, dispatchId, targetLabel, sourceId, at }: { 
               aria-label={`${CHILD_OPEN_TITLE.AGENT}: ${title}`}
               onClick={() => pushSubAgentDrawer(slug!, dispatchId!, { label: title })}
               onMouseDown={(e) => e.preventDefault()}
-              className="min-w-0 truncate rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+              className="min-w-0 truncate rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
             >
               {title}
             </button>
@@ -4488,7 +4534,7 @@ function ReasoningBlock({ text, sourceId }: { text: string; sourceId?: string })
         aria-controls={bodyId}
         aria-expanded={open}
         aria-label={`${open ? "Collapse" : "Expand"} model reasoning`}
-        className={`${TRANSCRIPT_META_LABEL_CLASS} flex items-baseline gap-1.5 self-start rounded outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60`}
+        className={`${TRANSCRIPT_META_LABEL_CLASS} flex items-baseline gap-1.5 self-start rounded outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60`}
       >
         <span>Reasoning</span>
         {/* One column, one chevron treatment — vertical correction, ink trim and tone all live in
@@ -4576,7 +4622,7 @@ export function WorkingIndicator({ since, startedAt, activityLabel, run }: { sin
   // `gap-1.5` INSIDE the label group stays what it was: the chevron is the label's handle, travels with
   // it, and reads as one cluster at ~6.4px of ink. See transcriptMetaChevronClass for why that number
   // is an ink distance and not the CSS one.
-  const rowClass = `group flex min-w-0 items-baseline justify-between gap-3 rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-fg/60 ${TRANSCRIPT_META_LABEL_CLASS}`
+  const rowClass = `group flex min-w-0 items-baseline justify-between gap-3 rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${TRANSCRIPT_META_LABEL_CLASS}`
   // ONE LINE, always — the row is a live status reading, and a status reading that changes height
   // as a path gets longer makes the whole tail jump. The label TRUNCATES (maintainer 2026-07-31:
   // "prevent the actual gerund from ever breaking onto two lines. It should get truncated
@@ -4606,7 +4652,7 @@ export function WorkingIndicator({ since, startedAt, activityLabel, run }: { sin
           />
         )}
       </span>
-      <span className="shrink-0 whitespace-nowrap tabular-nums text-[12px] text-muted/60">{durationLabel}</span>
+      <span className="shrink-0 whitespace-nowrap tabular-nums text-[12px] text-muted-60">{durationLabel}</span>
     </>
   )
   return (

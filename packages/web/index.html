@@ -22,15 +22,25 @@
          rail is a real document load (each board binds its own socket, board store and API base to
          one project, so a full load is how all three get re-bound in one step) — and the browser
          paints its default canvas for the frame before the module CSS arrives. That default is WHITE,
-         so every project switch strobed. `color-scheme` makes the UA canvas dark immediately; the
-         inline rule is the belt to that braces, since it needs no stylesheet at all. -->
-    <meta name="color-scheme" content="dark" />
+         so every project switch strobed. Resolve this browser's appearance before paint; the inline
+         canvas rules need no stylesheet, with an OS fallback if JavaScript is unavailable. -->
+    <meta name="color-scheme" content="dark light" />
     <style>
       html, body { background: #0d0e10; }
+      html[data-theme="light"], html[data-theme="light"] body { background: #f6f8fa; }
+      @media (prefers-color-scheme: light) { html:not([data-theme]), html:not([data-theme]) body { background: #f6f8fa; } }
     </style>
-    <!-- FOUC guard: the font choice lives in server settings, which arrive an RPC round-trip after
-         first paint — apply the last-known value synchronously from localStorage so the page never
-         flashes mono before swapping to sans (font.ts confirms/corrects once settings load). -->
+    <script>
+      let frizzThemePreference
+      try { frizzThemePreference = localStorage.getItem("frizz-theme") } catch {}
+      let frizzSystemDark = false
+      try { frizzSystemDark = typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches } catch {}
+      const frizzTheme = frizzThemePreference === "dark" || frizzThemePreference === "light" ? frizzThemePreference : frizzSystemDark ? "dark" : "light"
+      document.documentElement.dataset.theme = frizzTheme
+      document.documentElement.style.colorScheme = frizzTheme
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", frizzTheme === "dark" ? "#0d0e10" : "#f6f8fa")
+    </script>
+    <!-- The font cache avoids a flash before server settings arrive (font.ts reconciles it). -->
     <script>
       try { document.documentElement.dataset.font = localStorage.getItem("frizz-font") === "mono" ? "mono" : "sans" } catch {}
     </script>

@@ -74,7 +74,8 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
   // clicks; a panel already open stays (its layout degrades gracefully, and yanking it on resize
   // would lose the reader's place).
   useEffect(() => {
-    const wide = window.matchMedia(`(min-width: ${SPLIT_MIN_PX}px)`)
+    const wide = window.matchMedia?.(`(min-width: ${SPLIT_MIN_PX}px)`)
+    if (!wide) return
     const apply = () => { store.splitFileViewer = wide.matches }
     apply()
     wide.addEventListener("change", apply)

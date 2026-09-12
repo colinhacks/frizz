@@ -48,7 +48,7 @@ export function OpenAction({ path }: { path: string }) {
       type="button"
       onClick={open}
       onMouseDown={(e) => e.preventDefault()}
-      className="flex items-center gap-1.5 rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] font-medium text-fg/80 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+      className="flex items-center gap-1.5 rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] font-medium text-fg/80 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
       title={`Open ${path} outside Frizz`}
       aria-label="Open"
     >
@@ -103,7 +103,7 @@ export function MarkdownDrawer({ id, path, title, depth, widthDepth }: { id: num
             ) : body.error ? (
               // The gate's own words — "outside Frizz's trusted roots", "was not found" — say more than
               // a generic failure would, and the footer still offers the desktop opener.
-              <div className="text-[13px] text-red-400/90">Couldn’t read this file: {(body.error as Error).message}</div>
+              <div className="text-[13px] text-danger-90">Couldn’t read this file: {(body.error as Error).message}</div>
             ) : html ? (
               <>
                 {front && <Frontmatter source={front} />}

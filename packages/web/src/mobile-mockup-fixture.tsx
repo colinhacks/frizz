@@ -174,10 +174,10 @@ function ThreadRow({
             <span data-ink="row-title" className="min-w-0 flex-1 text-[15px] font-medium leading-[21px] tracking-[-0.01em] text-fg">
               <TitleWithMark title={title} provider={provider} />
             </span>
-            {age ? <span className="shrink-0 text-[11.5px] leading-[21px] tabular-nums text-muted/60">{age}</span> : null}
+            {age ? <span className="shrink-0 text-[11.5px] leading-[21px] tabular-nums text-muted-60">{age}</span> : null}
           </div>
           {gloss ? <span className="min-w-0 truncate text-[13px] leading-[18px] text-muted">{gloss}</span> : null}
-          {activity ? <span className="min-w-0 truncate text-[13px] leading-[18px] text-muted/85">{activity}</span> : null}
+          {activity ? <span className="min-w-0 truncate text-[13px] leading-[18px] text-muted-85">{activity}</span> : null}
         </div>
       </div>
       {children}
@@ -197,7 +197,7 @@ function ChildOp({ kind, label, elapsed }: { kind: "agent" | "shell"; label: str
     <div className="flex items-baseline gap-2 pb-1.5 pl-[46px] pr-4">
       <LiveDot kind={kind} ink="op-dot" />
       <span data-ink="op-label" className="min-w-0 flex-1 truncate text-[12.5px] leading-[19px] text-muted">{label}</span>
-      <span className="shrink-0 text-[11.5px] leading-[19px] tabular-nums text-muted/55">{elapsed}</span>
+      <span className="shrink-0 text-[11.5px] leading-[19px] tabular-nums text-muted-55">{elapsed}</span>
     </div>
   )
 }
@@ -226,7 +226,7 @@ function ProjectRow({ p, last }: { p: (typeof PROJECTS)[number]; last?: boolean 
         <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
           <span className="truncate text-[16px] font-medium leading-[21px] tracking-[-0.01em] text-fg">{p.label}</span>
           {quiet ? (
-            <span className="truncate font-mono-keep text-[12.5px] leading-[16px] text-muted/70">{p.path}</span>
+            <span className="truncate font-mono-keep text-[12.5px] leading-[16px] text-muted-70">{p.path}</span>
           ) : (
             <span className="flex min-w-0 items-baseline gap-2.5 text-[12.5px] leading-[16px] text-muted">
               {p.active > 0 && (
@@ -237,11 +237,11 @@ function ProjectRow({ p, last }: { p: (typeof PROJECTS)[number]; last?: boolean 
               )}
               {p.snoozed > 0 && (
                 <span className="flex shrink-0 items-baseline gap-1.5">
-                  <Hourglass data-ink="meta-glass" size={11} style={capAlign(11)} className={`${CAP_ALIGN} ${INK.hourglass} text-muted/70`} />
+                  <Hourglass data-ink="meta-glass" size={11} style={capAlign(11)} className={`${CAP_ALIGN} ${INK.hourglass} text-muted-70`} />
                   <span data-ink="meta-snoozed">{p.snoozed} snoozed</span>
                 </span>
               )}
-              <span className="min-w-0 truncate text-muted/55">{p.when}</span>
+              <span className="min-w-0 truncate text-muted-55">{p.when}</span>
             </span>
           )}
         </div>
@@ -250,7 +250,7 @@ function ProjectRow({ p, last }: { p: (typeof PROJECTS)[number]; last?: boolean 
             {p.asks}
           </span>
         ) : null}
-        <ChevronRight size={17} className="shrink-0 text-muted/45" />
+        <ChevronRight size={17} className="shrink-0 text-muted-45" />
       </div>
       {last ? null : <div className="ml-[72px] h-px bg-border/70" />}
     </div>
@@ -323,7 +323,7 @@ function boardTabs() {
     // The badge is the ASK count in accent when there is one, and the band count in muted otherwise —
     // see the note on TabBar. Yellow here always means "this many want you".
     { id: "queue", label: "Queue", icon: <PlayBox size={TAB_ICON} />, count: 3, asks: true },
-    { id: "snoozed", label: "Snoozed", icon: <StatusBox size={TAB_ICON}><Hourglass size={13} className="text-muted/75" /></StatusBox>, count: 2 },
+    { id: "snoozed", label: "Snoozed", icon: <StatusBox size={TAB_ICON}><Hourglass size={13} className="text-muted-75" /></StatusBox>, count: 2 },
     { id: "done", label: "Done", icon: <DoneBox size={TAB_ICON} />, count: 6 },
   ]
 }
@@ -496,7 +496,7 @@ function BoardHeldScreen() {
       <Group className="border-t-0">
         <ThreadRow
           dim
-          glyph={<StatusBox><Hourglass size={11} className="text-muted/75" /></StatusBox>}
+          glyph={<StatusBox><Hourglass size={11} className="text-muted-75" /></StatusBox>}
           title="Land the tenant routing fix"
           provider="claude"
           age="2h"
@@ -509,7 +509,7 @@ function BoardHeldScreen() {
         />
         <ThreadRow
           dim
-          glyph={<StatusBox><Timer size={11} className="text-muted/75" /></StatusBox>}
+          glyph={<StatusBox><Timer size={11} className="text-muted-75" /></StatusBox>}
           title="Retry the flaky socket test"
           provider="claude"
           age="20m"
@@ -530,13 +530,13 @@ function BoardHeldScreen() {
 function ToolCard({ icon, label, detail, elapsed }: { icon: ReactNode; label: string; detail?: string; elapsed?: string }) {
   return (
     <div className="flex items-center gap-2.5 rounded-[10px] border border-border/70 bg-panel px-3 py-2.5">
-      <span className="shrink-0 text-muted/70">{icon}</span>
+      <span className="shrink-0 text-muted-70">{icon}</span>
       <span className="min-w-0 flex-1 truncate font-mono-keep text-[12.5px] leading-[17px] text-fg/80">
         {label}
-        {detail ? <span className="text-muted/70"> {detail}</span> : null}
+        {detail ? <span className="text-muted-70"> {detail}</span> : null}
       </span>
-      {elapsed ? <span className="shrink-0 text-[11.5px] tabular-nums text-muted/55">{elapsed}</span> : null}
-      <ChevronRight size={15} className="shrink-0 text-muted/45" />
+      {elapsed ? <span className="shrink-0 text-[11.5px] tabular-nums text-muted-55">{elapsed}</span> : null}
+      <ChevronRight size={15} className="shrink-0 text-muted-45" />
     </div>
   )
 }
@@ -590,7 +590,7 @@ function ThreadScreen() {
 
           <div className="flex items-center gap-3 py-1">
             <span className="h-px flex-1 bg-border/60" />
-            <span className="shrink-0 text-[11.5px] text-muted/60">rested 4m</span>
+            <span className="shrink-0 text-[11.5px] text-muted-60">rested 4m</span>
             <span className="h-px flex-1 bg-border/60" />
           </div>
         </div>
@@ -732,7 +732,7 @@ function ActionsScreen() {
             </Group>
 
             <Group>
-              <Row icon={<Archive size={16} className="text-red-400" />} label="Archive thread" tone="text-red-300" />
+              <Row icon={<Archive size={16} className="text-danger" />} label="Archive thread" tone="text-danger-soft" />
             </Group>
           </div>
         </div>
@@ -852,7 +852,7 @@ function SnoozeScreen() {
           <Group>
             <Row icon={<Timer size={16} className="text-muted" />} label="Pick a date and time…" chevron />
           </Group>
-          <p className="m-0 px-4 text-[12.5px] leading-[17px] text-muted/70">
+          <p className="m-0 px-4 text-[12.5px] leading-[17px] text-muted-70">
             A snoozed thread moves to Snoozed and wakes itself at the time you pick. Nothing stops running.
           </p>
         </div>
@@ -976,7 +976,7 @@ function SubAgentScreen() {
 
           <div className="absolute inset-x-0 bottom-0 border-t border-border/70 bg-panel/90 px-3 pb-[26px] pt-2.5 backdrop-blur-xl">
             <div className="flex items-center gap-2">
-              <div className="flex h-[42px] min-w-0 flex-1 items-center rounded-[21px] border border-border-strong bg-bg px-3.5 text-[15px] text-muted/70">
+              <div className="flex h-[42px] min-w-0 flex-1 items-center rounded-[21px] border border-border-strong bg-bg px-3.5 text-[15px] text-muted-70">
                 Steer this sub-agent…
               </div>
               <button aria-label="Stop" className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-elevated text-muted">
@@ -1026,7 +1026,7 @@ function EmptyScreen() {
       <TabBar
         tabs={[
           { id: "queue", label: "Queue", icon: <PlayBox size={TAB_ICON} />, count: 0 },
-          { id: "snoozed", label: "Snoozed", icon: <StatusBox size={TAB_ICON}><Hourglass size={13} className="text-muted/75" /></StatusBox>, count: 0 },
+          { id: "snoozed", label: "Snoozed", icon: <StatusBox size={TAB_ICON}><Hourglass size={13} className="text-muted-75" /></StatusBox>, count: 0 },
           { id: "done", label: "Done", icon: <DoneBox size={TAB_ICON} />, count: 0 },
         ]}
         active="queue"
@@ -1042,7 +1042,7 @@ function EmptyScreen() {
 function KitSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
-      <span className="px-1 text-[11.5px] font-semibold uppercase tracking-[0.07em] text-muted/70">{title}</span>
+      <span className="px-1 text-[11.5px] font-semibold uppercase tracking-[0.07em] text-muted-70">{title}</span>
       {children}
     </div>
   )
@@ -1087,12 +1087,12 @@ function KitScreen() {
                 { mark: <AskBox />, label: "asks" },
                 { mark: <PlayBox />, label: "runs" },
                 { mark: <StatusBox />, label: "rests" },
-                { mark: <StatusBox><Hourglass size={11} className="text-muted/75" /></StatusBox>, label: "snoozed" },
+                { mark: <StatusBox><Hourglass size={11} className="text-muted-75" /></StatusBox>, label: "snoozed" },
                 { mark: <DoneBox />, label: "done" },
               ].map((item) => (
                 <div key={item.label} className="flex flex-1 flex-col items-center gap-1.5">
                   {item.mark}
-                  <span className="text-[11px] text-muted/70">{item.label}</span>
+                  <span className="text-[11px] text-muted-70">{item.label}</span>
                 </div>
               ))}
             </div>

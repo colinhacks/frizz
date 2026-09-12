@@ -50,7 +50,7 @@ export function MenuItem({
       onSelect={onSelect}
       className={`flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] outline-none transition-colors data-[highlighted]:bg-panel-2 ${
         danger
-          ? "text-red-400 data-[highlighted]:text-red-300"
+          ? "text-danger data-[highlighted]:text-danger-soft"
           : "text-muted data-[highlighted]:text-fg"
       }`}
     >

@@ -113,7 +113,9 @@ test("reduced motion keeps live work visible as a static ring in its own hue", (
 test("running shells pulse blue and running sub-agents pulse the accent-yellow", () => {
   const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8")
   // A distinct blue token, kept separate from the accent.
-  assert.match(css, /--color-shell:\s*#[0-9a-fA-F]{3,8};/)
+  const palette = readFileSync(new URL("../theme.css", import.meta.url), "utf8")
+  assert.match(palette, /--color-shell:\s*var\(--frizz-shell\);/)
+  assert.match(palette, /--frizz-shell:\s*#4a9eff;/)
   // The live dot defaults to the accent-yellow (sub-agent) and the --shell modifier swaps in the blue.
   assert.match(css, /\.frizz-live-dot \{[^}]*--live-dot: var\(--color-accent\)/)
   assert.match(css, /\.frizz-live-dot--shell \{ --live-dot: var\(--color-shell\); \}/)

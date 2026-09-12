@@ -42,13 +42,13 @@ const only = params.get("screen")?.toLowerCase() ?? null
 
 // ── shared vocabulary ─────────────────────────────────────────────────────────────────────────────
 const spinner = <Loader2 size={12} className="animate-spin text-accent" aria-hidden />
-const petite = "petite-caps text-[10px] tracking-wide text-muted/60"
+const petite = "petite-caps text-[10px] tracking-wide text-muted-60"
 
 function SectionLabel({ children, count }: { children: ReactNode; count?: number }) {
   return (
     <div className="flex items-baseline gap-1.5 px-4 pt-4 pb-1.5">
       <span className={petite}>{children}</span>
-      {count !== undefined && <span className="text-[10px] tabular-nums text-muted/40">{count}</span>}
+      {count !== undefined && <span className="text-[10px] tabular-nums text-muted-40">{count}</span>}
     </div>
   )
 }
@@ -60,9 +60,9 @@ function RailRow({ icon, label, meta, sub, active }: { icon: ReactNode; label: R
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-[12px] leading-[17px] text-fg/85">{label}</span>
-          {meta && <span className="shrink-0 text-[10.5px] tabular-nums text-muted/60">{meta}</span>}
+          {meta && <span className="shrink-0 text-[10.5px] tabular-nums text-muted-60">{meta}</span>}
         </span>
-        {sub && <span className="block truncate text-[10.5px] leading-[15px] text-muted/60">{sub}</span>}
+        {sub && <span className="block truncate text-[10.5px] leading-[15px] text-muted-60">{sub}</span>}
       </span>
     </button>
   )
@@ -73,7 +73,7 @@ function MetaRail({ collapsed, fileOpen }: { collapsed?: boolean; fileOpen?: str
   if (collapsed) {
     return (
       <aside className="flex h-full w-11 shrink-0 flex-col items-center gap-4 pt-4" aria-label="Thread activity, collapsed">
-        <ChevronRight size={13} className="rotate-180 text-muted/60" />
+        <ChevronRight size={13} className="rotate-180 text-muted-60" />
         <span className="relative"><Bot size={14} className="text-muted" /><span className="absolute -right-1.5 -top-1 rounded-full bg-accent px-[3px] text-[8px] font-semibold leading-[11px] text-bg">2</span></span>
         <span className="relative"><TerminalSquare size={14} className="text-muted" /><span className="absolute -right-1.5 -top-1 rounded-full bg-panel-2 px-[3px] text-[8px] font-semibold leading-[11px] text-muted">1</span></span>
         <span className="relative"><FileDiff size={14} className="text-muted" /><span className="absolute -right-1.5 -top-1 rounded-full bg-panel-2 px-[3px] text-[8px] font-semibold leading-[11px] text-muted">4</span></span>
@@ -88,14 +88,14 @@ function MetaRail({ collapsed, fileOpen }: { collapsed?: boolean; fileOpen?: str
         <div className="flex items-center gap-2">
           {spinner}
           <span className="min-w-0 flex-1 truncate text-[12px] text-fg/90">Running focused tests</span>
-          <span className="shrink-0 text-[10.5px] tabular-nums text-muted/60">14m</span>
+          <span className="shrink-0 text-[10.5px] tabular-nums text-muted-60">14m</span>
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <span className="petite-caps rounded border border-border/60 px-1 text-[9.5px] leading-[14px] text-muted/55">opus › high</span>
-          <span className="petite-caps rounded border border-border/60 px-1 text-[9.5px] leading-[14px] text-muted/55">auto</span>
+          <span className="petite-caps rounded border border-border/60 px-1 text-[9.5px] leading-[14px] text-muted-55">opus › high</span>
+          <span className="petite-caps rounded border border-border/60 px-1 text-[9.5px] leading-[14px] text-muted-55">auto</span>
           <span className="ml-auto flex items-center gap-1.5">
             <span className="h-1 w-16 overflow-hidden rounded-full bg-panel-2"><span className="block h-full w-[62%] rounded-full bg-muted/50" /></span>
-            <span className="text-[10px] tabular-nums text-muted/50">62%</span>
+            <span className="text-[10px] tabular-nums text-muted-50">62%</span>
           </span>
         </div>
       </div>
@@ -103,21 +103,21 @@ function MetaRail({ collapsed, fileOpen }: { collapsed?: boolean; fileOpen?: str
       <SectionLabel count={3}>Sub-agents</SectionLabel>
       <RailRow icon={spinner} label="Verifying the resolver fix against a live stack" meta="6m" sub="claude · frizz:high" />
       <RailRow icon={spinner} label="Sweeping call sites of normalizeId" meta="2m" sub="claude · frizz:medium" />
-      <RailRow icon={<CircleCheck size={12} className="text-muted/70" />} label="Traced the cache-collision repro" meta="11m" sub="returned · 1.2k tokens" />
+      <RailRow icon={<CircleCheck size={12} className="text-muted-70" />} label="Traced the cache-collision repro" meta="11m" sub="returned · 1.2k tokens" />
 
       <SectionLabel count={1}>Background shells</SectionLabel>
       <RailRow icon={<TerminalSquare size={12} className="text-muted" />} label={<span className="font-mono-keep">nub run dev</span>} meta="42m" sub="serving on :5175 · 312 lines" />
 
       <SectionLabel count={4}>Edited files</SectionLabel>
-      <RailRow active={fileOpen === "resolver"} icon={<FileDiff size={12} className={fileOpen === "resolver" ? "text-accent" : "text-muted"} />} label={<span className="font-mono-keep">src/resolver.ts</span>} meta={<span><span className="text-emerald-500/80">+24</span> <span className="text-red-400/70">−9</span></span>} />
-      <RailRow icon={<FileDiff size={12} className="text-muted" />} label={<span className="font-mono-keep">src/resolver.test.ts</span>} meta={<span><span className="text-emerald-500/80">+61</span> <span className="text-red-400/70">−0</span></span>} />
-      <RailRow icon={<FileDiff size={12} className="text-muted" />} label={<span className="font-mono-keep">lib/cache.ts</span>} meta={<span><span className="text-emerald-500/80">+3</span> <span className="text-red-400/70">−3</span></span>} />
-      <RailRow icon={<FileDiff size={12} className="text-muted" />} label={<span className="font-mono-keep">ARCHITECTURE.md</span>} meta={<span><span className="text-emerald-500/80">+12</span> <span className="text-red-400/70">−1</span></span>} />
+      <RailRow active={fileOpen === "resolver"} icon={<FileDiff size={12} className={fileOpen === "resolver" ? "text-accent" : "text-muted"} />} label={<span className="font-mono-keep">src/resolver.ts</span>} meta={<span><span className="text-emerald-500/80">+24</span> <span className="text-danger-70">−9</span></span>} />
+      <RailRow icon={<FileDiff size={12} className="text-muted" />} label={<span className="font-mono-keep">src/resolver.test.ts</span>} meta={<span><span className="text-emerald-500/80">+61</span> <span className="text-danger-70">−0</span></span>} />
+      <RailRow icon={<FileDiff size={12} className="text-muted" />} label={<span className="font-mono-keep">lib/cache.ts</span>} meta={<span><span className="text-emerald-500/80">+3</span> <span className="text-danger-70">−3</span></span>} />
+      <RailRow icon={<FileDiff size={12} className="text-muted" />} label={<span className="font-mono-keep">ARCHITECTURE.md</span>} meta={<span><span className="text-emerald-500/80">+12</span> <span className="text-danger-70">−1</span></span>} />
 
       <SectionLabel count={2}>Watching</SectionLabel>
       <RailRow icon={<GitPullRequest size={12} className="text-muted" />} label="acme/app#491" meta="checks 3/5" sub="2 running · none failed" />
       <RailRow icon={<Timer size={12} className="text-muted" />} label="Re-check the nightly bench" meta="in 2h" />
-      <div className="mt-auto border-t border-border/60 px-4 py-2.5 text-[10.5px] text-muted/50">Click a file to open it beside the thread</div>
+      <div className="mt-auto border-t border-border/60 px-4 py-2.5 text-[10.5px] text-muted-50">Click a file to open it beside the thread</div>
     </aside>
   )
 }
@@ -130,7 +130,7 @@ function ThreadColumn({ narrow, contextChip }: { narrow?: boolean; contextChip?:
         <button type="button" className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted transition-colors hover:bg-panel-2 hover:text-fg"><ArrowLeft size={13} /> Board</button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium">fix the resolver cache collision</div>
-          <div className="truncate text-[10px] text-muted/60">running · last active just now</div>
+          <div className="truncate text-[10px] text-muted-60">running · last active just now</div>
         </div>
         <button type="button" className="rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] font-medium text-fg/80">Interrupt</button>
       </header>
@@ -143,7 +143,7 @@ function ThreadColumn({ narrow, contextChip }: { narrow?: boolean; contextChip?:
         <div className="mt-5 flex items-center gap-2 text-[12.5px] text-muted">
           {spinner}
           <span className="shimmer-text">Running focused tests</span>
-          <span className="tabular-nums text-muted/50">3m</span>
+          <span className="tabular-nums text-muted-50">3m</span>
         </div>
       </div>
       <div className="shrink-0 px-6 pb-4">
@@ -171,14 +171,14 @@ function ThreadColumn({ narrow, contextChip }: { narrow?: boolean; contextChip?:
 // ── the file viewer column ────────────────────────────────────────────────────────────────────────
 function FileColumn({ selection }: { selection?: boolean }) {
   const add = "bg-emerald-500/[0.08] text-emerald-200/90"
-  const del = "bg-red-500/[0.08] text-red-300/80 line-through decoration-red-300/40"
+  const del = "bg-danger-fill/[0.08] text-danger-soft-80 line-through decoration-danger-soft/40"
   const sel = "bg-accent/20 text-emerald-100 rounded-[2px]"
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col border-l border-border bg-panel">
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium">resolver.ts</div>
-          <div className="truncate text-[10px] text-muted/60">src/resolver.ts · edited 2m ago</div>
+          <div className="truncate text-[10px] text-muted-60">src/resolver.ts · edited 2m ago</div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border-strong p-0.5 text-[11px] font-medium">
           <button type="button" className="rounded bg-panel-2 px-2 py-0.5 text-fg">Diff</button>
@@ -187,7 +187,7 @@ function FileColumn({ selection }: { selection?: boolean }) {
         <button type="button" className="rounded-md p-1.5 text-muted hover:bg-panel-2 hover:text-fg"><X size={15} /></button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 font-mono-keep text-[12px] leading-5">
-        <div className="mb-2 text-muted/50">@@ -18,9 +18,14 @@ export function resolveEntry(id: string)</div>
+        <div className="mb-2 text-muted-50">@@ -18,9 +18,14 @@ export function resolveEntry(id: string)</div>
         {[
           ["  ", "const key = normalizeId(id)", ""],
           ["- ", "const hit = memo.get(id)", del],
@@ -206,14 +206,14 @@ function FileColumn({ selection }: { selection?: boolean }) {
         {selection && (
           <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-bg px-2 py-1 text-[11px] text-muted shadow-lg" style={{ fontFamily: "inherit" }}>
             <span className="flex items-center gap-1 text-fg/80"><Plus size={11} /> Add to context</span>
-            <span className="text-muted/40">⌘I</span>
+            <span className="text-muted-40">⌘I</span>
             <span className="mx-0.5 h-3 w-px bg-border" />
             <span className="flex items-center gap-1"><Copy size={11} /> Copy</span>
           </div>
         )}
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 px-4 py-2.5">
-        <span className="truncate text-[10.5px] text-muted/60">Select text and press ⌘I to add it to the chat</span>
+        <span className="truncate text-[10.5px] text-muted-60">Select text and press ⌘I to add it to the chat</span>
         <span className="flex items-center gap-1.5">
           <button type="button" className="flex items-center gap-1.5 rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] font-medium text-fg/80"><Copy size={12} /> Copy</button>
           <button type="button" className="flex items-center gap-1.5 rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] font-medium text-fg/80"><ExternalLink size={12} /> Open</button>
@@ -237,8 +237,8 @@ function BoardFrame() {
       <aside className="w-[240px] shrink-0 pt-2">
         <button type="button" className="mb-5 flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] text-fg/80"><Plus size={12} /> New thread</button>
         <div className={`${petite} mb-1 pl-5`}>Rested · 2</div>
-        {row(<Circle size={7} className="fill-accent text-accent" />, "wire the settings export", <span className="pr-1 text-[10.5px] tabular-nums text-muted/50">3h</span>)}
-        {row(<Circle size={7} className="fill-accent text-accent" />, "why is the tailer dropping frames?", <span className="pr-1 text-[10.5px] tabular-nums text-muted/50">1d</span>)}
+        {row(<Circle size={7} className="fill-accent text-accent" />, "wire the settings export", <span className="pr-1 text-[10.5px] tabular-nums text-muted-50">3h</span>)}
+        {row(<Circle size={7} className="fill-accent text-accent" />, "why is the tailer dropping frames?", <span className="pr-1 text-[10.5px] tabular-nums text-muted-50">1d</span>)}
         <hr className="my-3 border-border/50" />
         <div className="rounded-md ring-1 ring-accent/60">
           {row(spinner, "fix the resolver cache collision")}
@@ -271,7 +271,7 @@ function FocusFrame({ file, collapsed, contextChip }: { file?: boolean; collapse
     <div className="flex h-full bg-bg">
       {/* the sidebar's ghost: a 12px hot edge; hovering or ← Board slides it back over */}
       <div className="group relative h-full w-3 shrink-0 border-r border-border/40 bg-bg hover:bg-panel-2/40" title="Board">
-        <ChevronRight size={11} className="absolute left-0.5 top-1/2 -translate-y-1/2 rotate-180 text-muted/40" />
+        <ChevronRight size={11} className="absolute left-0.5 top-1/2 -translate-y-1/2 rotate-180 text-muted-40" />
       </div>
       <ThreadColumn narrow={file} contextChip={contextChip} />
       <MetaRail collapsed={collapsed} fileOpen={file ? "resolver" : undefined} />

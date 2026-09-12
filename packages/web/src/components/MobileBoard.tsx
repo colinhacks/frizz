@@ -75,7 +75,7 @@ function StatusBox({ children, tone = "border-muted/45", size = 18 }: { children
 function PlayMark({ size = 18 }: { size?: number }) {
   return (
     <StatusBox size={size}>
-      <svg width={Math.round(size * 0.52)} height={Math.round(size * 0.52)} viewBox="0 0 10 10" aria-hidden className="translate-x-[8%] text-muted/85">
+      <svg width={Math.round(size * 0.52)} height={Math.round(size * 0.52)} viewBox="0 0 10 10" aria-hidden className="translate-x-[8%] text-muted-85">
         <path d="M2.5 1.4 8.2 5 2.5 8.6Z" fill="currentColor" />
       </svg>
     </StatusBox>
@@ -94,7 +94,7 @@ function AskMark({ size = 18 }: { size?: number }) {
 function DoneMark({ size = 18 }: { size?: number }) {
   return (
     <StatusBox size={size} tone="border-muted/40">
-      <Check size={Math.round((size * 10) / 15)} strokeWidth={3} className="text-muted/85" />
+      <Check size={Math.round((size * 10) / 15)} strokeWidth={3} className="text-muted-85" />
     </StatusBox>
   )
 }
@@ -102,7 +102,7 @@ function DoneMark({ size = 18 }: { size?: number }) {
 function HourglassMark({ size = 18 }: { size?: number }) {
   return (
     <StatusBox size={size}>
-      <Hourglass size={Math.round((size * 10) / 15)} className="text-muted/75" />
+      <Hourglass size={Math.round((size * 10) / 15)} className="text-muted-75" />
     </StatusBox>
   )
 }
@@ -280,7 +280,7 @@ function MobileThreadRow({
   const gloss = t.lastFence?.kind === "awaiting" ? hintGloss(t.lastFence.hints) : null
   const subs = visibleChildOps(t.subAgents ?? [], "rail")
   return (
-    <div className={kind === "snoozed" ? "opacity-60" : undefined}>
+    <div className={kind === "snoozed" ? "mobile-row-dim" : undefined}>
       <SwipeRow
         open={openSwipe}
         onOpenChange={onOpenSwipe}
@@ -321,7 +321,7 @@ function MobileThreadRow({
       <button
         data-mobile-thread-row={t.id}
         onClick={() => openThread(t.id)}
-        className="flex w-full items-start gap-3 px-4 pb-2.5 pt-2.5 text-left active:bg-white/[0.04]"
+        className="flex w-full items-start gap-3 px-4 pb-2.5 pt-2.5 text-left active:bg-hover"
       >
         <span className="flex h-[21px] shrink-0 items-center justify-center">
           <ThreadMark kind={kind} />
@@ -333,12 +333,12 @@ function MobileThreadRow({
               <ProviderMark backend={t.backend} className="ml-1.5" />
             </span>
             {age ? (
-              <span className="shrink-0 text-[11.5px] leading-[21px] tabular-nums text-muted/60">{age}</span>
+              <span className="shrink-0 text-[11.5px] leading-[21px] tabular-nums text-muted-60">{age}</span>
             ) : null}
           </span>
           {gloss ? <span className="min-w-0 truncate text-[13px] leading-[18px] text-muted">{gloss}</span> : null}
           {t.activity ? (
-            <span className="min-w-0 truncate text-[13px] leading-[18px] text-muted/85">{t.activity}</span>
+            <span className="min-w-0 truncate text-[13px] leading-[18px] text-muted-85">{t.activity}</span>
           ) : null}
         </span>
       </button>
@@ -397,21 +397,21 @@ function TabButton({
       onClick={onClick}
       className="flex flex-1 flex-col items-center justify-center gap-[3px] pt-[3px]"
     >
-      <span className={`relative ${active ? "opacity-100" : "opacity-55"}`}>
+      <span className={`relative ${active ? "opacity-100" : "mobile-tab-inactive"}`}>
         {icon}
         {count > 0 ? (
           // The badge is the ASK count in accent when there is one, and the band count in muted
           // otherwise. Yellow means "this many want you" here exactly as it does everywhere else.
           <span
             className={`absolute -right-[11px] -top-[7px] flex h-[16px] min-w-[16px] items-center justify-center rounded-full border-[1.5px] border-bg px-[3.5px] text-[10px] font-semibold tabular-nums ${
-              asks ? "bg-accent text-bg" : "bg-elevated text-muted"
+              asks ? "bg-accent-fill text-on-accent" : "bg-elevated text-muted"
             }`}
           >
             {count}
           </span>
         ) : null}
       </span>
-      <span className={`text-[10px] leading-[12px] tracking-[-0.005em] ${active ? "text-fg" : "text-muted/70"}`}>
+      <span className={`text-[10px] leading-[12px] tracking-[-0.005em] ${active ? "text-fg" : "text-muted-70"}`}>
         {label}
       </span>
     </button>
@@ -429,7 +429,7 @@ function TabButton({
 const CONNECTION_WORD = {
   open: { cls: "bg-live", word: "connected" },
   connecting: { cls: "bg-accent", word: "connecting…" },
-  closed: { cls: "bg-red-500", word: "disconnected" },
+  closed: { cls: "bg-danger-fill", word: "disconnected" },
 } as const
 
 function MoreSheet({ connection, onClose }: { connection: ConnectionState; onClose: () => void }) {
@@ -441,9 +441,9 @@ function MoreSheet({ connection, onClose }: { connection: ConnectionState; onClo
   }, [])
   return (
     <div data-mobile-more-sheet className="fixed inset-0 z-[70] flex flex-col justify-end">
-      <button aria-label="Close" onClick={onClose} className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ${shown ? "opacity-100" : "opacity-0"}`} />
+      <button aria-label="Close" onClick={onClose} className={`absolute inset-0 bg-scrim-50 transition-opacity duration-200 ${shown ? "opacity-100" : "opacity-0"}`} />
       <div
-        className={`relative flex max-h-[80%] flex-col overflow-hidden rounded-t-[14px] border-t border-border-strong bg-panel pb-[calc(24px+env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-10px_rgba(0,0,0,0.8)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
+        className={`relative flex max-h-[80%] flex-col overflow-hidden rounded-t-[14px] border-t border-border-strong bg-panel pb-[calc(24px+env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-10px_var(--sheet-shadow)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
           shown ? "translate-y-0" : "translate-y-full"
         }`}
       >
@@ -463,11 +463,11 @@ function MoreSheet({ connection, onClose }: { connection: ConnectionState; onClo
                 store.showSettings = true
                 onClose()
               }}
-              className="flex min-h-[48px] w-full items-center gap-3 px-4 text-left active:bg-white/[0.04]"
+              className="flex min-h-[48px] w-full items-center gap-3 px-4 text-left active:bg-hover"
             >
-              <SettingsIcon size={16} className="shrink-0 text-muted/70" />
+              <SettingsIcon size={16} className="shrink-0 text-muted-70" />
               <span className="min-w-0 flex-1 text-[16px] leading-[21px] text-fg">Settings</span>
-              <ChevronRight size={17} className="shrink-0 text-muted/45" />
+              <ChevronRight size={17} className="shrink-0 text-muted-45" />
             </button>
           </div>
         </div>
@@ -537,7 +537,7 @@ export function MobileBoard() {
             aria-label="Board actions"
             data-mobile-more
             onClick={() => setMoreOpen(true)}
-            className="ml-auto flex size-[44px] items-center justify-center rounded-full text-fg/85 active:bg-white/[0.06]"
+            className="ml-auto flex size-[44px] items-center justify-center rounded-full text-fg/85 active:bg-hover-strong"
           >
             <Ellipsis size={20} />
           </button>

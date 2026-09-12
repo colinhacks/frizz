@@ -27,15 +27,15 @@ const TODO_LABEL = "Todos"
 // distinguishable from a to-do row only by its dimmed text — reviewing the screenshot, "what is done" was
 // not scannable from the glyphs at 12px, which is the one thing a checklist owes the reader.
 const TODO_GLYPH = {
-  pending: { Icon: Square, className: "text-muted/50" },
+  pending: { Icon: Square, className: "text-muted-50" },
   in_progress: { Icon: SquareDot, className: "text-accent" },
-  completed: { Icon: SquareCheckBig, className: "text-muted/75" },
+  completed: { Icon: SquareCheckBig, className: "text-muted-75" },
 } as const
 
 const TODO_ROW_TEXT = {
   pending: "text-fg/75",
   in_progress: "text-fg",
-  completed: "text-muted/70",
+  completed: "text-muted-70",
 } as const
 
 // Sized in `1em`, NOT in px, and that is what makes the vertical corrections in diff.css legitimate.
@@ -81,7 +81,7 @@ export function TodoBlock({
         aria-controls={expandable ? bodyId : undefined}
         aria-expanded={expandable ? open : undefined}
         aria-label={`${expandable ? `${open ? "Collapse" : "Expand"} ` : ""}${TODO_LABEL}${summary ? `: ${summary}` : ""}${counter ? ` — ${done} of ${todos.length} done` : ""}`}
-        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/60"
+        className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="petite-caps frizz-bash-label shrink-0">{TODO_LABEL}</span>
@@ -98,7 +98,7 @@ export function TodoBlock({
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {counter && (
-            <span className="frizz-tool-header-caps tabular-nums text-[11px] text-muted/55" title={`${done} of ${todos.length} done`}>
+            <span className="frizz-tool-header-caps tabular-nums text-[11px] text-muted-55" title={`${done} of ${todos.length} done`}>
               {counter}
             </span>
           )}

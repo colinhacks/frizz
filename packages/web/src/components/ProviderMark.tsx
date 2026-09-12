@@ -16,7 +16,7 @@ export function ProviderMark({ backend, className }: ProviderMarkProps) {
     <span
       role="img"
       aria-label={provider.label}
-      className={`inline-flex shrink-0 text-muted/65 ${PROVIDER_MARK_GEOMETRY[provider.backend]} ${className ?? ""}`}
+      className={`inline-flex shrink-0 text-muted-65 ${PROVIDER_MARK_GEOMETRY[provider.backend]} ${className ?? ""}`}
     >
       {provider.backend === "codex" ? <OpenAIMark /> : <ClaudeMark />}
     </span>

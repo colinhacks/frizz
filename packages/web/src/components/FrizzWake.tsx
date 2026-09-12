@@ -43,7 +43,7 @@ import { useInnerHtml } from "../lib/innerHtml.ts"
 // transcript punctuation, and an accent-gold link inside one shouts louder than the event does. This is
 // the same muted underline the sub-agent divider's drill-in title wears, so every divider's link reads
 // the same way.
-const DIVIDER_LINK = "rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+const DIVIDER_LINK = "rounded-sm underline decoration-muted/30 underline-offset-2 outline-none transition-colors hover:text-fg hover:decoration-fg/60 focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
 
 // ---- THE ROW LIST IS GONE (2026-08-13) -----------------------------------------------------------
 // A burst used to hang one row per item under the divider — actor, kind, age, each its own permalink.

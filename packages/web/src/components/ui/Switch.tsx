@@ -76,7 +76,7 @@ export function Switch({ checked, onChange, disabled, label, size = "sm", testId
       // own height minus half a CAP — which the browser resolves per font, per size, with nothing to
       // re-measure when the setting flips. Needs the ROW to be `items-baseline`: with `items-center`
       // there is no shared baseline to align against and the correction silently lands ~1px off.
-      className={`inline-flex shrink-0 cursor-pointer items-center self-baseline rounded-full p-[2px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-fg/60 disabled:cursor-default disabled:opacity-45 ${s.track} ${s.onCap} ${
+      className={`inline-flex shrink-0 cursor-pointer items-center self-baseline rounded-full p-[2px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:cursor-default disabled:opacity-45 ${s.track} ${s.onCap} ${
         checked ? "bg-fg" : "bg-border hover:bg-border-strong"
       }`}
     >

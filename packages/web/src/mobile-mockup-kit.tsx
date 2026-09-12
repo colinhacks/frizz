@@ -276,7 +276,7 @@ export function GroupHeader({ children, trailing }: { children: ReactNode; trail
   return (
     <div className="flex items-baseline justify-between gap-3 px-4 pb-1.5 pt-4">
       <span className="text-[13px] font-medium text-muted">{children}</span>
-      {trailing ? <span className="text-[13px] text-muted/70">{trailing}</span> : null}
+      {trailing ? <span className="text-[13px] text-muted-70">{trailing}</span> : null}
     </div>
   )
 }
@@ -331,7 +331,7 @@ export function Row({
       </div>
       {value ? <span className="shrink-0 text-[15px] text-muted">{value}</span> : null}
       {trailing}
-      {chevron ? <ChevronRight size={17} className="shrink-0 text-muted/50" /> : null}
+      {chevron ? <ChevronRight size={17} className="shrink-0 text-muted-50" /> : null}
     </div>
   )
 }
@@ -370,7 +370,7 @@ export function Button({
         : kind === "tinted"
           ? "bg-elevated text-fg border border-border-strong active:bg-panel-2"
           : kind === "destructive"
-            ? "bg-red-500/12 text-red-300 border border-red-500/30 active:bg-red-500/20"
+            ? "bg-danger-fill/12 text-danger-soft border border-danger-fill/30 active:bg-danger-fill/20"
             : "text-fg/85 active:opacity-60"
   const box =
     size === "lg"
@@ -446,7 +446,7 @@ export function StatusBox({ children, tone = "border-muted/45", size = MOBILE_BO
 }
 
 /** [/] in progress — the rail's own rounded-rect spinner, at mobile size. */
-export function BoxSpinnerM({ size = MOBILE_BOX, tone = "text-muted/85", frozen }: { size?: number; tone?: string; frozen?: boolean }) {
+export function BoxSpinnerM({ size = MOBILE_BOX, tone = "text-muted-85", frozen }: { size?: number; tone?: string; frozen?: boolean }) {
   // `frozen` stops the travelling segment at the phase where it READS BEST — wrapped around the
   // top-right CORNER rather than lying along the flat top edge, where a brighter run of the outline
   // just looks like the outline. A still of a running spinner is otherwise a coin flip between
@@ -480,7 +480,7 @@ export function PlayBox({ size = MOBILE_BOX }: { size?: number }) {
       {/* Optically centred, not geometrically: a triangle's visual centre sits behind its centroid, so
           a play glyph centred on its bounding box always reads as leaning left. The 8% nudge is the
           convention every media player uses. */}
-      <svg width={Math.round(size * 0.52)} height={Math.round(size * 0.52)} viewBox="0 0 10 10" aria-hidden className="translate-x-[8%] text-muted/85">
+      <svg width={Math.round(size * 0.52)} height={Math.round(size * 0.52)} viewBox="0 0 10 10" aria-hidden className="translate-x-[8%] text-muted-85">
         <path d="M2.5 1.4 8.2 5 2.5 8.6Z" fill="currentColor" />
       </svg>
     </StatusBox>
@@ -500,7 +500,7 @@ export function AskBox({ size = MOBILE_BOX }: { size?: number }) {
 export function DoneBox({ size = MOBILE_BOX }: { size?: number }) {
   return (
     <StatusBox size={size} tone="border-muted/40">
-      <Check size={Math.round((size * 10) / 15)} strokeWidth={3} className="text-muted/85" />
+      <Check size={Math.round((size * 10) / 15)} strokeWidth={3} className="text-muted-85" />
     </StatusBox>
   )
 }
@@ -618,7 +618,7 @@ export function TabBar({
                   </span>
                 ) : null}
               </span>
-              <span className={`text-[10px] leading-[12px] tracking-[-0.005em] ${on ? "text-fg" : "text-muted/70"}`}>
+              <span className={`text-[10px] leading-[12px] tracking-[-0.005em] ${on ? "text-fg" : "text-muted-70"}`}>
                 {tab.label}
               </span>
             </button>
@@ -740,7 +740,7 @@ export function ComposerDock({
     <div className="absolute inset-x-0 bottom-0 z-30 border-t border-border/70 bg-bg/85 px-3 pb-[30px] pt-2.5 backdrop-blur-xl backdrop-saturate-150">
       <div className="flex items-end gap-2">
         <div className="flex min-h-[44px] min-w-0 flex-1 flex-col gap-2 rounded-[22px] border border-border-strong bg-panel px-3.5 py-[11px]">
-          <span className={`min-w-0 text-[16px] leading-[21px] ${value ? "text-fg" : "text-muted/70"}`}>{value ?? placeholder}</span>
+          <span className={`min-w-0 text-[16px] leading-[21px] ${value ? "text-fg" : "text-muted-70"}`}>{value ?? placeholder}</span>
           {value ? (
             <div className="flex items-center gap-1.5">
               <Chip>{profile}</Chip>
@@ -751,7 +751,7 @@ export function ComposerDock({
         <button
           aria-label="Send"
           className={`flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full transition-colors ${
-            armed ? "bg-accent text-bg" : "bg-elevated text-muted/60"
+            armed ? "bg-accent text-bg" : "bg-elevated text-muted-60"
           }`}
         >
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

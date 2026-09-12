@@ -5,6 +5,17 @@ import type { TermClientMsg } from "@frizz/shared"
 import { queuedTerminalInputBytes, terminalCloseKind, terminalReconnectDelay } from "../lib/terminalConnection.ts"
 import { FRIZZ_ROUTE_PREFIX } from "@frizz/shared"
 import { apiBase } from "../lib/base-path.ts"
+import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
+
+function terminalTheme() {
+  const root = getComputedStyle(document.documentElement)
+  const color = (name: string) => root.getPropertyValue(name).trim()
+  return {
+    background: color("--color-bg"), foreground: color("--color-fg"), cursor: color("--terminal-cursor"), cursorAccent: color("--terminal-cursor-accent") || color("--color-bg"), selectionBackground: color("--terminal-selection"),
+    black: color("--terminal-black"), red: color("--terminal-red"), green: color("--terminal-green"), yellow: color("--terminal-yellow"), blue: color("--terminal-blue"), magenta: color("--terminal-magenta"), cyan: color("--terminal-cyan"), white: color("--terminal-white"),
+    brightBlack: color("--terminal-bright-black"), brightRed: color("--terminal-bright-red"), brightGreen: color("--terminal-bright-green"), brightYellow: color("--terminal-bright-yellow"), brightBlue: color("--terminal-bright-blue"), brightMagenta: color("--terminal-bright-magenta"), brightCyan: color("--terminal-bright-cyan"), brightWhite: color("--terminal-bright-white"),
+  }
+}
 
 // One xterm + WebSocket per selected thread. Remounts on slug change (keyed by
 // the parent), so mount = attach and unmount = detach. The pty is owned by the login
@@ -37,12 +48,19 @@ export function TerminalPane({ slug }: { slug: string }) {
     const term = new Terminal({
       fontFamily: "Menlo, ui-monospace, monospace",
       fontSize: 13,
-      theme: { background: "#0d0e10", foreground: "#e6e7e9" },
+      theme: terminalTheme(),
       scrollback: 10000,
       allowProposedApi: true,
       cursorBlink: true,
     })
     termRef.current = term
+    let resolvedTheme = getThemeSnapshot().resolved
+    const unsubscribeTheme = subscribeTheme(() => {
+      const nextResolved = getThemeSnapshot().resolved
+      if (nextResolved === resolvedTheme) return
+      resolvedTheme = nextResolved
+      term.options.theme = terminalTheme()
+    })
     // No auto-focus on attach (that would swallow keys the user meant elsewhere) — clicking the
     // terminal focuses it natively; there is no focus machine anymore.
     const fit = new FitAddon()
@@ -214,6 +232,7 @@ export function TerminalPane({ slug }: { slug: string }) {
       window.removeEventListener("pageshow", onPageShow)
       document.removeEventListener("visibilitychange", onVisibility)
       ro.disconnect()
+      unsubscribeTheme()
       dataSub.dispose()
       if (ws) {
         ws.onopen = null

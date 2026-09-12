@@ -216,13 +216,13 @@ function Pair({ c }: { c: Case }) {
       <p className="text-[11px] text-muted">{c.label}</p>
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-1.5">
-          <p className="text-[10.5px] uppercase tracking-wide text-muted/45">At rest — the transcript tail</p>
+          <p className="text-[10.5px] uppercase tracking-wide text-muted-45">At rest — the transcript tail</p>
           <div ref={restRef}>
             <AwaitingBackgroundCard thread={restThread(c)} />
           </div>
         </div>
         <div className="flex flex-col gap-1.5">
-          <p className="text-[10.5px] uppercase tracking-wide text-muted/45">Steered — the fence in the transcript</p>
+          <p className="text-[10.5px] uppercase tracking-wide text-muted-45">Steered — the fence in the transcript</p>
           <div ref={runRef}>
             <ThreadSlugContext.Provider value={`${c.slug}-run`}>
               <FenceCard fenceKind="awaiting" body={c.body} hints={c.hints} />
@@ -230,7 +230,7 @@ function Pair({ c }: { c: Case }) {
           </div>
         </div>
       </div>
-      <p data-parity={c.slug} className={`text-[11px] ${verdict === "identical" ? "text-emerald-500" : "text-red-400"}`}>
+      <p data-parity={c.slug} className={`text-[11px] ${verdict === "identical" ? "text-emerald-500" : "text-danger"}`}>
         {verdict}
       </p>
     </section>

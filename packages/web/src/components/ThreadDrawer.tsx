@@ -98,7 +98,7 @@ export function ThreadDrawer({ id, slug, title, depth, widthDepth }: { id: numbe
           {/* Session-less: the bottom-pinned no-session notice + composer (the affordance to start work). */}
           {adoptable && (
             <div className="shrink-0 border-t border-border/60 px-5 pb-4 pt-3">
-              <p className="mb-2.5 text-[11.5px] text-muted/80">
+              <p className="mb-2.5 text-[11.5px] text-muted-80">
                 No session is attached to this thread yet. Send a message below to start one on this plan.
               </p>
               <Composer

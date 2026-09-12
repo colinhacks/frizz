@@ -594,7 +594,7 @@ export function Composer({
                   {suggestSourceLabels.map((label) => (
                     <span key={label} aria-hidden className="petite-caps invisible col-start-1 row-start-1">{label}</span>
                   ))}
-                  <span className="petite-caps col-start-1 row-start-1 text-right text-muted/70">
+                  <span className="petite-caps col-start-1 row-start-1 text-right text-muted-70">
                     {s.source ? SKILL_SOURCE_LABEL[s.source] : ""}
                   </span>
                 </span>
@@ -771,7 +771,7 @@ function AttachmentChip({
               39px needed against 34px available, once .parquet/.sqlite3 became attachable. The icon
               keeps its inset; the label now gets the full 42px and every extension up to seven
               characters fits. */}
-          {ext && <span className="-mx-1 max-w-[calc(100%+0.5rem)] truncate text-[8px] font-medium leading-none text-muted/80">{ext}</span>}
+          {ext && <span className="-mx-1 max-w-[calc(100%+0.5rem)] truncate text-[8px] font-medium leading-none text-muted-80">{ext}</span>}
         </div>
       )}
       <button

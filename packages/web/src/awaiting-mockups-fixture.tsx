@@ -72,7 +72,7 @@ const ON_CAP = "shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]"
  *  running. A yellow spinner"). A RING rather than lucide's Loader2: the other three states are 12px
  *  circles, so a ring keeps one circular footprint down the column and the glyph gutter never jitters
  *  as a PR goes from running to green. Same idiom as ChatView's own inline ring. */
-function Spinner({ tone = "border-amber-400" }: { tone?: string }) {
+function Spinner({ tone = "border-attention" }: { tone?: string }) {
   return <span className={`inline-block size-3 rounded-full border ${tone} border-t-transparent motion-safe:animate-spin ${ON_CAP}`} />
 }
 
@@ -82,13 +82,13 @@ function Mark({ r }: { r: Row }) {
   // Accent-yellow rather than the checks' amber, matching the rail: a sub-agent pulses accent, a shell
   // pulses blue (groups.sessionIndicatorKind).
   if (r.kind === "agent") return <Spinner tone="border-accent" />
-  if (!r.polled) return <CircleDashed size={12} className={`${ON_CAP} text-muted/60`} />
-  if (r.state === "merged") return <GitMerge size={12} className={`${ON_CAP} text-purple-400`} />
-  if (r.state === "closed") return <GitPullRequestClosed size={12} className={`${ON_CAP} text-red-400`} />
-  if (r.checks === "failing") return <CircleX size={12} className={`${ON_CAP} text-red-400`} />
+  if (!r.polled) return <CircleDashed size={12} className={`${ON_CAP} text-muted-60`} />
+  if (r.state === "merged") return <GitMerge size={12} className={`${ON_CAP} text-permission-edit`} />
+  if (r.state === "closed") return <GitPullRequestClosed size={12} className={`${ON_CAP} text-danger`} />
+  if (r.checks === "failing") return <CircleX size={12} className={`${ON_CAP} text-danger`} />
   if (r.checks === "passing") return <CircleCheck size={12} className={`${ON_CAP} text-emerald-500`} />
   if (r.checks === "running") return <Spinner />
-  return <CircleDashed size={12} className={`${ON_CAP} text-muted/60`} />
+  return <CircleDashed size={12} className={`${ON_CAP} text-muted-60`} />
 }
 
 /** THE WHOLE ROW IS THE TARGET and the chevron says so. `-mr-1` pulls the glyph's dead box off the card's
@@ -96,7 +96,7 @@ function Mark({ r }: { r: Row }) {
  *  the padding. The real number wants measuring with scripts/ink-gaps.mjs before this ships. */
 function Chevron({ external = false }: { external?: boolean }) {
   const Icon = external ? ArrowUpRight : ChevronRight
-  return <Icon size={13} className={`${ON_CAP} -mr-1 text-muted/40 transition-colors group-hover:text-muted/80`} />
+  return <Icon size={13} className={`${ON_CAP} -mr-1 text-muted-40 transition-colors group-hover:text-muted-80`} />
 }
 
 // The COUNTS, unchanged from what shipped: GitHub's own words, worst first, zeroes left out.
@@ -123,9 +123,9 @@ const state = (r: Row): string => {
  *  out the failed checks. I think there should just be a button to view the failures, and it can just
  *  link out to the PR"). It goes to the PR's CHECKS tab, which is where the failures actually are. */
 function ViewFailures({ bare = false }: { bare?: boolean }) {
-  if (bare) return <span className="shrink-0 text-red-400/80 underline decoration-red-400/30 underline-offset-2 hover:decoration-red-400">view failures</span>
+  if (bare) return <span className="shrink-0 text-danger-80 underline decoration-danger/30 underline-offset-2 hover:decoration-danger">view failures</span>
   return (
-    <span className={`shrink-0 rounded border border-red-400/35 px-1.5 text-[10.5px] leading-4 text-red-400/90 hover:border-red-400/70 ${ON_CAP}`}>
+    <span className={`shrink-0 rounded border border-danger/35 px-1.5 text-[10.5px] leading-4 text-danger-90 hover:border-danger/70 ${ON_CAP}`}>
       view failures
     </span>
   )
@@ -152,7 +152,7 @@ function Variant({ id, title, note, children }: { id: string; title: string; not
         <span className="text-[11px] font-semibold tracking-wider text-accent">{id}</span>
         <span className="text-[13px] font-medium text-fg">{title}</span>
       </div>
-      <p className="max-w-[86ch] text-[11.5px] leading-4 text-muted/80">{note}</p>
+      <p className="max-w-[86ch] text-[11.5px] leading-4 text-muted-80">{note}</p>
       <div data-shot={id}>{children}</div>
     </section>
   )
@@ -165,7 +165,7 @@ function Snooze() {
         <Hourglass size={12} className="translate-y-[calc(0.5em_-_0.5cap)]" />
         Snooze
       </button>
-      <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted/70">Hides card until new activity is detected</span>
+      <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted-70">Hides card until new activity is detected</span>
     </CardActions>
   )
 }
@@ -184,7 +184,7 @@ function A2({ rows }: { rows: Row[] }) {
           <div key={label(r)} className={`${HIT} gap-1.5`}>
             <Mark r={r} />
             <span className={REF}>{label(r)}</span>
-            <span className="min-w-0 truncate text-muted/80">{state(r)}</span>
+            <span className="min-w-0 truncate text-muted-80">{state(r)}</span>
             {isRed(r) && <ViewFailures />}
             <span className="flex-1" />
             <Chevron external={r.kind === "pr"} />
@@ -207,7 +207,7 @@ function B2({ rows }: { rows: Row[] }) {
           <div key={label(r)} className={`${HIT} col-span-5 grid grid-cols-subgrid gap-x-2.5`}>
             <Mark r={r} />
             <span className={REF}>{label(r)}</span>
-            <span className="min-w-0 truncate text-muted/75">{state(r)}</span>
+            <span className="min-w-0 truncate text-muted-75">{state(r)}</span>
             {isRed(r) ? <ViewFailures /> : <span />}
             <Chevron external={r.kind === "pr"} />
           </div>
@@ -232,7 +232,7 @@ function C2({ rows }: { rows: Row[] }) {
           >
             <Mark r={r} />
             <span className={REF}>{label(r)}</span>
-            <span className="min-w-0 truncate text-muted/75">{state(r)}</span>
+            <span className="min-w-0 truncate text-muted-75">{state(r)}</span>
             {isRed(r) ? <ViewFailures /> : <span />}
             <Chevron external={r.kind === "pr"} />
           </div>
@@ -254,7 +254,7 @@ function D2({ rows }: { rows: Row[] }) {
           <div key={label(r)} className={`${HIT} col-span-4 grid grid-cols-subgrid gap-x-2.5`}>
             <Mark r={r} />
             <span className={`min-w-0 truncate ${REF}`}>{label(r)}</span>
-            <span className="shrink-0 text-muted/70">{<StateCell r={r} />}</span>
+            <span className="shrink-0 text-muted-70">{<StateCell r={r} />}</span>
             <Chevron external={r.kind === "pr"} />
           </div>
         ))}
@@ -276,9 +276,9 @@ function E2({ rows }: { rows: Row[] }) {
         {rows.map((r) => (
           <div key={label(r)} className={`${HIT} col-span-5 grid grid-cols-subgrid gap-x-2.5`}>
             <Mark r={r} />
-            <span className="w-9 shrink-0 text-[10.5px] uppercase tracking-wide text-muted/45">{kindWord(r)}</span>
+            <span className="w-9 shrink-0 text-[10.5px] uppercase tracking-wide text-muted-45">{kindWord(r)}</span>
             <span className={REF}>{label(r)}</span>
-            <span className="min-w-0 truncate text-muted/75">{<StateCell r={r} />}</span>
+            <span className="min-w-0 truncate text-muted-75">{<StateCell r={r} />}</span>
             <Chevron external={r.kind === "pr"} />
           </div>
         ))}
@@ -303,12 +303,12 @@ function F2({ rows }: { rows: Row[] }) {
       <div className="mt-3 flex flex-col gap-2.5 text-[12px] leading-5">
         {groups.filter(([, rs]) => rs.length > 0).map(([head, rs]) => (
           <div key={head} className="flex flex-col">
-            <span className="text-[10.5px] uppercase tracking-wide text-muted/45">{head}</span>
+            <span className="text-[10.5px] uppercase tracking-wide text-muted-45">{head}</span>
             {rs.map((r) => (
               <div key={label(r)} className={`${HIT} gap-1.5`}>
                 <Mark r={r} />
                 <span className={REF}>{label(r)}</span>
-                <span className="min-w-0 truncate text-muted/75">{<StateCell r={r} />}</span>
+                <span className="min-w-0 truncate text-muted-75">{<StateCell r={r} />}</span>
                 <span className="flex-1" />
                 <Chevron external={r.kind === "pr"} />
               </div>
@@ -338,13 +338,13 @@ function G2({ rows }: { rows: Row[] }) {
           <div key={label(r)} className={`${HIT} col-span-4 grid grid-cols-subgrid gap-x-2.5`}>
             <Mark r={r} />
             <span className={REF}>{label(r)}</span>
-            <span className="min-w-0 truncate text-muted/75">{<StateCell r={r} />}</span>
+            <span className="min-w-0 truncate text-muted-75">{<StateCell r={r} />}</span>
             <Chevron external={r.kind === "pr"} />
           </div>
         ))}
       </div>
       {incidental.length > 0 && (
-        <p className="mt-2 text-[11.5px] leading-4 text-muted/55">
+        <p className="mt-2 text-[11.5px] leading-4 text-muted-55">
           Also running: {incidental.map((r) => label(r)).join(", ")}
         </p>
       )}
@@ -366,9 +366,9 @@ function H2({ rows }: { rows: Row[] }) {
             <span className="pt-[3px]"><Mark r={r} /></span>
             <span className="flex min-w-0 flex-col">
               <span className={`truncate ${REF}`}>{label(r)}</span>
-              <span className="truncate text-[11px] leading-4 text-muted/55">{detail(r)}</span>
+              <span className="truncate text-[11px] leading-4 text-muted-55">{detail(r)}</span>
             </span>
-            <span className="pt-[1px] text-muted/70">{isRed(r) ? <ViewFailures bare /> : r.kind === "pr" ? counts(r) : ""}</span>
+            <span className="pt-[1px] text-muted-70">{isRed(r) ? <ViewFailures bare /> : r.kind === "pr" ? counts(r) : ""}</span>
             <span className="pt-[3px]"><Chevron external={r.kind === "pr"} /></span>
           </div>
         ))}
@@ -385,14 +385,14 @@ function I2({ rows }: { rows: Row[] }) {
   return (
     <TranscriptCard icon={Hourglass} label="Awaiting background work">
       <div className="mt-3 grid grid-cols-[auto_1fr_auto_auto] text-[12px] leading-5">
-        <div className="col-span-4 grid grid-cols-subgrid border-b border-border pb-1 text-[10px] uppercase tracking-wider text-muted/40">
+        <div className="col-span-4 grid grid-cols-subgrid border-b border-border pb-1 text-[10px] uppercase tracking-wider text-muted-40">
           <span /><span>waiting on</span><span>state</span><span />
         </div>
         {rows.map((r) => (
           <div key={label(r)} className={`${HIT} col-span-4 mt-1 grid grid-cols-subgrid gap-x-2.5`}>
             <Mark r={r} />
             <span className={`min-w-0 truncate ${REF}`}>{label(r)}</span>
-            <span className="shrink-0 text-muted/75">{<StateCell r={r} />}</span>
+            <span className="shrink-0 text-muted-75">{<StateCell r={r} />}</span>
             <Chevron external={r.kind === "pr"} />
           </div>
         ))}
@@ -420,9 +420,9 @@ function J2({ rows }: { rows: Row[] }) {
           <div key={label(r)} className={`${HIT} col-span-6 grid grid-cols-subgrid gap-x-2.5`}>
             <Mark r={r} />
             <span className={`min-w-0 truncate ${REF}`}>{label(r)}</span>
-            <span className="shrink-0 tabular-nums text-muted/70">{short(r)}</span>
+            <span className="shrink-0 tabular-nums text-muted-70">{short(r)}</span>
             <span className="shrink-0">{isRed(r) ? <ViewFailures bare /> : null}</span>
-            <span className="w-10 shrink-0 text-right tabular-nums text-muted/45">{r.since}</span>
+            <span className="w-10 shrink-0 text-right tabular-nums text-muted-45">{r.since}</span>
             <Chevron external={r.kind === "pr"} />
           </div>
         ))}
@@ -451,13 +451,13 @@ function Sheet() {
     <div className="mx-auto flex w-[min(1320px,calc(100%-48px))] flex-col gap-10 py-10">
       <header className="flex flex-col gap-1">
         <h1 className="text-[15px] font-semibold text-fg">Resting card, round 2 — tabular, and with every kind of live work in it</h1>
-        <p className="max-w-[92ch] text-[12px] leading-5 text-muted/80">
+        <p className="max-w-[92ch] text-[12px] leading-5 text-muted-80">
           Every variant keeps A's density and takes the four settled decisions: a yellow SPINNER for running checks,
           a <em>view failures</em> button instead of the job list, a chevron with the whole row as the target, and —
           new — background shells and sub-agents as rows beside the PRs. Left: a mixed thread (2 PRs, 2 shells, 1
           sub-agent). Right: one green mergeable PR.
-          <code className="ml-1 text-muted/60">?font=mono</code>,
-          <code className="ml-1 text-muted/60">?only=B2</code>.
+          <code className="ml-1 text-muted-60">?font=mono</code>,
+          <code className="ml-1 text-muted-60">?only=B2</code>.
         </p>
       </header>
       {VARIANTS.map((v) => (

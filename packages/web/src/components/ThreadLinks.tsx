@@ -20,7 +20,7 @@ import { openLocalPath } from "../lib/local-file-links.ts"
 // 6.10px and icon→tag 6.25px against a SHELL row's 5.02 / 5.83 (inside the instrument's ±1px floor — the
 // dot's halo pulses); tag→label 12.21px against 8.04, the one gap the shared column widens, because
 // `File` is four letters in a five-letter track. Label x: 61.89px in every row in mono, 73.44px in sans.
-const ROW ="group flex min-w-0 items-baseline gap-1.5 rounded-sm text-left text-[11.5px] outline-none focus-visible:ring-1 focus-visible:ring-fg/60"
+const ROW ="group flex min-w-0 items-baseline gap-1.5 rounded-sm text-left text-[11.5px] outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
 // The SLOT is the baseline-aligned item, not the icon: an svg has no baseline of its own, so the slot's
 // is synthesized from the svg's bottom edge, and that edge lands on the label's baseline. `-mt-[1em]`
 // collapses the slot's OUTER box onto that edge — a baseline-aligned flex item counts its whole outer
@@ -31,7 +31,7 @@ const ROW ="group flex min-w-0 items-baseline gap-1.5 rounded-sm text-left text-
 const ICON_SLOT = `${CHILD_MARK_SLOT_CLASS} -mt-[1em] self-baseline`
 // Both glyphs are symmetric vertically; `0.5em − 0.5cap` lifts the icon's centre onto the cap band of
 // whichever font is resolved. Measured ink-to-cap residual: 0px in sans and mono, desktop and 390px.
-const ICON = "h-[1em] w-[1em] shrink-0 translate-y-[calc(0.5em_-_0.5cap)] text-muted/45"
+const ICON = "h-[1em] w-[1em] shrink-0 translate-y-[calc(0.5em_-_0.5cap)] text-muted-45"
 
 export function ThreadLinks({ links }: { links: readonly ThreadLinkView[] }) {
   if (!links.length) return null
@@ -44,13 +44,13 @@ export function ThreadLinks({ links }: { links: readonly ThreadLinkView[] }) {
           <span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span>
           <span className={ICON_SLOT}><Icon aria-hidden className={ICON} /></span>
           <span data-link-kind className={CHILD_KIND_TAG_CLASS}>{isUrl ? "Link" : "File"}</span>
-          <span data-link-label className="min-w-0 flex-1 truncate text-muted/70 group-hover:text-fg/80 group-hover:underline">{link.label}</span>
+          <span data-link-label className="min-w-0 flex-1 truncate text-muted-70 group-hover:text-fg/80 group-hover:underline">{link.label}</span>
           {/* `-mb-[0.5em]`: the destination is mono at 10px in a 15px line box whose baseline sits at
               ~60% of it, so beside a SANS label (baseline at ~75% of ITS box) it hung 1.75px below the
               label's line box and made the Link row 19px against every other row's 17.25px. The
               negative margin trims what the row's height arithmetic sees; the box itself — and so
               what `truncate` clips — is unchanged. */}
-          {isUrl && <span data-link-destination className="font-mono-keep ml-auto -mb-[0.5em] max-w-[45%] min-w-0 truncate text-right text-[10px] text-muted/45">{link.target}</span>}
+          {isUrl && <span data-link-destination className="font-mono-keep ml-auto -mb-[0.5em] max-w-[45%] min-w-0 truncate text-right text-[10px] text-muted-45">{link.target}</span>}
         </>
         return isUrl ? (
           <a key={link.id} data-thread-link={link.id} href={link.target} target="_blank" rel="noopener noreferrer" title={link.target} className={ROW} onClick={(event) => event.stopPropagation()}>{content}</a>

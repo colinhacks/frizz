@@ -104,7 +104,7 @@ export function MessageStamp({ at, host }: { at: string | undefined; host: Stamp
       // the plain utility lost and the reading took the pointer. Invisible at rest and `top-full`, it
       // would have been a transparent 16px strip eating clicks on whatever scrolled beneath it. Measured
       // in the fixture: elementFromPoint over the reading returned the reading itself before this.
-      className={`!pointer-events-none absolute right-6 top-full z-10 ${host === "bubble" ? "mt-[2px]" : "-mt-[5px]"} select-none text-[11px] leading-4 [font-variant-numeric:tabular-nums] text-muted/70 opacity-0 transition-opacity group-hover/ts:opacity-100`}
+      className={`!pointer-events-none absolute right-6 top-full z-10 ${host === "bubble" ? "mt-[2px]" : "-mt-[5px]"} select-none text-[11px] leading-4 [font-variant-numeric:tabular-nums] text-muted-70 opacity-0 transition-opacity group-hover/ts:opacity-100`}
     >
       {stamp}
     </time>
