@@ -97,7 +97,7 @@ function Variant({ id, title, note, children }: { id: string; title: string; not
         <span className="text-[11px] font-semibold tracking-wider text-accent">{id}</span>
         <span className="text-[13px] font-medium text-fg">{title}</span>
       </div>
-      <p className="max-w-[86ch] text-[11.5px] leading-4 text-muted/80">{note}</p>
+      <p className="max-w-[86ch] text-[11.5px] leading-4 text-muted-80">{note}</p>
       <div data-shot={id} className="flex flex-wrap items-start gap-6">
         {children}
       </div>
@@ -118,7 +118,7 @@ function Z3({ scen }: { scen: Scenario }) {
       <Prose md={scen.prose} />
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted">
         <span>a timer</span>
-        <span className="text-muted/70">for {scen.parkFor}</span>
+        <span className="text-muted-70">for {scen.parkFor}</span>
       </div>
     </TranscriptCard>
   )
@@ -150,7 +150,7 @@ function B3({ scen }: { scen: Scenario }) {
       aside={
         <span className="flex items-baseline gap-2">
           <PrRef scen={scen} />
-          {scen.pr && <span className="text-[12px] text-muted/40">·</span>}
+          {scen.pr && <span className="text-[12px] text-muted-40">·</span>}
           <span className="text-[12px] tabular-nums text-muted">wakes in {scen.timer.firesIn}</span>
         </span>
       }
@@ -170,21 +170,21 @@ function C3({ scen }: { scen: Scenario }) {
       <Prose md={scen.prose} />
       <div className="mt-2.5 grid grid-cols-[auto_1fr_auto] text-[12px] leading-5">
         <div className="col-span-3 grid grid-cols-subgrid items-baseline gap-x-2">
-          <AlarmClock size={12} className={`${ON_CAP} text-muted/70`} />
+          <AlarmClock size={12} className={`${ON_CAP} text-muted-70`} />
           <span className="min-w-0 truncate text-fg/85">{scen.timer.label}</span>
-          <span className="tabular-nums text-muted/70">in {scen.timer.firesIn}</span>
+          <span className="tabular-nums text-muted-70">in {scen.timer.firesIn}</span>
         </div>
         {scen.pr && (
           <div className="col-span-3 grid grid-cols-subgrid items-baseline gap-x-2">
-            <Radar size={12} className={`${ON_CAP} text-muted/70`} />
+            <Radar size={12} className={`${ON_CAP} text-muted-70`} />
             <span className="min-w-0 truncate">
               <a href="#" className={CARD_LINK}>{scen.pr}</a>
             </span>
-            <span className="text-muted/70">on any activity</span>
+            <span className="text-muted-70">on any activity</span>
           </div>
         )}
       </div>
-      <p className="mt-1.5 text-[11.5px] leading-4 text-muted/60">Full re-check by {scen.parkUntil} either way.</p>
+      <p className="mt-1.5 text-[11.5px] leading-4 text-muted-60">Full re-check by {scen.parkUntil} either way.</p>
     </TranscriptCard>
   )
 }
@@ -198,13 +198,13 @@ function D3({ scen }: { scen: Scenario }) {
     <TranscriptCard icon={icon(scen)} label="Awaiting" aside={<PrRef scen={scen} />}>
       <Prose md={scen.prose} />
       <div className="mt-2.5 flex items-baseline gap-2 text-[12px] leading-5">
-        <AlarmClock size={12} className={`${ON_CAP} text-muted/70`} />
+        <AlarmClock size={12} className={`${ON_CAP} text-muted-70`} />
         <span className="min-w-0 text-fg/85">
           <span className="font-medium tabular-nums">In {scen.timer.firesIn}</span>
-          <span className="text-muted/80"> — {scen.timer.prompt}</span>
+          <span className="text-muted-80"> — {scen.timer.prompt}</span>
         </span>
       </div>
-      <p className="mt-1 text-[11.5px] leading-4 text-muted/60">Parked {scen.parkFor} at most — a full re-check runs by {scen.parkUntil}.</p>
+      <p className="mt-1 text-[11.5px] leading-4 text-muted-60">Parked {scen.parkFor} at most — a full re-check runs by {scen.parkUntil}.</p>
     </TranscriptCard>
   )
 }
@@ -218,7 +218,7 @@ function E3({ scen }: { scen: Scenario }) {
     <div className="flex flex-col">
       <Prose md={scen.prose} />
       <p className="mt-2 flex items-baseline gap-1.5 text-[12px] leading-4 text-muted">
-        <Hourglass size={11} className={`${ON_CAP} text-muted/60`} />
+        <Hourglass size={11} className={`${ON_CAP} text-muted-60`} />
         <span>
           Parked — wakes in {scen.timer.firesIn}{scen.pr ? <>, or on activity on <a href="#" className={CARD_LINK}>{scen.pr}</a></> : null}; re-checks everything by {scen.parkUntil}.
         </span>
@@ -247,12 +247,12 @@ function G3({ scen }: { scen: Scenario }) {
     <TranscriptCard icon={icon(scen)} label="Awaiting" aside={<PrRef scen={scen} />}>
       <Prose md={scen.prose} />
       <div className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[12px] leading-5">
-        <span className="text-[10.5px] uppercase leading-5 tracking-wide text-muted/45">next wake</span>
+        <span className="text-[10.5px] uppercase leading-5 tracking-wide text-muted-45">next wake</span>
         <span className="text-muted">
           in {scen.timer.firesIn} — {scen.timer.label}
           {scen.pr ? <>, or any activity on <a href="#" className={CARD_LINK}>{scen.pr}</a></> : null}
         </span>
-        <span className="text-[10.5px] uppercase leading-5 tracking-wide text-muted/45">park ends</span>
+        <span className="text-[10.5px] uppercase leading-5 tracking-wide text-muted-45">park ends</span>
         <span className="text-muted">{scen.parkUntil} — Frizz re-checks everything</span>
       </div>
     </TranscriptCard>
@@ -276,12 +276,12 @@ function Sheet() {
     <div className="mx-auto flex w-[min(1360px,calc(100%-48px))] flex-col gap-10 py-10">
       <header className="flex flex-col gap-1">
         <h1 className="text-[15px] font-semibold text-fg">Awaiting fence card, round 3 — replacing “a timer&nbsp;&nbsp;for 2h”</h1>
-        <p className="max-w-[92ch] text-[12px] leading-5 text-muted/80">
+        <p className="max-w-[92ch] text-[12px] leading-5 text-muted-80">
           The card the transcript draws for a pure timer park. Left: the 2026-08-24 screenshot’s scenario (one
           hourly timer, <code>for: 2h</code>). Right: the same card with a watched PR beside the timer, because the
           aside slot is already spoken for there. Times are frozen so the sheet screenshots identically.
-          <code className="ml-1 text-muted/60">?font=mono</code>,
-          <code className="ml-1 text-muted/60">?only=C3</code>.
+          <code className="ml-1 text-muted-60">?font=mono</code>,
+          <code className="ml-1 text-muted-60">?only=C3</code>.
         </p>
       </header>
       {VARIANTS.map((v) => (

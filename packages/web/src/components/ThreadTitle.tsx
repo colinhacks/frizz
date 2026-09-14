@@ -113,7 +113,7 @@ export function ThreadTitle({ thread, className = "" }: { thread: ThreadView; cl
             setDraft(manualThreadTitleSeed(shown, slug))
             setEditing(true)
           }}
-          className={`min-w-0 max-w-full shrink truncate rounded px-0.5 -mx-0.5 font-semibold text-[15px] text-left outline-none transition-colors hover:bg-panel-2 focus-visible:ring-1 focus-visible:ring-fg/60 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+          className={`min-w-0 max-w-full shrink truncate rounded px-0.5 -mx-0.5 font-semibold text-[15px] text-left outline-none transition-colors hover:bg-panel-2 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
         >
           {shown}
         </button>

@@ -1,5 +1,5 @@
-/* Styles for the rendered diff (packages/web/src/lib/diff). Self-contained: token colours are a
-   dark palette tuned to the frizz theme (see styles.css --color-* vars). Import this where the diff
+/* Styles for the rendered diff (packages/web/src/lib/diff). Self-contained: token colours are the
+   selected Frizz palette (see theme.css). Import this where the diff
    is rendered. Class names are namespaced `frizz-diff-*` / `ftk-*` (frizz token kind). */
 
 /* `--block-radius` (styles.css) is the corner EVERY block-level element in the app wears — a signal
@@ -36,8 +36,8 @@
 }
 /* Lighter than assistant prose — bright white is reserved for actual agent messages. */
 .frizz-diff-header .frizz-diff-file { color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.frizz-diff-header .frizz-diff-add { color: #57ab5a; }
-.frizz-diff-header .frizz-diff-del { color: #e5534b; }
+.frizz-diff-header .frizz-diff-add { color: var(--code-add-sign); }
+.frizz-diff-header .frizz-diff-del { color: var(--code-del-sign); }
 
 .frizz-diff-body { overflow-x: auto; }
 
@@ -51,11 +51,11 @@
   align-items: baseline;
   white-space: pre;
 }
-.frizz-diff-line[data-type="add"] { background: rgba(87, 171, 90, 0.15); }
-.frizz-diff-line[data-type="del"] { background: rgba(229, 83, 75, 0.15); }
+.frizz-diff-line[data-type="add"] { background: var(--code-add-bg); }
+.frizz-diff-line[data-type="del"] { background: var(--code-del-bg); }
 
 .frizz-diff-gutter {
-  color: #4b4f57;
+  color: var(--code-gutter);
   user-select: none;
   text-align: right;
   min-width: 3em;
@@ -67,10 +67,10 @@
   text-align: center;
   flex-shrink: 0;
   user-select: none;
-  color: #4b4f57;
+  color: var(--code-gutter);
 }
-.frizz-diff-line[data-type="add"] .frizz-diff-sign { color: #57ab5a; }
-.frizz-diff-line[data-type="del"] .frizz-diff-sign { color: #e5534b; }
+.frizz-diff-line[data-type="add"] .frizz-diff-sign { color: var(--code-add-sign); }
+.frizz-diff-line[data-type="del"] .frizz-diff-sign { color: var(--code-del-sign); }
 
 .frizz-diff-code { flex: 1; min-width: 0; padding-right: 12px; }
 
@@ -123,7 +123,7 @@
 /* The status meta (done · 2m) shares the header's 11.5px so it doesn't read as an afterthought; its
    small-caps sit low in that box, so drop it a pixel onto the row's optical baseline. */
 .frizz-tool-header-caps { position: relative; top: 1px; }
-.frizz-tool-failed { color: #e5534b; }
+.frizz-tool-failed { color: var(--code-del-sign); }
 .frizz-bash-expand {
   color: var(--color-muted);
   font-size: 11px;

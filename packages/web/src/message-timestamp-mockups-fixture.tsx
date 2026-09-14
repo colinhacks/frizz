@@ -99,7 +99,7 @@ function DividerChrome({ children, trailing }: { children: ReactNode; trailing?:
   return (
     <div className="my-1 flex items-center gap-3">
       <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
-      <span className="petite-caps flex min-w-0 items-center gap-1 break-words text-center text-[12px] text-muted/70">
+      <span className="petite-caps flex min-w-0 items-center gap-1 break-words text-center text-[12px] text-muted-70">
         <Bot aria-hidden="true" size={12} className="shrink-0 translate-y-[0.04em]" />
         {children}
       </span>
@@ -185,7 +185,7 @@ function GutterRow({ m, row }: { m: Msg; row: number }) {
     // own label is petite-caps (inking from x-height, not cap-top), so flexbox's synthesized baseline
     // put the gutter reading 4.48px HIGH (measured). A rule is a horizontal object — centre against it.
     <div className={`group flex gap-2 ${m.kind === "divider" ? "items-center" : "items-baseline"}`} onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}>
-      <span className={`${GUTTER} ${REVEAL} ${shown(on, row)} ${TABULAR} text-right text-[11px] leading-5 text-muted/70`}>
+      <span className={`${GUTTER} ${REVEAL} ${shown(on, row)} ${TABULAR} text-right text-[11px] leading-5 text-muted-70`}>
         {gutterClock(m.at)}
       </span>
       <div className="min-w-0 flex-1"><Row m={m} /></div>
@@ -214,7 +214,7 @@ function TrailRow({ m, row }: { m: Msg; row: number }) {
   return (
     <div className="relative" onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}>
       <Row m={m} />
-      <span className={`${REVEAL} ${shown(on, row)} ${TABULAR} absolute right-0 top-full z-10 -mt-0.5 text-[11px] leading-4 text-muted/70`}>
+      <span className={`${REVEAL} ${shown(on, row)} ${TABULAR} absolute right-0 top-full z-10 -mt-0.5 text-[11px] leading-4 text-muted-70`}>
         {clock(m.at)}
       </span>
     </div>
@@ -243,7 +243,7 @@ function HairlineRow({ m, row }: { m: Msg; row: number }) {
   if (m.kind === "divider") {
     return (
       <div onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}>
-        <DividerChrome trailing={<span className={`${REVEAL} ${shown(on, row)} ${TABULAR} petite-caps text-[12px] text-muted/70`}>· {clock(m.at)}</span>}>
+        <DividerChrome trailing={<span className={`${REVEAL} ${shown(on, row)} ${TABULAR} petite-caps text-[12px] text-muted-70`}>· {clock(m.at)}</span>}>
           {m.label}
         </DividerChrome>
       </div>
@@ -254,7 +254,7 @@ function HairlineRow({ m, row }: { m: Msg; row: number }) {
       {/* Laid ON the gap the row already owns (-top-2.5), so the rule costs no height. */}
       <div className={`${REVEAL} ${shown(on, row)} absolute -top-2.5 left-0 right-0 flex items-center gap-3`}>
         <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
-        <span className={`petite-caps ${TABULAR} shrink-0 text-[12px] leading-none text-muted/70`}>{clock(m.at)}</span>
+        <span className={`petite-caps ${TABULAR} shrink-0 text-[12px] leading-none text-muted-70`}>{clock(m.at)}</span>
         <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
       </div>
       <Row m={m} />
@@ -286,7 +286,7 @@ const VARIANTS: Array<{ id: string; title: string; note: ReactNode; render: () =
   {
     id: "A",
     title: "Tooltip on the message",
-    note: <>Zero chrome. The message body is the trigger and the reading arrives in the app's existing dark tooltip, with the full date, the seconds and the age. Cheapest to ship — <code className="text-muted/60">components/Tooltip.tsx</code> already exists — and the only variant that adds literally nothing to the layout. Its weakness is visible in the shot: the tip is drawn <em>over</em> the transcript, so reading one message's time hides the one above it — and an unmarked trigger is undiscoverable, so nobody finds this without being told.</>,
+    note: <>Zero chrome. The message body is the trigger and the reading arrives in the app's existing dark tooltip, with the full date, the seconds and the age. Cheapest to ship — <code className="text-muted-60">components/Tooltip.tsx</code> already exists — and the only variant that adds literally nothing to the layout. Its weakness is visible in the shot: the tip is drawn <em>over</em> the transcript, so reading one message's time hides the one above it — and an unmarked trigger is undiscoverable, so nobody finds this without being told.</>,
     render: () => <VariantA msgs={EXCERPT} />,
   },
   {
@@ -313,14 +313,14 @@ function FontSwitch() {
   const [font, setFont] = useState(document.documentElement.dataset.font ?? "sans")
   const pick = (next: string) => { document.documentElement.dataset.font = next; setFont(next) }
   return (
-    <div className="flex items-center gap-1.5 text-[12px] text-muted/80">
+    <div className="flex items-center gap-1.5 text-[12px] text-muted-80">
       <span>Font</span>
       {["sans", "mono"].map((f) => (
         <button
           key={f}
           type="button"
           onClick={() => pick(f)}
-          className={`rounded px-2 py-0.5 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-fg/60 ${font === f ? "bg-panel-2 text-fg" : "hover:text-fg"}`}
+          className={`rounded px-2 py-0.5 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${font === f ? "bg-panel-2 text-fg" : "hover:text-fg"}`}
         >
           {f}
         </button>
@@ -338,25 +338,25 @@ function Sheet() {
           <h1 className="text-[15px] font-semibold text-fg">Per-message timestamps, on hover</h1>
           <FontSwitch />
         </div>
-        <p className="max-w-[92ch] text-[12px] leading-5 text-muted/80">
-          Four placements for the same fact. The data already ships — <code className="text-muted/60">TranscriptMessage.at</code> is an
+        <p className="max-w-[92ch] text-[12px] leading-5 text-muted-80">
+          Four placements for the same fact. The data already ships — <code className="text-muted-60">TranscriptMessage.at</code> is an
           ISO8601 the server sets on both providers and the client already reads — so each of these is a pure client render, no schema
           change and no server round-trip. All four are zero-layout by construction: the transcript is virtualized, so a reveal that
           changed a row's measured height would shove the scroll position under the pointer.
           <strong className="font-medium text-fg"> Hover the messages below</strong> — every panel is blank at rest, which is the
           point; each variant only shows its reading under the pointer.
-          <code className="ml-1 text-muted/60">?only=B</code> for one variant alone,
-          <code className="ml-1 text-muted/60">?reveal=3</code> to pin a row open,
-          <code className="ml-1 text-muted/60">?hover=all</code> to open every row at once.
+          <code className="ml-1 text-muted-60">?only=B</code> for one variant alone,
+          <code className="ml-1 text-muted-60">?reveal=3</code> to pin a row open,
+          <code className="ml-1 text-muted-60">?hover=all</code> to open every row at once.
         </p>
       </header>
       {shownVariants.map((v) => (
         <section key={v.id} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <h2 className="text-[13px] font-medium text-fg">
-              <span className={`${TABULAR} mr-2 text-muted/60`}>{v.id}</span>{v.title}
+              <span className={`${TABULAR} mr-2 text-muted-60`}>{v.id}</span>{v.title}
             </h2>
-            <p className="max-w-[92ch] text-[12px] leading-5 text-muted/80">{v.note}</p>
+            <p className="max-w-[92ch] text-[12px] leading-5 text-muted-80">{v.note}</p>
           </div>
           <div className="w-[760px]">{v.render()}</div>
         </section>

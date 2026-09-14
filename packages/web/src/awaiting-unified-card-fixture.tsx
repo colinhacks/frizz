@@ -66,8 +66,8 @@ const MIXED: Scenario = {
 const ON_CAP = "shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]"
 const ROW = "group relative col-span-4 grid grid-cols-subgrid items-baseline rounded-sm text-[12px] leading-5"
 const NAME = "ml-1.5 min-w-0 truncate font-medium text-fg/90"
-const STATUS = "ml-3 min-w-0 truncate text-right text-muted/70"
-const HEAD = "col-span-4 text-[10.5px] uppercase tracking-wide text-muted/45"
+const STATUS = "ml-3 min-w-0 truncate text-right text-muted-70"
+const HEAD = "col-span-4 text-[10.5px] uppercase tracking-wide text-muted-45"
 
 function Spinner({ tone }: { tone: string }) {
   return <span aria-hidden className={`inline-block size-3 rounded-full border ${tone} border-t-transparent motion-safe:animate-spin ${ON_CAP}`} />
@@ -75,7 +75,7 @@ function Spinner({ tone }: { tone: string }) {
 function Mark({ kind }: { kind: Row["kind"] }) {
   if (kind === "agent") return <Spinner tone="border-accent" />
   if (kind === "shell") return <TerminalSquare size={12} className={`${ON_CAP} text-shell`} />
-  if (kind === "timer") return <Clock size={12} className={`${ON_CAP} text-muted/60`} />
+  if (kind === "timer") return <Clock size={12} className={`${ON_CAP} text-muted-60`} />
   return <CircleCheck size={12} className={`${ON_CAP} text-emerald-500`} />
 }
 function WaitTable({ groups }: { groups: Scenario["groups"] }) {
@@ -89,7 +89,7 @@ function WaitTable({ groups }: { groups: Scenario["groups"] }) {
               <span className="flex shrink-0"><Mark kind={r.kind} /></span>
               <span className={NAME}>{r.name}</span>
               <span className={STATUS}>{r.status}</span>
-              {r.open ? <ChevronRight size={13} aria-hidden className={`${ON_CAP} ml-[3px] -mr-[4px] text-muted/35 transition-colors group-hover:text-muted/70`} /> : <span />}
+              {r.open ? <ChevronRight size={13} aria-hidden className={`${ON_CAP} ml-[3px] -mr-[4px] text-muted-35 transition-colors group-hover:text-muted-70`} /> : <span />}
             </div>
           ))}
         </div>
@@ -154,12 +154,12 @@ function Sheet() {
     <div className="mx-auto flex w-[min(1360px,calc(100%-48px))] flex-col gap-10 py-10">
       <header className="flex flex-col gap-1">
         <h1 className="text-[15px] font-semibold text-fg">Awaiting card, round 5 — the title: “Awaiting”, at a real title scale</h1>
-        <p className="max-w-[92ch] text-[12px] leading-5 text-muted/80">
+        <p className="max-w-[92ch] text-[12px] leading-5 text-muted-80">
           The composition is round 4's: prose, full-bleed divider, awaited items, recessed snooze footer
           (queue only). This round walks the TITLE alone — one word, four scales; the family's shared 13px
           style is the control. Left: the timer park. Right: every wait kind at once.
-          <code className="ml-1 text-muted/60">?font=mono</code>,
-          <code className="ml-1 text-muted/60">?only=C5</code>.
+          <code className="ml-1 text-muted-60">?font=mono</code>,
+          <code className="ml-1 text-muted-60">?only=C5</code>.
         </p>
       </header>
       {VARIANTS.map((v) => (
@@ -168,7 +168,7 @@ function Sheet() {
             <span className="text-[11px] font-semibold tracking-wider text-accent">{v.id}</span>
             <span className="text-[13px] font-medium text-fg">{v.title}</span>
           </div>
-          <p className="max-w-[86ch] text-[11.5px] leading-4 text-muted/80">{v.note}</p>
+          <p className="max-w-[86ch] text-[11.5px] leading-4 text-muted-80">{v.note}</p>
           <div data-shot={v.id} className="flex flex-wrap items-start gap-6">
             <div className="w-[640px]">{v.render(TIMER_PARK)}</div>
             <div className="w-[640px]">{v.render(MIXED)}</div>

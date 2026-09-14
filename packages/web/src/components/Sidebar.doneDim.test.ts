@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFileSync } from "node:fs"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -50,7 +51,7 @@ function titleClasses(html: string): string[] {
   return html.slice(start, html.indexOf('"', start)).split(" ").filter(Boolean)
 }
 
-const ROW_DIM = "opacity-65"
+const ROW_DIM = "sidebar-row-dim"
 const TITLE_DIM = "text-fg/75"
 const PINNED = { pinnedAt: "2026-09-02T10:00:00.000Z" } as Partial<ThreadView>
 const DONE = { state: "archived", archived: true } as Partial<ThreadView>
@@ -64,7 +65,8 @@ test("an open row at rest carries no dim", () => {
 test("a done row is dimmed — row and title alike", () => {
   const html = row(DONE)
   assert.ok(rowClasses(html).includes(ROW_DIM), "the row is grayed")
-  assert.ok(rowClasses(html).includes("hover:opacity-90"), "and lifts on hover, like Snoozed")
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8')
+  assert.match(css, /\.sidebar-row-dim:hover, \.sidebar-row-dim:focus-within \{ opacity: var\(--row-dim-hover-opacity\); \}/)
   assert.ok(titleClasses(html).includes(TITLE_DIM), "the title is grayed")
 })
 

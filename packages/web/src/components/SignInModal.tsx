@@ -114,7 +114,7 @@ export function SignInModal({
   return (
     <RadixDialog.Root open onOpenChange={(open) => { if (!open) { abandonAttempt(); onClose() } }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-[210] bg-black/30 backdrop-blur-md backdrop-saturate-150" />
+        <RadixDialog.Overlay className="fixed inset-0 z-[210] bg-scrim-30 backdrop-blur-md backdrop-saturate-150" />
         <RadixDialog.Content
           aria-modal="true"
           aria-describedby={undefined}
@@ -130,7 +130,7 @@ export function SignInModal({
               </p>
               {/* The restricted account terminal: a global provider sign-in session, NOT a thread —
                   it inherits no project prompt and accepts no other command. */}
-              <div className="mb-4 h-[340px] overflow-hidden rounded-lg border border-border bg-[#0d0e10]">
+              <div className="mb-4 h-[340px] overflow-hidden rounded-lg border border-border bg-bg">
                 <Suspense fallback={<div className="flex h-full items-center justify-center text-[12px] text-muted">Opening terminal…</div>}>
                   <TerminalPane slug={attempt} />
                 </Suspense>
@@ -160,7 +160,7 @@ export function SignInModal({
                   onClick={copyCommand}
                   className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-panel hover:text-fg"
                 >
-                  {copied ? <Check size={14} strokeWidth={2} className="text-green-400" /> : <Copy size={14} strokeWidth={1.8} />}
+                  {copied ? <Check size={14} strokeWidth={2} className="text-success" /> : <Copy size={14} strokeWidth={1.8} />}
                 </button>
               </div>
 
@@ -185,7 +185,7 @@ export function SignInModal({
                   type="button"
                   onClick={() => start.mutate()}
                   disabled={start.isPending}
-                  className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white outline-none transition-opacity hover:opacity-90 disabled:opacity-60"
+                  className="flex items-center gap-1.5 rounded-md bg-accent-fill px-3 py-1.5 text-[12.5px] font-medium text-accent-fg outline-none transition-opacity hover:opacity-90 disabled:opacity-60"
                 >
                   {start.isPending && <Loader2 size={13} className="animate-spin" />}
                   Sign in here
@@ -228,7 +228,7 @@ export function LogoutConfirmModal({ backend, onClose }: { backend: Backend; onC
   return (
     <RadixDialog.Root open onOpenChange={(open) => { if (!open && !logout.isPending) onClose() }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-[210] bg-black/30 backdrop-blur-md backdrop-saturate-150" />
+        <RadixDialog.Overlay className="fixed inset-0 z-[210] bg-scrim-30 backdrop-blur-md backdrop-saturate-150" />
         <RadixDialog.Content
           aria-modal="true"
           aria-describedby={undefined}
@@ -252,7 +252,7 @@ export function LogoutConfirmModal({ backend, onClose }: { backend: Backend; onC
               type="button"
               onClick={() => logout.mutate()}
               disabled={logout.isPending}
-              className="flex items-center gap-1.5 rounded-md bg-red-500/90 px-3 py-1.5 text-[12.5px] font-medium text-white outline-none transition-opacity hover:opacity-90 disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded-md bg-danger-button/90 px-3 py-1.5 text-[12.5px] font-medium text-white outline-none transition-opacity hover:opacity-90 disabled:opacity-60"
             >
               {logout.isPending && <Loader2 size={13} className="animate-spin" />}
               Sign out

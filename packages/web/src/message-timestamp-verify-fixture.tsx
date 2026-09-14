@@ -81,11 +81,11 @@ function Sheet() {
   return (
     <div className="mx-auto w-[min(900px,calc(100%-48px))] py-10">
       <h1 className="mb-1 text-[15px] font-semibold text-fg">Trailing reveal — the shipped component</h1>
-      <p className="mb-8 max-w-[92ch] text-[12px] leading-5 text-muted/80">
-        Real <code className="text-muted/60">MessageRow</code> and real <code className="text-muted/60">messageStamp</code>, on the real
+      <p className="mb-8 max-w-[92ch] text-[12px] leading-5 text-muted-80">
+        Real <code className="text-muted-60">MessageRow</code> and real <code className="text-muted-60">messageStamp</code>, on the real
         stylesheet, in transform-positioned rows that reproduce the transcript's virtualizer — so the stacking the reveal depends on is
-        genuinely exercised. Hover row 1 (<code className="text-muted/60">?hover=1</code>) for the tight case: its reading is
-        drawn into row 2's 6px <code className="text-muted/60">META_CARD_STEP</code> gap, which is where it overflows furthest into
+        genuinely exercised. Hover row 1 (<code className="text-muted-60">?hover=1</code>) for the tight case: its reading is
+        drawn into row 2's 6px <code className="text-muted-60">META_CARD_STEP</code> gap, which is where it overflows furthest into
         its neighbour and where the stacking lift has to hold.
       </p>
       {/* A SCROLL PANE with a pinned band, because the row lift has a second job beyond clearing its
@@ -126,7 +126,7 @@ function Sheet() {
         ))}
         </div>
       </div>
-      <p className="mt-6 text-[12px] leading-5 text-muted/80">
+      <p className="mt-6 text-[12px] leading-5 text-muted-80">
         Readings this build produces: {ROWS.map((r) => messageStamp(r.at)).join("   ·   ")}
       </p>
     </div>

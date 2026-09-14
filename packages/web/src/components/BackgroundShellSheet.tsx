@@ -92,8 +92,8 @@ export function BackgroundShellSheet({
         <>
           <SheetHeader
             title={label}
-            icon={<TerminalSquare aria-hidden size={14} className="shrink-0 text-muted/60" />}
-            meta={stateLabel ? <span className="shrink-0 whitespace-nowrap text-[11.5px] text-muted/60">{stateLabel}</span> : undefined}
+            icon={<TerminalSquare aria-hidden size={14} className="shrink-0 text-muted-60" />}
+            meta={stateLabel ? <span className="shrink-0 whitespace-nowrap text-[11.5px] text-muted-60">{stateLabel}</span> : undefined}
             onClose={close}
           />
 
@@ -109,9 +109,9 @@ export function BackgroundShellSheet({
               <div className="flex flex-col gap-5">
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-3">
-                    <h2 className="petite-caps text-[10px] text-muted/65">Command</h2>
+                    <h2 className="petite-caps text-[10px] text-muted-65">Command</h2>
                     {command && (
-                      <button type="button" onClick={copyCommand} className="flex items-center gap-1 rounded px-1.5 py-1 text-[10.5px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60">
+                      <button type="button" onClick={copyCommand} className="flex items-center gap-1 rounded px-1.5 py-1 text-[10.5px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60">
                         <Copy aria-hidden size={11} /> Copy
                       </button>
                     )}
@@ -127,14 +127,14 @@ export function BackgroundShellSheet({
                 </section>
                 <section>
                   <div className="mb-2 flex items-center gap-2">
-                    <h2 className="petite-caps text-[10px] text-muted/65">Output</h2>
+                    <h2 className="petite-caps text-[10px] text-muted-65">Output</h2>
                     {state === "running" && <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="shell-drawer" />}
-                    {query.data?.truncated && <span className="text-[10.5px] text-muted/50">Showing latest 512 KB</span>}
+                    {query.data?.truncated && <span className="text-[10.5px] text-muted-50">Showing latest 512 KB</span>}
                   </div>
                   {output ? (
-                    <pre data-background-shell-output className={`font-mono-keep min-h-40 whitespace-pre-wrap break-words ${BLOCK_RADIUS} border border-border bg-[#090b10] px-4 py-3 text-[12px] leading-relaxed text-fg/85`}>{output}</pre>
+                    <pre data-background-shell-output className={`font-mono-keep min-h-40 whitespace-pre-wrap break-words ${BLOCK_RADIUS} border border-border bg-inset px-4 py-3 text-[12px] leading-relaxed text-fg/85`}>{output}</pre>
                   ) : (
-                    <div data-background-shell-output className={`flex min-h-40 items-center justify-center ${BLOCK_RADIUS} border border-border bg-[#090b10] px-4 text-center text-[12px] text-muted/60`}>
+                    <div data-background-shell-output className={`flex min-h-40 items-center justify-center ${BLOCK_RADIUS} border border-border bg-inset px-4 text-center text-[12px] text-muted-60`}>
                       {state === "done" ? "No output was captured." : "No output yet."}
                     </div>
                   )}
@@ -159,7 +159,7 @@ export function BackgroundShellSheet({
                 data-stop-background-shell
                 disabled={stopping}
                 onClick={stop}
-                className="rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] text-fg/80 transition-colors hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300 disabled:opacity-50"
+                className="rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] text-fg/80 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger-soft disabled:opacity-50"
               >
                 {stopping ? "Stopping…" : "Stop shell"}
               </button>
@@ -168,7 +168,7 @@ export function BackgroundShellSheet({
           {!unavailable && !query.data?.stoppable && state === "running" && query.data?.stopNote && (
             <footer
               data-background-shell-stop-note
-              className="w-full shrink-0 border-t border-border/70 bg-panel/95 px-4 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[11.5px] text-muted/70"
+              className="w-full shrink-0 border-t border-border/70 bg-panel/95 px-4 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[11.5px] text-muted-70"
             >
               {query.data.stopNote}
             </footer>

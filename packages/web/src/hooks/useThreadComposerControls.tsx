@@ -164,7 +164,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           />
         )}
         {pendingModel && pendingEffort && (
-          <span className="min-w-0 truncate text-[9px] text-muted/50">
+          <span className="min-w-0 truncate text-[9px] text-muted-50">
             → {pendingModel} · {pendingEffort} pending
           </span>
         )}
@@ -173,7 +173,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
     status: composerStatus ? (
           <div
             data-thread-control-error=""
-            className="px-1 pt-1 text-[9.5px] leading-tight text-muted/65"
+            className="px-1 pt-1 text-[9.5px] leading-tight text-muted-65"
           >
             {composerStatus.message}
           </div>

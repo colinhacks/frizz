@@ -306,7 +306,7 @@ function ChecksInProgress() {
  *  The CircleDashed arms stay on the app's `muted`, deliberately: "frizz has not polled this PR yet" is
  *  not a GitHub state, so no Primer colour means it. */
 function ChecksGlyph({ status }: { status: GithubWatchStatus | undefined }) {
-  if (!status) return <CircleDashed size={12} className={`${ON_CAP} text-muted/60`} />
+  if (!status) return <CircleDashed size={12} className={`${ON_CAP} text-muted-60`} />
   if (status.state === "merged") return <GitMerge size={12} className={ON_CAP} style={{ color: PRIMER.fgDone }} />
   if (status.state === "closed") return <GitPullRequestClosed size={12} className={ON_CAP} style={{ color: PRIMER.fgDanger }} />
   if (status.checks === "failing") return <CircleX size={12} className={ON_CAP} style={{ color: PRIMER.fgDanger }} />
@@ -318,7 +318,7 @@ function ChecksGlyph({ status }: { status: GithubWatchStatus | undefined }) {
   // above it, on the same cap-band correction.
   if (status.gated > 0 && status.running === 0) return <CircleAlert size={12} className={ON_CAP} style={{ color: PRIMER.fgAttention }} />
   if (status.checks === "running") return <ChecksInProgress />
-  return <CircleDashed size={12} className={`${ON_CAP} text-muted/60`} />
+  return <CircleDashed size={12} className={`${ON_CAP} text-muted-60`} />
 }
 
 /** "2 failing, 1 in progress, 9 successful" — GitHub's own count words, and only the counts that are
@@ -398,7 +398,7 @@ const NAME = "ml-1.5 min-w-0 truncate font-medium text-fg/90"
 /** The light-gray status column. `text-right` right-justifies it inside its own track; the name's `1fr`
  *  eats the slack, so the status lands against the chevron at the card's right edge. `ml-3` is only a
  *  floor — the distance the reader actually sees is whatever the truncating name leaves. */
-const STATUS = "ml-3 min-w-0 truncate text-right text-muted/70"
+const STATUS = "ml-3 min-w-0 truncate text-right text-muted-70"
 
 /** The whole row is the target, so the name's link stretches over it (`after:inset-0` against the row's
  *  `relative`). A real <a>/<button> rather than a click handler on the div: right-click, middle-click and
@@ -424,7 +424,7 @@ function Chevron() {
   // toward the content edge the mark column already sits on. A further -1px to close the last 1.88px was
   // drafted and rejected: 1.88px of optical inset at a card's edge reads as intentional, and dead flush
   // against a 12px rounded corner does not.
-  return <ChevronRight size={13} aria-hidden className={`${ON_CAP} ml-[3px] -mr-[4px] text-muted/35 transition-colors group-hover:text-muted/70`} />
+  return <ChevronRight size={13} aria-hidden className={`${ON_CAP} ml-[3px] -mr-[4px] text-muted-35 transition-colors group-hover:text-muted-70`} />
 }
 
 export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, title, testKind, testId, indent }: {
@@ -637,7 +637,7 @@ export function TimerRow({ watch, now }: { watch: ThreadWatchView; now: number }
     <WaitRow
       testKind="timer"
       testId={watch.target}
-      mark={<Clock size={12} className={`${ON_CAP} text-muted/60`} />}
+      mark={<Clock size={12} className={`${ON_CAP} text-muted-60`} />}
       name={watch.timer?.prompt || watch.target}
       title={watch.timer?.fireAt ? `One-off timer, set for ${watch.timer.fireAt}` : watch.target}
       status={status}
@@ -778,7 +778,7 @@ export interface WaitGroup {
 // scripts/ink-gaps.mjs at dsf 6 on the fullscreen rail — label→count / count→caret: sans 7.84 / 8.10px,
 // mono 8.10 / 7.42px. `ml-[3px]` read 6.10px in sans, visibly tighter than the gap before it.
 function GroupHeading({ group, first }: { group: WaitGroup; first: boolean }) {
-  const cls = `col-span-4 text-[10.5px] uppercase tracking-wide text-muted/45 ${first ? "" : "mt-2.5"}`
+  const cls = `col-span-4 text-[10.5px] uppercase tracking-wide text-muted-45 ${first ? "" : "mt-2.5"}`
   if (!group.onToggle) return <div className={cls}>{group.head}</div>
   return (
     <button
@@ -786,7 +786,7 @@ function GroupHeading({ group, first }: { group: WaitGroup; first: boolean }) {
       onClick={group.onToggle}
       aria-expanded={!group.collapsed}
       onMouseDown={(e) => e.stopPropagation()}
-      className={`${cls} flex items-baseline rounded-sm text-left transition-colors hover:text-muted/80`}
+      className={`${cls} flex items-baseline rounded-sm text-left transition-colors hover:text-muted-80`}
     >
       <span>{group.head}</span>
       {group.count !== undefined && <span className="ml-1.5 tabular-nums">{group.count}</span>}

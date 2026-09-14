@@ -20,9 +20,10 @@ import { ThreadView } from "./ChatView.tsx"
 // each successive layer a step further from the right edge so the stack reads as a stack.
 
 function useNarrowDrawer(): boolean {
-  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 800px)").matches)
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 800px)").matches)
   useEffect(() => {
-    const query = window.matchMedia("(max-width: 800px)")
+    const query = window.matchMedia?.("(max-width: 800px)")
+    if (!query) return
     const update = () => setNarrow(query.matches)
     update()
     query.addEventListener("change", update)

@@ -86,7 +86,7 @@ test("the Codex context window presets come from the catalogue, not a hand-typed
 
 test("notification recovery aligns with its control and keeps recovery instructions visible", () => {
   const denied = source.slice(source.indexOf("function NotifDeniedHelp"), source.indexOf("function hostOf"))
-  assert.match(denied, /className="flex flex-col gap-1 text-\[11px\] text-muted\/70"/)
+  assert.match(denied, /className="flex flex-col gap-1 text-\[11px\] text-muted-70"/)
   assert.doesNotMatch(denied, /pl-6/)
   assert.match(denied, /Notifications are blocked for this site/)
   assert.match(denied, /Paste this into a new tab, set Notifications/)
@@ -99,7 +99,9 @@ test("notification recovery aligns with its control and keeps recovery instructi
 test("the form leads with interface preferences and keeps the Claude field under its own band", () => {
   const form = source.slice(source.indexOf('className="flex-1 overflow-y-auto p-5'), source.indexOf("function SaveStatus"))
   const fields = [...form.matchAll(/<SettingsField label="([^"]+)"/g)].map((m) => m[1])
-  assert.equal(fields[0], "Font")
+  assert.equal(fields[0], "Appearance")
+  assert.equal(fields[1], "Font")
+  assert.match(source, /Applies to this browser across all projects\. System follows the device appearance\./)
   assert.ok(!fields.includes("Permissions"), "the Claude field is not loose in the general list")
   // The band precedes its field, and the field's label no longer repeats the band's name.
   const claude = source.slice(source.indexOf("function ClaudeSection"), source.indexOf("function PromptsSection"))

@@ -113,43 +113,43 @@ const CANDIDATES: Candidate[] = [
     id: "current",
     label: "current — CircleDashed",
     note: "What ships today. Reads as a generic wait; says nothing about a shell.",
-    node: <StatusBox><CircleDashed size={10} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><CircleDashed size={10} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "lucide-terminal",
     label: "lucide Terminal, 10px",
     note: "The off-the-shelf mark, unmodified. Caret and rule drift apart at this size.",
-    node: <StatusBox><Terminal size={10} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Terminal size={10} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "lucide-terminal-heavy",
     label: "lucide Terminal, 10px, 2.4 weight",
     note: "Same mark, inked up to the family's weight band.",
-    node: <StatusBox><Terminal size={10} strokeWidth={2.4} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Terminal size={10} strokeWidth={2.4} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "prompt-tight",
     label: "drawn prompt — tight",
     note: "Caret and rule pulled together so the pair reads as one mark.",
-    node: <StatusBox><Prompt size={10} weight={1.5} gap={1.2} drop={1} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Prompt size={10} weight={1.5} gap={1.2} drop={1} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "prompt-open",
     label: "drawn prompt — open",
     note: "A touch more air between caret and rule; closer to a real shell prompt's rhythm.",
-    node: <StatusBox><Prompt size={10} weight={1.5} gap={2} drop={1} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Prompt size={10} weight={1.5} gap={2} drop={1} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "prompt-heavy",
     label: "drawn prompt — heavy",
     note: "The tight pair at a thicker pen, for weight-matching against the Check.",
-    node: <StatusBox><Prompt size={10} weight={2} gap={1.2} drop={1} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Prompt size={10} weight={2} gap={1.2} drop={1} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "prompt-large",
     label: "drawn prompt — 11px",
     note: "Filling more of the box: a sparse glyph reads lighter than a solid one at equal size.",
-    node: <StatusBox><Prompt size={11} weight={1.6} gap={1.2} drop={1} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Prompt size={11} weight={1.6} gap={1.2} drop={1} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "prompt-shell",
@@ -161,7 +161,7 @@ const CANDIDATES: Candidate[] = [
     id: "square-terminal",
     label: "lucide SquareTerminal",
     note: "Its own box inside the rail's box. Shown to rule it out, not to pick it.",
-    node: <StatusBox><SquareTerminal size={10} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><SquareTerminal size={10} className="text-muted-70" /></StatusBox>,
   },
   {
     id: "dot-pulse",
@@ -194,9 +194,9 @@ const CANDIDATES: Candidate[] = [
 const FAMILY: { id: string; node: ReactElement }[] = [
   { id: "working", node: <BoxSpinner /> },
   { id: "background", node: <StatusBox><Dot /></StatusBox> },
-  { id: "needs-input", node: <StatusBox><span className="frizz-rail-glyph font-bold leading-none text-muted/70" style={{ fontSize: 10 }}>?</span></StatusBox> },
-  { id: "snoozed-timer", node: <StatusBox><Hourglass size={9} className="text-muted/70" /></StatusBox> },
-  { id: "done", node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted/75" /></StatusBox> },
+  { id: "needs-input", node: <StatusBox><span className="frizz-rail-glyph font-bold leading-none text-muted-70" style={{ fontSize: 10 }}>?</span></StatusBox> },
+  { id: "snoozed-timer", node: <StatusBox><Hourglass size={9} className="text-muted-70" /></StatusBox> },
+  { id: "done", node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted-75" /></StatusBox> },
 ]
 
 // A rail row, close enough to the real one that the mark is judged at the size and against the title
@@ -282,9 +282,9 @@ createRoot(document.getElementById("root")!).render(
       <div className="flex gap-8">
         {FINALISTS.map((c) => (
           <div key={c.id} data-band-column={c.id} className="rounded-lg bg-panel/50 p-3">
-            <div className="mb-1 px-2 text-[10px] uppercase tracking-wide text-muted/70">Active</div>
+            <div className="mb-1 px-2 text-[10px] uppercase tracking-wide text-muted-70">Active</div>
             <Row node={<StatusBox><Dot /></StatusBox>} title="Typebox validator bench" />
-            <div className="mb-1 mt-3 px-2 text-[10px] uppercase tracking-wide text-muted/70">Snoozed</div>
+            <div className="mb-1 mt-3 px-2 text-[10px] uppercase tracking-wide text-muted-70">Snoozed</div>
             <Row node={c.node} title="Schemabenchmarks" dim />
             <div className="mt-3 px-2 text-[11px] text-fg/70">{c.label}</div>
           </div>
@@ -297,7 +297,7 @@ createRoot(document.getElementById("root")!).render(
       <div className="w-[280px] rounded-lg bg-panel/50 p-3">
         {SHIPPED_ROWS.map((r) => (
           <div key={r.id} data-shipped-row={r.id}>
-            <div className="mb-1 mt-2 px-2 text-[10px] uppercase tracking-wide text-muted/70">{r.band}</div>
+            <div className="mb-1 mt-2 px-2 text-[10px] uppercase tracking-wide text-muted-70">{r.band}</div>
             <ThreadRow t={r.t} />
           </div>
         ))}

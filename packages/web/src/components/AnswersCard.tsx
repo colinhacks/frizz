@@ -32,7 +32,7 @@ export function AnswersCard({ answers, queued, sourceId }: { answers: PairedAnsw
                 )}
                 <div className="flex items-start gap-2">
                   {!a.question && (
-                    <span className="mt-1.5 shrink-0 text-[10px] uppercase tabular-nums tracking-wide text-muted/70">{a.n}</span>
+                    <span className="mt-1.5 shrink-0 text-[10px] uppercase tabular-nums tracking-wide text-muted-70">{a.n}</span>
                   )}
                   {/* Neutral recessed chip — a SETTLED answer, not "awaiting you". The bright yellow accent
                       is reserved solely for the awaiting-you motif (see styles.css); a past choice reads

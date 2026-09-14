@@ -77,7 +77,7 @@ export function ContextMeter({ thread }: { thread: ThreadView }) {
         data-context-meter
         data-context-percent={percent}
         aria-label={label}
-        className="flex shrink-0 items-center text-muted/60"
+        className="flex shrink-0 items-center text-muted-60"
       >
         <svg
           viewBox="0 0 16 16"

@@ -287,7 +287,7 @@ function SubAgentSteerFooter({
     if (!unavailableNote) return <>{ops?.("w-full shrink-0 border-t border-border bg-panel px-4 pb-2 pt-3")}</>
     return (
       <div data-subagent-steer-note className="w-full shrink-0 border-t border-border bg-panel px-3 py-3">
-        <div className="px-1 pb-2 text-[11.5px] text-muted/70">{unavailableNote}</div>
+        <div className="px-1 pb-2 text-[11.5px] text-muted-70">{unavailableNote}</div>
         <div className="pl-1.5">
           <SubAgentProfileReadout subagentType={subagentType} />
         </div>
@@ -314,14 +314,14 @@ function SubAgentSteerFooter({
           />
         ) : note ? (
           <>
-            <div className="px-1 pb-2 text-[11.5px] text-muted/70">{note}</div>
+            <div className="px-1 pb-2 text-[11.5px] text-muted-70">{note}</div>
             <div className="pl-1.5">
               <SubAgentProfileReadout subagentType={subagentType} />
             </div>
           </>
         ) : null}
         {steerable && !stoppable && stopNote && (
-          <div className="mt-2 px-1 text-[11.5px] text-muted/70">{stopNote}</div>
+          <div className="mt-2 px-1 text-[11.5px] text-muted-70">{stopNote}</div>
         )}
         {/* Same optical bottom inset ThreadComposerBox gives the thread-level prompt box (styles.css).
             No `empty:hidden` wrapper needed — the strip itself renders nothing when it has no rows, so
@@ -339,7 +339,7 @@ function SubAgentSteerFooter({
             data-stop-subagent
             disabled={stopping}
             onClick={stop}
-            className="rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] text-fg/80 transition-colors hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300 disabled:opacity-50"
+            className="rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] text-fg/80 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger-soft disabled:opacity-50"
           >
             {stopping ? "Stopping…" : "Stop sub-agent"}
           </button>

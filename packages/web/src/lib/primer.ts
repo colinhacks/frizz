@@ -1,11 +1,11 @@
-/** GITHUB'S OWN STATE PALETTE — Primer dark, for every mark in this app that stands for a GitHub
+/** GITHUB'S OWN STATE PALETTE — Primer, for every mark in this app that stands for a GitHub
  *  thing: a PR's state, a CI verdict, a diffstat's two sides.
  *
  *  WHY IT IS NOT THIS APP'S PALETTE, and must never drift into it. Green/purple/red on an issue is a
  *  vocabulary the reader arrives already fluent in — they have just come from github.com, and the same
  *  mark for the same fact is one less thing to translate. Re-spelling a merged PR in accent-yellow
- *  would make a familiar object unreadable. So these are LITERALS, deliberately outside the theme
- *  tokens: a merged PR is Primer purple wherever it is drawn, whatever this app's own colours do.
+ *  would make a familiar object unreadable. These references resolve through theme.css's dedicated
+ *  Primer palettes: a merged PR stays purple in either appearance, never Frizz accent-yellow.
  *
  *  WHY IT IS ONE MODULE AND NOT A LITERAL PER CALL SITE. Because it was the latter, and it drifted —
  *  which is the whole bug this file was written for. The hovercard spelled its greens in Primer while
@@ -24,7 +24,7 @@
  *  and a `#3fb950` "+316". (The amber row is history: that mark moved to Primer on 2026-08-29 for the
  *  same reason, one glyph at a time. This module is that fix finished.)
  *
- *  THE VALUES ARE MEASURED, NOT RECALLED — read off github.com in dark mode on 2026-08-31, both as the
+ *  THE ORIGINAL DARK VALUES WERE MEASURED — read off github.com on 2026-08-31, both as the
  *  CSS custom properties on `<html>` and as the resolved `color` of the real octicons, which is the
  *  reading that actually settles which of the two families a mark takes:
  *
@@ -45,39 +45,34 @@
  *  on any github.com page with `data-color-mode="dark"`. */
 export const PRIMER = {
   /** `--fgColor-success` — an open PR/issue glyph, a passing check, a diffstat's `+N`. */
-  fgSuccess: "#3fb950",
+  fgSuccess: "var(--gh-fg-success)",
   /** `--bgColor-success-emphasis` — the "Open" pill's fill, a diffstat's added square. */
-  bgSuccessEmphasis: "#238636",
+  bgSuccessEmphasis: "var(--gh-bg-success-emphasis)",
 
   /** `--fgColor-danger` — a closed-PR glyph, a failing check, a diffstat's `−N`. */
-  fgDanger: "#f85149",
+  fgDanger: "var(--gh-fg-danger)",
   /** `--bgColor-danger-emphasis` — the "Closed" pill's fill, a diffstat's deleted square. */
-  bgDangerEmphasis: "#da3633",
+  bgDangerEmphasis: "var(--gh-bg-danger-emphasis)",
 
   /** `--fgColor-done` — a merged-PR glyph, a closed-as-completed issue glyph. */
-  fgDone: "#ab7df8",
+  fgDone: "var(--gh-fg-done)",
   /** `--bgColor-done-emphasis` — the "Merged" pill's fill. */
-  bgDoneEmphasis: "#8957e5",
+  bgDoneEmphasis: "var(--gh-bg-done-emphasis)",
 
   /** `--fgColor-attention` — checks still running. Already worn by the in-progress spinner. */
-  fgAttention: "#d29922",
+  fgAttention: "var(--gh-fg-attention)",
 
   /** `--fgColor-neutral` — a draft PR's glyph. Near-identical to this app's own `--color-muted`
    *  (#8b8f96), so the change is invisible; it is here so one `StateIcon` speaks one palette rather
    *  than three arms of Primer and one of the theme. */
-  fgNeutral: "#9198a1",
+  fgNeutral: "var(--gh-fg-neutral)",
   /** `--bgColor-neutral-emphasis` — the "Draft" / "Closed as not planned" pill fill. */
-  bgNeutralEmphasis: "#656c76",
+  bgNeutralEmphasis: "var(--gh-bg-neutral-emphasis)",
+  onEmphasis: "var(--gh-on-emphasis)",
 } as const
 
-/** The "view failures" link on a red PR watch row — the one place a Primer colour needs a HOVER state,
- *  which an inline `style` cannot express. Spelled as Tailwind arbitrary values so the hex still lives
- *  in this file and nowhere else; the same trick `iconRhythm.ts` uses, and it works because Tailwind
- *  scans this module's source for class-shaped strings like any other.
- *
- *  KEEP THE THREE HEXES IN STEP WITH `fgDanger` ABOVE. They cannot interpolate — Tailwind matches the
- *  literal text, so a template string here compiles to nothing at all. */
-export const PRIMER_DANGER_LINK = "text-[#f85149]/85 decoration-[#f85149]/30 hover:decoration-[#f85149]"
+/** Primer danger ink and decoration resolve through CSS, including the legacy dark ink alpha. */
+export const PRIMER_DANGER_LINK = "text-[color:var(--gh-danger-link-fg)] decoration-[color:color-mix(in_srgb,var(--gh-danger-link)_30%,transparent)] hover:decoration-[color:var(--gh-danger-link)]"
 
 /** A mark that expresses FRIZZ's own state rather than GitHub's — "not polled yet", a sub-agent's
  *  spinner — keeps the app's palette and must NOT be pulled in here. GitHub has no such state, so

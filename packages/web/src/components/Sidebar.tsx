@@ -66,7 +66,7 @@ import type { ReactElement, ReactNode, RefObject } from "react"
 // matches the row's pt-1) so it never exceeds the row height. Bare glyphs — the group draws no box
 // around them (its backing is the rail's own base colour under the row's hover wash; see the strip in
 // ThreadRow), and only the one under the pointer paints its own square.
-// OPAQUE PAINT, TRANSLUCENT BOX — `text-muted opacity-70`, never `text-muted/70`. The unpin is a lucide
+// OPAQUE PAINT, TRANSLUCENT BOX — `text-muted opacity-70`, never `text-muted-70`. The unpin is a lucide
 // glyph FILLED and STROKED in currentColor, and an SVG paints the stroke over the fill: with an alpha
 // colour the ring lands at ~0.8 alpha where it overlaps the 0.7 fill, so the pin read as a darker
 // outline around a lighter middle (maintainer 2026-09-11: "slightly dimmer in the middle. It looks
@@ -174,7 +174,7 @@ export function Sidebar() {
   // local: Element.scrollIntoView could scroll the main document and steal the reader's position.
   useLayoutEffect(() => {
     const rail = railRef.current
-    if (!rail || !activeId || window.matchMedia("(max-width: 800px)").matches) return
+    if (!rail || !activeId || window.matchMedia?.("(max-width: 800px)").matches) return
     const item = rail.querySelector<HTMLElement>(`[data-sidebar-item="${CSS.escape(activeId)}"]`)
     if (!item) return
     const railBox = rail.getBoundingClientRect()
@@ -287,7 +287,7 @@ export function Sidebar() {
             // renders only when BOTH are empty. Saying "no active threads" over a hidden queue would be
             // the same conflation the vocabulary above exists to stop. Suppressed under a pinned band —
             // the pinned rows ARE open threads, so the claim would be visibly false one band up.
-            <div className="py-1 pl-5 pr-1.5 text-[11.5px] text-muted/50">No open threads</div>
+            <div className="py-1 pl-5 pr-1.5 text-[11.5px] text-muted-50">No open threads</div>
           ) : null}
           {/* HELD — every deliberate clock/hourglass/timed wait, visibly de-emphasized and labeled so
               it cannot read as active work. COLLAPSIBLE, and collapsed by default (maintainer
@@ -379,10 +379,10 @@ export function SectionHeader({ label, count, collapsed, onToggle }: { label: st
       <span>{label}</span>
       {/* Count rides right next to its label (not floated to the far edge) — it's meaningful data,
           not a margin ornament; raised contrast so it actually reads. */}
-      <span className="ml-1.5 tabular-nums text-muted/60">{count}</span>
+      <span className="ml-1.5 tabular-nums text-muted-60">{count}</span>
     </>
   )
-  const cls = "flex w-full items-center gap-1 px-1.5 py-1 text-[11px] uppercase tracking-wide text-muted/70"
+  const cls = "flex w-full items-center gap-1 px-1.5 py-1 text-[11px] uppercase tracking-wide text-muted-70"
   return onToggle ? (
     <button onClick={onToggle} className={`${cls} transition-colors hover:text-fg`}>
       {inner}
@@ -596,7 +596,7 @@ export const ThreadRow = memo(function ThreadRow({
   return (
     <div
       data-sidebar-item={t.id}
-      className={`group relative flex min-w-0 items-start rounded-md transition-[color,opacity] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-white/[0.04] after:opacity-0 after:transition-opacity hover:after:opacity-100 ${legacy ? "opacity-80" : dim ? "opacity-65 hover:opacity-90 focus-within:opacity-90" : ""}`}
+      className={`group relative flex min-w-0 items-start rounded-md transition-[color,opacity] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-hover after:opacity-0 after:transition-opacity hover:after:opacity-100 ${legacy ? "opacity-80" : dim ? "sidebar-row-dim" : ""}`}
     >
       {/* The reading position owns a real, in-row rail rather than borrowing the status-icon column.
           The marker spans the row's complete visual height, including wrapped titles and subtitles,
@@ -650,7 +650,7 @@ export const ThreadRow = memo(function ThreadRow({
                     RE-MEASURE rather than re-guess if the type scale or the pill's size moves. */}
                 {foreign && (
                   <span
-                    className="petite-caps ml-1.5 inline-block rounded border border-border/60 px-1 align-[2px] text-[9.5px] leading-[14px] text-muted/55"
+                    className="petite-caps ml-1.5 inline-block rounded border border-border/60 px-1 align-[2px] text-[9.5px] leading-[14px] text-muted-55"
                     title="Read-only — running in an external terminal"
                   >
                     terminal
@@ -754,7 +754,7 @@ function RestedAge({ t, yieldsToRetry }: { t: ThreadView; yieldsToRetry?: boolea
       aria-label={`Rested ${relativeAge(at, now) ?? span}`}
       // shrink-0 + tabular-nums: the column must not compress under a long title, and the digits must
       // not jitter horizontally when the clock ticks. The title takes the remaining width and wraps.
-      className={`shrink-0 tabular-nums text-[10.5px] leading-[19px] text-muted/55 ${
+      className={`shrink-0 tabular-nums text-[10.5px] leading-[19px] text-muted-55 ${
         yieldsToRetry ? "transition-opacity group-hover:opacity-0 group-focus-within:opacity-0" : ""
       }`}
     >
@@ -830,7 +830,7 @@ function PinnedMark() {
     <span
       aria-hidden
       data-rail-pin-mark
-      // `text-muted opacity-55`, not `text-muted/55`: the mark is filled AND stroked, and an alpha colour
+      // `text-muted opacity-55`, not `text-muted-55`: the mark is filled AND stroked, and an alpha colour
       // compounds where the stroke overlaps the fill — see ROW_ACTION_CLASS. The hover hide is the same
       // opacity axis, and the variant wins over the bare 55.
       className="-ml-1 flex h-[19px] w-[19px] shrink-0 items-center justify-center self-start text-muted opacity-55 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
@@ -1109,7 +1109,7 @@ const PR_MARK_NUDGE = PR_MARK_SIZE / 24
 //
 const githubMark = (
   <StatusBox>
-    <Github size={PR_MARK_SIZE} className="text-muted/70" style={{ transform: `translateX(${PR_MARK_NUDGE}px)` }} />
+    <Github size={PR_MARK_SIZE} className="text-muted-70" style={{ transform: `translateX(${PR_MARK_NUDGE}px)` }} />
   </StatusBox>
 )
 
@@ -1123,7 +1123,7 @@ const githubMark = (
 // not with the flashing blue dot"). The clock is gone with it: the rail already had a word for "on the
 // clock", and the limit kill's accent hourglass is this same glyph in the attention colour, so the
 // family stays one glyph in two tones rather than two glyphs for one idea.
-const hourglassMark = <StatusBox><Hourglass size={9} className="text-muted/70" /></StatusBox>
+const hourglassMark = <StatusBox><Hourglass size={9} className="text-muted-70" /></StatusBox>
 
 /** "fires in 34m" for the SOONEST armed timer — the resting card's TimerRow words, so the rail's hover
  *  and the card never count down in two vocabularies. A due-but-undelivered timer (the scheduler's tick
@@ -1141,7 +1141,7 @@ function timerWake(t: Pick<ThreadView, "watches">, nowMs = Date.now()): string |
 
 function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: string | null } {
   const kind = sessionIndicatorKind(t)
-  if (kind === "archived") return { node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted/75" /></StatusBox>, tip: "Done" }
+  if (kind === "archived") return { node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted-75" /></StatusBox>, tip: "Done" }
   if (kind === "needs-input") {
     // Muted "?", same gray as every other glyph — a needs-you thread already carries maximum emphasis
     // by sitting in the ⚖ queue, so the rail indicator adds NO extra color (maintainer 2026-07-10).
@@ -1160,7 +1160,7 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
       tip: popover(t, fenced ? "At rest" : "At rest — a background shell is still running"),
     }
   }
-  if (kind === "done") return { node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted/75" /></StatusBox>, tip: "Done" }
+  if (kind === "done") return { node: <StatusBox><Check size={10} strokeWidth={3} className="text-muted-75" /></StatusBox>, tip: "Done" }
   if (kind === "stalled") {
     // ONE mark for "the process is gone". The server's `crashed` bit (exited AND turn-in-flight/live
     // background work) no longer gates the mark — it only picks the wording, so the tooltip still tells
@@ -1302,7 +1302,7 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
   // glyph says "at rest" and the popover says what it thinks it is waiting for, which is the one thing
   // the rail cannot show and the operator most wants on hover (maintainer 2026-08-16).
   return {
-    node: <StatusBox><Ellipsis size={11} className="text-muted/70" /></StatusBox>,
+    node: <StatusBox><Ellipsis size={11} className="text-muted-70" /></StatusBox>,
     tip: popover(t, "At rest"),
   }
 }
@@ -1330,7 +1330,7 @@ function Glyph({ ch, muted }: { ch: string; muted?: boolean }) {
       // than its em box — the correction is the BROWSER's, holds in both of this app's fonts, and lives
       // with its readings in styles.css. It replaced `translateY(0.09em)`, a constant fitted on a fixture
       // that silently rendered mono while the app runs sans, which left both marks ~1.4px low on screen.
-      className={`frizz-rail-glyph font-bold leading-none ${muted ? "text-muted/70" : "text-accent"}`}
+      className={`frizz-rail-glyph font-bold leading-none ${muted ? "text-muted-70" : "text-accent"}`}
       style={{ fontSize: 10 }}
     >
       {ch}
@@ -1345,8 +1345,8 @@ function legacyIndicatorFor(t: ThreadView): { node: ReactElement; tip: string | 
   if (t.runtime === "turn-idle" && liveSub && !t.humanBlocked) return { node: <Spinner />, tip: "Working" }
   if (needsAction(t)) return { node: <BlueDot />, tip: "Needs your input" }
   if (t.status === "needs-human") return { node: <YellowDot />, tip: "Awaiting you — open to read & reply" }
-  if (t.status === "blocked" && t.mechanism === "timer") return { node: <Timer size={INDICATOR + 1} className="text-muted/70" />, tip: "Waiting on a timer" }
-  if (t.status === "blocked" && t.mechanism === "threads") return { node: <CircleDashed size={INDICATOR + 1} className="text-muted/70" />, tip: "Waiting on other work" }
+  if (t.status === "blocked" && t.mechanism === "timer") return { node: <Timer size={INDICATOR + 1} className="text-muted-70" />, tip: "Waiting on a timer" }
+  if (t.status === "blocked" && t.mechanism === "threads") return { node: <CircleDashed size={INDICATOR + 1} className="text-muted-70" />, tip: "Waiting on other work" }
   return { node: <FaintDot />, tip: null }
 }
 
@@ -1367,19 +1367,19 @@ function Spinner() {
 function AccentDot() {
   return (
     <span
-      className="block rounded-full bg-accent shadow-[0_0_5px_rgba(232,185,35,0.45)]"
+      className="block rounded-full bg-accent shadow-[0_0_5px_color-mix(in_srgb,var(--color-accent)_45%,transparent)]"
       style={{ width: ATTENTION, height: ATTENTION }}
     />
   )
 }
 
 function BlueDot() {
-  return <span className="block rounded-full bg-sky-400" style={{ width: INDICATOR, height: INDICATOR }} />
+  return <span className="block rounded-full bg-planning" style={{ width: INDICATOR, height: INDICATOR }} />
 }
 
 // Awaiting-you without a queue card (legacy session-less needs-human): the status palette's yellow.
 function YellowDot() {
-  return <span className="block rounded-full bg-yellow-400" style={{ width: INDICATOR, height: INDICATOR }} />
+  return <span className="block rounded-full bg-needs-human" style={{ width: INDICATOR, height: INDICATOR }} />
 }
 
 function FaintDot() {

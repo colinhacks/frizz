@@ -74,7 +74,7 @@ const QUOTA_READING = "text-[9px]"
 // landing both on the ~12px of ink a 14px lucide glyph paints. Measured with scripts/ink-gaps.mjs at
 // --dsf=4 --pad=0 against the settings gear, and re-measure rather than re-guess if either changes.
 //
-// `!` on both because ProviderMark composes its own `text-muted/65` and `size-*` ahead of this
+// `!` on both because ProviderMark composes its own `text-muted-65` and `size-*` ahead of this
 // className, and Tailwind resolves a same-property collision by CSS SOURCE order, not class order —
 // without it these silently lose to the defaults.
 const PROVIDER_MARK_AS_ICON: Record<Backend, string> = {
@@ -239,8 +239,8 @@ function QuotaChip({
             <div className="flex items-center gap-1.5 font-medium">
               <ProviderMark backend={backend} />
               <span>{providerLabel}</span>
-              {quota?.planType && <span className="text-muted/70">· {cap(quota.planType)} plan</span>}
-              {fetching && <Loader2 size={11} className="animate-spin text-muted/60" aria-label="Rechecking" />}
+              {quota?.planType && <span className="text-muted-70">· {cap(quota.planType)} plan</span>}
+              {fetching && <Loader2 size={11} className="animate-spin text-muted-60" aria-label="Rechecking" />}
             </div>
             {/* WHICH account this is. Sits above the window breakdown because it is an AUTH fact, not a
                 quota one — "am I on the right account?" is asked while reading the numbers, not after.
@@ -248,7 +248,7 @@ function QuotaChip({
                 plan label beside it (both are identity metadata, so the block reads as one). Selectable
                 and title-carrying, so a long address stays copyable past the 15rem truncation. */}
             {email && (
-              <div data-quota-account className="truncate text-muted/70 select-text" title={email}>
+              <div data-quota-account className="truncate text-muted-70 select-text" title={email}>
                 {email}
               </div>
             )}
@@ -261,15 +261,15 @@ function QuotaChip({
               const reset = resetText(w)
               return (
                 <li key={w.key} className="flex items-center justify-between gap-3">
-                  <span className="text-muted/80">{w.label}</span>
+                  <span className="text-muted-80">{w.label}</span>
                   <span className="flex items-center gap-2 tabular-nums">
                     <span className={toneText(left)}>{left}% left</span>
-                    {reset && <span className="text-muted/55">resets {reset}</span>}
+                    {reset && <span className="text-muted-55">resets {reset}</span>}
                   </span>
                 </li>
               )
             })}
-            {quota!.detail && <li className="pt-1 text-muted/55">{quota!.detail}</li>}
+            {quota!.detail && <li className="pt-1 text-muted-55">{quota!.detail}</li>}
           </ul>
         </PopoverContent>
       </Popover>
@@ -299,7 +299,7 @@ function pickHeadline(windows: QuotaWindow[]): QuotaWindow {
 // spent only on states that want attention; a healthy quota is just information, so it reads as a calm
 // neutral light gray rather than any hue (green, in any shade, fought the muted dark palette).
 function toneText(remaining: number): string {
-  if (remaining <= 8) return "text-red-400"
+  if (remaining <= 8) return "text-danger"
   if (remaining <= HEALTHY_MIN) return "text-accent"
   return "text-fg/70"
 }

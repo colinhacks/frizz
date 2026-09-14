@@ -189,7 +189,7 @@ export function DispatchForm({
         leftAction={githubTriggerVisible ? <GithubTrigger /> : undefined}
       />
       {dispatch.isError && (
-        <span className="px-0.5 text-[11px] text-red-400 truncate">{(dispatch.error as Error).message}</span>
+        <span className="px-0.5 text-[11px] text-danger truncate">{(dispatch.error as Error).message}</span>
       )}
       {pendingDispatch && (
         <div data-pending-dispatch role="status" className="rounded-lg border border-border bg-panel-2 px-3 py-2.5">
@@ -237,7 +237,7 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
       <RadixDialog.Portal>
         {/* Frosted glass: heavy blur + saturation over a light black wash, so the board reads as a
             texture behind the dialog rather than going fully dark. */}
-        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/30 backdrop-blur-md backdrop-saturate-150" />
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-scrim-30 backdrop-blur-md backdrop-saturate-150" />
         <RadixDialog.Content
           ref={contentRef}
           aria-modal="true"
@@ -272,7 +272,7 @@ export function Overlay({ children, onClose }: { children: ReactNode; onClose: (
     // tier so the centered picker sits ABOVE the sidebar/prompt box (z-[100] on desktop) rather than
     // behind it.
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30 backdrop-blur-md backdrop-saturate-150"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-scrim-30 backdrop-blur-md backdrop-saturate-150"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}

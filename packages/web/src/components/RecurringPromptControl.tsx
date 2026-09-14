@@ -166,13 +166,13 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
               as the empty slot it would otherwise leave. Amber, not the app's accent yellow, so it
               reads as a state rather than the focus motif.
 
-              QUIET, NOT DIMMER THAN ITS NEIGHBOURS. This was `text-muted/45` against the meter's and
-              the hourglass's `text-muted/60`, and the left cluster consequently read as three marks
+              QUIET, NOT DIMMER THAN ITS NEIGHBOURS. This was `text-muted-45` against the meter's and
+              the hourglass's `text-muted-60`, and the left cluster consequently read as three marks
               from three different families (maintainer 2026-08-04: "the icon brightnesses and spacing
               look absolutely terrible"). The cluster is one status group, so it takes one tone — the
               armed/idle distinction is carried by the amber, which is the state worth seeing, and not
               by holding the resting glyph a step below the readouts beside it. */}
-          <GoalMark size={12} className={live ? "text-amber-400/90" : "text-muted/60 hover:text-muted"} />
+          <GoalMark size={12} className={live ? "text-attention-90" : "text-muted-60 hover:text-muted"} />
         </button>
       </PopoverAnchor>
       {mode === "preview" ? (
@@ -240,7 +240,7 @@ function GoalPreview({ armed }: { armed: ThreadView["recurringPrompt"] }) {
     <div data-recurring-preview-body>
       <div className="mb-1 flex items-baseline gap-2">
         <span className="font-medium">Goal</span>
-        <span className="text-muted/70">
+        <span className="text-muted-70">
           {clauses.length > 0 ? `sent ${clauses.join(", ")}` : text ? "no trigger is on" : "not set"}
         </span>
       </div>
@@ -562,7 +562,7 @@ function PromptPanel({ thread, armed, close }: {
     <section data-recurring-panel>
       <div className="mb-2 flex items-center gap-3">
         <span className="font-medium">Goal</span>
-        {lastLabel && <span className="ml-auto truncate text-muted/55">{lastLabel}</span>}
+        {lastLabel && <span className="ml-auto truncate text-muted-55">{lastLabel}</span>}
       </div>
       {/* ALWAYS EDITABLE. It used to be `readOnly` until a master toggle was on, which made sense while
           that toggle was the feature's on switch. With the switch gone, gating the textarea on "some
@@ -604,7 +604,7 @@ function PromptPanel({ thread, armed, close }: {
         // stay fully editable, because writing them is what you do BEFORE picking a trigger. The tone is
         // the only thing that changes, and it says the same thing the glyph says from outside: these words
         // are parked, not live.
-        className={`field-sizing-content max-h-[28vh] min-h-[4rem] w-full resize-none overflow-y-auto rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-muted/50 focus:border-border-strong ${anyTrigger ? "text-fg" : "text-muted"}`}
+        className={`field-sizing-content max-h-[28vh] min-h-[4rem] w-full resize-none overflow-y-auto rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-muted-50 focus:border-border-strong ${anyTrigger ? "text-fg" : "text-muted"}`}
       />
       {/* THE THREE MECHANISMS, one per line under the text they all send. They are NAMED — Stop hook,
           Heartbeat, Compaction — rather than described, because those are the names everything else in

@@ -131,7 +131,7 @@ function DrawerSurface() {
       <div className="min-h-0 flex-1 overflow-y-auto p-4 text-[13px] leading-relaxed text-muted">
         {messages.map((m) => (
           <p key={m.sourceId} className="mb-3 whitespace-pre-wrap">
-            <span className="petite-caps mr-2 text-[11px] text-muted/60">{m.role}</span>
+            <span className="petite-caps mr-2 text-[11px] text-muted-60">{m.role}</span>
             {m.text}
           </p>
         ))}

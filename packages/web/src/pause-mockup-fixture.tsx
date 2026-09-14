@@ -72,7 +72,7 @@ function SplitButton({ label, icon, accent }: { label: string; icon?: ReactNode;
 // Tabler's target-arrow, the goal mark (RecurringPromptControl.tsx keeps the provenance).
 function GoalMark({ live }: { live?: boolean }) {
   return (
-    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={live ? "text-accent" : "text-muted/60"} aria-hidden>
+    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={live ? "text-accent" : "text-muted-60"} aria-hidden>
       <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
       <path d="M12 7a5 5 0 1 0 5 5" />
       <path d="M13 3.055a9 9 0 1 0 7.941 7.945" />
@@ -85,7 +85,7 @@ function GoalMark({ live }: { live?: boolean }) {
 // A stand-in for the ContextMeter ring: same em sizing, same currentColor arcs.
 function ContextRing() {
   return (
-    <svg width="1em" height="1em" viewBox="0 0 16 16" className="text-muted/60" aria-hidden>
+    <svg width="1em" height="1em" viewBox="0 0 16 16" className="text-muted-60" aria-hidden>
       <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2.5" />
       <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray="14 38" transform="rotate(-90 8 8)" />
     </svg>
@@ -98,7 +98,7 @@ function Footer({ state, pauseVerb }: { state: "today" | "pausable" | "paused"; 
     <footer className="flex min-h-10 items-center justify-end gap-3 border-t border-border/70 bg-panel/95 px-3 pb-2 pt-2 text-[12px]">
       <span className="mr-auto flex items-center gap-3">
         <ContextRing />
-        {state === "paused" ? null : <span className="-mx-1 px-0.5 text-muted/60"><Hourglass size={12} /></span>}
+        {state === "paused" ? null : <span className="-mx-1 px-0.5 text-muted-60"><Hourglass size={12} /></span>}
         <span className="-mx-[3px]"><GoalMark live={state !== "paused"} /></span>
       </span>
       {state === "paused" ? (
@@ -146,7 +146,7 @@ function MenuRow({ icon, children, detail, highlighted }: { icon?: ReactNode; ch
       {icon && <span className="flex w-3.5 shrink-0 items-center justify-center text-muted">{icon}</span>}
       <span className="flex min-w-0 flex-1 items-center justify-between gap-4">
         <span className="whitespace-nowrap">{children}</span>
-        {detail && <span className="whitespace-nowrap text-[10px] text-muted/55">{detail}</span>}
+        {detail && <span className="whitespace-nowrap text-[10px] text-muted-55">{detail}</span>}
       </span>
     </div>
   )
@@ -165,11 +165,11 @@ function StatusBox({ children }: { children?: ReactNode }) {
   )
 }
 const spinner = <BoxSpinner />
-const atRest = <StatusBox><Ellipsis size={10} className="text-muted/70" /></StatusBox>
-const snoozedMark = <StatusBox><Hourglass size={9} className="text-muted/70" /></StatusBox>
+const atRest = <StatusBox><Ellipsis size={10} className="text-muted-70" /></StatusBox>
+const snoozedMark = <StatusBox><Hourglass size={9} className="text-muted-70" /></StatusBox>
 // THE PAUSE MARK: lucide's two bars, FILLED, at the hourglass's 9px. Outlined, two 4×16 rects at 9px
 // are four hairlines; filled they are the ⏸ every media player taught the eye.
-const pausedMark = <StatusBox><Pause size={9} fill="currentColor" className="text-muted/70" /></StatusBox>
+const pausedMark = <StatusBox><Pause size={9} fill="currentColor" className="text-muted-70" /></StatusBox>
 
 function Row({ indicator, title, restedAge, dim }: { indicator: ReactNode; title: string; restedAge?: string; dim?: boolean }) {
   return (
@@ -179,7 +179,7 @@ function Row({ indicator, title, restedAge, dim }: { indicator: ReactNode; title
         <span className="min-w-0 flex-1 flex flex-col">
           <span className="flex min-w-0 items-baseline gap-3">
             <span className={`min-w-0 flex-1 break-words text-[13px] leading-[19px] ${dim ? "text-fg/75" : "text-fg/90"}`}>{title}</span>
-            {restedAge && <span className="shrink-0 tabular-nums text-[10.5px] leading-[19px] text-muted/55">{restedAge}</span>}
+            {restedAge && <span className="shrink-0 tabular-nums text-[10.5px] leading-[19px] text-muted-55">{restedAge}</span>}
           </span>
         </span>
       </div>
@@ -188,10 +188,10 @@ function Row({ indicator, title, restedAge, dim }: { indicator: ReactNode; title
 }
 function Header({ label, count }: { label: string; count: number }) {
   return (
-    <div className="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] uppercase tracking-wide text-muted/70">
+    <div className="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] uppercase tracking-wide text-muted-70">
       <ChevronRight size={11} className="rotate-90" />
       <span>{label}</span>
-      <span className="ml-1.5 tabular-nums text-muted/60">{count}</span>
+      <span className="ml-1.5 tabular-nums text-muted-60">{count}</span>
     </div>
   )
 }
@@ -201,7 +201,7 @@ function Rule() {
 function PromptBoxGhost({ children }: { children?: ReactNode }) {
   return (
     <div className="mb-5">
-      <div className="rounded-lg border border-border/60 bg-panel px-3 py-2.5 text-[13px] text-muted/40">Dispatch a new thread…</div>
+      <div className="rounded-lg border border-border/60 bg-panel px-3 py-2.5 text-[13px] text-muted-40">Dispatch a new thread…</div>
       {children}
     </div>
   )
@@ -226,11 +226,11 @@ function HeldWake({ icon, children, age, count }: { icon: ReactNode; children: R
   return (
     <li className="group/held flex min-w-0 items-center gap-1.5 text-[12px]">
       <span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span>
-      <span className="flex w-3.5 shrink-0 items-center justify-center text-muted/70">{icon}</span>
+      <span className="flex w-3.5 shrink-0 items-center justify-center text-muted-70">{icon}</span>
       <span className="min-w-0 flex-1 truncate text-fg/80">{children}</span>
-      {count && <span className="shrink-0 text-[11px] text-muted/60">{count}</span>}
-      <span className="shrink-0 tabular-nums text-[11px] text-muted/50">{age}</span>
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted/40 opacity-0 transition-opacity hover:bg-panel hover:text-fg group-hover/held:opacity-100"><X size={11} /></span>
+      {count && <span className="shrink-0 text-[11px] text-muted-60">{count}</span>}
+      <span className="shrink-0 tabular-nums text-[11px] text-muted-50">{age}</span>
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-40 opacity-0 transition-opacity hover:bg-panel hover:text-fg group-hover/held:opacity-100"><X size={11} /></span>
     </li>
   )
 }
@@ -265,16 +265,16 @@ function ComposerGhost({ paused }: { paused?: boolean }) {
   return (
     <div className="px-3 py-3">
       <div className="relative rounded-xl border border-border bg-bg">
-        <div className="px-3 pb-10 pt-3 text-[14px] text-muted/40">{paused ? "Paused — your message queues until you resume…" : "Follow up…"}</div>
+        <div className="px-3 pb-10 pt-3 text-[14px] text-muted-40">{paused ? "Paused — your message queues until you resume…" : "Follow up…"}</div>
         <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-          <span className="rounded-md bg-panel-2 px-1.5 py-0.5 text-[10px] text-muted/70">Opus 5</span>
-          <span className="rounded-md bg-panel-2 px-1.5 py-0.5 text-[10px] text-muted/70">high</span>
+          <span className="rounded-md bg-panel-2 px-1.5 py-0.5 text-[10px] text-muted-70">Opus 5</span>
+          <span className="rounded-md bg-panel-2 px-1.5 py-0.5 text-[10px] text-muted-70">high</span>
         </div>
         <span className="absolute bottom-2 right-[44px] flex h-7 w-7 items-center justify-center rounded-lg text-muted"><Paperclip size={14} /></span>
         <span className="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-bg"><ArrowUp size={14} strokeWidth={2.5} /></span>
       </div>
       {paused && (
-        <div className="px-1 pt-1 text-[9.5px] leading-tight text-muted/65">Paused · Enter queues · ⌘⏎ resumes and sends</div>
+        <div className="px-1 pt-1 text-[9.5px] leading-tight text-muted-65">Paused · Enter queues · ⌘⏎ resumes and sends</div>
       )}
     </div>
   )
@@ -313,7 +313,7 @@ function Frame({ id, title, note, children, width }: { id: string; title: string
   return (
     <section className="mb-12" data-screen={id}>
       <h2 className="mb-1 text-[13px] font-semibold text-fg/90">{title}</h2>
-      <p className="mb-4 max-w-[760px] text-[11.5px] leading-[16px] text-muted/60">{note}</p>
+      <p className="mb-4 max-w-[760px] text-[11.5px] leading-[16px] text-muted-60">{note}</p>
       <div className="flex flex-wrap items-start gap-8" style={width ? { maxWidth: width } : undefined}>{children}</div>
     </section>
   )
@@ -322,7 +322,7 @@ function Panel({ title, note, children, width = 340 }: { title: string; note?: s
   return (
     <section className="shrink-0" style={{ width }}>
       <h3 className="mb-1 text-[12px] font-medium text-fg/80">{title}</h3>
-      {note && <p className="mb-3 min-h-[30px] text-[11px] leading-[15px] text-muted/60">{note}</p>}
+      {note && <p className="mb-3 min-h-[30px] text-[11px] leading-[15px] text-muted-60">{note}</p>}
       <div className="overflow-hidden rounded-xl border border-border/40">{children}</div>
     </section>
   )
@@ -345,7 +345,7 @@ createRoot(document.getElementById("root")!).render(
     {!only && (
       <>
         <h1 className="mb-1 text-[15px] font-semibold">Pause — a thread the human has frozen</h1>
-        <p className="mb-10 max-w-[760px] text-[11.5px] leading-[16px] text-muted/60">
+        <p className="mb-10 max-w-[760px] text-[11.5px] leading-[16px] text-muted-60">
           Snooze parks the card and Mark as done ends the session; neither stops the worker. Pause does: the agent halts, and nothing Frizz would otherwise deliver — the goal, a timer, a shell ending, a PR going green, a snooze bump — reaches it until you press play. Every wake that arrives meanwhile is held and listed; your own messages queue. On resume, Frizz sends one message carrying every held wake in order, then the queued sends. A pause has no clock.
         </p>
       </>
@@ -403,7 +403,7 @@ createRoot(document.getElementById("root")!).render(
             <div className="text-[11px] font-medium uppercase tracking-wide text-fg/70">2 sub-agents</div>
             <ul className="flex flex-col gap-0.5">
               <li className="flex min-w-0 items-baseline gap-1.5"><span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span><span className="min-w-0 truncate text-fg/80">Review the driver diff</span></li>
-              <li className="flex min-w-0 items-baseline gap-1.5"><span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span><span className="min-w-0 truncate text-fg/80">Port the arm64 leg</span><span className="shrink-0 text-[11px] text-muted/60">no recent output</span></li>
+              <li className="flex min-w-0 items-baseline gap-1.5"><span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span><span className="min-w-0 truncate text-fg/80">Port the arm64 leg</span><span className="shrink-0 text-[11px] text-muted-60">no recent output</span></li>
             </ul>
           </div>
           <p>1 background shell (<code className="rounded bg-panel-2 px-1">Watch CI</code>) keeps running; its exit will be held for you.</p>
@@ -467,12 +467,12 @@ createRoot(document.getElementById("root")!).render(
       <Panel title="Transcript tail, four minutes after resume" width={560}>
         <Drawer width={558} header={<HeaderStrip />} composer={<ComposerGhost />} footer={<Footer state="today" pauseVerb />}>
           <AssistantProse>The v2 driver port is done for x86 and I have started on arm64.</AssistantProse>
-          <div className="rounded-xl border border-border/60 bg-panel-2 px-4 py-2.5 text-[12px] text-muted/70">
-            <span className="flex items-center gap-2"><Pause size={12} className="text-muted/60" />Paused by you · 2h 35m</span>
+          <div className="rounded-xl border border-border/60 bg-panel-2 px-4 py-2.5 text-[12px] text-muted-70">
+            <span className="flex items-center gap-2"><Pause size={12} className="text-muted-60" />Paused by you · 2h 35m</span>
           </div>
           <WakeDivider icon={Play} at={minutesAgo(4)}>Resumed — 4 held wakes delivered</WakeDivider>
           <div className="rounded-xl border border-border/60 bg-panel-2 p-4 text-[13px] leading-5 text-fg/75">
-            <div className="petite-caps mb-1.5 text-[11px] tracking-wide text-muted/60">frizz</div>
+            <div className="petite-caps mb-1.5 text-[11px] tracking-wide text-muted-60">frizz</div>
             <p>▶ Resumed after being paused for <b className="font-medium text-fg/85">2h 35m</b>. While you were paused:</p>
             <ol className="mt-1.5 list-decimal space-y-0.5 pl-5">
               <li>Goal (stop hook), fired 3×: “Keep porting drivers until the three-platform run is green”</li>
@@ -495,7 +495,7 @@ createRoot(document.getElementById("root")!).render(
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-accent/10 text-accent"><Pause size={12} fill="currentColor" /></span>
           </div>
           <PromptBoxGhost>
-            <div className="mt-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200/90">
+            <div className="mt-2 flex items-center gap-2 rounded-md border border-attention-fill/30 bg-attention-fill/10 px-2.5 py-1.5 text-[11px] text-attention-detail-90">
               <Pause size={11} fill="currentColor" />
               <span className="min-w-0 flex-1 truncate">Paused · 7 threads · 12m</span>
               <span className="flex shrink-0 items-center gap-1 rounded bg-fg px-2 py-0.5 text-[10.5px] font-medium text-bg"><Play size={10} fill="currentColor" />Resume all</span>
@@ -506,7 +506,7 @@ createRoot(document.getElementById("root")!).render(
           <Row indicator={pausedMark} title="Fix the cache collision in the resolver" dim />
           <Row indicator={pausedMark} title="Triage the dependabot queue" dim />
           <Row indicator={pausedMark} title="Verify the relay pin mechanics on staging" dim />
-          <div className="px-5 pt-1 text-[10.5px] text-muted/45">+3 more</div>
+          <div className="px-5 pt-1 text-[10.5px] text-muted-45">+3 more</div>
           <Rule />
           <Header label="Done" count={12} />
         </div>

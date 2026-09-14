@@ -1,19 +1,19 @@
 // Shared side-sheet primitives — the timing, width curve, scrim, and panel classes that the whole
 // right-side drawer family (thread / doc / plan / sub-agent / background-shell) and the settings drawer
 // render with. Extracted so these can never drift apart again: they had been copied near-identically
-// across six files, and small divergences crept in (settings' scrim was bg-black/55, the rest /40).
+// across six files, and small divergences crept in (settings' scrim was bg-scrim-55, the rest /40).
 // One scrim darkness, one slide duration, one width formula, one reduced-motion check.
 
 // Slide-out duration. A layer is removed from the drawer stack (or the settings panel unmounts) after
 // this elapses — kept ~10ms past the 200ms CSS transition so removal lands just after the slide ends.
 export const SHEET_CLOSE_MS = 210
 
-// The full-screen backdrop: one uniform scrim darkness (bg-black/40) that fades with the panel. Layout
+// The full-screen backdrop: one uniform scrim darkness (bg-scrim-40) that fades with the panel. Layout
 // is the consumer's: a plain sheet parks its panel against the right edge by adding `flex justify-end`,
 // while ThreadSheet's Radix overlay is a bare scrim whose content is a separately-positioned portal
 // sibling — so this string is exactly ThreadSheet's overlay className minus the opacity toggle.
 export const SHEET_SCRIM_CLASS =
-  "fixed inset-0 bg-black/40 backdrop-blur-[1px] transition-opacity duration-200 ease-out motion-reduce:transition-none"
+  "fixed inset-0 bg-scrim-40 backdrop-blur-[1px] transition-opacity duration-200 ease-out motion-reduce:transition-none"
 
 // The sliding panel: right-anchored, full-height, bordered, elevated; slides along the X axis. The
 // consumer appends the translate toggle (translate-x-0 / translate-x-full) and its own width.
