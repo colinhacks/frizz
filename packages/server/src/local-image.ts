@@ -17,6 +17,10 @@ export type LocalImageResult =
 // unconfined: the HTTP callers apply Frizz's loopback/origin gate before reaching it, while the
 // extension allowlist, realpath, and regular-file check keep the response limited to image bytes.
 export function resolveLocalImage(rawPath: string | undefined): LocalImageResult {
+  // Same normalization as resolveLocalFile: a file URL's pathname keeps `/` before a Windows drive
+  // (`/D:/shots/a.png`), which `isAbsolute` accepts on win32 and no drive on the machine holds, so the
+  // proxy 404'd a picture that was right there. POSIX names are untouched.
+  if (rawPath && process.platform === "win32") rawPath = rawPath.replace(/^\/([a-zA-Z]:[\\/])/, "$1")
   if (!rawPath || !isAbsolute(rawPath)) return { status: 400 }
 
   const contentType = IMAGE_CONTENT_TYPE[extname(rawPath).toLowerCase()]

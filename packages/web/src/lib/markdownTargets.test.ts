@@ -5,11 +5,11 @@ import { isLocalMarkdownFile, localFileDir, localImageUrl, localImageUrlForTarge
 test("absolute POSIX and file URLs become local targets with decoded proxy paths", () => {
   assert.deepEqual(
     localMarkdownTarget("/Users/me/visual%20review/shot.png"),
-    { display: "/Users/me/visual review/shot.png", posixPath: "/Users/me/visual review/shot.png" },
+    { display: "/Users/me/visual review/shot.png", filePath: "/Users/me/visual review/shot.png" },
   )
   assert.deepEqual(
     localMarkdownTarget("file:///Users/me/visual%20review/shot.png"),
-    { display: "/Users/me/visual review/shot.png", posixPath: "/Users/me/visual review/shot.png" },
+    { display: "/Users/me/visual review/shot.png", filePath: "/Users/me/visual review/shot.png" },
   )
   assert.equal(
     localImageUrl("/Users/me/visual review/shot.png"),
@@ -26,47 +26,65 @@ test("only server-supported local image extensions become proxy URLs", () => {
     assert.ok(localImageUrlForTarget(localMarkdownTarget(path)!), path)
   }
   assert.equal(localImageUrlForTarget(localMarkdownTarget("/tmp/shot.svg")!), null)
-  assert.equal(localImageUrlForTarget(localMarkdownTarget("C:\\Users\\me\\shot.png")!), null)
+  // A Windows screenshot is proxied like any other: the route resolves a drive path when the server
+  // runs there, and dropping the image left a Windows write-up with no picture in it at all.
+  assert.equal(
+    localImageUrlForTarget(localMarkdownTarget("C:\\Users\\me\\shot.png")!),
+    "/_frizz/local-image?path=C%3A%5CUsers%5Cme%5Cshot.png",
+  )
 })
 
 test("editor deep links resolve to the local path they name", () => {
   // Both slash forms of the VS Code URL grammar, every recognized scheme, and a percent-escaped path.
   assert.deepEqual(
     localMarkdownTarget("cursor://file/Users/me/plan.md"),
-    { display: "/Users/me/plan.md", posixPath: "/Users/me/plan.md" },
+    { display: "/Users/me/plan.md", filePath: "/Users/me/plan.md" },
   )
   assert.deepEqual(
     localMarkdownTarget("vscode://file//Users/me/visual%20review/shot.png"),
-    { display: "/Users/me/visual review/shot.png", posixPath: "/Users/me/visual review/shot.png" },
+    { display: "/Users/me/visual review/shot.png", filePath: "/Users/me/visual review/shot.png" },
   )
   assert.deepEqual(
     localMarkdownTarget("vscode-insiders://file/tmp/a.ts"),
-    { display: "/tmp/a.ts", posixPath: "/tmp/a.ts" },
+    { display: "/tmp/a.ts", filePath: "/tmp/a.ts" },
   )
   assert.deepEqual(
     localMarkdownTarget("windsurf://file/tmp/a.ts"),
-    { display: "/tmp/a.ts", posixPath: "/tmp/a.ts" },
+    { display: "/tmp/a.ts", filePath: "/tmp/a.ts" },
   )
   // The editor cursor suffix survives (the reader and the server's opener strip it themselves), and a
   // query tail does not.
   assert.deepEqual(
     localMarkdownTarget("cursor://file/repo/AGENTS.md:42:7"),
-    { display: "/repo/AGENTS.md:42:7", posixPath: "/repo/AGENTS.md:42:7" },
+    { display: "/repo/AGENTS.md:42:7", filePath: "/repo/AGENTS.md:42:7" },
   )
   assert.deepEqual(
     localMarkdownTarget("vscode://file/tmp/a.ts?windowId=_blank"),
-    { display: "/tmp/a.ts", posixPath: "/tmp/a.ts" },
+    { display: "/tmp/a.ts", filePath: "/tmp/a.ts" },
   )
-  // A Windows path stays a visible chip with no proxyable POSIX path, and an empty path is nothing.
-  assert.deepEqual(localMarkdownTarget("vscode://file/c:/Users/me/shot.png"), { display: "c:/Users/me/shot.png" })
+  // A Windows drive path the route carries is a file path too, and an empty path is nothing.
+  assert.deepEqual(localMarkdownTarget("vscode://file/c:/Users/me/shot.png"), { display: "c:/Users/me/shot.png", filePath: "c:/Users/me/shot.png" })
   assert.equal(localMarkdownTarget("cursor://file/"), null)
   // Unrecognized schemes stay ordinary links.
   assert.equal(localMarkdownTarget("zed://file/tmp/a.ts"), null)
 })
 
-test("Windows and remote file targets are visibly local but cannot become proxy reads", () => {
-  assert.deepEqual(localMarkdownTarget("C:\\Users\\me\\shot.png"), { display: "C:\\Users\\me\\shot.png" })
-  assert.deepEqual(localMarkdownTarget("C:%5CUsers%5Cme%5Cshot.png"), { display: "C:\\Users\\me\\shot.png" })
+test("a Windows drive path is a file path the server can act on; a remote host is not", () => {
+  // Every one of these was a chip with NO path until 2026-09-14, which made a file link on Windows a
+  // button whose click did nothing and an inline screenshot vanish from the prose.
+  assert.deepEqual(localMarkdownTarget("C:\\Users\\me\\shot.png"), { display: "C:\\Users\\me\\shot.png", filePath: "C:\\Users\\me\\shot.png" })
+  assert.deepEqual(localMarkdownTarget("C:%5CUsers%5Cme%5Cshot.png"), { display: "C:\\Users\\me\\shot.png", filePath: "C:\\Users\\me\\shot.png" })
+  assert.deepEqual(localMarkdownTarget("D:/Development/frizz/AGENTS.md"), { display: "D:/Development/frizz/AGENTS.md", filePath: "D:/Development/frizz/AGENTS.md" })
+  // A drive path wearing a URL's leading slash is neither POSIX nor Windows, and no server gate finds
+  // it. Shed the slash so `file:` links, editor deep links and plain paths all name the same file.
+  assert.deepEqual(localMarkdownTarget("file:///D:/Development/frizz/AGENTS.md"), { display: "D:/Development/frizz/AGENTS.md", filePath: "D:/Development/frizz/AGENTS.md" })
+  assert.deepEqual(localMarkdownTarget("/D:/Development/frizz/AGENTS.md"), { display: "D:/Development/frizz/AGENTS.md", filePath: "D:/Development/frizz/AGENTS.md" })
+  assert.deepEqual(localMarkdownTarget("cursor://file//C:/Users/me/plan.md"), { display: "C:/Users/me/plan.md", filePath: "C:/Users/me/plan.md" })
+  // A one-character URL scheme shares the drive path's prefix and must NOT become a file button. The
+  // separator count is the whole difference: a path has one, a URL has two.
+  assert.equal(localMarkdownTarget("x://host/p"), null)
+  assert.equal(localMarkdownTarget("m://mail/inbox"), null)
+  // A UNC share is still not a file this machine's server resolves.
   assert.deepEqual(localMarkdownTarget("file://fileserver/share/shot.png"), { display: "file://fileserver/share/shot.png" })
 })
 
@@ -87,7 +105,7 @@ test("normal web, relative app, anchor, and mail links remain links", () => {
 test("malformed URL encoding cannot throw or become an app navigation", () => {
   assert.deepEqual(localMarkdownTarget("/Users/me/bad%ZZ.png"), {
     display: "/Users/me/bad%ZZ.png",
-    posixPath: "/Users/me/bad%ZZ.png",
+    filePath: "/Users/me/bad%ZZ.png",
   })
 })
 

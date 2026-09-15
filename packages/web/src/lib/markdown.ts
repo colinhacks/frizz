@@ -374,7 +374,7 @@ function walk(node: ParentNode, ctx: WalkContext) {
           // rewritten so an absolute filesystem path cannot become a bogus same-origin web URL.
           el.setAttribute("href", imageUrl)
           el.setAttribute("title", target.display)
-          el.setAttribute("data-local-path", target.posixPath!)
+          el.setAttribute("data-local-path", target.filePath!)
           el.setAttribute("data-local-image", "true")
         } else {
           // Don't turn a filesystem path into a bogus localhost URL or inert code. The app-wide
@@ -383,12 +383,12 @@ function walk(node: ParentNode, ctx: WalkContext) {
           // handler opens in Frizz's own reader drawer instead. The markup is identical either way (one
           // `data-local-path` button); only the title says which of the two the click will do, because
           // the routing decision belongs to the click handler and not to every producer of a path.
-          const readable = target.posixPath && isLocalMarkdownFile(target.posixPath)
+          const readable = target.filePath && isLocalMarkdownFile(target.filePath)
           const button = document.createElement("button")
           button.type = "button"
           button.className = "local-file-action"
           button.title = readable ? `Read ${target.display}` : target.display
-          if (target.posixPath) button.setAttribute("data-local-path", target.posixPath)
+          if (target.filePath) button.setAttribute("data-local-path", target.filePath)
           while (el.firstChild) button.append(el.firstChild)
           el.replaceWith(button)
           continue
@@ -406,7 +406,7 @@ function walk(node: ParentNode, ctx: WalkContext) {
       }
       el.setAttribute("src", imageUrl)
       el.setAttribute("title", target.display)
-      el.setAttribute("data-local-path", target.posixPath!)
+      el.setAttribute("data-local-path", target.filePath!)
       el.setAttribute("data-local-image", "true")
       if (!el.getAttribute("alt")) el.setAttribute("alt", target.display)
       // Block prose only — see sanitize's `block`. The attribute loop below still runs on `el`, which

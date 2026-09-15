@@ -15,9 +15,19 @@ export interface SpawnedOpener {
 
 export type LocalFileSpawn = (command: string, args: readonly string[], options: SpawnOptions) => SpawnedOpener
 
-function isUnder(real: string, root: string): boolean {
+// Windows paths name the same file in either case, and the two spellings of one root DO occur: a tool
+// reports `d:\dev\repo\a.ts` while `project.dir` came back from git as `D:\Development\repo`, and
+// `realpathSync` preserves whatever case it was handed for the drive. A byte comparison then read that
+// as an escape attempt and refused the file. Fold case on win32 only — a POSIX path is case-sensitive
+// and must keep being compared byte for byte.
+function sameCase(path: string): string {
+  return process.platform === "win32" ? path.toLowerCase() : path
+}
+
+function isUnder(rawReal: string, root: string): boolean {
   let rootReal: string
-  try { rootReal = realpathSync(root) } catch { return false }
+  try { rootReal = sameCase(realpathSync(root)) } catch { return false }
+  const real = sameCase(rawReal)
   return real === rootReal || real.startsWith(rootReal.endsWith(sep) ? rootReal : rootReal + sep)
 }
 
@@ -26,6 +36,9 @@ function isUnder(real: string, root: string): boolean {
 // (artifact dirs), while the open action gates to home-and-below (see the router) so a referenced file
 // like ~/.claude/CLAUDE.md can open — still confined, never the whole filesystem.
 export function resolveLocalFile(rawPath: string, roots: readonly string[]): string {
+  // A file URL's pathname keeps `/` before a Windows drive (`/D:/docs/plan.md`).
+  // Normalize here so readers, watchers and openers agree, but leave POSIX names untouched.
+  if (process.platform === "win32") rawPath = rawPath.replace(/^\/([a-zA-Z]:[\\/])/, "$1")
   if (!isAbsolute(rawPath)) throw new Error("Local path must be absolute")
   let real: string
   try { real = realpathSync(rawPath) } catch { throw new Error("Local file was not found") }

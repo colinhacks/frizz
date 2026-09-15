@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events"
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { pathToFileURL } from "node:url"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import assert from "node:assert/strict"
@@ -18,6 +19,46 @@ import {
 } from "./local-file.ts"
 
 interface SpawnCall { command: string; args: readonly string[]; options: Parameters<LocalFileSpawn>[2] }
+
+test("Windows URL-shaped paths read, watch and open without bypassing trusted roots", { skip: process.platform !== "win32" }, async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "frizz-local-url-")))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const trusted = join(root, "trusted")
+  mkdirSync(trusted)
+  const file = join(trusted, "plan space %.md")
+  writeFileSync(file, "# Plan\n")
+  const urlPath = decodeURIComponent(pathToFileURL(file).pathname)
+  assert.match(urlPath, /^\/[A-Za-z]:\//)
+  assert.throws(() => realpathSync(urlPath), { code: "ENOENT" })
+  for (const path of [file, urlPath, `/${file}`]) {
+    assert.deepEqual(readLocalMarkdown(path, [trusted]), { path: file, markdown: "# Plan\n", truncated: false })
+    assert.equal(readLocalTextFile(path, [trusted]).text, "# Plan\n")
+    assert.equal(resolveWatchableLocalFile(path, [trusted]), file)
+    assert.equal(resolveOpenableFile(path, trusted, [trusted]), file)
+    assert.deepEqual(await openLocalFile(path, "copy", [trusted]), { action: "copy", path: file })
+  }
+  const outside = join(root, "secret.md")
+  writeFileSync(outside, "secret")
+  assert.throws(() => readLocalMarkdown(decodeURIComponent(pathToFileURL(outside).pathname), [trusted]), /trusted roots/)
+  assert.throws(() => readLocalMarkdown(`${urlPath}/../gone.md`, [trusted]), /was not found/)
+  assert.throws(() => resolveLocalFile("relative.md", [trusted]), /absolute/)
+})
+
+test("a Windows root and a path spelled in another case are one directory", { skip: process.platform !== "win32" }, (t) => {
+  // `d:\dev\…` under a root git reported as `D:\Development\…` is the same file, and refusing it as
+  // "outside Frizz's trusted roots" is how a live file link died for a difference of case alone.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "frizz-local-case-")))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const file = join(root, "Plan.md")
+  writeFileSync(file, "# Plan\n")
+  assert.equal(resolveLocalFile(file.toLowerCase(), [root.toUpperCase()]), realpathSync(file.toLowerCase()))
+  assert.equal(readLocalMarkdown(file.toUpperCase(), [root.toLowerCase()]).markdown, "# Plan\n")
+  // Containment itself still holds: a sibling of the root is out however it is spelled.
+  const outside = join(realpathSync(tmpdir()), `frizz-local-case-outside-${process.pid}.md`)
+  writeFileSync(outside, "secret")
+  t.after(() => rmSync(outside, { force: true }))
+  assert.throws(() => readLocalMarkdown(outside.toLowerCase(), [root]), /trusted roots/)
+})
 
 // A ChildProcess stand-in that settles the way a real spawn does: asynchronously, through a `spawn`
 // or an `error` EVENT. The `error` is emitted with no listener of the fake's own, so an opener that
