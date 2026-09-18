@@ -53,6 +53,8 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
         // frame is built from spans so the paragraph marked wraps the image in survives the re-parse.
         framedIn: img?.closest(".md-image-frame")?.tagName,
         frameInsideParagraph: !!img?.closest("p"),
+        // The same dot-directory path written in prose: every separator has to survive the render.
+        winProse: [...node.querySelectorAll("p")].find((p) => p.textContent?.includes("in prose"))?.textContent,
       }
     })
     assert.deepEqual(rendered, {
@@ -73,6 +75,9 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
         "D:/fixture/win-report.md",
         "D:\\fixture\\win-trace.json",
         "/D:/fixture/win-plan.md",
+        // The `\.` in `fixture\.frizz` is a separator, not a CommonMark escape: the path the button
+        // carries is the one the worker wrote, dot-directory and all.
+        "D:\\fixture\\.frizz\\threads\\8e51437e\\build-gap.md",
       ],
       anchors: [],
       imageSrc: "/_frizz/local-image?path=%2Ffixture%2Fshot.png",
@@ -81,6 +86,7 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
       winImageSrc: "/_frizz/local-image?path=D%3A%2Ffixture%2Fwin-shot.png",
       framedIn: "SPAN",
       frameInsideParagraph: true,
+      winProse: "It also lives at D:\\fixture\\.frizz\\threads\\8e51437e\\build-gap.md in prose.",
     })
 
     // The ROUTING split, which the markup above deliberately cannot show: both links are the same
@@ -101,6 +107,8 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
     await page.click('button[data-local-path="D:/fixture/win-report.md"]')
     await page.click('button[data-local-path="D:\\\\fixture\\\\win-trace.json"]')
     await page.click('button[data-local-path="/D:/fixture/win-plan.md"]')
+    // And the dot-directory path reaches the reader with its separator intact.
+    await page.click('button[data-local-path="D:\\\\fixture\\\\.frizz\\\\threads\\\\8e51437e\\\\build-gap.md"]')
     const routed = await page.evaluate(() => ({
       opened: (window as unknown as { __localFileFixtureOpened?: string[] }).__localFileFixtureOpened ?? [],
       drawers: (window as unknown as { __localFileFixtureDrawers: () => unknown[] }).__localFileFixtureDrawers(),
@@ -113,6 +121,7 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
         { kind: "markdown", path: "/fixture/plan.md" },
         { kind: "markdown", path: "D:/fixture/win-report.md" },
         { kind: "markdown", path: "/D:/fixture/win-plan.md" },
+        { kind: "markdown", path: "D:\\fixture\\.frizz\\threads\\8e51437e\\build-gap.md" },
       ],
     })
 
@@ -143,6 +152,7 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
       { kind: "markdown", path: "/fixture/plan.md" },
       { kind: "markdown", path: "D:/fixture/win-report.md" },
       { kind: "markdown", path: "/D:/fixture/win-plan.md" },
+      { kind: "markdown", path: "D:\\fixture\\.frizz\\threads\\8e51437e\\build-gap.md" },
       { kind: "markdown", path: "/fixture/notes.md" },
     ])
     assert.equal(fromHeaders.expanded, expandedBefore)

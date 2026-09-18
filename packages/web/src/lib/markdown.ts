@@ -4,6 +4,7 @@ import { CODE_BLOCK_CLASS, renderHighlightedCode } from "./syntaxHighlight.ts"
 import { isLocalMarkdownFile, localImageUrlForTarget, localMarkdownTarget, resolveRelativeLocalPath } from "./markdownTargets.ts"
 import { prefixedAppRoute } from "./base-path.ts"
 import { githubRefFromUrl, linkifyGithubRefs } from "./githubAutolink.ts"
+import { restoreWindowsPathEscapes } from "./windowsPathEscapes.ts"
 import { FRAMED_IMAGE, IMAGE_FRAME, IMAGE_FRAME_MAT } from "../components/ImageFrame.tsx"
 
 // marked's GFM strikethrough opener is `~~?` — ONE tilde is enough. That misreads the tilde agents
@@ -239,6 +240,9 @@ export const MARKDOWN_OPTIONS = {
   // path, and marked hands that to `processAllTokens` alone.
   hooks: {
     processAllTokens(tokens: Token[]) {
+      // A Windows path's `\.` is a separator, not a CommonMark escape (windowsPathEscapes.ts). First,
+      // so the autolinker splits the text tokens the way the reader will see them.
+      restoreWindowsPathEscapes(tokens)
       linkifyGithubRefs(tokens)
       return tokens
     },

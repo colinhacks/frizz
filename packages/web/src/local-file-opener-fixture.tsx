@@ -73,6 +73,13 @@ createRoot(document.getElementById("root")!).render(
           "The Windows plan is [`win-plan.md`](file:///D:/fixture/win-plan.md).",
           "",
           "![windows alt](D:/fixture/win-shot.png)",
+          "",
+          // A Windows path through a dot-directory, in the destination AND in prose. CommonMark reads
+          // `\.` as an escaped dot, so `fixture\.frizz` used to fuse into `fixture.frizz` in both — a
+          // label the reader could not trust and a path the opener could not find (lib/windowsPathEscapes.ts).
+          "The scratch note is [`build-gap.md`](D:\\fixture\\.frizz\\threads\\8e51437e\\build-gap.md).",
+          "",
+          "It also lives at D:\\fixture\\.frizz\\threads\\8e51437e\\build-gap.md in prose.",
         ].join("\n"), { baseDir: BASE_DIR, homeDir: HOME_DIR }),
       }}
     />

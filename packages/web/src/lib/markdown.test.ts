@@ -35,6 +35,16 @@ test("strikethrough: the ~~two-tilde~~ form still strikes, and still nests inlin
     "<del>first</del> then ~single~ then <del>second</del>")
 })
 
+// The bug (2026-09-18): CommonMark reads `\.` as an escaped dot, so a Windows path's `CloudIPMSjb\.frizz`
+// rendered as `CloudIPMSjb.frizz` — in prose and in the destination the click opens. The pass itself is
+// pinned in windowsPathEscapes.test.ts; this is the app's configuration doing it, alongside the autolinker.
+test("a Windows path keeps the separator before a dot-directory, in prose and in a link", () => {
+  const path = String.raw`D:\Development\CloudIPMSjb\.frizz\threads\8e51437e\build-gap.md`
+  assert.equal(render(`see ${path} (#12 fixed)`), `see ${path} (#12 fixed)`)
+  assert.equal(render(`[build-gap.md](${path})`),
+    `<a href="D:%5CDevelopment%5CCloudIPMSjb%5C.frizz%5Cthreads%5C8e51437e%5Cbuild-gap.md">build-gap.md</a>`)
+})
+
 // The sanitizer half of these behaviours is pinned in markdownSanitizer.e2e.test.ts (it needs a DOM);
 // what's checkable here is that marked EMITS the markup the sanitizer now has to preserve.
 test("task-list items emit a state-carrying marker, not a bare bullet", () => {

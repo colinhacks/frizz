@@ -174,8 +174,11 @@ function splitRefs(source: string): Token[] | null {
 // bare autolinked URL cannot grow a nested link.
 const OPAQUE = new Set(["code", "codespan", "html", "link", "image"])
 
-/** Every child-token array hanging off one token, including the cell arrays a table keeps. */
-function childArrays(token: Token): Token[][] {
+/**
+ * Every child-token array hanging off one token, including the cell arrays a table keeps. Shared with
+ * lib/windowsPathEscapes.ts, the other pass that walks the whole tree from `processAllTokens`.
+ */
+export function childArrays(token: Token): Token[][] {
   const arrays: Token[][] = []
   const any = token as { tokens?: Token[]; items?: Token[]; header?: { tokens: Token[] }[]; rows?: { tokens: Token[] }[][] }
   if (Array.isArray(any.tokens)) arrays.push(any.tokens)
