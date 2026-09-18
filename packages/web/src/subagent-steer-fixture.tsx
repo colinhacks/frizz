@@ -146,7 +146,7 @@ createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={qc}>
     <main className="min-h-screen bg-bg p-8 text-fg">
       <h1 className="text-[13px] font-medium">Sub-agent drawer — regular transcript tail + controls</h1>
-      <p className="mt-1 text-[11.5px] text-muted/70">
+      <p className="mt-1 text-[11.5px] text-muted-70">
         state=<code>{STATE}</code> · append <code>?state=</code>steerable | rich | note-codex | note-tmux | note-nested | settled | stale
       </p>
       <button

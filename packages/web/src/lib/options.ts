@@ -54,8 +54,8 @@ export const CLAUDE_DISPATCH_PERMISSION_OPTIONS: SelectOption[] = (["auto", "byp
 export const PERMISSION_COLOR: Record<(typeof PERMISSION_MODES)[number], string> = {
   auto: "text-accent",
   default: "text-muted",
-  acceptEdits: "text-purple-400",
-  plan: "text-cyan-400",
+  acceptEdits: "text-permission-edit",
+  plan: "text-permission-plan",
   bypassPermissions: "text-muted",
 }
 

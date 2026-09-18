@@ -148,7 +148,7 @@ function Fixture() {
                 data-add-tool-batch
                 disabled={step === LIVE_STEPS.length - 1}
                 onClick={() => setStep((s) => Math.min(s + 1, LIVE_STEPS.length - 1))}
-                className="rounded-md border border-border px-2 py-1 text-[11px] text-muted outline-none hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60 disabled:opacity-40"
+                className="rounded-md border border-border px-2 py-1 text-[11px] text-muted outline-none hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-40"
               >
                 Advance
               </button>

@@ -30,24 +30,24 @@ export const STATUS_ORDER: readonly FrizzStatus[] = FrizzStatus.options
 // `needs-human` — the awaiting-you state — since that is the app's focus/attention motif. `blocked`
 // (now a pure machine-wait) keeps its warm orange, adjacent but distinct from the needs-human yellow.
 export const STATUS_DOT: Record<string, string> = {
-  planning: "bg-sky-400",
-  planned: "bg-violet-400",
-  active: "bg-emerald-400",
-  "needs-human": "bg-yellow-400",
-  blocked: "bg-orange-400",
+  planning: "bg-planning",
+  planned: "bg-planned",
+  active: "bg-active-status",
+  "needs-human": "bg-needs-human",
+  blocked: "bg-blocked",
   done: "bg-zinc-400",
-  dismissed: "bg-rose-400",
+  dismissed: "bg-dismissed",
 }
 
 // Chip variant of the same hues (text + border), plus the UI-level "archived" pseudo-status,
 // which only ever appears as a chip in the inactive listing.
 export const STATUS_CHIP: Record<string, string> = {
-  planning: "text-sky-400 border-sky-400/40",
-  planned: "text-violet-400 border-violet-400/40",
-  active: "text-emerald-400 border-emerald-400/40",
-  "needs-human": "text-yellow-400 border-yellow-400/40",
-  blocked: "text-orange-400 border-orange-400/40",
+  planning: "text-planning border-planning/40",
+  planned: "text-planned border-planned/40",
+  active: "text-active-status border-active-status/40",
+  "needs-human": "text-needs-human border-needs-human/40",
+  blocked: "text-blocked border-blocked/40",
   done: "text-zinc-400 border-zinc-400/40",
-  dismissed: "text-rose-400 border-rose-400/40",
+  dismissed: "text-dismissed border-dismissed/40",
   archived: "text-slate-500 border-slate-500/40",
 }

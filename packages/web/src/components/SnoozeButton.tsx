@@ -96,7 +96,7 @@ export function SnoozeButton({ thread, onSnoozed }: { thread: ThreadView; onSnoo
           aria-label={snoozedUntil ? "Wake thread now" : selectedAction}
           title={snoozedUntil ? `Wake now · ${formatSnoozeWake(snoozedUntil)}` : selectedAction}
           onClick={() => void apply(snoozedUntil ? null : snoozePresetInstant(selectedPreset))}
-          className="flex items-center gap-1.5 rounded-l-md px-2.5 py-1 text-[12px] font-medium text-fg/75 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60 disabled:cursor-not-allowed disabled:opacity-45"
+          className="flex items-center gap-1.5 rounded-l-md px-2.5 py-1 text-[12px] font-medium text-fg/75 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:cursor-not-allowed disabled:opacity-45"
         >
           {busy && <Loader2 size={12} className="animate-spin" />}
           {snoozedUntil ? "Wake now" : selectedAction}
@@ -109,7 +109,7 @@ export function SnoozeButton({ thread, onSnoozed }: { thread: ThreadView; onSnoo
               disabled={busy}
               aria-label="Snooze options"
               title={`Selected snooze: ${selectedLabel}`}
-              className="flex min-w-0 items-center justify-center gap-1 rounded-r-md px-2 text-fg/75 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-fg/60 disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex min-w-0 items-center justify-center gap-1 rounded-r-md px-2 text-fg/75 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:cursor-not-allowed disabled:opacity-45"
             >
               <ChevronDown size={12} />
             </button>
@@ -119,7 +119,7 @@ export function SnoozeButton({ thread, onSnoozed }: { thread: ThreadView; onSnoo
               <MenuItem key={preset.value} onSelect={() => applyPreset(preset.value)} icon={<Clock size={12} />}>
                 <span className="flex min-w-0 flex-1 items-center justify-between gap-4">
                   <span>{preset.label}</span>
-                  <span className="text-[10px] text-muted/55">{preset.detail}</span>
+                  <span className="text-[10px] text-muted-55">{preset.detail}</span>
                 </span>
               </MenuItem>
             ))}
@@ -187,11 +187,11 @@ export function SnoozeButton({ thread, onSnoozed }: { thread: ThreadView; onSnoo
             }}
             className="w-full rounded-md border border-border bg-bg px-2.5 py-2 text-[13px] text-fg outline-none focus:border-accent"
           />
-          <p className="text-[10.5px] text-muted/65">
+          <p className="text-[10.5px] text-muted-65">
             Stored as an exact instant; shown here in your browser’s local time zone.
           </p>
           <label htmlFor={promptInputId} className="mt-1 text-[11px] font-medium text-muted">
-            Then send this prompt <span className="font-normal text-muted/55">(optional)</span>
+            Then send this prompt <span className="font-normal text-muted-55">(optional)</span>
           </label>
           {/* The prompt is the difference between a reminder and a scheduled bump, so the field is
               focused: the dialog exists to write one, and the time above already carries a sane default. */}
@@ -222,14 +222,14 @@ export function SnoozeButton({ thread, onSnoozed }: { thread: ThreadView; onSnoo
                 submitCustom()
               }
             }}
-            className="w-full resize-y rounded-md border border-border bg-bg px-2.5 py-2 text-[13px] leading-5 text-fg outline-none placeholder:text-muted/40 focus:border-accent"
+            className="w-full resize-y rounded-md border border-border bg-bg px-2.5 py-2 text-[13px] leading-5 text-fg outline-none placeholder:text-muted-40 focus:border-accent"
           />
-          <p className="min-h-4 text-[10.5px] text-muted/65">
+          <p className="min-h-4 text-[10.5px] text-muted-65">
             {promptValue.trim()
               ? "frizz will resume this thread with the prompt at the wake time."
               : "Leave empty to just bring the card back to your queue."}
           </p>
-          {customError && <p role="alert" className="text-[11px] text-red-400">{customError}</p>}
+          {customError && <p role="alert" className="text-[11px] text-danger">{customError}</p>}
         </form>
       </Dialog>
     </>

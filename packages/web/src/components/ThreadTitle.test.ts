@@ -29,6 +29,8 @@ test("an owned session thread's name is a click-to-edit button, with the Claude 
   const html = render({})
   assert.match(html, /<button[^>]*aria-label="Edit thread title: A worker"/)
   assert.match(html, /data-ai-rename/)
+  assert.match(html, /focus-visible:ring-focus-ink-60/)
+  assert.doesNotMatch(html, /focus-visible:ring-fg\/60/)
 })
 
 test("a Codex thread keeps the manual editor and gets no Claude refresh mark", () => {

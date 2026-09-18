@@ -120,7 +120,7 @@ test("no density renders a model+effort tag — the profile lives on the prompt 
 })
 
 // The readings group — everything right-justified at the end of the line. `ml-auto` is what pushes it
-// there, and its `text-muted/40` is the one tone every reading inside it inherits.
+// there, and its `text-muted-40` is the one tone every reading inside it inherits.
 function readings(html: string): string {
   const at = html.indexOf('class="ml-auto')
   assert.ok(at >= 0, "the row must render a right-justified readings group")
@@ -140,7 +140,7 @@ test("the light-gray working-duration reading renders on every density, and only
     // "12m" — how long the child has been WORKING, not how recently it was active: anything still
     // listed here is running or tracked-stale, so recency was near-zero information (maintainer 2026-07-28).
     assert.match(withReading, /\b12m\b/, `${density} must render the working-duration reading`)
-    assert.match(readings(withReading), /^class="[^"]*text-muted\/40/, `${density} reading must be the light-gray tone`)
+    assert.match(readings(withReading), /^class="[^"]*text-muted-40/, `${density} reading must be the light-gray tone`)
     assert.match(withReading, /title="Working for 12m"/, `${density} reading carries the explicit tooltip`)
     // A child with no dispatch instant gets NO reading — never a fabricated "0s".
     // Assert the READING, not a bare duration shape: the spinner SVG carries dur="1.1s", so a loose
@@ -158,7 +158,7 @@ test("the counter sits LEFT of the duration, so the duration keeps the right edg
   assert.match(group, /·/, "the two readings are separated by the same middot the progress label uses")
   assert.match(html, /data-child-op-counter[^>]*title="Lines of output so far"/)
   // ONE tone for the whole group: the counter must not arrive as a second, louder gray.
-  assert.equal(group.split("text-muted/40").length - 1, 1, "the tone lives once, on the group")
+  assert.equal(group.split("text-muted-40").length - 1, 1, "the tone lives once, on the group")
 })
 
 test("the counter stands alone when the row has no duration, and leaves no gap when absent", () => {
@@ -243,7 +243,7 @@ test("the rail's hover highlight moved to the wrapper; its 26px indent stayed on
   // identity element, still as padding (a margin would carve the highlight back on every nested row).
   const html = render({ density: "rail", onOpen: () => {}, onDismiss: () => {}, depth: 2, startedAt: TWELVE_MIN_AGO })
   const wrapper = html.slice(0, html.indexOf("<button"))
-  assert.match(wrapper, /hover:bg-white\/\[0\.04\]/, "the highlight is on the wrapper, so it spans the whole rail row")
+  assert.match(wrapper, /hover:bg-hover/, "the highlight is on the wrapper, so it spans the whole rail row")
   assert.doesNotMatch(wrapper, /pl-\[26px\]/, "the indent is not the wrapper's")
   assert.doesNotMatch(wrapper, /margin-left/)
   const identity = html.slice(html.indexOf("<button"))

@@ -5,7 +5,7 @@
 // on one element — Tailwind resolves same-property collisions by CSS source order, not class order,
 // so stacking z-[110] and z-[250] would be a coin-flip). Motion-free (no pop-in) by contract.
 export const OPAQUE_SURFACE_BASE =
-  "isolate bg-elevated opacity-100 border border-border shadow-2xl shadow-black/40"
+  "isolate bg-elevated opacity-100 border border-border shadow-2xl shadow-overlay-shadow"
 
 // THE STACKING ORDER, low → high. The sidebar/board rail deliberately has NO z-index (default
 // stacking): it and the workpane are side-by-side columns that never overlap, and its old desktop

@@ -40,7 +40,7 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 pt-[12vh]"
+      className="fixed inset-0 z-[60] flex items-start justify-center bg-scrim-50 pt-[12vh]"
       onMouseDown={(e) => e.target === e.currentTarget && close()}
     >
       <Command
@@ -101,7 +101,7 @@ export function CommandPalette() {
               {threads.map((t) => (
                 <Item key={t.id} value={`${displayTitle(t)} ${t.id}`} onSelect={() => run(() => jump(t.id))}>
                   <span className="truncate">{displayTitle(t)}</span>
-                  <span className="ml-auto shrink-0 text-[11px] text-muted/70">{t.id}</span>
+                  <span className="ml-auto shrink-0 text-[11px] text-muted-70">{t.id}</span>
                 </Item>
               ))}
             </Command.Group>

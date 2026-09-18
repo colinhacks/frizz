@@ -19,7 +19,7 @@ export const CHILD_ARROW = "⤷"
 // used /45, the ops strip and the completion dialog /40. The arrow is the row's STRUCTURAL marker — the
 // thing that says "this line hangs off the one above it" — so it takes the brighter of the two rather
 // than sitting below the muted label it introduces.
-export const CHILD_ARROW_CLASS = "shrink-0 text-[11px] leading-none text-muted/45"
+export const CHILD_ARROW_CLASS = "shrink-0 text-[11px] leading-none text-muted-45"
 
 // THE KIND TAG on an operations row — `AGENT` / `SHELL` / `WATCH` on ChildOpRow's sheet density, `File` /
 // `Link` on ThreadLinks. One class, because the two surfaces render one under the other beneath the
@@ -28,7 +28,7 @@ export const CHILD_ARROW_CLASS = "shrink-0 text-[11px] leading-none text-muted/4
 // The saved-reference rows had a 9px tag of their own in a 33px column, which put their labels 14.1px
 // right of the rows above them in mono and 7.2px in sans (maintainer 2026-09-11: "The label is further
 // to the right. Why? There's no reason for that at all").
-export const CHILD_KIND_TAG_CLASS = "frizz-kind-tag petite-caps shrink-0 text-[9.5px] text-muted/45"
+export const CHILD_KIND_TAG_CLASS = "frizz-kind-tag petite-caps shrink-0 text-[9.5px] text-muted-45"
 
 // THE MARK SLOT between the arrow and the tag — 9px, the liveness dot plus its halo — on the same two
 // surfaces. A saved-reference row puts its 1em icon in this same slot (it overflows by 1.25px a side,

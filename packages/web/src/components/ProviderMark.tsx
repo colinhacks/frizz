@@ -19,7 +19,7 @@ export function ProviderMark({ backend, model, className }: ProviderMarkProps) {
     <span
       role="img"
       aria-label={provider.label}
-      className={`inline-flex shrink-0 text-muted/65 ${PROVIDER_MARK_GEOMETRY[provider.key]} ${className ?? ""}`}
+      className={`inline-flex shrink-0 text-muted-65 ${PROVIDER_MARK_GEOMETRY[provider.key]} ${className ?? ""}`}
     >
       {MARKS[provider.key]()}
     </span>

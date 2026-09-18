@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { useInnerHtml } from "../lib/innerHtml.ts"
 import { localImageUrl } from "../lib/markdownTargets.ts"
 import {
@@ -15,6 +15,8 @@ import {
 } from "lucide-react"
 import type { CodexHostDirective, CodexHostDirectiveValue } from "../lib/codexHostDirectives.ts"
 import { BLOCK_RADIUS } from "./TranscriptCard.tsx"
+import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
+import { createMermaidRenderQueue } from "../lib/mermaidRenderQueue.ts"
 
 function text(attrs: CodexHostDirective["attrs"], key: string): string | undefined {
   const value = attrs[key]
@@ -169,56 +171,56 @@ export function CodexDirectiveCard({ directive }: { directive: CodexHostDirectiv
 
 type MermaidModule = typeof import("mermaid")["default"]
 let mermaidModule: Promise<MermaidModule> | undefined
+let nextMermaidRender = 0
 
 function loadMermaid(): Promise<MermaidModule> {
-  mermaidModule ??= import("mermaid").then(({ default: mermaid }) => {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: "dark",
-      themeVariables: {
-        background: "#181b20",
-        primaryColor: "#181b20",
-        primaryTextColor: "#e6e7e9",
-        primaryBorderColor: "#33363c",
-        lineColor: "#8b8f96",
-        secondaryColor: "#26282d",
-        tertiaryColor: "#0d0e10",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-      },
-    })
-    return mermaid
-  })
+  mermaidModule ??= import("mermaid").then(({ default: mermaid }) => mermaid)
   return mermaidModule
 }
 
+function mermaidColors() {
+  const root = getComputedStyle(document.documentElement)
+  const color = (name: string) => root.getPropertyValue(name).trim()
+  return {
+    background: color("--color-panel-2"), primaryColor: color("--color-panel-2"), primaryTextColor: color("--color-fg"), primaryBorderColor: color("--color-control-strong"), lineColor: color("--color-muted"), secondaryColor: color("--color-border"), tertiaryColor: color("--color-bg"), fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  }
+}
+
+const mermaidRenderer = createMermaidRenderQueue(
+  async (request) => {
+    const mermaid = await loadMermaid()
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: request.resolved === "dark" ? "dark" : "base", themeVariables: request.palette })
+    return mermaid.render(request.id, request.source)
+  },
+  (id) => document.getElementById(`d${id}`)?.remove(),
+)
+
 export function MermaidDiagram({ source }: { source: string }) {
   const reactId = useId()
+  const { resolved } = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeSnapshot)
   const [state, setState] = useState<{ html?: string; error?: string }>({})
+  const generation = useRef(0)
   // Declared above the early returns (hook order) — a rendered diagram is a large SVG, and rebuilding
   // it from markup on every unrelated re-render is exactly what useInnerHtml exists to prevent.
   const inner = useInnerHtml(state.html ?? "")
   useEffect(() => {
     let live = true
-    setState({})
+    const currentGeneration = ++generation.current
+    setState((previous) => previous.error ? { html: previous.html } : previous)
     if (source.length > 50_000) {
       setState({ error: "Diagram source exceeds the 50 KB rendering limit" })
       return () => { live = false }
     }
-    const id = `frizz-mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, "")}`
-    void loadMermaid()
-      .then((mermaid) => mermaid.render(id, source))
-      .then(({ svg }) => { if (live) setState({ html: svg }) })
+    const id = `frizz-mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, "")}-${++nextMermaidRender}`
+    void mermaidRenderer.enqueue({ id, source, resolved, palette: mermaidColors() })
+      .then(({ svg }) => { if (live && generation.current === currentGeneration) setState({ html: svg }) })
       .catch((error: unknown) => {
-        if (!live) return
+        if (!live || generation.current !== currentGeneration) return
         const message = error instanceof Error ? error.message.split(/\n| for text:/, 1)[0] : "Unknown diagram error"
         setState({ error: message.slice(0, 240) })
       })
-      // Mermaid appends a `d<id>` scratch container to document.body while rendering. Its rejection
-      // path leaves that node behind as a giant error diagram unless the host removes it explicitly.
-      .finally(() => document.getElementById(`d${id}`)?.remove())
     return () => { live = false }
-  }, [reactId, source])
+  }, [reactId, resolved, source])
 
   if (state.error) {
     return (

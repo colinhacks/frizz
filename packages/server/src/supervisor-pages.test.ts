@@ -53,7 +53,8 @@ test("each recovery variant states its own cause, and both offer the same two wa
     // page should not have to guess.
     assert.match(page, /Threads already running are not affected/)
     // A `</script>` anywhere inside the inline script would end it early and dump the rest as markup.
-    assert.equal(page.split("</script>").length - 1, 2, "one font script, one recovery script")
+    assert.equal(page.split("</script>").length - 1, 3, "one theme script, one font script, one recovery script")
+    assert.match(page, /localStorage\.getItem\("frizz-theme"\)/)
   }
 })
 

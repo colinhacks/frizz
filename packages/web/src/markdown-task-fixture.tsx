@@ -64,7 +64,7 @@ const Panel = ({ title, className, style }: { title: string; className?: string;
     <p className="text-[11px] uppercase tracking-wide text-muted">{title}</p>
     {CASES.map(({ id, label, md }) => (
       <div key={id} data-case={id} className="flex flex-col gap-1">
-        <code className="text-[10px] text-muted/70">{label}</code>
+        <code className="text-[10px] text-muted-70">{label}</code>
         <div className={`md-body ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: mdToHtml(md) }} />
       </div>
     ))}

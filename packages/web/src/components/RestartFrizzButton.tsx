@@ -199,10 +199,10 @@ export function RestartFailureNotice({
   onDismiss: () => void
 }) {
   return (
-    <div role="alert" className={`${ANCHORED_PANEL} ${NOTICE_WIDTH} ${PANEL_SURFACE} border border-red-500/45`}>
-      <span aria-hidden="true" className={`${PANEL_ARROW} border-red-500/45`} />
+    <div role="alert" className={`${ANCHORED_PANEL} ${NOTICE_WIDTH} ${PANEL_SURFACE} border border-danger-fill/45`}>
+      <span aria-hidden="true" className={`${PANEL_ARROW} border-danger-fill/45`} />
       <div className="relative flex items-center gap-2.5">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-300">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-danger-fill/15 text-danger-soft">
           <AlertTriangle aria-hidden="true" size={14} strokeWidth={2.25} />
         </span>
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-fg">{update ? "Update failed" : "Restart failed"}</span>

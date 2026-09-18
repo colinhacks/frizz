@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { ProviderMark } from "./ProviderMark.tsx"
 import { PROVIDER_MARK_GEOMETRY, providerMarkFor, providerMarkForBackend } from "./providerMark.ts"
 
 test("provider marks identify only known, backend-backed threads", () => {
@@ -24,4 +27,14 @@ test("provider mark geometry keeps compact monochrome marks optically centered b
   assert.equal(PROVIDER_MARK_GEOMETRY.codex, "size-[10px]")
   assert.equal(PROVIDER_MARK_GEOMETRY.claude, "size-[11px] translate-y-px")
   for (const [key, geometry] of Object.entries(PROVIDER_MARK_GEOMETRY)) assert.match(geometry, /size-\[|h-\[/, `${key} sizes its box explicitly`)
+})
+
+test("every ACP provider mark uses semantic ink while retaining its own geometry", () => {
+  for (const agent of ["opencode", "cursor", "gemini", "copilot", "qwen", "kimi", "grok"]) {
+    const provider = providerMarkFor("acp", `acp:${agent}`)!
+    const html = renderToStaticMarkup(createElement(ProviderMark, { backend: "acp", model: `acp:${agent}` }))
+    assert.ok(html.includes(PROVIDER_MARK_GEOMETRY[provider.key]))
+    assert.match(html, /text-muted-65/)
+    assert.doesNotMatch(html, /text-muted\/65/)
+  }
 })

@@ -15,7 +15,7 @@ export function BoxSpinner({ size = STATUS_BOX }: { size?: number }) {
   // (4px outer radius minus the 0.5 half-stroke). Perimeter of that rounded rect ≈ 50, so the dash sum
   // stays 50. The faint base outline is toned to the checkbox's border-muted/45 weight.
   return (
-    <svg width={size} height={size} viewBox="0 0 15 15" aria-hidden className="text-muted/85">
+    <svg width={size} height={size} viewBox="0 0 15 15" aria-hidden className="text-muted-85">
       <rect x="0.5" y="0.5" width="14" height="14" rx="3.5" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1" />
       <rect x="0.5" y="0.5" width="14" height="14" rx="3.5" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeDasharray="11 39">
         <animate attributeName="stroke-dashoffset" from="50" to="0" dur="1.1s" repeatCount="indefinite" />

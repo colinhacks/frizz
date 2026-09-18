@@ -18,7 +18,7 @@ export function ApprovalDetails({ payload }: { payload: ApprovalPayload }) {
       h("div", { className: "text-[12px] text-muted" }, "Command"),
       h("div", { className: "mt-0.5 break-words text-[13px] font-medium text-fg" }, payload.command.summary),
       payload.command.workingDirectoryLabel
-        ? h("div", { className: "mt-1 break-all text-[10.5px] text-muted/70" }, "Working directory: ", payload.command.workingDirectoryLabel)
+        ? h("div", { className: "mt-1 break-all text-[10.5px] text-muted-70" }, "Working directory: ", payload.command.workingDirectoryLabel)
         : null,
       h(PreviewDisclosure, { label: "Redacted command preview", text: payload.command.preview }),
       payload.command.actions ? h(CommandActionList, { actions: payload.command.actions }) : null,
@@ -33,11 +33,11 @@ export function ApprovalDetails({ payload }: { payload: ApprovalPayload }) {
         ? h("div", { className: "mt-1 break-all font-mono-keep text-[11px] text-muted" }, "→ ", payload.destinationLabel)
         : null,
       payload.grantRootLabel
-        ? h("section", { "aria-label": "Requested session write root", className: "mt-2.5 min-w-0 rounded-md border border-amber-400/35 bg-amber-500/[0.06] px-2.5 py-2" },
-            h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-amber-100/80" }, "Requested session write root"),
+        ? h("section", { "aria-label": "Requested session write root", className: "mt-2.5 min-w-0 rounded-md border border-attention/35 bg-attention-fill/[0.06] px-2.5 py-2" },
+            h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-attention-soft-80" }, "Requested session write root"),
             h("div", { className: "mt-1 min-w-0 break-all font-mono-keep text-[10.5px] text-fg/85" }, payload.grantRootLabel),
             payload.scopeLabel
-              ? h("div", { className: "mt-1.5 whitespace-pre-wrap break-words text-[10.5px] leading-snug text-amber-100/75" }, payload.scopeLabel)
+              ? h("div", { className: "mt-1.5 whitespace-pre-wrap break-words text-[10.5px] leading-snug text-attention-soft-75" }, payload.scopeLabel)
               : null,
           )
         : null,
@@ -62,7 +62,7 @@ export function ApprovalDetails({ payload }: { payload: ApprovalPayload }) {
       ? h("div", { className: "mt-1 break-all text-[11px] text-muted" }, "Resource: ", payload.resourceLabel)
       : null,
     payload.workingDirectoryLabel
-      ? h("div", { className: "mt-1.5 break-all text-[10.5px] text-muted/70" }, "Working directory: ", payload.workingDirectoryLabel)
+      ? h("div", { className: "mt-1.5 break-all text-[10.5px] text-muted-70" }, "Working directory: ", payload.workingDirectoryLabel)
       : null,
     payload.scopeLabel
       ? h("div", { className: "mt-2 whitespace-pre-wrap break-words text-[11px] leading-snug text-muted" }, payload.scopeLabel)
@@ -77,7 +77,7 @@ function PreviewDisclosure({ label, text }: { label: string; text: string }) {
     open: text.length < 1_200,
   },
   h("summary", {
-    className: "cursor-pointer px-2.5 py-2 text-[10.5px] text-muted outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/50",
+    className: "cursor-pointer px-2.5 py-2 text-[10.5px] text-muted outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-50",
   }, label),
   h("pre", {
     className: "max-h-64 max-w-full min-w-0 overflow-auto border-t border-border/60 px-2.5 py-2 whitespace-pre-wrap break-words font-mono-keep text-[11px] leading-relaxed text-fg/80",
@@ -86,7 +86,7 @@ function PreviewDisclosure({ label, text }: { label: string; text: string }) {
 
 function CommandActionList({ actions }: { actions: readonly InteractionCommandAction[] }) {
   return h("section", { "aria-label": "Parsed command actions", className: "mt-3 min-w-0" },
-    h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-muted/75" }, "Parsed actions"),
+    h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-muted-75" }, "Parsed actions"),
     h("ul", { className: "mt-1.5 flex min-w-0 flex-col gap-2" }, actions.map((action, index) =>
       h("li", { key: index, className: "min-w-0 rounded-md border border-border/65 bg-bg/25 px-2.5 py-2" },
         h("div", { className: "text-[11px] font-medium text-fg/90" }, commandActionLabel(action.kind)),
@@ -104,7 +104,7 @@ function CommandActionList({ actions }: { actions: readonly InteractionCommandAc
 
 function FileChangeList({ changes }: { changes: readonly InteractionFileChangeDisplay[] }) {
   return h("section", { "aria-label": "Affected file changes", className: "mt-3 min-w-0" },
-    h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-muted/75" }, "Affected changes"),
+    h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-muted-75" }, "Affected changes"),
     h("ol", { className: "mt-1.5 flex min-w-0 flex-col gap-2" }, changes.map((change, index) =>
       h("li", { key: index, className: "min-w-0 rounded-md border border-border/65 bg-bg/25 px-2.5 py-2" },
         h("div", { className: "text-[11px] font-medium text-fg/90" }, fileOperationLabel(change.operation)),
@@ -122,7 +122,7 @@ function FileChangeList({ changes }: { changes: readonly InteractionFileChangeDi
 
 function CapabilityList({ capabilities }: { capabilities: readonly InteractionCapability[] }) {
   return h("section", { "aria-label": "Requested capabilities", className: "mt-3 min-w-0" },
-    h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-muted/75" }, "Requested capabilities"),
+    h("h4", { className: "text-[10px] font-medium uppercase tracking-[0.07em] text-muted-75" }, "Requested capabilities"),
     h("ul", { className: "mt-1.5 flex min-w-0 flex-col gap-2" }, capabilities.map((capability, index) =>
       h("li", { key: index, className: "min-w-0 rounded-md border border-border/65 bg-bg/25 px-2.5 py-2" },
         h(CapabilityDetail, { capability }),

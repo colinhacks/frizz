@@ -175,7 +175,7 @@ export function ProfileGridSelector({
           <span className={`profile-grid-value relative -top-px min-w-0 flex-1 truncate text-left ${typography}`}>
             {profileGridDisplayLabel(groups, value, placeholder)}
           </span>
-          {pendingLabel && <Loader2 aria-hidden="true" size={compact ? 10 : 11} className="shrink-0 animate-spin text-muted/65" />}
+          {pendingLabel && <Loader2 aria-hidden="true" size={compact ? 10 : 11} className="shrink-0 animate-spin text-muted-65" />}
           <ChevronDown aria-hidden="true" size={compact ? 11 : 13} className="shrink-0 text-fg/65 transition-transform group-data-[state=open]:rotate-180" />
         </button>
       </RadixMenu.Trigger>
@@ -196,7 +196,7 @@ export function ProfileGridSelector({
             <RadixMenu.Group key={group.id}>
               {group.label && (
                 <div className="profile-grid-header sticky left-0 flex items-baseline justify-between gap-4 px-1.5 pb-1 pt-1 first:pt-0.5">
-                  <RadixMenu.Label className="text-left font-medium tracking-[0.07em] text-muted/55">
+                  <RadixMenu.Label className="text-left font-medium tracking-[0.07em] text-muted-55">
                     {group.label}
                   </RadixMenu.Label>
                   {contextWindows && (group.id === "claude" || group.id === "codex") && (
@@ -333,7 +333,7 @@ export function ProfileGridSelector({
             </RadixMenu.Group>
           ))}
           {selections.length === 0 && (
-            <div className="px-2 py-1.5 text-muted/60">No profiles available</div>
+            <div className="px-2 py-1.5 text-muted-60">No profiles available</div>
           )}
         </RadixMenu.Content>
       </RadixMenu.Portal>

@@ -86,7 +86,7 @@ function Fixture() {
           needs somewhere to land, and the strip's own corner radius only reads against a border. */}
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="h-32 p-4 text-[12px] text-muted">…transcript…</div>
-        <div className="mx-3 rounded-md border border-border/70 px-3 py-2 text-[12px] text-muted/50">…prompt box…</div>
+        <div className="mx-3 rounded-md border border-border/70 px-3 py-2 text-[12px] text-muted-50">…prompt box…</div>
         <BackgroundOpsStrip slug={SLUG} />
         <ThreadLifecycleFooter thread={thread} />
       </div>

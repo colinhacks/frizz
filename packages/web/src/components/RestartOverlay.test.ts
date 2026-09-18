@@ -36,7 +36,7 @@ test("a supervisor message renders as a status sub-line, blank ones are dropped"
 // modal that cannot be dismissed is the bug it replaces.
 test("the blocking shape never leaks the stalled copy or a dismiss control", () => {
   const html = renderToStaticMarkup(createElement(RestartOverlay, { open: true, message: "installing frizz@0.5.0" }))
-  assert.match(html, /bg-black\/55/)
+  assert.match(html, /bg-scrim-55/)
   assert.doesNotMatch(html, /Dismiss/)
   assert.doesNotMatch(html, /did not come back/)
 })
@@ -46,7 +46,7 @@ test("past the deadline the overlay lifts its block and says what to do", () => 
   assert.match(html, /role="alert"/)
   assert.doesNotMatch(html, /alertdialog|aria-modal/)
   // No scrim, and the wrapper lets the pointer through — only the card itself is interactive.
-  assert.doesNotMatch(html, /bg-black\/55|backdrop-blur/)
+  assert.doesNotMatch(html, /bg-scrim-55|backdrop-blur/)
   const wrapper = html.match(/^<div class="([^"]*)"/)?.[1] ?? ""
   assert.ok(wrapper.includes("pointer-events-none"), wrapper)
   assert.ok(wrapper.includes("z-[300]"), "still above every modal, so a dialog left open under the old block cannot cover the notice")

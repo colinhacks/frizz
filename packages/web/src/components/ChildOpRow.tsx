@@ -98,7 +98,7 @@ export function ChildOpRow({
   // whose surface does not poll for one.
   counter?: string
   counterTitle?: string
-  // THE ONE COUNTER THAT MAY OUTRANK THE ROW'S OWN DIMNESS. Every reading in this column is `text-muted/40`,
+  // THE ONE COUNTER THAT MAY OUTRANK THE ROW'S OWN DIMNESS. Every reading in this column is `text-muted-40`,
   // deliberately — a strip of live work is scanned, not read, and "1.2k lines" earns no more ink than the
   // age beside it. A watched PR whose CI has gone RED is the exception: it is the number that decides what
   // the human does next, and rendered in the column's uniform grey it was indistinguishable from a
@@ -188,13 +188,13 @@ export function ChildOpRow({
   // DURATION stays rightmost whatever else joins it — that column is what a stack of rows is read down
   // — and the counter falls in beside it, separated by the same `·` the progress label already uses.
   const reading: ReactNode = counter || elapsed ? (
-    <span className="ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-muted/40">
+    <span className="ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-muted-40">
       {counter && (
         // The tone rides a Primer colour rather than a Tailwind red, because the same fact is drawn in
         // the same colour on the awaiting card two surfaces away (ChecksGlyph → PRIMER.fgDanger).
         <span data-child-op-counter title={counterTitle} style={counterTone === "danger" ? { color: PRIMER.fgDanger } : undefined}>{counter}</span>
       )}
-      {counter && elapsed && <span aria-hidden className="text-muted/25">·</span>}
+      {counter && elapsed && <span aria-hidden className="text-muted-25">·</span>}
       {elapsed && <span title={`Working for ${elapsed}`}>{elapsed}</span>}
     </span>
   ) : null
@@ -204,7 +204,7 @@ export function ChildOpRow({
       <span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span>
       {indicator}
       {sheet && <span className={CHILD_KIND_TAG_CLASS}>{KIND_TAG[kind]}</span>}
-      <span className={`min-w-0 truncate text-muted/70 ${rail ? "leading-[16px]" : clickable ? "group-hover:text-fg/80 group-hover:underline" : ""}`}>{label}</span>
+      <span className={`min-w-0 truncate text-muted-70 ${rail ? "leading-[16px]" : clickable ? "group-hover:text-fg/80 group-hover:underline" : ""}`}>{label}</span>
     </>
   )
 
@@ -221,7 +221,7 @@ export function ChildOpRow({
     // `overflow-hidden` is load-bearing at a narrow width: the arrow/dot/kind tag inside are shrink-0,
     // so once the row runs out of room the button's own content used to SPILL and the × landed on top
     // of the "AGENT" tag. Clipping keeps the collapse graceful. The ring goes inset to survive it.
-    : `group flex min-w-0 max-w-[60%] items-center gap-1.5 overflow-hidden text-left text-[11.5px] ${clickable ? "cursor-pointer rounded-sm outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg/60" : ""}`
+    : `group flex min-w-0 max-w-[60%] items-center gap-1.5 overflow-hidden text-left text-[11.5px] ${clickable ? "cursor-pointer rounded-sm outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60" : ""}`
 
   // The rail indents with PADDING, not margin: a margin would carve the row wrapper's full-width hover
   // highlight back on every nested row. The two prompt-box densities have no such highlight, so they
@@ -266,7 +266,7 @@ export function ChildOpRow({
   // the × arrived, because the button no longer spans the row and a highlight on the button would stop
   // short of the × and the duration. The indent stayed on the button (see rowClass).
   const wrapperClass = rail
-    ? "flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-[11.5px] transition-colors hover:bg-white/[0.04]"
+    ? "flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-[11.5px] transition-colors hover:bg-hover"
     : "flex min-w-0 items-center gap-1.5 text-[11.5px]"
   const wrapperStyle = !rail && nestIndent > 0 ? { marginLeft: nestIndent } : undefined
 
@@ -298,7 +298,7 @@ export function ChildOpRow({
           onMouseDown={(e) => e.stopPropagation()}
           title={CHILD_DISMISS_TITLE[dismissTone]}
           aria-label={`${CHILD_DISMISS_VERB[dismissTone]} ${CHILD_DISMISS_NOUN[kind]}: ${label}`}
-          className="shrink-0 rounded-sm p-0.5 text-muted/45 outline-none transition-colors hover:text-fg focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-fg/60"
+          className="shrink-0 rounded-sm p-0.5 text-muted-45 outline-none transition-colors hover:text-fg focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
         >
           <X size={11} />
         </button>

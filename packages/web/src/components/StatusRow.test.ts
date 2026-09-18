@@ -112,7 +112,7 @@ test("the project is a LINK to its GitHub repo — and the connection dot is gon
     const state = render("colinhacks/frizz", { connection })
     assert.doesNotMatch(state, /role="img" aria-label="connected"/)
     assert.doesNotMatch(state, /aria-label="disconnected"|aria-label="connecting…"/)
-    assert.doesNotMatch(state, /bg-live|bg-red-500|data-board-sync-fallback/)
+    assert.doesNotMatch(state, /bg-live|bg-danger-fill|data-board-sync-fallback/)
   }
 })
 
@@ -188,11 +188,11 @@ test("the quota READING is small, but its provider mark is a full-sized, full-br
   assert.match(html, /data-quota-bar="true" class="[^"]*text-\[9px\]/)
   assert.match(html, /text-fg\/75! size-\[14px\]!/)
   assert.match(html, /text-fg\/75! size-\[12\.75px\]!/)
-  // ProviderMark's own `text-muted/65 size-[11px]` is still in the class list and MUST be — the `!`
+  // ProviderMark's own `text-muted-65 size-[11px]` is still in the class list and MUST be — the `!`
   // is what outranks it, because Tailwind resolves a same-property collision by CSS source order and
   // not by class order. Asserting the default is absent would be asserting the wrong mechanism; the
   // browser-side check that these resolve to 14px/12.75px is in the handoff's measurements.
-  assert.match(html, /text-muted\/65 size-\[11px\][^"]*size-\[14px\]!/)
+  assert.match(html, /text-muted-65 size-\[11px\][^"]*size-\[14px\]!/)
 })
 
 test("the home crumb is a ROUTER link, not a raw anchor that reloads the document", () => {

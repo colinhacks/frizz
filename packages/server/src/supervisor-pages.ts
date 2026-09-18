@@ -52,11 +52,28 @@ const BASE_STYLE = `
 :root{
   color-scheme:dark;
   --bg:#0d0e10;--panel:#131519;--panel-2:#181b20;
-  --border:#26282d;--border-strong:#33363c;
+  --border:#26282d;--border-strong:#33363c;--control-border:#26282d;--control-strong:#33363c;
   --fg:#e6e7e9;--muted:#8b8f96;--accent:#e8b923;--danger:#fca5a5;
+  --focus-border:color-mix(in srgb,var(--accent) 55%,transparent);--focus-ring:color-mix(in srgb,var(--accent) 22%,transparent);
   --sans:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"JetBrains Mono","SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
   --ease:cubic-bezier(0,0,.2,1);
+}
+:root[data-theme=light]{
+  color-scheme:light;
+  --bg:#f6f8fa;--panel:#fff;--panel-2:#f1f4f7;
+  --border:#d0d7de;--border-strong:#afb8c1;--control-border:#858e98;--control-strong:#7d8791;
+  --fg:#1f2328;--muted:#57606a;--accent:#9a6700;--danger:#cf222e;
+  --focus-border:#9a6700;--focus-ring:#9a6700;
+}
+@media(prefers-color-scheme:light){
+  :root:not([data-theme]){
+    color-scheme:light;
+    --bg:#f6f8fa;--panel:#fff;--panel-2:#f1f4f7;
+    --border:#d0d7de;--border-strong:#afb8c1;--control-border:#858e98;--control-strong:#7d8791;
+    --fg:#1f2328;--muted:#57606a;--accent:#9a6700;--danger:#cf222e;
+    --focus-border:#9a6700;--focus-ring:#9a6700;
+  }
 }
 html,body{background:var(--bg)}
 body{
@@ -82,13 +99,13 @@ const RECOVERY_STYLE = `
 /* ErrorBoundary's ACTION_CLASS, one size up for a page that is alone in a viewport. */
 .btn{
   appearance:none;display:inline-flex;align-items:center;
-  border:1px solid var(--border);border-radius:6px;background:transparent;
+  border:1px solid var(--control-border);border-radius:6px;background:transparent;
   padding:5px 10px;font:inherit;font-size:11.5px;color:color-mix(in srgb,var(--fg) 90%,transparent);
   cursor:pointer;text-decoration:none;
   transition:background-color 120ms var(--ease),border-color 120ms var(--ease),color 120ms var(--ease);
 }
-.btn:hover{background:var(--panel);border-color:var(--border-strong);color:var(--fg)}
-.btn:focus-visible{outline:none;border-color:color-mix(in srgb,var(--accent) 55%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent)}
+.btn:hover{background:var(--panel);border-color:var(--control-strong);color:var(--fg)}
+.btn:focus-visible{outline:none;border-color:var(--focus-border);box-shadow:0 0 0 2px var(--focus-ring)}
 .btn:disabled{opacity:.5;pointer-events:none}
 /* min-height holds the slot open while it is LIVE, so a changing status line never nudges the card;
    :empty collapses it when there is nothing live to say, so a halted card has no trailing gutter. */
@@ -146,6 +163,7 @@ const RECOVERY_STYLE = `
 // so it reads the same key for itself — otherwise a restart flips a sans board to mono for two seconds.
 // Branded pages only: the key names the product.
 const FONT_SCRIPT = `try{document.documentElement.dataset.font=localStorage.getItem("frizz-font")==="mono"?"mono":"sans"}catch{}`
+const THEME_SCRIPT = `var p;try{p=localStorage.getItem("frizz-theme")}catch{}var d=false;try{d=matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches}catch{}var t=p==="dark"||p==="light"?p:d?"dark":"light";document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;document.querySelector('meta[name="theme-color"]').content=t==="dark"?"#0d0e10":"#f6f8fa"`
 
 /**
  * THE RECOVERY PAGE POLLS, and the comment this replaces said it deliberately did not: "a broken child
@@ -273,9 +291,11 @@ function documentShell(options: {
   return `<!doctype html><html lang="en" data-font="sans"><head><meta charset="utf-8">`
     + `<title>${options.title}</title>`
     + `<meta name="viewport" content="width=device-width,initial-scale=1">`
-    + `<meta name="color-scheme" content="dark"><meta name="theme-color" content="#0d0e10">`
+    + (options.font
+      ? `<meta name="color-scheme" content="dark light"><meta name="theme-color" content="#0d0e10">`
+      : `<meta name="color-scheme" content="dark light"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d0e10"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f8fa">`)
     + `<style>${options.style ? `${BASE_STYLE}\n${options.style}` : BASE_STYLE}</style>`
-    + (options.font ? `<script>${FONT_SCRIPT}</script>` : "")
+    + (options.font ? `<script>${THEME_SCRIPT}</script><script>${FONT_SCRIPT}</script>` : "")
     + `</head>`
     + `<body${options.bodyAttributes ? ` ${options.bodyAttributes}` : ""}><main>${options.body}</main>`
     + (options.script ? `<script>${options.script}</script>` : "")
