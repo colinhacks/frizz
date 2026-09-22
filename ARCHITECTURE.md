@@ -9,7 +9,7 @@ The UI has ZERO intelligence: all orchestration wisdom lives in the user-editabl
 ## Repo layout
 
 **The repo root IS the published `frizz` package** — root `package.json` is the manifest, `src/` is
-the launcher, `npm publish` runs from the root, and the root `README.md` is the npmjs.com page.
+the launcher, the publish runs from the root, and the root `README.md` is the npmjs.com page.
 **Releases publish from the `release` branch, not from main** (since 2026-09-08): main says a change
 landed, `release` says it was verified and chosen to ship, and only the second one triggers
 [`release.yml`](.github/workflows/release.yml). The branch is a fast-forward pointer into main with no

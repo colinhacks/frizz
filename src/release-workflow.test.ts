@@ -28,3 +28,22 @@ test("a release retry reconciles shell tags and GitHub metadata after npm succee
   assert.match(tag, /git ls-remote --exit-code --tags origin "v\$VERSION"/);
   assert.match(release, /gh release view "v\$VERSION"/);
 });
+
+test("the release path can only stage, and holds every downstream step behind the approval", () => {
+  const server = step("Build and stage frizz-server on npm");
+  const shell = step("Stage the frizz shell on npm");
+  const wait = step("Wait for the maintainer to approve the staged versions");
+
+  // A direct publish is the thing staging exists to prevent: the trusted publisher is stage-only,
+  // so this is what a re-introduced `npm publish` would look like before npm rejected it.
+  assert.ok(!/\bnpm publish\b/.test(workflow), "the release path must stage, never publish");
+  assert.match(server, /npm-stage-publish\.sh \.\/packages\/server-release --ignore-scripts/);
+  assert.match(shell, /npm-stage-publish\.sh \.$/m);
+  assert.doesNotMatch(wait, /\n\s+if:/, "the wait must run on a retry, when both versions are already staged");
+  assert.match(workflow, /^ {4}timeout-minutes: 360$/m, "the approval wait needs the job's full six hours");
+  // The tag and the GitHub release describe a published version, so they must follow the wait.
+  assert.ok(
+    workflow.indexOf("- name: Wait for the maintainer") < workflow.indexOf("- name: Tag the released shell commit"),
+    "the tag and the GitHub release must come after the approval wait"
+  );
+});

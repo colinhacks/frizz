@@ -30,6 +30,14 @@ name: release
 # environment, and this workflow declares no environment), which is what makes publishing from
 # `release` work at all. Trusted publishing attaches provenance automatically; --provenance is
 # unnecessary.
+#
+# STAGED PUBLISHING (2026-09-22). This workflow can no longer publish — it can only STAGE. The
+# trusted publisher on `frizz` and on `frizz-server` is stage-only, so every publish here is `npm
+# stage publish`, and a staged version is not installable until the maintainer approves it with 2FA.
+# The job then WAITS for that approval before it tags anything or creates a GitHub release, so
+# neither exists for a version npm has not served. What this buys: a stolen credential that moves
+# `release` fills a queue and ships nothing. That is the shape of the 2026-09-21 nubjs/nub
+# compromise, where a stolen push credential cut a tag and 18 packages published unattended.
 
 on:
   push:
@@ -56,6 +64,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Six hours is a GitHub job's maximum, and the approval wait below spends up to 350 minutes of
+    # it. An approval that arrives later is not lost: re-run the job and it resumes from it.
+    timeout-minutes: 360
     permissions:
       id-token: write # required for Trusted Publishing (OIDC)
       contents: write # tag the released commit and create the GitHub release
@@ -73,12 +84,16 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
-      # Trusted Publishing needs npm >= 11.5.1. Node 26 ships a new enough npm today; upgrading
-      # explicitly keeps this workflow correct if the bundled npm ever regresses.
-      - name: Use an npm that supports trusted publishing
+      # `npm stage publish` landed in npm 11.15; the npm bundled with a Node image can lag it, and a
+      # too-old npm would fail with an unhelpful unknown-command error mid-release.
+      - name: Install an npm CLI that can stage
         run: |
-          npm install -g npm@latest
-          npm --version
+          npm install -g npm@11
+          v="$(npm --version)"
+          # `sort -V | head -1` yields the smaller of the two; it must be the floor.
+          [ "$(printf '%s\n11.15.0\n' "$v" | sort -V | head -1)" = "11.15.0" ] \
+            || { echo "::error::npm $v cannot stage (need >= 11.15)"; exit 1; }
+          echo "npm $v"
 
       - name: Install workspace
         run: pnpm install --frozen-lockfile
@@ -99,6 +114,8 @@ jobs:
           echo "server_version=$SERVER_VERSION" >> "$GITHUB_OUTPUT"
           # Registry checks, rather than commit diffs, make retries idempotent. Server releases are
           # intentionally independent: a compatible runtime fix can publish without moving the shell.
+          # A version that is STAGED but not yet approved is not served, so it reads as unpublished
+          # here and the staging step below re-stages it — npm refuses, which that step tolerates.
           if npm view "frizz-server@$SERVER_VERSION" version > /dev/null 2>&1; then
             echo "frizz-server@$SERVER_VERSION is already published"
             echo "publish_server=false" >> "$GITHUB_OUTPUT"
@@ -117,18 +134,64 @@ jobs:
       # Root prepack stages this package before either pack operation. `--ignore-scripts` makes the
       # server tarball exactly the staging that the shell's local artifact tests consume; it avoids a
       # second, package-directory lifecycle that cannot see the source workspace.
-      - name: Build and publish frizz-server to npm
+      - name: Build and stage frizz-server on npm
         if: steps.decide.outputs.publish_server == 'true'
         run: |
           node ./scripts/prepare-package.mjs --server
           node ./scripts/build-package.mjs --server
-          npm publish --ignore-scripts ./packages/server-release
+          bash .github/scripts/npm-stage-publish.sh ./packages/server-release --ignore-scripts
 
       # Shell prepack creates its launcher bundle, leaves server staging intact for future standalone
       # packs, and strips workspace-only development links from the root manifest.
-      - name: Publish frizz shell to npm
+      - name: Stage the frizz shell on npm
         if: steps.decide.outputs.publish_shell == 'true'
-        run: npm publish
+        run: bash .github/scripts/npm-stage-publish.sh .
+
+      # THE HUMAN GATE. Both versions above are in npm's staged queue, and nothing below runs until a
+      # maintainer approves them with 2FA and the registry serves them. So the tag and the GitHub
+      # release can never describe a version npm has not published.
+      #
+      # APPROVE frizz-server FIRST. Staging puts both in the queue at once, so the order the steps
+      # above ran in no longer orders the releases — the approvals do. A `frizz` shell fetches the
+      # `frizz-server` version pinned in its own manifest from the registry on first boot, so a shell
+      # that goes live before that server does is broken for anyone who installs it in between.
+      - name: Wait for the maintainer to approve the staged versions
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+          SERVER_VERSION: ${{ steps.decide.outputs.server_version }}
+        run: |
+          {
+            echo "## Staged on npm — waiting for approval"
+            echo
+            echo "Neither version is installable until a maintainer approves it with 2FA."
+            echo "**Approve \`frizz-server\` first** — the shell fetches its pinned server from the registry on first boot."
+            echo
+            echo "- \`frizz-server@$SERVER_VERSION\`"
+            echo "- \`frizz@$VERSION\`"
+            echo
+            echo '```sh'
+            echo "npm stage list frizz-server   # the stage ids; npm stage view <id> to inspect one"
+            echo "npm stage list frizz"
+            echo "npm stage approve <id>        # one id per call, 2FA each time"
+            echo "pnpm stage approve            # pnpm 12+: a picker, one one-time password for both"
+            echo '```'
+            echo
+            echo "This job waits up to six hours. If the approval comes later, re-run it: an approved version is skipped, a still-staged one is tolerated, and the tag and release steps then run."
+          } >> "$GITHUB_STEP_SUMMARY"
+          # 350 minutes of polling under the job's 360-minute cap, one read per package per minute.
+          deadline=$(( $(date +%s) + 350 * 60 ))
+          for spec in "frizz-server@$SERVER_VERSION" "frizz@$VERSION"; do
+            want="${spec##*@}"
+            until [ "$(npm view "$spec" version 2>/dev/null)" = "$want" ]; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "::error::$spec is still not served after 350 minutes — approve the staged versions and re-run this job; it resumes from the approval."
+                exit 1
+              fi
+              echo "… $spec not served yet (staged, awaiting approval) — $(date -u +%H:%M:%SZ)"
+              sleep 60
+            done
+            echo "✓ $spec is published"
+          done
 
       # Tags and GitHub releases belong to the stable shell only. This reconciliation deliberately
       # runs even when the registry check skipped publishing: a retry after npm accepted the tarball
