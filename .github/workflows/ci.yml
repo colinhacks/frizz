@@ -7,7 +7,7 @@ name: ci
 
 on:
   push:
-    # `release` as well as main: it is the branch that actually publishes (see release.yml), so it is
+    # `release` as well as main: it is the branch releases are cut from (see release.yml), so it is
     # the last branch that should be able to go green-untested. It carries no commits of its own — it
     # fast-forwards to a main commit — so in the ordinary case these checks have already passed on the
     # same sha and this run is a cheap re-confirmation rather than new work.

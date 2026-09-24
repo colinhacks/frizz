@@ -1,6 +1,7 @@
 name: release
 
-# Publishes `frizz` from the `release` branch — NOT from main.
+# Publishes `frizz` from the `release` branch — NOT from main — and only when a maintainer
+# dispatches it by hand. See the `on:` block for why the push trigger is gone.
 #
 # WHAT CHANGED, AND WHY (2026-09-08). This published on every push to main that touched package.json.
 # That is the natural shape for a repo that lands straight on main, and it worked until releasing
@@ -19,9 +20,10 @@ name: release
 # leave later, unverified commits behind. If `release` ever needs a non-fast-forward push, something
 # has gone wrong — stop and look rather than forcing it.
 #
-# THE CONSEQUENCE TO KNOW ABOUT: bumping the version on main and pushing NO LONGER PUBLISHES. It is
-# inert until `release` is moved. That silence is deliberate, but it is silence, so the procedure lives
-# in plans/runtime-pin-bumps.md and the check for an unshipped bump runs on the daily runtime watch.
+# THE CONSEQUENCE TO KNOW ABOUT: bumping the version on main and pushing NO LONGER PUBLISHES, and
+# since 2026-09-23 neither does moving `release` — nothing publishes until a maintainer dispatches
+# this workflow. That silence is deliberate, but it is silence, so the procedure lives in
+# plans/runtime-pin-bumps.md and the check for an unshipped bump runs on the daily runtime watch.
 #
 # Auth is npm Trusted Publishing (OIDC): no NPM_TOKEN, no secret to rotate or leak. That binds the
 # right to publish to THIS repository and THIS workflow file — the filename is load-bearing, and
@@ -36,23 +38,28 @@ name: release
 # stage publish`, and a staged version is not installable until the maintainer approves it with 2FA.
 # The job then WAITS for that approval before it tags anything or creates a GitHub release, so
 # neither exists for a version npm has not served. What this buys: a stolen credential that moves
-# `release` fills a queue and ships nothing. That is the shape of the 2026-09-21 nubjs/nub
-# compromise, where a stolen push credential cut a tag and 18 packages published unattended.
+# `release` fills a queue and ships nothing — and since the trigger change below, it cannot even do
+# that. That is the shape of the 2026-09-21 nubjs/nub compromise, where a stolen push credential cut
+# a tag and 18 packages published unattended.
 
 on:
-  push:
-    branches: [release]
-    # NO path filter, deliberately — it was `paths: [package.json]` and that is wrong for this branch.
-    # A path filter tests the files changed IN THE PUSHED RANGE, and `release` advances by
-    # fast-forwarding over several main commits at once, so the version bump is normally somewhere in
-    # the middle of the range rather than in its diff — and on the push that CREATES the branch there
-    # is no range at all. Measured 2026-09-08: neither the creating push nor the next fast-forward
-    # fired, and both releases had to be dispatched by hand.
-    #
-    # Dropping the filter costs nothing, because the workflow is already idempotent by construction:
-    # it asks the registry whether this version exists and no-ops when it does. `release` only ever
-    # moves when someone means to publish, so a run per move is exactly right.
-  # Still here for the case it was written for: finishing a release that died AFTER the publish.
+  # DISPATCH ONLY (2026-09-23), and deliberately so. A `workflow_dispatch` needs a GitHub session or
+  # token carrying write access; a stolen git push credential carries neither, so moving `release`
+  # now starts nothing. That closes the last automatic path from a push to a package: the 2026-09-21
+  # compromise above needed only a push credential.
+  #
+  # Releasing is therefore two deliberate acts — fast-forward `release` to the verified commit, then
+  # `gh workflow run release.yml --ref release` — followed by the 2FA approval of each staged
+  # version. The branch still decides WHAT ships; the dispatch decides WHEN. Dispatching against any
+  # other ref is refused by the first step of the job below.
+  #
+  # The push trigger this replaces deliberately carried NO path filter, because a path filter tests
+  # the files changed in the pushed range and `release` advances by fast-forwarding over several main
+  # commits at once, so the version bump normally sat mid-range rather than in the diff (measured
+  # 2026-09-08: neither the creating push nor the next fast-forward fired, and both releases had to
+  # be dispatched by hand anyway). A dispatch has no range at all, so that whole hazard is gone. The
+  # workflow stays idempotent by construction either way: it asks the registry whether each version
+  # exists and no-ops when it does, so a re-dispatch is always safe.
   workflow_dispatch:
 
 # Two releases racing would fight over the same version; let an in-flight one finish rather than
@@ -71,6 +78,14 @@ jobs:
       id-token: write # required for Trusted Publishing (OIDC)
       contents: write # tag the released commit and create the GitHub release
     steps:
+      # `release`, not main: this repo publishes the commit someone verified and moved the branch to,
+      # never whatever main happens to hold (see the header). A step rather than a job-level `if:`,
+      # because a skipped job is silent — the run would go green having released nothing while
+      # looking like it had.
+      - name: Refuse to release from any ref but release
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/release" ] || { echo "::error::release.yml runs from the release branch only, got $GITHUB_REF"; exit 1; }
+
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4

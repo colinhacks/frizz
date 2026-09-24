@@ -154,7 +154,7 @@ touches GitHub as a PR.
   is no size threshold and no exception. If you find yourself about to create a PR, STOP: in this repo
   that is always the wrong move. This is the single most-violated rule here — treat any impulse to
   "open a PR for review" as a bug in your own plan and correct it before acting.
-- **Don't push a branch to the remote to stage a review either.** The remote plays no part in landing work. Reading GitHub (issues, PRs, CI) is fine; creating or pushing a PR is not. The one push that is not staging a review is a RELEASE: `release` is a fast-forward pointer into `main`, and pushing it is what publishes — when asked to cut one, follow `AGENTS.md` § Cutting a release, which is the whole procedure.
+- **Don't push a branch to the remote to stage a review either.** The remote plays no part in landing work. Reading GitHub (issues, PRs, CI) is fine; creating or pushing a PR is not. The one push that is not staging a review is a RELEASE: `release` is a fast-forward pointer into `main`, and pushing it selects the commit that ships — a maintainer then dispatches the workflow against it. When asked to cut one, follow `AGENTS.md` § Cutting a release, which is the whole procedure.
 - **The default is to work directly on `main` and commit there.** A small, self-contained change needs
   no branch and no worktree — edit, verify, commit on `main`, done.
 - **Use a git worktree freely whenever you want isolation** — messy in-progress work, isolated and
