@@ -6,7 +6,7 @@ import { useBoard } from "../hooks.ts"
 import { rpc } from "../api/rpc.ts"
 import { displayTitle } from "../groups.ts"
 import { registerDrawerFocus } from "../lib/overlays.ts"
-import { useSheetLayer } from "./ui/Sheet.tsx"
+import { useHoldsScrollLock, useIsTopDrawer, useNarrowDrawer, useSheetLayer } from "./ui/Sheet.tsx"
 import { SHEET_PANEL_CLASS, SHEET_SCRIM_CLASS, sheetWidth } from "../lib/sheet.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
@@ -18,19 +18,6 @@ import { ThreadView } from "./ChatView.tsx"
 // showing a thread's FULL view as an OVERLAY — the queue (and any layers below) keep their scroll and
 // state; closing just reveals what's underneath. Chat/Terminal is LOCAL to the layer. `depth` insets
 // each successive layer a step further from the right edge so the stack reads as a stack.
-
-function useNarrowDrawer(): boolean {
-  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 800px)").matches)
-  useEffect(() => {
-    const query = window.matchMedia?.("(max-width: 800px)")
-    if (!query) return
-    const update = () => setNarrow(query.matches)
-    update()
-    query.addEventListener("change", update)
-    return () => query.removeEventListener("change", update)
-  }, [])
-  return narrow
-}
 
 export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id: number; slug: string; depth: number; widthDepth: number; initiallyOpen?: boolean }) {
   // URL-created sheets exist before the first React paint. They must begin visible (initiallyOpen):
@@ -45,8 +32,8 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
   const scrollerRef = useRef<HTMLDivElement>(null)
   const initialScrollRef = useRef<DrawerInitialScrollCoordinator | null>(null)
   const drawerSnap = useSnapshot(store)
-  const activeDrawer = [...drawerSnap.drawers].reverse().find((drawer) => !drawer.closing)
-  const isTopDrawer = activeDrawer?.id === id
+  const isTopDrawer = useIsTopDrawer(id)
+  const holdsScrollLock = useHoldsScrollLock(id)
   const narrow = useNarrowDrawer()
   // Sheets are store/route-mounted rather than opened by RadixDialog.Trigger. Preserve the focused
   // row/button (or the control in the layer below) so closing this stack layer restores it exactly.
@@ -191,10 +178,17 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
   return (
     <RadixDialog.Root modal={narrow} open onOpenChange={(open) => { if (!open) close() }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay
-          className={`${SHEET_SCRIM_CLASS} ${shown ? "opacity-100" : "opacity-0"}`}
-          style={{ zIndex: 50 + depth * 2 }}
-        />
+        {/* The modal Overlay is what carries Radix's scroll lock, so a thread covered by another layer
+            renders the same scrim WITHOUT it and lets the layer on top hold the lock (useHoldsScrollLock).
+            The Content stays modal either way: toggling `modal` would remount the whole transcript. */}
+        {narrow && !holdsScrollLock ? (
+          <div className={`${SHEET_SCRIM_CLASS} ${shown ? "opacity-100" : "opacity-0"}`} style={{ zIndex: 50 + depth * 2, pointerEvents: "auto" }} />
+        ) : (
+          <RadixDialog.Overlay
+            className={`${SHEET_SCRIM_CLASS} ${shown ? "opacity-100" : "opacity-0"}`}
+            style={{ zIndex: 50 + depth * 2 }}
+          />
+        )}
         <RadixDialog.Content
           ref={scrollerRef}
           aria-modal={narrow || undefined}
