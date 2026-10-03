@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { createStorage, type Storage, type SessionRow } from "./storage.ts"
 import { Bus } from "./bus.ts"
-import type { ServerEvent } from "@frizz/shared"
+import type { CodexModel, ServerEvent } from "@frizz/shared"
 import { AwaitingHint, QUESTION_FENCE_RETIRED_AT } from "@frizz/shared"
 import { permMarkerPath, type Project } from "./project.ts"
 import { degradeIfAwaitingAnswer, deriveNeedsYou } from "./board.ts"
@@ -3606,6 +3606,11 @@ test("tailer: a cached transcript_id is excluded from FOREIGN discovery (the re-
 // Codex rollout record builders (real 0.144.1 schema — see backend/codex.fixtures/*.jsonl).
 const cxMeta = (codexId: string, cwd: string) => JSON.stringify({ timestamp: "2026-07-10T21:58:43.000Z", type: "session_meta", payload: { session_id: codexId, cwd } })
 const cxTaskStarted = JSON.stringify({ timestamp: "2026-07-10T21:58:43.255Z", type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } })
+const cxTurnContext = (model: string, effort: string) => JSON.stringify({
+  timestamp: "2026-07-10T21:58:44.000Z",
+  type: "turn_context",
+  payload: { model, effort },
+})
 const cxAgentFinal = (text: string) => JSON.stringify({ timestamp: "2026-07-10T21:58:50.000Z", type: "event_msg", payload: { type: "agent_message", message: text, phase: "final_answer" } })
 const cxTaskComplete = (last: string) => JSON.stringify({ timestamp: "2026-07-10T21:59:00.000Z", type: "event_msg", payload: { type: "task_complete", turn_id: "turn-1", last_agent_message: last } })
 const CX_DONE = "All wired.\n\n```done\nwired\n```"
@@ -3641,7 +3646,7 @@ function writeCodexRollout(codexHome: string, codexId: string, lines: string[]):
 
 // A tailer whose backendFor routes codex rows to a real CodexBackend (tmp $CODEX_HOME) and everything
 // else to a real ClaudeBackend — mirroring context.ts's resolver.
-function codexTailer(h: Harness, codexHome: string) {
+function codexTailer(h: Harness, codexHome: string, codexModels?: () => readonly CodexModel[]) {
   const codexBackend = createCodexBackend({ codexHome })
   const claudeBackend = createClaudeBackend({ logDir: h.logDir })
   const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : claudeBackend)
@@ -3654,6 +3659,7 @@ function codexTailer(h: Harness, codexHome: string) {
     paneDead: () => h.dead.v,
     sessionLogDir: h.logDir,
     backendFor,
+    codexModels,
   })
 }
 
@@ -3705,6 +3711,28 @@ test("tailer: a codex rollout already at task_complete PRIMES straight to idle (
   t.tick() // prime a fully-bracketed rollout
   assert.equal(t.get("t")?.turn, "idle", "a primed, fully-bracketed codex rollout is idle — computeTurn respects it")
   assert.equal(h.events.length, 0, "priming never notifies (the completion pre-dates first sight)")
+})
+
+test("tailer: observed Codex profiles use the same injected catalogue as the composer", () => {
+  const h = harness()
+  const codexHome = tmp("frizz-codexhome-")
+  const codexId = "019f4e0b-aaaa-bbbb-cccc-ddddeeeeffff"
+  const path = writeCodexRollout(codexHome, codexId, [cxMeta(codexId, "/x"), cxTaskStarted])
+  pinCodexRow(h, codexId)
+  const models: CodexModel[] = [{
+    slug: "gpt-compatible",
+    displayName: "GPT Compatible",
+    defaultEffort: "medium",
+    efforts: ["medium", "high"],
+  }]
+
+  const tailer = codexTailer(h, codexHome, () => models)
+  tailer.tick()
+  appendFileSync(path, cxTurnContext("gpt-compatible", "high") + "\n")
+  tailer.tick()
+
+  assert.equal(h.storage.getSession("t")?.model, "gpt-compatible")
+  assert.equal(h.storage.getSession("t")?.effort, "high")
 })
 
 test("tailer: a real-shaped first Codex title comment persists its title and replay never restores the transport", () => {

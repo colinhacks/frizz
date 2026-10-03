@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { parseCodexModelsCache, readCodexModels, CODEX_MODELS_FALLBACK } from "./codex-models.ts"
+import { CODEX_MODELS_FALLBACK_VERSION } from "@frizz/shared"
+import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./codex-app-server.ts"
 
 // A REAL snippet of ~/.codex/models_cache.json (codex-cli 0.144.1, fields verbatim; the gpt-6-astra
 // entry is the codex-cli 0.153.2 bundled shape, 2026-09-04, and gpt-6-sol the 0.155.1 one, 2026-09-22).
@@ -141,6 +143,10 @@ const REAL_CACHE = JSON.stringify({
   ],
 })
 
+test("the degraded catalogue is re-read whenever Frizz's pinned Codex runtime moves", () => {
+  assert.equal(CODEX_MODELS_FALLBACK_VERSION, CODEX_APP_SERVER_SUPPORTED_VERSION)
+})
+
 test("parseCodexModelsCache: lists visible models priority-ASC with EXACT per-model effort sets", () => {
   const models = parseCodexModelsCache(REAL_CACHE)
   // codex-auto-review (visibility:hide) is dropped; the rest are priority-ascending (astra=1, gpt-6-sol=2,
@@ -218,8 +224,61 @@ test("readCodexModels: reads a real cache from CODEX_HOME; a MISSING cache degra
     const home2 = mkdtempSync(join(tmpdir(), "codex-models-"))
     mkdirSync(home2, { recursive: true })
     writeFileSync(join(home2, "models_cache.json"), REAL_CACHE)
-    assert.deepEqual(readCodexModels(home2).map((m) => m.slug), ["gpt-6-astra", "gpt-6-sol", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.3-codex-spark"])
+    assert.deepEqual(readCodexModels(home2, "0.144.1").map((m) => m.slug), ["gpt-6-astra", "gpt-6-sol", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.3-codex-spark"])
     rmSync(home2, { recursive: true, force: true })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("a foreign Codex client's cache cannot make the pinned runtime's models disappear", () => {
+  const pinned = parseCodexModelsCache(REAL_CACHE)
+  const foreign = JSON.stringify({
+    client_version: "0.154.0",
+    models: [{
+      slug: "gpt-5.5",
+      display_name: "GPT-5.5",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "medium" }],
+      visibility: "list",
+      priority: 1,
+    }],
+  })
+  assert.deepEqual(
+    parseCodexModelsCache(foreign, "0.156.1", pinned),
+    pinned,
+    "an older writer retains the last catalogue read from Frizz's pinned runtime",
+  )
+  assert.deepEqual(
+    parseCodexModelsCache(foreign, "0.156.1"),
+    CODEX_MODELS_FALLBACK,
+    "a cold server degrades to the shared catalogue rather than the foreign writer's partial list",
+  )
+  assert.ok(CODEX_MODELS_FALLBACK.some((model) => model.slug === "gpt-6.1-sol"))
+})
+
+test("readCodexModels: retains the last compatible catalogue after a foreign writer replaces the cache", () => {
+  const home = mkdtempSync(join(tmpdir(), "codex-models-trusted-"))
+  const path = join(home, "models_cache.json")
+  try {
+    writeFileSync(path, REAL_CACHE)
+    const compatible = readCodexModels(home, "0.144.1", 0)
+    writeFileSync(path, JSON.stringify({
+      client_version: "0.154.0",
+      models: [{
+        slug: "gpt-5.5",
+        display_name: "GPT-5.5",
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: [{ effort: "medium" }],
+        visibility: "list",
+        priority: 1,
+      }],
+    }))
+    assert.deepEqual(
+      readCodexModels(home, "0.144.1", 5_001),
+      compatible,
+      "the live reader, not only the pure parser, carries the trusted list across a foreign write",
+    )
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

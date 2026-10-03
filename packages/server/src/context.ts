@@ -26,6 +26,7 @@ resumeThread,
 } from "./resume.ts"
 import { createClaudeBackend } from "./backend/claude.ts"
 import { createCodexBackend, codexSandbox } from "./backend/codex.ts"
+import { readCodexModels } from "./backend/codex-models.ts"
 import { createAcpBackend } from "./backend/acp-transcript.ts"
 import { createAcpBridge, type AcpBridge } from "./backend/acp-bridge.ts"
 import { readClaudePreflightAuth, readCodexAuthState, readCodexBinaryState } from "./backend/auth-status.ts"
@@ -230,11 +231,15 @@ export interface AppContext {
   // Same seam for Codex: the resolved app-server/backend executable, so codex logout targets
   // the binary frizz actually runs rather than whatever "codex" is first on PATH.
   codexBin?: string
+  // Exact only for Frizz's provisioned runtime. An explicit/PATH override is unknown and leaves the
+  // shared Codex cache ungated; see backend/codex-models.ts.
+  codexVersion?: string
 }
 
 export interface ContextOptions {
   claudeBin?: string // injectable dispatch executable (tests use a stand-in)
   codexBin?: string // injectable app-server executable; unused unless the bridge flag is enabled
+  codexVersion?: string // exact provisioned runtime version; undefined for an override/PATH fallback
   // startServer pins the owner-verified project before any SQLite/tailer/scheduler initialization.
   project?: Project
   /**
@@ -867,6 +872,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     storage,
     bus,
     backendFor,
+    codexModels: () => readCodexModels(undefined, opts.codexVersion),
     onChange: () => board.refresh(),
     onTranscriptChange: (slugs) => transcriptChange.emit(slugs),
     // The SDK's own reading of a headless broker session: its turn (so the fold's 5s unknown-stop_reason
@@ -1091,5 +1097,6 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     launchProjectId: opts.launchProjectId,
     claudeBin: opts.claudeBin,
     codexBin: opts.codexBin,
+    codexVersion: opts.codexVersion,
   }
 }

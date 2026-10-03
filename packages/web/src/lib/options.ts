@@ -1,4 +1,5 @@
-import { ACP_MODEL_PREFIX, PermissionMode, type Backend, type ClaudeModel, type CodexModel } from "@frizz/shared"
+import { ACP_MODEL_PREFIX, CODEX_MODELS_FALLBACK, PermissionMode, type Backend, type ClaudeModel, type CodexModel } from "@frizz/shared"
+export { CODEX_MODELS_FALLBACK } from "@frizz/shared"
 import type { SelectOption, SelectGroup } from "../components/ui/Select.tsx"
 
 // Shared option sets for the permission / model / effort selects, used by both the New-thread
@@ -86,28 +87,12 @@ export function claudeModelOptions(claudeModels: readonly ClaudeModel[] = []): S
   })
 }
 
-// Codex (OpenAI) models are NO LONGER hand-listed here — they + their PER-MODEL effort sets come from
-// the server's codexModels() RPC, which reads the authoritative ~/.codex/models_cache.json (the fix for
-// two live breakages: a bare `gpt-5.6` that codex 400s, and a single effort list that's wrong per-model
-// — 5.6 goes to max/ultra, 5.5 stops at xhigh). This is only the DEGRADED fallback for the loading /
-// no-cache state — a compact mirror, NOT a second catalogue to maintain. Ordered by codex's own
-// priority and re-read verbatim from the codex-cli 0.155.1 catalogue on 2026-09-22: the GPT-6 trio
-// (astra 1, sol 2, luna 3) leads the 5.6 trio, and the DEFAULT EFFORTS moved with it — astra is
-// `medium` now where the 0.153.2 catalogue said `low`, and gpt-5.6-sol is `low` where it said
-// `medium`. Mirror them; never assume a generation shares one default. A codex spawn 400s on a bare
-// `gpt-5.6`, hence the -sol id.
-export const CODEX_MODELS_FALLBACK: CodexModel[] = [
-  { slug: "gpt-6-astra", displayName: "GPT-6 Astra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-6-luna", displayName: "GPT-6 Luna", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max"] },
-  { slug: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultEffort: "low", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max"] },
-  { slug: "gpt-5.5", displayName: "GPT-5.5", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh"] },
-]
-
-// The set of codex slugs to treat as the "codex" backend when no live RPC list is on hand — the fallback
-// models above. backendForModel unions this with whatever live list a caller passes.
+// Codex models + their PER-MODEL effort sets come from the server's codexModels() RPC. Loading and
+// incompatible-cache states use the shared degraded catalogue from @frizz/shared; keeping that one
+// fallback at the protocol boundary prevents the browser and server from disagreeing about whether a
+// saved profile is dispatchable.
+// The shared fallback's Codex slugs when no live RPC list is on hand. backendForModel unions these
+// with whatever live list a caller passes.
 const FALLBACK_CODEX_SLUGS = new Set(CODEX_MODELS_FALLBACK.map((m) => m.slug))
 
 // The backend a model id runs on — the model→backend derivation the whole picker keys off. An `acp:<id>`

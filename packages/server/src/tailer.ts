@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
-import type { AskQuestion, AwaitingHint, LiveTool } from "@frizz/shared"
+import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
 import { insideFence, isAllInjectedNoise, isInterruptMarker, parseAskUserQuestionInput, PermissionMode, questionFencesLive, saysAllDone, splitAwaitingFrontmatter } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
@@ -2522,6 +2522,9 @@ export interface TailerDeps {
   // composition layer; when absent (tests) the single `backend`/default Claude fold covers every row —
   // byte-identical to before. Takes precedence over `backend` when both are set.
   backendFor?: (kind?: string) => AgentBackend
+  // The same version-checked catalogue the composer uses. Keep this as a reader rather than a boot
+  // snapshot so a compatible cache refresh can become authoritative without restarting the server.
+  codexModels?: () => readonly CodexModel[]
   // The structured PermissionRequest signal (Claude workers with the cc-worker plugin): the worker's
   // perm-observe.mjs hook drops `<stateDir>/perm-requests/<slug>.json` the instant Claude creates a
   // tool-approval prompt. Injectable for tests; the default reads that file. Absent stateDir (narrow
@@ -4851,11 +4854,13 @@ export function createTailer(deps: TailerDeps): Tailer {
       if (profileRecordLanded && state.model && state.profileAt) {
         const observedAt = Date.parse(state.profileAt)
         const spawnedAt = Date.parse(row.spawned_at)
-        const model = normalizeObservedThreadModel(row.backend ?? "claude", state.model)
+        const backendKind = row.backend ?? "claude"
+        const codexModels = backendKind === "codex" ? deps.codexModels?.() : undefined
+        const model = normalizeObservedThreadModel(backendKind, state.model, codexModels)
         const effort = state.effort?.trim() || row.effort?.trim()
         if (model && effort && Number.isFinite(observedAt) && Number.isFinite(spawnedAt) && observedAt >= spawnedAt) {
           try {
-            validateThreadProfile(row.backend ?? "claude", model, effort)
+            validateThreadProfile(backendKind, model, effort, codexModels)
             deps.storage.setObservedProfileIfCurrent(
               row.slug,
               { sessionId: row.session_id, generation: runtimeGeneration },

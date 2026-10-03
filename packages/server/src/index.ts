@@ -641,7 +641,16 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     },
     // serverLockPath is the LAUNCHING project's: it is the only `server.lock` this process publishes
     // (see "status publication"), so it is the only file a tenant's worker can read the port out of.
-    contextOptions: { get claudeBin() { return runtimes?.claude.bin ?? opts.claudeBin }, get codexBin() { return runtimes?.codex.bin ?? opts.codexBin }, serverLockPath: serverLockPathFor(project), activeTenants, teardownProject, launchProjectId: project.id, get database() { return frizzDb?.db } },
+    contextOptions: {
+      get claudeBin() { return runtimes?.claude.bin ?? opts.claudeBin },
+      get codexBin() { return runtimes?.codex.bin ?? opts.codexBin },
+      get codexVersion() { return runtimes?.codex.version === "unknown" ? undefined : runtimes?.codex.version },
+      serverLockPath: serverLockPathFor(project),
+      activeTenants,
+      teardownProject,
+      launchProjectId: project.id,
+      get database() { return frizzDb?.db },
+    },
     // Each project's app carries ITS OWN owner proof, so /health stays honest per project rather than
     // answering for whichever one happened to launch the server. The socket is per project for a
     // blunter reason: it is a live feed of ONE board, so sharing the launcher's would push its
@@ -941,6 +950,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
       () => runtime.createContext({
         claudeBin: runtimes!.claude.bin,
         codexBin: runtimes!.codex.bin,
+        codexVersion: runtimes!.codex.version === "unknown" ? undefined : runtimes!.codex.version,
         project,
         database: frizzDb!.db,
         serverLockPath: serverLockPathFor(project),

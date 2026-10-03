@@ -145,6 +145,24 @@ export const ClaudeModel = z.object({
 })
 export type ClaudeModel = z.infer<typeof ClaudeModel>
 
+// The DEGRADED catalogue used while Frizz's pinned Codex runtime has not written a compatible
+// `models_cache.json` yet. This is deliberately one shared mirror: the server used to fall back to
+// GPT-5.5 alone while the browser's fallback included the current generation, so an older Codex app
+// rewriting the machine-wide cache made a model visible in one tab and unavailable in another.
+// Keep the order/defaults in step with the pinned runtime's catalogue when that runtime moves.
+// Re-read from codex-cli 0.160.0 on 2026-10-01; defaults vary by model generation.
+export const CODEX_MODELS_FALLBACK_VERSION = "0.160.0"
+export const CODEX_MODELS_FALLBACK: CodexModel[] = [
+  { slug: "gpt-6.1-sol", displayName: "GPT-6.1 Sol", defaultEffort: "low", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+  { slug: "gpt-6-astra", displayName: "GPT-6 Astra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+  { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+  { slug: "gpt-6-luna", displayName: "GPT-6 Luna", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max"] },
+  { slug: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultEffort: "low", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+  { slug: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+  { slug: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max"] },
+  { slug: "gpt-5.5", displayName: "GPT-5.5", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh"] },
+]
+
 // An Agent Client Protocol agent Frizz can launch (server/backend/acp-agents.ts). `available` means
 // its executable was found on the server's PATH; the composer lists only those, as `acp:<id>` models.
 export const AcpAgent = z.object({

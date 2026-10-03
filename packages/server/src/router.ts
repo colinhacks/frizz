@@ -194,12 +194,15 @@ const SlugInput = z.object({ slug: ThreadSlug }).strict()
 // boundary. This intentionally rejects stale model/effort pairs; neither is normalized, clamped, or
 // replaced with Settings defaults. Permission is NOT part of the tuple: dispatch stamps it server-side
 // (workerDispatchPermission — the non-interactive floor, raised to bypass only when Settings asks).
-export function validateGithubDispatchProfile(input: z.infer<typeof GithubBatchInput>): void {
+export function validateGithubDispatchProfile(
+  input: z.infer<typeof GithubBatchInput>,
+  codexModels?: readonly z.infer<typeof CodexModel>[],
+): void {
   // An ACP profile carries no effort, and its "model" is an `acp:<agent>` slug the dispatcher resolves
   // itself (refusing an agent that is not on PATH) — there is no model/effort catalogue to check.
   if (input.backend === "acp") return
   if (input.effort === undefined) throw new Error(`Unsupported ${input.backend} model/effort pair: ${input.model} / (no effort)`)
-  validateThreadProfile(input.backend, input.model, input.effort)
+  validateThreadProfile(input.backend, input.model, input.effort, codexModels)
 }
 
 export function githubDispatcherRequest(
@@ -2410,7 +2413,10 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new Error(`thread ${input.slug} is not editable`)
-        return threadProfileOptions(row.backend, row.backend === "claude" ? await readClaudeModels({ claudeBin: ctx.claudeBin, cwd: ctx.project.dir }) : undefined)
+        const claudeModels = row.backend === "claude"
+          ? await readClaudeModels({ claudeBin: ctx.claudeBin, cwd: ctx.project.dir })
+          : undefined
+        return threadProfileOptions(row.backend, claudeModels, readCodexModels(undefined, ctx.codexVersion))
       },
     }),
 
@@ -3588,7 +3594,7 @@ export function createRouter(ctx: AppContext) {
     // hand-maintained list. Degrades to a minimal fallback (never throws) when the cache is absent.
     codexModels: query({
       output: z.array(CodexModel),
-      handler: async () => readCodexModels(),
+      handler: async () => readCodexModels(undefined, ctx.codexVersion),
     }),
 
     // The Claude aliases with the EDITION the pinned runtime resolves each to ("Opus 5.5"), asked of the
@@ -3967,13 +3973,13 @@ export function createRouter(ctx: AppContext) {
 
     dispatchPreferencesGet: query({
       output: DispatchPreferences,
-      handler: async () => ctx.getDispatchPreferences(readCodexModels()),
+      handler: async () => ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion)),
     }),
 
     dispatchPreferenceSet: mutation({
       input: SetDispatchPreferenceInput,
       output: DispatchPreferences,
-      handler: async ({ input }) => ctx.setDispatchPreference(input, readCodexModels()),
+      handler: async ({ input }) => ctx.setDispatchPreference(input, readCodexModels(undefined, ctx.codexVersion)),
     }),
 
     // The shipped GitHub batch-dispatch prompt template (single source of truth: server/github.ts).
@@ -4038,7 +4044,7 @@ export function createRouter(ctx: AppContext) {
       input: GithubBatchInput,
       output: GithubBatchResult,
       handler: async ({ input }) => {
-        validateGithubDispatchProfile(input)
+        validateGithubDispatchProfile(input, readCodexModels(undefined, ctx.codexVersion))
         const repo = await resolveRepo()
         if (!repo) throw new Error("not a GitHub repo")
         // Read the template ONCE per batch: the user's Settings override (githubPrompt) when non-blank,
