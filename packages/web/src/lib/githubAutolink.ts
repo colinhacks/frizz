@@ -51,14 +51,51 @@ export function setGithubRepo(next: string | null | undefined): void {
   for (const listener of listeners) listener()
 }
 
-/** The repo the autolinker is pointed at — the `getSnapshot` half of the subscription. */
-export function githubRepoForLinks(): string | null {
-  return repo
-}
-
 export function subscribeGithubRepo(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
+}
+
+// THE CONSOLE'S REPOS. The Console shows every project on one page, so the page value above stays null
+// there (store.ts refuses the union board at its door, and the binding's reset clears it) — and with it
+// every `#123`, commit hash and `owner/repo#123` on the Console rendered as plain text. A card or drawer
+// on it still belongs to ONE project, the one its <ProjectScope> names, so the Console's feed records
+// each project's repo off that project's own keyframe (api/consoleFeed.ts) and a surface asks for its
+// project's by name — the same shape lib/localPathBase.ts gives relative paths. Off the Console the map
+// is empty and every surface gets the page value.
+const projectRepos = new Map<string, string>()
+
+/** One Console project's repo, from its keyframe; null when it is not a github.com repo or has left. */
+export function setProjectGithubRepo(project: string, next: string | null | undefined): void {
+  const value = next ?? null
+  if ((projectRepos.get(project) ?? null) === value) return
+  if (value) projectRepos.set(project, value)
+  else projectRepos.delete(project)
+  for (const listener of listeners) listener()
+}
+
+/**
+ * The repo a surface's references link to: its project's, when it names one the Console knows, else the
+ * page's. `project` is the surface's <ProjectScope> (undefined on a project's own page).
+ */
+export function githubRepoFor(project: string | undefined): string | null {
+  return (project ? projectRepos.get(project) : undefined) ?? repo
+}
+
+// The repo the render in progress links against, when its caller named one (`withGithubRepo`). marked
+// calls the token hook with no way to pass it an argument, so a render that is not the page's sets it
+// here for exactly the length of its synchronous parse.
+let renderRepo: string | null | undefined
+
+/** Run `render` with references linking to `linkRepo`; `undefined` means the page's repo. */
+export function withGithubRepo<T>(linkRepo: string | null | undefined, render: () => T): T {
+  const outer = renderRepo
+  renderRepo = linkRepo
+  try {
+    return render()
+  } finally {
+    renderRepo = outer
+  }
 }
 
 // One repo path segment: GitHub's own owner/name character set.
@@ -133,10 +170,12 @@ export type GithubRefMatch = { start: number; text: string; href: string; title:
 /**
  * Every GitHub-style reference in a plain string — the same grammar the markdown path links, exposed
  * for surfaces that render text WITHOUT markdown (the user bubble, lib/plainLinks.ts). Empty when the
- * project is not a github.com repo, the same one predictable switch the token path has.
+ * project is not a github.com repo, the same one predictable switch the token path has. `githubRepo`
+ * left out means the render in progress's repo (`withGithubRepo`), else the page's.
  */
-export function scanGithubRefs(source: string): GithubRefMatch[] {
-  if (!repo) return []
+export function scanGithubRefs(source: string, githubRepo?: string | null): GithubRefMatch[] {
+  const linkRepo = githubRepo !== undefined ? githubRepo : renderRepo !== undefined ? renderRepo : repo
+  if (!linkRepo) return []
   const matches: GithubRefMatch[] = []
   REF.lastIndex = 0
   for (let match = REF.exec(source); match; match = REF.exec(source)) {
@@ -144,11 +183,11 @@ export function scanGithubRefs(source: string): GithubRefMatch[] {
     const hash = commitHash ?? bareHash
     if (hash && !isCommitHash(hash)) continue
     const href = issueNumber
-      ? `${GITHUB}/${issueRepo ?? repo}/issues/${issueNumber}`
-      : `${GITHUB}/${commitRepo ?? repo}/commit/${hash}`
+      ? `${GITHUB}/${issueRepo ?? linkRepo}/issues/${issueNumber}`
+      : `${GITHUB}/${commitRepo ?? linkRepo}/commit/${hash}`
     const title = issueNumber
-      ? `${issueRepo ?? repo}#${issueNumber}`
-      : `${commitRepo ?? repo}@${hash}`
+      ? `${issueRepo ?? linkRepo}#${issueNumber}`
+      : `${commitRepo ?? linkRepo}@${hash}`
     matches.push({ start: match.index + boundary.length, text: whole.slice(boundary.length), href, title })
   }
   return matches

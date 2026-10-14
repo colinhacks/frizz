@@ -88,3 +88,12 @@ test("plain prose comes back as one text segment, byte-for-byte", () => {
   const text = "no links here.\njust words — and #0d0e10 the colour."
   assert.deepEqual(plainLinkSegments(text), [{ kind: "text", text }])
 })
+
+test("a surface's own repo outranks the page's", () => {
+  const segments = plainLinkSegments("fixed in #12 by 749a37b", "nubjs/nub")
+  assert.deepEqual(links(segments).map((s) => s.kind === "link" && s.href), [
+    "https://github.com/nubjs/nub/issues/12",
+    "https://github.com/nubjs/nub/commit/749a37b",
+  ])
+  assert.equal(links(plainLinkSegments("fixed in #12", null)).length, 0, "a surface whose project has no github.com repo links nothing")
+})

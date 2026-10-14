@@ -47,11 +47,11 @@ function trimUrl(raw: string): string {
   return url
 }
 
-function pushText(segments: PlainLinkSegment[], text: string): void {
+function pushText(segments: PlainLinkSegment[], text: string, githubRepo: string | null | undefined): void {
   if (text === "") return
   // The GitHub shorthand only lives OUTSIDE URLs — a hex run inside a pasted URL's path is a path.
   let consumed = 0
-  for (const ref of scanGithubRefs(text)) {
+  for (const ref of scanGithubRefs(text, githubRepo)) {
     if (ref.start > consumed) segments.push({ kind: "text", text: text.slice(consumed, ref.start) })
     segments.push({ kind: "link", text: ref.text, href: ref.href, title: ref.title, ghRef: githubRefFromUrl(ref.href) })
     consumed = ref.start + ref.text.length
@@ -61,9 +61,10 @@ function pushText(segments: PlainLinkSegment[], text: string): void {
 
 /**
  * Split a plain string into text and link segments. Concatenating every segment's `text` yields the
- * input byte-for-byte — links re-dress runs of the original text, they never rewrite it.
+ * input byte-for-byte — links re-dress runs of the original text, they never rewrite it. `githubRepo`
+ * is the repo a `#123` links to (the surface's, from useGithubRepoForLinks); left out, the page's.
  */
-export function plainLinkSegments(source: string): PlainLinkSegment[] {
+export function plainLinkSegments(source: string, githubRepo?: string | null): PlainLinkSegment[] {
   const segments: PlainLinkSegment[] = []
   let consumed = 0
   URL.lastIndex = 0
@@ -76,10 +77,10 @@ export function plainLinkSegments(source: string): PlainLinkSegment[] {
     // Resume right after the LINKED part: the trimmed-off tail may itself hold a reference.
     URL.lastIndex = start + url.length
     const href = /^www\./i.test(url) ? `http://${url}` : url
-    if (start > consumed) pushText(segments, source.slice(consumed, start))
+    if (start > consumed) pushText(segments, source.slice(consumed, start), githubRepo)
     segments.push({ kind: "link", text: url, href, ghRef: githubRefFromUrl(href) })
     consumed = start + url.length
   }
-  if (consumed < source.length) pushText(segments, source.slice(consumed))
+  if (consumed < source.length) pushText(segments, source.slice(consumed), githubRepo)
   return segments
 }

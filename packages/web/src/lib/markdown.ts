@@ -7,7 +7,7 @@ import { CODE_LINE_CLASS, CODE_LINE_MARKED_CLASS } from "./codeLines.ts"
 import { ANSI_STYLE_PATTERN } from "./ansi.ts"
 import { isLocalMarkdownFile, localImageUrlForTarget, localMarkdownTarget, resolveRelativeLocalPath } from "./markdownTargets.ts"
 import { prefixedAppRoute } from "./base-path.ts"
-import { githubRefFromUrl, linkifyGithubRefs } from "./githubAutolink.ts"
+import { githubRefFromUrl, linkifyGithubRefs, withGithubRepo } from "./githubAutolink.ts"
 import { restoreWindowsPathEscapes } from "./windowsPathEscapes.ts"
 import { calloutExtension, promoteCallouts } from "./callouts.ts"
 import { restoreDisclosure } from "./disclosure.ts"
@@ -296,15 +296,17 @@ const documentMarkdown = new Marked({ ...MARKDOWN_OPTIONS, breaks: false })
 // built-in file reader, the project root from every other surface (see lib/localPathBase.ts). `homeDir`
 // expands a `~`-anchored one. `document` is the file reader's alone: soft wraps stay soft. `project` is
 // the project the prose belongs to on the Console (its surface's <ProjectScope>), which a worker's
-// `/thread/<slug>` link names (lib/base-path.ts prefixedAppRoute).
-export function mdToHtml(md: string, opts?: { baseDir?: string; homeDir?: string; document?: boolean; project?: string }): string {
+// `/thread/<slug>` link names (lib/base-path.ts prefixedAppRoute). `githubRepo` is the repo its `#123`
+// and commit references link to — that project's on the Console (githubAutolink.ts `githubRepoFor`);
+// left out, the page's.
+export function mdToHtml(md: string, opts?: { baseDir?: string; homeDir?: string; document?: boolean; project?: string; githubRepo?: string | null }): string {
   if (!md.trim()) return ""
   // breaks: single newlines are HARD breaks (chat convention — Slack/GitHub-comment style);
   // CommonMark default silently glued "item ✅\nitem ✅" lists onto one line.
   // A document also keeps its long code blocks open (codeBlock.ts `withLongBlocksOpen`).
-  const html = opts?.document
+  const html = withGithubRepo(opts?.githubRepo, () => opts?.document
     ? withLongBlocksOpen(() => documentMarkdown.parse(md, { async: false }) as string)
-    : markdown.parse(md, { async: false }) as string
+    : markdown.parse(md, { async: false }) as string)
   return sanitize(html, { block: true, baseDir: opts?.baseDir, homeDir: opts?.homeDir, project: opts?.project })
 }
 
@@ -317,10 +319,11 @@ export function mdToHtml(md: string, opts?: { baseDir?: string; homeDir?: string
 // flattened (`inertInteractive`), because the chip was a `<button>` around its text and an anchor
 // inside one is invalid HTML; the chip now lays its hit area BESIDE the text instead
 // (components/QuestionBlockCard.tsx), so a file named in an option opens like one named in a paragraph.
-export function mdInlineToHtml(md: string, opts?: { baseDir?: string; homeDir?: string; project?: string }): string {
+export function mdInlineToHtml(md: string, opts?: { baseDir?: string; homeDir?: string; project?: string; githubRepo?: string | null }): string {
   if (!md.trim()) return ""
-  const { baseDir, homeDir, project } = opts ?? {}
-  return sanitize(markdown.parseInline(md, { async: false }) as string, { baseDir, homeDir, project })
+  const { baseDir, homeDir, project, githubRepo } = opts ?? {}
+  const html = withGithubRepo(githubRepo, () => markdown.parseInline(md, { async: false }) as string)
+  return sanitize(html, { baseDir, homeDir, project })
 }
 
 export function stripFrontmatter(md: string): string {

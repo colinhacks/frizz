@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { mdToHtml, mdInlineToHtml } from "./markdown.ts"
-import { githubRepoForLinks, subscribeGithubRepo } from "./githubAutolink.ts"
+import { githubRepoFor, subscribeGithubRepo } from "./githubAutolink.ts"
 import { githubRefsInHtml, noteGithubRefs } from "./githubHovercards.ts"
 import { localPathBaseFor, subscribeLocalPathBase, type LocalPathBase } from "./localPathBase.ts"
 import { useProjectScope } from "./projectScope.tsx"
@@ -17,9 +17,16 @@ import { useProjectScope } from "./projectScope.tsx"
 // useSyncExternalStore over a SCALAR rather than useSnapshot, matching lib/deliverQueuedNow.ts: this
 // runs in every prose block on screen, and the value changes at most once per page.
 
-/** The repo GitHub-style references link to, as a render input. */
+/**
+ * The repo GitHub-style references link to, as a render input.
+ *
+ * On the Console it is the SURFACE's project's, not the page's — the page names none, and a card's
+ * `#123` means an issue in the repo of the project that card belongs to (githubRepoFor).
+ */
 export function useGithubRepoForLinks(): string | null {
-  return useSyncExternalStore(subscribeGithubRepo, githubRepoForLinks, githubRepoForLinks)
+  const project = useProjectScope()
+  const read = useCallback(() => githubRepoFor(project), [project])
+  return useSyncExternalStore(subscribeGithubRepo, read, read)
 }
 
 /**
@@ -50,10 +57,8 @@ export function useMarkdownHtml(md: string, opts?: { baseDir?: string; asDocumen
   const project = useProjectScope()
   const { baseDir, asDocument } = opts ?? {}
   const dir = baseDir ?? base.dir
-  // `repo` is deliberately a dependency without appearing in the body — it is an input to mdToHtml
-  // through githubAutolink.ts's module state, not through this argument list.
   const html = useMemo(
-    () => mdToHtml(md, { baseDir: dir, homeDir: base.home, document: asDocument, project }),
+    () => mdToHtml(md, { baseDir: dir, homeDir: base.home, document: asDocument, project, githubRepo: repo }),
     [md, dir, base.home, asDocument, project, repo],
   )
   useGithubHovercardRefs(html)
@@ -82,7 +87,7 @@ export function useInlineMarkdownHtml(md: string): string {
   const base = useLocalPathBase()
   const project = useProjectScope()
   const html = useMemo(
-    () => mdInlineToHtml(md, { baseDir: base.dir, homeDir: base.home, project }),
+    () => mdInlineToHtml(md, { baseDir: base.dir, homeDir: base.home, project, githubRepo: repo }),
     [md, base.dir, base.home, project, repo],
   )
   useGithubHovercardRefs(html)

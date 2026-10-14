@@ -3,6 +3,7 @@ import type { BoardSnapshot, ServerEvent, SocketClientMsg, SocketServerMsg, Thre
 import { applyBoardDelta, deltaAction } from "@frizz/shared"
 import { store, openThread, setBoardPendingCheck } from "../store.ts"
 import { isConsolePath, projectApiBase, projectHref } from "../lib/base-path.ts"
+import { setProjectGithubRepo } from "../lib/githubAutolink.ts"
 import { localFileQueryKey } from "../lib/localFileQuery.ts"
 import { splitThreadKey, threadKey } from "../lib/threadKey.ts"
 import { noteServerBootId } from "./boot.ts"
@@ -231,6 +232,7 @@ class ProjectFeed {
     this.budgetTimers.clear()
     const board = store.board ?? staged
     if (board) dropProject(board, this.project)
+    setProjectGithubRepo(this.project, null)
     for (const slug of this.subs.keys()) delete store.socketTranscriptFallbacks[threadKey(this.project, slug)]
   }
 
@@ -321,6 +323,9 @@ class ProjectFeed {
   private adoptKeyframe(board: BoardSnapshot): void {
     if (!isConsolePath() || !active) return
     mergeKeyframe(store.board ?? (staged ??= emptyUnion()), this.project, board)
+    // The repo this project's `#123` and commit hashes link to. The merged board carries no project's
+    // repo, so this keyframe — the project's own — is the one place that knows it (lib/githubAutolink.ts).
+    setProjectGithubRepo(this.project, board.githubRepo)
     this.keyframed = true
     maybePublish()
   }

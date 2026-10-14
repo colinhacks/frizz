@@ -48,6 +48,16 @@ test("references linkify when the repo arrives after first render", {
       "nubjs/nub@fe2a46c -> https://github.com/nubjs/nub/commit/fe2a46c",
     ])
 
+    // The Console: each card links to its own project's repo, not the page's.
+    assert.deepEqual(await hrefsIn("console-app"), [
+      "acme/app#6372 -> https://github.com/acme/app/issues/6372",
+      "#6341 -> https://github.com/acme/app/issues/6341",
+    ])
+    assert.deepEqual(await hrefsIn("console-nub"), [
+      "#12 -> https://github.com/nubjs/nub/issues/12",
+      "749a37b -> https://github.com/nubjs/nub/commit/749a37b",
+    ])
+
     // The author's literal bytes, and no anchor inside an anchor.
     assert.deepEqual(await hrefsIn("code"), [], "a hash inside `code` is not a reference")
     assert.deepEqual(await hrefsIn("link-text"), ["see #12 -> https://example.com/x"])

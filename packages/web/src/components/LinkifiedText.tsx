@@ -8,11 +8,10 @@ import { useGithubRepoForLinks } from "../lib/useMarkdown.ts"
 // full markdown would rewrite what they typed: every text byte renders as-is, but a pasted URL or a
 // GitHub ref becomes the same anchor it would be in agent prose, hovercard included.
 export function LinkifiedText({ text }: { text: string }) {
-  // A render input for the same reason useMarkdownHtml subscribes: plainLinkSegments reads the repo
-  // from githubAutolink's module state (it arrives from the board a beat after the transcript), so
-  // `repo` is deliberately a dependency without appearing in the body.
+  // A render input for the same reason useMarkdownHtml subscribes: the repo arrives from the board a
+  // beat after the transcript, and on the Console it is this surface's project's, not the page's.
   const repo = useGithubRepoForLinks()
-  const segments = useMemo(() => plainLinkSegments(text), [text, repo])
+  const segments = useMemo(() => plainLinkSegments(text, repo), [text, repo])
   // Queue the hovercard fetch at render time, same contract as useGithubHovercardRefs — the delegated
   // pointerover has its own just-in-time request, but pre-noting means a hover is never blank.
   const refs = useMemo(

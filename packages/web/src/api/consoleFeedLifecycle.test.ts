@@ -71,13 +71,13 @@ class FakeEventSource {
 }
 
 const thread = (id: string): ThreadView => ({ id, title: id, dependsOn: [], needsYou: true }) as unknown as ThreadView
-const keyframe = (projectSlug: string, ids: string[]): SocketServerMsg => ({
+const keyframe = (projectSlug: string, ids: string[], githubRepo?: string): SocketServerMsg => ({
   t: "event",
   event: {
     type: "board",
     seq: 1,
     bootId: "boot-test",
-    board: { projectDir: `/fixture/${projectSlug}`, projectName: projectSlug, projectSlug, threads: ids.map(thread), errors: [], warnings: [] } as BoardSnapshot,
+    board: { projectDir: `/fixture/${projectSlug}`, projectName: projectSlug, projectSlug, githubRepo, threads: ids.map(thread), errors: [], warnings: [] } as BoardSnapshot,
   },
 })
 const socketFor = (path: string) => FakeWebSocket.instances.filter((s) => new URL(s.url).pathname === path).at(-1)
@@ -110,6 +110,7 @@ test("the Console's feed shows a board only once every project in it has answere
     const { store, resolveRoutedThread } = await import("../store.ts")
     const socket = await import("./socket.ts")
     const feed = await import("./consoleFeed.ts")
+    const { githubRepoFor } = await import("../lib/githubAutolink.ts")
     feed.initConsoleFeed(queryClient as never)
     const ids = () => store.board?.threads.map((t) => t.id).sort() ?? null
 
@@ -125,8 +126,11 @@ test("the Console's feed shows a board only once every project in it has answere
     feed.setConsoleProjects(["alpha", "beta"])
     assert.equal(feed.consoleFeedPending("beta"), true)
     socketFor("/_frizz/alpha/ws")!.open()
-    socketFor("/_frizz/alpha/ws")!.message(keyframe("alpha", ["a"]))
+    socketFor("/_frizz/alpha/ws")!.message(keyframe("alpha", ["a"], "o/alpha"))
     assert.equal(store.board, null, "beta has not answered, so the board waits")
+    // Each project's references link to ITS repo, read off its own keyframe; the merged board has none.
+    assert.equal(githubRepoFor("alpha"), "o/alpha")
+    assert.equal(githubRepoFor("beta"), null, "a project whose keyframe names no github.com repo links nothing")
     // A cold link to one of beta's threads is not MISSING while beta is still on its way: it stays parked,
     // where before it was sent off the Console to a full page.
     store.board = { projectDir: "", projectName: "Console", threads: [], errors: [], warnings: [] } as unknown as BoardSnapshot
@@ -168,6 +172,7 @@ test("the Console's feed shows a board only once every project in it has answere
     here.pathname = "/"
     socket.leaveConsole()
     assert.ok(consoleSockets.every((s) => s.readyState === FakeWebSocket.CLOSED), "the Console's connections close")
+    assert.equal(githubRepoFor("alpha"), null, "…and take their projects' repos with them")
     assert.equal(socket.feedIsConsole(), false)
     const launcher = socketFor("/_frizz/ws")!
     assert.equal(launcher.readyState, FakeWebSocket.CONNECTING, "the grid holds what a cold load of it would")

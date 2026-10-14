@@ -1,7 +1,8 @@
 import { useEffect } from "react"
 import { createRoot } from "react-dom/client"
 import "./styles.css"
-import { setGithubRepo } from "./lib/githubAutolink.ts"
+import { setGithubRepo, setProjectGithubRepo } from "./lib/githubAutolink.ts"
+import { ProjectScope } from "./lib/projectScope.tsx"
 import { useMarkdownHtml } from "./lib/useMarkdown.ts"
 
 // Drives the REAL render path (useMarkdownHtml → mdToHtml → marked → the DOM sanitizer) for the
@@ -25,6 +26,13 @@ const CASES: { id: string; md: string }[] = [
   { id: "digits", md: "Wrote 1234567 bytes on 20260813; the wall was defaced." },
 ]
 
+// THE CONSOLE: cards from two projects on one page, each in its own <ProjectScope>, each project's repo
+// recorded late off its own keyframe (api/consoleFeed.ts). Each must link to ITS repo — never the page's.
+const CONSOLE_CASES: { id: string; project: string; repo: string; md: string }[] = [
+  { id: "console-app", project: "app", repo: "acme/app", md: "The spec is up as acme/app#6372; #6341 uses merge commits." },
+  { id: "console-nub", project: "nub", repo: "nubjs/nub", md: "Fixed #12 in 749a37b." },
+]
+
 function Case({ md }: { md: string }) {
   return <div className="md-body" data-rendered dangerouslySetInnerHTML={{ __html: useMarkdownHtml(md) }} />
 }
@@ -32,7 +40,10 @@ function Case({ md }: { md: string }) {
 function Fixture() {
   // A frame later, exactly as the board's keyframe does — never during the first render.
   useEffect(() => {
-    const id = setTimeout(() => setGithubRepo(REPO), 250)
+    const id = setTimeout(() => {
+      setGithubRepo(REPO)
+      for (const { project, repo } of CONSOLE_CASES) setProjectGithubRepo(project, repo)
+    }, 250)
     return () => clearTimeout(id)
   }, [])
   return (
@@ -43,6 +54,14 @@ function Fixture() {
           <section key={id} data-case={id} className="flex flex-col gap-1">
             <code className="text-xs text-muted">{md}</code>
             <Case md={md} />
+          </section>
+        ))}
+        {CONSOLE_CASES.map(({ id, project, md }) => (
+          <section key={id} data-case={id} className="flex flex-col gap-1">
+            <code className="text-xs text-muted">{project}: {md}</code>
+            <ProjectScope project={project}>
+              <Case md={md} />
+            </ProjectScope>
           </section>
         ))}
       </div>

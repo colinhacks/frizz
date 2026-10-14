@@ -2,7 +2,7 @@ import { test, before, after } from "node:test"
 import assert from "node:assert/strict"
 import { Marked } from "marked"
 import { MARKDOWN_OPTIONS } from "./markdown.ts"
-import { setGithubRepo } from "./githubAutolink.ts"
+import { githubRepoFor, setGithubRepo, setProjectGithubRepo, subscribeGithubRepo, withGithubRepo } from "./githubAutolink.ts"
 
 // The app's REAL marked configuration, driven straight — mdToHtml's sanitizer needs a DOM, so what is
 // exercised here is the tokenizing half (the sanitizer's treatment of the anchors this mints is the
@@ -92,5 +92,55 @@ test("nothing is linked when the project is not a github.com repo", () => {
     assert.equal(render("nubjs/nub#587"), "nubjs/nub#587")
   } finally {
     setGithubRepo(REPO)
+  }
+})
+
+// THE CONSOLE. The page names no project there, so the page repo is null — and until each surface asked
+// for its OWN project's repo, every reference on the Console rendered as plain text.
+test("a Console surface links against its own project's repo, not the page's", () => {
+  setGithubRepo(null)
+  setProjectGithubRepo("app", "acme/app")
+  setProjectGithubRepo("nub", "nubjs/nub")
+  try {
+    const renderIn = (project: string | undefined, md: string) => withGithubRepo(githubRepoFor(project), () => render(md))
+    assert.equal(renderIn("app", "#6372"), issue(6372, "acme/app"))
+    assert.equal(renderIn("nub", "landed as 749a37b"), `landed as ${commit("749a37b", "nubjs/nub")}`)
+    // The reported case: a fully qualified reference in a Console card.
+    assert.equal(renderIn("app", "acme/app#6341"),
+      `<a href="https://github.com/acme/app/issues/6341" title="acme/app#6341">acme/app#6341</a>`)
+    // A project with no github.com repo, and a surface with no project, fall back to the page: nothing.
+    assert.equal(renderIn("gitlab-project", "#12"), "#12")
+    assert.equal(renderIn(undefined, "#12"), "#12")
+    // The override lasts exactly one render.
+    assert.equal(render("#12"), "#12")
+  } finally {
+    setProjectGithubRepo("app", null)
+    setProjectGithubRepo("nub", null)
+    setGithubRepo(REPO)
+  }
+})
+
+test("a project's page is untouched by the Console's repos", () => {
+  setProjectGithubRepo("nub", "nubjs/nub")
+  try {
+    assert.equal(githubRepoFor(undefined), REPO)
+    assert.equal(render("#123"), issue(123))
+  } finally {
+    setProjectGithubRepo("nub", null)
+  }
+})
+
+test("a Console project's repo arriving or leaving re-renders its prose", () => {
+  let notified = 0
+  const unsubscribe = subscribeGithubRepo(() => notified++)
+  try {
+    setProjectGithubRepo("nub", "nubjs/nub")
+    setProjectGithubRepo("nub", "nubjs/nub")
+    assert.equal(notified, 1, "the same repo again is not a change")
+    setProjectGithubRepo("nub", null)
+    assert.equal(notified, 2)
+    assert.equal(githubRepoFor("nub"), REPO, "a project that left falls back to the page")
+  } finally {
+    unsubscribe()
   }
 })
