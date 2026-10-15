@@ -23,13 +23,14 @@ import type { Token, Tokens } from "marked"
 // turns out to be one. Same site, different question, opposite default.
 const GITHUB = "https://github.com"
 
-// "owner/repo" for the project this page is showing, or null when it is not a github.com repo.
+// "owner/repo" for the project this page is showing, or null when it is not a github.com repo — and
+// null on the Console, which shows no one project (its surfaces use THE CONSOLE'S REPOS below).
 //
-// A module-level value, set from the board snapshot (store.ts) rather than passed through every
-// `mdToHtml` call: there are a dozen call sites, each memoizing on its own markdown string, and
-// threading an extra argument through all of them buys nothing — a page shows one project at a time,
-// and a switch tears down every markdown-rendering surface with it (resetProjectState nulls the board
-// and the drawer stack). See `setGithubRepo` for why the board is the right source.
+// Set from the board snapshot (store.ts). Every render site reaches it through one hook,
+// useGithubRepoForLinks (lib/useMarkdown.ts), which hands mdToHtml the repo for the surface it is
+// rendering: this value on a project's page, the surface's own project's on the Console. A project
+// switch resets it (resetProjectState nulls it with the board and the drawer stack). See
+// `setGithubRepo` for why the board is the right source.
 let repo: string | null = null
 const listeners = new Set<() => void>()
 

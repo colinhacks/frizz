@@ -7,15 +7,16 @@ import { useProjectScope } from "./projectScope.tsx"
 
 // Memoized markdown rendering, for every surface that drops agent prose into `dangerouslySetInnerHTML`.
 //
-// It exists because `mdToHtml` is not a pure function of its argument: the GitHub autolinker
-// (githubAutolink.ts) reads the project's repo from module state, and that state arrives from the board a
-// beat after a thread's own transcript query resolves. Every call site used to memoize on the markdown
-// STRING alone, so the HTML built during that beat — with no repo, hence no links — was the HTML the
-// reader kept for the life of the page. Making the repo a subscribed render input is what fixes it, and
+// It exists because the HTML depends on more than the markdown: the GitHub autolinker links against
+// the surface's repo (githubAutolink.ts `githubRepoFor` — the page's, or on the Console the surface's own
+// project's), and that repo arrives from the board, or the project's keyframe, a beat after a thread's
+// own transcript query resolves. Every call site used to memoize on the markdown STRING alone, so the
+// HTML built during that beat — with no repo, hence no links — was the HTML the reader kept for the life
+// of the page. Making the repo a subscribed render input, passed to mdToHtml, is what fixes it, and
 // putting it in one hook is what stops the next markdown surface from reintroducing the bug.
 //
 // useSyncExternalStore over a SCALAR rather than useSnapshot, matching lib/deliverQueuedNow.ts: this
-// runs in every prose block on screen, and the value changes at most once per page.
+// runs in every prose block on screen, and the value changes at most once per project.
 
 /**
  * The repo GitHub-style references link to, as a render input.
