@@ -341,7 +341,16 @@ export function segmentFolds(seg: CollapseSegment): boolean {
  *
  *  Computed over ALL runs, not just the folding ones: a middle run with nothing worth folding on its own
  *  is still intermediate work, and leaving it visible would put a stray restatement inside the very span
- *  this is hiding. */
+ *  this is hiding.
+ *
+ *  EXCEPT A RUN HOLDING AN OPEN QUESTION, which is not intermediate work: it is what the thread is queued
+ *  on. A worker that asks mid-run and is then woken by a shell or a sub-agent rests again without naming
+ *  the question, so its card stays at the rest it was asked at (lib/questionAnchor) — and that rest was
+ *  one of these middle runs. The card's rail said [?] and the composer said "Or skip the questions", and
+ *  the question itself sat behind "9 more rounds · click to expand" (2026-10-15, an open-knowledge thread
+ *  whose ask landed in its 6th of 8 runs: "I have to click a bunch of buttons to expand previous tool
+ *  calls … The question should come to me in the queue"). Such a run is KEPT like the first and the last,
+ *  folding only its own calls, and the runs on either side of it collapse into a divider each. */
 export interface MiddleCollapse {
   /** Inclusive index range this swallows — every message in it renders nothing but the one divider. */
   start: number
@@ -353,34 +362,57 @@ export interface MiddleCollapse {
   tools: number
 }
 
-/** Split the runs into [first, …middle…, last]. `middle` is undefined when there is nothing in between —
- *  fewer than three runs — and the card then behaves exactly as it did before. */
+/** Split the runs into [first, …middle…, last]. `middles` is empty when there is nothing in between —
+ *  fewer than three runs — and the card then behaves exactly as it did before.
+ *
+ *  `pinned` is the message indices that must stay on screen: where each open question is drawn (the
+ *  message whose fence places it, or the rest it is anchored to). A middle run holding one is kept, and
+ *  splits the middle into one divider on each side of it. A rest record belongs to the run it closed. */
 export function collapseMiddleRuns(
   segments: readonly CollapseSegment[],
-): { kept: CollapseSegment[]; middle?: MiddleCollapse } {
-  if (segments.length < 3) return { kept: [...segments] }
-  const first = segments[0]
-  const last = segments[segments.length - 1]
-  const inner = segments.slice(1, -1)
-  return {
-    kept: [first, last],
-    middle: {
+  pinned: Iterable<number> = [],
+): { kept: CollapseSegment[]; middles: MiddleCollapse[] } {
+  if (segments.length < 3) return { kept: [...segments], middles: [] }
+  const held = new Set<number>()
+  for (const at of pinned) {
+    let owner = -1
+    for (let s = 0; s < segments.length && segments[s].start <= at; s++) owner = s
+    if (owner > 0 && owner < segments.length - 1) held.add(owner)
+  }
+  const kept: CollapseSegment[] = [segments[0]]
+  const middles: MiddleCollapse[] = []
+  let hidden: CollapseSegment[] = []
+  const collapse = () => {
+    if (hidden.length === 0) return
+    middles.push({
       // ONE BEFORE the first hidden run, because a resumed run's `start` is the message AFTER the wake
       // that opened it — so keying on `start` alone left that wake rendering above the collapse line, and
       // the card drew a "Goal · at rest" hairline for a round it was busy hiding. The maintainer asked for
       // the awakenings in the middle to go WITH the middle. Caught by looking at the rendered card; no
       // unit test on the segment walk could see it, because the walk's output was correct.
       //
-      // Clamped to the first run's end so this can never reach back into content that must stay visible.
-      // For a run cut by a REST rather than a wake, `start - 1` is the rest record, which renders nothing
-      // anyway — harmless to swallow.
-      start: Math.max(first.end + 1, inner[0].start - 1),
-      // Up to the last hidden run's END, so the wake or rest that opens the FINAL run still renders: it
-      // is what says why the last message exists, and the maintainer has already reported once that
+      // Clamped to the end of the run kept above it so this can never reach back into content that must
+      // stay visible. For a run cut by a REST rather than a wake, `start - 1` is the rest record, which
+      // renders nothing anyway — harmless to swallow.
+      start: Math.max(kept[kept.length - 1].end + 1, hidden[0].start - 1),
+      // Up to the last hidden run's END, so the wake or rest that opens the next KEPT run still renders:
+      // it is what says why that run's message exists, and the maintainer has already reported once that
       // resumed work with nothing above it reads as unexplained.
-      end: inner[inner.length - 1].end,
-      runs: inner.length,
-      tools: inner.reduce((n, s) => n + s.tools, 0),
-    },
+      end: hidden[hidden.length - 1].end,
+      runs: hidden.length,
+      tools: hidden.reduce((n, s) => n + s.tools, 0),
+    })
+    hidden = []
   }
+  for (let s = 1; s < segments.length - 1; s++) {
+    if (!held.has(s)) {
+      hidden.push(segments[s])
+      continue
+    }
+    collapse()
+    kept.push(segments[s])
+  }
+  collapse()
+  kept.push(segments[segments.length - 1])
+  return { kept, middles }
 }

@@ -1204,26 +1204,6 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
     () => queueCollapseSegments(collapseSteps, lastUserIdx + 1),
     [collapseSteps, lastUserIdx],
   )
-  const { kept, middle } = useMemo(() => collapseMiddleRuns(allSegments), [allSegments])
-  const segments = useMemo(() => kept.filter(segmentFolds), [kept])
-  // Index → the segment folding it, for the render loop. Only folding segments are indexed: a run with
-  // nothing worth hiding renders exactly as it did before.
-  const segmentAt = useMemo(() => {
-    const at = new Map<number, number>()
-    segments.forEach((seg, si) => { for (let i = seg.start; i <= seg.end; i++) at.set(i, si) })
-    return at
-  }, [segments])
-  // Collapse unless the reader has opted into the full log. Gated on there being something ABOVE the
-  // first fold to anchor it — the human's ask, or a rest divider a wake-driven turn opens on.
-  //
-  // THE MIDDLE COUNTS AS SOMETHING TO COLLAPSE, independently of the kept runs. Counting only the kept
-  // folding segments meant a thread whose FIRST run answered in a single message (open === close, so it
-  // deliberately never folds) and whose LAST run was one quiet status line hid NOTHING — the gate read
-  // "nothing to fold" while twelve rounds and 149 tool calls sat between them, and the card painted
-  // every one in full (maintainer 2026-09-02, nub `investigate-divergences-fix-this-and-all`: an
-  // "insane" card that rendered fifteen hours of intermediate work raw).
-  const collapseIntermediate =
-    !intermediateExpanded && (landedUserIdx >= 0 || restTurnStart > 0) && (segments.length > 0 || middle !== undefined)
   // THE HUMAN'S LAST MESSAGE WINS, even when the agent has rested since. It used to be capped at the
   // current turn (`Math.max` with `restTurnStart`) on the reasoning that a closed turn is history the
   // drawer already holds — but with frizz driving threads across many rests, "the current turn" is a
@@ -1308,6 +1288,32 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
     return { byAnchor, tail, tailSend, sendAnchors }
   }, [messages, openQuestions, placement, visibleStart])
   const hasMore = visibleStart > 0 || transcript?.hasEarlier === true
+  // WHERE EACH OPEN QUESTION IS DRAWN — the message whose fence places it, or the rest it is anchored to —
+  // so the middle collapse keeps the run holding it on screen (lib/queueCollapse collapseMiddleRuns).
+  const openQuestionPins = useMemo(
+    () => [...placement.placed.keys(), ...questionAnchors.byAnchor.keys()],
+    [placement, questionAnchors],
+  )
+  const { kept, middles } = useMemo(() => collapseMiddleRuns(allSegments, openQuestionPins), [allSegments, openQuestionPins])
+  const segments = useMemo(() => kept.filter(segmentFolds), [kept])
+  // Index → the segment folding it, for the render loop. Only folding segments are indexed: a run with
+  // nothing worth hiding renders exactly as it did before.
+  const segmentAt = useMemo(() => {
+    const at = new Map<number, number>()
+    segments.forEach((seg, si) => { for (let i = seg.start; i <= seg.end; i++) at.set(i, si) })
+    return at
+  }, [segments])
+  // Collapse unless the reader has opted into the full log. Gated on there being something ABOVE the
+  // first fold to anchor it — the human's ask, or a rest divider a wake-driven turn opens on.
+  //
+  // THE MIDDLE COUNTS AS SOMETHING TO COLLAPSE, independently of the kept runs. Counting only the kept
+  // folding segments meant a thread whose FIRST run answered in a single message (open === close, so it
+  // deliberately never folds) and whose LAST run was one quiet status line hid NOTHING — the gate read
+  // "nothing to fold" while twelve rounds and 149 tool calls sat between them, and the card painted
+  // every one in full (maintainer 2026-09-02, nub `investigate-divergences-fix-this-and-all`: an
+  // "insane" card that rendered fifteen hours of intermediate work raw).
+  const collapseIntermediate =
+    !intermediateExpanded && (landedUserIdx >= 0 || restTurnStart > 0) && (segments.length > 0 || middles.length > 0)
 
   useLayoutEffect(() => {
     const pending = pendingViewportAnchor.current
@@ -1703,7 +1709,7 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
               // divider. The wake hairlines sit BETWEEN the segments, where the reader can read each one
               // against the work it caused. The pinned ask and loaded-earlier history render in full.
               const barEmitted = new Set<number>()
-              let middleEmitted = false
+              const middleEmitted = new Set<number>()
               activityVisible.forEach(({ message: m, messageIndex: globalIdx, runStartedAt }, i) => {
                 pendingBreak = carryTimeBreak(pendingBreak, windowBreaks[i])
                 if (m.queued) return
@@ -1736,14 +1742,17 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
                 // swallows it; coalescing can likewise absorb that index into an earlier entry. Keying on
                 // equality hid twelve rounds with NO divider standing in for them — the reader saw the
                 // first answer jump to the final status with nothing saying work happened in between.
-                if (collapseIntermediate && middle && globalIdx >= middle.start && globalIdx <= middle.end) {
-                  if (!middleEmitted) {
-                    middleEmitted = true
+                // One divider per middle: a run holding an open question is kept between two of them.
+                const mi = collapseIntermediate ? middles.findIndex((m) => globalIdx >= m.start && globalIdx <= m.end) : -1
+                if (mi >= 0) {
+                  const middle = middles[mi]
+                  if (!middleEmitted.has(mi)) {
+                    middleEmitted.add(mi)
                     flushQuestions(globalIdx - 1)
-                    if (prev !== undefined) out.push(<VSpace key="middle-runs-space" h={STEP} />)
+                    if (prev !== undefined) out.push(<VSpace key={`middle-runs-space-${mi}`} h={STEP} />)
                     out.push(
                       <MiddleRunsSummary
-                        key="middle-runs-summary"
+                        key={`middle-runs-summary-${mi}`}
                         runs={middle.runs}
                         toolCount={middle.tools}
                         onExpand={() => setIntermediateExpanded(true)}

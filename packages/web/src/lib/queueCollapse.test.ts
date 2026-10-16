@@ -331,12 +331,13 @@ test("three or more runs keep the first and last, and collapse the middle whole"
     1,
   )
   assert.equal(segs.length, 4, "four runs to start with")
-  const { kept, middle } = collapseMiddleRuns(segs)
+  const { kept, middles } = collapseMiddleRuns(segs)
+  const [middle] = middles
   const first = segs[0]
   assert.equal(kept.length, 2, "the first run and the last one survive")
   assert.equal(kept[0], segs[0])
   assert.equal(kept[1], segs[3])
-  assert.ok(middle, "and the two between them collapse")
+  assert.equal(middles.length, 1, "and the two between them collapse into one line")
   assert.equal(middle.runs, 2, "counted in ROUNDS — what the reader wants is how many times it went round")
   assert.equal(middle.tools, segs[1].tools + segs[2].tools, "with every call inside them")
   // IT REACHES BACK OVER THE OPENING WAKE. A resumed run's `start` is the message AFTER the wake that
@@ -354,15 +355,15 @@ test("three or more runs keep the first and last, and collapse the middle whole"
 test("two runs are left alone — there is no middle to hide", () => {
   const segs = queueCollapseSegments([x(), p(), t(3), r(), w(), p(), t(2)], 1)
   assert.equal(segs.length, 2)
-  const { kept, middle } = collapseMiddleRuns(segs)
-  assert.equal(middle, undefined, "nothing between the first and the last")
+  const { kept, middles } = collapseMiddleRuns(segs)
+  assert.deepEqual(middles, [], "nothing between the first and the last")
   assert.deepEqual(kept, segs, "so the card behaves exactly as it did before")
 })
 
 test("one run, and no run at all, are both left alone", () => {
   for (const steps of [[x(), p(), t(3)], [x()]]) {
-    const { kept, middle } = collapseMiddleRuns(queueCollapseSegments(steps, 1))
-    assert.equal(middle, undefined)
+    const { kept, middles } = collapseMiddleRuns(queueCollapseSegments(steps, 1))
+    assert.deepEqual(middles, [])
     assert.ok(kept.length <= 1)
   }
 })
@@ -374,7 +375,53 @@ test("thirty runs collapse to two visible runs and one line", () => {
   for (let i = 0; i < 29; i++) steps.push(r(), w(), p(), t(2))
   const segs = queueCollapseSegments(steps, 1)
   assert.equal(segs.length, 30)
-  const { kept, middle } = collapseMiddleRuns(segs)
+  const { kept, middles } = collapseMiddleRuns(segs)
   assert.equal(kept.length, 2)
-  assert.equal(middle?.runs, 28)
+  assert.equal(middles.length, 1)
+  assert.equal(middles[0].runs, 28)
+})
+
+// THE RUN AN OPEN QUESTION SITS IN STAYS ON SCREEN. The 2026-10-15 shape: the worker asked in its 6th run,
+// a background task woke it, and it rested again without naming the question — so the card stayed at the
+// 6th run's rest, inside the middle, behind "N more rounds". The rail said [?] and nothing showed the ask.
+test("a middle run holding an open question is kept, with the rounds on each side collapsed", () => {
+  const steps = [x(), p(), t(2)] // 0..2: the human's ask and the first run
+  for (let i = 0; i < 7; i++) steps.push(r(), w(), p(), t(2)) // seven more runs, four messages each
+  const segs = queueCollapseSegments(steps, 1)
+  assert.equal(segs.length, 8)
+  const ask = segs[5].open // the 6th run's prose carries the question fence
+  const { kept, middles } = collapseMiddleRuns(segs, [ask])
+  assert.deepEqual(kept, [segs[0], segs[5], segs[7]], "the first run, the asking run and the last")
+  assert.equal(middles.length, 2, "one line above the asking run and one below it")
+  assert.deepEqual([middles[0].runs, middles[1].runs], [4, 1])
+  assert.equal(middles[0].tools, segs[1].tools + segs[2].tools + segs[3].tools + segs[4].tools)
+  assert.ok(middles[0].end < segs[5].start - 1, "the asking run keeps the wake that opened it")
+  assert.equal(middles[1].start, segs[6].start - 1, "the second line takes its own run's wake with it")
+  assert.ok(middles[1].start > segs[5].end, "and never reaches back into the asking run")
+  assert.ok(middles[1].end < segs[7].start - 1, "the last run keeps its waker")
+})
+
+test("a question anchored to a rest pins the run that rest closed", () => {
+  const steps = [x(), p(), t(2)]
+  for (let i = 0; i < 4; i++) steps.push(r(), w(), p(), t(2))
+  const segs = queueCollapseSegments(steps, 1)
+  assert.equal(segs.length, 5)
+  // A question registered without a fence draws after its rest: the rest record that closed run 2.
+  const rest = segs[2].end + 1
+  assert.equal(steps[rest].closes, true)
+  const { kept, middles } = collapseMiddleRuns(segs, [rest])
+  assert.deepEqual(kept, [segs[0], segs[2], segs[4]])
+  assert.deepEqual(middles.map((m) => m.runs), [1, 1])
+})
+
+test("adjacent pinned runs share no divider, and pins in the first or last run change nothing", () => {
+  const steps = [x(), p(), t(2)]
+  for (let i = 0; i < 4; i++) steps.push(r(), w(), p(), t(2))
+  const segs = queueCollapseSegments(steps, 1)
+  const both = collapseMiddleRuns(segs, [segs[2].open, segs[3].open])
+  assert.deepEqual(both.kept, [segs[0], segs[2], segs[3], segs[4]])
+  assert.deepEqual(both.middles.map((m) => m.runs), [1], "only run 1 is left to hide")
+  const outer = collapseMiddleRuns(segs, [segs[0].open, segs[4].open, 0])
+  assert.deepEqual(outer.kept, [segs[0], segs[4]])
+  assert.deepEqual(outer.middles.map((m) => m.runs), [3])
 })

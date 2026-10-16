@@ -95,6 +95,12 @@ import "./styles.css"
 //                      divider, so its calls vanished with nothing standing in for them. The divider must
 //                      draw ABOVE the lone message when the work came first (`loneprose`), and BELOW it
 //                      when the agent wrote and then worked (`loneproseafter`).
+//   ?variant=foldedask THE QUESTION BEHIND THE FOLD (2026-10-15): five runs, and the worker asks with a
+//                      registered ```question fence in the THIRD, keeps working, and is then woken twice by
+//                      background tasks and rests without naming the question again. Its card stays at the
+//                      rest it was asked at — a middle run — and the middle collapse used to swallow it
+//                      whole, so the rail said [?] and nothing on the card showed the ask. The asking run
+//                      must stay on screen with a "1 more round" line on each side of it.
 //
 // AND `?src=<url>` REPLAYS A REAL THREAD through the card, overriding the variant. Point it at a dump of
 // the server's own `threadTranscript` reply and the card renders the actual bytes that produced a report,
@@ -106,13 +112,15 @@ import "./styles.css"
 //   open '…/intermediate-collapse-fixture.html?src=http://127.0.0.1:8181/t.json'
 //
 // It accepts the RPC envelope (`{result:{messages}}`) or a bare `{messages}` / array, and runs before the
-// fetch mock below so it uses the real `fetch`. This is how the 2026-08-16 collapse regression was
+// fetch mock below so it uses the real `fetch`. A dump may also carry `thread` — board fields laid over
+// the fixture's own thread, such as the `questions` still open and the `spawnedAt` that decides which
+// question grammar it speaks — so a card queued on an open question replays with that question. This is how the 2026-08-16 collapse regression was
 // confirmed fixed on the thread that reported it — a synthesized fixture cannot prove the server's own
 // `boundary`/`wake` markers are the ones the walk keys on.
 const params = new URLSearchParams(location.search)
 const variant = params.get("variant") ?? "heavy"
 const src = params.get("src")
-const replay: { messages: TranscriptMessage[]; hasEarlier: boolean } | undefined = src
+const replay: { messages: TranscriptMessage[]; hasEarlier: boolean; thread?: Partial<ThreadViewModel> } | undefined = src
   ? await (async () => {
       const body = await (await fetch(src)).json()
       const page = body?.result ?? body
@@ -121,6 +129,7 @@ const replay: { messages: TranscriptMessage[]; hasEarlier: boolean } | undefined
         // A real dump is a WINDOW, and the card's "Load earlier messages" control is part of what the
         // replay is meant to reproduce.
         hasEarlier: page?.hasEarlier === true,
+        thread: page?.thread,
       }
     })()
   : undefined
@@ -736,9 +745,80 @@ const loneProse = (workFirst: boolean): TranscriptMessage[] => [
   withId(boundaryEvent("rest", "Agent rested")),
 ]
 
+const DB_ENGINE_FENCE = [
+  "```question",
+  "id: db-engine",
+  "kind: choice",
+  "question: Which engine should the storage layer target?",
+  "options:",
+  "  - label: Postgres",
+  "    description: matches production",
+  "    recommended: true",
+  "  - label: SQLite",
+  "    description: zero setup, no parity with production",
+  "```",
+].join("\n")
+
+const foldedask: TranscriptMessage[] = [
+  { sourceId: "u-cur", role: "user", text: "Set up the storage layer end to end.", tools: [], parts: [] },
+  withId(asst("Reading the current schema and migration setup first.", [
+    tool("Read", { detail: "packages/server/src/storage.ts", read: "…980 lines…" }),
+    tool("Grep", { detail: "migrate|schema" }),
+  ])),
+  withId(asst("Starting the schema audit in the background; I'll pick up when it reports.", [
+    tool("Bash", { detail: "nub scripts/audit-schema.mts", desc: "Auditing the schema" }),
+  ])),
+  withId(boundaryEvent("rest", "Agent rested")),
+  withId(boundaryEvent("wake", "Background task «Auditing the schema» finished")),
+  withId(asst("The audit found two tables with no index on their foreign key. Adding both.", [
+    tool("Edit", { detail: "packages/server/src/storage.ts" }),
+    tool("Bash", { detail: "nub --test", desc: "Running the server suite" }),
+  ])),
+  withId(asst("Indexes are in and green. Running the migration dry-run against a copy of the data.")),
+  withId(boundaryEvent("rest", "Agent rested")),
+  withId(boundaryEvent("wake", "Background task «Dry-running the migrations» finished")),
+  withId(asst("The dry-run is clean.", [tool("Read", { detail: "target/migrate-dry-run.log" })])),
+  withId(asst(`One decision belongs to you before the connection layer goes in:\n\n${DB_ENGINE_FENCE}`)),
+  withId(asst("The rest doesn't depend on the answer, so I'm writing the migrations runner meanwhile.", [
+    tool("Edit", { detail: "packages/server/src/migrate.ts" }),
+    tool("Bash", { detail: "nub --test", desc: "Running the server suite" }),
+  ])),
+  withId(boundaryEvent("rest", "Agent rested")),
+  withId(boundaryEvent("wake", "Background task «Running the full suite» finished")),
+  withId(asst("The full suite is green with the runner in.", [tool("Bash", { detail: "git log -1", desc: "Recording the head" })])),
+  withId(boundaryEvent("rest", "Agent rested")),
+  withId(boundaryEvent("wake", "Background task «Packaging the server build» finished")),
+  withId(asst("The server build packages cleanly.", [
+    tool("Bash", { detail: "nub run build", desc: "Building the server" }),
+    tool("Read", { detail: "dist/manifest.json" }),
+  ])),
+  withId(boundaryEvent("rest", "Agent rested")),
+]
+
+// The registered row the `foldedask` fence became — what queues the thread and draws the card.
+const foldedaskThread: Partial<ThreadViewModel> = {
+  spawnedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+  questions: [{
+    id: "qst_foldedask01",
+    handle: "db-engine",
+    askedAt: new Date(Date.now() - 50 * 60_000).toISOString(),
+    standing: true,
+    spec: {
+      handle: "db-engine",
+      kind: "question",
+      question: "Which engine should the storage layer target?",
+      options: [
+        { label: "Postgres", description: "matches production", recommended: true },
+        { label: "SQLite", description: "zero setup, no parity with production" },
+      ],
+    },
+  }],
+}
+
 const messages =
   replay?.messages ??
-  (variant === "loneprose" ? loneProse(true)
+  (variant === "foldedask" ? foldedask
+  : variant === "loneprose" ? loneProse(true)
   : variant === "loneproseafter" ? loneProse(false)
   : variant === "pinnedtail" ? pinnedtail
   : variant === "donetail" ? donetail
@@ -804,6 +884,8 @@ const thread: ThreadViewModel = {
     ? { kind: "done", registered: true, body: "- **Answered the market question** — the map is in the final message; the design report needed no edits." }
     : undefined,
   lastActivityAt: new Date().toISOString(),
+  ...(variant === "foldedask" ? foldedaskThread : undefined),
+  ...replay?.thread,
 } as unknown as ThreadViewModel
 
 store.board = { projectDir: "/fixture/frizz", threads: [thread] } as BoardSnapshot
