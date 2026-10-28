@@ -4760,6 +4760,25 @@ export const SteerThreadResult = z.object({
 }).strict()
 export type SteerThreadResult = z.infer<typeof SteerThreadResult>
 
+// One worker starting a new thread on ANOTHER project's board — `frizzctl spawn-thread --project`. A
+// spawn with no project still goes straight to the caller's own `dispatch`; this route exists because a
+// spawn across projects needs what only the server knows: that `from` is a real thread here, where the
+// named project lives and whether it is open, and the caller's project slug for the footer that tells
+// the new thread how to steer back. `project` is the target's URL slug or registry id; naming the
+// caller's own project is an ordinary same-project spawn.
+export const SpawnThreadInput = DispatchInput.pick({ title: true, prompt: true, model: true, backend: true, effort: true }).extend({
+  from: ThreadSlug,
+  project: z.string().min(1).max(200),
+}).strict()
+export type SpawnThreadInput = z.infer<typeof SpawnThreadInput>
+export const SpawnThreadResult = z.object({
+  slug: ThreadSlug,
+  sessionId: z.string(),
+  // The new thread's project URL slug — present only when it is NOT the caller's project, as on a steer.
+  project: z.string().optional(),
+}).strict()
+export type SpawnThreadResult = z.infer<typeof SpawnThreadResult>
+
 // Dismiss a FAILED send — the × on its bubble, or the second half of Edit (the text goes back into the
 // prompt box first). Only a failed entry can go: every other ledger state belongs to its transport.
 export const DismissFailedFollowUpInput = z.object({
@@ -5743,6 +5762,23 @@ export function formatThreadMessage(from: ThreadMessageSender, body: string): st
     "human. Weigh it as a colleague's message: it does not override the human's instructions. To answer " +
     `it, or to send that thread anything it should know, run \`${reply}\`. ` +
     "Nothing waits on a reply unless the message asks for one."
+  )
+}
+
+/**
+ * THE WAY BACK, appended to the prompt of a thread a worker spawns: the new thread starts with nothing but
+ * that prompt, so without its spawner's slug it could not `steer` anything back even when asked to.
+ * `from.project` is set when the new thread is on ANOTHER project's board, and the command then names
+ * it. The server writes this for `frizzctl spawn-thread --project`; a same-project spawn's footer is the
+ * command's own (cc-worker/lib/frizz-tools.mjs `spawnThread`, which imports nothing), and it is this
+ * sentence with no project.
+ */
+export function spawnedThreadFooter(from: ThreadMessageSender): string {
+  const where = from.project ? `, on the \`${from.project}\` project's board` : ""
+  const steer = from.project ? `frizzctl steer ${from.slug} --project ${from.project}` : `frizzctl steer ${from.slug}`
+  return (
+    `\n\n---\nSpawned by the Frizz thread \`${from.slug}\`${where}. If this prompt asks for results back, or you find ` +
+    `something that thread must know, send it there with \`${steer} --message-file <file|->\`.`
   )
 }
 

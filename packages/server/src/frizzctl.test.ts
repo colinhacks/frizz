@@ -29,6 +29,7 @@ function plausible(procedure: string, body: any): unknown {
   switch (procedure) {
     case "dispatch": return { slug: "spawned-child" }
     case "steerThread": return { slug: body.to, title: "The other thread", delivery: "resting" }
+    case "spawnThread": return { slug: "spawned-child", sessionId: "sid-spawned-child", project: body.project }
     case "upsertOwnLink": return { link: { id: "lnk_1", kind: "url", label: body.label, target: body.target } }
     case "dropOwnLink": return { dropped: true }
     case "setOwnThreadTitle": return { accepted: true, title: body.title }
@@ -343,6 +344,45 @@ test("the caller is the environment's thread and nothing a command line can say"
 
     // Outside a worker there is no thread, and the message says so rather than naming a command.
     const outside = await run(["activity"], { env: { FRIZZ_STATE_DIR: fake.stateDir } })
+    assert.equal(outside.code, 1)
+    assert.match(outside.stderr, /could not tell which thread is calling/)
+    assert.deepEqual(fake.seen, [])
+  } finally {
+    fake.close()
+  }
+})
+
+// `spawn-thread --project` goes to OUR project's `spawnThread`, never to the other project's `dispatch`:
+// our project verifies the caller and writes the footer, because it knows our slug and we hold its id.
+test("`spawn-thread --project` asks our own project, with the raw prompt, and links the thread into the other one", async () => {
+  const fake = await fakeFrizz()
+  try {
+    const ran = await run(["spawn-thread", "--project", "nub", "--model", "opus", "--effort", "high", "--title", "Bump the SDK", "--prompt", "do it"], { env: worker(fake, "the-caller") })
+    assert.equal(ran.code, 0, ran.stderr)
+    assert.deepEqual(fake.seen, [{
+      url: "/_frizz/proj-1/rpc/spawnThread",
+      body: { model: "opus", effort: "high", title: "Bump the SDK", prompt: "do it", from: "the-caller", project: "nub" },
+    }])
+    assert.match(ran.stdout, /now on the `nub` project's board/)
+    assert.match(ran.stdout, /with `frizzctl steer spawned-child --project nub`/)
+    assert.match(ran.stdout, /\[Bump the SDK\]\(\/project\/nub\/thread\/spawned-child\)/)
+
+    // Any link into that board names the project as well as its slug does.
+    fake.seen.length = 0
+    await run(["spawn-thread", "--project", "http://localhost:9393/project/nub/thread/some-thread/full", "--model", "opus", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(fake.seen[0]?.body.project, "nub")
+
+    // With no project, the spawn is the same-project `dispatch` it always was, footer and all.
+    fake.seen.length = 0
+    const local = await run(["spawn-thread", "--model", "opus", "--effort", "high", "--prompt", "x"], { env: worker(fake, "the-caller") })
+    assert.equal(local.code, 0, local.stderr)
+    assert.equal(fake.seen[0]?.url, "/_frizz/proj-1/rpc/dispatch")
+    assert.match(fake.seen[0]?.body.prompt, /Spawned by the Frizz thread `the-caller`\. .*`frizzctl steer the-caller --message-file <file\|->`\.$/s)
+    assert.match(local.stdout, /\(\/thread\/spawned-child\)/)
+
+    // The other project's board takes a real caller: a shell with no thread has none to send.
+    fake.seen.length = 0
+    const outside = await run(["spawn-thread", "--project", "nub", "--model", "opus", "--effort", "high", "--prompt", "x"], { env: { FRIZZ_STATE_DIR: fake.stateDir } })
     assert.equal(outside.code, 1)
     assert.match(outside.stderr, /could not tell which thread is calling/)
     assert.deepEqual(fake.seen, [])

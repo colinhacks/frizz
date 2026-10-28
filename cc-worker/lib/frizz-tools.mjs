@@ -59,6 +59,8 @@ const SPAWN_THREAD = {
     "root cause over twenty hours. " +
     "Spawn only when the work genuinely cannot ride on your own card: a different repo, a different long-lived " +
     "runtime, an effort that must outlive yours. Never spawn merely to clear your own `done` fence. " +
+    "The new thread lands on YOUR project's board unless you pass `project`: then it starts on that " +
+    "project's board, in that project's checkout — the way to hand work to another repo this Frizz serves. " +
     "You MUST deliberately choose `model` and `effort` to match the NEW thread's task complexity — they are " +
     "required, there is NO default. Do not reflexively pick the cheapest; a hard task on a weak model/effort " +
     "wastes the whole thread.",
@@ -96,6 +98,13 @@ const SPAWN_THREAD = {
         description: "Optional agent backend (default `claude`). If `codex`, `model` must be a codex model id.",
       },
       title: { type: "string", description: "Optional short title for the new thread (else derived from the prompt)." },
+      project: {
+        type: "string",
+        description:
+          "Optional: start the thread on ANOTHER project's board, in that project's checkout — its slug, as " +
+          "its board URL shows it (`/project/<slug>/…`), or any link into that board. Omitted ⇒ your own " +
+          "project. The new thread is told which project you are on, so it can `steer` results back.",
+      },
     },
     required: ["prompt", "model", "effort"],
   },
@@ -863,6 +872,8 @@ const HANDLERS = {
 // thread's project.
 const THREAD_LINK = /\/thread\/([^/?#)\s]+)/
 const PROJECT_LINK = /\/project\/([^/?#)\s]+)\/thread\//
+// The project out of any link into a board (`…/project/<p>/…`), for `spawn-thread --project`.
+const PROJECT_SEGMENT = /\/project\/([^/?#)\s]+)/
 
 /** The `steer` handler: deliver a message into ANOTHER thread, of this project or any other.
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
@@ -1144,8 +1155,9 @@ function rpcPath(procedure) {
  *
  * There is deliberately no tool parameter for it and no way to name another project: the id comes from
  * the server's stamp, or failing that from the tree we are standing in (`<root>/.frizz/.id`, the same
- * file project-root.ts treats as identity). Spawning a thread onto somebody else's board is therefore
- * not something a model can express, rather than something it is asked not to do.
+ * file project-root.ts treats as identity). A command that reaches ANOTHER project (`steer`, and
+ * `spawn-thread --project`) still lands here, on our own, which verifies the caller and then finds the
+ * other project itself; a model can name a target, never be somebody else.
  *
  * The walk-up is what makes this work for a worker spawned by a server that predates the stamp, and it
  * is the honest source anyway: a worker's project is wherever its cwd is, and that cannot go stale.
@@ -1195,6 +1207,18 @@ async function spawnThread(args) {
   if (typeof args.title === "string" && args.title.trim()) body.title = args.title.trim()
   if (args.backend === "claude" || args.backend === "codex") body.backend = args.backend
 
+  // ANOTHER PROJECT'S BOARD goes through OUR project's `spawnThread`, as a steer does: the server checks
+  // that we are a real thread, finds the project, and writes the footer itself, because it knows our
+  // project's slug and we hold only its id.
+  const rawProject = typeof args.project === "string" ? args.project.trim() : ""
+  if (rawProject) {
+    const project = decodeURIComponent(PROJECT_SEGMENT.exec(rawProject)?.[1] ?? rawProject)
+    const { prompt: _withFooter, ...rest } = body
+    const result = (await callRpc("spawnThread", { ...rest, prompt, from: threadSlug(), project }))?.result
+    if (typeof result?.slug !== "string" || !result.slug) throw new Error(`spawnThread returned no slug: ${JSON.stringify(result)?.slice(0, 300)}`)
+    return spawnedReceipt(result.slug, typeof body.title === "string" ? body.title : result.slug, result.project)
+  }
+
   const port = serverLockPort()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS)
@@ -1220,13 +1244,21 @@ async function spawnThread(args) {
   const payload = await res.json().catch(() => null)
   const slug = payload?.result?.slug
   if (typeof slug !== "string" || !slug) throw new Error(`dispatch response missing a slug: ${JSON.stringify(payload)?.slice(0, 300)}`)
-  const label = typeof body.title === "string" ? body.title : slug
+  return spawnedReceipt(slug, typeof body.title === "string" ? body.title : slug, undefined)
+}
+
+/** What the spawner reads back. `project` is the new thread's project slug when it is not ours.
+ * @param {string} slug @param {string} label @param {string | undefined} project @returns {string} */
+function spawnedReceipt(slug, label, project) {
+  const where = project ? ` on the \`${project}\` project's board` : " on the board"
+  const steer = project ? `frizzctl steer ${slug} --project ${project}` : `frizzctl steer ${slug}`
+  const href = project ? `/project/${project}/thread/${slug}` : `/thread/${slug}`
   return (
-    `Spawned a new frizz thread \`${slug}\`. It is now on the board driving independently — it reports ` +
+    `Spawned a new frizz thread \`${slug}\`. It is now${where} driving independently — it reports ` +
     `to the human via its own final message, so do not wait on a result from it. It knows your slug: if ` +
     `its prompt asked for results back, they arrive as a \`steer\` that wakes you. You can message it ` +
-    `the same way, with \`frizzctl steer ${slug}\`.\n\n` +
-    `Paste this link to let the human open it in the drawer:\n\n[${label}](/thread/${slug})`
+    `the same way, with \`${steer}\`.\n\n` +
+    `Paste this link to let the human open it in the drawer:\n\n[${label}](${href})`
   )
 }
 
@@ -2156,7 +2188,10 @@ const CLI = {
   spawn_thread: {
     group: "Other threads",
     summary: "Dispatch a new, separate top-level thread (the last resort)",
-    examples: ['frizzctl spawn-thread --model opus --effort high --title "Port the relay to Bun" --prompt-file prompt.md'],
+    examples: [
+      'frizzctl spawn-thread --model opus --effort high --title "Port the relay to Bun" --prompt-file prompt.md',
+      'frizzctl spawn-thread --project nub --model opus --effort high --title "Bump the SDK pin" --prompt-file prompt.md',
+    ],
   },
 }
 

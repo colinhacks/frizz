@@ -4,6 +4,7 @@ import {
   PermissionMode,
   wakeDeliveryToken,
   type CodexModel,
+  type DispatchInput,
   type DispatchPreferences,
   type SetDispatchPreferenceInput,
   type Settings,
@@ -144,6 +145,10 @@ export class ContextStartupError extends Error {
 /** Deliver one `<thread-message>` into a thread of THIS project: the sender is already verified by the
  *  sending project's router, and `from.project` is set because it is never this one. */
 export type ThreadInbox = (sent: { from: ThreadMessageSender; to: string; message: string }) => Promise<SteerThreadResult>
+/** Start one thread on THIS project's board for a worker in ANOTHER project (`frizzctl spawn-thread
+ *  --project`). The spawner is already verified by its own project's router, which also wrote the
+ *  footer naming it into `input.prompt`; `from` is recorded with the dispatch. */
+export type ThreadSpawner = (spawn: { from: ThreadMessageSender; input: DispatchInput }) => Promise<{ slug: string; sessionId: string }>
 
 export interface AppContext {
   // Random per-process id minted at boot. It rides every board/board-delta SSE frame and the
@@ -218,7 +223,7 @@ export interface AppContext {
    * project nobody has opened has no honest count, and this deliberately does not activate one to get
    * it. Absent under a test context or a one-project server, which read as "only this project".
    */
-  activeTenants?: () => ReadonlyArray<{ project: Project; board: BoardManager; storage?: Storage; threadInbox?: ThreadInbox }>
+  activeTenants?: () => ReadonlyArray<{ project: Project; board: BoardManager; storage?: Storage; threadInbox?: ThreadInbox; threadSpawner?: ThreadSpawner }>
   /**
    * The RECEIVING half of `frizzctl steer` for this project's threads — how a worker in ANOTHER project
    * delivers into one of them (router `steerThread`, which reaches it through activeTenants). Bound by
@@ -226,6 +231,21 @@ export interface AppContext {
    * be a second set of runtime branches to keep in step; absent until this project's router is built.
    */
   threadInbox?: ThreadInbox
+  /**
+   * The RECEIVING half of `frizzctl spawn-thread --project` for this project's board — how a worker in
+   * ANOTHER project starts a thread here (router `spawnThread`, which reaches it through activeTenants).
+   * Bound by createRouter beside threadInbox, for the same reason: it is this project's own `dispatch`,
+   * audited here, and absent until this project's router is built.
+   */
+  threadSpawner?: ThreadSpawner
+  /**
+   * Open a registered project this process has not opened yet, the way a request addressed to it would
+   * (index.ts `routeToTenant`); resolves whether it is open now. For `frizzctl spawn-thread --project`,
+   * whose whole point is to start work on that board: a project the post-boot prime (tenant-prime.ts)
+   * has not reached yet is opened rather than refused. Supplied by the server, which owns the tenant map;
+   * absent under a test context or a one-project server.
+   */
+  openProject?: (projectId: string) => Promise<boolean>
   /**
    * The Frizz thread that sent a cross-session message into one of THIS project's threads, for the
    * chat line that names the sender (see session-peer.ts). Absent under a test context, and then the
@@ -316,6 +336,8 @@ export interface ContextOptions {
   activeTenants?: AppContext["activeTenants"]
   /** See AppContext.teardownProject — supplied by the server, which owns the tenant map. */
   teardownProject?: AppContext["teardownProject"]
+  /** See AppContext.openProject — supplied by the server, which owns the tenant map. */
+  openProject?: AppContext["openProject"]
   /** See AppContext.launchProjectId — supplied by the server, which knows which project launched it. */
   launchProjectId?: string
   /** Internal deterministic construction/rollback seam. */
@@ -1276,6 +1298,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     activeTenants: opts.activeTenants,
     sessionPeerThread: (peer) => sessionPeerResolver(peer, project.id),
     teardownProject: opts.teardownProject,
+    openProject: opts.openProject,
     launchProjectId: opts.launchProjectId,
     // Derived from the state dir, never from `homedir()`, so a sandboxed server audits into its own
     // sandbox (the reason serverAddressPathForStateDir exists).

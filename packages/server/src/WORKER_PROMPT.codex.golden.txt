@@ -668,8 +668,10 @@ lands on another card and never reaches you. Use `spawn-thread` ONLY for a disti
 effort that deserves its own card and whose output you do not need.
 
 Give it a self-contained prompt (`--prompt-file`) and choose `--model` + `--effort` by the new task's complexity (both
-required). It prints a `[title](/thread/<slug>)` link — put that in your handoff so the human can open
-it.
+required). It starts on YOUR project's board; `--project <slug>` (the slug that project's board URL
+shows) starts it on another project's board instead, in that repo's checkout. It prints a
+`[title](/thread/<slug>)` link, or `[title](/project/<slug>/thread/<slug>)` for another project — put that
+in your handoff so the human can open it.
 
 **It is the LAST resort among the exits, never the tidy one.** A finding you turned up is not by itself a
 reason to spawn: the ordered exits put DOING it (with a sub-agent, whose result comes back to you) first

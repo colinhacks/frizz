@@ -623,6 +623,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
       // Read through the context at call time: createRouter binds it while the tenant's app is built,
       // after the context this entry is read from already exists.
       threadInbox: openCtx.threadInbox,
+      threadSpawner: openCtx.threadSpawner,
     }))
   /**
    * Take one project apart while the rest keep serving — the resource half of deleting a project.
@@ -650,6 +651,12 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     }
     return { closed, stoppedWorkers }
   }
+  // See AppContext.openProject. The same activation routeToTenant runs for a request, minus its URL.
+  const openProject: NonNullable<AppContext["openProject"]> = async (projectId) => {
+    if (tenants.get(projectId) || projectId === project.id) return true
+    const entry = findProjectBySegment(projectId)
+    return entry ? (await tenants.activate(projectFromRegistryEntry(entry))) !== undefined : false
+  }
   const tenants = createTenantMap<TenantSurfaces>({
     createContext: async (contextOptions) => {
       const opening = contextOptions.project
@@ -672,6 +679,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
       serverLockPath: serverLockPathFor(project),
       activeTenants,
       teardownProject,
+      openProject,
       launchProjectId: project.id,
       get database() { return frizzDb?.db },
     },
@@ -993,6 +1001,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
         serverLockPath: serverLockPathFor(project),
         activeTenants,
         teardownProject,
+        openProject,
         launchProjectId: project.id,
         startup: {
           afterPhase: (p) => {

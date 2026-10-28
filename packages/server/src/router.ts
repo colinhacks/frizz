@@ -20,7 +20,11 @@ import {
   type QuestionAnswer,
   SteerThreadInput,
   SteerThreadResult,
+  SpawnThreadInput,
+  SpawnThreadResult,
+  type ThreadMessageSender,
   formatThreadMessage,
+  spawnedThreadFooter,
   parseThreadMessage,
   UnqueueFollowUpInput,
   DismissFailedFollowUpInput,
@@ -169,7 +173,7 @@ import {
   AcpAgentModels,
   AcpAgentModelsInput,
 } from "@frizz/shared"
-import { type AppContext, type ThreadInbox } from "./context.ts"
+import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
 import { listAcpAgents } from "./backend/acp-agents.ts"
 import { sessionTitleLocked } from "./storage.ts"
@@ -926,62 +930,93 @@ export function createRouter(ctx: AppContext) {
   }
   ctx.threadInbox = receiveThreadMessage
 
+  // THE RECEIVING HALF OF `frizzctl spawn-thread --project`: this project's own dispatch, for a worker in
+  // another project (or this one, naming it). Audited HERE as a `dispatch` naming the spawner, because
+  // this is the board the thread lands on, and so the log a reader of this project checks first.
+  function spawnForThread({ from, input }: Parameters<ThreadSpawner>[0]): Promise<{ slug: string; sessionId: string }> {
+    return audit(
+      "dispatch",
+      {
+        project: thisProject,
+        detail: {
+          prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null,
+          spawnedBy: { thread: from.slug, ...(from.project ? { project: from.project } : {}) },
+        },
+      },
+      () => ctx.dispatcher.dispatch(input, { backend: input.backend }),
+      (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId } }),
+    )
+  }
+  ctx.threadSpawner = spawnForThread
+
+  type OpenProject = ReturnType<NonNullable<AppContext["activeTenants"]>>[number]
+  const projectSlugOf = (id: string) => findById(id)?.slug ?? id
+  const otherOpenProjects = (): OpenProject[] => (ctx.activeTenants?.() ?? []).filter((open) => open.project.id !== ctx.project.id)
+
   /**
-   * Where a `frizzctl steer` target lives: `undefined` for THIS project, else the other project's URL
-   * slug and the inbox that delivers there. Throws, with the fix in the message, when it is nowhere.
-   *
-   *   · `project` named (a `--project`, or the `/project/<slug>/` of a link the command was handed):
-   *     that project and only that one, by slug or registry id.
-   *   · none: this project first — so a slug that is ALSO taken elsewhere still means the thread
-   *     beside the sender, as it did before steer crossed projects — then every other open project. A
-   *     slug only one of them has is that thread; one several have is refused rather than guessed.
+   * The project a worker's `--project` names, for a steer or a spawn: `undefined` for THIS project, else
+   * that project's entry among the open ones. By URL slug or registry id. Throws, with the fix in the
+   * message, when no project has that name or when it is registered but not open; `unreachable` says
+   * what that costs the caller.
    *
    * Only projects this process has OPEN can be reached, because delivery needs that project's live
    * board and runtimes. Every registered project is opened shortly after boot (tenant-prime.ts), so a
    * closed one is a folder that is gone, a project another Frizz serves, or one that would not open.
    */
+  function openProjectNamed(project: string, unreachable: string): OpenProject | undefined {
+    const entry = findProjectBySegment(project)
+    const id = entry?.id ?? project
+    if (id === ctx.project.id) return undefined
+    const open = otherOpenProjects().find((candidate) => candidate.project.id === id)
+    if (open) return open
+    if (!entry) {
+      const known = listProjects().filter((p) => !p.archived).map((p) => `\`${p.slug}\``)
+      throw new Error(
+        `no project \`${project}\` on this machine. Name it by the slug its board URL shows (\`/project/<slug>/…\`)` +
+        (known.length ? `; the projects are ${known.join(", ")}` : ""),
+      )
+    }
+    throw new Error(
+      `project \`${entry.slug}\` is registered but not open in this Frizz — its folder may be gone, another ` +
+      `Frizz may be serving it, or it failed to open — so ${unreachable}`,
+    )
+  }
+
+  /**
+   * Where a `frizzctl steer` target lives: `undefined` for THIS project, else the other project's URL
+   * slug and the inbox that delivers there. Throws, with the fix in the message, when it is nowhere.
+   *
+   *   · `project` named (a `--project`, or the `/project/<slug>/` of a link the command was handed):
+   *     that project and only that one (openProjectNamed).
+   *   · none: this project first — so a slug that is ALSO taken elsewhere still means the thread
+   *     beside the sender, as it did before steer crossed projects — then every other open project. A
+   *     slug only one of them has is that thread; one several have is refused rather than guessed.
+   */
   function resolveSteerTarget(to: string, project: string | undefined): { project: string; inbox: ThreadInbox } | undefined {
-    const others = (ctx.activeTenants?.() ?? []).filter((open) => open.project.id !== ctx.project.id)
-    const slugOf = (id: string) => findById(id)?.slug ?? id
-    const reachable = (open: (typeof others)[number]) => {
+    const reachable = (open: OpenProject) => {
       if (!open.threadInbox) {
-        throw new Error(`project \`${slugOf(open.project.id)}\` is open in Frizz but not taking messages yet; retry in a moment`)
+        throw new Error(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking messages yet; retry in a moment`)
       }
-      return { project: slugOf(open.project.id), inbox: open.threadInbox }
+      return { project: projectSlugOf(open.project.id), inbox: open.threadInbox }
     }
     if (project) {
-      const entry = findProjectBySegment(project)
-      const id = entry?.id ?? project
-      if (id === ctx.project.id) {
+      const open = openProjectNamed(project, "none of its threads can be reached from here")
+      if (!open) {
         if (!ctx.storage.getSession(to)) throw new Error(`no thread \`${to}\` in this project (\`${project}\`)`)
         return undefined
       }
-      const open = others.find((candidate) => candidate.project.id === id)
-      if (!open) {
-        if (!entry) {
-          const known = listProjects().filter((p) => !p.archived).map((p) => `\`${p.slug}\``)
-          throw new Error(
-            `no project \`${project}\` on this machine. Name it by the slug its board URL shows (\`/project/<slug>/…\`)` +
-            (known.length ? `; the projects are ${known.join(", ")}` : ""),
-          )
-        }
-        throw new Error(
-          `project \`${entry.slug}\` is registered but not open in this Frizz — its folder may be gone, another ` +
-          "Frizz may be serving it, or it failed to open — so none of its threads can be reached from here",
-        )
-      }
       if (!open.storage?.getSession(to)) {
-        throw new Error(`no thread \`${to}\` in project \`${slugOf(id)}\`. Pass the slug exactly as a thread link names it (\`/thread/<slug>\`)`)
+        throw new Error(`no thread \`${to}\` in project \`${projectSlugOf(open.project.id)}\`. Pass the slug exactly as a thread link names it (\`/thread/<slug>\`)`)
       }
       return reachable(open)
     }
     if (ctx.storage.getSession(to)) return undefined
-    const holders = others.filter((open) => open.storage?.getSession(to))
+    const holders = otherOpenProjects().filter((open) => open.storage?.getSession(to))
     if (holders.length === 1) return reachable(holders[0])
     if (holders.length > 1) {
       throw new Error(
         `no thread \`${to}\` in this project, and ${holders.length} other projects have one ` +
-        `(${holders.map((open) => `\`${slugOf(open.project.id)}\``).join(", ")}). Pass \`--project <slug>\` to say which`,
+        `(${holders.map((open) => `\`${projectSlugOf(open.project.id)}\``).join(", ")}). Pass \`--project <slug>\` to say which`,
       )
     }
     throw new Error(
@@ -2738,8 +2773,8 @@ export function createRouter(ctx: AppContext) {
     // command addresses its own — and that is where the sender is verified. The target is then found by
     // resolveSteerTarget, and one in another project is delivered by THAT project's router
     // (AppContext.threadInbox): wake, queue, reopen and the ledger behave exactly as within one project,
-    // and the wrapper names the sender's project so the reply finds its way back. `spawn_thread` stays
-    // same-project; nothing here lets a worker start work on another board, only message a thread on it.
+    // and the wrapper names the sender's project so the reply finds its way back. Starting a thread on
+    // another board is `spawnThread`, below.
     steerThread: mutation({
       input: SteerThreadInput,
       output: SteerThreadResult,
@@ -2757,10 +2792,48 @@ export function createRouter(ctx: AppContext) {
           }
           return receiveThreadMessage({ from: { slug: sender.slug, title: threadTitleOf(sender) }, to: input.to, message: input.message })
         }
-        const from = { slug: sender.slug, title: threadTitleOf(sender), project: findById(ctx.project.id)?.slug ?? ctx.project.id }
+        const from = { slug: sender.slug, title: threadTitleOf(sender), project: projectSlugOf(ctx.project.id) }
         const receipt = await target.inbox({ from, to: input.to, message: input.message })
         return { ...receipt, project: target.project }
       }),
+    }),
+
+    // ONE WORKER STARTING A THREAD ON ANOTHER PROJECT'S BOARD — `frizzctl spawn-thread --project`
+    // (maintainer 2026-10-28, after steer had crossed projects and spawn had not). A spawn with no
+    // project still goes straight to this project's `dispatch`. This one lands on the SENDER's project, as
+    // a steer does, which verifies the sender and finds the named project (openProjectNamed); that
+    // project's router then dispatches it (AppContext.threadSpawner), so the thread, its worker's cwd, its
+    // board and its audit record are all that project's. The footer telling the new thread how to steer
+    // back is written HERE because only the server knows the sender's project slug — the worker holds its
+    // registry id. The same-project footer is the command's own (frizz-tools.mjs `spawnThread`), and the
+    // two say the same sentence.
+    spawnThread: mutation({
+      input: SpawnThreadInput,
+      output: SpawnThreadResult,
+      handler: ({ input }) => audit("spawnThread", {
+        project: thisProject,
+        thread: input.from,
+        detail: { toProject: input.project, prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
+      }, async () => {
+        const sender = ctx.storage.getSession(input.from)
+        if (!sender) throw new Error(`the calling thread ${input.from} is not registered in this project`)
+        // A registered project nobody has opened yet is opened now, as a request addressed to it would
+        // be: a steer needs a thread that already exists, but a spawn exists to start work there.
+        const named = findProjectBySegment(input.project)
+        if (named && named.id !== ctx.project.id && !otherOpenProjects().some((open) => open.project.id === named.id)) {
+          await ctx.openProject?.(named.id)
+        }
+        const open = openProjectNamed(input.project, "no thread can be started there from here")
+        if (open && !open.threadSpawner) {
+          throw new Error(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking new threads yet; retry in a moment`)
+        }
+        const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender), ...(open ? { project: projectSlugOf(ctx.project.id) } : {}) }
+        const { from: _from, project: _project, ...rest } = input
+        const dispatch = { ...rest, prompt: input.prompt + spawnedThreadFooter(from) }
+        if (!open) return spawnForThread({ from, input: dispatch })
+        const made = await open.threadSpawner!({ from, input: dispatch })
+        return { ...made, project: projectSlugOf(open.project.id) }
+      }, (result: SpawnThreadResult) => ({ detail: { spawned: result.slug, ...(result.project ? { spawnedIn: result.project } : {}) } })),
     }),
 
     // The × on a FAILED send's bubble, and the second half of its Edit (the client has already put the
