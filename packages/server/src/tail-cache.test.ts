@@ -279,7 +279,7 @@ test("tail-cache: a MISSING table degrades to correct-but-slow rather than throw
 //
 // It matters more than the usual staleness because the fold-schema digest CANNOT save us here. In a
 // promoted artifact the .ts sources are not shipped (verified: `find ~/.frizz/builds -name tailer.ts`
-// is empty), so foldSchemaDigest falls back to the fixed "frizz-tail-state-v1-unreadable" constant and
+// is empty), so foldSchemaDigest falls back to the fixed "frizz-tail-state-v2-unreadable" constant and
 // every build's rows match every other build's. A state cached by the build that still retained
 // auto-APPROVALS would therefore be handed straight back to the build that removed them — resurrecting
 // the note ab774ee deleted, permanently, because nothing clears it.

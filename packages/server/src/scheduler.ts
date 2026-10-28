@@ -3,7 +3,7 @@ import { promisify } from "node:util"
 import { createHash, randomUUID } from "node:crypto"
 import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { autonomousGoalOf, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
-import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, readAwaitingPark, unaccountedItems } from "./awaiting.ts"
+import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, githubStatusKey, idlePrsOf, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, parkWaitsOnThisSide, readAwaitingPark, readGithubStatusBook, unaccountedItems, type AwaitingPark, type GithubStatusBook } from "./awaiting.ts"
 import type { CommandWatchRow, PrWatchRow, SessionRow, Storage, ThreadQuestionRow } from "./storage.ts"
 import type { CommandRunResult, CommandWatchService } from "./command-watch.ts"
 import type { Tailer } from "./tailer.ts"
@@ -97,6 +97,11 @@ export interface PrStatus {
   /** Exits from the merge path that were not a merge — the queue dropping the PR, auto-merge going off.
    *  Absent on the `gh` fallback, which does not read the timeline. */
   mergeExits?: GithubPrMergeExit[]
+  /** Who the PR waits on — see GithubPrSnapshot. Absent on the `gh` fallback, which does not ask. */
+  autoMerge?: boolean
+  viewerDidAuthor?: boolean
+  viewerPermission?: string
+  reviewRequestCount?: number
 }
 
 export interface WorkflowRun {
@@ -409,8 +414,28 @@ export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchSt
     polledAt,
     head: pr.head,
     failureSig: failureSignature(entries),
+    ...githubWaitingOn(pr),
   }
 }
+
+// WHO A PR IS WAITING ON, in the facts awaiting.prWaitsOnNoOne reads. Each is left out unless the
+// poll actually said: a guess of "nobody" would pull a thread out of Snoozed that something will wake.
+function githubWaitingOn(pr: PrStatus): Pick<GithubWatchStatus, "mergePath" | "viewerAuthored" | "viewerCanMerge" | "reviewRequested"> {
+  const mergePath = pr.queued ? "queued" as const
+    : pr.autoMerge ? "auto" as const
+    : pr.queued === null && pr.autoMerge === false ? "none" as const
+    : undefined
+  return {
+    ...(mergePath ? { mergePath } : {}),
+    ...(pr.viewerDidAuthor !== undefined ? { viewerAuthored: pr.viewerDidAuthor } : {}),
+    ...(pr.viewerPermission !== undefined ? { viewerCanMerge: MERGING_PERMISSIONS.has(pr.viewerPermission) } : {}),
+    // The raw count, not `reviewRequests`: that list keeps only the reviewers with a name, and a request to
+    // an unnamed one (a team the token cannot see) is still a wait on someone.
+    ...(pr.reviewRequestCount !== undefined ? { reviewRequested: pr.reviewRequestCount > 0 } : {}),
+  }
+}
+
+const MERGING_PERMISSIONS = new Set(["ADMIN", "MAINTAIN", "WRITE"])
 
 function wakeDeliveryId(slug: string, sessionId: string, fenceId: string): string {
   return createHash("sha256").update(slug).update("\0").update(sessionId).update("\0").update(fenceId).digest("hex")
@@ -1137,6 +1162,28 @@ const DONE_GATE_FROM_MS = Date.parse(QUESTION_FENCES_REGISTER_FROM)
 /** From this instant a refused ```question fence stays owed its correction across the human's typed
  *  messages (SOURCE 14). */
 const FAULTS_OUTLIVE_HUMAN_FROM_MS = Date.parse(QUESTION_FAULTS_OUTLIVE_HUMAN_FROM)
+/** The correction for a park parkWaitsOnThisSide refused: each PR with what is left to do on it, read off
+ *  the same reading that refused it, then the two ways out. */
+function prsWaitOnThisSideMessage(park: AwaitingPark, github: GithubStatusBook): string {
+  const lines = park.items.map((i) => {
+    const ref = parsePrRef(i.value)
+    const status = ref ? github[githubStatusKey(ref)] : undefined
+    const left = status?.checks === "failing" ? "CI FAILED, and nobody else will push the fix"
+      : status?.merge === "conflicting" ? "it CONFLICTS with its base, and nobody else will resolve it"
+      : "green and mergeable, no review requested and nothing set to merge it: only the merge is left"
+    return `- \`prs: [${i.value}]\` — opened by the signed-in GitHub account; ${left}`
+  })
+  return [
+    `${PARK_CORRECTION_NAMES_LEAD}only pull requests that wait on this side, so it is not a park and your thread is in the human's queue.`,
+    "",
+    ...lines,
+    "",
+    "A PR watcher reports change, and none is coming. Push the fix, or hand the merge to the human with",
+    "`steps:` (one step, linking the PR). If it waits on someone GitHub does not show, say who in a",
+    "`needs_input` handoff.",
+  ].join("\n")
+}
+
 function parkFenceId(cause: string, spokeAt: string): string {
   return `${PARK_FENCE_PREFIX}:${cause}:${spokeAt}`
 }
@@ -2594,6 +2641,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   }
 
   function evalParkIntegrity(nowMs: number): void {
+    // Read once per pass: which watched PRs wait on nothing but their own thread (parkWaitsOnThisSide).
+    const github = readGithubStatusBook(deps.storage.getSetting(GITHUB_STATUS_SETTING))
+    const idlePrs = idlePrsOf(github)
     for (const row of deps.storage.allSessions()) {
       if (row.state === "archived" || row.archived === 1) continue
       const tele = deps.tailer.get(row.slug)
@@ -2625,6 +2675,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         armedTimerIdsOf(deps.storage, row.slug),
         registeredIssueWatchesOf(deps.storage, row.slug),
         armedCommandWatchIdsOf(deps.storage, row.slug),
+        // Only on a QUIET park (`working` or `watching`), which is the one place the board reads it
+        // (needsInputParkHolds). A `needs_input` handoff naming its own green PR is exactly the rest this
+        // asks for, and a fence with no answer is judged by rules that never see the PR readings.
+        awaitingNeedsInput(tele.lastFence.hints) === false ? idlePrs : undefined,
       )
       // A command watch's settled rows, by id: one that PASSED has already woken the thread, the way a
       // fired timer has, and one that expired or was cancelled is a wait that is over for another reason.
@@ -2691,6 +2745,29 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const questionFaulted = questionFaultRests.get(row.slug) === spokeAt
       if (parkIsHonoured(park, live) && !unanswered && !questionFaulted && (row.park_bumps ?? 0) > 0) deps.storage.resetParkBumps(row.slug)
       if (dead.length === 0 && !expired && !nameless) {
+        // EVERY PR IT NAMES WAITS ON THIS SIDE (parkWaitsOnThisSide). Each is registered and its watcher
+        // armed, so nothing above caught it, but the watcher reports CHANGE and none is coming: the next
+        // act is a fix this thread pushes or a merge it hands over. Before 2026-10-28 the board queued this
+        // park without telling the worker, which is the silent refusal the nameless note above records.
+        if (!parkOnHuman(park) && parkWaitsOnThisSide(park, live)) {
+          if (parkCapSpent(row, spokeAt)) continue
+          const fenceId = parkFenceId("pr-idle", spokeAt)
+          const deliveryId = wakeDeliveryId(row.slug, row.session_id, fenceId)
+          if (outbox.get(deliveryId)) continue
+          const item = outbox.enqueue({
+            id: deliveryId,
+            slug: row.slug,
+            sessionId: row.session_id,
+            fenceId,
+            hintKey: fenceId,
+            message: `${prsWaitOnThisSideMessage(park, github)}\n\n${wakeTimeHeader(nowMs, spokeAt)}`,
+            reason: "awaiting park names only PRs that wait on this side",
+          }, nowMs).delivery
+          deps.storage.countParkBump(row.slug, spokeAt)
+          log(`waker: queued ${row.slug} — ${item.reason}`)
+          checkpoint("after-enqueue", item)
+          continue
+        }
         // The answer is corrected only once the ITEMS are right. A fence that names dead work or none is
         // told about that first — adding `status:` would not make it a park, and a worker waiting on
         // nothing should end in ```done or a question, not be taught one more line of a fence it should

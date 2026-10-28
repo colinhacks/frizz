@@ -5,7 +5,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingNeedsInput, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -2641,6 +2641,7 @@ export function applyRecord(state: TailState, rec: Record): void {
       // clears it (the fence only signals while it is the final message). Same lifecycle as the
       // question flag: set per assistant text, cleared by any user record below.
       state.lastFence = parseSignalFence(raw)
+      noteHandoff(state)
     }
     trackDispatches(state, rec) // register any background Agent dispatches + background shells
     trackLiveTools(state, rec) // the tool calls now awaiting a result — the board row's live line
@@ -2747,6 +2748,14 @@ function applyFinalText(state: FoldState, text: string): void {
   state.lastAssistantHasQuestion = hasQuestionBlock(text)
   state.lastAssistantAllDone = saysAllDone(text)
   state.lastFence = parseSignalFence(text)
+  noteHandoff(state)
+}
+
+// Stamp FoldState.handoffAt when the fence just folded hands the rest to the human. Read after
+// `lastAssistantAt` is set for the same message, so the stamp is that message's own instant.
+function noteHandoff(state: FoldState): void {
+  const fence = state.lastFence
+  if (fence?.kind === "awaiting" && awaitingNeedsInput(fence.hints) === true && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
 }
 
 // Fold one NORMALIZED event into the backend-neutral accumulator — the codex-facing counterpart to
@@ -6212,7 +6221,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

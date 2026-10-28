@@ -5,6 +5,7 @@ import type { ChatMessage } from "../hooks.ts"
 import { useLiveAnswering, type LiveAnswering } from "../lib/answering.ts"
 import { pairAllAnswers, unrenderedAnswers, type PairedAnswer } from "../lib/answersMessage.ts"
 import type { TranscriptShellRecord } from "../lib/childOps.ts"
+import { heldHandoffIndex } from "../lib/fenceBlocks.ts"
 import { useFileDropZone, useFileIntakeHandle, type FileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { useOpsHeldForTranscript } from "../lib/opsAhead.ts"
@@ -126,6 +127,9 @@ export interface ThreadTranscript {
    *  At rest it is the last thing the agent said, which the resting card at the tail keys on too
    *  (maintainer 2026-09-24: "When the agent is running, an awaiting card should never be shown at all"). */
   awaitingCut: number
+  /** The one message before the cut whose fence is NOT stale: the `needs_input` handoff the board is holding
+   *  the thread in the queue for (ThreadView.heldHandoff, lib/fenceBlocks heldHandoffIndex), or -1. */
+  heldIdx: number
   /** The resting card at the tail states the last message's wait, so that message's fence draws nothing. */
   restingShown: boolean
   /** The two reasons the awaiting fence in the message at `index` draws nothing: the worker has spoken
@@ -271,6 +275,9 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const running = thread?.runtime === "running" || thread?.runtime === "spawning"
   const lastAgentIdx = useMemo(() => lastAssistantIndex(messages), [messages])
   const awaitingCut = running ? messages.length : lastAgentIdx
+  // A handoff the board is holding the thread in the queue for stays drawn above the quiet park that
+  // could not take it back (lib/fenceBlocks heldHandoffIndex); every other fence before the cut settles.
+  const heldIdx = useMemo(() => (thread?.heldHandoff ? heldHandoffIndex(messages, awaitingCut) : -1), [thread?.heldHandoff, messages, awaitingCut])
   const restingShown = showsRestingCard(thread)
   const fencesLive = questionFencesLive(thread?.spawnedAt)
   const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread)
@@ -290,8 +297,9 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       running,
       lastAgentIdx,
       awaitingCut,
+      heldIdx,
       restingShown,
-      hidesAwaiting: (index) => [awaitingCut >= 0 && index < awaitingCut, index === lastAgentIdx && restingShown] as const,
+      hidesAwaiting: (index) => [awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, index === lastAgentIdx && restingShown] as const,
       stepsDone,
       openQuestions,
       fencesLive,
@@ -304,7 +312,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       answeringForMessage,
       opsThread,
     }),
-    [thread, messages, running, lastAgentIdx, awaitingCut, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
+    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
   )
 
   // The surface is the zone and its prompt box the intake (lib/fileDrop). Files given while no box is
