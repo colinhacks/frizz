@@ -108,7 +108,7 @@ before(async () => {
 after(() => server.close())
 
 const claudeCoords: RuntimeCoordinates = { pkg: "@anthropic-ai/claude-agent-sdk-darwin-arm64", packageVersion: CLAUDE_AGENT_SDK_VERSION, label: CLAUDE_CODE_VERSION, binary: "claude" }
-const codexCoords: RuntimeCoordinates = { pkg: "@openai/codex", packageVersion: "0.164.0-darwin-arm64", label: "0.164.0", binary: "codex" }
+const codexCoords: RuntimeCoordinates = { pkg: "@openai/codex", packageVersion: "0.165.0-darwin-arm64", label: "0.165.0", binary: "codex" }
 
 const claudeTgz = tarball([
   { name: "package/package.json", data: Buffer.from('{"name":"stub"}') },
@@ -338,7 +338,7 @@ test("sweep: a lease whose holder is dead is pruned and the directory retired", 
 test("lease: the version directory is found from either layout, and a PATH bin gets no lease", () => {
   const root = scratch()
   const claude = provisionedDir(root, "claude", "2.1.267", "claude")
-  const codex = provisionedDir(root, "codex", "0.164.0", join("vendor", "aarch64-apple-darwin", "bin", "codex"))
+  const codex = provisionedDir(root, "codex", "0.165.0", join("vendor", "aarch64-apple-darwin", "bin", "codex"))
   assert.equal(runtimeVersionDir(join(claude, "claude")), claude)
   assert.equal(runtimeVersionDir(join(codex, "vendor", "aarch64-apple-darwin", "bin", "codex")), codex)
   const stray = join(root, "elsewhere", "claude")

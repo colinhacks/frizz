@@ -150,15 +150,17 @@ export type ClaudeModel = z.infer<typeof ClaudeModel>
 // GPT-5.5 alone while the browser's fallback included the current generation, so an older Codex app
 // rewriting the machine-wide cache made a model visible in one tab and unavailable in another.
 // Keep the order/defaults in step with the pinned runtime's catalogue when that runtime moves.
-// Re-read from codex-cli 0.164.0 on 2026-10-23, identical in slug, order, default and efforts to 0.163.0's
-// of 2026-10-17 and 0.161.0's of 2026-10-08 (the cache's display names are hyphenated; the mirror keeps
-// them spaced); defaults vary by model generation. gpt-5.5, hidden since 0.161.0 (visibility "hide", so
-// the live picker dropped it too), has been gone from the catalogue since 0.163.0, which is why the
-// mirror does not list it.
-export const CODEX_MODELS_FALLBACK_VERSION = "0.164.0"
+// Re-read from codex-cli 0.165.0 on 2026-10-27. It adds gpt-6.1-terra at priority 3 (default low, all
+// six efforts; codex PR #57337); every other slug, its order, default and efforts are as in 0.164.0's of
+// 2026-10-23, 0.163.0's and 0.161.0's (the cache's display names are hyphenated except Terra's; the
+// mirror keeps them all spaced); defaults vary by model generation. gpt-5.5, hidden since 0.161.0
+// (visibility "hide", so the live picker dropped it too), has been gone from the catalogue since 0.163.0,
+// which is why the mirror does not list it.
+export const CODEX_MODELS_FALLBACK_VERSION = "0.165.0"
 export const CODEX_MODELS_FALLBACK: CodexModel[] = [
   { slug: "gpt-6.1-sol", displayName: "GPT-6.1 Sol", defaultEffort: "low", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
   { slug: "gpt-6-astra", displayName: "GPT-6 Astra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+  { slug: "gpt-6.1-terra", displayName: "GPT-6.1 Terra", defaultEffort: "low", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
   { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
   { slug: "gpt-6-luna", displayName: "GPT-6 Luna", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max"] },
   { slug: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultEffort: "low", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },

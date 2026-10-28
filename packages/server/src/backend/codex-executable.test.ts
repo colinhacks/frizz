@@ -112,7 +112,7 @@ test("codex resolver, win32: the search path is read under every spelling, and a
     assert.deepEqual(windowsResolve(files, { env: { [spelling]: BIN } }), { file: `${BIN}\\codex.exe`, args: [] }, spelling)
   }
   // The provisioned pin arrives absolute and is never re-resolved (it is not on PATH at all).
-  const pin = "C:\\Users\\op\\AppData\\Local\\frizz\\runtimes\\codex\\0.164.0\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe"
+  const pin = "C:\\Users\\op\\AppData\\Local\\frizz\\runtimes\\codex\\0.165.0\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe"
   assert.deepEqual(windowsResolve({}, { bin: pin }), { file: pin, args: [] })
 })
 
