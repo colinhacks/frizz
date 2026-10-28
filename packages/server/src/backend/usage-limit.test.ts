@@ -25,6 +25,17 @@ test("classify: the real session-limit record → session window + its reset clo
   assert.deepEqual(got, { window: "session", resetClock: { hour: 17, minute: 50, timeZone: "America/Los_Angeles" } })
 })
 
+// Claude Code 2.1.312 renamed the 5-hour window: the CLI builds the line as `You've hit your ${label}`
+// + ` · resets …` (+ ` · progress saved`), and its label map now reads five_hour: "5-hour limit" where
+// 2.1.311's read "session limit". The CLI's own reader accepts both, and so must this one — a thread
+// stopped by the renamed line would otherwise fall to "unknown" and never auto-resume.
+test("classify: the 2.1.312 '5-hour limit' record → session window + its reset clock", () => {
+  const record = { isApiErrorMessage: true, error: "rate_limit", apiErrorStatus: 429 }
+  const resetClock = { hour: 17, minute: 50, timeZone: "America/Los_Angeles" }
+  assert.deepEqual(classifyLimitRecord(record, "You've hit your 5-hour limit · resets 5:50pm (America/Los_Angeles)"), { window: "session", resetClock })
+  assert.deepEqual(classifyLimitRecord(record, "You've hit your 5-hour limit · resets 5:50pm (America/Los_Angeles) · progress saved"), { window: "session", resetClock })
+})
+
 test("classify: the real weekly-limit record → weekly window", () => {
   const got = classifyLimitRecord(
     { isApiErrorMessage: true, error: "rate_limit", apiErrorStatus: 429 },

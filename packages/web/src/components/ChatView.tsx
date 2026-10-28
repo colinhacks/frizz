@@ -4288,7 +4288,9 @@ export function LimitPauseCard({ slug, sessionId, pause }: { slug: string; sessi
   // Only Claude and Codex report a limit window Frizz can read; an ACP agent's limits stay inside its
   // own CLI, so a pause attributed to one is labelled generically rather than crashing on the lookup.
   const label = pause.backend === "acp" ? "The agent" : PROVIDER_LABEL[pause.backend]
-  const which = pause.window === "weekly" ? "weekly limit" : pause.window === "session" ? "session limit" : "usage limit"
+  // The window is keyed "session", but it is labelled the way the provider's line above the card names
+  // it: Claude Code calls it the "5-hour limit" since 2.1.312 ("session limit" before).
+  const which = pause.window === "weekly" ? "weekly limit" : pause.window === "session" ? "5-hour limit" : "usage limit"
   const [continuing, setContinuing] = useState(false)
   const queryClient = useQueryClient()
   // "Continue now" is a manual override of the auto-resume — a turn-starting action exactly like a
@@ -4308,7 +4310,7 @@ export function LimitPauseCard({ slug, sessionId, pause }: { slug: string; sessi
   }
   return (
     <TranscriptCard data-limit-pause tone="caution" icon={Hourglass} label={`Paused by the ${label} ${which}`}>
-      {/* The provider's own "You've hit your session limit · resets …" line sits directly above this
+      {/* The provider's own "You've hit your 5-hour limit · resets …" line sits directly above this
           card (unlike an auth error, it is informative, so transcript.ts keeps its bubble). So this
           card says only what THAT line cannot: what frizz is going to do about it. */}
       <span className={CARD_BODY}>
