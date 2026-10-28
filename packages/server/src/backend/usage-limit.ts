@@ -20,8 +20,8 @@ import type { LimitFault } from "./types.ts"
 // backstop lands the thread IDLE ~5s later. That idle-with-a-live-limit-fault state is exactly the
 // "was running when the limit hit" set the scheduler resumes.
 
-// Which subscription window the provider says is exhausted. The 5-hour window ("session limit")
-// always resets within 5 hours, so its wall-clock reset text resolves unambiguously to the next
+// Which subscription window the provider says is exhausted. The 5-hour window ("5-hour limit" since
+// Claude Code 2.1.312, "session limit" before it; Frizz's own key stays "session") always resets within 5 hours, so its wall-clock reset text resolves unambiguously to the next
 // occurrence. The weekly window can be days out, so its text-only clock is NOT resolvable — that
 // case defers to the quota endpoint for an exact instant (see resolveResetInstant's callers).
 export type { LimitWindow }
@@ -52,7 +52,9 @@ const RESET_RE = /\bresets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]+)\)
 
 // Which window the message names. Deliberately conservative: an unrecognized phrasing is "unknown"
 // (→ no auto-resume from text alone) rather than being guessed into the 5-hour bucket, because a
-// wrong guess there would resume against a still-exhausted weekly window.
+// wrong guess there would resume against a still-exhausted weekly window. Claude Code 2.1.312 renamed
+// the 5-hour window's line to "You've hit your 5-hour limit · resets …" ("session limit" through
+// 2.1.311), so both spellings are live: older transcripts keep the old one.
 function windowFromText(text: string): LimitWindow {
   if (/\bweekly\s+limit\b/i.test(text) || /\bweek\b/i.test(text)) return "weekly"
   if (/\bsession\s+limit\b/i.test(text) || /\b5[- ]?hour\b/i.test(text)) return "session"

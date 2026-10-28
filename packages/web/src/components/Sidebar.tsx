@@ -1534,7 +1534,7 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
     // showed up and fucking snoozed"). The tip mirrors the drawer's LimitPauseCard word for word, so the
     // rail and the card can never tell two stories about one thread.
     const p = t.limitPause
-    const which = p?.window === "weekly" ? "weekly limit" : p?.window === "session" ? "session limit" : "usage limit"
+    const which = p?.window === "weekly" ? "weekly limit" : p?.window === "session" ? "5-hour limit" : "usage limit"
     // The auto-resume promise is the server's word (resolveLimitPause keeps it truthful — an unknown
     // window has no wake), so the tip splits on it: a promised wake names its clock, an unpromised one
     // says plainly that Retry is the way back.
