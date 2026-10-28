@@ -13,6 +13,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { githubWatchStatus, type PrStatus } from "./scheduler.ts"
 import { readGithubStatusBook } from "./awaiting.ts"
+import { parseGithubPrSnapshot } from "./github-review.ts"
 import { deriveNeedsYou, deriveAwaitingBackground, fenceWatchViews } from "./board.ts"
 import type { SessionTelemetry } from "./tailer.ts"
 import type { SessionRow } from "./storage.ts"
@@ -317,4 +318,28 @@ test("an unregistered pr-watch line neither cards nor leaves the queue", () => {
   const running = book({ checks: "running", running: 2 })
   assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, NOW, undefined, true, false, running, new Set()), true)
   assert.deepEqual(fenceWatchViews("t", watching(), LATER, running, []), [])
+})
+
+// ---- who the PR waits on (board.prWaitsOnNoOne) ----
+
+test("the poll's answer to who a PR waits on reaches the reading, and an unasked field stays absent", () => {
+  const node = (over: Record<string, unknown>) => parseGithubPrSnapshot({ state: "OPEN", mergeable: "MERGEABLE", ...over })!
+  const read = (over: Record<string, unknown>) => {
+    const snap = node(over)
+    return githubWatchStatus({ ...snap, rollup: snap.rollup as PrStatus["rollup"] }, AT)
+  }
+  const idle = read({ mergeQueueEntry: null, autoMergeRequest: null, viewerDidAuthor: true, baseRepository: { viewerPermission: "WRITE" }, reviewRequests: { nodes: [] } })
+  assert.deepEqual([idle.mergePath, idle.viewerAuthored, idle.viewerCanMerge, idle.reviewRequested], ["none", true, true, false])
+  assert.equal(read({ reviewRequests: { nodes: [{ requestedReviewer: { __typename: "User", login: "teammate" } }] } }).reviewRequested, true)
+  // A reviewer with no name to keep is still a reviewer: a team the token cannot see, and a Mannequin.
+  assert.equal(read({ reviewRequests: { nodes: [{ requestedReviewer: null }] } }).reviewRequested, true)
+  assert.equal(read({ reviewRequests: { nodes: [{ requestedReviewer: { __typename: "Mannequin" } }] } }).reviewRequested, true)
+  assert.equal(read({}).reviewRequested, undefined, "a response that did not list review requests says nothing")
+  assert.equal(read({ mergeQueueEntry: { position: 2 }, autoMergeRequest: null }).mergePath, "queued")
+  assert.equal(read({ mergeQueueEntry: null, autoMergeRequest: { enabledAt: AT } }).mergePath, "auto")
+  const outsider = read({ viewerDidAuthor: false, baseRepository: { viewerPermission: "READ" } })
+  assert.deepEqual([outsider.viewerAuthored, outsider.viewerCanMerge], [false, false])
+  const unasked = githubWatchStatus(pr(), AT)
+  assert.deepEqual([unasked.mergePath, unasked.viewerAuthored, unasked.viewerCanMerge, unasked.reviewRequested], [undefined, undefined, undefined, undefined])
+  assert.deepEqual(readGithubStatusBook({ [REF]: idle })[REF], idle, "the stored book keeps the new fields")
 })

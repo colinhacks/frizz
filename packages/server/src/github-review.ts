@@ -108,6 +108,16 @@ export interface GithubPrSnapshot {
   queued?: { position?: number } | null
   /** The PR's latest exits from the merge path that were NOT a merge — see `GithubPrMergeExit`. */
   mergeExits: GithubPrMergeExit[]
+  /** Auto-merge is on (`autoMergeRequest` present). Absent when the response did not say. */
+  autoMerge?: boolean
+  /** The signed-in account opened this PR, and its permission on the base repository (`ADMIN`,
+   *  `MAINTAIN`, `WRITE`, `TRIAGE`, `READ`). Absent when the response did not say. */
+  viewerDidAuthor?: boolean
+  viewerPermission?: string
+  /** How many review requests GitHub returned, counted BEFORE `reviewRequests` keeps only the named ones:
+   *  a request to a team the token cannot see (`requestedReviewer: null`), a Mannequin or an EnterpriseTeam
+   *  has no name to keep, and is still someone the PR waits on. Absent when the response did not say. */
+  reviewRequestCount?: number
 }
 
 /** A PR leaving the road to its merge without merging: GitHub's merge queue dropping it, or auto-merge
@@ -315,7 +325,7 @@ export function parseGithubPrSnapshot(pr: unknown): GithubPrSnapshot | undefined
         }]
       }),
     labels: strings(p.labels?.nodes, (n) => n.name),
-    // A User answers to `login` and a Team to `name`; the row is the reviewer either way.
+    // A User or a Bot answers to `login` and a Team to `name`; the row is the reviewer either way.
     reviewRequests: strings(p.reviewRequests?.nodes, (n) => {
       const r = n.requestedReviewer as Record<string, unknown> | undefined
       return r?.login ?? r?.name
@@ -327,6 +337,10 @@ export function parseGithubPrSnapshot(pr: unknown): GithubPrSnapshot | undefined
         : null }
       : {}),
     mergeExits: parseMergeExits(p.timelineItems?.nodes),
+    ...("autoMergeRequest" in p ? { autoMerge: Boolean(p.autoMergeRequest) } : {}),
+    ...(typeof p.viewerDidAuthor === "boolean" ? { viewerDidAuthor: p.viewerDidAuthor } : {}),
+    ...(typeof p.baseRepository?.viewerPermission === "string" ? { viewerPermission: p.baseRepository.viewerPermission } : {}),
+    ...(Array.isArray(p.reviewRequests?.nodes) ? { reviewRequestCount: p.reviewRequests.nodes.length } : {}),
   }
 }
 
@@ -425,6 +439,9 @@ function buildQuery(refs: GithubReviewRef[]): { query: string; variables: Record
         pullRequest(number: $number${index}) {
           state mergedAt mergeable reviewDecision isDraft
           mergeQueueEntry { position }
+          autoMergeRequest { enabledAt }
+          viewerDidAuthor
+          baseRepository { viewerPermission }
           timelineItems(last: ${MERGE_EXIT_CAP}, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT, AUTO_MERGE_DISABLED_EVENT]) { nodes {
             __typename
             ... on RemovedFromMergeQueueEvent { id createdAt reason actor { login }
@@ -435,7 +452,7 @@ function buildQuery(refs: GithubReviewRef[]): { query: string; variables: Record
           reviews(last: 50) { nodes { id url state submittedAt body author { login __typename } } }
           comments(last: 50) { nodes { id url createdAt body author { login __typename } } }
           labels(first: ${LABEL_CAP}) { nodes { name } }
-          reviewRequests(first: ${REVIEW_REQUEST_CAP}) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } } } }
+          reviewRequests(first: ${REVIEW_REQUEST_CAP}) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { name } } } }
           commits(last: 1) { nodes { commit {
             oid
             statusCheckRollup { contexts(first: ${ROLLUP_PAGE_SIZE}) { pageInfo { hasNextPage endCursor } nodes {${ROLLUP_NODE_FIELDS}

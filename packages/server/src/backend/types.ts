@@ -118,6 +118,8 @@ export interface NormalizedTail {
   lastMidTurnDeliveryAt?: string
   // When the human last TYPED a message to the thread — see FoldState.restFromAt. Absent reads as `lastUserAt`.
   restFromAt?: string
+  // When the worker last rested on a fence that needed the human — see FoldState.handoffAt.
+  handoffAt?: string
   // When Frizz last delivered a ```question fence correction — see FoldState.questionCorrectedAt.
   questionCorrectedAt?: string
   lastUserText?: string // the newest drawn user turn's text, Frizz's deliveries included (confirms wake-token delivery)
@@ -216,6 +218,13 @@ export interface FoldState {
   // the human wrote it (applyRecord, noteQueuedMessage). Absent (a tail cached before 2026-10-13) reads
   // as `lastUserAt`.
   restFromAt?: string
+  // WHEN THE WORKER LAST RESTED ON A HANDOFF: an ```awaiting fence answering `status: needs_input` (or
+  // listing `steps:`). Unlike `lastFence` it is NOT cleared by a user record, because what it records is
+  // an obligation on the reader, like a question: a later wake carrying no news let the worker re-park
+  // `status: watching` and bury the handoff in Snoozed while the human still owed it a merge
+  // (2026-10-27). The board holds such a thread in the queue until the human types past it or snoozes it
+  // (board handoffStands).
+  handoffAt?: string
   // The human messages QUEUED and not yet seen delivered, oldest first — so the record that delivers one
   // does not move `restFromAt` a second time, to an instant later than the human wrote it. Bounded.
   queuedHumanTexts?: string[]

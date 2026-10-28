@@ -43,7 +43,8 @@ test("a fence the resting card states never reaches the card either", () => {
   const chat = source
   const todos = readFileSync(new URL("./TodosView.tsx", import.meta.url), "utf8")
   const shell = readFileSync(new URL("./ThreadSurface.tsx", import.meta.url), "utf8")
-  assert.match(shell, /hidesAwaiting: \(index\) => \[awaitingCut >= 0 && index < awaitingCut, index === lastAgentIdx && restingShown\] as const/)
+  // One message before the cut keeps its fence: the handoff the board holds the thread in the queue for.
+  assert.match(shell, /hidesAwaiting: \(index\) => \[awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, index === lastAgentIdx && restingShown\] as const/)
   assert.match(chat, /const \[staleAwaiting, restingCardShown\] = t\.hidesAwaiting\(index\)/, "ThreadMessage takes both reasons from the surface")
   assert.equal(chat.match(/restingCardShown=\{/g)?.length, 1, "ThreadMessage is the only site that passes it")
   assert.doesNotMatch(todos, /restingCardShown=|staleAwaiting=/, "the queue card draws its messages through ThreadMessage")
@@ -53,7 +54,7 @@ test("a fence the resting card states never reaches the card either", () => {
   assert.match(helper, /restingCardShown = false/, "it takes the resting-card reason")
   assert.match(helper, /entry\.messageIndex === awaitingCut\) stated\.add\(entry\.message\)/, "…and marks the last message as stated")
   assert.match(helper, /messageRendersNothing\(message, stale\.has\(message\), stated\.has\(message\)\)/, "…as its own reason, not one more stale member")
-  assert.equal(chat.match(/rendersNothingIn\([a-zA-Z]+, awaitingCut, restingShown\)/g)?.length, 2, "every rendersNothingIn call passes it")
+  assert.equal(chat.match(/rendersNothingIn\([a-zA-Z]+, awaitingCut, restingShown, heldIdx\)/g)?.length, 2, "every rendersNothingIn call passes it, and the held handoff")
   assert.match(todos, /const \{ lastAgentIdx, hidesAwaiting, [^}]*\} = surface\.transcript/, "the queue card's walk asks the surface")
   assert.equal(todos.match(/message(?:RendersNothing|HasRenderableText)\(m, \.\.\.hidesAwaiting\(globalIdx\)\)/g)?.length, 2, "the queue card's predicates take both reasons")
   assert.doesNotMatch(todos, /isStaleAwaiting|showsRestingCard\(/, "…and derive neither for themselves")
@@ -172,7 +173,7 @@ test("every transcript surface cuts staleness at the same index", () => {
   const helper = source.match(/export function rendersNothingIn[\s\S]*?\n}/)?.[0]
   assert.ok(helper, "rendersNothingIn must exist")
   assert.match(helper, /new WeakSet<ChatMessage>\(\)/, "it keys on the message object the entry holds")
-  assert.match(helper, /entry\.messageIndex < awaitingCut/, "…cut at the same index the renderer uses")
+  assert.match(helper, /entry\.messageIndex < awaitingCut && entry\.messageIndex !== heldIdx/, "…cut at the same index the renderer uses, sparing the same held handoff")
   // NO AWAITING CARD WHILE THE THREAD RUNS (maintainer 2026-09-24, on a screenshot of a park card above a
   // spinning worker: "When the agent is running, an awaiting card should never be shown at all"). The cut
   // sits past every message while running, so each fence in the window is stale; at rest it is the last
@@ -249,8 +250,10 @@ test("the resting card owns the heading, the glyph, the prose and the chips", ()
   // thread already bg-snoozed has no rest for the Snooze to park, and a thread that has left the rest its
   // steps were posted at has nobody waiting on the steps' Done (2026-10-03). A steps card takes no Snooze
   // at all — the reader is what it waits on — and neither does a `watching` rest (2026-10-05): its worker
-  // already parked it in Snoozed, which is the park the button would make.
-  assert.match(code, /const snoozable = thread !== undefined && steps\.length === 0 && thread\.waitStatus !== "watching" && showsRestingCard\(thread\) && threadLifecycleAvailability\(thread\)\.snooze/)
+  // already parked it in Snoozed, which is the park the button would make. Nor does a fence handed in from
+  // the transcript (2026-10-28): that is an earlier fence, a held handoff above the resting card, and the
+  // rest has one Snooze, on the card that states it.
+  assert.match(code, /const snoozable = thread !== undefined && fence === undefined && steps\.length === 0 && thread\.waitStatus !== "watching" && showsRestingCard\(thread\) && threadLifecycleAvailability\(thread\)\.snooze/)
   assert.match(code, /const stepsLive = thread !== undefined && restingOnSteps\(thread, steps\)/)
   // Nothing else may key on the runtime. A second `showsRestingCard` call inside this card is how a
   // heading, a glyph or a truncation rule would start varying with it again.

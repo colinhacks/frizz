@@ -793,7 +793,7 @@ function VirtualizedThreadTranscript({
   // model the queue card reads. `messages` here is the presentation list, which shares its indices with
   // the list the model was built over.
   const transcript = useThreadTranscript()
-  const { thread, running, lastAgentIdx, awaitingCut, restingShown, paired, inFlightAnswers, placement, settledPlacement, openQuestions } = transcript
+  const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, placement, settledPlacement, openQuestions } = transcript
   // Presentation-only coalescing: provider batching must not mint one loader per pure tool turn. Original
   // indices ride beside the display message, so paired answers keep addressing server truth.
   const coalescedActivityMessages = useMemo(() => coalesceToolActivityMessages(messages), [messages])
@@ -803,12 +803,12 @@ function VirtualizedThreadTranscript({
   // draws — with the resting card as the third reason a fence draws nothing (rendersNothingIn).
   const activityMessages = useMemo(() => {
     const entries = running ? historicalToolActivityMessages(coalescedActivityMessages) : coalescedActivityMessages
-    return withoutRedundantRestDividers(entries, rendersNothingIn(entries, awaitingCut, restingShown))
-  }, [coalescedActivityMessages, running, awaitingCut, restingShown])
+    return withoutRedundantRestDividers(entries, rendersNothingIn(entries, awaitingCut, restingShown, heldIdx))
+  }, [coalescedActivityMessages, running, awaitingCut, restingShown, heldIdx])
   const messageRows = useMemo(() => {
     const rows = buildVirtualTranscriptMessageRows(
       activityMessages.map((entry) => entry.message),
-      rendersNothingIn(activityMessages, awaitingCut, restingShown),
+      rendersNothingIn(activityMessages, awaitingCut, restingShown, heldIdx),
       messageGap,
     )
     // A rest the human came back to after a long wait draws as the instant they came back (restGapOf).
@@ -818,7 +818,7 @@ function VirtualizedThreadTranscript({
       messageIndex: activityMessages[row.messageIndex].messageIndex,
       restGap: restGapOf(row.message, rows[i + 1]?.message),
     }))
-  }, [activityMessages, awaitingCut, restingShown])
+  }, [activityMessages, awaitingCut, restingShown, heldIdx])
   // The slot at the end, off the model the queue card draws its own from (useRuntimeTail). Its ROW exists
   // whenever the slot draws anything — a rung, or the policy-denial card a rest with no rung still owes.
   const runtimeTail = useRuntimeTail(transcript, coalescedActivityMessages, activityMessages, steerSince)
@@ -1820,10 +1820,11 @@ export function rendersNothingIn<T extends { message: ChatMessage; messageIndex:
   entries: readonly T[],
   awaitingCut: number,
   restingCardShown = false,
+  heldIdx = -1,
 ): (message: ChatMessage) => boolean {
   const stale = new WeakSet<ChatMessage>()
   const stated = new WeakSet<ChatMessage>()
-  if (awaitingCut >= 0) for (const entry of entries) if (entry.messageIndex < awaitingCut) stale.add(entry.message)
+  if (awaitingCut >= 0) for (const entry of entries) if (entry.messageIndex < awaitingCut && entry.messageIndex !== heldIdx) stale.add(entry.message)
   if (awaitingCut >= 0 && restingCardShown) for (const entry of entries) if (entry.messageIndex === awaitingCut) stated.add(entry.message)
   return (message) => messageRendersNothing(message, stale.has(message), stated.has(message))
 }
@@ -4084,6 +4085,12 @@ export function InlineVisualization({ file }: { file: string }) {
 // its thread's Archive is the header's check (ThreadLifecycleActions). `awaiting` → THE RESTING CARD ITSELF
 // (AwaitingBackgroundCard), which is the whole point: one component draws that card on every surface and
 // at every runtime, so steering a worker cannot re-shape it. See the branch below.
+// Whether the thread's own last fence is this one, by content: a fence passed down from the transcript is
+// a fresh object, never the board's.
+function statesFence(fence: ThreadViewData["lastFence"], body: string, hints: readonly AwaitingHint[]): boolean {
+  return fence?.kind === "awaiting" && fence.body === body && JSON.stringify(fence.hints) === JSON.stringify(hints)
+}
+
 export function FenceCard({ fenceKind, body, hints, wrap, pastRest }: { fenceKind: FenceKind; body: string; hints: AwaitingHint[]; wrap?: boolean; pastRest?: boolean }) {
   // BLOCK markdown, not inline. A fence's prose is arbitrary Markdown since frontmatter landed
   // (2026-08-17), and inline rendering flattened a worker's paragraphs and lists into one run — the shape
@@ -4192,8 +4199,10 @@ export function FenceCard({ fenceKind, body, hints, wrap, pastRest }: { fenceKin
   // the fence BLOCK before it reaches here (Message's `restingCardShown`), because a null returned from
   // this component still spends the block spacer above it. This only catches a caller that did not pass
   // the flag — and it must stay a null rather than a second card, or the tail's card and this one draw
-  // the same wait twice.
-  if (fenceThread && showsRestingCard(fenceThread)) return null
+  // the same wait twice. Only the fence the resting card STATES is that wait: a held handoff
+  // (ThreadView.heldHandoff) is an earlier fence, drawn above the resting card of the quiet park that
+  // could not take it back, so it gets its own card.
+  if (fenceThread && showsRestingCard(fenceThread) && statesFence(fenceThread.lastFence, body, hints)) return null
   return <AwaitingBackgroundCard thread={fenceThread} fence={{ body, hints }} />
 }
 

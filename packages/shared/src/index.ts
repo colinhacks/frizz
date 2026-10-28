@@ -2379,6 +2379,15 @@ export const GithubWatchStatus = z.object({
    *  same job, or a slower job going red after the first — both of which are a second failure the worker
    *  must hear about. Empty when nothing is failing. */
   failureSig: z.string().optional(),
+  /** WHO THE PR IS WAITING ON, the facts behind "will anything move here unless we act?"
+   *  (awaiting.prWaitsOnNoOne). Whether GitHub will merge it by itself (`queued` in a merge queue, `auto`
+   *  with auto-merge on, `none`), whether the signed-in `gh` account opened it and may merge it, and
+   *  whether a review is still requested of someone. Absent means unknown: the `gh` fallback and a
+   *  reading taken before 2026-10-27 carry none, and an unknown never counts as "nobody". */
+  mergePath: z.enum(["none", "queued", "auto"]).optional(),
+  viewerAuthored: z.boolean().optional(),
+  viewerCanMerge: z.boolean().optional(),
+  reviewRequested: z.boolean().optional(),
 }).strict()
 export type GithubWatchStatus = z.infer<typeof GithubWatchStatus>
 
@@ -3832,6 +3841,11 @@ export const ThreadView = z.object({
    *  menu greys out "Until activity" without it, and the server stops honouring that snooze once it
    *  goes false. Absent on a dead worker and on an archived thread. */
   wakesOnItsOwn: z.boolean().optional(),
+  /** A QUIET PARK THE BOARD REFUSED because an earlier `needs_input` handoff still stands: the human has
+   *  neither typed to the thread nor snoozed a rest since it (board handoffStands). The surfaces keep that
+   *  handoff's fence drawn (web lib/fenceBlocks heldHandoffIndex), since it is what the thread is in the
+   *  queue for. Set only while it is what queued the thread. */
+  heldHandoff: z.boolean().optional(),
   // Which Claude transport serves this thread. "broker" — a session-broker-owned Agent SDK session with
   // a typed control channel — is the only one there is; ABSENT means a row dispatched before the broker
   // became the sole transport, which frizz can no longer reach that way. Only the broker can be asked to

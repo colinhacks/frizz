@@ -1304,7 +1304,10 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
   //
   // NOT ON A `watching` REST EITHER (2026-10-05): its worker already parked it in Snoozed until the watch
   // wakes it, which is the very park this button would make.
-  const snoozable = thread !== undefined && steps.length === 0 && thread.waitStatus !== "watching" && showsRestingCard(thread) && threadLifecycleAvailability(thread).snooze
+  //
+  // AND ONLY ON THE CARD THAT STATES THE REST (`fence` absent). A fence handed in is an earlier one: a held
+  // handoff drawn above the resting card would otherwise grow a second Snooze for the same rest.
+  const snoozable = thread !== undefined && fence === undefined && steps.length === 0 && thread.waitStatus !== "watching" && showsRestingCard(thread) && threadLifecycleAvailability(thread).snooze
   return (
     // The SAME shell as every transcript card (TranscriptCard). This card stacks directly under an
     // awaiting fence card on a queue card, and it used to be a visibly different object there —

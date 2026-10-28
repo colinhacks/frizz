@@ -277,6 +277,6 @@ test("the fold-schema digest moves when the question reader or the scanner under
     }
     // THE OTHER HALF, which this file cannot make true: a build that ships no sources has nothing to hash.
     // Its digest is one constant shared by every build, so there a reader change invalidates nothing.
-    assert.equal(await (async () => ((await import(`./tail-cache.ts?fold-schema-${n++}`)) as typeof import("./tail-cache.ts")).foldSchemaDigest(join(dir, "empty")))(), "frizz-tail-state-v1-unreadable")
+    assert.equal(await (async () => ((await import(`./tail-cache.ts?fold-schema-${n++}`)) as typeof import("./tail-cache.ts")).foldSchemaDigest(join(dir, "empty")))(), "frizz-tail-state-v2-unreadable")
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

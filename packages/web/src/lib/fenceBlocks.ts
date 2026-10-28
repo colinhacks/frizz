@@ -8,7 +8,7 @@
 // actions live in a stable footer), `awaiting` = a compact parked human/timer handoff. Distinct
 // from ```question blocks (their own machinery in questionBlocks.ts) — those never match here.
 
-import { insideFence, splitAwaitingFrontmatter, splitDoneFrontmatter, type AwaitingHint } from "@frizz/shared"
+import { awaitingNeedsInput, insideFence, splitAwaitingFrontmatter, splitDoneFrontmatter, type AwaitingHint, type TranscriptMessage } from "@frizz/shared"
 
 export type FenceKind = "done" | "awaiting"
 
@@ -79,4 +79,19 @@ export function splitFenceBlocks(text: string): FenceSegment[] {
 // (one nested in a code block) can never answer yes.
 export function hasFence(text: string): boolean {
   return splitFenceBlocks(text).some((s) => s.kind === "fence")
+}
+
+// THE HANDOFF A QUIET PARK COULD NOT TAKE BACK (ThreadView.heldHandoff, server board handoffStands): the
+// newest agent message before `before` whose ```awaiting fence handed the rest to the human. Every fence
+// before the last agent message is otherwise drawn as settled (ThreadSurface hidesAwaiting), which hid the
+// very handoff the board was holding the thread in the queue for: the card showed the later quiet park
+// alone. `awaitingNeedsInput` is the predicate the fold stamps `handoffAt` with, so this finds the same
+// message. -1 when there is none in the page.
+export function heldHandoffIndex(messages: readonly Pick<TranscriptMessage, "role" | "kind" | "text">[], before: number): number {
+  for (let i = Math.min(before, messages.length) - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== "assistant" || m.kind === "event") continue
+    if (splitFenceBlocks(m.text).some((seg) => seg.kind === "fence" && seg.fenceKind === "awaiting" && awaitingNeedsInput(seg.hints) === true)) return i
+  }
+  return -1
 }

@@ -102,6 +102,10 @@ export interface LiveActivity {
   /** Armed COMMAND WATCH ids on this thread (`cmw_…`, 2026-10-11). Optional for the reason `issues` is:
    *  absent reads as "none armed", which makes a `commands:` entry unaccounted — the safe direction. */
   commands?: ReadonlySet<string>
+  /** Watched PRs that wait on nothing but this side (prWaitsOnNoOne), normalized like `prs`. Optional the
+   *  other way round from the two above: absent reads as "none known", so a caller holding no GitHub
+   *  reading never refuses a park on a PR (parkWaitsOnThisSide). */
+  idlePrs?: ReadonlySet<string>
 }
 
 const LIVE_SET: Record<AwaitingItemKind, keyof LiveActivity> = {
@@ -135,6 +139,7 @@ export function liveActivityOf(
   armedTimerIds: ReadonlySet<string>,
   registeredIssueWatches: ReadonlySet<string> = new Set(),
   armedCommandWatches: ReadonlySet<string> = new Set(),
+  idlePrs?: ReadonlySet<string>,
 ): LiveActivity {
   const shells = new Set<string>()
   for (const sh of tele?.bgShells ?? []) {
@@ -146,7 +151,7 @@ export function liveActivityOf(
     if (a.state !== "running") continue
     for (const h of [a.taskId, a.id, a.label]) if (h) agents.add(h)
   }
-  return { shells, agents, timers: armedTimerIds, prs: registeredPrWatches, issues: registeredIssueWatches, commands: armedCommandWatches }
+  return { shells, agents, timers: armedTimerIds, prs: registeredPrWatches, issues: registeredIssueWatches, commands: armedCommandWatches, ...(idlePrs ? { idlePrs } : {}) }
 }
 
 /** The items this fence names that frizz CANNOT account for — dead, unknown, or another thread's.
@@ -190,12 +195,33 @@ function liveKey(i: AwaitingItem): string {
  *
  *  QUESTIONS ARE THE SAME WAIT (2026-10-05): `questions:` names registered questions the worker still
  *  needs answered, and the answer is the wake. That every open question is named is the scheduler's
- *  check (evalParkIntegrity), not this one's — it needs the question rows. */
+ *  check (evalParkIntegrity), not this one's — it needs the question rows.
+ *
+ *  A PARK ON NOTHING BUT PRS THAT WAIT ON THIS SIDE IS NOT A WAIT EITHER (parkWaitsOnThisSide): every
+ *  item is registered and its watcher armed, but no news is coming, so the park would sit out its whole
+ *  `for:` (180 days, for a PR). */
 export function parkIsHonoured(park: AwaitingPark, live: LiveActivity): boolean {
   const onHuman = parkOnHuman(park)
   if (park.items.length === 0 && !onHuman) return false
   if (park.forMs === null && !onHuman) return false
+  if (!onHuman && parkWaitsOnThisSide(park, live)) return false
   return unaccountedItems(park.items, live).length === 0
+}
+
+/** Does this park name nothing but PRs that wait on this side (`live.idlePrs`)? One PR that someone else
+ *  will move, or any other item, is a real wait, so the check is on the whole park, not item by item. And
+ *  a park on the HUMAN is exempt in parkIsHonoured: `steps:` naming the merge beside the PR is exactly
+ *  the handoff a park like this should have been.
+ *
+ *  A RUN OF QUIET PARKS IS NOT ONE OF THESE. A rule that queued three `watching` parks across a day, each
+ *  answering the worker's own timer or an expired park, was proposed beside this one (colinhacks/frizz#70)
+ *  for threads polling another thread for a grant. Replayed over this machine's 364 Claude transcripts
+ *  (2026-10-28), it fired on four threads, every one a periodic job the maintainer runs on purpose and none
+ *  of them stuck: two vulnerability-database watchers (a pass every 6h, then daily), a daily runtime-pin
+ *  check, a to-do refresh every 7h. Each does real work on every wake and parks because nothing came of
+ *  it, which is exactly what a poll that never pays off looks like from here. */
+export function parkWaitsOnThisSide(park: AwaitingPark, live: LiveActivity): boolean {
+  return park.items.length > 0 && park.items.every((i) => i.kind === "pr" && live.idlePrs?.has(liveKey(i)) === true)
 }
 
 /** Does the park wait on the HUMAN — steps to perform, or questions to answer? Either needs no item and
@@ -278,6 +304,28 @@ export function readGithubStatusBook(raw: unknown): GithubStatusBook {
  *  the card, the queue rule and the poller all name one PR one way. */
 export function githubStatusKey(ref: PrRef): string {
   return `${ref.owner}/${ref.repo}#${ref.number}`
+}
+
+/** A WATCHED PR THAT NOTHING WILL MOVE UNLESS THIS SIDE ACTS: open, CI settled (no job running, none held
+ *  for a maintainer's approval), not in a merge queue or on auto-merge, opened by the signed-in account, and
+ *  its next act ours. Red CI or a conflict needs our push; a green, mergeable PR with no review still
+ *  requested, which that account may merge, needs our merge. Every field the call rests on must be KNOWN:
+ *  an absent one (the `gh` fallback, a reading from before 2026-10-27) is never read as "nobody".
+ *
+ *  A PR waiting on someone else's review or merge stays a real wait, however long it takes. What this
+ *  catches is the five "ready, unmerged" PRs that sat 180-day parks in Snoozed with green CI and only the
+ *  maintainer's merge left (one project, 2026-10-25), and the two whose red CI their workers had
+ *  decided not to fix. A park on nothing else is not honoured (parkWaitsOnThisSide). */
+export function prWaitsOnNoOne(status: GithubWatchStatus | undefined): boolean {
+  if (!status || status.state !== "open" || status.mergePath !== "none" || status.viewerAuthored !== true) return false
+  if (status.checks === "running" || status.running > 0 || status.gated > 0) return false
+  if (status.checks === "failing" || status.merge === "conflicting") return true
+  return status.merge === "mergeable" && status.viewerCanMerge === true && status.reviewRequested === false
+}
+
+/** The book's PRs that wait on no one (prWaitsOnNoOne), as `LiveActivity.idlePrs`. */
+export function idlePrsOf(book: GithubStatusBook): ReadonlySet<string> {
+  return new Set(Object.keys(book).filter((key) => prWaitsOnNoOne(book[key])))
 }
 
 // ---- THE WATCHED-ISSUE STATUS BOOK ----------------------------------------------------------------
