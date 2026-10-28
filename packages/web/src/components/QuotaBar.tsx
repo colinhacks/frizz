@@ -8,7 +8,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { CLAUDE_MODELS } from "../lib/options.ts"
 import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
-import { GAUGE, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent } from "../lib/quotaGauge.ts"
+import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent } from "../lib/quotaGauge.ts"
 
 // THE FUEL GAUGE — the quota readout in the StatusRow above the prompt box: ONE gauge for the model the
 // prompt box has selected, its needle and lit arc standing at the quota that model has left. Pointing
@@ -17,8 +17,8 @@ import { GAUGE, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, rem
 // It was two chips until 2026-10-26, a provider mark and a 9px percentage for each of Claude and Codex
 // side by side, whichever model you were about to use (maintainer: "the usage should look like a fuel
 // gauge and it should actually change to reflect the remaining usage. it should show usage for the model
-// that's currently selected in the prompt box"). Which window it reads, and why that is the tightest one
-// binding the model rather than always the 5h one, is lib/quotaGauge.ts gaugeWindow.
+// that's currently selected in the prompt box"). Which window it reads — the 5h one, until a longer cap
+// binding the model runs low — and why, is lib/quotaGauge.ts gaugeWindow.
 //
 // The gauge renders ONLY when it has a reading to show (see hasReading): the first fetch, a signed-out
 // account, an unreachable usage endpoint and an ACP agent — which reports no quota at all — draw nothing.
@@ -370,10 +370,6 @@ export function QuotaMeters() {
 function clampPct(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n)))
 }
-
-// The remaining % at/below which a window is no longer "a good amount of quota" — it enters the warn
-// zone, where the tone drops the calm neutral for the amber alarm.
-const HEALTHY_MIN = 25
 
 // Severity by REMAINING: healthy (neutral light gray — no alarm), low (amber), critical (red). Color is
 // spent only on states that want attention; a healthy quota is just information, so it reads as a calm

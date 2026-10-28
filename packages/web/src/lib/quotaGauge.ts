@@ -18,20 +18,31 @@ export function modelFamily(backend: string, model: string | undefined): string 
   return /^[a-z]+/.exec(model.toLowerCase())?.[0]
 }
 
+// The remaining % at/below which a window is no longer "a good amount of quota": it enters the warn zone,
+// where the gauge's tone drops the calm neutral for the amber alarm — and where a longer cap than the 5h
+// window starts to earn the gauge (gaugeWindow).
+export const HEALTHY_MIN = 25
+
 /**
- * The window the gauge reads: the one with the LEAST left among those that bind the selected model.
+ * The window the gauge reads: the 5h window, unless a longer cap binding the selected model is in the
+ * warn zone (HEALTHY_MIN or less left) with less left than the 5h window — then the tightest such cap.
  *
  * A window binds the model unless it is a weekly cap scoped to a DIFFERENT model: the 5h session and the
  * general weekly bind every model, an unfamiliar future cap might bind any of them, and `weekly-opus`
- * binds Opus alone. A gauge is the answer to "how far can this model go before it stalls", which is the
- * tightest of those — and choosing Sonnet over Opus changes the answer exactly when Opus's own weekly cap
+ * binds Opus alone. So choosing Sonnet over Opus changes the reading exactly when Opus's own weekly cap
  * is the one running out (maintainer 2026-10-26: "it should show usage for the model that's currently
  * selected in the prompt box").
  *
- * The chip this replaced always read the 5h window, by choice: a NUMBER that quietly switched windows
- * meant you had to open the popover to learn what it described. The gauge names its window in its
- * tooltip and its accessible name, so it can follow the binding one. Equal readings keep the earlier
- * window, and the server lists the 5h window first.
+ * It read the tightest PERCENTAGE among those windows until 2026-10-28, and that put the weekly on the
+ * gauge for most of the week (maintainer: "The fuel gauge icon often is just showing me my weekly limit
+ * when 5 hours would be far more relevant"). Percentages are not comparable across windows: 40% of a
+ * week's allowance is several 5h windows' worth, so a weekly with less left than the 5h window is usually
+ * still not the wall the next turn meets. A longer cap takes the gauge only once it is low enough to be
+ * a warning, and since that is the threshold the gauge turns amber at, the colour announces the switch.
+ * The breakdown behind the gauge lists every window either way, the one it reads in full fg.
+ *
+ * With no 5h window to default to (a provider that reports only longer caps), the tightest binding cap
+ * is the reading. Equal readings keep the earlier window.
  */
 export function gaugeWindow(windows: readonly QuotaWindow[], family: string | undefined): QuotaWindow | undefined {
   const scopedElsewhere = (key: string) =>
@@ -39,7 +50,9 @@ export function gaugeWindow(windows: readonly QuotaWindow[], family: string | un
   const binding = windows.filter((w) => !scopedElsewhere(w.key))
   const pool = binding.length > 0 ? binding : windows
   if (pool.length === 0) return undefined
-  return pool.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a))
+  const tightest = pool.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a))
+  const session = pool.find((w) => w.key === "5h")
+  return session && remainingPercent(tightest) > HEALTHY_MIN ? session : tightest
 }
 
 /** Percent REMAINING in a window, clamped to a whole 0–100. */
