@@ -466,6 +466,51 @@ test("every distinct failure speaks: a re-run on the same commit, and a second j
   } finally { h.close() }
 })
 
+// RED IS REPORTED EARLY, SO RED MUST ALSO SAY WHEN IT STOPPED MOVING. `failing` wins over `running`, so
+// the first red job speaks while the rest of CI is still going — and the stamp then holds that reading.
+// When the last running job finished, the stamp did not move and nothing was said: on 2026-10-29 a PR was
+// reported red at 05:22Z with a build job still running, that job went green at 05:40:46Z, and the thread
+// parked on "every check has settled" sat silent until a human looked 54 minutes later. One report for the
+// settle, never one per job finishing.
+test("a red reading says once when its last running check finishes, and not for each job before that", async () => {
+  const h = await prHarness()
+  try {
+    const red = { status: "COMPLETED", conclusion: "FAILURE", name: "test:shard18", detailsUrl: "https://gh/runs/1/job/1" }
+    h.setChecks([
+      red,
+      { status: "IN_PROGRESS", name: "build", detailsUrl: "https://gh/runs/1/job/2" },
+      { status: "IN_PROGRESS", name: "e2e", detailsUrl: "https://gh/runs/1/job/3" },
+    ])
+    await h.tick()
+    assert.equal(h.delivered.length, 1, "the first red job is reported at once")
+    assert.match(h.delivered[0], /CI FAILED/)
+    assert.match(h.delivered[0], /2 checks still running/, "…and says CI has not finished")
+    h.delivered.length = 0
+
+    h.setChecks([
+      red,
+      { status: "IN_PROGRESS", name: "build", detailsUrl: "https://gh/runs/1/job/2" },
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "e2e", detailsUrl: "https://gh/runs/1/job/3" },
+    ])
+    await h.tick()
+    assert.deepEqual(h.delivered, [], "one job going green while another still runs is not news")
+
+    h.setChecks([
+      red,
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "build", detailsUrl: "https://gh/runs/1/job/2" },
+      { status: "COMPLETED", conclusion: "SUCCESS", name: "e2e", detailsUrl: "https://gh/runs/1/job/3" },
+    ])
+    await h.tick()
+    assert.equal(h.delivered.length, 1, "the last running check finishing is the news a parked worker waits on")
+    assert.match(h.delivered[0], /CI FAILED on [^\n]*test:shard18/)
+    assert.match(h.delivered[0], /Every check has finished/)
+    h.delivered.length = 0
+
+    await h.tick()
+    assert.deepEqual(h.delivered, [], "a settled red reading stays quiet")
+  } finally { h.close() }
+})
+
 test("a SECOND CI failure on a new commit is reported, and a re-poll of the same commit is not", async () => {
   const h = await prHarness()
   try {

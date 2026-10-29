@@ -1740,6 +1740,10 @@ export function prWatchWakeMessage(input: {
     /** `gated` only: how many workflows GitHub is holding for an approval, and which. */
     gated?: number
     gating?: string[]
+    /** `failing` only: how many checks were still running. A red verdict is reported at the first red
+     *  job, so without this the worker cannot tell "CI is done and red" from "red so far". Absent on a
+     *  report held across the 2026-10-29 upgrade, which then says neither. */
+    running?: number
   }
   /** What changed about the PR itself — a conflict appearing, a label moving, a reviewer being asked.
    *  ONE LINE for all of them, joined with semicolons, because each is a clause and not a headline: a
@@ -1809,6 +1813,14 @@ export function prWatchWakeMessage(input: {
   if (input.review) {
     if (lines.length) lines.push("")
     lines.push(input.review)
+  }
+  // BELOW EVERY PART, never between the CI line and a steer: `PR_WATCH_CI_FAILED` reads the CI line whole,
+  // and `parseGithubWakeSteer` decides on the first line left once the status lines come off.
+  const running = input.checks?.verdict === "failing" ? input.checks.running : undefined
+  if (running !== undefined) {
+    lines.push("", running > 0
+      ? `${running} check${running === 1 ? "" : "s"} still running; this watcher reports again once they have all finished.`
+      : "Every check has finished.")
   }
   lines.push("", PR_WATCH_ARMED_TRAILER)
   return lines.join("\n")

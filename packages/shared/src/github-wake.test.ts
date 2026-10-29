@@ -335,6 +335,20 @@ test("a wake carrying CI and review activity yields both parts", () => {
   }, "a machine-facing tail must not cost the divider")
 })
 
+test("a red wake's running count costs neither the CI part nor the steer beside it", () => {
+  for (const running of [2, 0]) {
+    const text = prWatchWakeMessage({
+      target: "nubjs/nub#587",
+      checks: { verdict: "failing", passed: 1, failed: 1, failing: ["build"], running },
+      review: formatGithubWakeSteer(single),
+    })
+    assert.match(text, running ? /2 checks still running/ : /Every check has finished\./)
+    assert.deepEqual(parsePrWatchWake(text), { ref: "nubjs/nub#587", kind: "ci", verdict: "failing", failing: ["build"] })
+    const rest = text.split("\n").filter((line) => !parsePrWatchWake(line)).join("\n")
+    assert.deepEqual(parseGithubWakeSteer(rest), single, "the steer still leads what is left once the CI line comes off")
+  }
+})
+
 // The trailer, the review steer and ordinary agent prose are all NOT status lines. A false positive here
 // puts a divider on a message that never said a PR finished, which is worse than the card it replaces.
 test("text with no pr-watch status line parses as none", () => {

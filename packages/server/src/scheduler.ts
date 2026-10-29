@@ -3324,6 +3324,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   interface PrWatchCursor {
     seen: string[]
     checks?: string
+    /** Whether checks were still running under the `checks` stamp. Absent means "not known" (a cursor
+     *  written before 2026-10-29), which records a baseline and says nothing, like `labels`. */
+    running?: boolean
     report?: number
     held?: PrWatchHeld
     merge?: string
@@ -3366,6 +3369,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         skipped: Number(c.skipped) || 0,
         gated: Number(c.gated) || 0,
         gating: Array.isArray(c.gating) ? c.gating.filter((x: unknown): x is string => typeof x === "string") : [],
+        ...(typeof c.running === "number" ? { running: c.running } : {}),
       }
       : undefined
     const changes = Array.isArray(h.changes) ? h.changes.filter((x: unknown): x is string => typeof x === "string") : undefined
@@ -3430,6 +3434,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       return {
         seen,
         checks: typeof parsed.checks === "string" ? parsed.checks : undefined,
+        ...(typeof parsed.running === "boolean" ? { running: parsed.running } : {}),
         report: Number(parsed.report) || 0,
         ...(held ? { held } : {}),
         ...(typeof parsed.merge === "string" ? { merge: parsed.merge } : {}),
@@ -3729,6 +3734,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // head; only the comparison relaxes, so a cursor written before this reads exactly the same way.
       const checksChanged = stamp !== undefined && cursor.checks !== stamp
         && !(terminal === "gated" && stampVerdict(cursor.checks) === "gated")
+      // RED STOPPING, which the stamp cannot say (2026-10-29). `failing` wins over `running`, so red is
+      // reported at the first red job and the stamp then holds still while the rest of CI finishes. A worker
+      // parked on "every check has settled" waits for exactly that, and one such thread sat 54 minutes
+      // after its last job went green. Once per stretch of running, never once per job.
+      const ciSettled = terminal === "failing" && cursor.checks === stamp && cursor.running === true && st!.running === 0
       // NEW review activity, against everything already reported. On the FIRST poll there is nothing
       // reported yet, so the baseline is the REGISTRATION INSTANT: a worker registers when it opens or
       // pushes a PR, so anything already there is its own news and telling it would spend a turn — while
@@ -3803,6 +3813,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         // The STAMP, so the next poll compares against the commit as well as the colour. A verdict taken
         // back was never read, so it stops counting as said: a force-push back to that commit reports it.
         checks: stamp ?? (outrun ? undefined : cursor.checks),
+        // Whether checks were still running under that stamp, which travels with it.
+        ...(stamp !== undefined ? { running: st!.running > 0 } : !outrun && cursor.running !== undefined ? { running: cursor.running } : {}),
         report: cursor.report ?? 0,
         // Each of these advances only when this poll actually READ it. A `gh`-fallback poll knows the
         // merge verdict but not the labels, and overwriting a known baseline with "not known" would make
@@ -3815,7 +3827,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           ? { exits: [...new Set([...(prMeta?.mergeExits ?? []).map((e) => e.id), ...(cursor.exits ?? [])])].slice(0, 20) }
           : {}),
       }
-      const news = checksChanged || fresh.length > 0 || changes.length > 0
+      const news = checksChanged || ciSettled || fresh.length > 0 || changes.length > 0
       // What the report waiting now still has to say, once a verdict the PR has moved past is off it.
       const held: PrWatchHeld | undefined = (() => {
         if (!waiting || !cursor.held) return undefined
@@ -3852,7 +3864,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const carried: PrWatchHeld = {
         items: items.slice(-REVIEW_STEER_CAP),
         omitted: (held?.omitted ?? 0) + (fresh.length - named.length) + Math.max(0, items.length - REVIEW_STEER_CAP),
-        ...(checksChanged && terminal
+        ...((checksChanged || ciSettled) && terminal
           ? {
             checks: {
               verdict: terminal,
@@ -3863,6 +3875,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
               gated: st!.gated,
               gating: st!.gating,
               ...(st!.head ? { head: st!.head } : {}),
+              ...(terminal === "failing" ? { running: st!.running } : {}),
             },
           }
           : held?.checks ? { checks: held.checks } : {}),
@@ -3891,7 +3904,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ...(carried.changes?.length ? { changes: carried.changes } : {}),
         ...(carried.offMergePath ? { offMergePath: carried.offMergePath } : {}),
         ...(review ? { review } : {}),
-      }), `pr-watch ${key}${carried.checks ? ` CI ${carried.checks.verdict}` : ""}${carried.offMergePath ? " left merge path" : carried.changes?.length ? " state" : ""}${review ? " review" : ""}`, nowMs)
+      }), `pr-watch ${key}${carried.checks ? ` CI ${carried.checks.verdict}${ciSettled ? " settled" : ""}` : ""}${carried.offMergePath ? " left merge path" : carried.changes?.length ? " state" : ""}${review ? " review" : ""}`, nowMs)
       deps.storage.setPrWatchCursor(w.id, JSON.stringify({ ...nextCursor, report, held: carried }))
     }
   }
