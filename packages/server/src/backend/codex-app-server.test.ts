@@ -600,9 +600,9 @@ test("bridge is the sole codex transport (always enabled) and negotiates exact i
   // be retyped by hand, so a bump that moves the version and forgets the source tag or the commit
   // fails here instead of shipping a revision that names a build nobody audited.
   assert.deepEqual(CODEX_APP_SERVER_PROTOCOL_REVISION, {
-    packageVersion: "0.165.0",
-    sourceTag: "rust-v0.165.0",
-    sourceCommit: "360319d8dee62d87e2d59fc0c21805d79519cfed",
+    packageVersion: "0.166.0",
+    sourceTag: "rust-v0.166.0",
+    sourceCommit: "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
   })
   assert.notEqual(h.calls[0]!.env, process.env, "the child receives a point-in-time environment snapshot")
   // Looked up the way the OS does, because the snapshot is a PLAIN object: `process.env` is a
@@ -903,6 +903,49 @@ test("approval mapping rejects unseen authority instead of truncating commands, 
     reason: "Apply all changes",
     grantRoot: null,
   })
+  h.close()
+})
+
+// Codex 0.166.0 (#57172) flattens `startedAtMs` / `completedAtMs` onto every ThreadItem and always
+// serializes both, so this is the shape a fileChange item now arrives in. Frizz's strict item schema
+// refused it, remembered nothing, and answered every file approval with a protocol error. The last
+// request proves the schema is still strict about a key nobody audited.
+test("a fileChange item carrying 0.166.0's lifecycle stamps still correlates its file approval", async () => {
+  const h = harness()
+  const binding = await h.bridge.startDisposableSession({ threadSlug: "stamped-file", sessionId: "stamped-file-session", cwd: h.dir })
+  const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "Write a file" })
+  const process = h.processes[0]!
+  const scope = { projectId: "project-1", threadSlug: binding.threadSlug, sessionId: binding.sessionId }
+  const started = Date.now()
+  const item = (id: string, extra: Record<string, unknown>) => ({
+    type: "fileChange",
+    id,
+    status: "inProgress",
+    changes: [{ path: join(h.dir, `${id}.txt`), kind: { type: "add" }, diff: "+stamped\n" }],
+    ...extra,
+  })
+  const approval = (id: string, itemId: string) => process.request(id, "item/fileChange/requestApproval", {
+    threadId: binding.codexThreadId,
+    turnId,
+    itemId,
+    startedAtMs: Date.now(),
+    reason: "Write the stamped file",
+    grantRoot: h.dir,
+  })
+
+  process.notify("item/started", { threadId: binding.codexThreadId, turnId, startedAtMs: started, item: item("stamped", { startedAtMs: started, completedAtMs: null }) })
+  approval("stamped-approval", "stamped")
+  await waitFor(() => h.interactions.listPending(scope).length === 1, "file approval card for a stamped item")
+  assert.equal(h.interactions.listPending(scope)[0]!.payload.kind, "file-approval")
+  assert.equal(process.clientResponses.some((message) => message.id === "stamped-approval" && "error" in message), false)
+
+  process.notify("item/completed", { threadId: binding.codexThreadId, turnId, completedAtMs: started + 1, item: { ...item("stamped", { startedAtMs: started, completedAtMs: started + 1 }), status: "completed" } })
+  await waitFor(() => h.interactions.listPending(scope).length === 0, "a stamped completion retires the card")
+
+  process.notify("item/started", { threadId: binding.codexThreadId, turnId, startedAtMs: started, item: item("unaudited", { startedAtMs: started, completedAtMs: null, unauditedKey: true }) })
+  approval("unaudited-approval", "unaudited")
+  await waitFor(() => process.clientResponses.some((message) => message.id === "unaudited-approval" && "error" in message), "an unaudited item key still fails closed")
+  assert.equal(h.interactions.listPending(scope).length, 0)
   h.close()
 })
 

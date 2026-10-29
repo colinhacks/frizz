@@ -78,7 +78,7 @@ export function selectCodexHostKind(
   if (flagValue === "1" || flagValue === "true") return nativeSupported ? "native" : "daemon"
   return nativeSupported ? "native" : "daemon"
 }
-export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.165.0"
+export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.166.0"
 // Upgrade policy: the AUDITED version is an exact coordinate — changing it requires a fresh
 // generated-protocol audit plus a source audit at the matching immutable Rust tag/commit, then a new
 // fingerprint and contract fixtures. These coordinates are intentionally runtime-visible diagnostics,
@@ -87,8 +87,8 @@ export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.165.0"
 // The ACCEPTANCE RULE is deliberately not that exact coordinate — see codexVersionVerdict below.
 export const CODEX_APP_SERVER_PROTOCOL_REVISION = Object.freeze({
   packageVersion: CODEX_APP_SERVER_SUPPORTED_VERSION,
-  sourceTag: "rust-v0.165.0",
-  sourceCommit: "360319d8dee62d87e2d59fc0c21805d79519cfed",
+  sourceTag: "rust-v0.166.0",
+  sourceCommit: "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
 })
 /** Numeric semver compare; a version that will not parse sorts BELOW everything (fails closed). */
 export function compareCodexVersions(a: string, b: string): number {
@@ -400,11 +400,18 @@ const FileUpdateChange = z.object({
   kind: PatchChangeKind,
   diff: z.string().max(MAX_JSONL_BYTES),
 }).strict()
+// Strict on purpose: this item is the snapshot a file approval is bound to, so a key nobody audited
+// fails closed. The two lifecycle stamps are audited ones. Codex 0.166.0 (#57172) flattens them onto
+// EVERY ThreadItem on the wire and always serializes them, as a number or null, so without them here
+// each fileChange item was refused, no item was ever remembered, and every file approval came back
+// "no active correlated file-change item". Frizz reads neither; the envelope's own stamp is the one used.
 const FileChangeItem = z.object({
   type: z.literal("fileChange"),
   id: Opaque,
   changes: z.array(FileUpdateChange).max(128),
   status: z.enum(["inProgress", "completed", "failed", "declined"]),
+  startedAtMs: SafeTimestampMs.nullish(),
+  completedAtMs: SafeTimestampMs.nullish(),
 }).strict()
 // A model-run shell command, as the app-server reports it on the item stream. Deliberately NOT
 // `.strict()`: this is a large, evolving item type and frizz reads three fields off it — adding

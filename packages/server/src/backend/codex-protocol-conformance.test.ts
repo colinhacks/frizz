@@ -169,8 +169,8 @@ function featureStates(overrides: string[] = []): Map<string, string> {
 // Frizz reads a Codex thread's history from its plain `rollout-*.jsonl` (codex.ts, transcript.ts,
 // codex-quota.ts) and has no zstd reader. Codex can compress a rollout untouched for 7 days into
 // `.jsonl.zst` behind `local_thread_store_compression`, which is under development and off by default
-// through 0.165.0 (codex-rs/rollout/src/compression.rs at the pinned commit, read 2026-10-23; unchanged
-// since #55545 of 2026-10-20, re-checked 2026-10-27). A release that turns it on would empty the
+// through 0.166.0 (codex-rs/rollout/src/compression.rs at the pinned commit, read 2026-10-23; unchanged
+// since #55545 of 2026-10-20, re-checked 2026-10-27 and 2026-10-29). A release that turns it on would empty the
 // transcript of every Codex thread older than a week, with no error, so the bump has to stop here first.
 // The forced-on read proves the parse can see `true` at all, so a reworded listing cannot pass by
 // matching nothing.
