@@ -231,12 +231,15 @@
   /* The five `> [!TYPE]` callout inks (styles.css § Callouts). Not the status tokens: amber-400 and
      red-400 lie outside sRGB and are the brightest of the set, so a P3 screen painted the warning more
      vivid than any hex (maintainer 2026-10-19: "Why does this look so saturated?"). One OKLCH lightness
-     and chroma for all five — L 0.76 / C 0.115 here, L 0.50 / C 0.105 in light — on the status hues,
-     every value inside sRGB. Light's is a step darker than the dark set's mirror so each title holds
-     4.7:1 on its own tinted header. */
+     for all five — L 0.76 here, L 0.50 in light — at C 0.115 / 0.105 on the status hues, every value
+     inside sRGB. Light's is a step darker than the dark set's mirror so each title holds 4.7:1 on its
+     own tinted header. IMPORTANT is the exception: at the violet status hue (303) it clashed with the
+     app's blue-grey neutrals, which all sit at hue 260-268 (maintainer 2026-10-29: "This color just
+     doesn't look good with the rest of the blues here"), so it is a blue-violet, H 288 at C 0.085
+     (0.078 in light) — inside the neutrals' family, and still well clear of NOTE's sky blue at 254. */
   --frizz-callout-note: #7db5f9;
   --frizz-callout-tip: #72c78f;
-  --frizz-callout-important: #c09fed;
+  --frizz-callout-important: #aea9e5;
   --frizz-callout-warning: #d7a955;
   --frizz-callout-caution: #f1938d;
   --frizz-success: var(--color-green-400);
@@ -409,7 +412,7 @@
   --frizz-attention-fill: #9a6700;
   --frizz-callout-note: #35659d;
   --frizz-callout-tip: #277447;
-  --frizz-callout-important: #705394;
+  --frizz-callout-important: #615c8d;
   --frizz-callout-warning: #825b00;
   --frizz-callout-caution: #964845;
   --frizz-success: #1a7f37;
@@ -581,7 +584,7 @@
     --frizz-attention-fill: #9a6700;
     --frizz-callout-note: #35659d;
     --frizz-callout-tip: #277447;
-    --frizz-callout-important: #705394;
+    --frizz-callout-important: #615c8d;
     --frizz-callout-warning: #825b00;
     --frizz-callout-caution: #964845;
     --frizz-success: #1a7f37;
