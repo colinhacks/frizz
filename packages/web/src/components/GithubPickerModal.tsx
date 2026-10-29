@@ -404,7 +404,7 @@ function PagerButton({
       disabled={disabled}
       onClick={onClick}
       onMouseDown={(e) => e.preventDefault()}
-      className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md border border-border/70 text-muted-70 outline-none transition-colors hover:border-border hover:bg-elevated hover:text-fg disabled:pointer-events-none disabled:opacity-30"
+      className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md border border-border/70 text-muted-70 outline-none transition-colors hover:bg-elevated hover:text-fg disabled:pointer-events-none disabled:opacity-30"
     >
       {children}
     </button>

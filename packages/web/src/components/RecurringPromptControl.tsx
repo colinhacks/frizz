@@ -175,7 +175,7 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
           onBlur={closePreview}
           // The paperclip's own square, hover fill and tone beside it (Composer), so the rail reads as
           // one family; ThreadComposerBox places it through the composer's `railLead` slot.
-          className="group/goal icon-hover-outline flex h-7 w-7 items-center justify-center rounded-lg outline-none transition-[color,background-color] hover:bg-panel-2/70"
+          className="group/goal icon-focus-outline flex h-7 w-7 items-center justify-center rounded-lg outline-none transition-[color,background-color] hover:bg-hover-strong"
         >
           {/* A TARGET WITH AN ARROW IN IT (see GoalMark for the geometry and why it is drawn rather
               than imported), and the ONLY surface that says this exists (the rail deliberately carries

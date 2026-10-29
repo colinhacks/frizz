@@ -4258,7 +4258,7 @@ export function ProviderFaultCard({
             // The secondary sibling departs from the primary on FILL only — it stays outlined so the
             // pair keeps a hierarchy — never on the corner, which is a property of sitting in a card's
             // action row rather than of being the card's verb.
-            className={`shrink-0 ${CARD_ACTION_RADIUS} border border-border px-2 py-1 text-[11px] text-fg/90 transition-colors hover:bg-panel hover:border-border-strong disabled:opacity-60`}
+            className={`shrink-0 ${CARD_ACTION_RADIUS} border border-border px-2 py-1 text-[11px] text-fg/90 transition-colors hover:bg-panel disabled:opacity-60`}
           >
             Retry
           </button>

@@ -137,7 +137,7 @@ export function StepsComplete({ slug, steps, onReplied, onReplyFailed }: {
           if (!sendScope?.composer.run()) sendAlone()
         }}
         className={`${BOX_ROW} outline-none transition-colors ${
-          checked ? "border-selection-border bg-selection text-fg" : "border-border text-fg/90 hover:border-border-strong hover:bg-elevated"
+          checked ? "border-selection-border bg-selection text-fg" : "border-border text-fg/90 hover:bg-elevated"
         }`}
       >
         <button

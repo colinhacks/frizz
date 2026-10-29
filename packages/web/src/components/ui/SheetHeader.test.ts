@@ -35,10 +35,10 @@ test("SheetHeader leads with the close button and ends with the actions", () => 
 
 // A programmatically focused button matches :focus-visible, so a close button that took the sheet's
 // initial focus drew a ring every time a drawer opened from the keyboard. The sheet takes it instead.
-test("the close button never claims the sheet's initial focus and draws no hover edge", () => {
+test("the close button never claims the sheet's initial focus and draws no edge of its own", () => {
   const html = renderToStaticMarkup(createElement(SheetHeader, { title: "Settings", onClose: () => undefined }))
   assert.doesNotMatch(html, /data-dialog-initial-focus/)
-  assert.doesNotMatch(html, /icon-hover-outline/)
+  assert.doesNotMatch(html, /icon-focus-outline/)
 })
 
 test("SheetHeader renders subtitle, icon, meta, and actions when provided", () => {

@@ -77,7 +77,7 @@ export function SignInModal({
               type="button"
               aria-label="Copy command"
               onClick={copyCommand}
-              className="icon-hover-outline flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-panel hover:text-fg"
+              className="icon-focus-outline flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg"
             >
               {copied ? <Check size={14} strokeWidth={2} className="text-success" /> : <Copy size={14} strokeWidth={1.8} />}
             </button>

@@ -559,7 +559,7 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
           // 16 box px: `-mx-2` collapses the padding AND that inset, so the layout box IS the ink box
           // — which now lands the ×'s ink flush on the card's right content edge (the p-4 inset),
           // where the dropped glyph's ink sat 1.33px shy of it.
-          className="icon-hover-outline card-icon-offset -mx-2 -my-1 flex rounded-md p-1 text-muted-70 outline-none transition-colors hover:bg-elevated hover:text-fg disabled:opacity-40"
+          className="icon-focus-outline card-icon-offset -mx-2 -my-1 flex rounded-md p-1 text-muted-70 outline-none transition-colors hover:bg-hover-strong hover:text-fg disabled:opacity-40"
         >
           <X size={16} />
         </button>

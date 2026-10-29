@@ -67,7 +67,7 @@ export function SheetClose({ onClose }: { onClose: () => void }): ReactElement {
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="-ml-1 shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+        className="-ml-1 shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
       >
         <X size={15} />
       </button>

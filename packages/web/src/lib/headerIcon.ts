@@ -15,7 +15,11 @@ export const HEADER_ICON_SQUARE = "flex h-7 w-7 shrink-0 items-center justify-ce
  *  transfers: this strip is 28px squares at `text-muted` on a flat `gap-0.5`. Sharing the string is
  *  what stops an imported verb reading as a different family from the icons beside it.
  *
+ *  Its hover fill is every icon button's, `bg-hover-strong` (styles.css, icon-focus-outline). It was
+ *  `bg-panel-2` until 2026-10-29, five levels over the card's own `bg-panel`: with the hover edge gone
+ *  that step was the whole of the hover, and it did not read.
+ *
  *  It lives here rather than in HeaderActions.tsx because several of those buttons are imported BY
  *  that file; taking the constant from it would close an import cycle. */
 export const HEADER_ICON_CLASS =
-  `icon-hover-outline ${HEADER_ICON_SQUARE} text-muted transition-colors hover:bg-panel-2 hover:text-fg disabled:hover:bg-transparent disabled:hover:text-muted disabled:opacity-40`
+  `icon-focus-outline ${HEADER_ICON_SQUARE} text-muted transition-colors hover:bg-hover-strong hover:text-fg disabled:hover:bg-transparent disabled:hover:text-muted disabled:opacity-40`

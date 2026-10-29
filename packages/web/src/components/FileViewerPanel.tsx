@@ -193,14 +193,17 @@ export function FileViewerPanel({ slug, path, active }: { slug: string; path: st
           // The active segment's fill must contrast the HEADER it sits on (bg-panel) — an earlier
           // bg-panel fill was invisible there and the state read only from text brightness. A
           // non-markdown file has no rendered form, so it gets no toggle.
-          !markdown ? null : <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border-strong p-0.5 text-[11px] font-medium" role="group" aria-label="File view">
+          // No frame around the pair: the reader draws no borders, only fills (OpenAction), and the lit
+          // segment's fill is what says which view is on. `-mr-0.5` puts "Source" 22px of ink from the
+          // panel's right edge, mirroring the X's 21.75 at the left (measured 2026-10-29); it read 24.
+          !markdown ? null : <div className="-mr-0.5 flex shrink-0 items-center gap-0.5 text-[11px] font-medium" role="group" aria-label="File view">
             {(["rendered", "source"] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => setView(mode)}
                 aria-pressed={view === mode}
-                className={`rounded px-2 py-0.5 transition-colors ${view === mode ? "bg-panel-2 text-fg" : "text-muted hover:text-fg"}`}
+                className={`rounded px-2 py-0.5 transition-colors ${view === mode ? "bg-hover-strong text-fg" : "text-muted hover:text-fg"}`}
               >
                 {mode === "rendered" ? "Rendered" : "Source"}
               </button>

@@ -1079,7 +1079,7 @@ export function Composer({
         // With no rail action the paperclip TAKES the rail-action slot — at its OWN offset, not the
         // rail action’s, because it paints 1px less dead space on that side (lib/iconRhythm.ts).
         style={{ right: rail.right.paperclip }}
-        className={`icon-hover-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-[color,background-color] enabled:hover:bg-panel-2/70 enabled:hover:text-fg disabled:opacity-50`}
+        className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-[color,background-color] enabled:hover:bg-hover-strong enabled:hover:text-fg disabled:opacity-50`}
       >
         {uploading ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <Paperclip size={15} strokeWidth={2} />}
       </button>
@@ -1115,7 +1115,7 @@ export function Composer({
           // Listening swaps the GLYPH for live level bars at full foreground, never a fill: a filled square
           // is ink edge to edge, and at this slot's box gap it would sit ~6px off the paperclip's ink
           // instead of ~14. (A red, pulsing microphone was tried first and rejected, 2026-10-08.)
-          className={`icon-hover-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg transition-[color,background-color] enabled:hover:bg-panel-2/70 disabled:opacity-50 ${
+          className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg transition-[color,background-color] enabled:hover:bg-hover-strong disabled:opacity-50 ${
             dictation.state === "listening" ? "text-fg" : "text-muted enabled:hover:text-fg"
           }`}
         >
@@ -1152,9 +1152,9 @@ export function Composer({
         disabled={!hasContent || busy || uploading}
         title="Send (Enter · ⌘⏎ sends now)"
         aria-label="Send"
-        // Never `transition-all`: it animates box-shadow, which holds the hover edge back (styles.css).
+        // Never `transition-all`: it animates box-shadow, which holds the focus edge back (styles.css).
         style={{ right: rail.right.send }}
-        className={`icon-hover-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg transition-[color,background-color,opacity,scale] ${
+        className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg transition-[color,background-color,opacity,scale] ${
           // Primary actions use neutral contrast; the accent marks focus.
           hasContent && !busy && !uploading
             ? "bg-fg text-bg hover:opacity-90 active:scale-95"

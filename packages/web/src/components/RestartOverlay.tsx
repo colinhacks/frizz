@@ -113,7 +113,7 @@ export function RestartOverlay({
               type="button"
               aria-label="Dismiss"
               onClick={() => setDismissed(true)}
-              className="icon-hover-outline -mr-1 ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong"
+              className="icon-focus-outline -mr-1 ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong"
             >
               <X aria-hidden="true" size={14} strokeWidth={2.25} />
             </button>

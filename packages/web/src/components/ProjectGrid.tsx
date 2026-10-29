@@ -116,7 +116,7 @@ function Card({ project, home }: { project: ProjectCard; home: string | undefine
           type="button"
           aria-label={`Change the icon for ${project.name}`}
           style={{ width: CARD_ICON, height: CARD_ICON }}
-          className="icon-hover-outline absolute left-[13px] top-1/2 flex -translate-y-1/2 items-center justify-center rounded-[30%] bg-black/75 text-on-overlay opacity-0 outline-none transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-focus-ink-60 data-[state=open]:opacity-100"
+          className="icon-focus-outline absolute left-[13px] top-1/2 flex -translate-y-1/2 items-center justify-center rounded-[30%] bg-black/75 text-on-overlay opacity-0 outline-none transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-focus-ink-60 data-[state=open]:opacity-100"
         >
           <ImagePlus size={16} strokeWidth={1.75} />
         </button>
@@ -136,7 +136,7 @@ function Card({ project, home }: { project: ProjectCard; home: string | undefine
         <button
           type="button"
           aria-label={`More actions for ${project.name}`}
-          className="icon-hover-outline absolute right-[8px] top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted opacity-0 outline-none transition-opacity hover:bg-panel-2 hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-focus-ink-60 group-hover/card:opacity-100 data-[state=open]:opacity-100"
+          className="icon-focus-outline absolute right-[8px] top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted opacity-0 outline-none transition-opacity hover:bg-hover-strong hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-focus-ink-60 group-hover/card:opacity-100 data-[state=open]:opacity-100"
         >
           <Ellipsis size={15} />
         </button>

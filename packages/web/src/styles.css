@@ -6,7 +6,15 @@
   @apply inset-ring inset-ring-button-border;
 }
 
-/* Bare icon actions stay quiet at rest in both palettes. Keyboard focus gets the same edge.
+/* Bare icon actions stay quiet at rest in both palettes, and KEYBOARD focus draws an edge.
+   A HOVER DRAWS NO EDGE: it changes the fill and nothing else (maintainer 2026-10-29: "No borders ever,
+   just a background color change"). This was `icon-focus-outline` until then and lit the edge on hover
+   too, but only on a <button>: `:enabled` matches no <a>, so the fullscreen door, a link, lit its fill
+   alone beside a Collapse button that lit fill and edge, one 28px square apart.
+   THE FILL IS `bg-hover-strong` on every one of them: a translucent step (white 6% dark, black 8%
+   light), so it reads the same over the page, a card or a sheet. The opaque fills they wore —
+   `bg-panel-2`, `bg-panel-2/70`, `bg-elevated` — each read differently by surface, and `bg-panel-2`
+   over a card's `bg-panel` is five levels, which with no edge beside it did not read at all.
    NEVER LET A TRANSITION ANIMATE box-shadow ON THESE (`transition`, `transition-all`,
    `transition-shadow`, or a list naming it). The edge is a box-shadow whose colour is
    color-mix(currentColor …), and Chrome cannot interpolate that from the resting `none`: it holds
@@ -14,13 +22,8 @@
    2026-10-03 on the prompt box: the paperclip (colour + background only) showed its edge on the
    first frame, while the GitHub icon and send button showed nothing for 120ms and then snapped —
    the "hitch". theme.test.ts fails on any class string that pairs this utility with one. */
-@utility icon-hover-outline {
-  @media (hover: hover) {
-    &:enabled:hover {
-      @apply button-outline;
-    }
-  }
-  &:enabled:focus-visible {
+@utility icon-focus-outline {
+  &:focus-visible {
     @apply button-outline;
   }
 }

@@ -28,7 +28,7 @@ export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard
 }
 
 const DESKTOP_CHIP =
-  "group inline-flex min-w-0 max-w-[min(14rem,40vw)] cursor-pointer items-center gap-1.5 rounded-md border border-border/50 bg-transparent py-1 pl-[5px] pr-2 text-left text-[12px] leading-4 text-fg/90 outline-none transition-colors hover:border-border hover:bg-panel-2 data-[state=open]:border-border data-[state=open]:bg-panel-2"
+  "group inline-flex min-w-0 max-w-[min(14rem,40vw)] cursor-pointer items-center gap-1.5 rounded-md border border-border/50 bg-transparent py-1 pl-[5px] pr-2 text-left text-[12px] leading-4 text-fg/90 outline-none transition-colors hover:bg-hover-strong data-[state=open]:bg-hover-strong"
 // On the phone's new-thread page the chip rides beside the phone's model chip (MobileModelSheet.tsx
 // PhoneProfileSelector), so it takes that chip's shape: 32px of pill, 44px of target, 13.5px type.
 const PHONE_CHIP =

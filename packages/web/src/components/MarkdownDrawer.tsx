@@ -35,13 +35,19 @@ export const FOOTER_STYLE = { paddingBottom: "max(0.75rem, env(safe-area-inset-b
 // belongs in the editor, and this is the only affordance left that gets it there. It honours the
 // `localFileOpener` setting, exactly as a click on the link used to. Exported because the /full
 // page's split FileViewerPanel is the same reader in a different frame and must not fork this.
+//
+// NO BORDER AND NO RESTING FILL, like the sheet's X at the other corner: a hover fills it with the X's
+// own `bg-panel-2`, and that is the whole of its chrome (maintainer 2026-10-29, of this reader: "it should
+// not have a border ever. No borders ever, just a background color change"). It wore a bordered pill
+// until then, beside an X that never had one. `-mr-2.5` hands its padding back to the footer, so the
+// word's ink ends on the body text's right edge rather than 10px inside it.
 export function OpenAction({ path }: { path: string }) {
   return (
     <button
       type="button"
       onClick={() => void openOutsideFrizz(path)}
       onMouseDown={(e) => e.preventDefault()}
-      className="flex items-center gap-1.5 rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] font-medium text-fg/80 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+      className="-mr-2.5 flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium text-fg/80 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
       title={`Open ${path} outside Frizz`}
       aria-label="Open"
     >

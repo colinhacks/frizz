@@ -30,7 +30,9 @@ const EMPTY = "__frizz_empty_select_value__"
 const toRadix = (v: string) => (v === "" ? EMPTY : v)
 const fromRadix = (v: string) => (v === EMPTY ? "" : v)
 
-// `ghost` (default): borderless until hover — the quiet inline row under the new-thread composer.
+// `ghost` (default): borderless, a hover filling it — the quiet inline row under the new-thread composer.
+// No variant changes its BORDER on hover or open, only its fill (maintainer 2026-10-29: "No borders
+// ever, just a background color change"); `ghost` drew a hairline on hover until then.
 // `bordered`: a full-width control with a resting border+bg, for stacked settings rows. In BOTH
 // variants the border + bg + padding + hover-bg all live on the Trigger itself (one element), so the
 // hover highlight covers the full hit area edge-to-edge — never an inset box painted inside a
@@ -38,15 +40,15 @@ const fromRadix = (v: string) => (v === EMPTY ? "" : v)
 // site; call sites must NOT add their own border/bg wrapper).
 const TRIGGER_VARIANT = {
   ghost:
-    "border-transparent bg-transparent hover:border-border hover:bg-panel-2 data-[state=open]:border-border data-[state=open]:bg-panel-2",
+    "border-transparent bg-transparent hover:bg-hover-strong data-[state=open]:bg-hover-strong",
   bordered:
     "w-full justify-between border-border bg-bg hover:bg-panel-2 data-[state=open]:bg-panel-2",
   // A plain VALUE READOUT that must still read as INTERACTIVE: quiet muted text carrying a resting
   // hairline pill (border-border/50) + a stronger caret, so it registers as a dropdown at a glance
-  // rather than a static label. The pill fills + brightens on hover/open; the caret sits at ~fg/65 so
+  // rather than a static label. The pill fills on hover/open; the caret sits at ~fg/65 so
   // the chevron is legible, not a ghost.
   readout:
-    "text-muted hover:text-fg border-border/50 bg-transparent hover:border-border hover:bg-panel-2 data-[state=open]:border-border data-[state=open]:bg-panel-2 [&_.select-caret]:text-fg/65 [&_.select-caret]:opacity-100",
+    "text-muted hover:text-fg border-border/50 bg-transparent hover:bg-hover-strong data-[state=open]:bg-hover-strong [&_.select-caret]:text-fg/65 [&_.select-caret]:opacity-100",
 } as const
 
 // Disabled readouts must stay visually inert: preserve their resting treatment but deliberately

@@ -134,7 +134,7 @@ function DesktopProfileGridSelector({
   const typography = compact ? PROFILE_GRID_COMPACT_TYPOGRAPHY_CLASS : PROFILE_GRID_TYPOGRAPHY_CLASS
   const triggerInteraction = disabled
     ? "cursor-not-allowed opacity-45"
-    : "cursor-pointer transition-colors hover:border-border hover:bg-panel-2 hover:text-fg"
+    : "cursor-pointer transition-colors hover:bg-hover-strong hover:text-fg"
   const known = profileGridSelectionKnown(groups, value)
   // `known` has already checked the effort against the row, and a row with no effort axis (an ACP
   // agent) is keyed on `effort: ""` — so the key is built whenever the model is known, not only when
@@ -235,7 +235,7 @@ function DesktopProfileGridSelector({
           title={title}
           data-profile-known={known ? "true" : "false"}
           data-profile-pending={pendingLabel ? "true" : undefined}
-          className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] rounded-md border border-border/50 bg-transparent px-2 py-1 text-left text-muted outline-none data-[state=open]:border-border data-[state=open]:bg-panel-2 ${triggerInteraction} ${className} ${typography}`}
+          className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] rounded-md border border-border/50 bg-transparent px-2 py-1 text-left text-muted outline-none data-[state=open]:bg-hover-strong ${triggerInteraction} ${className} ${typography}`}
         >
           {/* Sans cap-band residual is 0.23px without a text nudge; 3px box gap paints 6.69px of ink. */}
           <span className={`profile-grid-value min-w-0 flex-1 truncate text-left ${typography}`}>

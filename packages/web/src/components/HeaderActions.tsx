@@ -126,7 +126,7 @@ function RetryButton({ slug }: { slug: string }) {
         // (styles.css, `[data-header-pill]`) to keep the same ink distance a bare icon gets.
         data-header-pill
         onMouseDown={(e) => e.preventDefault()}
-        className="ml-1 flex items-center gap-1.5 rounded-md border border-accent/45 bg-accent/10 px-2.5 py-1 text-[12px] font-medium text-accent outline-none transition-colors hover:border-accent/70 hover:bg-accent/15 disabled:opacity-50"
+        className="ml-1 flex items-center gap-1.5 rounded-md border border-accent/45 bg-accent/10 px-2.5 py-1 text-[12px] font-medium text-accent outline-none transition-colors hover:bg-accent/15 disabled:opacity-50"
       >
         {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
         Retry

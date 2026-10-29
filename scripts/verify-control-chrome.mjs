@@ -52,25 +52,32 @@ try {
     if (!baseline) {
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/icon-rhythm-fixture.html`, { waitUntil: 'networkidle2' })
       await page.evaluate(async theme => (await import('/src/lib/theme.ts')).setThemePreference(theme), theme)
-      const selectors = ['[data-header-shell] .icon-hover-outline', 'button[title^="Attach"]', '[aria-label="Start threads from issues and PRs"]', '[aria-label="Send"]']
+      const selectors = ['[data-header-shell] .icon-focus-outline', 'button[title^="Attach"]', '[aria-label="Start threads from issues and PRs"]', '[aria-label="Send"]']
       const edge = selector => page.$eval(selector, el => getComputedStyle(el).getPropertyValue('--tw-inset-ring-shadow'))
-      // The PAINTED edge two frames into the hover, not the variable: `--tw-inset-ring-shadow` flips at
+      // The PAINTED edge two frames into the focus, not the variable: `--tw-inset-ring-shadow` flips at
       // once even when a box-shadow transition holds the drawn edge transparent until its last frame —
-      // the GitHub icon and send button hitch this check used to pass (styles.css, icon-hover-outline).
+      // the GitHub icon and send button hitch this check used to pass (styles.css, icon-focus-outline).
       const paintedEdge = selector => page.$eval(selector, el => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(getComputedStyle(el).boxShadow.split(/,(?![^(]*\))/).find(layer => layer.includes('inset')) ?? '')))))
+      const fill = selector => page.$eval(selector, el => getComputedStyle(el).backgroundColor)
       for (const selector of selectors) {
         await page.mouse.move(0, 0)
         await page.evaluate(() => document.activeElement?.blur())
         assert.doesNotMatch(await edge(selector), /inset/, `No resting icon edge: ${selector}`)
+        const restFill = await fill(selector)
+        // A hover changes the fill and draws no edge (maintainer 2026-10-29: "No borders ever, just a
+        // background color change").
         await page.hover(selector)
-        const painted = await paintedEdge(selector)
-        assert.match(painted, /1px inset/, `Hover paints the icon edge at once: ${selector}`)
-        assert.doesNotMatch(painted, /^\s*(rgba\(0, 0, 0, 0\)|transparent)/, `Hover paints the icon edge at once, not transparent: ${selector}`)
-        assert.match(await edge(selector), /inset/, `Hover reveals the icon edge: ${selector}`)
+        assert.doesNotMatch(await edge(selector), /inset/, `Hover draws no icon edge: ${selector}`)
+        // The fill rides the 120ms colour transition, so it is read once that has settled. Send is the
+        // exception: a filled primary button, whose hover dims it rather than filling it.
+        await new Promise(resolve => setTimeout(resolve, 250))
+        if (selector !== '[aria-label="Send"]') assert.notEqual(await fill(selector), restFill, `Hover changes the icon's fill: ${selector}`)
         await page.mouse.move(0, 0)
         await page.keyboard.press('Tab')
         await page.focus(selector)
-        assert.match(await edge(selector), /inset/, `Keyboard focus reveals the icon edge: ${selector}`)
+        const painted = await paintedEdge(selector)
+        assert.match(painted, /1px inset/, `Keyboard focus paints the icon edge at once: ${selector}`)
+        assert.doesNotMatch(painted, /^\s*(rgba\(0, 0, 0, 0\)|transparent)/, `Keyboard focus paints the icon edge at once, not transparent: ${selector}`)
       }
       await page.evaluate(() => document.activeElement?.blur())
       await page.mouse.move(0, 0)

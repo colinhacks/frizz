@@ -6,10 +6,9 @@
 // 12px text strip rather than as chrome parked next to it. The old corner button was 32px, which
 // out-weighed the owner/repo label once the two became neighbours.
 //
-// The hover fill is bg-elevated. It was bg-panel while the row was a corner CHIP with its own
-// bg-panel fill, where the hover was the same colour as the surface behind it and simply stopped
-// reading. The row is loose on the page now (bg-bg), and bg-elevated still reads against that — it is
-// the step this app already uses for a hover on the bare page.
+// The hover fill is bg-hover-strong, every icon button's (styles.css, icon-focus-outline). It was
+// bg-panel while the row was a corner CHIP with its own bg-panel fill, where the hover was the same
+// colour as the surface behind it and simply stopped reading, and then bg-elevated until 2026-10-29.
 //
 // `-mx-1.5` IS THE 24px SQUARE'S DEAD SPACE, and it is what makes the row's one `gap` mean one
 // distance. The square is the HOVER TARGET; the mark is the 14px glyph inside it, which paints 12px
@@ -27,7 +26,7 @@
 //     '[data-status-row] button[aria-label="Settings"],[data-status-row] button[aria-label="Update Frizz"]' \
 //     --dsf=4 --pad=0
 export const STATUS_ROW_ACTION =
-  "-mx-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg/75 outline-none transition-colors hover:bg-elevated hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong disabled:opacity-55"
+  "-mx-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg/75 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong disabled:opacity-55"
 
 /** Icon size for every glyph in the row. Matched to the 24px target so no button reads heavier. */
 export const STATUS_ROW_ICON = 14

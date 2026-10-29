@@ -538,7 +538,7 @@ function Chip({
               ? "border-border text-muted-80"
               // hover lands on `elevated`, one step above the card's own panel-2 fill — hovering to
               // panel-2 was invisible once every card standardized on that fill.
-              : "border-border text-fg/90 hover:bg-elevated hover:border-border-strong"
+              : "border-border text-fg/90 hover:bg-elevated"
       }`}
     >
       <button

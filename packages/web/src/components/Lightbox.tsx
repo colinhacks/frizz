@@ -861,7 +861,7 @@ function ViewerVideo({ image, view, reserve, videoRef }: { image: LightboxImage;
 // ink 21px from the window edge, where a sheet's close stands 21.75px from its own (SheetClose). With
 // Download added (2026-10-21), zoom out to close reads 18 / 18 / 18 / 20px, and Download's mean contrast
 // 280 sits with its neighbours' 299.
-const VIEWER_ICON_ON = "icon-hover-outline text-[#787a7d] transition-colors hover:bg-white/[0.04] hover:text-[#e6e7e9]"
+const VIEWER_ICON_ON = "icon-focus-outline text-[#787a7d] transition-colors hover:bg-white/[0.04] hover:text-[#e6e7e9]"
 // The strip's `disabled:opacity-40`, as a tone (40% of the rest tone's lift off black): an opacity
 // would fade the focus ring with the glyph.
 const VIEWER_ICON_OFF = "cursor-default text-[#303132]"

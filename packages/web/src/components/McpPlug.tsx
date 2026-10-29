@@ -75,7 +75,7 @@ export function McpPlug({ target }: { target: McpTarget }) {
           onClick={() => setOpen((was) => !was)}
           // The paperclip's square, hover fill and tone (Composer), so the rail reads as one family. Held in
           // its hover state while the menu is open, like a pressed toolbar button.
-          className={`icon-hover-outline relative flex h-7 w-7 items-center justify-center rounded-lg outline-none transition-[color,background-color] hover:bg-panel-2/70 hover:text-fg ${open ? "bg-panel-2/70 text-fg" : "text-muted"}`}
+          className={`icon-focus-outline relative flex h-7 w-7 items-center justify-center rounded-lg outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg ${open ? "bg-hover-strong text-fg" : "text-muted"}`}
         >
           {/* 16px, a size up from the paperclip's 15: lucide's plug paints 8 of its 13 box px where the
               paperclip paints 10, so at one size the plug read small and light beside it. */}
