@@ -26,7 +26,7 @@ function render(
     githubRepo?: string | null
     projectName?: string
     backend?: "claude" | "codex" | "acp"
-    pageLabel?: string
+    onConsole?: boolean
   } = {},
 ): string {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -62,7 +62,7 @@ function render(
     createElement(
       QueryClientProvider,
       { client },
-      createElement(MemoryRouter, null, createElement(StatusRow, options.pageLabel === undefined ? null : { label: options.pageLabel })),
+      createElement(MemoryRouter, null, createElement(StatusRow, options.onConsole ? { onConsole: true } : null)),
     ),
   )
 }
@@ -83,9 +83,9 @@ test("a breadcrumb leads; the icons are right-justified with settings in the cor
   // The breadcrumb is a nav with the slash as its separator, and the icons' group is pushed right by
   // `ml-auto` — without it they pack left against the crumb.
   assert.match(html, /<nav aria-label="Breadcrumb" class="flex min-w-0 items-center gap-2\.5">/)
-  // The crumb's hover pill is the house's hover square in shape — 24px tall, rounded-md, bg-elevated —
-  // so the two controls in the breadcrumb light up alike.
-  assert.match(html, /data-project-crumb="[^"]*"[^>]*class="group -ml-1\.5 -mr-\[3px\] inline-flex h-6 [^"]*rounded-md [^"]*hover:bg-elevated/)
+  // The crumb's hover pill is the house's hover square in shape — 24px tall, rounded-md, every icon
+  // button's bg-hover-strong — so the two controls in the breadcrumb light up alike.
+  assert.match(html, /data-project-crumb="[^"]*"[^>]*class="group -ml-1\.5 -mr-\[3px\] inline-flex h-6 [^"]*rounded-md [^"]*hover:bg-hover-strong/)
   assert.match(html, /<span aria-hidden="true" class="shrink-0 select-none text-muted-45">\/<\/span>/)
   assert.match(html, /class="ml-auto flex shrink-0 items-center gap-3"/)
 })
@@ -152,11 +152,17 @@ test("a cold board still reserves the crumb's measure, and says it is loading", 
   assert.match(html, /aria-label="All projects"/)
 })
 
-test("the Console's row names the page, and offers no repo", () => {
-  const html = render("colinhacks/frizz", { pageLabel: "All projects" })
-  assert.match(html, /data-project-identity-state="page"/)
-  assert.match(html, /<span class="min-w-0 truncate">All projects<\/span>/)
-  assert.match(html, /data-project-crumb=""/, "the Console is no project, so nothing in the menu is checked")
+test("the Console's row draws no breadcrumb, only its icons", () => {
+  // "If you're on the console page, you should not see the 'All Projects' thing" (maintainer 2026-10-29):
+  // the prompt box's project chip is the Console's one project menu, and the home switcher's Projects tab
+  // is its way to the grid.
+  const html = render("colinhacks/frizz", { onConsole: true })
+  assert.doesNotMatch(html, /aria-label="Breadcrumb"/)
+  assert.doesNotMatch(html, /All projects/)
+  assert.doesNotMatch(html, /data-project-crumb/)
+  assert.match(html, /data-quota-gauge/)
+  assert.match(html, /aria-label="Settings"/)
+  assert.match(html, /ml-auto/, "the icons keep the right end")
 })
 
 test("the row's gap is 12px of INK: one flex gap, and every icon square trimmed onto its glyph", () => {
@@ -229,7 +235,7 @@ test("the house goes to the grid even while the Console is the kept home", () =>
   // (routes.tsx GridRoute), so the house names the grid's own address, which never forwards.
   setHomeView("console")
   try {
-    const html = render(null, { pageLabel: "Console" })
+    const html = render(null)
     const house = houseOf(html)
     assert.ok(house.includes(`href="${PROJECTS_HREF}"`), house)
     assert.match(house, /title="All projects"/)

@@ -54,35 +54,20 @@ import { PROJECTS_HREF } from "../lib/homeView.ts"
 // this spacing. UIs are conflicting here"). `gap-2.5` leaves 4px between the slash and either surface
 // when lit, and 10px of ink a side at rest: the slash stands centred between the house and the name.
 
+// THE CONSOLE DRAWS NO BREADCRUMB (maintainer 2026-10-29: "if you're on the console page, you should not
+// see the 'All Projects' thing … it's just kind of confusing that that's there, and the dropdown inside of
+// the prompt box is there"). It read `⌂ / All projects ▾` until then: a second project menu one row above
+// the prompt box's own project chip, which is the one that matters there, since it picks where the next
+// thread runs. The house went with it, as the home switcher's Projects tab right above it goes to the
+// same grid. The icons keep the right end.
+
 /**
- * Takes no props beyond the Console's `label`, and reads its live values itself. Its call sites are
+ * Takes no props beyond the Console's flag, and reads its live values itself. Its call sites are
  * leaves of very different trees — the sidebar column and the fresh-project centered box — and the
  * second one (TodosView) subscribes to no store state of its own. valtio's useSnapshot tracks the
  * properties actually READ, so this re-renders on a board change and on nothing else.
  */
-export function StatusRow({ label }: { label?: string } = {}) {
-  const board = useBoard()
-  // A missing board is not evidence that this project is named "frizz". Keep the crumb neutral until a
-  // board keyframe supplies an actual name; reconnects retain their adopted board.
-  const identity = projectIdentity(board)
-  // Host-STRICT: the board carries `githubRepo` only when the origin remote is github.com (see
-  // BoardSnapshot), which is exactly the case where a link to github.com is a right destination. The
-  // display label alone cannot decide this — a GitLab origin yields an owner/repo there too.
-  const githubRepo = label === undefined ? (board?.githubRepo ?? null) : null
-
-  // The Console belongs to no project, so its crumb names the page instead (`label`). A project's crumb
-  // reads the project's own name — owner/repo is the repo, not the project, and lives in the crumb's
-  // menu — falling back to the repo half of the label for a board that predates `projectName`.
-  const name =
-    label ??
-    (identity.state === "verified"
-      ? board?.projectName?.trim() || identity.repo
-      : identity.state === "local"
-        ? identity.name
-        : null)
-  // The launching project is served unprefixed, so its path names no slug; the board carries it.
-  const currentSlug = label === undefined ? (board?.projectSlug ?? projectSlug()) : undefined
-
+export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
   return (
     <div
       data-status-row
@@ -91,36 +76,7 @@ export function StatusRow({ label }: { label?: string } = {}) {
       // block rather than a strip parked above a box.
       className="mb-2.5 flex min-w-0 items-center gap-3 text-[12px]"
     >
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2.5">
-        {/* THE DOOR OUT, and the breadcrumb's root. A 24px target like the icons at the other end, trimmed
-            onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the house's ink then starts on the
-            composer's outer border edge, as the gear's ends on it at the row's other end (both measured
-            2026-10-26, 0px). It carried an extra `-ml-px` until then, which did not ADD to the trim but
-            REPLACED it — `margin-left` outranks `margin-inline` in the stylesheet — and left the house
-            5px inside the border while the owner/repo at the other end ran flush. */}
-        {/* A ROUTER Link, like the rail's identical door at ProjectRail.tsx. It was a raw `<a href="/">`
-            from 2026-08-19 until 2026-09-04, which hard-loaded the document: measured at 116-411ms with a
-            0.15 CLS, and it threw away the app socket and the whole query cache on the way out.
-            It goes to the grid even while the Console is the kept home (lib/homeView.ts): PROJECTS_HREF,
-            not `/`, which would forward straight back to the Console. */}
-        <Link to={PROJECTS_HREF} title="All projects" aria-label="All projects" className={STATUS_ROW_ACTION}>
-          <House size={STATUS_ROW_ICON} aria-hidden="true" />
-        </Link>
-        <span aria-hidden="true" className="shrink-0 select-none text-muted-45">/</span>
-        <span
-          className="flex min-w-0 items-center"
-          data-project-identity-state={label === undefined ? identity.state : "page"}
-          aria-busy={(label === undefined && identity.state === "loading") || undefined}
-        >
-          {name ? (
-            <ProjectCrumb name={name} currentSlug={currentSlug} githubRepo={githubRepo} />
-          ) : (
-            // Only before the first board keyframe, or on a keyframe with nothing nameable in it. A repo
-            // with no git remote is NOT this case — it has a name (its directory) and shows it.
-            <span className="identity-placeholder w-24" aria-hidden="true" />
-          )}
-        </span>
-      </nav>
+      {onConsole ? null : <Breadcrumb />}
       {/* THE ICONS, right-justified: the readout, then the buttons, with settings in the corner. Each is
           shrink-0, so the crumb gives way before any of them does. */}
       <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -139,5 +95,61 @@ export function StatusRow({ label }: { label?: string } = {}) {
         </button>
       </div>
     </div>
+  )
+}
+
+/** The way out and this project, as a dropdown: a project board's alone (above). */
+function Breadcrumb() {
+  const board = useBoard()
+  // A missing board is not evidence that this project is named "frizz". Keep the crumb neutral until a
+  // board keyframe supplies an actual name; reconnects retain their adopted board.
+  const identity = projectIdentity(board)
+  // Host-STRICT: the board carries `githubRepo` only when the origin remote is github.com (see
+  // BoardSnapshot), which is exactly the case where a link to github.com is a right destination. The
+  // display label alone cannot decide this — a GitLab origin yields an owner/repo there too.
+  const githubRepo = board?.githubRepo ?? null
+
+  // The crumb reads the project's own name — owner/repo is the repo, not the project, and lives in the
+  // crumb's menu — falling back to the repo half of the label for a board that predates `projectName`.
+  const name =
+    identity.state === "verified"
+      ? board?.projectName?.trim() || identity.repo
+      : identity.state === "local"
+        ? identity.name
+        : null
+  // The launching project is served unprefixed, so its path names no slug; the board carries it.
+  const currentSlug = board?.projectSlug ?? projectSlug()
+
+  return (
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2.5">
+      {/* THE DOOR OUT, and the breadcrumb's root. A 24px target like the icons at the other end, trimmed
+          onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the house's ink then starts on the
+          composer's outer border edge, as the gear's ends on it at the row's other end (both measured
+          2026-10-26, 0px). It carried an extra `-ml-px` until then, which did not ADD to the trim but
+          REPLACED it — `margin-left` outranks `margin-inline` in the stylesheet — and left the house
+          5px inside the border while the owner/repo at the other end ran flush. */}
+      {/* A ROUTER Link, like the rail's identical door at ProjectRail.tsx. It was a raw `<a href="/">`
+          from 2026-08-19 until 2026-09-04, which hard-loaded the document: measured at 116-411ms with a
+          0.15 CLS, and it threw away the app socket and the whole query cache on the way out.
+          It goes to the grid even while the Console is the kept home (lib/homeView.ts): PROJECTS_HREF,
+          not `/`, which would forward straight back to the Console. */}
+      <Link to={PROJECTS_HREF} title="All projects" aria-label="All projects" className={STATUS_ROW_ACTION}>
+        <House size={STATUS_ROW_ICON} aria-hidden="true" />
+      </Link>
+      <span aria-hidden="true" className="shrink-0 select-none text-muted-45">/</span>
+      <span
+        className="flex min-w-0 items-center"
+        data-project-identity-state={identity.state}
+        aria-busy={identity.state === "loading" || undefined}
+      >
+        {name ? (
+          <ProjectCrumb name={name} currentSlug={currentSlug} githubRepo={githubRepo} />
+        ) : (
+          // Only before the first board keyframe, or on a keyframe with nothing nameable in it. A repo
+          // with no git remote is NOT this case — it has a name (its directory) and shows it.
+          <span className="identity-placeholder w-24" aria-hidden="true" />
+        )}
+      </span>
+    </nav>
   )
 }

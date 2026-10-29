@@ -153,7 +153,7 @@ createRoot(document.getElementById("root")!).render(
         {/* The sidebar column's real width at a 1440px viewport by default, so the row's split reads at the
             measure it actually ships at; `?width=272` is the column's floor. */}
         <div style={{ width }}>
-          <StatusRow {...(identityMode === "console" ? { label: "All projects" } : {})} />
+          <StatusRow onConsole={identityMode === "console"} />
           <div className="rounded-xl border border-border bg-panel px-3 py-6 text-[13px] text-muted">
             A stand-in prompt box. The row's two ends land on THIS border.
           </div>

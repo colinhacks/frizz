@@ -1,9 +1,12 @@
-import type { ReactNode } from "react"
+import type { MouseEvent, ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import type { ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { lastActiveLabelAt } from "../groups.ts"
 import { keyProject } from "../lib/threadKey.ts"
+import { projectHref } from "../lib/base-path.ts"
+import { spaNavigate } from "../lib/router.ts"
+import { isPlainLeftClick } from "../lib/standaloneThreadRoute.ts"
 import { ProjectSquare } from "./ProjectRail.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { ContextMeter, hasContextReading } from "./ContextMeter.tsx"
@@ -65,14 +68,37 @@ export function HeaderFacts({
   )
 }
 
-/** The project a Console thread belongs to: its square and its name, from the machine's project list. */
+/**
+ * The project a Console thread belongs to: its square and its name, from the machine's project list.
+ *
+ * A LINK TO THAT PROJECT'S BOARD (maintainer 2026-10-29: "clicking one of the icons for any card in the
+ * queue should open up that project"). A real anchor, so hovering shows the address and ⌘-click opens a
+ * tab; a plain click is a router navigation through lib/router, which needs no router context, so the
+ * line still renders in a bare test. The name comes with the square as one target: two links to one
+ * place, side by side, would be one hover too many.
+ */
 function ThreadProject({ slug }: { slug: string }) {
   const projects = useQuery({ queryKey: ["projectsList"], queryFn: () => rpc.projectsList() })
   const project = projects.data?.find((p) => p.slug === slug)
+  const name = project?.name ?? slug
+  const href = projectHref(slug)
+  function onClick(event: MouseEvent<HTMLAnchorElement>) {
+    // The link is the whole act: the header it sits in never sees the click.
+    event.stopPropagation()
+    if (!isPlainLeftClick(event)) return
+    event.preventDefault()
+    spaNavigate(href)
+  }
   return (
-    <span data-thread-project={slug} className="flex min-w-0 shrink-0 items-center gap-1.5 font-medium text-fg/80">
+    <a
+      href={href}
+      data-thread-project={slug}
+      title={`Open ${name}`}
+      onClick={onClick}
+      className="flex min-w-0 shrink-0 items-center gap-1.5 rounded-sm font-medium text-fg/80 no-underline outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+    >
       {project ? <ProjectSquare project={project} size={14} /> : null}
-      <span className="truncate">{project?.name ?? slug}</span>
-    </span>
+      <span className="truncate">{name}</span>
+    </a>
   )
 }

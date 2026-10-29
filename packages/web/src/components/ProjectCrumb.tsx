@@ -22,7 +22,8 @@ import { ProjectSquare } from "./ProjectRail.tsx"
 // grid is where one of those is reopened or forgotten, and a switch into it would land on nothing.
 //
 // The menu is the Console project chip's (ConsoleProjectChip.tsx) — the same surface, row and check —
-// so the two project menus on one screen read as one control.
+// so the app's two project menus read as one control. They are never on one screen: the Console draws
+// no breadcrumb (StatusRow.tsx).
 
 /** One menu row: the chip's own row, so the two project menus match. The tone is each row's own. */
 const ROW =
@@ -33,9 +34,9 @@ export function ProjectCrumb({
   currentSlug,
   githubRepo,
 }: {
-  /** What the crumb reads before the project list answers, and on the Console, where it names the page. */
+  /** What the crumb reads before the project list answers. */
   name: string
-  /** The project this page shows, checked in the menu. Absent on the Console, which is no project. */
+  /** The project this page shows, checked in the menu. */
   currentSlug: string | undefined
   /** owner/repo when the origin is github.com: the menu's way out to the repo. */
   githubRepo: string | null
@@ -48,7 +49,7 @@ export function ProjectCrumb({
     <RadixDropdown.Root modal={false}>
       <RadixDropdown.Trigger asChild>
         {/* THE SAME HOVER SURFACE AS THE HOUSE beside it (STATUS_ROW_ACTION): 24px tall, `rounded-md`,
-            `bg-elevated`, so the breadcrumb's two controls light up as one family rather than a square
+            `bg-hover-strong`, so the breadcrumb's two controls light up as one family rather than a square
             and a shorter, lower pill (it was 22px and sat 1px low until the maintainer read it off a
             screenshot, 2026-10-26: "i dont love this spacing. UIs are conflicting here").
             Its padding is 6px of INK a side: `pl-1.5` before the name, and `pr-[3px]` after the chevron,
@@ -64,7 +65,7 @@ export function ProjectCrumb({
           data-project-crumb={currentSlug ?? ""}
           aria-label={`${label}: switch project`}
           title="Switch project"
-          className="group -ml-1.5 -mr-[3px] inline-flex h-6 min-w-0 items-center rounded-md pl-1.5 pr-[3px] font-semibold text-fg/90 outline-none transition-colors hover:bg-elevated hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong data-[state=open]:bg-elevated data-[state=open]:text-fg"
+          className="group -ml-1.5 -mr-[3px] inline-flex h-6 min-w-0 items-center rounded-md pl-1.5 pr-[3px] font-semibold text-fg/90 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong data-[state=open]:bg-hover-strong data-[state=open]:text-fg"
         >
           <span className="flex min-w-0 items-baseline gap-1">
             <span className="min-w-0 truncate">{label}</span>

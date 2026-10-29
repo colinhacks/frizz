@@ -47,8 +47,8 @@ import { StatusRow } from "./StatusRow.tsx"
 // The same column as a project's (Sidebar.tsx): the status row and the prompt box at its top, the rows
 // under them, the scroll marker opposite the card being read. What differs is what it holds, and where
 // it sits:
-//   · the status row names "All projects", and the prompt box carries a PROJECT chip saying where a new
-//     task goes;
+//   · the status row carries its icons alone, with no breadcrumb: the prompt box's PROJECT chip, saying
+//     where a new task goes, is the one project menu here (StatusRow.tsx);
 //   · "By status" adds Snoozed and Done under Queue and Running, collapsed until opened and paged behind
 //     "Show more" (lib/consoleBoard.ts); "By project" stays Queue and Running alone, what needs the
 //     operator now;
@@ -141,7 +141,7 @@ export function ConsoleSidebar() {
     <aside ref={stackedRailAnchor} className={`${CONSOLE_SIDEBAR_COLUMN_CLASS} ${STACKED_RAIL_ANCHOR_CLASS}`} style={{ paddingTop: CONSOLE_TOP_PX }} data-console-sidebar>
       <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col max-[800px]:max-h-none">
         <div className="mb-5 shrink-0 px-0.5">
-          <StatusRow label="All projects" />
+          <StatusRow onConsole />
           <ConsoleDispatch />
         </div>
         {/* The list scrolls BEHIND the prompt box, as a project's does (Sidebar.tsx): its scroll edge is
