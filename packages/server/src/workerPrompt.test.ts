@@ -146,6 +146,31 @@ test("the contract teaches the structured question fence, and none of the gramma
   }
 })
 
+// QUESTIONS SIT BESIDE WHAT THEY DECIDE (2026-10-30). Workers piled their fences at the bottom of the
+// message (measured beside QUESTIONS in workerPrompt.ts), so the contract shows a whole message that
+// interleaves, and that example has to stay one: prose before the first card, prose between every pair,
+// and only what holds either way after the last.
+test("the contract shows a whole message whose questions sit under the paragraphs they decide", () => {
+  for (const backend of ["claude", "codex", "acp"] as const) {
+    const prompt = buildWorkerPrompt(backend)
+    const c = prompt.replace(/\s+/g, " ")
+    assert.match(c, /\*\*EACH FENCE GOES IN YOUR PROSE, DIRECTLY UNDER THE PARAGRAPH IT DECIDES — NEVER STACKED AT THE BOTTOM\.\*\*/, backend)
+    assert.match(c, /not three paragraphs and then three fences, and never a "the questions below"/, backend)
+    // The signal section, which a worker reads first, says the same in its own place.
+    assert.match(c, /A question is not a signal block, and it does not go at the end/, backend)
+    assert.match(c, /so a sign-off is not a last line: each fence sits in the prose, under the paragraph it decides/, backend)
+    const example = prompt.match(/^````markdown\n([\s\S]*?)\n````$/m)?.[1]
+    assert.ok(example, `${backend}: the contract carries the whole-message example`)
+    const asks = questionFenceBlocks(example).filter((b) => b.read.form === "ask")
+    assert.equal(asks.length, 2, backend)
+    assert.notEqual(example.slice(0, asks[0].start).trim(), "", `${backend}: a finding comes before the first card`)
+    assert.notEqual(example.slice(asks[0].end, asks[1].start).trim(), "", `${backend}: the second card has its own paragraph`)
+    assert.notEqual(example.slice(asks[1].end).trim(), "", `${backend}: what holds either way closes the message`)
+    // Its questions are ones a worker could copy, so they read and assemble without a fault.
+    assert.deepEqual(questionFencesIn(example).faults, [], backend)
+  }
+})
+
 // STEPS FOR THE HUMAN (2026-10-03) ride the awaiting fence, and the contract has to route to them at the
 // places a worker decides how to hand over — or "what the human must do" stays a sentence in a handoff
 // that nothing tracks and nothing wakes on.

@@ -84,8 +84,8 @@ course-correct early.
 
 Anything derivable from the code, the task, or ordinary engineering judgment is YOURS to decide —
 deciding it is the job. If a genuinely human-owned question remains (see The stop criterion), ask
-EVERY one of them together — each in its own \`question\` fence, all in one message — so one reply
-unblocks the whole implementation; never dribble questions across turns. Trivial and conversational dispatches skip this entirely.`
+EVERY one of them together — each in its own \`question\` fence under the finding it decides, all in one
+message — so one reply unblocks the whole implementation; never dribble questions across turns. Trivial and conversational dispatches skip this entirely.`
 
 // SAY THE ACT BEFORE THE CALL (2026-10-15). The last paragraph exists because a caption flashes past and
 // its row folds shut, so an act a worker narrates nowhere else reaches the human only if they open that
@@ -258,8 +258,9 @@ on running work with no fence is a bare rest, and it lands in the human's queue.
 **A QUESTION YOU ASK IS THAT REST'S SIGN-OFF — REST NORMALLY.** Frizz does not bump you for a missing
 fence at the rest that asked, so add none: an \`awaiting\` fence after a question is only for work that
 is also still running. When the work that does not depend on the answer runs out, write your handoff
-prose and STOP. The card is drawn where you wrote the fence, until it is answered or withdrawn;
-your write-up carries the reasoning around the ask, never a copy of it (see Questions for the human).
+prose and STOP. The card is drawn where you wrote the fence, until it is answered or withdrawn — so a
+sign-off is not a last line: each fence sits in the prose, under the paragraph it decides, and the
+write-up carries the reasoning around the ask, never a copy of it (see Questions for the human).
 **A QUESTION YOU ASKED STAYS YOUR ASK UNTIL THE HUMAN TYPES TO THIS THREAD.** A wake does not retire
 it: a finished shell, a timer, a watch, a Goal prompt or a correction is not the human replying. Rest
 after one as the work calls for — a quiet park is still the fence alone — and the thread stays in the
@@ -271,10 +272,10 @@ carrying its \`id:\` alone — which draws the card there and puts the question 
 you no longer need, you withdraw with \`frizzctl unask <id>\`.
 
 Use at most ONE fenced signal block — \`done\` or \`awaiting\` — at the very END. A question is not a
-signal block: its fence goes wherever your write-up has earned the ask, above any signal fence and never
-inside one. The fence language is the state; the body is the card the human reads. A question that still
-stands — asked or referenced since the human last typed to this thread — and a real permission prompt
-are higher-priority asks than \`done\` or \`awaiting\`.
+signal block, and it does not go at the end: its fence goes in the prose, right under the paragraph that
+sets it up, above any signal fence and never inside one. The fence language is the state; the body is
+the card the human reads. A question that still stands — asked or referenced since the human last typed
+to this thread — and a real permission prompt are higher-priority asks than \`done\` or \`awaiting\`.
 
 **NAME THE PULL REQUEST, EVERY TIME YOU REST** — its reference in EVERY resting message, not just the
 one where it first appeared: one \`owner/repo#123\` in the first line or two. Several PRs in play ⇒
@@ -863,6 +864,28 @@ The API call is the unit of cost, not the tokens you type: each message re-reads
 //     copied it: cards drew a capitalised label over a description in lowercase, a run-on fragment
 //     beneath a heading. The examples carried the habit, so the examples are the fix; "in sentence case"
 //     in the key's row says it once for a worker that reads the table and not the fences.
+//
+// QUESTIONS SIT BESIDE WHAT THEY DECIDE (2026-10-30). Maintainer: *"Threads rarely seem to interleave their
+// questions into their messages. We need to emphasize this."* Measured on this machine's Claude transcripts
+// from 2026-10-14 to 10-30: of 203 messages asking two or more questions (all but three from Opus 5.5),
+// 141 had no prose between any two of their fences, 93 of them as the message's tail. The usual shape was
+// a sectioned handoff (what landed, the judgment calls, "found along the way"), then "the questions below"
+// and every card in one pile, each far from the section it decides. The contract said where a fence goes
+// only in a clause under "never restate it", called a question the rest's "sign-off" (read as its last
+// line), and showed every question as a lone fence. So placement got its own heading beside ONE QUESTION
+// PER FENCE, the signal section says it in its own place, and the example is a WHOLE message.
+//   - Verified by replaying real contexts: six of those stacked moments (reylo, motherload, pullfrog, 100k
+//     to 130k tokens each), each session forked just before the stacked message and the message regenerated
+//     with `claude -p` under the previous contract and this one, both arms in every batch, six runs per case
+//     and arm over two batches. Previous contract: 20 of 22 replies that asked two or more questions stacked
+//     every fence, and 4 of 53 adjacent pairs had prose between them. This one: 3 of 25 and 42 of 52, and
+//     the final wording's two stacks were each a question beside its own `when:` follow-up.
+//   - A single-turn task with the findings handed over as notes does NOT reproduce it on Opus (1 stacked of
+//     12 under the previous contract); it did on Sonnet (5 of 8, then 0 of 8). Measure placement on a
+//     forked real context.
+//   - "Only questions that hang on the same paragraph sit together": a follow-up beside its parent, or
+//     three credential asks under one setup, belong together, and without the sentence the rule asks for
+//     filler prose between them.
 const QUESTIONS = `## Questions for the human
 
 You run under a dashboard, not a live chat, so a question is a ROW the human still owes an answer to,
@@ -954,12 +977,57 @@ would produce, the message that would be posted — and never a run of
 one-sentence paragraphs. A bare "which approach?" with no options is a broken handoff.
 
 ONE QUESTION PER FENCE. Several independent questions are several fences in one message, never one
-bundled question, and every card of a rest sends its answers together. A FOLLOW-UP is its own fence, in
-the same message as its parent \`choice\` or in a later one while the parent is still unanswered, with
-\`when:\` naming the option it hangs on — the text after \`=\` is that option's \`label:\` EXACTLY as
-written. (Once the parent is answered, a further question is an ordinary fence with no \`when:\`.) A
-follow-up is asked only if its option is picked, so "and if so, which?" never reaches somebody who said
-no (three levels deep at most):
+bundled question, and every card of a rest sends its answers together.
+
+**EACH FENCE GOES IN YOUR PROSE, DIRECTLY UNDER THE PARAGRAPH IT DECIDES — NEVER STACKED AT THE BOTTOM.**
+The card is drawn where its fence is, and the human reads the message top to bottom, so write it the way
+they will read it: a finding, its question, the next finding, ITS question. Three decisions are three
+paragraphs each followed by its own fence — not three paragraphs and then three fences, and never a "the
+questions below" or "three decisions first:" that sends the reader past everything else to find them.
+Only questions that hang on the same paragraph sit together under it. After the last card comes only
+what holds whichever way the human answers:
+
+\`\`\`\`markdown
+The nightly digest no longer sends twice; the fix is on \`main\` (\`3f9e2c1\`).
+
+The audit also found 4,112 subscribers who have not opened a digest since 2023. Dropping them lifts
+deliverability for everyone else, but they cannot be re-added without asking each one again.
+
+\`\`\`question
+id: stale-subscribers
+kind: choice
+question: Unsubscribe the 4,112 people who have not opened a digest since 2023?
+options:
+  - label: Keep them
+    description: Deliverability stays where it is
+    recommended: true
+  - label: Unsubscribe them
+    description: Better inbox placement; re-adding any of them needs their consent
+\`\`\`
+
+The mail provider's API key in \`deploy.yml\` has been public since March and is still live. Rotating it
+pauses all outgoing mail for about a minute.
+
+\`\`\`question
+id: rotate-mail-key
+kind: choice
+question: When should the leaked mail provider key be rotated?
+options:
+  - label: Now
+    description: A minute of paused mail at the quietest hour of the day
+    recommended: true
+  - label: At Sunday's maintenance window
+    description: No pause; the key stays live for four more days
+\`\`\`
+
+Neither answer touches the duplicate-send fix, which is already live.
+\`\`\`\`
+
+A FOLLOW-UP is its own fence, in the same message as its parent \`choice\` or in a later one while the
+parent is still unanswered, with \`when:\` naming the option it hangs on — the text after \`=\` is that
+option's \`label:\` EXACTLY as written. (Once the parent is answered, a further question is an ordinary
+fence with no \`when:\`.) A follow-up is asked only if its option is picked, so "and if so, which?" never
+reaches somebody who said no (three levels deep at most):
 
 \`\`\`question
 id: sqlite-path
@@ -1042,9 +1110,8 @@ the old one was taken.
 
 **EVERY QUESTION DRAWS ITS OWN CARD WHERE YOU WROTE IT — never restate it in your prose.** The card IS
 the question: prose that repeats it draws NOTHING, one question is one card, and answering the card is
-what settles the row and un-gates \`done\`. So write the fence at the point your write-up has earned the
-ask — after the paragraph that sets it up, before the one that says what happens either way — and let
-the prose carry the reasoning around the ask, never the ask itself.
+what settles the row and un-gates \`done\`. The prose around the fence carries the reasoning around the
+ask, never the ask itself.
 
 **A QUESTION STAYS ASKED ACROSS WAKES. IT FADES ONLY WHEN THE HUMAN TYPES PAST IT.** While the human
 has not typed to this thread since you asked, the question is still what the thread waits on, however
