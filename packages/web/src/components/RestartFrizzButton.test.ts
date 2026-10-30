@@ -4,7 +4,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { SUPERVISOR_STATUS_KEY } from "../api/supervisorStatus.ts"
-import { isBadgeRelease, PANEL_ARROW_GEOMETRY, showsUpdateBadge, RestartActionButton, RestartFailureNotice, RestartFrizzButton, UPDATE_RESTART_ICON_ROTATION, UpdateRestartPopover } from "./RestartFrizzButton.tsx"
+import { anchoredPanelPlacement, isBadgeRelease, PANEL_ARROW_GEOMETRY, showsUpdateBadge, RestartActionButton, RestartFailureNotice, RestartFrizzButton, UPDATE_RESTART_ICON_ROTATION, UpdateRestartPopover } from "./RestartFrizzButton.tsx"
 
 test("Update Frizz presents one calm sentence whose highlight is that threads are untouched", () => {
   const html = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: true }))
@@ -285,13 +285,41 @@ test("both panels hang one identical arrow off one shared constant, differing on
   assert.ok(popover.includes(`-top-[${-g.top}px]`), popover)
   assert.ok(popover.includes(`left-${g.left / 4}`), popover)
   assert.ok(popover.includes(`h-${g.square / 4} w-${g.square / 4}`) && popover.includes("rotate-45"), popover)
+  // The arrow follows the anchor's shift back onto the mark (anchoredPanelPlacement).
+  assert.ok(popover.includes("translate-x-[var(--panel-shift,0px)]"), popover)
 })
 
 test("the panel's left offset is the arrow's, not an edge alignment", () => {
   const g = PANEL_ARROW_GEOMETRY
   const panel = (html: string) => html.match(/<div id="update-restart-popover"[^>]*class="([^"]*)"/)?.[1] ?? ""
   const html = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: true }))
-  assert.ok(panel(html).includes(`sm:-left-[${-g.panelLeft}px]`), panel(html))
+  assert.deepEqual(anchoredPanelPlacement({ left: 542.5, bottom: 76 }, 368, 1440), { left: 542.5 + g.panelLeft, top: "calc(76px + 0.65rem)", shift: 0 })
+  // The stacked layout's full-width sidebar puts the button near the right edge (710px of 760, measured):
+  // the card slides left to fit with a 12px margin, and the arrow slides back so its apex stays on the mark.
+  const shifted = anchoredPanelPlacement({ left: 710, bottom: 60 }, 368, 760)
+  assert.equal(shifted.left + 368, 760 - 12)
+  assert.equal(shifted.left + g.border + g.left + g.square / 2 + shifted.shift, 710 + g.markCentre)
+  // …and the shifted apex still lands on flat border, clear of the card's right-hand corner arc.
+  assert.ok(368 - (g.border + g.left + g.square / 2 + shifted.shift) - (g.square * Math.SQRT2) / 2 > g.radius)
+  // Never past the left margin, however narrow the window.
+  assert.equal(anchoredPanelPlacement({ left: 100, bottom: 60 }, 544, 300).left, 12)
   // rounded-xl IS the radius the arithmetic above clears; a smaller card corner would free the arrow.
   assert.ok(panel(html).includes("rounded-xl"), panel(html))
+  // The arrow measures from the PANEL's padding edge, so the panel has to be its containing block.
+  assert.match(panel(html), /(^| )relative( |$)/)
+})
+
+// The sidebar column is sticky, and a sticky box is a stacking context whatever its z-index: a panel that
+// stacked itself inside the status row ranked only against the sidebar, and spilled out UNDER the queue
+// cards' sticky headers (maintainer 2026-10-30). Stacking is AnchoredPanel's job, done from <body>, so
+// neither panel may carry a position-and-z of its own that would read as having solved it.
+test("neither desktop panel stacks itself; both are lifted out of the sidebar by the anchor", () => {
+  const surfaces = [
+    renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: true })).match(/<div id="update-restart-popover"[^>]*class="([^"]*)"/)?.[1],
+    renderToStaticMarkup(createElement(RestartFailureNotice, { update: true, message: "boom", onDismiss: () => undefined })).match(/role="alert" class="([^"]*)"/)?.[1],
+  ]
+  for (const surface of surfaces) {
+    assert.ok(surface, "surface rendered")
+    assert.doesNotMatch(surface, /(^| )(sm:)?(fixed|absolute)( |$)|(^| )(sm:)?z-/, surface)
+  }
 })

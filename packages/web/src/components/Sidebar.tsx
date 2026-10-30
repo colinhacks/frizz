@@ -237,6 +237,11 @@ export function Sidebar() {
     // painted BEHIND the prompt box and had to escalate past 100 to be seen. That escalation is the
     // recurring "hidden underneath the prompt box" bug. Default stacking is the fix: overlays win by
     // simply being overlays. Do not re-add a z here — raise the specific overlay instead.
+    // STICKY IS STILL A STACKING CONTEXT, z-index or not. Nothing inside this column can rise above the
+    // workpane by its own z: a panel that spills out over the queue paints under every positioned layer
+    // the workpane draws (the cards' sticky z-10 headers), so it portals to <body> — the Popover
+    // primitive, or RestartFrizzButton's AnchoredPanel (the update popover sat under the cards until
+    // 2026-10-30).
     // The 272px FLOOR (was 320px) only binds in the TABLET BAND just above the 800px stack point, where
     // 34vw is smallest and the workpane is squeezed hardest — 320px claimed ~39% of an 820px viewport
     // for nav and left the queue with the remainder. 272px still holds the dispatch composer's profile

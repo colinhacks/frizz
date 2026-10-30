@@ -1,4 +1,5 @@
-import React, { useRef, useState } from "react"
+import React, { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import { useSnapshot } from "valtio"
 import { AlertTriangle, Check, RefreshCw, X } from "lucide-react"
 import {
@@ -18,6 +19,7 @@ import {
 import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { showToast, store } from "../store.ts"
 import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
+import { OVERLAY_Z_CLASS } from "../lib/overlaySurface.ts"
 
 // RefreshCw's arrowheads advance clockwise, matching Tailwind's clockwise animate-spin keyframes.
 // Keep this exported contract covered by the focused component test when either icon or animation changes.
@@ -58,26 +60,38 @@ const restartCopy = "Restart Frizz. Your running threads will not be affected."
 // update verb at all, which is why it does not claim "the latest version".
 const currentCopy = "There is no newer version of Frizz to install."
 
-// The one anchor both panels that hang off this button use. Desktop: anchored to the button's LEFT
-// edge and opening RIGHTWARD, into the gutter and the workpane beyond it. The button sits at the
-// right end of the status row above the prompt box, so there is always a workpane's width to its
-// right and never enough room to its left for a 23rem panel — a right-0 anchor pushed it off-screen
-// back when this control was corner chrome, and would still push it across the sidebar now. z-50 is
-// a ROOT-level z now: the status row is loose on the page and carries no stacking context of its own
-// (it was a z-20 chip until 2026-08-19), and the sidebar deliberately has no z-index, so z-50 is what
-// puts either panel over the rail and the composer.
+// The one anchor both panels that hang off this button use: the button's LEFT edge, opening RIGHTWARD
+// into the gutter and the workpane beyond it. The button sits at the right end of the status row above
+// the prompt box, so beside the queue there is always a workpane's width to its right and never enough
+// room to its left for a 23rem panel — a right-0 anchor pushed it off-screen back when this control was
+// corner chrome, and would still push it across the sidebar now. (The stacked layout, where the sidebar
+// is the page's full width, is the one place it has to slide back: anchoredPanelPlacement.)
 //
-// The `fixed left-3 right-3 top-12` full-width strip below `sm:` (640px) is unreachable and kept only
-// as a floor: this button renders only on the desktop shell, which the phone shell replaces at 700px.
-// The phone's update lives on its Settings page (MobileUpdateRow in SettingsDrawer.tsx), and its failure
-// card renders inline there (`mobile`), not off this anchor.
+// BOTH PANELS ARE PORTALED TO <body> (AnchoredPanel, below), at the anchored-popover tier. They were
+// `absolute z-50` inside the status row until 2026-10-30, on the belief that z-50 was a root-level z
+// there. It was not: the sidebar column is `position: sticky`, and a sticky box is a stacking context of
+// its own even with no z-index, so the panel's z-50 ranked only against the sidebar's own contents. The
+// sidebar as a whole paints at z-auto, under every positioned layer the workpane draws after it, so the
+// popover spilled out over the queue and went under each card's sticky z-10 header and under its user
+// bubbles while the card's plain body showed through beside them (maintainer 2026-10-30, on the Console:
+// "Z-index issues"). The sidebar keeps no z-index on purpose (Sidebar.tsx), so the panel leaves it.
+// This button renders only on the desktop shell, which the phone shell replaces at 700px; the phone's
+// update lives on its Settings page (MobileUpdateRow in SettingsDrawer.tsx), and its failure card
+// renders inline there (`mobile`), not off this anchor.
 //
-// `sm:-left-[17px]` is DERIVED from the arrow, not chosen: PANEL_ARROW below carries the arithmetic
-// and the readings. It is not the offset that lines the panel's own edge up with anything — the panel
-// hangs 11px further left than the button's box, which is what it costs to put the arrow's base on a
-// straight run of border while its apex stays on the mark.
-const ANCHORED_PANEL =
-  "fixed left-3 right-3 top-12 z-50 w-auto text-left font-sans sm:absolute sm:right-auto sm:-left-[17px] sm:top-[calc(100%+0.65rem)]"
+// The panel's left edge sits PANEL_ARROW_GEOMETRY.panelLeft (-17px) from the button's wrapper, and that
+// offset is DERIVED from the arrow, not chosen: PANEL_ARROW below carries the arithmetic and the
+// readings. It is not the offset that lines the panel's own edge up with anything — the panel hangs
+// 11px further left than the button's box, which is what it costs to put the arrow's base on a straight
+// run of border while its apex stays on the mark. The 0.65rem drop clears the arrow's 7px tent.
+//
+// Out of the row, the panel has to bring two things the row used to give it. `relative`: PANEL_ARROW is
+// measured from the PANEL's padding edge, and without it the arrow measured from the portal's wrapper
+// instead and sat 1px up and 1px left. And the row's type: App's `text-sm` leading at the row's own
+// 12px. <body> is 13px at 1.5, which grew the heading's line box by 0.93px and moved the chip centred on
+// it (measured against the in-row panel, 2026-10-30).
+const ANCHORED_PANEL = "relative text-left font-sans text-[12px] leading-[calc(1.25/0.875)]"
+const PANEL_DROP = "0.65rem"
 
 // ONE arrow for both panels; only the border tone differs. Every number is measured, and the two that
 // look arbitrary are the two the old spelling (`-top-1.5 left-1.5`) got wrong — it drew the left foot
@@ -90,14 +104,17 @@ const ANCHORED_PANEL =
 // `-top-[7px]`: 1px border + 6px half-square puts the square's CENTRE on the panel's border-box top, so
 //   the base diagonal lies along the top border and the arrow's own fill covers it. `-top-1.5` sat that
 //   centre 1px lower, leaving 1px of border painted across the base as a notch at each foot.
-// `sm:-left-[17px]` follows: the apex is at panelLeft + 1 + 16 + 6, and the mark it points at is the
+// `panelLeft: -17` follows: the apex is at panelLeft + 1 + 16 + 6, and the mark it points at is the
 //   button's 12px glyph centre, 6px into the wrapper that STATUS_ROW_ACTION's `-mx-1.5` ink trim
 //   (lib/statusRow.ts) leaves behind — so panelLeft = 6 - 23 = -17.
+// `--panel-shift`: how far AnchoredPanel pulled the panel LEFT to keep it on screen (0 almost always —
+//   see anchoredPanelPlacement). The arrow moves back right by the same amount, so the apex stays on
+//   the mark while the card slides under it.
 //
 // RE-DERIVE, don't re-guess, if the corner radius, the arrow size, the panel border or that ink trim
 // moves. `nub scripts/shot.mjs http://localhost:<vite>/restart-frizz-button-fixture.html?failure
 // out.png --clip=.rotate-45 --pad=18 --dsf=8` is the crop that shows the join.
-const PANEL_ARROW = "absolute -top-[7px] left-4 h-3 w-3 rotate-45 border-l border-t bg-elevated"
+const PANEL_ARROW = "absolute -top-[7px] left-4 h-3 w-3 translate-x-[var(--panel-shift,0px)] rotate-45 border-l border-t bg-elevated"
 
 /**
  * The same geometry as numbers, in CSS px, so the focused test can check the ARITHMETIC above rather
@@ -114,14 +131,14 @@ export const PANEL_ARROW_GEOMETRY = {
   left: 16,
   /** `-top-[7px]` on PANEL_ARROW. */
   top: -7,
-  /** `sm:-left-[17px]` on ANCHORED_PANEL. */
+  /** The panel's left edge against the button's wrapper, as AnchoredPanel places it. */
   panelLeft: -17,
   /** The mark: the button's glyph centre, 6px into the wrapper STATUS_ROW_ACTION's ink trim leaves. */
   markCentre: 6,
 } as const
 
 // Width is per-panel and each panel applies EXACTLY ONE of these — never both. Tailwind resolves a
-// same-property collision by CSS source order, not class order, so stacking two `sm:w-*` utilities on
+// same-property collision by CSS source order, not class order, so stacking two `w-*` utilities on
 // one element is a coin flip (the same trap lib/overlaySurface.ts documents for `z-*`).
 //
 // 23rem holds the popover's one sentence. The failure card is wider because its content is BUILD
@@ -129,8 +146,8 @@ export const PANEL_ARROW_GEOMETRY = {
 // across three lines and a routine typecheck failure became 20 wrapped lines — which pushed the one
 // `error TS…` line that says what actually broke below the scroll fold. At 34rem the same failure
 // reads in about half that, so the actionable line is visible without scrolling.
-const POPOVER_WIDTH = "sm:w-[min(23rem,calc(100vw-1.5rem))]"
-const NOTICE_WIDTH = "sm:w-[min(34rem,calc(100vw-1.5rem))]"
+const POPOVER_WIDTH = "w-[min(23rem,calc(100vw-1.5rem))]"
+const NOTICE_WIDTH = "w-[min(34rem,calc(100vw-1.5rem))]"
 
 // Both panels are OPAQUE. Anything anchored here hangs over the sidebar list and the dispatch
 // composer, and a tinted-but-transparent fill let every one of those lines read straight through the
@@ -423,15 +440,94 @@ export function useUpdateRestart() {
   }
 }
 
+/** The least room a shifted panel keeps from the viewport's edge — the Popover primitive's own margin. */
+const PANEL_VIEWPORT_MARGIN = 12
+
+/**
+ * Where a panel hanging off the button's wrapper goes, in viewport px: PANEL_ARROW_GEOMETRY's left
+ * offset, and PANEL_DROP under the wrapper's bottom edge. A panel that would run past the viewport's
+ * right edge is pulled left by `shift`, and its arrow pushed back right by the same (PANEL_ARROW).
+ *
+ * Only the stacked layout ever shifts: between the 700px phone switch and the 800px stack point the
+ * sidebar is the page's full width, so the button sits a few px from the right edge and a 23rem panel
+ * opened rightward ran ~300px off screen. In the row it widened the page instead, which at least let the
+ * failure card's Dismiss be scrolled to; a `fixed` panel is clipped, so it has to fit.
+ */
+export function anchoredPanelPlacement(
+  anchor: { left: number; bottom: number },
+  width = 0,
+  viewport = Number.POSITIVE_INFINITY,
+): { left: number; top: string; shift: number } {
+  const natural = anchor.left + PANEL_ARROW_GEOMETRY.panelLeft
+  const overflow = natural + width - (viewport - PANEL_VIEWPORT_MARGIN)
+  const shift = Math.max(0, Math.min(overflow, natural - PANEL_VIEWPORT_MARGIN))
+  return { left: natural - shift, top: `calc(${anchor.bottom}px + ${PANEL_DROP})`, shift }
+}
+
+type PanelBox = { left: number; bottom: number; width: number; viewport: number }
+
+/**
+ * Hangs a panel off the element it is rendered INSIDE (the button's wrapper), but OUTSIDE the sidebar's
+ * stacking context (see ANCHORED_PANEL): portaled to <body>, `fixed` under the wrapper, at OVERLAY_Z —
+ * the anchored-popover tier, so it also clears a thread drawer the human can still reach the sidebar
+ * beside. Re-measured after every commit (the first has no panel to measure the width of) and on every
+ * scroll and resize: the failure card stays up until dismissed, and in the stacked layout (800px and
+ * under) the sidebar scrolls with the page. Mounted only while its panel shows.
+ *
+ * The wrapper is found through a hidden marker of the panel's OWN, not a ref the caller passes: React
+ * attaches a child's ref before its parent's layout effect runs, but a PARENT's ref only after its
+ * children's effects, so a panel that mounts together with its wrapper read a null ref and never drew
+ * (the fixture's failure card, 2026-10-30).
+ */
+export function AnchoredPanel({ children }: { children: ReactNode }) {
+  const marker = useRef<HTMLSpanElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<PanelBox | null>(null)
+  const place = useCallback(() => {
+    const rect = marker.current?.parentElement?.getBoundingClientRect()
+    if (!rect) return
+    const next = { left: rect.left, bottom: rect.bottom, width: panel.current?.offsetWidth ?? 0, viewport: document.documentElement.clientWidth }
+    setBox((was) => (was && was.left === next.left && was.bottom === next.bottom && was.width === next.width && was.viewport === next.viewport ? was : next))
+  }, [])
+  // Settles in one extra pass, before paint: an unchanged reading hands back the same box, and React stops.
+  useLayoutEffect(place)
+  useLayoutEffect(() => {
+    window.addEventListener("resize", place)
+    window.addEventListener("scroll", place, true)
+    return () => {
+      window.removeEventListener("resize", place)
+      window.removeEventListener("scroll", place, true)
+    }
+  }, [place])
+  const placement = box && anchoredPanelPlacement(box, box.width, box.viewport)
+  return (
+    <>
+      <span ref={marker} hidden />
+      {placement &&
+        createPortal(
+          <div
+            ref={panel}
+            className={`fixed ${OVERLAY_Z_CLASS}`}
+            style={{ left: placement.left, top: placement.top, "--panel-shift": `${placement.shift}px` } as React.CSSProperties}
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
+    </>
+  )
+}
+
 /** The desktop status row's update action: an icon button, its hover popover, and its anchored failure card. */
 export function RestartFrizzButton() {
   const [open, setOpen] = useState(false)
-  const controlRef = useRef<HTMLDivElement>(null)
   const control = useUpdateRestart()
   if (!control.visible) return null
 
   return (
-    <div ref={controlRef} className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    // React routes enter/leave through the component tree, so the portaled panels still count as inside
+    // this wrapper: a pointer that reaches the popover keeps it open, exactly as when it was a DOM child.
+    <div onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <RestartActionButton
         update={control.update}
         busy={control.busy}
@@ -445,8 +541,15 @@ export function RestartFrizzButton() {
           void control.run()
         }}
       />
-      {control.shownError && <RestartFailureNotice update={control.update} message={control.shownError} outcome={control.outcome} onDismiss={control.dismiss} />}
-      <UpdateRestartPopover open={open && !control.shownError} update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} />
+      {control.shownError ? (
+        <AnchoredPanel>
+          <RestartFailureNotice update={control.update} message={control.shownError} outcome={control.outcome} onDismiss={control.dismiss} />
+        </AnchoredPanel>
+      ) : open ? (
+        <AnchoredPanel>
+          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} />
+        </AnchoredPanel>
+      ) : null}
     </div>
   )
 }
