@@ -1347,8 +1347,9 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
         ? <LinkedHtml className={`md-body ${QUEUE_WRAP}`} html={proseHtml} />
         // NEITHER SHAPE MAY CARD AS BLANK. A fence whose body is empty — or is nothing but machinery
         // lines, which never reach the reader — has no handoff to open on, and if it has no rows either
-        // the card would be a bare heading. That is reachable only off a thread with nothing live (a
-        // sub-agent's own transcript above all), and the sentence below is what it says instead.
+        // the card would be a bare heading. That is reachable only with nothing live to row — a
+        // sub-agent's own transcript, or a park whose names have all just settled while their wake is on
+        // its way (AWAITING_NO_PROSE) — and the sentence below is what it says instead.
         : groups.length === 0 && !hasUnrowedWork(work) && steps.length === 0 ? <p className={CARD_BODY}>{AWAITING_NO_PROSE}</p>
         : null}
       {steps.length > 0 && <StepsList steps={steps} />}

@@ -83,6 +83,11 @@ test("quiet window: an answer and a limit resume are not held; the exemption is 
   assert.equal(isQuietWindowExempt("park:done-open-question:2026-10-20T10:04:00.000Z"), true)
   assert.equal(isQuietWindowExempt("park:expired:2026-09-25T21:59:41.787Z"), false)
   assert.equal(isQuietWindowExempt("prwatch:prw_1"), false)
+  // A command watch's wake ends the park that named it — the row settles as the wake is queued — so it
+  // is not held. A timer's row stays armed until its wake is delivered, so its park holds and it waits.
+  assert.equal(isQuietWindowExempt("cmdwatch:cmw_830cf4a68fbd"), true)
+  assert.equal(isQuietWindowExempt("cmdwatch-expired:cmw_830cf4a68fbd"), true)
+  assert.equal(isQuietWindowExempt("cmdwatch-cancelled:cmw_830cf4a68fbd"), true)
   assert.equal(isQuietWindowExempt("timer:tmr_1"), false)
   const { storage, outbox } = store()
   outbox.enqueue(wake("a"), T0)

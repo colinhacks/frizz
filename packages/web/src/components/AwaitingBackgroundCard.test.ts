@@ -174,8 +174,9 @@ test("the fence is a PARAMETER, so one card states a fence the board no longer h
 })
 
 // A SUB-AGENT'S OWN TRANSCRIPT has no owning thread — no board row, so no rows and no verb — and a fence
-// still has to card there. It is also the ONE place the card can have neither prose nor rows, which is
-// what the placeholder sentence is for: a bare heading says less than a sentence does.
+// still has to card there. It is one of the two places the card can have neither prose nor rows (the
+// other is a park whose names have all just settled), which is what the placeholder sentence is for: a
+// bare heading says less than a sentence does.
 test("a card with no thread is still the card: its heading, no rows, no verb", () => {
   const bare = renderToStaticMarkup(createElement(AwaitingBackgroundCard, { fence: { body: "", hints: [{ kind: "title", value: "Three-platform CI run" }] } }))
   assert.match(bare.replace(/<[^>]+>/g, ""), /Three-platform CI run/)

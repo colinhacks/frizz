@@ -13,6 +13,7 @@ import { join } from "node:path"
 import { NEEDS_INPUT_REQUIRED_AT, parseCommandWatchWake } from "@frizz/shared"
 import { createStorage, type SessionRow, type Storage } from "./storage.ts"
 import { createScheduler, MID_TURN_HOLD_MAX_MS } from "./scheduler.ts"
+import { WAKE_QUIET_WINDOW_MS } from "./wake-store.ts"
 import { deriveAwaitingBackground, deriveNeedsYou, deriveWaitStatus } from "./board.ts"
 import { parkForMaxMs, readAwaitingPark } from "./awaiting.ts"
 import type { CommandRunResult, CommandWatchService } from "./command-watch.ts"
@@ -65,7 +66,9 @@ function fakeService() {
   return { service, calls, script, gate }
 }
 
-function harness() {
+// No quiet window unless a test asks for one: most of this file hands one thread several wakes within a
+// minute, and pins the source, not the window.
+function harness(opts: { wakeQuietWindowMs?: number } = {}) {
   const storage: Storage = createStorage(join(mkdtempSync(join(tmpdir(), "frizz-cmw-sched-")), "ui.db"), "p")
   const teleMap = new Map<string, SessionTelemetry>()
   const tailer: Tailer = {
@@ -76,7 +79,7 @@ function harness() {
   const clock = { ms: T0 }
   const fake = fakeService()
   const s = createScheduler({
-    storage, tailer, now: () => clock.ms, log: () => {}, wakeQuietWindowMs: 0,
+    storage, tailer, now: () => clock.ms, log: () => {}, wakeQuietWindowMs: opts.wakeQuietWindowMs ?? 0,
     resume: (slug, message, deliveryId) => void resumes.push({ slug, message, deliveryId }),
     fetchPr: async () => undefined, fetchGithubReview: async () => [],
     commandWatches: fake.service,
@@ -339,6 +342,49 @@ test("a watch that passes under a rest on it sends ONE wake — no park correcti
   assert.equal(h.resumes.length, 1)
   const parks = h.storage.db.prepare("SELECT fence_id FROM wake_delivery WHERE fence_id LIKE 'park:%'").all()
   assert.deepEqual(parks, [])
+  await h.s.stop()
+})
+
+// THE 2026-10-29 CARD. A thread woken at 21:10:12 parked on a Vercel check; the check passed at 21:12:43,
+// which settled the watch and with it the park, and the wake waited behind the quiet window until
+// 21:15:12. In between the thread sat in the queue under an awaiting card with nothing left to name:
+// "Waiting for an external update." The pass is not held now, and a wake the window WAS holding leaves
+// with it rather than being stranded behind it.
+test("a pass inside the quiet window is delivered at once, carrying what the window held", async () => {
+  const h = harness({ wakeQuietWindowMs: WAKE_QUIET_WINDOW_MS })
+  h.storage.setSetting("signoffNudge", "off")
+  h.storage.upsertSession(row("t"))
+  h.tele.set("t", tele())
+  // A wake handed over opens the thread's window…
+  h.storage.armThreadTimer({ id: "tmr_first", slug: "t", prompt: "Check the deploy.", fireAtMs: T0, createdAtMs: T0 })
+  await h.s.tick()
+  assert.equal(h.resumes.length, 1)
+  // …and the window is live in this harness: an alarm thirty seconds on is held.
+  h.clock.ms = T0 + 30_000
+  h.storage.armThreadTimer({ id: "tmr_second", slug: "t", prompt: "Re-read the build log.", fireAtMs: h.clock.ms, createdAtMs: h.clock.ms })
+  await h.s.tick()
+  assert.equal(h.resumes.length, 1, "the timer waits for the window")
+
+  // The worker registers a check, sees it fail once, and parks on it.
+  h.clock.ms = T0 + 60_000
+  const id = h.arm("t", { firstRunAtMs: h.clock.ms })
+  h.tele.set("t", parkedOn([{ kind: "command", value: id }, { kind: "status", value: "watching" }, { kind: "for", value: "1h" }], new Date(h.clock.ms + 1_000).toISOString()))
+  // It passes 2m 31s after the first wake, inside the window.
+  h.clock.ms = T0 + 151_000
+  h.fake.script.push({ exitCode: 0, output: "success" })
+  await h.cycle()
+  assert.equal(h.storage.getCommandWatch(id)!.state, "passed")
+  assert.equal(h.resumes.length, 2, "delivered on the pass, not when the window ends")
+  const sent = h.resumes[1].message
+  assert.match(sent, new RegExp(`command watch \`${id}\` PASSED`))
+  assert.match(sent, /held 2 wakes/)
+  assert.ok(sent.indexOf("Re-read the build log.") < sent.indexOf(id), "the held timer rides along, oldest first")
+
+  // The wake lands as a user record, which is the worker moving past this rest.
+  h.tele.set("t", { ...h.tele.get("t")!, lastUserAt: new Date(h.clock.ms).toISOString() })
+  h.clock.ms = T0 + WAKE_QUIET_WINDOW_MS
+  await h.s.tick()
+  assert.equal(h.resumes.length, 2, "nothing is left for the window to release")
   await h.s.stop()
 })
 

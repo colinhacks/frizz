@@ -53,11 +53,22 @@ export const WAKE_QUIET_WINDOW_MS = 5 * 60_000
  *  showed a rest with a code block in it. `park:needs-input:` (a park with no `status:` Frizz can read)
  *  is a park Frizz refused, which is this comment's own second example, and is counted against
  *  PARK_BUMP_MAX like the rest. `park:question:` left the list the same day: it was the cause of the
- *  open-question refusal, which the ```question fence retired, and nothing has minted it since. */
+ *  open-question refusal, which the ```question fence retired, and nothing has minted it since.
+ *
+ *  A COMMAND WATCH'S WAKES (`cmdwatch:`, `cmdwatch-expired:`, `cmdwatch-cancelled:`, 2026-11-02) end the
+ *  very park that named them. The watch leaves `armed` the moment its wake is queued (scheduler
+ *  evalCommandWatches: wake THEN settle), so the board stops honouring a `commands:` park at once and
+ *  queues the thread — under an awaiting card with no row left to draw, which says only "Waiting for an
+ *  external update." Held, that card stood in the queue for the rest of the window: observed 2026-10-29,
+ *  a Vercel check that passed 2m 31s after the thread's last wake, its wake sent 2m 30s later, the
+ *  maintainer asking what the card meant in between. Each wake ends its watch, so none can burst.
+ *  TIMERS STAY HELD, and need to: a timer row stays `armed` until its wake is delivered (scheduler
+ *  settleTimer), so a park on one keeps holding through the window and the card keeps its row. */
 export const WAKE_QUIET_EXEMPT_HINT_PREFIXES = [
   "answers:", "limit:", "interrupt-ended:",
   "signoff:", "park:retired:", "park:nameless:", "park:dead:", "park:needs-input:",
   "park:question-fence:", "park:done-open-question:",
+  "cmdwatch:", "cmdwatch-expired:", "cmdwatch-cancelled:",
 ] as const
 
 export function isQuietWindowExempt(hintKey: string): boolean {

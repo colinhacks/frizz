@@ -30,9 +30,12 @@ export const AWAITING_KIND = "Awaiting"
 export const SHELLS_KIND = "Background shells running"
 
 /** What the card says when the fence carries NO prose — an empty body, or one that was nothing but
- *  machinery lines, which never reach the reader. Only reachable on a card that also has no rows (a
- *  fence in a sub-agent's own transcript), and it exists because a card that is a bare heading says
- *  less than a sentence does. */
+ *  machinery lines, which never reach the reader. Only reachable on a card that also has no rows: a
+ *  fence in a sub-agent's own transcript, or a quiet park whose names have all just settled and whose
+ *  wake has not gone out yet. That second shape is why it exists in the queue at all, and it stood there
+ *  for 2m 30s on 2026-10-29 — a passed command watch's wake held by the quiet window, exempt since
+ *  (server wake-store.ts). It exists because a card that is a bare heading says less than a sentence
+ *  does. */
 export const AWAITING_NO_PROSE = "Waiting for an external update."
 
 /** The KIND over a card handing the human `steps:` — the one fence shape whose wait is on the READER
@@ -147,9 +150,9 @@ const LOWERCASE_BY_NAME = new Set(["npm", "npx", "pnpm", "nub", "nubx", "gh", "g
 // which is where that belongs, and the card says what it can rather than showing the machinery.
 //
 // NULL, not a placeholder sentence: the card's heading and rows already state the wait, so an empty
-// handoff wants no filler and no divider above one. The one card that has neither — a fence in a
-// sub-agent's own transcript, with no thread and so no rows — says AWAITING_NO_PROSE instead, and that
-// is the card's call to make rather than this function's.
+// handoff wants no filler and no divider above one. A card that has neither — a fence in a sub-agent's
+// own transcript, with no thread and so no rows, or a park whose names have all just settled — says
+// AWAITING_NO_PROSE instead, and that is the card's call to make rather than this function's.
 export function awaitingProseBlock(body: string | undefined): string | null {
   return body ? stripFenceSyntax(body) || null : null
 }
