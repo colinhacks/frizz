@@ -218,18 +218,34 @@
   --frizz-muted-95: color-mix(in oklab, var(--frizz-muted) 95%, transparent);
   /* The version after a model family in the profile picker ("Opus 5.5"): one step dimmer than the word. */
   --frizz-edition: color-mix(in oklab, var(--frizz-muted) 55%, transparent);
-  --frizz-danger-faint: var(--color-red-200);
-  --frizz-danger-soft: var(--color-red-300);
-  --frizz-danger: var(--color-red-400);
-  --frizz-danger-fill: var(--color-red-500);
-  --frizz-danger-button: var(--color-red-500);
+  /* THE STATUS SET — danger, attention and the status dots below. Each was a Tailwind 400/500 until
+     2026-11-02, and thirteen of those lie outside sRGB (amber-400 at C 0.189 where sRGB stops at 0.170,
+     violet-400 at 0.183 against 0.173), so a P3 screen painted them more vivid than any hex. The rest
+     sat on the sRGB edge, green-400 at C 0.209: a neon set beside neutrals at C 0.01 and a brand accent
+     at 0.157. The maintainer said it twice of the callouts that borrowed these inks ("Why does this look
+     so saturated?", 2026-10-19; "This color just doesn't look good with the rest of the blues here",
+     2026-10-29). So every value is an sRGB hex, each keeps its Tailwind lightness and hue, and a mark
+     stops at C 0.15, under the accent; only the red fill and button keep 0.18-0.19, since a destructive
+     button should still read as one. Three deliberate moves off the plain rule:
+       - attention is a quieter ochre (L 0.78 C 0.115 H 78), not amber-400 tamed. Tamed in place it
+         landed on the accent gold, and a usage-limit pause ("caution", TranscriptCard's tones) must
+         never read like "your agent is stuck waiting on you".
+       - danger-button drops to L 0.58 so its white label holds 4.7:1 (red-500 gave it 3.8:1).
+       - needs-human IS the accent, as it already is in light: the app spends its yellow in one place
+         (Sidebar's AccentDot), and yellow-400 was a second, brighter one for the same meaning.
+     The 50/100/200 tints were inside sRGB and calm already, and stay. Light's set was always hexes. */
+  --frizz-danger-faint: #fccbcb; /* L 0.885 C 0.055 H 18 */
+  --frizz-danger-soft: #f8a8a7; /* L 0.808 C 0.095 H 20 */
+  --frizz-danger: #ee7574; /* L 0.704 C 0.15 H 22 */
+  --frizz-danger-fill: #e84f4c; /* L 0.637 C 0.19 H 25 */
+  --frizz-danger-button: #cf413d; /* L 0.58 C 0.18 H 26 */
   --frizz-attention-faint: var(--color-amber-50);
   --frizz-attention-soft: var(--color-amber-100);
   --frizz-attention-detail: var(--color-amber-200);
-  --frizz-attention: var(--color-amber-400);
-  --frizz-attention-fill: var(--color-amber-500);
+  --frizz-attention: #e0ae5d; /* L 0.78 C 0.115 H 78 */
+  --frizz-attention-fill: #e29e47; /* L 0.75 C 0.13 H 70 */
   /* The five `> [!TYPE]` callout inks (styles.css § Callouts). Not the status tokens: amber-400 and
-     red-400 lie outside sRGB and are the brightest of the set, so a P3 screen painted the warning more
+     red-400 lay outside sRGB and were the brightest of the set, so a P3 screen painted the warning more
      vivid than any hex (maintainer 2026-10-19: "Why does this look so saturated?"). One OKLCH lightness
      for all five — L 0.76 here, L 0.50 in light — at C 0.115 / 0.105 on the status hues, every value
      inside sRGB. Light's is a step darker than the dark set's mirror so each title holds 4.7:1 on its
@@ -242,15 +258,17 @@
   --frizz-callout-important: #aea9e5;
   --frizz-callout-warning: #d7a955;
   --frizz-callout-caution: #f1938d;
-  --frizz-success: var(--color-green-400);
-  --frizz-planning: var(--color-sky-400);
-  --frizz-planned: var(--color-violet-400);
-  --frizz-active-status: var(--color-emerald-400);
-  --frizz-needs-human: var(--color-yellow-400);
-  --frizz-blocked: var(--color-orange-400);
-  --frizz-dismissed: var(--color-rose-400);
-  --frizz-permission-edit: var(--color-purple-400);
-  --frizz-permission-plan: var(--color-cyan-400);
+  /* The rest of the status set (see its comment above). planned and permission-edit leave violet-400
+     and purple-400 for the Important callout's blue-violet hue, 290, for the reason given there. */
+  --frizz-success: #6ad58b; /* L 0.79 C 0.145 H 152 */
+  --frizz-planning: #4bb9ef; /* L 0.746 C 0.125 H 233 */
+  --frizz-planned: #a497ea; /* L 0.72 C 0.12 H 290 */
+  --frizz-active-status: #48ce99; /* L 0.765 C 0.14 H 163 */
+  --frizz-needs-human: var(--frizz-accent);
+  --frizz-blocked: #f29349; /* L 0.75 C 0.145 H 56 */
+  --frizz-dismissed: #f07687; /* L 0.712 C 0.15 H 13 */
+  --frizz-permission-edit: #a497ea; /* L 0.72 C 0.12 H 290 */
+  --frizz-permission-plan: #44cee7; /* L 0.789 C 0.12 H 212 */
   --frizz-danger-soft-80: color-mix(in oklab, var(--frizz-danger-soft) 80%, transparent);
   --frizz-danger-70: color-mix(in oklab, var(--frizz-danger) 70%, transparent);
   --frizz-danger-80: color-mix(in oklab, var(--frizz-danger) 80%, transparent);
