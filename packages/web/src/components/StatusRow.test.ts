@@ -152,15 +152,16 @@ test("a cold board still reserves the crumb's measure, and says it is loading", 
   assert.match(html, /aria-label="All projects"/)
 })
 
-test("the Console's row draws no breadcrumb, only its icons", () => {
+test("the Console's row keeps the house and draws no crumb", () => {
   // "If you're on the console page, you should not see the 'All Projects' thing" (maintainer 2026-10-29):
-  // the prompt box's project chip is the Console's one project menu, and the home switcher's Projects tab
-  // is its way to the grid.
+  // the prompt box's project chip is the Console's one project menu. The house stays ("keep the home
+  // icon!", 2026-11-01), alone, with no slash after it.
   const html = render("colinhacks/frizz", { onConsole: true })
+  assert.match(houseOf(html), new RegExp(`href="${PROJECTS_HREF.replace(/[?]/g, "\\$&")}"`))
   assert.doesNotMatch(html, /aria-label="Breadcrumb"/)
-  assert.doesNotMatch(html, /All projects/)
   assert.doesNotMatch(html, /data-project-crumb/)
-  assert.match(html, /data-quota-gauge/)
+  assert.doesNotMatch(html, />\/<\/span>/, "no slash: nothing follows the house")
+  assert.ok(html.indexOf('aria-label="All projects"') < html.indexOf("data-quota-gauge"), "the house leads, the icons follow")
   assert.match(html, /aria-label="Settings"/)
   assert.match(html, /ml-auto/, "the icons keep the right end")
 })

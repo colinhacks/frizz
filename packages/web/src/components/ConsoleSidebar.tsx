@@ -47,8 +47,8 @@ import { StatusRow } from "./StatusRow.tsx"
 // The same column as a project's (Sidebar.tsx): the status row and the prompt box at its top, the rows
 // under them, the scroll marker opposite the card being read. What differs is what it holds, and where
 // it sits:
-//   · the status row carries its icons alone, with no breadcrumb: the prompt box's PROJECT chip, saying
-//     where a new task goes, is the one project menu here (StatusRow.tsx);
+//   · the status row keeps the house and its icons but draws no project crumb: the prompt box's PROJECT
+//     chip, saying where a new task goes, is the one project menu here (StatusRow.tsx);
 //   · "By status" adds Snoozed and Done under Queue and Running, collapsed until opened and paged behind
 //     "Show more" (lib/consoleBoard.ts); "By project" stays Queue and Running alone, what needs the
 //     operator now;

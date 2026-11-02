@@ -54,12 +54,12 @@ import { PROJECTS_HREF } from "../lib/homeView.ts"
 // this spacing. UIs are conflicting here"). `gap-2.5` leaves 4px between the slash and either surface
 // when lit, and 10px of ink a side at rest: the slash stands centred between the house and the name.
 
-// THE CONSOLE DRAWS NO BREADCRUMB (maintainer 2026-10-29: "if you're on the console page, you should not
-// see the 'All Projects' thing … it's just kind of confusing that that's there, and the dropdown inside of
-// the prompt box is there"). It read `⌂ / All projects ▾` until then: a second project menu one row above
-// the prompt box's own project chip, which is the one that matters there, since it picks where the next
-// thread runs. The house went with it, as the home switcher's Projects tab right above it goes to the
-// same grid. The icons keep the right end.
+// THE CONSOLE KEEPS THE HOUSE AND DRAWS NO CRUMB (maintainer 2026-10-29: "if you're on the console page,
+// you should not see the 'All Projects' thing … it's just kind of confusing that that's there, and the
+// dropdown inside of the prompt box is there"). It read `⌂ / All projects ▾` until then: a second project
+// menu one row above the prompt box's own project chip, which is the one that matters there, since it
+// picks where the next thread runs. The house went with the crumb for three days and came back
+// (maintainer 2026-11-01: "keep the home icon!"), so the Console's row is `⌂` and the icons.
 
 /**
  * Takes no props beyond the Console's flag, and reads its live values itself. Its call sites are
@@ -76,7 +76,7 @@ export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
       // block rather than a strip parked above a box.
       className="mb-2.5 flex min-w-0 items-center gap-3 text-[12px]"
     >
-      {onConsole ? null : <Breadcrumb />}
+      {onConsole ? <HomeLink /> : <Breadcrumb />}
       {/* THE ICONS, right-justified: the readout, then the buttons, with settings in the corner. Each is
           shrink-0, so the crumb gives way before any of them does. */}
       <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -122,20 +122,7 @@ function Breadcrumb() {
 
   return (
     <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2.5">
-      {/* THE DOOR OUT, and the breadcrumb's root. A 24px target like the icons at the other end, trimmed
-          onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the house's ink then starts on the
-          composer's outer border edge, as the gear's ends on it at the row's other end (both measured
-          2026-10-26, 0px). It carried an extra `-ml-px` until then, which did not ADD to the trim but
-          REPLACED it — `margin-left` outranks `margin-inline` in the stylesheet — and left the house
-          5px inside the border while the owner/repo at the other end ran flush. */}
-      {/* A ROUTER Link, like the rail's identical door at ProjectRail.tsx. It was a raw `<a href="/">`
-          from 2026-08-19 until 2026-09-04, which hard-loaded the document: measured at 116-411ms with a
-          0.15 CLS, and it threw away the app socket and the whole query cache on the way out.
-          It goes to the grid even while the Console is the kept home (lib/homeView.ts): PROJECTS_HREF,
-          not `/`, which would forward straight back to the Console. */}
-      <Link to={PROJECTS_HREF} title="All projects" aria-label="All projects" className={STATUS_ROW_ACTION}>
-        <House size={STATUS_ROW_ICON} aria-hidden="true" />
-      </Link>
+      <HomeLink />
       <span aria-hidden="true" className="shrink-0 select-none text-muted-45">/</span>
       <span
         className="flex min-w-0 items-center"
@@ -151,5 +138,27 @@ function Breadcrumb() {
         )}
       </span>
     </nav>
+  )
+}
+
+/**
+ * THE DOOR OUT, and the breadcrumb's root — on the Console, the whole of the row's left end. A 24px target
+ * like the icons at the other end, trimmed onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the
+ * house's ink then starts on the composer's outer border edge, as the gear's ends on it at the row's other
+ * end (both measured 2026-10-26, 0px). It carried an extra `-ml-px` until then, which did not ADD to the
+ * trim but REPLACED it — `margin-left` outranks `margin-inline` in the stylesheet — and left the house 5px
+ * inside the border while the owner/repo at the other end ran flush.
+ *
+ * A ROUTER Link, like the rail's identical door at ProjectRail.tsx. It was a raw `<a href="/">` from
+ * 2026-08-19 until 2026-09-04, which hard-loaded the document: measured at 116-411ms with a 0.15 CLS, and
+ * it threw away the app socket and the whole query cache on the way out. It goes to the grid even while
+ * the Console is the kept home (lib/homeView.ts): PROJECTS_HREF, not `/`, which would forward straight
+ * back to the Console.
+ */
+function HomeLink() {
+  return (
+    <Link to={PROJECTS_HREF} title="All projects" aria-label="All projects" className={STATUS_ROW_ACTION}>
+      <House size={STATUS_ROW_ICON} aria-hidden="true" />
+    </Link>
   )
 }

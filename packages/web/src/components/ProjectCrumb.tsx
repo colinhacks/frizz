@@ -22,8 +22,8 @@ import { ProjectSquare } from "./ProjectRail.tsx"
 // grid is where one of those is reopened or forgotten, and a switch into it would land on nothing.
 //
 // The menu is the Console project chip's (ConsoleProjectChip.tsx) — the same surface, row and check —
-// so the app's two project menus read as one control. They are never on one screen: the Console draws
-// no breadcrumb (StatusRow.tsx).
+// so the app's two project menus read as one control. They are never on one screen: the Console's status
+// row draws no crumb (StatusRow.tsx).
 
 /** One menu row: the chip's own row, so the two project menus match. The tone is each row's own. */
 const ROW =
