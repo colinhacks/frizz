@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useSnapshot } from "valtio"
 import { Loader2 } from "lucide-react"
 import { store, pushDrawer } from "../store.ts"
+import { Z_TOAST } from "../lib/layers.ts"
 
 // Minimal toast (no dep): rises in at the BOTTOM RIGHT, holds, then sinks back down and fades.
 // Each showToast bumps the id, which re-arms the timer so a repeat message (the same failure twice
@@ -13,7 +14,7 @@ export function Toaster() {
   const toast = snap.toast
   const [visible, setVisible] = useState(false)
   // A thread drawer's prompt box also anchors bottom-right — its send button — one layer BELOW this
-  // toast (inside a z-51 drawer; toast z-70). The drawer's lifecycle footer sat there until 2026-10-05
+  // toast (inside a drawer, whose layers all sit below the toast layer — lib/layers.ts). The drawer's lifecycle footer sat there until 2026-10-05
   // (its Snooze and Mark as done are in the header now), and at the resting bottom-4 the toast sat
   // directly on top of those buttons: a `link` toast — whose pill used to be pointer-events-auto —
   // swallowed every click meant for them for its full (5s) life. So: keep the strip click-through and
@@ -33,7 +34,7 @@ export function Toaster() {
 
   if (!toast) return null
   return (
-    <div className={`pointer-events-none fixed right-4 z-[70] flex justify-end ${drawerOpen ? "bottom-20" : "bottom-[calc(var(--queue-dock-inset,0px)+1rem)]"}`}>
+    <div className={`pointer-events-none fixed right-4 ${Z_TOAST} flex justify-end ${drawerOpen ? "bottom-20" : "bottom-[calc(var(--queue-dock-inset,0px)+1rem)]"}`}>
       <div
         data-toast
         role="status"

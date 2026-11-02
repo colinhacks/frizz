@@ -20,6 +20,8 @@ import { SignOutThisDeviceRow } from "./SignOutThisDeviceRow.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { Select } from "./ui/Select.tsx"
 import { SettingsField } from "./SettingsField.tsx"
+import { Z_MODAL } from "../lib/layers.ts"
+import { ModalSurface } from "./ui/ModalSurface.tsx"
 
 type NotifPerm = "default" | "granted" | "denied" | "unsupported"
 function currentPerm(): NotifPerm {
@@ -100,15 +102,17 @@ export function SettingsDrawer({ offerUpdate = false }: {
   }
 
   return (
-    <div
-      className={`${SHEET_SCRIM_CLASS} z-50 flex justify-end ${shown ? "opacity-100" : "opacity-0"}`}
+    // A real modal dialog, not just a panel that looks like one: assistive tech reads it as one, and it
+    // sits in Radix's layer stack (ui/ModalSurface), so a thread drawer under it defers its Escape, its
+    // pointer and its focus to Settings. Opened from ⌘K over a drawer, Escape closed the drawer instead.
+    <ModalSurface
+      label="Settings"
+      // `text-sm`: the app frame's type (App.tsx), which a portal to <body> leaves behind.
+      className={`${SHEET_SCRIM_CLASS} ${Z_MODAL} flex justify-end text-sm ${shown ? "opacity-100" : "opacity-0"}`}
       onMouseDown={(e) => e.target === e.currentTarget && close()}
     >
-      {/* A real modal dialog, not just a panel that looks like one, so assistive tech reads it as one. */}
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
+        data-settings-panel
         className={`${SHEET_PANEL_CLASS} w-[560px] max-w-[94vw] ${shown ? "translate-x-0" : "translate-x-full"}`}
       >
         <SheetHeader title="Settings" actions={<SaveStatus state={saveState} />} onClose={close} />
@@ -172,7 +176,7 @@ export function SettingsDrawer({ offerUpdate = false }: {
           )}
         </div>
       </div>
-    </div>
+    </ModalSurface>
   )
 }
 
@@ -327,13 +331,13 @@ function MobileSettingsPage({
   const supervisor = useSupervisorStatus()
   const version = supervisor.data?.version
   return (
-    <div
+    <ModalSurface
       data-mobile-settings-page
-      // A modal dialog for the same reasons as the desktop drawer's panel (see SettingsDrawer).
-      role="dialog"
-      aria-modal="true"
-      aria-label="Settings"
-      className={`fixed inset-0 z-50 flex flex-col bg-bg pt-[env(safe-area-inset-top)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
+      // A modal dialog in Radix's layer stack for the same reasons as the desktop sheet (see
+      // SettingsDrawer). On the phone it matters more: a thread drawer there is a MODAL Radix layer, so a
+      // page outside that stack would draw over it and take no tap.
+      label="Settings"
+      className={`fixed inset-0 ${Z_MODAL} flex flex-col bg-bg text-sm pt-[env(safe-area-inset-top)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
         shown ? "translate-x-0" : "translate-x-full"
       }`}
     >
@@ -420,7 +424,7 @@ function MobileSettingsPage({
           <div data-mobile-version className="px-[18px] py-[14px] text-[12.5px] text-faint">Frizz {version}</div>
         ) : null}
       </div>
-    </div>
+    </ModalSurface>
   )
 }
 

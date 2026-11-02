@@ -5,6 +5,8 @@ import { store, openThread, openNewThread, pushDrawer, topThreadSlug, closeDrawe
 import { rpc } from "../api/rpc.ts"
 import { useBoard, asThreads } from "../hooks.ts"
 import { sortThreads, displayTitle } from "../groups.ts"
+import { Z_PALETTE } from "../lib/layers.ts"
+import { ModalSurface } from "./ui/ModalSurface.tsx"
 
 // Cmd+K palette: fuzzy-jump to any thread (over title + slug, grouped like the sidebar) plus the
 // common actions. cmdk owns the filtering; we set each item's `value` to the text we want matched.
@@ -39,12 +41,12 @@ export function CommandPalette() {
   }
 
   return (
-    // A modal dialog, so assistive tech reads it as one.
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-scrim-50 pt-[12vh]"
+    // A modal dialog in Radix's layer stack (ui/ModalSurface), so it is the layer a drawer under it
+    // defers to: the one Escape closes, the one that takes the pointer and the focus.
+    <ModalSurface
+      label="Command palette"
+      // `text-sm`: the app frame's type (App.tsx), which a portal to <body> leaves behind.
+      className={`fixed inset-0 ${Z_PALETTE} flex items-start justify-center bg-scrim-50 pt-[12vh] text-sm`}
       onMouseDown={(e) => e.target === e.currentTarget && close()}
     >
       <Command
@@ -55,6 +57,9 @@ export function CommandPalette() {
       >
         <Command.Input
           autoFocus
+          // ModalSurface's own focus on open: over a modal phone drawer `autoFocus` alone loses the
+          // focus back to the drawer.
+          data-autofocus
           value={search}
           onValueChange={setSearch}
           placeholder="Jump to a thread or run a command…"
@@ -112,7 +117,7 @@ export function CommandPalette() {
           )}
         </Command.List>
       </Command>
-    </div>
+    </ModalSurface>
   )
 }
 

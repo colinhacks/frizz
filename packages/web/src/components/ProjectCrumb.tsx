@@ -4,7 +4,7 @@ import { ArrowUpRight, Check, ChevronDown } from "lucide-react"
 import { Link } from "react-router"
 import { rpc } from "../api/rpc.ts"
 import { projectHref } from "../lib/base-path.ts"
-import { OPAQUE_SURFACE_BASE } from "../lib/overlaySurface.ts"
+import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 import { ProjectSquare } from "./ProjectRail.tsx"
 
 // THE BREADCRUMB'S LAST CRUMB — `<home> / <this>` at the head of the status row above the prompt box: the
@@ -86,7 +86,7 @@ export function ProjectCrumb({
           sideOffset={6}
           collisionPadding={8}
           data-project-crumb-menu=""
-          className={`z-[110] ${OPAQUE_SURFACE_BASE} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] max-w-[280px] overflow-auto rounded-lg p-1.5`}
+          className={`${OPAQUE_PORTAL_SURFACE_CLASS} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] max-w-[280px] overflow-auto rounded-lg p-1.5`}
         >
           {projects.map((project) => (
             <RadixDropdown.Item key={project.id} asChild>

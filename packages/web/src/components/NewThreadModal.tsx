@@ -25,6 +25,7 @@ import { isConsolePath } from "../lib/base-path.ts"
 import { ProjectScope, useProjectScope } from "../lib/projectScope.tsx"
 import { beginDispatch, dispatchAnswered, dispatchFailed } from "../lib/pendingDispatch.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
+import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 
 // THE dispatch prompt box — composer + quiet selects row — shared by every surface that can start a
 // thread: the queue's inline section and the anywhere-modal. There is no title field — the server
@@ -433,7 +434,7 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
       <RadixDialog.Portal>
         {/* Frosted glass: heavy blur + saturation over a light black wash, so the board reads as a
             texture behind the dialog rather than going fully dark. */}
-        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-scrim-30 backdrop-blur-md backdrop-saturate-150" />
+        <RadixDialog.Overlay className={`fixed inset-0 ${Z_MODAL} bg-scrim-30 backdrop-blur-md backdrop-saturate-150`} />
         <RadixDialog.Content
           ref={contentRef}
           aria-modal="true"
@@ -451,8 +452,8 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
           // A PAGE ON A PHONE: full screen, under the device's top inset (PhoneNewThreadPage). Above the
           // phone breakpoint nothing changes.
           className={isMobile
-            ? "fixed inset-0 z-50 flex flex-col bg-bg pt-[env(safe-area-inset-top)] outline-none"
-            : "fixed left-1/2 top-1/2 z-50 w-[640px] max-w-[86vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none max-[700px]:top-[calc(env(safe-area-inset-top)+56px)] max-[700px]:w-[calc(100vw-24px)] max-[700px]:max-w-none max-[700px]:translate-y-0"}
+            ? `fixed inset-0 ${Z_MODAL} flex flex-col bg-bg pt-[env(safe-area-inset-top)] outline-none`
+            : `fixed left-1/2 top-1/2 ${Z_MODAL} w-[640px] max-w-[86vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none max-[700px]:top-[calc(env(safe-area-inset-top)+56px)] max-[700px]:w-[calc(100vw-24px)] max-[700px]:max-w-none max-[700px]:translate-y-0`}
         >
           {onConsole ? <ProjectScope project={target.project?.slug}>{form}</ProjectScope> : form}
         </RadixDialog.Content>
@@ -464,11 +465,10 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
 export function Overlay({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   return (
     // Frosted glass: heavy blur + saturation over a light black wash, so the board reads as a
-    // texture behind the dialog rather than going fully dark. z-[200] matches the shared Radix Dialog
-    // tier so the centered picker sits ABOVE the sidebar/prompt box (z-[100] on desktop) rather than
-    // behind it.
+    // texture behind the dialog rather than going fully dark. The dialog layer (lib/layers.ts), the
+    // shared Radix Dialog's, so the centered picker sits above every drawer and modal it can open from.
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-scrim-30 backdrop-blur-md backdrop-saturate-150"
+      className={`fixed inset-0 ${Z_DIALOG} flex items-center justify-center bg-scrim-30 backdrop-blur-md backdrop-saturate-150`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}

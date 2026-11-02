@@ -12,6 +12,7 @@ import {
 } from "../lib/profileGrid.ts"
 import type { ProfileGridUpgrade } from "./ProfileGridSelector.tsx"
 import { PhoneBarHoldContext } from "./Composer.tsx"
+import { Z_POPOVER } from "../lib/layers.ts"
 
 // THE PHONE'S MODEL AND EFFORT PICKER — a bottom sheet in place of the desktop's grid popover.
 //
@@ -90,13 +91,14 @@ export function MobileModelSheet({
   // drawer and the new-thread page are both Radix dialogs, which make everything outside themselves
   // inert and dismiss on any press outside. A nested Radix dialog is the one layer they yield to, and it
   // brings Escape (this sheet only — the layer underneath does not also unwind) and the focus trap.
-  // z-[250] clears every surface a model chip can sit in, the z-[200] GitHub picker overlay included.
+  // The popover layer (lib/layers.ts) clears every surface a model chip can sit in, the GitHub picker's
+  // dialog included.
   return (
     <RadixDialog.Root open onOpenChange={(open) => { if (!open) close() }}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay
           data-mobile-model-sheet-scrim
-          className={`fixed inset-0 z-[250] bg-scrim-50 transition-opacity duration-200 ${shown ? "opacity-100" : "opacity-0"}`}
+          className={`fixed inset-0 ${Z_POPOVER} bg-scrim-50 transition-opacity duration-200 ${shown ? "opacity-100" : "opacity-0"}`}
         />
         <RadixDialog.Content
           data-mobile-model-sheet
@@ -105,7 +107,7 @@ export function MobileModelSheet({
           // back to nobody on close: returning it to the prompt would raise the keyboard again.
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
-          className={`fixed inset-x-0 bottom-0 z-[250] flex max-h-[86%] flex-col overflow-hidden rounded-t-[16px] border-t border-border-strong bg-panel pb-[calc(14px+env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-10px_var(--sheet-shadow)] outline-none transition-transform duration-200 ease-out motion-reduce:transition-none ${
+          className={`fixed inset-x-0 bottom-0 ${Z_POPOVER} flex max-h-[86%] flex-col overflow-hidden rounded-t-[16px] border-t border-border-strong bg-panel pb-[calc(14px+env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-10px_var(--sheet-shadow)] outline-none transition-transform duration-200 ease-out motion-reduce:transition-none ${
             shown ? "translate-y-0" : "translate-y-full"
           }`}
         >

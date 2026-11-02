@@ -14,6 +14,7 @@ import { DrawerInitialScrollCoordinator } from "../lib/drawerInitialScroll.ts"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { ThreadView } from "./ChatView.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
+import { drawerZ } from "../lib/layers.ts"
 
 // One THREAD layer of the side-drawer stack: a right sheet (same slide/backdrop family as settings)
 // showing a thread's FULL view as an OVERLAY — the queue (and any layers below) keep their scroll and
@@ -186,11 +187,11 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
             renders the same scrim WITHOUT it and lets the layer on top hold the lock (useHoldsScrollLock).
             The Content stays modal either way: toggling `modal` would remount the whole transcript. */}
         {narrow && !holdsScrollLock ? (
-          <div className={`${SHEET_SCRIM_CLASS} ${shown ? "opacity-100" : "opacity-0"}`} style={{ zIndex: 50 + depth * 2, pointerEvents: "auto" }} />
+          <div className={`${SHEET_SCRIM_CLASS} ${shown ? "opacity-100" : "opacity-0"}`} style={{ zIndex: drawerZ(depth).scrim, pointerEvents: "auto" }} />
         ) : (
           <RadixDialog.Overlay
             className={`${SHEET_SCRIM_CLASS} ${shown ? "opacity-100" : "opacity-0"}`}
-            style={{ zIndex: 50 + depth * 2 }}
+            style={{ zIndex: drawerZ(depth).scrim }}
           />
         )}
         <RadixDialog.Content
@@ -263,7 +264,7 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
           // commit, so the /full column has somewhere to morph back into.
           data-vt-chat
           className={`fixed right-0 top-0 overflow-hidden outline-none ${SHEET_PANEL_CLASS} ${shown ? "translate-x-0" : "translate-x-full"}`}
-          style={{ zIndex: 51 + depth * 2, width: sheetWidth(widthDepth), viewTransitionName: drawerSnap.vtReturnTarget === slug ? "thread-chat" : undefined }}
+          style={{ zIndex: drawerZ(depth).panel, width: sheetWidth(widthDepth), viewTransitionName: drawerSnap.vtReturnTarget === slug ? "thread-chat" : undefined }}
         >
           <RadixDialog.Title className="sr-only">
             {route.kind === "found" ? `Thread: ${displayTitle(route.thread)}` : `Thread: ${slug}`}

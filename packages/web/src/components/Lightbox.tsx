@@ -17,6 +17,7 @@ import { useLocalPathBase } from "../lib/useMarkdown.ts"
 import { FIT, clampZoom, detailScale, maxScale, panBy, pinch, zoomAbout, type ZoomBounds, type ZoomState } from "../lib/viewerZoom.ts"
 import { IMAGE_FRAME_MAT, ImageFrame } from "./ImageFrame.tsx"
 import { Tooltip, TooltipProvider } from "./Tooltip.tsx"
+import { Z_DIALOG } from "../lib/layers.ts"
 
 // A ```lightbox fence (lib/lightbox.ts for the grammar): the pictures and videos a worker listed, laid out
 // as ONE gallery inside the same frame every rendered picture in the transcript sits in (ImageFrame), and
@@ -640,7 +641,7 @@ function LightboxViewer({ images, index }: { images: readonly LightboxImage[]; i
             a light-mode scrim would wash a dark screenshot out. 95% and blurred: at 90% the transcript's
             own text still read through around a narrow picture, and a light page came through as a
             muddy grey with its dark screenshots floating in it as blobs. */}
-        <RadixDialog.Overlay className="overlay-in fixed inset-0 z-[200] bg-black/95 backdrop-blur-md" style={{ opacity: fade }} />
+        <RadixDialog.Overlay className={`overlay-in fixed inset-0 ${Z_DIALOG} bg-black/95 backdrop-blur-md`} style={{ opacity: fade }} />
         <RadixDialog.Content
           ref={contentRef}
           data-lightbox
@@ -656,7 +657,7 @@ function LightboxViewer({ images, index }: { images: readonly LightboxImage[]; i
             if (opener.current?.isConnected) opener.current.focus({ preventScroll: true })
           }}
           onKeyDown={onKeyDown}
-          className="overlay-in fixed inset-0 z-[200] flex flex-col text-white outline-none"
+          className={`overlay-in fixed inset-0 ${Z_DIALOG} flex flex-col text-white outline-none`}
         >
           {/* The side padding clears a phone's rounded corners and notch in landscape. */}
           <header

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useSnapshot } from "valtio"
 import { ArrowLeft, Check, Clock, Plus, Settings as SettingsIcon } from "lucide-react"
 import { activeBandThread, boardAskThread, type ThreadView } from "@frizz/shared"
@@ -25,9 +25,11 @@ import { projectIdentity, sessionIndicatorFor } from "./Sidebar.tsx"
 import { StatusListView } from "./StatusListView.tsx"
 import { ThreadActionsSheet } from "./MobileThreadActionsSheet.tsx"
 import { showsUpdateBadge } from "./RestartFrizzButton.tsx"
+import { trackBottomFloat } from "../lib/queueDockInset.ts"
 import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { showCompletionToast } from "../lib/completionPins.ts"
 import { captureReaderPin, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
+import { Z_CHROME } from "../lib/layers.ts"
 
 // THE PHONE'S BOARD — a header, three text tabs, ONE list, and a "New thread" button.
 //
@@ -440,6 +442,10 @@ export function MobileBoard() {
   const [openSwipe, setOpenSwipe] = useState<string | null>(null)
   // The thread whose actions sheet a long-press opened, if any.
   const [actionsFor, setActionsFor] = useState<string | null>(null)
+  // The "New thread" button's corner is the toaster's too: publish it, so a toast rides above the button
+  // instead of over it (lib/queueDockInset.ts).
+  const newThreadRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => (newThreadRef.current ? trackBottomFloat("phone-new-thread", newThreadRef.current) : undefined), [])
   // Both optimistic overlays, exactly as the rail composes them: a just-sent steer pulls a row into the
   // running reading and a just-clicked Mark-as-done drops it into Done, each folded in BEFORE any band
   // is derived — so a row's appearance and its band always land together.
@@ -496,7 +502,7 @@ export function MobileBoard() {
       {/* The header and the band tabs, fixed together. `env(safe-area-inset-top)`: on a notched phone the
           status bar sits over the top of the viewport, and no headless shot has that inset — so this is a
           defect no screenshot here can show and every real device would. */}
-      <div data-mobile-board-header className="fixed inset-x-0 top-0 z-30 bg-bg pt-[env(safe-area-inset-top)]">
+      <div data-mobile-board-header className={`fixed inset-x-0 top-0 ${Z_CHROME} bg-bg pt-[env(safe-area-inset-top)]`}>
         <div className="flex h-[56px] items-center gap-0.5 pr-0.5">
           {/* A real navigation to the grid, not a router link: `/` is a different project binding (its
               own socket, board store and API base), which is exactly why the desktop grid is reached by
@@ -588,12 +594,13 @@ export function MobileBoard() {
       </div>
 
       <button
+        ref={newThreadRef}
         data-mobile-new-thread
         onClick={() => (store.showNewThread = true)}
         // NOT the accent: a permanent yellow pill would out-shout every ask in the list under it, and
         // the accent means exactly one thing in this product. This is the app's own primary-button fill.
         // Labelled, not a bare +: the verb is the one thing on this screen that is not a thread.
-        className="button-outline fixed bottom-[calc(16px+env(safe-area-inset-bottom))] right-4 z-30 flex h-[50px] items-center gap-1.5 rounded-full bg-fg pl-4 pr-5 text-[15px] font-semibold text-bg shadow-lg shadow-shadow-ink/50 active:opacity-85"
+        className={`button-outline fixed bottom-[calc(16px+env(safe-area-inset-bottom))] right-4 ${Z_CHROME} flex h-[50px] items-center gap-1.5 rounded-full bg-fg pl-4 pr-5 text-[15px] font-semibold text-bg shadow-lg shadow-shadow-ink/50 active:opacity-85`}
       >
         <Plus size={20} strokeWidth={2.4} />
         New thread

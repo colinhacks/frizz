@@ -7,6 +7,7 @@ import { CONSOLE_PATH, isConsolePath } from "../lib/base-path.ts"
 import { PROJECTS_HREF, type HomeView } from "../lib/homeView.ts"
 import { BOARD_PAIR_CLASS, SIDEBAR_WIDTH_CLASS, WORKPANE_WIDTH_CLASS } from "../lib/boardColumns.ts"
 import { RAIL_INSET_CLASS } from "./ProjectRail.tsx"
+import { Z_CHROME } from "../lib/layers.ts"
 
 // THE SWITCH BETWEEN THE TWO HOMES — the project grid (`/`) and the Console (`/console`).
 //
@@ -118,7 +119,7 @@ export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
     // The empty copy of the board's two columns, inset by the rail as the page is (routes.tsx RootLayout),
     // with the pill in the sidebar's slot. It is the window's width and takes no pointer, so nothing under
     // it stops being clickable.
-    <div data-home-switcher-frame className={`pointer-events-none fixed inset-x-0 top-[14px] z-40 ${railVisible ? RAIL_INSET_CLASS : ""}`}>
+    <div data-home-switcher-frame className={`pointer-events-none fixed inset-x-0 top-[14px] ${Z_CHROME} ${railVisible ? RAIL_INSET_CLASS : ""}`}>
       <div className={BOARD_PAIR_CLASS}>
         <div className={SIDEBAR_WIDTH_CLASS}>
           {/* `ml-0.5`: the sidebar's prompt box is inset 2px in its column (ConsoleSidebar's `px-0.5`), and the

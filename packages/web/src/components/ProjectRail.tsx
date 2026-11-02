@@ -17,6 +17,7 @@ import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { dropIndex, edgeScrollVelocity, moveItem, shiftFor } from "../lib/railReorder.ts"
 import { Tooltip } from "./Tooltip.tsx"
+import { Z_CHROME, Z_SELECT } from "../lib/layers.ts"
 
 // THE PROJECT RAIL — every project on this machine as one icon square, always on screen.
 //
@@ -440,7 +441,7 @@ export function ProjectIconMenu({
           <RadixDropdown.Content
             align="start"
             sideOffset={6}
-            className="z-[220] min-w-[190px] rounded-lg border border-border bg-panel p-1 shadow-xl shadow-shadow-ink/40"
+            className={`${Z_SELECT} min-w-[190px] rounded-lg border border-border bg-panel p-1 shadow-xl shadow-shadow-ink/40`}
           >
             <RadixDropdown.Item className={item} onSelect={() => pick.mutate()}>
               {set.isPending ? "Uploading…" : "Choose an icon…"}
@@ -709,7 +710,7 @@ export function ProjectRail() {
   return (
     <nav
       aria-label="Projects"
-      className={`fixed inset-y-0 left-0 z-[60] flex flex-col items-center border-r border-border bg-panel/60 py-3 max-[800px]:hidden ${RAIL_WIDTH_CLASS}`}
+      className={`fixed inset-y-0 left-0 ${Z_CHROME} flex flex-col items-center border-r border-border bg-panel/60 py-3 max-[800px]:hidden ${RAIL_WIDTH_CLASS}`}
     >
       {/* A HOME GLYPH, not the Frizz mark. Two reasons, and the second is why it stopped being the
           mark: this slot is a destination ("all projects"), and the wordmark said whose app you are

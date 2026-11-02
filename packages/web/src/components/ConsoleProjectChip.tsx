@@ -4,7 +4,7 @@ import { Check, ChevronDown } from "lucide-react"
 import type { ProjectCard } from "@frizz/shared"
 import { useConsoleProjectList } from "../lib/consoleProjects.ts"
 import { consoleDispatchProject, pickConsoleDispatchProject, useConsoleDispatchPick } from "../lib/consoleDispatchProject.ts"
-import { OPAQUE_SURFACE_BASE } from "../lib/overlaySurface.ts"
+import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { ProjectSquare } from "./ProjectRail.tsx"
 
@@ -70,7 +70,7 @@ function ProjectChip({ project, projects, onPick }: { project: ProjectCard; proj
           side="bottom"
           sideOffset={5}
           collisionPadding={8}
-          className={`z-[110] ${OPAQUE_SURFACE_BASE} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] overflow-auto rounded-lg p-1.5`}
+          className={`${OPAQUE_PORTAL_SURFACE_CLASS} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] overflow-auto rounded-lg p-1.5`}
         >
           {projects.map((p) => (
             <RadixDropdown.Item

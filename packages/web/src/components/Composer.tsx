@@ -19,6 +19,7 @@ import { localImageUrl } from "../lib/markdownTargets.ts"
 import { basename } from "../lib/paths.ts"
 import { useKeyboardInset } from "../lib/keyboardInset.ts"
 import { useFileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
+import { AnchoredLayer, aboveAnchor } from "./ui/AnchoredLayer.tsx"
 
 // The shared prompt composer (the pattern the user called "perfect"): ONE rounded bordered box
 // holding a borderless auto-growing textarea plus a small round accent send button hovering INSIDE
@@ -117,6 +118,8 @@ export type PhoneComposerLayout =
   | { layout: "page"; tools?: ReactNode }
 
 const LONG_PRESS_MS = 500
+// The skills menu's placement: the box's width, 6px above it (below when the top has no room).
+const SUGGEST_PLACEMENT = aboveAnchor(6)
 
 // HOLDING THE BAR OPEN. The open box's toolbar is only there while the field has focus or text — but a
 // control in it that opens a sheet (the model chip) closes the keyboard first, which blurs an empty
@@ -690,21 +693,33 @@ export function Composer({
   }
 
   // The skills menu, floated ABOVE the box (the composer lives at the bottom of its surface, so up is
-  // the direction with room). Rows are text-only — a name and its one-line description — which keeps
-  // this out of icon-ink territory entirely. Mousedown is prevented on every row for the same reason as
-  // the send button: choosing a suggestion must never blur the textarea. Shared by every layout.
-  const suggestMenu = suggestOpen ? (
+  // the direction with room; ui/AnchoredLayer flips it below when the box sits too near the window's
+  // top). Rows are text-only — a name and its one-line description — which keeps this out of icon-ink
+  // territory entirely. Mousedown is prevented on every row for the same reason as the send button:
+  // choosing a suggestion must never blur the textarea. Shared by every layout.
+  //
+  // PORTALED, and shown only while the textarea has focus. It was `absolute bottom-full z-20` inside the
+  // box until 2026-11-01, where its z ranked only inside the composer's surface — a card footer is
+  // sticky z-10, a drawer footer z-10 — so the drawer's jump-to-latest pill (z-20 over the transcript)
+  // painted across its rows, and a box near the window's top opened it off the screen (lib/layers.ts
+  // rule 2). Out of the surface it outranks anything opened after it, so it has to close when the
+  // textarea lets go of focus, as every popover does; its keys only ever reached it with focus anyway.
+  const [focused, setFocused] = useState(false)
+  const suggestMenu = suggestOpen && focused ? (
+      <AnchoredLayer place={SUGGEST_PLACEMENT}>
         <div
           ref={suggestListRef}
           data-slash-menu
-          className="absolute bottom-full left-0 right-0 z-20 mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-border bg-bg py-1 shadow-lg"
+          // On the list, not each row: a press on its padding or its scrollbar would blur the box too,
+          // and the menu closes with focus.
+          onMouseDown={(e) => e.preventDefault()}
+          className="max-h-56 overflow-y-auto rounded-lg border border-border bg-bg py-1 shadow-lg"
         >
           {suggestions.map((s, i) => (
             <button
               key={s.name}
               type="button"
               data-suggest-index={i}
-              onMouseDown={(e) => e.preventDefault()}
               onClick={() => acceptSuggestion(s)}
               onMouseEnter={() => setSuggestSel(i)}
               // px-3.5 matches the textarea's own text inset, so the completed `/name` lands exactly
@@ -734,11 +749,12 @@ export function Composer({
             </button>
           ))}
         </div>
+      </AnchoredLayer>
   ) : null
 
   // ── The phone layouts ────────────────────────────────────────────────────────────────────────────
   // Hooks first and unconditionally, so a window that crosses the breakpoint keeps its hook order.
-  const [focused, setFocused] = useState(false)
+  // (`focused` is declared above, with the skills menu that reads it too.)
   const [held, setHeld] = useState(false)
   const phoneRootRef = useRef<HTMLDivElement>(null)
   const keyboardInset = useKeyboardInset(phoneRootRef, Boolean(phone))
@@ -1005,6 +1021,8 @@ export function Composer({
             setProse(e.target.value)
           }}
           onKeyDown={onKeyDown}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onPaste={(e) => {
             // Any file item claims the whole paste (preventDefault) — deliberately. An image paste
             // usually carries a junk text/html or filename text/plain fallback that must NOT be

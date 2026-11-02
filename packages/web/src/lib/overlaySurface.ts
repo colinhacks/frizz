@@ -1,3 +1,5 @@
+import { Z_POPOVER, Z_SELECT, Z_SELECT_IN_POPOVER } from "./layers.ts"
+
 // The opaque overlay surface WITHOUT a z-index. Portal menus/popovers must be an opaque layer from
 // their first painted frame — the older `pop-in` animation starts at opacity: 0, which makes a
 // just-opened menu look transparent over the sidebar/composer. This base owns everything BUT the
@@ -7,38 +9,29 @@
 export const OPAQUE_SURFACE_BASE =
   "isolate bg-elevated opacity-100 border border-border shadow-2xl shadow-overlay-shadow"
 
-// THE STACKING ORDER, low → high. The sidebar/board rail deliberately has NO z-index (default
-// stacking): it and the workpane are side-by-side columns that never overlap, and its old desktop
-// z-[100] is what forced every overlay to escalate past it — the recurring "hidden underneath the
-// prompt box" bug. Anything below is an OVERLAY and therefore already outranks the rail:
-//   z-20  fixed corner chrome · z-50 modal dialogs/drawers · z-[60] ⌘K palette · z-[70] toasts
-//   z-[110] portaled selector surfaces · z-[200] shared Dialog · z-[250] anchored popovers/tooltips
-//   z-[260] a selector opened from INSIDE a popover · z-[300] restart scrim (alone must cover the whole app)
-// Never re-elevate a persistent layer to "win" a collision — raise the specific overlay instead.
+// The z-indexes below are NAMES for layers of lib/layers.ts, the one stacking order, where each
+// layer's reason lives; this file only says which surface takes which. Never re-elevate a persistent
+// layer to "win" a collision — raise the specific overlay instead, in layers.ts.
 
-// The selector-surface contract for Select, DropdownMenu, and the profile grid: the opaque base at
-// z-[110]. Portal content mounts at document.body, so it must clear the modal surfaces it can be
-// opened from (a selector inside a z-50 dialog) rather than paint beneath them.
-export const OPAQUE_PORTAL_SURFACE_Z = "z-[110]"
+// The selector-surface contract for Select, DropdownMenu, and the profile grid: the opaque base at the
+// select layer. Portal content mounts at document.body, so it must clear the modal surfaces it can be
+// opened from (a selector inside Settings or a drawer) rather than paint beneath them.
+export const OPAQUE_PORTAL_SURFACE_Z = Z_SELECT
 export const OPAQUE_PORTAL_SURFACE_CLASS = `${OPAQUE_PORTAL_SURFACE_Z} ${OPAQUE_SURFACE_BASE}`
 
-// The stacking level a selector must take when it is opened from INSIDE the shared z-[200] surface
-// (the GitHub picker's Overlay). Its portal still mounts at document.body, so the default z-[110]
-// would paint the menu BENEATH that overlay's frosted backdrop — the classic "hidden underneath"
-// bug. This is the raise-the-specific-overlay fix, not a re-elevation of the z-[110] tier itself:
-// it borrows the anchored-overlay level, which is defined to clear z-[200].
-export const OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z = "z-[250]"
+// The stacking level a selector must take when it is opened from INSIDE a dialog (the GitHub picker's
+// Overlay). Its portal still mounts at document.body, so the select layer would paint the menu BENEATH
+// that overlay's frosted backdrop — the classic "hidden underneath" bug. It borrows the popover layer,
+// which is defined to clear every dialog.
+export const OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z = Z_POPOVER
 
 // The stacking level a selector takes when it is opened from INSIDE an anchored popover (the model
-// picker's agent-settings panel carries three Selects). Its portal still mounts at document.body, so
-// at the popover's own z-[250] it would resolve by source order against the panel it was opened from
-// — a coin flip that lands the menu beneath its own trigger. One step above, and still below the
-// restart scrim.
-export const OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z = "z-[260]"
+// picker's agent-settings panel carries three Selects). At the popover's own layer it would resolve by
+// source order against the panel it was opened from — a coin flip that lands the menu beneath its own
+// trigger. One step above, and still below toasts and the restart scrim.
+export const OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z = Z_SELECT_IN_POPOVER
 
 // The z-index for ANCHORED transient overlays that pop off a trigger — tooltips and popovers. They
-// must clear every surface they can be opened from: the opaque selector surface (z-[110]) and the
-// modal Dialog (z-[200], so a popover opened from inside a dialog still shows). It sits just below
-// the restart scrim (z-[300]). This is also the fix for the quota popover that used to render at
-// z-50 and got clipped away "underneath the prompt box".
-export const OVERLAY_Z_CLASS = "z-[250]"
+// must clear every surface they can be opened from, dialogs included. This is also the fix for the
+// quota popover that used to render at z-50 and got clipped away "underneath the prompt box".
+export const OVERLAY_Z_CLASS = Z_POPOVER

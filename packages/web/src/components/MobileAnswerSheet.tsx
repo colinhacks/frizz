@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
-import { createPortal } from "react-dom"
 import { X } from "lucide-react"
 import type { MessageAnswering, QuestionKind } from "../lib/questionBlocks.ts"
 import { QuestionBlockCard } from "./QuestionBlockCard.tsx"
+import { Z_MODAL } from "../lib/layers.ts"
+import { ModalSurface } from "./ui/ModalSurface.tsx"
 
 // ANSWERING ON A PHONE — one question at a time, in a sheet that slides up from the bottom.
 //
@@ -69,8 +70,11 @@ export function MobileAnswerSheet({
   // which sits inside a virtualized transcript that positions its rows with `transform`. Left in place
   // the sheet anchored to the row's window instead of the screen: it floated mid-page with the thread's
   // composer visible and undimmed below it. The portal escapes every transformed ancestor at once.
-  return createPortal(
-    <div data-mobile-answer-sheet className="fixed inset-0 z-[80] flex flex-col justify-end">
+  // It is ui/ModalSurface's portal, not a bare one: the thread drawer this opens from is a MODAL Radix
+  // layer on the phone, which makes everything outside its stack click-through and pulls focus back
+  // into itself, so a sheet outside the stack drew over the drawer and took neither a tap nor a keystroke.
+  return (
+    <ModalSurface data-mobile-answer-sheet label="Answer questions" className={`fixed inset-0 ${Z_MODAL} flex flex-col justify-end`}>
       <button
         aria-label="Close"
         onClick={onClose}
@@ -139,8 +143,7 @@ export function MobileAnswerSheet({
           </div>
         </div>
       </div>
-    </div>,
-    document.body,
+    </ModalSurface>
   )
 
   function submit() {

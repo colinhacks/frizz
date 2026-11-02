@@ -1,6 +1,7 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
+import { Z_MODAL } from "../lib/layers.ts"
 
 // THE PHONE'S BOTTOM SHEET, on Radix Dialog rather than a hand-rolled fixed div, for one reason that
 // decides it: the thread page it opens over IS a modal Radix dialog (ThreadSheet, `modal` below 700px).
@@ -45,7 +46,7 @@ export function MobileBottomSheet({
     <RadixDialog.Root open onOpenChange={(open) => { if (!open) onRequestClose() }}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay
-          className={`fixed inset-0 z-[80] bg-scrim-50 transition-opacity duration-200 motion-reduce:transition-none ${shown ? "opacity-100" : "opacity-0"}`}
+          className={`fixed inset-0 ${Z_MODAL} bg-scrim-50 transition-opacity duration-200 motion-reduce:transition-none ${shown ? "opacity-100" : "opacity-0"}`}
         />
         <RadixDialog.Content
           ref={contentRef}
@@ -58,7 +59,7 @@ export function MobileBottomSheet({
           }}
           // Close THIS layer and stop there: the thread under it must not also unwind on one keystroke.
           onEscapeKeyDown={handleDialogEscape}
-          className={`fixed inset-x-0 bottom-0 z-[80] flex max-h-[86%] flex-col overflow-hidden rounded-t-[14px] border-t border-border-strong bg-panel pb-[calc(14px+env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-10px_var(--sheet-shadow)] outline-none transition-transform duration-200 ease-out motion-reduce:transition-none ${
+          className={`fixed inset-x-0 bottom-0 ${Z_MODAL} flex max-h-[86%] flex-col overflow-hidden rounded-t-[14px] border-t border-border-strong bg-panel pb-[calc(14px+env(safe-area-inset-bottom))] shadow-[0_-20px_60px_-10px_var(--sheet-shadow)] outline-none transition-transform duration-200 ease-out motion-reduce:transition-none ${
             shown ? "translate-y-0" : "translate-y-full"
           } ${className}`}
         >

@@ -53,13 +53,12 @@ test("flipping 'Project sidebar' on a board reached from the grid shows the rail
     assert.equal(await rail(), false, "still hidden after the switch")
 
     await page.click('[aria-label="Settings"]')
-    await page.waitForSelector('button[aria-label="Project sidebar"]', { timeout: 10_000 })
-    await page.click('button[aria-label="Project sidebar"]')
-    await page.waitForSelector('[role="menuitemradio"]', { timeout: 10_000 })
-    await page.evaluate(() => {
-      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((el) => /Always shown/.test(el.textContent ?? ""))
-      item?.click()
-    })
+    // "Project sidebar" is an Off/On pair under its label (SettingsDrawer's OnOffToggle); it was a select
+    // with an "Always shown" item until the toggle replaced it. A real click, so the press has to reach
+    // the drawer through whatever sits on top of it.
+    const on = await page.waitForFunction(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][aria-label="Settings"] button[aria-pressed]')]
+      .find((button) => button.textContent?.trim() === "On" && button.closest(".flex-col")?.textContent?.includes("Project sidebar")), { timeout: 10_000 })
+    await (on as unknown as { click: () => Promise<void> }).click()
 
     // The save is one round trip; the rail must follow it on THIS page, not on the next load.
     await page.waitForFunction(() => document.querySelector('nav[aria-label="Projects"]') !== null, { timeout: 10_000 })

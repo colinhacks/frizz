@@ -123,6 +123,10 @@ Do not ship "it renders" and wait to be told it looks wrong. If the pattern exis
 (GitHub, Linear, this app's own components), measure the real one and mirror it instead of designing
 from taste.
 
+# Layers: one stacking order, in `lib/layers.ts`
+
+Anything drawn over the page — a menu, a popover, a sheet, a modal, a toast — takes its layer from [`packages/web/src/lib/layers.ts`](packages/web/src/lib/layers.ts), whose header states the four rules and the bugs behind each (one audit on 2026-11-01 found seven: a toast under the sign-in modal, the rail through the Settings scrim, Settings under a drawer, Escape on ⌘K closing the drawer beneath it, …). In short: no z-index above 20 anywhere else; a panel hanging off a trigger is portaled (Radix's `Portal`, or `ui/AnchoredLayer`), never `absolute` past its parent's edge; and a full-screen layer is a Radix dialog or `ui/ModalSurface`, because a drawer is a Radix layer and a plain `fixed` div loses Escape, the pointer and the focus to it whatever its z. `layers.guard.test.ts` fails on each of these, and `components/stackingOrder.e2e.test.ts` asks a real browser what is on top. A new layer goes into `layers.ts` beside what it must cover, never as a bigger number at the call site.
+
 # Copy capitalization: sentence case, never title case
 
 All user-visible copy uses SENTENCE case — capitalize only the first word and any proper nouns. This

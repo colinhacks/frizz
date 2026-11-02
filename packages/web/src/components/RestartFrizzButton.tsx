@@ -1,5 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react"
-import { createPortal } from "react-dom"
+import React, { useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { useSnapshot } from "valtio"
 import { AlertTriangle, Check, RefreshCw, X } from "lucide-react"
 import {
@@ -19,7 +18,7 @@ import {
 import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { showToast, store } from "../store.ts"
 import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
-import { OVERLAY_Z_CLASS } from "../lib/overlaySurface.ts"
+import { AnchoredLayer, type AnchorRect, type LayerSize, type Viewport } from "./ui/AnchoredLayer.tsx"
 
 // RefreshCw's arrowheads advance clockwise, matching Tailwind's clockwise animate-spin keyframes.
 // Keep this exported contract covered by the focused component test when either icon or animation changes.
@@ -464,58 +463,20 @@ export function anchoredPanelPlacement(
   return { left: natural - shift, top: `calc(${anchor.bottom}px + ${PANEL_DROP})`, shift }
 }
 
-type PanelBox = { left: number; bottom: number; width: number; viewport: number }
-
 /**
- * Hangs a panel off the element it is rendered INSIDE (the button's wrapper), but OUTSIDE the sidebar's
- * stacking context (see ANCHORED_PANEL): portaled to <body>, `fixed` under the wrapper, at OVERLAY_Z —
- * the anchored-popover tier, so it also clears a thread drawer the human can still reach the sidebar
- * beside. Re-measured after every commit (the first has no panel to measure the width of) and on every
- * scroll and resize: the failure card stays up until dismissed, and in the stacked layout (800px and
- * under) the sidebar scrolls with the page. Mounted only while its panel shows.
- *
- * The wrapper is found through a hidden marker of the panel's OWN, not a ref the caller passes: React
- * attaches a child's ref before its parent's layout effect runs, but a PARENT's ref only after its
- * children's effects, so a panel that mounts together with its wrapper read a null ref and never drew
- * (the fixture's failure card, 2026-10-30).
+ * Hangs a panel off the element it is rendered INSIDE (the button's wrapper), outside the sidebar's
+ * stacking context (see ANCHORED_PANEL), through ui/AnchoredLayer: portaled to <body> at the popover
+ * layer, so it also clears a thread drawer the human can still reach the sidebar beside, and re-measured
+ * while it stays up (the failure card stays until dismissed; in the stacked layout the sidebar scrolls
+ * with the page). Mounted only while its panel shows: the hover popover closes as the pointer leaves.
  */
 export function AnchoredPanel({ children }: { children: ReactNode }) {
-  const marker = useRef<HTMLSpanElement>(null)
-  const panel = useRef<HTMLDivElement>(null)
-  const [box, setBox] = useState<PanelBox | null>(null)
-  const place = useCallback(() => {
-    const rect = marker.current?.parentElement?.getBoundingClientRect()
-    if (!rect) return
-    const next = { left: rect.left, bottom: rect.bottom, width: panel.current?.offsetWidth ?? 0, viewport: document.documentElement.clientWidth }
-    setBox((was) => (was && was.left === next.left && was.bottom === next.bottom && was.width === next.width && was.viewport === next.viewport ? was : next))
-  }, [])
-  // Settles in one extra pass, before paint: an unchanged reading hands back the same box, and React stops.
-  useLayoutEffect(place)
-  useLayoutEffect(() => {
-    window.addEventListener("resize", place)
-    window.addEventListener("scroll", place, true)
-    return () => {
-      window.removeEventListener("resize", place)
-      window.removeEventListener("scroll", place, true)
-    }
-  }, [place])
-  const placement = box && anchoredPanelPlacement(box, box.width, box.viewport)
-  return (
-    <>
-      <span ref={marker} hidden />
-      {placement &&
-        createPortal(
-          <div
-            ref={panel}
-            className={`fixed ${OVERLAY_Z_CLASS}`}
-            style={{ left: placement.left, top: placement.top, "--panel-shift": `${placement.shift}px` } as React.CSSProperties}
-          >
-            {children}
-          </div>,
-          document.body,
-        )}
-    </>
-  )
+  return <AnchoredLayer place={placeUpdatePanel}>{children}</AnchoredLayer>
+}
+
+function placeUpdatePanel(anchor: AnchorRect, size: LayerSize, viewport: Viewport): CSSProperties {
+  const placement = anchoredPanelPlacement(anchor, size.width, viewport.width)
+  return { left: placement.left, top: placement.top, "--panel-shift": `${placement.shift}px` } as CSSProperties
 }
 
 /** The desktop status row's update action: an icon button, its hover popover, and its anchored failure card. */

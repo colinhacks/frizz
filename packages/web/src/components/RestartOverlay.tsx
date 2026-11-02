@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { AlertTriangle, RefreshCw, X } from "lucide-react"
+import { Z_RESTART } from "../lib/layers.ts"
 
 // The default copy shown while the supervisor rebuilds and promotes a fresh Frizz artifact. The
 // supervisor may hand us a more specific `message`; when it does we show that as the sub-line.
@@ -97,7 +98,7 @@ export function RestartOverlay({
     return (
       // No scrim and no pointer capture on the wrapper: only the card itself is interactive, so the
       // page behind it stays reachable (for whatever it is still worth without a server).
-      <div className="pointer-events-none fixed inset-x-0 top-6 z-[300] flex justify-center px-4">
+      <div className={`pointer-events-none fixed inset-x-0 top-6 ${Z_RESTART} flex justify-center px-4`}>
         <div
           role="alert"
           className="pointer-events-auto w-[min(26rem,calc(100vw-2rem))] rounded-2xl border border-danger-fill/45 bg-elevated p-5 text-left shadow-2xl shadow-shadow-ink/60"
@@ -135,8 +136,10 @@ export function RestartOverlay({
       aria-label={RESTART_HEADING}
       // z-[300] beats the shared Radix Dialog (z-[200]) so a dialog already open when a
       // supervisor-initiated restart begins is covered, not tied. A heavier black wash than the
-      // frosted dialogs (black/55 vs /30) reads as a genuine block; the scrim captures pointer events.
-      className="fixed inset-0 z-[300] flex items-center justify-center bg-scrim-55 px-4 backdrop-blur-md backdrop-saturate-150"
+      // frosted dialogs (black/55 vs /30) reads as a genuine block; the scrim captures pointer events —
+      // `pointer-events-auto` said outright, because a modal Radix layer underneath (a phone drawer,
+      // Settings, ⌘K) makes <body> click-through, and an inherited `none` let clicks through the block.
+      className={`pointer-events-auto fixed inset-0 ${Z_RESTART} flex items-center justify-center bg-scrim-55 px-4 backdrop-blur-md backdrop-saturate-150`}
     >
       <div
         ref={cardRef}

@@ -7,6 +7,7 @@ import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
 import { SIGN_IN_COMMAND, PROVIDER_LABEL } from "../lib/signIn.ts"
+import { Z_DIALOG_OVER_DIALOG } from "../lib/layers.ts"
 
 // The sign-in gate modal. Shown when a dispatch targets a signed-out provider or the runtime 401
 // classifier flags a rejected credential. It hands the human the provider's own login command to run
@@ -58,11 +59,11 @@ export function SignInModal({
   return (
     <RadixDialog.Root open onOpenChange={(open) => { if (!open) onClose() }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-[210] bg-scrim-30 backdrop-blur-md backdrop-saturate-150" />
+        <RadixDialog.Overlay className={`fixed inset-0 ${Z_DIALOG_OVER_DIALOG} bg-scrim-30 backdrop-blur-md backdrop-saturate-150`} />
         <RadixDialog.Content
           aria-modal="true"
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[210] w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none"
+          className={`fixed left-1/2 top-1/2 ${Z_DIALOG_OVER_DIALOG} w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none`}
         >
           <RadixDialog.Title className="mb-1 text-[14px] font-medium">Signed out of {label}</RadixDialog.Title>
 
@@ -136,11 +137,11 @@ export function LogoutConfirmModal({ backend, onClose }: { backend: AccountBacke
   return (
     <RadixDialog.Root open onOpenChange={(open) => { if (!open && !logout.isPending) onClose() }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-[210] bg-scrim-30 backdrop-blur-md backdrop-saturate-150" />
+        <RadixDialog.Overlay className={`fixed inset-0 ${Z_DIALOG_OVER_DIALOG} bg-scrim-30 backdrop-blur-md backdrop-saturate-150`} />
         <RadixDialog.Content
           aria-modal="true"
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[210] w-[420px] max-w-[86vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none"
+          className={`fixed left-1/2 top-1/2 ${Z_DIALOG_OVER_DIALOG} w-[420px] max-w-[86vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none`}
         >
           <RadixDialog.Title className="mb-1 text-[14px] font-medium">Sign out of {label}?</RadixDialog.Title>
           <p className="mb-4 text-[12.5px] leading-relaxed text-muted">

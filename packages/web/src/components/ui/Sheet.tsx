@@ -5,6 +5,7 @@ import { store, markDrawerClosing, removeDrawerAfterExit } from "../../store.ts"
 import { registerDrawerClose } from "../../lib/overlays.ts"
 import { useBackClosesLayer } from "../../lib/backDismiss.ts"
 import { useIsMobile } from "../../lib/mobile.ts"
+import { drawerZ } from "../../lib/layers.ts"
 import {
   SHEET_CLOSE_MS,
   SHEET_PANEL_CLASS,
@@ -192,7 +193,7 @@ export function Sheet({
   return (
     <div
       className={`${SHEET_SCRIM_CLASS} pointer-events-none flex justify-end ${shown ? "opacity-100" : "opacity-0"}`}
-      style={{ zIndex: 50 + depth * 2 }}
+      style={{ zIndex: drawerZ(depth).scrim }}
     >
       <RemoveScroll ref={panelRef} enabled={narrow && holdsLock} allowPinchZoom forwardProps>
         <div
