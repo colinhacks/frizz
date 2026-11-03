@@ -32,6 +32,7 @@ function plausible(procedure: string, body: any): unknown {
     case "spawnThread": return { slug: "spawned-child", sessionId: "sid-spawned-child", project: body.project }
     case "upsertOwnLink": return { link: { id: "lnk_1", kind: "url", label: body.label, target: body.target } }
     case "dropOwnLink": return { dropped: true }
+    case "listThreads": return { project: { slug: "frizz", id: "proj-1", name: "frizz" }, threads: [], counts: { rested: 0, active: 0, snoozed: 0, done: 0 } }
     case "setOwnThreadTitle": return { accepted: true, title: body.title }
     case "ask": return { registered: body.questions.map((q: any, i: number) => ({ id: `qst_${i}`, spec: q, ...(q.secret ? { secretPath: "/tmp/a dir/secret" } : {}) })) }
     case "unask": return { withdrawn: true }
@@ -386,6 +387,70 @@ test("`spawn-thread --project` asks our own project, with the raw prompt, and li
     assert.equal(outside.code, 1)
     assert.match(outside.stderr, /could not tell which thread is calling/)
     assert.deepEqual(fake.seen, [])
+  } finally {
+    fake.close()
+  }
+})
+
+// `threads` asks OUR project's `listThreads`, naming the other project when there is one, and prints the
+// board banded the way the sidebar is — the caller marked, the Done band counted even when it is left out.
+test("`threads` lists a board by band, marks the caller, reads a project out of a link, and prints JSON on request", async () => {
+  const now = Date.now()
+  const ago = (ms: number) => new Date(now - ms).toISOString()
+  const listing = {
+    project: { slug: "frizz", id: "proj-1", name: "frizz" },
+    threads: [
+      { slug: "fix-queue-focus", title: "Fix queue focus", band: "rested", runtime: "turn-idle", fence: "done", questions: 0, subAgents: 0, shells: 0, watches: [], lastLine: "**Fixed** — the queue keeps focus.", lastActivityAt: ago(2 * 3600_000 + 5 * 60_000) },
+      { slug: "the-caller", title: "List the threads", band: "active", runtime: "running", doing: "Running the focused tests", questions: 0, subAgents: 1, shells: 0, watches: [], lastActivityAt: ago(30_000) },
+      { slug: "bump-the-pin", title: "Bump the pin", band: "snoozed", runtime: "turn-idle", fence: "awaiting", questions: 0, subAgents: 0, shells: 0, watches: ["acme/app#391"], pinned: true, lastActivityAt: ago(3 * 86400_000) },
+    ],
+    counts: { rested: 1, active: 1, snoozed: 1, done: 122 },
+  }
+  const fake = await fakeFrizz((procedure) => (procedure === "listThreads" ? { result: listing } : undefined))
+  try {
+    const ran = await run(["threads"], { env: worker(fake, "the-caller") })
+    assert.equal(ran.code, 0, ran.stderr)
+    assert.deepEqual(fake.seen, [{ url: "/_frizz/proj-1/rpc/listThreads", body: {} }])
+    assert.equal(ran.stdout, [
+      "frizz (`frizz`) — 3 open threads (1 rested, 1 active, 1 snoozed); 122 done, not listed (`--all` lists them).",
+      "",
+      "Rested — in the human's queue",
+      "  fix-queue-focus  Fix queue focus",
+      "    signed off done · last moved 2h 5m ago",
+      "    > **Fixed** — the queue keeps focus.",
+      "",
+      "Active — spinning",
+      "  the-caller  List the threads  (this thread)",
+      "    turn in flight: Running the focused tests · 1 sub-agent running · last moved 30s ago",
+      "",
+      "Snoozed — parked",
+      "  bump-the-pin  Bump the pin  (pinned)",
+      "    watching acme/app#391 · last moved 3d ago",
+      "",
+      "Message one with `frizzctl steer <slug>`. `--json` prints every field.",
+      "",
+    ].join("\n"))
+
+    // Another project's board, named by any link into it; the caller is not marked there, and the steer
+    // hint carries the project it needs.
+    fake.seen.length = 0
+    const other = { ...listing, project: { slug: "nub", id: "proj-nub", name: "nub" } }
+    const fakeOther = await fakeFrizz((procedure) => (procedure === "listThreads" ? { result: other } : undefined))
+    try {
+      const there = await run(["threads", "http://localhost:9393/project/nub/thread/x/full", "--all"], { env: worker(fakeOther, "the-caller") })
+      assert.equal(there.code, 0, there.stderr)
+      assert.deepEqual(fakeOther.seen[0]?.body, { project: "nub", all: true })
+      assert.doesNotMatch(there.stdout, /this thread/)
+      assert.match(there.stdout, /; 122 done\.\n/)
+      assert.match(there.stdout, /`frizzctl steer <slug> --project nub`/)
+    } finally {
+      fakeOther.close()
+    }
+
+    // `--json` is the listing itself, and a shell with no thread of its own can read a board too.
+    const json = await run(["threads", "--json"], { env: { FRIZZ_STATE_DIR: fake.stateDir } })
+    assert.equal(json.code, 0, json.stderr)
+    assert.deepEqual(JSON.parse(json.stdout), listing)
   } finally {
     fake.close()
   }

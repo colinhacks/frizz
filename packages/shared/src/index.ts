@@ -4479,6 +4479,110 @@ export function activeBandThreadAt(t: ThreadView, nowMs: number): boolean {
   return sectionAt(t, nowMs) === "active" && inActiveBand(t)
 }
 
+// THE TITLE A THREAD SHOWS, and the helpers it is built from. Moved here from web/src/groups.ts (which
+// re-exports it) on 2026-11-03 so the SERVER names a thread with the rule the sidebar does: `frizzctl
+// threads` reports each thread's title to other agents, and a second copy of this ladder would drift
+// from the one the human reads.
+//
+// The title to SHOW for a thread: prefer trustworthy backend title telemetry once it exists, else the
+// provenance-aware stored title. One place so every render site (sidebar, palette, header) agrees.
+// The narrow Pick accepts a valtio readonly snapshot as readily as a plain ThreadView.
+export function displayTitle(t: Pick<ThreadView, "title" | "aiTitle" | "id" | "titleAuto" | "titleLocked" | "spawnedAt" | "backend" | "runtime" | "foreign">): string {
+  // An EXTERNAL row is already named. The server resolves it in foreignThreadView — the harness's own
+  // name, else a chop of the opening human turn, else a short id — which is the order both agents'
+  // resume pickers use, and it stores the result in `title`. Every rule below is about a row frizz
+  // DISPATCHED: a placeholder for a name that is on its way, a raw prompt frizz seeded and must never
+  // show. Neither describes a terminal session, and the codex rule in particular replaced every
+  // external codex row's resolved name with "Untitled thread" the day the server learned to name them
+  // (maintainer 2026-08-24: "for my externals all the codexes show up as 'untitled thread'").
+  if (t.foreign === true && t.title.trim()) return t.title.trim()
+  // A machine-guessed dispatch title (titleAuto) with no aiTitle yet is NOT a real name — show the
+  // "Spinning up…" placeholder while the session is genuinely just spinning up (maintainer 2026-07-10:
+  // "do not try to guess at the thread title"). But that's BOUNDED (see titleIsProvisional): a session
+  // Claude that never yields an aiTitle falls back after its bounded window; Codex gets a shorter
+  // grace and then the neutral fallback below.
+  if (titleIsProvisional(t)) return SPINNING_UP_TITLE
+  // The worker's OWN name for its task wins over whatever the row was seeded with — unless a human has
+  // claimed the name, in which case a stale/slug-shaped backend record must never displace it.
+  if (t.aiTitle?.trim() && !titleIsHumanOwned(t)) return readableMachineTitle(t.aiTitle)
+  // Codex's TUI has no native automatic naming event. Frizz asks the first finalized response for a
+  // hidden title signal; omission or malformed syntax must stay neutral rather than exposing either
+  // the stored legacy prompt heuristic or a provider-recorded raw initial prompt.
+  if (t.backend === "codex" && t.titleAuto === true && !t.aiTitle?.trim()) return UNTITLED_THREAD_TITLE
+  // `titleAuto === false` means the stored title is a real name, not the prompt chop — a human rename,
+  // or a caller's dispatch title standing in until the worker names the thread itself. Unknown legacy
+  // rows retain the historical aiTitle-first fallback because their provenance is unavailable.
+  if (t.titleAuto === false && t.title.trim()) return t.title
+  // For machine-titled rows, an internal slug is not a display title. This is especially important
+  // around native `/rename`: if Claude fails to emit a custom title, the header must keep a neutral
+  // name rather than presenting the session identifier as though rename succeeded. Legacy rows
+  // (unknown titleAuto) retain the historical id fallback.
+  if (t.title.trim() && !(t.titleAuto === true && t.title.trim() === t.id)) {
+    return t.titleAuto === true ? readableMachineTitle(t.title) : t.title.trim()
+  }
+  return t.titleAuto === true ? UNTITLED_THREAD_TITLE : t.id
+}
+
+// Has a HUMAN claimed this thread's name? Only then does the stored title outrank the backend's own
+// aiTitle. Mirrors the server's `sessionTitleLocked` exactly, including its fallback: a row with no
+// `titleLocked` predates the split, so any non-guessed title there is read as the human's. That
+// fallback is what keeps a legacy rename safe, and what makes `titleLocked: false` — written only by a
+// dispatch whose title a CALLER hard-coded — the sole way a real-looking title stays replaceable.
+function titleIsHumanOwned(t: Pick<ThreadView, "titleAuto" | "titleLocked">): boolean {
+  return t.titleLocked ?? t.titleAuto === false
+}
+
+// Backend-generated titles are not human metadata. Claude's native auto-rename currently reports a
+// semantic kebab slug; humanize that immediately so even the short generate→confirm interval can
+// never paint an internal identifier. Explicit/manual titles bypass this helper above and stay exact.
+// SENTENCE case (capitalize only the first word) — thread titles follow the repo copy rule (see
+// AGENTS.md), never Title Case; mirrors the server's humanizeClaudeTitle so the generate→confirm
+// interval and the persisted rename read identically.
+export function readableMachineTitle(raw: string): string {
+  const title = raw.trim()
+  if (!/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/i.test(title)) return title
+  const words = title.split(/[-_]+/).filter(Boolean)
+  if (words.length === 0) return title
+  const joined = words.join(" ").toLowerCase()
+  return joined.charAt(0).toUpperCase() + joined.slice(1)
+}
+
+// The placeholder shown (dimmed) while a freshly-dispatched thread has only a machine-guessed title.
+export const SPINNING_UP_TITLE = "Spinning up a thread…"
+export const UNTITLED_THREAD_TITLE = "Untitled thread"
+
+// Both backends are bounded by a TIME window — Codex's is shorter because its title signal rides the
+// first finalized response rather than a separate naming event. (This once read "Codex uses its
+// concrete spawning runtime state"; nothing ever emitted that state. See titleIsProvisional.)
+const SPIN_UP_MS = 60_000
+const CODEX_TITLE_SIGNAL_GRACE_MS = 15_000
+
+// A title is PROVISIONAL when it's the auto-guessed dispatch slug, Claude hasn't named the session yet
+// (titleAuto && no aiTitle), AND the dispatch is still WITHIN the spin-up window. The time bound is
+// load-bearing: a long session that compacts gets a NEW transcript id, so frizz (still tracking the
+// pinned id) loses the transcript and never sees an aiTitle — without the bound the row would stick on
+// "Spinning up…" forever (maintainer 2026-07-10). After the window it falls back to the dispatch title.
+// Root cause of the lost transcript is tracked separately ([[session-transcript-drift]]).
+export function titleIsProvisional(t: Pick<ThreadView, "aiTitle" | "titleAuto" | "spawnedAt" | "backend" | "runtime">): boolean {
+  if (!t.titleAuto || t.aiTitle) return false
+  // Codex now emits its title in the first assistant commentary, normally a couple seconds after the
+  // rollout starts. Keep the neutral startup label through that short, bounded title-signal grace so
+  // the row never flashes "Untitled thread" between task_started and the comment. A noncompliant or
+  // failed worker still degrades to the neutral fallback after the grace; it can never stick here.
+  if (t.backend === "codex") {
+    // DEAD BRANCH, kept deliberately. `deriveRuntime` (board.ts) has no `"spawning"` return — the
+    // state is on the wire enum and nothing emits it — so the grace below is what actually bounds a
+    // codex row, and a dispatch whose title signal lands after it flashes "Untitled thread". Waking
+    // this branch means making the server emit `spawning`, which changes what every other reader of
+    // `runtime` sees; it is not a comment fix. Left as the honest record of the intended shape.
+    if (t.runtime === "spawning") return true
+    const spawned = Date.parse(t.spawnedAt ?? "")
+    return Number.isFinite(spawned) && Date.now() - spawned < CODEX_TITLE_SIGNAL_GRACE_MS
+  }
+  const spawned = Date.parse(t.spawnedAt ?? "")
+  return Number.isFinite(spawned) && Date.now() - spawned < SPIN_UP_MS
+}
+
 /**
  * Does an open registered question STAND at this thread's current rest? The server queues a thread on
  * exactly these (board.ts → standingQuestions), so every reader that turns "has a question" into a mark
@@ -5333,6 +5437,91 @@ export const OwnThreadActivityResult = z.object({
   questions: z.array(RegisteredQuestionView).default([]),
 }).strict()
 export type OwnThreadActivityResult = z.infer<typeof OwnThreadActivityResult>
+
+// ── `frizzctl threads`: one board's threads, as another agent reads them ────────────────────────────
+//
+// The board snapshot is the whole truth about a project's threads and far too much of it for a worker's
+// context (360KB for 129 threads on this machine, 2026-11-03), so a worker asking "who else is working
+// here, and on what?" had nothing to ask. This is the board reduced to what that question needs: each
+// thread's slug (what `frizzctl steer` takes), the title the sidebar shows, the band it sits in, and the
+// facts behind the band. The band is DERIVED by the board's own predicates (threadBandAt), never
+// re-derived from the facts, so the readout and the sidebar cannot disagree about where a thread is.
+
+/** Where a thread sits on its board, in the maintainer's words for the sidebar's bands (AGENTS.md §
+ *  Board nomenclature): `rested` — the queue, a card waiting on the human; `active` — open with no
+ *  card, in practice spinning; `snoozed` — the dimmed park band; `done` — archived. */
+export const ThreadBand = z.enum(["rested", "active", "snoozed", "done"])
+export type ThreadBand = z.infer<typeof ThreadBand>
+
+/** The band a thread's row draws in, on a clock the caller sampled — `null` for a row the sidebar never
+ *  draws (a legacy file row, a foreign session). A PIN is ignored on purpose: it moves a row to the top of
+ *  one sidebar, and says nothing about whether the thread is working, waiting or finished. */
+export function threadBandAt(t: ThreadView, nowMs: number): ThreadBand | null {
+  if (t.kind !== "session" || t.foreign === true) return null
+  const section = sectionAt(t, nowMs)
+  if (section === "inactive") return "done"
+  if (section === "snoozed") return "snoozed"
+  if (section === "active") return inActiveBand(t) ? "active" : "rested"
+  return null
+}
+
+export const ThreadListing = z.object({
+  slug: ThreadSlug,
+  /** The title the sidebar shows (displayTitle). */
+  title: z.string(),
+  band: ThreadBand,
+  runtime: RuntimeState,
+  backend: Backend.optional(),
+  model: z.string().optional(),
+  /** The human pinned it to the top of this board's sidebar. */
+  pinned: z.literal(true).optional(),
+  /** The caption of the tool call in flight, while a turn is running ("Running the focused tests"). */
+  doing: z.string().optional(),
+  /** The first line of its newest message — the verdict line of a handoff. Capped. */
+  lastLine: z.string().optional(),
+  /** The signal fence its last rest ended on, while the board still reads it. */
+  fence: z.enum(["done", "awaiting"]).optional(),
+  /** Questions standing at its current rest (hasStandingQuestion's rule), plus a native ask or a
+   *  permission prompt the human has not answered. */
+  questions: z.number().int(),
+  /** Its own sub-agents still running (direct children only, as the board counts them). */
+  subAgents: z.number().int(),
+  /** Background shells still running. */
+  shells: z.number().int(),
+  /** What its armed watches are on: `owner/repo#N` for a PR or issue, the prompt for a timer, the
+   *  command for a command watch. */
+  watches: z.array(z.string()),
+  /** Killed by a usage limit, waiting for the window to reset. */
+  limited: z.literal(true).optional(),
+  /** Its process is gone with the turn unfinished. */
+  crashed: z.literal(true).optional(),
+  spawnedAt: z.string().optional(),
+  /** When its own turn last came to rest (ThreadView.lastAssistantAt). */
+  restedAt: z.string().optional(),
+  lastActivityAt: z.string().optional(),
+  /** A wall-clock snooze still in the future. */
+  snoozedUntil: z.string().optional(),
+  archivedAt: z.string().optional(),
+}).strict()
+export type ThreadListing = z.infer<typeof ThreadListing>
+
+export const ListThreadsInput = z.object({
+  /** Another project's board — its slug, id or registered name — instead of the one the call lands on. */
+  project: z.string().trim().min(1).optional(),
+  /** Include the Done band (archived threads), which on a long-lived board is nearly every thread. */
+  all: z.boolean().optional(),
+}).strict()
+export type ListThreadsInput = z.infer<typeof ListThreadsInput>
+
+export const ListThreadsResult = z.object({
+  /** The board's project: its URL slug, its registry id, and the name the board shows. */
+  project: z.object({ slug: z.string(), id: z.string(), name: z.string() }).strict(),
+  /** Rested, then active, then snoozed, then done; newest activity first within each. */
+  threads: z.array(ThreadListing),
+  /** Every band's size, the Done band's included when its threads are not listed. */
+  counts: z.object({ rested: z.number().int(), active: z.number().int(), snoozed: z.number().int(), done: z.number().int() }).strict(),
+}).strict()
+export type ListThreadsResult = z.infer<typeof ListThreadsResult>
 
 export const SetOwnThreadTimerResult = z.object({
   id: z.string(),

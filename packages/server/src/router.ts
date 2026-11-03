@@ -46,6 +46,8 @@ import {
   CancelOwnThreadTimerResult,
   ListOwnThreadTimersInput,
   ListOwnThreadActivityInput,
+  ListThreadsInput,
+  ListThreadsResult,
   OwnThreadActivityResult,
   UpsertOwnLinkInput,
   UpsertOwnLinkResult,
@@ -201,6 +203,7 @@ import { openExternalUrl } from "./open-external.ts"
 import { openLocalFile, readLocalMarkdown, resolveOpenableFile, readLocalTextFile } from "./local-file.ts"
 import { openableFileRoots } from "./project.ts"
 import { resolveThreadLink, threadLinkView } from "./thread-links.ts"
+import { listBoardThreads } from "./thread-listing.ts"
 import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
 import { createGithubHovercardService } from "./github-hovercard.ts"
 import { slugify, resolveSlug, resolveLegacyThreadFile, claudeWorkerSystemPrompt, coldResumePermission } from "./dispatch.ts"
@@ -3651,6 +3654,24 @@ export function createRouter(ctx: AppContext) {
         // scheduler settles a watch the tick its target stops being live, so an armed row always has an
         // item to ride. The QUESTIONS had nowhere at all — hence their own list.
         return { activity, questions: openQuestionViews(input.slug), links: ctx.storage.listThreadLinks(input.slug).map(threadLinkView) }
+      },
+    }),
+
+    // `frizzctl threads`: every thread on a board — this project's, or another one this Frizz serves — by
+    // slug, shown title and band (thread-listing.ts), so a worker can see who else is working where
+    // without the multi-megabyte board snapshot. A READ, so it verifies no caller: anything that can reach
+    // this surface can already read the whole board through `board`. A mutation only because a worker's
+    // command line POSTs every call (frizz-tools.mjs callRpc), as listOwnThreadActivity is. A project
+    // that is registered but not open here is refused with openProjectNamed's reason rather than opened:
+    // a read has no business starting another project's tailer and scheduler.
+    listThreads: mutation({
+      input: ListThreadsInput,
+      output: ListThreadsResult,
+      handler: async ({ input }) => {
+        const open = input.project ? openProjectNamed(input.project, "its threads cannot be listed from here") : undefined
+        const project = open?.project ?? ctx.project
+        const { threads } = await (open?.board ?? ctx.board).snapshot()
+        return listBoardThreads(threads, { slug: projectSlugOf(project.id), id: project.id, name: project.name }, { all: input.all })
       },
     }),
 

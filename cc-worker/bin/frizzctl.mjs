@@ -276,7 +276,7 @@ function topHelp() {
   }).filter(Boolean)
   return [
     `${NAME} — the Frizz command line for the worker of one thread.`,
-    "Every command acts on the thread whose worker runs it; there is no way to name another.",
+    "Every command acts AS the thread whose worker runs it; there is no way to act as another.",
     "",
     "Usage:",
     `  ${NAME} <command> [arguments]`,
