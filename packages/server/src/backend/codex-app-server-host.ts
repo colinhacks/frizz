@@ -31,6 +31,8 @@ import { endDaemonTree } from "./daemon-tree.ts"
 import { stopNativeListener } from "./codex-app-server-native.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
 import { codexAppServerArgv } from "./codex-mcp.ts"
+import { applyLaunchPrefix } from "@frizz/shared"
+import { recordedLaunchPrefix } from "./launch-prefix.ts"
 import type { FrizzMcp } from "./types.ts"
 import type { CodexAppServerProcess } from "./codex-app-server.ts"
 import { log as frizzLog } from "../logging.ts"
@@ -48,6 +50,9 @@ export interface CodexAppServerDaemonRecord {
   /** ChatGPT account loaded by this app-server at process start. Absent for legacy records and
    *  non-ChatGPT authentication. This is an opaque identifier, never a credential. */
   authAccountId?: string
+  /** The launch prefix this app-server was started through (Settings.launchPrefix.codex, split into
+   *  words). Absent for a process started with none, and for records written before the setting. */
+  launchPrefix?: string[]
 }
 
 export interface CodexAppServerAttachment {
@@ -62,6 +67,9 @@ export interface CodexAppServerAttachment {
   droppedWhileDetached: number
   /** ChatGPT account loaded when this app-server process was spawned. */
   authAccountId?: string
+  /** The launch prefix this app-server process was started through; `[]` or absent ⇒ none. The bridge
+   *  compares it with the current setting and replaces the process at an idle boundary when they differ. */
+  launchPrefix?: string[]
 }
 
 export interface CodexAppServerHostOptions {
@@ -74,6 +82,10 @@ export interface CodexAppServerHostOptions {
   capabilities: Record<string, unknown>
   /** ChatGPT account present in auth.json immediately before the process is obtained/spawned. */
   authAccountId?: string
+  /** The operator's launch prefix, as words: the app-server starts as `<prefix…> <codex> app-server …`.
+   *  A thunk, called ONLY when a host is about to start a process — never on a reattach — so a prefix
+   *  that no longer parses fails that start, with its own message, and never a live app-server. */
+  launchPrefix?: () => string[]
   /** Mounts the unified `frizz` MCP server into this app-server. Absent ⇒ frizz mounts nothing, the
    *  same degradation the claude side has when the descriptor cannot be resolved. */
   frizzMcp?: FrizzMcp
@@ -130,6 +142,7 @@ export function readDaemonRecord(stateDir: string, projectId: string): CodexAppS
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
       ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
+      ...recordedLaunchPrefix(value.launchPrefix),
     }
   } catch {
     return null
@@ -222,7 +235,7 @@ export async function stopCodexAppServerDaemon(stateDir: string, projectId: stri
   }
 }
 
-function forkDaemon(options: CodexAppServerHostOptions): Promise<CodexAppServerDaemonRecord> {
+function forkDaemon(options: CodexAppServerHostOptions, launchPrefix: string[]): Promise<CodexAppServerDaemonRecord> {
   const { stateDir, projectId } = options
   mkdirSync(daemonDir(stateDir), { recursive: true })
   const record = recordPath(stateDir, projectId)
@@ -236,6 +249,7 @@ function forkDaemon(options: CodexAppServerHostOptions): Promise<CodexAppServerD
     projectId, socketPath, recordPath: record, codexBin: options.codexBin, cwd: options.cwd,
     env, generation, clientInfo: options.clientInfo, capabilities: options.capabilities,
     ...(options.authAccountId ? { authAccountId: options.authAccountId } : {}),
+    ...(launchPrefix.length > 0 ? { launchPrefix } : {}),
     // The argv is built HERE, not in the daemon: the daemon is a bare forked entry that should not have
     // to resolve frizz's MCP descriptors, and building it once keeps this transport identical to the
     // native listener's.
@@ -384,7 +398,7 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
   if (existing) {
     try {
       const attached = await attach(existing, timeoutMs)
-      return { ...attached, generation: existing.generation, reattached: true, daemonPid: existing.daemonPid, authAccountId: existing.authAccountId }
+      return { ...attached, generation: existing.generation, reattached: true, daemonPid: existing.daemonPid, authAccountId: existing.authAccountId, launchPrefix: existing.launchPrefix ?? [] }
     } catch {
       // The record outlived its socket (a daemon killed between the pid check and connect). Drop it
       // and fall through to a fresh fork rather than failing the whole connect.
@@ -395,10 +409,13 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
     const stale = codexAppServerSocketPath(options.stateDir, options.projectId)
     if (existsSync(stale) && !liveDaemonRecord(options.stateDir, options.projectId)) { try { unlinkSync(stale) } catch {} }
   }
+  // Resolved before either start below, so a launch prefix that cannot be used fails this connect with
+  // its own message instead of reading as a broken daemon and retrying in-process.
+  const launchPrefix = options.launchPrefix?.() ?? []
   try {
-    const record = await forkDaemon(options)
+    const record = await forkDaemon(options, launchPrefix)
     const attached = await attach(record, timeoutMs)
-    return { ...attached, generation: record.generation, reattached: false, daemonPid: record.daemonPid, authAccountId: record.authAccountId }
+    return { ...attached, generation: record.generation, reattached: false, daemonPid: record.daemonPid, authAccountId: record.authAccountId, launchPrefix }
   } catch (error) {
     // LAST RESORT, and deliberately not a hard failure. The daemon buys ONE thing — an in-flight turn
     // surviving Update & Restart. Codex itself does not need it: before the daemon existed the
@@ -406,13 +423,14 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
     // survival property, never Codex. Without this, one packaging slip took out every Codex dispatch,
     // follow-up, steer and interrupt at once (2026-07-23) with only a cryptic toast to go on.
     frizzLog.error("codex", `codex app-server daemon unavailable (${(error as Error).message}); falling back to an in-process app-server — turns will NOT survive a frizz restart`)
-    return inProcessCodexAppServer(options)
+    return inProcessCodexAppServer(options, launchPrefix)
   }
 }
 
 /** The pre-daemon transport: `codex app-server --stdio` as an ordinary child of this runtime. */
-function inProcessCodexAppServer(options: CodexAppServerHostOptions): CodexAppServerAttachment {
-  const child = spawn(options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp), {
+function inProcessCodexAppServer(options: CodexAppServerHostOptions, launchPrefix: string[]): CodexAppServerAttachment {
+  const { command, args } = applyLaunchPrefix(launchPrefix, options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp))
+  const child = spawn(command, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -428,7 +446,7 @@ function inProcessCodexAppServer(options: CodexAppServerHostOptions): CodexAppSe
   // returns false and says nothing. Match POSIX: a teardown must never throw because codex is missing.
   const kill = child.kill.bind(child)
   child.kill = ((signal?: number | NodeJS.Signals) => { try { return kill(signal) } catch { return false } }) as typeof child.kill
-  return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0, authAccountId: options.authAccountId }
+  return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0, authAccountId: options.authAccountId, launchPrefix }
 }
 
 /** Test/harness seam: keep the historical direct-child behavior, where every connect is a NEW
@@ -437,14 +455,19 @@ export function directChildHost(
   spawnChild: (binary: string, args: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => CodexAppServerProcess,
   generationId: () => string = randomUUID,
 ): CodexAppServerHost {
-  return async (options) => ({
-    process: spawnChild(options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp), { cwd: options.cwd, env: options.env }),
-    generation: generationId(),
-    reattached: false,
-    daemonPid: process.pid,
-    droppedWhileDetached: 0,
-    authAccountId: options.authAccountId,
-  })
+  return async (options) => {
+    const launchPrefix = options.launchPrefix?.() ?? []
+    const { command, args } = applyLaunchPrefix(launchPrefix, options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp))
+    return {
+      process: spawnChild(command, args, { cwd: options.cwd, env: options.env }),
+      generation: generationId(),
+      reattached: false,
+      daemonPid: process.pid,
+      droppedWhileDetached: 0,
+      authAccountId: options.authAccountId,
+      launchPrefix,
+    }
+  }
 }
 
 export { recordPath as codexAppServerDaemonRecordPath }

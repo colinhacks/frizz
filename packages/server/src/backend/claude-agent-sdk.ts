@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process"
 import { accessSync, constants as fsConstants, rmSync } from "node:fs"
 import { delimiter, isAbsolute } from "node:path"
+import { StringDecoder } from "node:string_decoder"
 import {
   query,
   type CanUseTool as SdkCanUseTool,
@@ -10,6 +12,8 @@ import {
   type SDKControlInitializeResponse,
   type SDKMessage,
   type SDKUserMessage,
+  type SpawnedProcess as SdkSpawnedProcess,
+  type SpawnOptions as SdkSpawnOptions,
 } from "@frizz/claude-agent-sdk-runtime"
 import { claudeUltracodeSettings, resolveClaudeEffort } from "./claude-effort.ts"
 import { resolveClaudeLaunchModel } from "./claude-context-window.ts"
@@ -165,6 +169,10 @@ export interface ClaudeQueryStartOptions {
   // Pass `[]` for a hermetic session that sees no config at all (what the standalone SDK foundation
   // used before the broker became a real worker transport).
   settingSources?: Array<"user" | "project" | "local">
+  // The operator's LAUNCH PREFIX (Settings.launchPrefix.claude, already split into words): the CLI is
+  // started as `<prefix…> <claude> <args…>` instead of `<claude> <args…>`. Empty or absent ⇒ the SDK's
+  // own spawn, untouched. See launchPrefixedClaudeSpawn.
+  launchPrefix?: readonly string[]
 }
 
 export interface ClaudeQueryHandle extends AsyncIterable<ClaudeQueryEvent> {
@@ -1120,6 +1128,14 @@ function startClaudeQuery(executablePath: string, options: ClaudeQueryStartOptio
   const mcpConfigFile = options.mcpServers && Object.keys(options.mcpServers).length > 0
     ? writeMcpConfigFile(sessionId, options.mcpServers)
     : undefined
+  const launchPrefix = validateLaunchPrefix(options.launchPrefix)
+  // ONE stderr reader, whichever process writes it: the SDK calls it for a CLI it spawned itself, and
+  // a launch-prefixed spawn feeds it the wrapper's stderr (which is the CLI's too, unless the wrapper
+  // swallows it). Same redaction either way.
+  const onStderr = (data: string): void => {
+    const redacted = redact(data)
+    diagnostic?.({ kind: "stderr", ...redacted })
+  }
 
   const raw = query({
     prompt: input,
@@ -1185,10 +1201,8 @@ function startClaudeQuery(executablePath: string, options: ClaudeQueryStartOptio
       // absent → the child was reported `stopped` 7ms after the interrupt; present → it ran
       // to `completed` after the parent's turn had already been aborted.
       perTaskStopAffordance: true,
-      stderr(data) {
-        const redacted = redact(data)
-        diagnostic?.({ kind: "stderr", ...redacted })
-      },
+      stderr: onStderr,
+      ...(launchPrefix.length > 0 ? { spawnClaudeCodeProcess: launchPrefixedClaudeSpawn(launchPrefix, onStderr) } : {}),
     },
   })
 
@@ -2109,6 +2123,57 @@ function guardObserverCallback(callback: ((value: unknown) => void) | undefined)
       // Observational: a failed observer must not become a failed session.
     }
   }
+}
+
+// The SDK's own spawn (`spawnLocalProcess` in the bundled sdk.mjs, 0.3.316) with the operator's launch
+// prefix in front of it: same stdio, same cwd, env and abort signal, same hidden console on Windows.
+// The SDK reads only stdin, stdout and the exit; it cannot see the stderr of a process it did not
+// spawn, so this one reads it and hands it to the reader the SDK would have called.
+//
+// The command the prefix is handed is the SDK's resolved one — the absolute Claude executable (or
+// `node <cli.js>` for a script install) — so a wrapper never needs `claude` on its own PATH. Whatever
+// the wrapper does, it must start that command with the stdin and stdout it was given: the SDK speaks
+// its whole protocol over those two pipes. Stopping follows the SDK's own order — stdin closes first,
+// then the abort signal reaches the WRAPPER — so a wrapper that does not forward signals still loses
+// its child at the stdin EOF, which is what ends a Claude Code reading the stream-json protocol.
+export function launchPrefixedClaudeSpawn(prefix: readonly string[], onStderr: (text: string) => void): (options: SdkSpawnOptions) => SdkSpawnedProcess {
+  // applyLaunchPrefix (@frizz/shared), spelled out: this module runs inside the broker daemon, which is
+  // bundled on its own and imports nothing from the shared package's runtime.
+  const [command, ...prefixArgs] = prefix
+  return (options) => {
+    const child = spawn(command!, [...prefixArgs, options.command, ...options.args], {
+      cwd: options.cwd,
+      env: options.env,
+      signal: options.signal,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    })
+    const decoder = new StringDecoder("utf8")
+    child.stderr.on("data", (chunk: Buffer) => {
+      const text = decoder.write(chunk)
+      if (text) onStderr(text)
+    })
+    child.stderr.on("error", () => { /* the exit, not a stderr read, is what reports a dead process */ })
+    // The SDK words a failed spawn as a failure of the CLAUDE executable, which with a prefix it may
+    // well not be. The bridge checks the prefix's command before forking (launchPrefixArgv); this line
+    // is for whatever that check could not see, so the diagnostic log still names the real program.
+    child.on("error", (error) => onStderr(`launch prefix: \`${command}\` could not be started: ${error.message}\n`))
+    return child
+  }
+}
+
+// EXACT words, never sanitized: these are an argv, and a silently rewritten one runs something else.
+// The parser that produced them (parseLaunchPrefix) already bounds them; this only refuses what spawn()
+// would choke on less legibly.
+function validateLaunchPrefix(value: readonly string[] | undefined): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > 64) throw new ClaudeAgentSdkProtocolError("launchPrefix must be a bounded list")
+  const words = value.map((word, index) => {
+    if (typeof word !== "string" || word.includes("\0") || utf8Bytes(word) > 8 * 1024) throw new ClaudeAgentSdkProtocolError(`launchPrefix[${index}] is not a usable argument`)
+    return word
+  })
+  if (words.length > 0 && !words[0]) throw new ClaudeAgentSdkProtocolError("launchPrefix must start with a command")
+  return words
 }
 
 function validateExecutablePath(value: string): string {

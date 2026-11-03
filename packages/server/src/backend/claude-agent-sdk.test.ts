@@ -1,5 +1,5 @@
 import { createRequire } from "node:module"
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { delimiter, dirname, isAbsolute, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -1750,4 +1750,68 @@ test("strictMcpConfig hands the CLI --strict-mcp-config, and the mounted servers
   } finally {
     await harness.close()
   }
+})
+
+// THE LAUNCH PREFIX (Settings.launchPrefix.claude) rides the SDK's `spawnClaudeCodeProcess`, and this
+// drives the real SDK through it: the wrapper is a real process that records what it was handed, adds a
+// variable to the environment, writes to stderr and then `exec`s the command after it — the shape of
+// `op run --`, `aws-vault exec`, `env FOO=bar`. Every assertion is something only the WRAPPED spawn
+// can produce, so a prefix silently dropped (the SDK's own spawn running instead) fails each of them.
+test("a launch prefix starts the CLI through the operator's wrapper, with its environment and stderr intact", { timeout: 10_000, skip: process.platform === "win32" ? "the wrapper is a POSIX sh script" : false }, async () => {
+  const wrapperDir = mkdtempSync(join(tmpdir(), "frizz-claude-prefix-"))
+  const wrapper = join(wrapperDir, "inject-vars")
+  const argvFile = join(wrapperDir, "wrapper-argv")
+  writeFileSync(wrapper, `#!/bin/sh
+printf '%s\n' "$@" > '${argvFile}'
+echo "inject-vars: starting $1" >&2
+FRIZZ_FAKE_INHERITED=from-the-wrapper
+export FRIZZ_FAKE_INHERITED
+shift
+exec "$@"
+`)
+  chmodSync(wrapper, 0o700)
+  const harness = startHarness("basic", { FRIZZ_FAKE_INHERITED: undefined }, {}, { kind: "new", sessionId: SESSION_ID }, { launchPrefix: [wrapper, "--marker"] })
+  try {
+    const ready = await withTimeout(harness.handle.ready(), "session init")
+    assert.equal(ready.sessionId, SESSION_ID)
+    await harness.handle.send({ id: INPUT_ID, text: "through the prefix" })
+    await collectThrough(harness.handle, "result")
+    const records = await waitForCapture(harness.capturePath, (rows) => rows.some((row) => row.kind === "user-input"))
+    const startup = records.find((row) => row.kind === "startup") as CaptureRecord
+    // The variable the WRAPPER exported reached the CLI — Frizz's own env had it cleared.
+    assert.equal((startup.environment as Record<string, unknown>).frizzFakeInheritedPresent, true)
+    // The wrapper was handed its own words first, then the SDK's resolved command, unchanged: a
+    // script provider runs as `node <cli.mjs> …`, and the CLI's protocol flags follow it intact.
+    const wrapperArgv = readFileSync(argvFile, "utf8").trimEnd().split("\n")
+    assert.equal(wrapperArgv[0], "--marker")
+    assert.ok(wrapperArgv.slice(1, 3).some((word) => word.endsWith("fake-claude--basic.mjs")), `wrapper argv: ${wrapperArgv.join(" ")}`)
+    assert.deepEqual((startup.argv as string[]).slice(0, 5), ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json"])
+    assert.ok(wrapperArgv.includes("--output-format"))
+    // The SDK cannot read the stderr of a process it did not spawn; the prefixed spawn reads it and
+    // hands it to the same diagnostic stream.
+    assert.ok(harness.diagnostics.some((event) => event.kind === "stderr" && event.message.includes("inject-vars: starting")), JSON.stringify(harness.diagnostics))
+  } finally {
+    await harness.close()
+    rmSync(wrapperDir, { recursive: true, force: true })
+  }
+})
+
+test("a launch prefix whose command does not exist fails the session instead of hanging it", { timeout: 10_000 }, async () => {
+  const harness = startHarness("basic", {}, {}, { kind: "new", sessionId: SESSION_ID }, { launchPrefix: [join(tmpdir(), "frizz-no-such-launch-prefix", "inject")] })
+  try {
+    await assert.rejects(withTimeout(harness.handle.ready(), "session init"), (error: Error) => {
+      assert.doesNotMatch(error.message, /timed out/i)
+      return true
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test("an empty or malformed launch prefix is refused before anything spawns", () => {
+  const factory = createClaudeQueryFactory({ enabled: true, executablePath: fakeExecutable })
+  const start = (launchPrefix: unknown) => factory.start({ cwd: tmpdir(), session: { kind: "new", sessionId: SESSION_ID }, launchPrefix: launchPrefix as string[] })
+  assert.throws(() => start([""]), ClaudeAgentSdkProtocolError)
+  assert.throws(() => start(["ok", 7]), ClaudeAgentSdkProtocolError)
+  assert.throws(() => start(Array.from({ length: 65 }, () => "x")), ClaudeAgentSdkProtocolError)
 })

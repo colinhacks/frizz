@@ -8,7 +8,7 @@ import { Composer } from "./Composer.tsx"
 import { McpPlug } from "./McpPlug.tsx"
 import { GithubTrigger, useGithubTriggerVisible } from "./GithubTrigger.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
-import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
+import { SETTINGS_WRITE_KEY, settingsQuery } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
@@ -57,6 +57,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
   // round-trip on every keystroke. The gate blocks ONLY on a positive "signed-out" (fails open on
   // "unknown"/loading/error), so a stale or missing snapshot can never trap a logged-in user.
   const authStatus = useQuery({ queryKey: ["authStatus"], queryFn: () => rpc.authStatus(), staleTime: 30_000 })
+  // The project's launch prefixes. A runtime that has one is not gated: the prefix may be what supplies
+  // its credentials (a token proxy, `op run`), so "no local sign-in" says nothing — the server's
+  // preflight makes the same exception (context.ts).
+  const settings = useQuery(settingsQuery(project))
   // When submit is gated, the built dispatch is stashed here and the sign-in modal opens for this
   // backend; a successful re-check runs the stashed dispatch unchanged.
   const [signInFor, setSignInFor] = useState<AccountBackend | null>(null)
@@ -154,7 +158,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
     // Auth gate: block ONLY on a positive "signed-out" for this dispatch's backend. Loading/unknown/
     // authed all fall through (fail open) so a flaky or slow read never blocks a logged-in user. An ACP
     // agent has no account here at all — its own CLI reports a missing login on the first prompt.
-    if (resolved.backend !== "acp" && authStatus.data?.[resolved.backend] === "signed-out") {
+    if (resolved.backend !== "acp" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
       gatedInputRef.current = input
       setSignInFor(resolved.backend)
       return

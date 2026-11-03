@@ -40,6 +40,8 @@ interface DaemonConfig {
    *  resolve frizz's MCP descriptors itself. Absent ⇒ a bare `app-server --stdio`, which is a worker
    *  with NO mcp tools; kept as a fallback only so an older payload cannot fail to boot. */
   appServerArgs?: string[]
+  /** The operator's launch prefix, as words, put in front of the app-server's own command. */
+  launchPrefix?: string[]
   /** Test seam only; production leaves this undefined and gets REACHABILITY_CHECK_MS. */
   reachabilityCheckMs?: number
 }
@@ -102,7 +104,12 @@ function main(): void {
   // the app-server spawns helpers (codex-code-mode-host) from beside its own binary long after boot,
   // so a retired directory breaks a daemon that looked perfectly alive.
   const releaseRuntimeLease = leaseRuntime(config.codexBin, "codex-app-server")
-  const child = spawn(config.codexBin, config.appServerArgs ?? ["app-server", "--stdio"], {
+  // The operator's launch prefix goes in front of the app-server's own argv — applyLaunchPrefix in
+  // @frizz/shared, spelled out here because this daemon is bundled on its own and need not carry the
+  // shared package for three lines.
+  const appServerArgv = [config.codexBin, ...(config.appServerArgs ?? ["app-server", "--stdio"])]
+  const [launchCommand, ...launchArgs] = config.launchPrefix?.length ? [...config.launchPrefix, ...appServerArgv] : appServerArgv
+  const child = spawn(launchCommand!, launchArgs, {
     cwd: config.cwd,
     env: config.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -303,6 +310,7 @@ function main(): void {
       socketPath: config.socketPath,
       createdAt: new Date().toISOString(),
       ...(config.authAccountId ? { authAccountId: config.authAccountId } : {}),
+      ...(config.launchPrefix?.length ? { launchPrefix: config.launchPrefix } : {}),
     }))
   }
 

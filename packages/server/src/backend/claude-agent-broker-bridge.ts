@@ -5,6 +5,7 @@
 // auto-allow, honoring the thread's permission mode — matching the retired argv path's
 // `--permission-mode auto`), and sends follow-up turns.
 import { randomUUID } from "node:crypto"
+import { homedir } from "node:os"
 import { adoptOrForkBroker, brokerLivenessSnapshot, killBroker, lastKnownBrokerDaemon, liveBrokerRecord, liveBrokerRecords, claudeBrokerRecordPath, resolveClaudeExecutableAbsolute, takeBrokerRetirement, type BrokerRetirementMark, type BrokerRetirementReason } from "./claude-broker-host.ts"
 import { connectClaudeBroker, type ClaudeBrokerClient } from "./claude-broker-client.ts"
 import { describeClaudeBrokerExit, readClaudeBrokerExit, type ClaudeBrokerExitRecord } from "./claude-broker-diagnostics.ts"
@@ -25,6 +26,7 @@ import {
 } from "./claude-permission-interactions.ts"
 import { FRIZZ_MCP, claudeCompactionEnv, claudeCompactionWindowOf, claudePromptCacheEnv, claudeWorkerEnv, frizzCliEnv, type FrizzCli } from "./types.ts"
 import type { WorkerMcpServers } from "./project-mcp-servers.ts"
+import { launchPrefixArgv } from "./launch-prefix.ts"
 
 type BrokerMcpServers = NonNullable<ClaudeBrokerConfig["mcpServers"]>
 
@@ -80,7 +82,7 @@ export interface ClaudeBrokerBridgeDeps {
   /** The live Settings, read at every fork so the auto-compact window (Settings.autoCompactWindow →
    *  CLAUDE_CODE_AUTO_COMPACT_WINDOW) follows the drawer without a restart. Only the fork reads it: a
    *  daemon already running keeps the value it was forked with. Absent ⇒ the CLI's own default. */
-  getSettings?: () => { autoCompactWindow?: number; promptCacheTtl?: string }
+  getSettings?: () => { autoCompactWindow?: number; promptCacheTtl?: string; launchPrefix?: { claude?: string } }
   /** The dashboard InteractionStore + this project's id. When present, a Claude tool-permission
    *  escalation (canUseTool, which under "auto" fires only for classifier-flagged risky calls) is
    *  journaled as an approval interaction and gated on the human's dashboard decision. Absent ⇒ the
@@ -606,6 +608,10 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
     const { record, reattached } = await adoptOrForkBroker({
       stateDir: deps.stateDir, cwd, sessionId, executablePath, permissionMode, env: deps.env,
       pluginDir: we?.pluginDir, mcpServers, allowedTools: we?.allowedTools, workerEnv,
+      // The operator's launch prefix (Settings.launchPrefix.claude), read at every fork like the
+      // compaction window: the next dispatch or cold resume carries an edit, a running daemon keeps the
+      // prefix it was forked with. `~/` resolves against the HOME the worker itself will see.
+      launchPrefix: () => launchPrefixArgv(deps.getSettings?.(), "claude", { home: deps.env.HOME || homedir(), cwd, env: deps.env }),
       ...fork,
     })
     // A RESUME that had to cold-start is the moment frizz discovers a daemon died while nobody was

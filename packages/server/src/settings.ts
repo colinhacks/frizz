@@ -1,6 +1,7 @@
 import { readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { Settings } from "@frizz/shared"
+import { launchPrefixSettingsError } from "./backend/launch-prefix.ts"
 import { frizzPaths } from "./frizz-paths.ts"
 import { deleteMachineConfig, readMachineConfig, writeMachineConfig } from "./machine-config.ts"
 import type { Storage } from "./storage.ts"
@@ -107,6 +108,12 @@ export function getSettings(storage: Storage, home: string): Settings {
 
 export function setSettings(storage: Storage, next: Settings, home: string): Settings {
   const validated = Settings.parse(next)
+  // A launch prefix that does not split into words would fail every worker it is applied to, so the
+  // save refuses it here rather than the next dispatch discovering it. The schema itself stays a plain
+  // string on purpose (see Settings.launchPrefix): a refinement there would also fail the READ, and a
+  // read miss resets every setting to its default.
+  const prefixError = launchPrefixSettingsError(validated)
+  if (prefixError) throw new Error(prefixError)
   writeMachineSettings(pickMachine(validated), home)
   storage.setSetting(SETTINGS_KEY, validated)
   return validated

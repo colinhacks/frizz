@@ -76,6 +76,9 @@ export interface ClaudeBrokerConfig {
   mcpServers?: WorkerMcpServers
   allowedTools?: string[]
   workerEnv?: Record<string, string>
+  /** The operator's launch prefix for Claude, already split into words: the CLI starts as
+   *  `<prefix…> <claude> …`. Fixed at fork like everything else here. Absent ⇒ the SDK's own spawn. */
+  launchPrefix?: string[]
   /** When set, the daemon writes a discovery record here after its socket is listening. */
   recordPath?: string
   /** When set, the daemon appends its OWN lifecycle/stderr diagnostics here, synchronously. This is
@@ -223,6 +226,7 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
     session: config.resume ? { kind: "resume", sessionId: config.sessionId } : { kind: "new", sessionId: config.sessionId },
     permissionMode: config.permissionMode ?? "default",
     env,
+    launchPrefix: config.launchPrefix,
     persistSession: true, // write the tailer-readable transcript JSONL
     appendSystemPrompt: config.appendSystemPrompt,
     model: config.model,

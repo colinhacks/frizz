@@ -42,6 +42,8 @@ import { frizzIpcPath } from "./ipc-path.ts"
 import { codexAppServerArgv } from "./codex-mcp.ts"
 import type { CodexAppServerProcess } from "./codex-app-server.ts"
 import type { CodexAppServerAttachment, CodexAppServerHost, CodexAppServerHostOptions } from "./codex-app-server-host.ts"
+import { recordedLaunchPrefix } from "./launch-prefix.ts"
+import { applyLaunchPrefix } from "@frizz/shared"
 import { log as frizzLog } from "../logging.ts"
 
 export interface NativeListenerRecord {
@@ -54,6 +56,9 @@ export interface NativeListenerRecord {
   createdAt: string
   /** Opaque ChatGPT account id present when this listener was spawned. */
   authAccountId?: string
+  /** The launch prefix the listener was started through. When present, `listenerPid` is the PREFIX's
+   *  process, not codex's — see signalListener. */
+  launchPrefix?: string[]
 }
 
 function nativeDir(stateDir: string): string {
@@ -95,10 +100,23 @@ export function readNativeRecord(stateDir: string, projectId: string): NativeLis
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
       ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
+      ...recordedLaunchPrefix(value.launchPrefix),
     }
   } catch {
     return null
   }
+}
+
+/** Signal the listener — and, when it was started through a launch prefix, everything the prefix
+ *  started with it. The spawn is `detached`, so the recorded pid leads its own process group. With no
+ *  prefix that pid IS codex and is signalled alone, exactly as before the setting existed. With one it
+ *  is the prefix's process, and a prefix that does not forward signals (a plain `sh -c` that never
+ *  `exec`s) would otherwise take the signal itself and leave codex holding the socket. */
+function signalListener(record: NativeListenerRecord, signal: NodeJS.Signals): void {
+  if (record.launchPrefix?.length && process.platform !== "win32") {
+    try { process.kill(-record.listenerPid, signal); return } catch { /* no group: fall through */ }
+  }
+  try { process.kill(record.listenerPid, signal) } catch {}
 }
 
 /** A listener is live only while its process is running AND its socket is still bound; the app-server
@@ -117,7 +135,7 @@ export function liveNativeRecord(stateDir: string, projectId: string): NativeLis
 export function killNativeListener(stateDir: string, projectId: string): void {
   const record = liveNativeRecord(stateDir, projectId)
   if (!record) return
-  try { process.kill(record.listenerPid, "SIGTERM") } catch {}
+  signalListener(record, "SIGTERM")
   try { unlinkSync(nativeRecordPath(stateDir, projectId)) } catch {}
 }
 
@@ -147,7 +165,7 @@ export async function stopNativeListener(stateDir: string, projectId: string, ti
   // SIGKILL leaves the socket file behind unlinked-by-nobody, which `startListener` already clears
   // once it has proven nothing is accepting on it.
   if (pidAlive(record.listenerPid)) {
-    try { process.kill(record.listenerPid, "SIGKILL") } catch {}
+    signalListener(record, "SIGKILL")
     while (pidAlive(record.listenerPid) && Date.now() < deadline + 2_000) {
       await new Promise((resolve) => setTimeout(resolve, 25))
     }
@@ -285,7 +303,7 @@ function attach(record: NativeListenerRecord, timeoutMs: number): Promise<CodexA
   })
 }
 
-async function startListener(options: CodexAppServerHostOptions): Promise<NativeListenerRecord> {
+async function startListener(options: CodexAppServerHostOptions, launchPrefix: string[]): Promise<NativeListenerRecord> {
   const { stateDir, projectId } = options
   mkdirSync(nativeDir(stateDir), { recursive: true })
   const socketPath = nativeListenSocketPath(stateDir, projectId)
@@ -298,7 +316,8 @@ async function startListener(options: CodexAppServerHostOptions): Promise<Native
   }
 
   const generation = randomUUID()
-  const child = spawn(options.codexBin, codexAppServerArgv(["--listen", `unix://${socketPath}`], options.frizzMcp), {
+  const { command, args } = applyLaunchPrefix(launchPrefix, options.codexBin, codexAppServerArgv(["--listen", `unix://${socketPath}`], options.frizzMcp))
+  const child = spawn(command, args, {
     cwd: options.cwd,
     env: options.env,
     detached: true,
@@ -316,6 +335,7 @@ async function startListener(options: CodexAppServerHostOptions): Promise<Native
     socketPath,
     createdAt: new Date().toISOString(),
     ...(options.authAccountId ? { authAccountId: options.authAccountId } : {}),
+    ...(launchPrefix.length > 0 ? { launchPrefix } : {}),
   }
   // Published BEFORE the socket is up: a runtime that dies during startup must still leave the next
   // one a way to find (and if need be reap) the listener it created.
@@ -372,14 +392,18 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
         daemonPid: existing.listenerPid,
         droppedWhileDetached: PRESUMED_LOSSY_REJOIN,
         authAccountId: existing.authAccountId,
+        launchPrefix: existing.launchPrefix ?? [],
       }
     } catch {
       // The record outlived its socket. Drop it and start fresh rather than failing the connect.
       try { unlinkSync(nativeRecordPath(options.stateDir, options.projectId)) } catch {}
     }
   }
+  // Resolved before the start below, so a launch prefix that cannot be used fails this connect with its
+  // own message instead of reading as a listener that would not start.
+  const launchPrefix = options.launchPrefix?.() ?? []
   try {
-    const record = await startListener(options)
+    const record = await startListener(options, launchPrefix)
     // A listener WE just started has no detached window behind it and nothing could have been missed.
     return {
       process: await attach(record, timeoutMs),
@@ -388,6 +412,7 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
       daemonPid: record.listenerPid,
       droppedWhileDetached: 0,
       authAccountId: record.authAccountId,
+      launchPrefix,
     }
   } catch (error) {
     // A concurrent frizz may have won the bind between our probe and our spawn ("app-server control
@@ -401,10 +426,12 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
         daemonPid: raced.listenerPid,
         droppedWhileDetached: PRESUMED_LOSSY_REJOIN,
         authAccountId: raced.authAccountId,
+        launchPrefix: raced.launchPrefix ?? [],
       }
     }
     frizzLog.error("codex", `codex app-server native listener unavailable (${(error as Error).message}); falling back to an in-process app-server — turns will NOT survive a frizz restart`)
-    const child = spawn(options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp), { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
-    return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0, authAccountId: options.authAccountId }
+    const fallback = applyLaunchPrefix(launchPrefix, options.codexBin, codexAppServerArgv(["--stdio"], options.frizzMcp))
+    const child = spawn(fallback.command, fallback.args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
+    return { process: child as unknown as CodexAppServerProcess, generation: randomUUID(), reattached: false, daemonPid: process.pid, droppedWhileDetached: 0, authAccountId: options.authAccountId, launchPrefix }
   }
 }

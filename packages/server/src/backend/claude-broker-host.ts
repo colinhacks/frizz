@@ -298,6 +298,9 @@ export interface ForkBrokerOptions {
   mcpServers?: WorkerMcpServers
   allowedTools?: string[]
   workerEnv?: Record<string, string>
+  /** The launch prefix's words, resolved only when this call FORKS — adopting a live daemon never asks,
+   *  so a prefix that no longer parses fails a new worker and never a reattach. May throw. */
+  launchPrefix?: () => string[]
   /** Override the daemon entry (tests). Defaults to the bundled/sibling claude-agent-broker. */
   daemonEntry?: string
   timeoutMs?: number
@@ -309,6 +312,7 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
   const recordPath = claudeBrokerRecordPath(options.stateDir, options.sessionId)
   mkdirSync(dirname(recordPath), { recursive: true })
   const generation = randomUUID()
+  const launchPrefix = options.launchPrefix?.() ?? []
   const config: ClaudeBrokerConfig = {
     socketPath, cwd: options.cwd, sessionId: options.sessionId, executablePath: options.executablePath,
     permissionMode: options.permissionMode, env: options.env, recordPath, generation,
@@ -319,6 +323,7 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
     resume: options.resume,
     pluginDir: options.pluginDir, mcpServers: options.mcpServers, allowedTools: options.allowedTools,
     workerEnv: options.workerEnv,
+    ...(launchPrefix.length > 0 ? { launchPrefix } : {}),
   }
   const entry = options.daemonEntry ?? resolveDetachedDaemonEntry(import.meta.url, "claude-agent-broker")
   const child = spawn(process.execPath, [entry], {

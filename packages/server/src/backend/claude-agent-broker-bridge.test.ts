@@ -482,6 +482,77 @@ test("the lifted worker caps reach the process the broker actually forks", { tim
   }
 })
 
+// THE LAUNCH PREFIX, end to end through real processes: Settings → the bridge → a forked broker daemon
+// → the Agent SDK → the operator's wrapper → claude. The wrapper adds a variable and `exec`s what it is
+// handed, which is what `op run --` / `env FOO=bar` do; the fake CLI reports the variable back, so the
+// assertion holds only if the wrapper really sat between the daemon and claude. Then the half that
+// matters for an operator who mistypes it: a prefix that cannot be used fails a NEW worker with a
+// sentence naming it, and never the reattach to one already running.
+test("a launch prefix from Settings wraps the claude the broker forks, and a bad one fails only a fork", { timeout: 30_000, skip: process.platform === "win32" ? "the wrapper is a POSIX sh script" : false }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cbrk-prefix-"))
+  const exe = join(dir, "fake-claude--basic.mjs")
+  copyFileSync(fakeCli, exe); chmodSync(exe, 0o700)
+  const wrapper = join(dir, "inject-vars")
+  const marker = join(dir, "wrapper-argv")
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$@" > '${marker}'\nFRIZZ_FAKE_INHERITED=from-the-wrapper\nexport FRIZZ_FAKE_INHERITED\nshift\nexec "$@"\n`)
+  chmodSync(wrapper, 0o700)
+  const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" }
+  let prefix = `'${wrapper}' --via-frizz`
+  const getSettings = () => ({ launchPrefix: { claude: prefix } })
+  const bridge = createClaudeAgentBrokerBridge({ stateDir: dir, executablePath: exe, env, getSettings })
+  const adopter = createClaudeAgentBrokerBridge({ stateDir: dir, executablePath: exe, env, getSettings })
+  const sessionId = randomUUID()
+  const slug = "prefixed"
+  const recordPath = claudeBrokerRecordPath(dir, sessionId)
+  const startup = () => {
+    try {
+      return readFileSync(join(dir, "capture.jsonl"), "utf8")
+        .split("\n").filter(Boolean)
+        .map((l) => JSON.parse(l) as { kind: string; environment?: Record<string, unknown> })
+        .find((r) => r.kind === "startup")
+    } catch { return undefined }
+  }
+  try {
+    await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: dir, prompt: "do the thing", permissionMode: "default" })
+    const deadline = Date.now() + 10_000
+    while (!startup() && Date.now() < deadline) await sleep(100)
+    assert.equal(startup()?.environment?.frizzFakeInheritedPresent, true, "the variable the wrapper exported reached claude")
+    const wrapperArgv = readFileSync(marker, "utf8").trimEnd().split("\n")
+    assert.equal(wrapperArgv[0], "--via-frizz", "the wrapper got its own words first")
+    assert.ok(wrapperArgv.includes("--output-format"), "…and the CLI's own argv after them")
+
+    // A frizz restart with a prefix that no longer parses still reaches the daemon that is running.
+    bridge.close()
+    prefix = "sh -c 'exec"
+    const daemonPid = readBrokerRecord(recordPath)?.daemonPid
+    const deliveryId = randomUUID()
+    await adopter.followUp({ threadSlug: slug, sessionId, cwd: dir, text: "carry on", deliveryId })
+    assert.equal(readBrokerRecord(recordPath)?.daemonPid, daemonPid, "the follow-up was delivered to the adopted daemon")
+
+    // A NEW worker under the same prefix fails, saying why, before any daemon is forked for it.
+    await assert.rejects(
+      adopter.spawnDispatch({ threadSlug: "fresh", sessionId: randomUUID(), cwd: dir, prompt: "x", permissionMode: "default" }),
+      /Claude Code launch prefix in this project's settings cannot be used: A single quote is never closed/,
+    )
+    prefix = join(dir, "no-such-wrapper")
+    await assert.rejects(
+      adopter.spawnDispatch({ threadSlug: "fresh-2", sessionId: randomUUID(), cwd: dir, prompt: "x", permissionMode: "default" }),
+      /starts `.*no-such-wrapper`, which is not an executable file/,
+    )
+    prefix = "frizz-no-such-launch-prefix-command --"
+    await assert.rejects(
+      adopter.spawnDispatch({ threadSlug: "fresh-3", sessionId: randomUUID(), cwd: dir, prompt: "x", permissionMode: "default" }),
+      /starts `frizz-no-such-launch-prefix-command`, which was not found on PATH/,
+    )
+  } finally {
+    adopter.releaseSession(slug, sessionId, "session-deleted")
+    adopter.close()
+    bridge.close()
+    try { const r = readBrokerRecord(recordPath); if (r) process.kill(r.daemonPid, "SIGKILL") } catch {}
+    await rmEventually(dir)
+  }
+})
+
 // SINGLE-FLIGHT COLD RESUME. A hibernated thread whose operator answers its questions receives two
 // inputs in the same instant — the waker's delivery of the answers and the operator's own send — and
 // each used to find no live daemon and fork one. On 2026-09-30 that put two daemons on one session

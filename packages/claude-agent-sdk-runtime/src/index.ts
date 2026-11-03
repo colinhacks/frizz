@@ -12,4 +12,6 @@ export type {
   SDKControlInitializeResponse,
   SDKMessage,
   SDKUserMessage,
+  SpawnedProcess,
+  SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk"

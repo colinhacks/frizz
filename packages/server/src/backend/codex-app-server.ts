@@ -569,6 +569,8 @@ export type CodexAppServerDiagnostic =
   | { event: "daemon-events-dropped"; dropped: number }
   | { event: "protocol-failure"; detail: string }
   | { event: "auth-account-refreshed" }
+  // The app-server was replaced because the project's Codex launch prefix changed (ensureCurrentAuth).
+  | { event: "launch-prefix-applied" }
   | { event: "execution-health-failed"; detail: string }
   // The app-server this bridge had been talking to is gone and a fresh one replaced it — every turn
   // that was running inside it (parents AND their sub-agents) died. `deathReason` is the dead daemon's
@@ -1052,6 +1054,11 @@ export interface CodexAppServerBridgeOptions {
   onStatusChange?: () => void
   /** Test seam for the current ChatGPT account in auth.json. */
   codexAuthAccountId?: () => string | undefined
+  /** The operator's launch prefix for this project's app-server (Settings.launchPrefix.codex), as words.
+   *  Handed to the host, which calls it only when it STARTS a process; read again before every turn,
+   *  and a process started through a different prefix is replaced at the next idle boundary — the same
+   *  path an account change takes (ensureCurrentAuth). May throw on a prefix that does not parse. */
+  launchPrefix?: () => string[]
   /** Test seam for the account-replacement patience bound (AUTH_REPLACEMENT_WAIT_MS). */
   authReplacementWaitMs?: number
   /** Test seam for the local macOS service check; production always probes through the app-server. */
@@ -1941,6 +1948,9 @@ export class CodexAppServerBridge {
   private daemonGeneration = ""
   /** ChatGPT account the current app-server cached when its process started. */
   private processAuthAccountId: string | undefined
+  /** The launch prefix the current app-server process was started through (`[]` = none); undefined
+   *  while no process is known. */
+  private processLaunchPrefix: string[] | undefined
   /** Serializes account-driven replacement across concurrent session/turn starts. */
   private authReplacement: Promise<void> | null = null
   private readonly authReplacementWaitMs: number
@@ -2881,6 +2891,7 @@ export class CodexAppServerBridge {
         this.openingConnection = null
       }
       this.processAuthAccountId = undefined
+      this.processLaunchPrefix = undefined
       this.notifyTurnIdleWaiters()
     }
   }
@@ -2944,13 +2955,18 @@ export class CodexAppServerBridge {
       // Before auth replacement too: a failed health probe must not enter a path that kills the
       // shared listener. Interrupt/status/resume remain available through ensureConnected().
       await this.checkExecutionHealth(connection)
-      if (!desiredAccountId || this.processAuthAccountId === desiredAccountId) return connection
+      const accountStale = Boolean(desiredAccountId) && this.processAuthAccountId !== desiredAccountId
+      // The other thing a process fixes at start: how it was launched. Changing the launch prefix in
+      // Settings has to reach the app-server every Codex thread here shares, and this is the one place
+      // that already knows how to replace it without cutting a running turn short.
+      const launchStale = this.launchPrefixStale()
+      if (!accountStale && !launchStale) return connection
       // The loop re-reads auth.json each pass, so it terminates on its own in the ordinary case. The
       // cap is for the pathological one — a replacement that keeps succeeding while the account keeps
       // failing to match — which would otherwise spin here forever.
       if (attempt >= MAX_AUTH_REPLACEMENT_ATTEMPTS) return connection
       if (!this.authReplacement) {
-        const replacement = this.replaceAppServerForAuthChange()
+        const replacement = this.replaceAppServerForAuthChange(accountStale ? "auth-account-refreshed" : "launch-prefix-applied")
         this.authReplacement = replacement
         void replacement.finally(() => {
           if (this.authReplacement === replacement) this.authReplacement = null
@@ -3017,13 +3033,29 @@ export class CodexAppServerBridge {
     this.turnIdleWaiters.clear()
   }
 
-  private async replaceAppServerForAuthChange(): Promise<void> {
+  private async replaceAppServerForAuthChange(event: "auth-account-refreshed" | "launch-prefix-applied"): Promise<void> {
     while (this.hasInFlightTurns()) await this.whenTurnsIdle()
     if (this.closed || this.dbReleased) throw new Error("Codex app-server bridge is closed")
     this.disconnectOwnedProcess()
     await stopCodexAppServerDaemon(this.options.stateDir ?? this.options.projectDir, this.options.projectId)
     await this.ensureConnected()
-    this.options.diagnostic?.({ event: "auth-account-refreshed" })
+    this.options.diagnostic?.({ event })
+  }
+
+  /** Whether the running app-server was started through a different launch prefix than Settings now
+   *  names. A prefix that cannot be used reads as NOT stale: tearing down a working app-server to fail
+   *  its replacement would only trade a running Codex for a broken one, and the start that needs the
+   *  prefix reports it (the settings save refuses such a prefix in the first place). */
+  private launchPrefixStale(): boolean {
+    const running = this.processLaunchPrefix
+    if (!this.options.launchPrefix || running === undefined) return false
+    let desired: string[]
+    try {
+      desired = this.options.launchPrefix()
+    } catch {
+      return false
+    }
+    return desired.length !== running.length || desired.some((word, index) => word !== running[index])
   }
 
   /**
@@ -3057,6 +3089,7 @@ export class CodexAppServerBridge {
       // have them. A thread that still needs the mount gets it from its own config bag, which every
       // start and resume carries (threadConfig) — the only channel that ever gave it an identity.
       authAccountId,
+      ...(this.options.launchPrefix ? { launchPrefix: this.options.launchPrefix } : {}),
     })
     const child = attachment.process
     this.executionScope = `project ${this.options.projectDir}, backend PID ${attachment.daemonPid}, generation ${attachment.generation}`
@@ -3144,6 +3177,7 @@ export class CodexAppServerBridge {
       this.capabilityRevision = negotiated.capabilityRevision
       this.daemonGeneration = attachment.generation
       this.processAuthAccountId = attachment.authAccountId
+      this.processLaunchPrefix = attachment.launchPrefix ?? []
       if (this.closed) throw new Error("Codex app-server bridge closed during negotiation")
       this.connection = connection
       this.openingConnection = null
@@ -3202,6 +3236,7 @@ export class CodexAppServerBridge {
     const epoch = this.connectionEpoch
     this.connection = null
     this.processAuthAccountId = undefined
+    this.processLaunchPrefix = undefined
     this.providerErrors.clear()
     this.forgetCorrelatedFileItems()
     // No notification can ever arrive on a dead connection, so release every settings waiter now
