@@ -44,11 +44,39 @@ test("the drift token only reads Workers, and has no zone policy at all", () => 
   assert.deepEqual(ids(plan), [{ resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-r"] }])
 })
 
-test("only the two CI tokens are minted here, and both go to GitHub", () => {
-  assert.deepEqual(TOKENS.map((t) => [t.key, t.sink.secret, t.sink.env ?? null]), [
-    ["deploy", "CLOUDFLARE_API_TOKEN", "workers-deploy"],
-    ["drift", "CLOUDFLARE_READ_TOKEN", null],
+test("the CI tokens go to GitHub and the laptop's two go to Keyward, under the names cf reads", () => {
+  assert.deepEqual(TOKENS.map((t) => [t.key, t.sink.kind, t.sink.secret, t.sink.env ?? null]), [
+    ["deploy", "gh", "CLOUDFLARE_API_TOKEN", "workers-deploy"],
+    ["drift", "gh", "CLOUDFLARE_READ_TOKEN", null],
+    ["read", "keyward", "CLOUDFLARE_API_TOKEN", null],
+    ["admin", "keyward", "CLOUDFLARE_ADMIN_TOKEN", null],
   ])
+})
+
+test("the read-only token takes every Read group, on the account and on all of its zones", () => {
+  const plan = planToken(spec("read"), { groups, accountId: "acct", zoneId: "zone1" })
+  assert.deepEqual(plan.missing, [])
+  assert.deepEqual(ids(plan), [
+    { resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-r", "g-kv-r", "g-settings-r", "g-zone-r-account"] },
+    { resources: [`${ACCOUNT}.acct`], groups: ["g-routes-r", "g-zone-r", "g-dns-r"] },
+  ])
+  assert.deepEqual(plan.policies[1].resources, { [`${ACCOUNT}.acct`]: { [`${ZONE}.*`]: "*" } })
+  for (const policy of plan.policies) for (const g of policy.permission_groups) assert.match(g.name, / Read$/)
+})
+
+test("the admin token takes every group, writes included, on the account and all of its zones", () => {
+  const plan = planToken(spec("admin"), { groups, accountId: "acct", zoneId: "zone1" })
+  const granted = plan.policies.flatMap((p) => p.permission_groups.map((g) => g.id)).sort()
+  assert.deepEqual(granted, groups.map((g) => g.id).sort())
+  assert.deepEqual(plan.policies[1].resources, { [`${ACCOUNT}.acct`]: { [`${ZONE}.*`]: "*" } })
+})
+
+test("a group outside the account and its zones, such as a user-level one, is never granted", () => {
+  const withUser = [...groups, { id: "g-user", name: "User Details Read", scopes: ["com.cloudflare.api.user"] }]
+  for (const key of ["read", "admin"]) {
+    const plan = planToken(spec(key), { groups: withUser, accountId: "acct", zoneId: "zone1" })
+    assert.ok(!plan.policies.some((p) => p.permission_groups.some((g) => g.id === "g-user")), key)
+  }
 })
 
 test("an optional group the account lacks is skipped rather than failing the plan", () => {
