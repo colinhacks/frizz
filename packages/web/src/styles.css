@@ -692,6 +692,42 @@ a[href] {
   color: inherit;
 }
 
+/* THE PAGE LOADER (FrizzLoader.tsx): the fff mark writes itself, holds, and lifts off the way it came.
+   With `pathLength=1` and a dash pattern of `1 1`, an offset of 1 shows none of the stroke, 0 all of it,
+   and -1 none again with the pen gone off the far end; the pattern repeats every 2, so -1 and 1 are the
+   same frame and the loop has no seam. The write takes 55% of the cycle and the lift the last 32%, so it
+   writes deliberately and clears briskly. It fades in after 150ms, so a fast load never flashes it. */
+.frizz-loader {
+  opacity: 0;
+  animation: frizz-loader-in 0.4s ease-out 0.15s forwards;
+}
+.frizz-loader path {
+  fill: none;
+  stroke: var(--frizz-brand);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.frizz-loader-track { opacity: 0.13; }
+.frizz-loader-pen {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: frizz-loader-write 2.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  /* In the mark's own units: 28 of its 435 is ~6px at 96px wide. */
+  filter: drop-shadow(0 0 28px var(--frizz-brand-glow));
+}
+@keyframes frizz-loader-in { to { opacity: 1; } }
+@keyframes frizz-loader-write {
+  0% { stroke-dashoffset: 1; }
+  55%, 68% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -1; }
+}
+/* Without motion: the whole mark, breathing on opacity alone. */
+@keyframes frizz-loader-breathe { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .frizz-loader { animation: none; opacity: 1; }
+  .frizz-loader-pen { stroke-dasharray: none; animation: frizz-loader-breathe 2.8s ease-in-out infinite; }
+}
+
 /* Radix popover/dropdown/dialog enter animations. Kept subtle — a short fade + tiny rise. */
 @keyframes pop-in {
   from {

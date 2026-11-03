@@ -127,9 +127,9 @@ test("while the board loads, the spinner is centred on the page beside the reser
         Object.assign(window, { WebSocket: Closed, EventSource: Closed })
       })
       await page.reload({ waitUntil: "domcontentloaded" })
-      await page.waitForSelector('[role="status"][aria-label="Loading project"] .animate-spin', { timeout: 20_000 })
+      await page.waitForSelector('[role="status"][aria-label="Loading project"] svg', { timeout: 20_000 })
       const at = await page.evaluate(() => {
-        const spinner = document.querySelector('[aria-label="Loading project"] .animate-spin')!.getBoundingClientRect()
+        const spinner = document.querySelector('[aria-label="Loading project"] svg')!.getBoundingClientRect()
         const rail = document.querySelector('nav[aria-label="Projects"]')?.getBoundingClientRect()
         const left = rail && rail.width > 0 ? rail.right : 0
         return {
