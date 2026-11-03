@@ -29,7 +29,8 @@ import { showToast, store } from "../store.ts"
 import { Dialog } from "./ui/Dialog.tsx"
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/Menu.tsx"
 import { HomeTabs } from "./HomeSwitcher.tsx"
-import { ProjectSquare, useProjectIconChange, warmProjectPicker } from "./ProjectRail.tsx"
+import { ProjectSquare, projectSquareLabel, railCountsLabel, useProjectIconChange, warmProjectPicker } from "./ProjectRail.tsx"
+import { Tooltip } from "./Tooltip.tsx"
 import { SettingsDrawer } from "./SettingsDrawer.tsx"
 import { Z_DIALOG } from "../lib/layers.ts"
 
@@ -69,17 +70,14 @@ function tileBadgeWidth(count: number): number {
   return count < 10 ? 20 : count < 100 ? 26 : 32
 }
 
-/** `2 running, 3 in the queue` — the rail tooltip's split, in the words of the sidebar's own bands. */
-function tileCountsLabel(queued: number, running: number): string {
-  const parts: string[] = []
-  if (running) parts.push(`${running} running`)
-  if (queued) parts.push(`${queued} in the queue`)
-  return parts.join(", ")
-}
-
 /**
- * The project's badge, on its square's top-right corner: how many of its threads are in play — waiting
- * on the human (the queue) PLUS in flight — with a spinner lapping it while any are in flight.
+ * The project's badge: how many of its threads are in play — waiting on the human (the queue) PLUS in
+ * flight — with a spinner lapping it while any are in flight.
+ *
+ * ON THE SQUARE'S BOTTOM-RIGHT CORNER, overlapping it — Discord's placement, and the rail's (maintainer
+ * 2026-11-03: "It should be in the bottom-right corner, like in the project sidebar"). It sat top-right,
+ * the phone home screen's corner, until then. 6px past the square's edges, the rail's 5px of a 16px
+ * badge scaled to this 20px one, so the same share of the badge hangs off the square.
  *
  * ONE MARK FOR BOTH, issue #41's badge (maintainer 2026-09-24: "the number inside the yellow dot should
  * be the sum"), which the rail wore until 2026-10-11, when it went back to the queue alone. The home
@@ -100,10 +98,10 @@ function TileBadge({ queued, running }: { queued: number; running: number }) {
   const count = queued + running
   return (
     <span
-      aria-label={tileCountsLabel(queued, running)}
+      aria-label={railCountsLabel(queued, running)}
       data-home-tile-count={count}
       data-home-tile-running={running || undefined}
-      className="pointer-events-none absolute -right-2 -top-2 flex"
+      className="pointer-events-none absolute -bottom-1.5 -right-1.5 flex"
     >
       {running ? <span aria-hidden className="frizz-tile-badge-ring absolute -inset-1 rounded-full text-accent-fill" /> : null}
       <span
@@ -133,26 +131,40 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
   const icon = useProjectIconChange(project)
   const queued = counts?.queued ?? 0
   const running = counts?.running ?? 0
-  const inPlay = tileCountsLabel(queued, running)
   return (
     <div data-home-tile={project.slug} className="group/tile relative flex flex-col items-center pb-1 pt-1.5" style={{ width: TILE_PX }}>
-      {/* The lift is the hover, not a fill: a fill behind the square would show around the badge's
-          cut-out in a colour the ring is not. */}
-      <span className="relative transition-transform duration-150 ease-out group-hover/tile:-translate-y-[3px]">
-        <span
-          className={`block rounded-[30%] shadow-[0_6px_18px_-6px] shadow-shadow-ink/70 group-has-[a:focus-visible]/tile:ring-2 group-has-[a:focus-visible]/tile:ring-focus-ink-60 group-has-[a:focus-visible]/tile:ring-offset-2 group-has-[a:focus-visible]/tile:ring-offset-bg ${
-            project.stale ? "opacity-60 grayscale" : ""
-          }`}
+      {/* THE SQUARE CARRIES THE RAIL'S TOOLTIP (projectSquareLabel): the project's name and what it has in
+          play, open the moment the pointer is on it, as on the rail. So the square is a link of its OWN,
+          lifted above the name's cover (TileName), because a tooltip opens on the element under the
+          pointer and the cover would otherwise be that element. Kept out of the tab order and from
+          assistive tech: the name is the tile's one link, and the badge says its count in words. */}
+      <Tooltip side="top" label={projectSquareLabel(project, queued, running)}>
+        <Link
+          to={projectHref(project.slug)}
+          tabIndex={-1}
+          aria-hidden
+          data-home-tile-square
+          className="relative z-[1] block outline-none"
         >
-          <ProjectSquare project={project} size={TILE_ICON} />
-        </span>
-        {queued + running > 0 ? <TileBadge queued={queued} running={running} /> : null}
-      </span>
+          {/* The lift is the hover, not a fill: a fill behind the square would show around the badge's
+              cut-out in a colour the ring is not. */}
+          <span className="relative block transition-transform duration-150 ease-out group-hover/tile:-translate-y-[3px]">
+            <span
+              className={`block rounded-[30%] shadow-[0_6px_18px_-6px] shadow-shadow-ink/70 group-has-[a:focus-visible]/tile:ring-2 group-has-[a:focus-visible]/tile:ring-focus-ink-60 group-has-[a:focus-visible]/tile:ring-offset-2 group-has-[a:focus-visible]/tile:ring-offset-bg ${
+                project.stale ? "opacity-60 grayscale" : ""
+              }`}
+            >
+              <ProjectSquare project={project} size={TILE_ICON} />
+            </span>
+            {queued + running > 0 ? <TileBadge queued={queued} running={running} /> : null}
+          </span>
+        </Link>
+      </Tooltip>
       <TileName
         project={project}
-        // Native, not the app's Tooltip: that one opens with no delay, and sweeping the pointer across a
-        // grid of these would flash one per tile.
-        title={[project.name, project.stale ? "Folder is missing" : inPlay, shortPath(project.path, home)].filter(Boolean).join("\n")}
+        // The square has the rail's tooltip; the name's native one, after the browser's delay, is for a
+        // name cut short and for where the project lives.
+        title={`${project.name}\n${shortPath(project.path, home)}`}
         menu={
           <Menu onOpenChange={(open) => { if (open) icon.warm() }}>
             <MenuTrigger asChild>
@@ -221,7 +233,10 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
  */
 function TileName({ project, title, menu }: { project: ProjectCard; title: string; menu: ReactNode }) {
   return (
-    <span className="mt-2 flex max-w-full items-baseline gap-1 text-[12px] leading-[15px]">
+    // `mt-3`: the badge hangs off the square's bottom-right corner, 6px below it and its running ring 10px,
+    // over the right of a long name. At `mt-2` the ring came 1.1px from the name's ascenders (measured
+    // 2026-11-03); 12px leaves it ~5px, and the face ~9px.
+    <span className="mt-3 flex max-w-full items-baseline gap-1 text-[12px] leading-[15px]">
       {menu}
       <Link
         to={projectHref(project.slug)}
@@ -257,7 +272,7 @@ function AddTile({ pending, onClick }: { pending: boolean; onClick: () => void }
       >
         {pending ? <Loader2 size={20} className="animate-spin" /> : <Plus size={22} strokeWidth={1.6} />}
       </span>
-      <span className="mt-2 max-w-full truncate text-[12px] leading-[15px] text-muted group-hover/tile:text-fg">
+      <span className="mt-3 max-w-full truncate text-[12px] leading-[15px] text-muted group-hover/tile:text-fg">
         {pending ? "Choosing a folder…" : "Add a project"}
       </span>
       <span className="mt-1 h-[13px]" />

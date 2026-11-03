@@ -197,11 +197,20 @@ const SQUARE = 40
  * The badge draws the queue alone (see RailLink), so this is where the rail still says that a project
  * has work in flight.
  */
-function railCountsLabel(queued: number, running: number): string {
+export function railCountsLabel(queued: number, running: number): string {
   const parts: string[] = []
   if (running) parts.push(`${running} running`)
   if (queued) parts.push(`${queued} in the queue`)
   return parts.join(", ")
+}
+
+/**
+ * A project square's tooltip, `zod — 1 running, 2 in the queue`: the rail's, and the home screen's tile
+ * (ProjectGrid), so the two say a project's state in one sentence.
+ */
+export function projectSquareLabel(project: ProjectCard, queued: number, running: number): string {
+  const inPlay = railCountsLabel(queued, running)
+  return project.stale ? `${project.name} — directory is missing` : inPlay ? `${project.name} — ${inPlay}` : project.name
 }
 
 /**
@@ -271,7 +280,6 @@ export function RailLink({
 }) {
   const held = drag?.fromIndex === index
   const queued = counts?.queued ?? 0
-  const inPlay = railCountsLabel(queued, counts?.running ?? 0)
   // The held square follows the pointer; everything between its old slot and its new one slides one
   // step to open the gap. `shiftFor` owns which is which — see lib/railReorder.ts.
   const offset = drag
@@ -287,11 +295,7 @@ export function RailLink({
     <Tooltip
       side="right"
       disabled={drag !== null}
-      label={
-        project.stale
-          ? `${project.name} — directory is missing`
-          : inPlay ? `${project.name} — ${inPlay}` : project.name
-      }
+      label={projectSquareLabel(project, queued, counts?.running ?? 0)}
     >
       <Link
         to={projectHref(project.slug)}
