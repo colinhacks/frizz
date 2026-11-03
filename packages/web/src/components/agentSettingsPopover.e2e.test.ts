@@ -148,3 +148,52 @@ test("a settings write still in flight holds the composer until it lands", { ski
     await browser.close()
   }
 })
+
+test("the launch prefix field saves what parses, holds back what does not, and keeps the other runtime's", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  // A 400ms save round-trip, so the typing below lands while writes are in flight.
+  const { browser, page, errors } = await launch("?settingsDelay=400")
+  const INPUT = `${PANEL} input[aria-label="Claude Code launch prefix"]`
+  const prefixes = async () => (await writes(page)).map((w) => w.launchPrefix)
+  try {
+    await openPanel(page)
+    await page.click(INPUT)
+    await page.keyboard.type("op run --env-file .env --", { delay: 30 })
+    // A caret moved mid-text and typed at while a save is in flight: nothing re-renders the box under it.
+    await page.$eval(INPUT, (el) => (el as HTMLInputElement).setSelectionRange(2, 2))
+    await page.keyboard.type(" -v", { delay: 30 })
+    assert.deepEqual(await page.$eval(INPUT, (el) => [(el as HTMLInputElement).value, (el as HTMLInputElement).selectionStart]), ["op -v run --env-file .env --", 5])
+    await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes("op -v run --env-file .env -- claude"), { timeout: 3000 }, `${PANEL} [data-launch-prefix-preview]`)
+    await page.waitForFunction(() => (window as unknown as { dispatchComposerProfileFixture: Fixture }).dispatchComposerProfileFixture.settingsWrites.length >= 1, { timeout: 3000 })
+    // Debounced: one burst of typing is one write, and it carries the whole object.
+    await new Promise((r) => setTimeout(r, 1200))
+    const sent = await writes(page)
+    assert.equal(sent.length, 1, "a burst of typing is one write")
+    assert.deepEqual(sent[0]!.launchPrefix, { claude: "op -v run --env-file .env --" })
+    assert.equal(sent[0]!.autoCompactWindow, 500000)
+
+    // Shell syntax is refused under the box, and never written.
+    await page.keyboard.press("End")
+    await page.keyboard.type(" | tee", { delay: 30 })
+    await page.waitForSelector(`${PANEL} [role="alert"]`)
+    assert.match(await page.$eval(`${PANEL} [role="alert"]`, (el) => el.textContent ?? ""), /shell syntax/)
+    assert.equal(await page.$eval(INPUT, (el) => el.getAttribute("aria-invalid")), "true")
+    await new Promise((r) => setTimeout(r, 1200))
+    assert.equal((await prefixes()).some((p) => JSON.stringify(p).includes("|")), false, "an invalid prefix is never saved")
+
+    // The Codex panel writes its own key and leaves Claude's as stored.
+    await page.keyboard.press("Escape")
+    await page.waitForFunction((panel) => !document.querySelector(panel), {}, PANEL)
+    await page.click('button[aria-label="Codex settings"]')
+    const CODEX = '[data-agent-settings-menu="codex"] input[aria-label="Codex launch prefix"]'
+    await page.waitForSelector(CODEX)
+    await page.click(CODEX)
+    await page.keyboard.type("nice -n 10", { delay: 20 })
+    await page.waitForFunction(() => {
+      const all = (window as unknown as { dispatchComposerProfileFixture: Fixture }).dispatchComposerProfileFixture.settingsWrites
+      return JSON.stringify(all.at(-1)?.launchPrefix) === JSON.stringify({ claude: "op -v run --env-file .env -- ", codex: "nice -n 10" })
+    }, { timeout: 4000 })
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})

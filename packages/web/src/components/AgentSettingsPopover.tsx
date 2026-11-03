@@ -1,12 +1,14 @@
 import * as RadixMenu from "@radix-ui/react-dropdown-menu"
 import { useQuery } from "@tanstack/react-query"
 import { Settings as SettingsIcon } from "lucide-react"
-import { type Settings } from "@frizz/shared"
+import { useId, useState } from "react"
+import { parseLaunchPrefix, type Settings } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { useEscapeToClose } from "../hooks/useEscapeToClose.ts"
 import { SaveStatus, useSettingsDraft } from "../hooks/useSettingsAutosave.tsx"
 import { CODEX_CONTEXT_WINDOW_DEFAULT, codexContextWindowOptions, formatTokens } from "../lib/codexContextWindow.ts"
 import { AUTO_COMPACT_WINDOW_OPTIONS, CONTEXT_WINDOW_HELP, DEFAULT_AUTO_COMPACT_WINDOW } from "../lib/contextWindows.ts"
+import { launchPrefixPreview, withLaunchPrefix, type LaunchPrefixRuntime } from "../lib/launchPrefixField.ts"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS } from "../lib/options.ts"
 import { OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z } from "../lib/overlaySurface.ts"
 import { SETTINGS_HELP } from "../lib/settingsHelp.ts"
@@ -26,9 +28,10 @@ const PROVIDER_LABEL = { claude: "Claude Code", codex: "Codex" } as const
 
 // The gear on a runtime's band in the model picker, and the panel it opens: every setting that belongs
 // to THAT runtime's new threads in this project — Claude's permission mode, prompt-cache tier and
-// compaction window; Codex's context window. They lived in the Settings drawer under a "Claude" band
-// until 2026-09-19, a drawer away from the picker where the operator is actually choosing a worker
-// (maintainer: "we want settings to appear in the context where they are relevant").
+// compaction window; Codex's context window; and each runtime's launch prefix. They lived in the
+// Settings drawer under a "Claude" band until 2026-09-19, a drawer away from the picker where the
+// operator is actually choosing a worker (maintainer: "we want settings to appear in the context where
+// they are relevant").
 //
 // MODAL, and that is the whole reason this panel cannot vanish. Its predecessor — a plain context
 // dropdown on the same header row — was a NON-modal popover whose trigger was a menu item, and Radix
@@ -136,19 +139,23 @@ function AgentSettingsForm({ backend }: { backend: "claude" | "codex" }) {
             />
           </SettingsField>
           <CompactionWindowField draft={draft} update={update} />
+          <LaunchPrefixField runtime="claude" draft={draft} update={update} />
         </>
       ) : (
-        <SettingsField label="Context window" help={CONTEXT_WINDOW_HELP.codex}>
-          <Select
-            variant="bordered"
-            value={draft.codexContextWindow === undefined ? CODEX_CONTEXT_WINDOW_DEFAULT : String(draft.codexContextWindow)}
-            onValueChange={(v) => update({ ...draft, codexContextWindow: v === CODEX_CONTEXT_WINDOW_DEFAULT ? undefined : Number(v) })}
-            options={codexContextWindowOptions(models.data, draft.codexContextWindow)}
-            indicatorPosition="right"
-            menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z}
-            ariaLabel="Codex context window"
-          />
-        </SettingsField>
+        <>
+          <SettingsField label="Context window" help={CONTEXT_WINDOW_HELP.codex}>
+            <Select
+              variant="bordered"
+              value={draft.codexContextWindow === undefined ? CODEX_CONTEXT_WINDOW_DEFAULT : String(draft.codexContextWindow)}
+              onValueChange={(v) => update({ ...draft, codexContextWindow: v === CODEX_CONTEXT_WINDOW_DEFAULT ? undefined : Number(v) })}
+              options={codexContextWindowOptions(models.data, draft.codexContextWindow)}
+              indicatorPosition="right"
+              menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z}
+              ariaLabel="Codex context window"
+            />
+          </SettingsField>
+          <LaunchPrefixField runtime="codex" draft={draft} update={update} />
+        </>
       )}
     </div>
   )
@@ -175,4 +182,67 @@ function CompactionWindowField({ draft, update }: { draft: Settings; update: (ne
       />
     </SettingsField>
   )
+}
+
+// The command a runtime's workers start THROUGH (shared/launch-prefix.ts). Free text, so it keeps its
+// OWN text state rather than rendering `draft.launchPrefix` back into the box:
+//  - AN INVALID PREFIX IS NEVER SAVED. Every keystroke is parsed by the same `parseLaunchPrefix` the
+//    server spawns with; one that fails shows the parser's sentence under the box and queues nothing,
+//    so the stored value stays the last one that parsed (and a half-typed `"op run` never reaches a
+//    worker). The draft seeds the box once, when the panel opens, so reopening it shows what is stored.
+//  - NOTHING ROUND-TRIPS INTO THE BOX. The input's value is this local string alone, and an autosave
+//    that lands republishes the settings cache, never this state — so a save mid-word cannot rewrite
+//    the text or move the cursor.
+//  - DEBOUNCED like every free-text setting (useSettingsDraft), so a prefix is one write, not one per
+//    character; closing the panel flushes it.
+// Under a valid prefix, the command it produces in muted mono: the box is one line that scrolls, so
+// this is the only place a long wrapper reads whole, and it shows the split the parser made.
+function LaunchPrefixField({ runtime, draft, update }: {
+  runtime: LaunchPrefixRuntime
+  draft: Settings
+  update: (next: Settings, opts?: { debounce?: boolean }) => void
+}) {
+  const [text, setText] = useState(() => draft.launchPrefix?.[runtime] ?? "")
+  const parsed = parseLaunchPrefix(text)
+  const errorId = useId()
+  return (
+    <SettingsField label="Launch prefix" help={runtime === "claude" ? SETTINGS_HELP.launchPrefixClaude : SETTINGS_HELP.launchPrefixCodex}>
+      <input
+        type="text"
+        data-1p-ignore
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        value={text}
+        placeholder="op run --"
+        aria-label={`${PROVIDER_LABEL[runtime]} launch prefix`}
+        aria-invalid={parsed.ok ? undefined : true}
+        aria-describedby={parsed.ok ? undefined : errorId}
+        onChange={(event) => {
+          const next = event.target.value
+          setText(next)
+          if (parseLaunchPrefix(next).ok) update(withLaunchPrefix(draft, runtime, next), { debounce: true })
+        }}
+        // The Select triggers' own box (border, `px-2 py-1`, 28px tall), so the input lines up with the
+        // fields above it. 11.5px, not their 12px: the mono face is drawn larger on the same size —
+        // measured in sans, 12px mono's cap/x-height is 8.75/6.56px against the selects' 8.46/6.32px,
+        // and 11.5px mono's 8.39/6.29px matches them.
+        className="input px-2 py-1 text-[11.5px] leading-[18px] font-mono-keep"
+      />
+      {!parsed.ok ? (
+        <div id={errorId} role="alert" className="break-words text-[11px] leading-snug text-danger-soft">{withInlineCode(parsed.error)}</div>
+      ) : parsed.argv.length > 0 ? (
+        <div className="text-[11px] leading-snug text-muted font-mono-keep [overflow-wrap:anywhere]" data-launch-prefix-preview="">
+          {launchPrefixPreview(parsed.argv, runtime)}
+        </div>
+      ) : null}
+    </SettingsField>
+  )
+}
+
+// The parser's sentences mark code with backticks (`|`, `sh -c`), so those spans render as code rather
+// than as literal backticks.
+function withInlineCode(sentence: string) {
+  return sentence.split("`").map((part, i) => (i % 2 === 1 ? <code key={i} className="font-mono-keep">{part}</code> : part))
 }
