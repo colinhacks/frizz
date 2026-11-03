@@ -1455,6 +1455,23 @@ test("Claude Code's request records (2.1.300+) draw nothing", () => {
   assert.ok(!withRequests.some((m) => /NOBODY TYPED|SYSTEM/.test(m.text)), "no request content is drawn as a message")
 })
 
+test("Claude Code's session-owner record (2.1.317+) draws nothing, even as a transcript's first line", () => {
+  // From 2.1.317 a session's transcript OPENS with a `session-owner` record and repeats it before each
+  // model request: no timestamp, no uuid, no message, only the signed-in account's ids. A reader that
+  // took the first line for the session's opening record would start the transcript on it. Shape as
+  // 2.1.317 writes it; the ids are placeholders.
+  const owner = JSON.stringify({ type: "session-owner", accountUuid: "account-uuid", organizationUuid: "org-uuid", sessionId: "s" })
+  const turn = [
+    userRec("2026-07-01T00:00:00.000Z"),
+    bashRec("2026-07-01T00:00:02.000Z", "m1"),
+    JSON.stringify({ type: "user", timestamp: "2026-07-01T00:00:03.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu", content: "ok" }] } }),
+    JSON.stringify({ type: "assistant", timestamp: "2026-07-01T00:00:05.000Z", message: { id: "m2", stop_reason: "end_turn", content: [{ type: "text", text: "Done." }] } }),
+  ]
+  const withOwner = parseTranscript([owner, turn[0], owner, turn[1], turn[2], owner, turn[3]].join("\n"))
+  const drawn = (messages: TranscriptMessage[]) => messages.map(({ sourceId: _offset, ...m }) => m)
+  assert.deepEqual(drawn(withOwner), drawn(parseTranscript(turn.join("\n"))), "the session-owner records change nothing the transcript draws")
+})
+
 test("a long thinking window leaves NO row behind, only the turn's own card", () => {
   // Claude's thinking content is redacted, so this line could only ever have reported a DURATION — and a
   // permanent row whose whole payload is "the model paused here" is what the transcript stopped carrying
