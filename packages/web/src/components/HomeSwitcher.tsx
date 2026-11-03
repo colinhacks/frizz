@@ -11,11 +11,14 @@ import { Z_CHROME } from "../lib/layers.ts"
 
 // THE SWITCH BETWEEN THE TWO HOMES — the project grid (`/`) and the Console (`/console`).
 //
-// AT THE TOP-LEFT OF THE CONSOLE'S SIDEBAR, on both homes (maintainer 2026-10-26: "Projects/Console
-// needs to move to the top left at the top of the sidebar"). Its left edge stands on the prompt box's
-// border, CONSOLE_TOP_PX above the status row, and the grid draws it in the same spot although the grid
-// has no sidebar: a switch that moved when it was used would move out from under the pointer that
-// pressed it. It was centred over the page beside the rail until then.
+// TWO PLACEMENTS, ONE PILL (HomeTabs). On the Console it stands at the top-left of the sidebar
+// (HomeSwitcher, below: maintainer 2026-10-26, "Projects/Console needs to move to the top left at the top
+// of the sidebar"), its left edge on the prompt box's border, CONSOLE_TOP_PX above the status row. On the
+// grid it is the head of the page, centred over the project icons where the home screen's search field
+// was mocked (ProjectGrid; maintainer 2026-11-03: "put the tab switcher for projects and console in the
+// place where the search bar currently is"). From 2026-10-26 the grid drew it in the Console's corner too,
+// so that a click never moved the pill out from under the pointer; the home screen gave that up for a
+// page whose head is the choice between the two homes.
 //
 // WHERE THAT CORNER FALLS IS LAID OUT, NOT CALCULATED. The sidebar's left edge is wherever the centred
 // pair of columns puts it, which depends on the window's width at every step (lib/boardColumns.ts). So
@@ -23,12 +26,12 @@ import { Z_CHROME } from "../lib/layers.ts"
 // Console's sidebar starts at every width — in the stacked narrow layout too, where that is the page's
 // own left padding. The copy draws nothing and takes no pointer; only the pill does.
 //
-// FIXED to the window, so it stays where the operator left it however far the page scrolls. It FLOATS:
-// the pill is the whole of it, translucent and blurred (maintainer 2026-10-20: "supposed to be FLOATING.
-// not be in a black top bar"). Beside the Console's cards nothing passes under it any more, since the
-// sidebar column holds still; the grid's cards do, once forty projects make the grid scroll, and the
-// narrow Console's cards do, where the workpane is stacked under the sidebar. There the cards' headers
-// stick below it (lib/homeView.ts HOME_SWITCHER_CLEARANCE_PX, App.tsx).
+// On the Console it is FIXED to the window, so it stays where the operator left it however far the page
+// scrolls. It FLOATS: the pill is the whole of it, translucent and blurred (maintainer 2026-10-20:
+// "supposed to be FLOATING. not be in a black top bar"). Beside the Console's cards nothing passes under
+// it, since the sidebar column holds still; the narrow Console's cards do, where the workpane is stacked
+// under the sidebar, and there the cards' headers stick below it (lib/homeView.ts
+// HOME_SWITCHER_CLEARANCE_PX, App.tsx). On the grid it sits in the page's flow and scrolls with it.
 //
 // The two tabs are one fixed width (HOME_TAB_PX), their words centred in them, so the pill does not grow
 // and shift when the count gains a digit. It fits the sidebar at its narrowest, 272px.
@@ -76,7 +79,8 @@ function isPlainClick(event: MouseEvent): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
 }
 
-export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
+/** The pill itself: the two tabs, Projects and Console. Placed by HomeSwitcher on the Console and by the grid. */
+export function HomeTabs({ className = "" }: { className?: string }) {
   // The tab that is lit is the page on screen. It read the KEPT home (lib/homeView.ts) until 2026-10-23,
   // which every tab shares: choosing Projects in one tab lit "Projects" over the Console in another.
   const view: HomeView = isConsolePath(useLocation().pathname) ? "console" : "projects"
@@ -116,6 +120,21 @@ export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
     )
   }
   return (
+    <div
+      role="tablist"
+      aria-label="Home"
+      data-home-switcher
+      className={`flex w-fit gap-0.5 rounded-full border border-border-strong bg-elevated/80 p-[3px] shadow-lg shadow-shadow-ink/40 backdrop-blur-md ${className}`}
+    >
+      {tab("projects", "Projects")}
+      {tab("console", "Console", total)}
+    </div>
+  )
+}
+
+/** The Console's placement: fixed, in the corner where its sidebar starts. */
+export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
+  return (
     // The empty copy of the board's two columns, inset by the rail as the page is (routes.tsx RootLayout),
     // with the pill in the sidebar's slot. It is the window's width and takes no pointer, so nothing under
     // it stops being clickable.
@@ -124,15 +143,7 @@ export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
         <div className={SIDEBAR_WIDTH_CLASS}>
           {/* `ml-0.5`: the sidebar's prompt box is inset 2px in its column (ConsoleSidebar's `px-0.5`), and the
               pill's border stands on the box's border. */}
-          <div
-            role="tablist"
-            aria-label="Home"
-            data-home-switcher
-            className="pointer-events-auto ml-0.5 flex w-fit gap-0.5 rounded-full border border-border-strong bg-elevated/80 p-[3px] shadow-lg shadow-shadow-ink/40 backdrop-blur-md"
-          >
-            {tab("projects", "Projects")}
-            {tab("console", "Console", total)}
-          </div>
+          <HomeTabs className="pointer-events-auto ml-0.5" />
         </div>
         <div className={WORKPANE_WIDTH_CLASS} />
       </div>

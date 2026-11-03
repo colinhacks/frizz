@@ -1,4 +1,3 @@
-import * as RadixDropdown from "@radix-ui/react-dropdown-menu"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent as DragEvent_, type KeyboardEvent as KeyboardEvent_, type MouseEvent as MouseEvent_, type PointerEvent as PointerEvent_, type ReactNode } from "react"
 import { House, Plus } from "lucide-react"
@@ -17,7 +16,7 @@ import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { dropIndex, edgeScrollVelocity, moveItem, shiftFor } from "../lib/railReorder.ts"
 import { Tooltip } from "./Tooltip.tsx"
-import { Z_CHROME, Z_SELECT } from "../lib/layers.ts"
+import { Z_CHROME } from "../lib/layers.ts"
 
 // THE PROJECT RAIL — every project on this machine as one icon square, always on screen.
 //
@@ -360,24 +359,30 @@ export function RailLink({
 }
 
 /**
- * Choose, or stop choosing, this project's picture.
+ * Choose, or stop choosing, this project's picture — the two icon items of the home grid's project menu
+ * (ProjectGrid), as actions that menu draws among its own.
  *
  * The server's native picker, opened standing in the project's own directory (`pick` below), with a
- * browser file input as the fallback where the machine has none. Opening the menu has the server build
- * that picker, so the click on "Choose an icon…" only has to show it.
+ * browser file input as the fallback where the machine has none. `warm` is for the menu's opening: the
+ * server builds that picker then, so the click on "Choose an icon…" only has to show it. `fileInput` must
+ * be rendered by the caller, outside the menu, so it outlives the menu closing on the click.
+ *
+ * It was a menu of its own until 2026-11-03, opened from an overlay on the old project card's square.
+ * The home grid's icons are links with nothing laid over them, so the items moved into the one menu.
  */
-export function ProjectIconMenu({
-  project,
-  children,
-}: {
-  project: ProjectCard
-  children: ReactNode
-}) {
+export function useProjectIconChange(project: ProjectCard): {
+  fileInput: ReactNode
+  choose: () => void
+  reset: () => void
+  warm: () => void
+  uploading: boolean
+  resetLabel: string
+} {
   const input = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["projectsList"] })
-  // A toast, not an inline line: the trigger this wraps is a 38px overlay on the project's square
-  // (ProjectGrid), and a paragraph rendered beside it has nowhere to go.
+  // A toast, not an inline line: the menu has closed by the time a pick or an upload fails, and the
+  // project's icon cell has no room for a paragraph.
   const report = (cause: unknown) => showToast(cause instanceof Error ? cause.message : String(cause), { duration: 7000 })
   const set = useMutation({
     mutationFn: async (file: File) => {
@@ -416,9 +421,8 @@ export function ProjectIconMenu({
     onError: () => input.current?.click(),
   })
 
-  const item = "cursor-pointer rounded px-2 py-1.5 text-[12.5px] text-fg outline-none data-[highlighted]:bg-panel-2"
-  return (
-    <>
+  return {
+    fileInput: (
       <input
         ref={input}
         type="file"
@@ -432,28 +436,16 @@ export function ProjectIconMenu({
           if (file) set.mutate(file)
         }}
       />
-      {/* Opening the menu is the cue: "Choose an icon…" is one move away, and on macOS a panel built at
-          the click took most of a second to draw (server/directory-picker.ts). Speculative, so a failed
-          request is dropped — the click builds its own panel. */}
-      <RadixDropdown.Root onOpenChange={(open) => { if (open) rpc.projectIconPickWarm({ id: project.id }).catch(() => {}) }}>
-        <RadixDropdown.Trigger asChild>{children}</RadixDropdown.Trigger>
-        <RadixDropdown.Portal>
-          <RadixDropdown.Content
-            align="start"
-            sideOffset={6}
-            className={`${Z_SELECT} min-w-[190px] rounded-lg border border-border bg-panel p-1 shadow-xl shadow-shadow-ink/40`}
-          >
-            <RadixDropdown.Item className={item} onSelect={() => pick.mutate()}>
-              {set.isPending ? "Uploading…" : "Choose an icon…"}
-            </RadixDropdown.Item>
-            <RadixDropdown.Item className={item} onSelect={() => clear.mutate()}>
-              {project.iconIsCustom ? "Use the detected icon" : "Look for an icon again"}
-            </RadixDropdown.Item>
-          </RadixDropdown.Content>
-        </RadixDropdown.Portal>
-      </RadixDropdown.Root>
-    </>
-  )
+    ),
+    choose: () => pick.mutate(),
+    reset: () => clear.mutate(),
+    // Opening the menu is the cue: "Choose an icon…" is one move away, and on macOS a panel built at the
+    // click took most of a second to draw (server/directory-picker.ts). Speculative, so a failed request
+    // is dropped — the click builds its own panel.
+    warm: () => void rpc.projectIconPickWarm({ id: project.id }).catch(() => {}),
+    uploading: set.isPending,
+    resetLabel: project.iconIsCustom ? "Use the detected icon" : "Look for an icon again",
+  }
 }
 
 /** A drag in flight. `toIndex` is derived from `deltaY` every move — see lib/railReorder.ts. */

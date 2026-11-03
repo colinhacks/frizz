@@ -52,11 +52,13 @@ function RootLayout() {
   // conditional while every page kept an unconditional `pl-[57px]` — so turning the rail off left a
   // 57px lane of nothing down the left of every board. A hidden rail has to be gone from the layout,
   // not merely invisible in it.
-  const railVisible = useProjectRailVisible()
-  // The two homes — the grid and the Console — wear the switcher between them. It is the LAYOUT's, so the
-  // switch from one to the other keeps the same switcher on screen rather than remounting it.
+  const railOn = useProjectRailVisible()
   const { pathname } = useLocation()
-  const atHome = pathname === "/" || isConsolePath(pathname)
+  // THE GRID IS THE RAIL, LARGER: every project's square with its queue badge (ProjectGrid). A column of
+  // the same squares beside it says everything twice, so on `/` the rail is hidden — mounted still, so
+  // leaving the grid does not rebuild it — and the page takes no inset for it.
+  const onGrid = pathname === "/"
+  const railVisible = railOn && !onGrid
   const isMobile = useIsMobile()
   return (
     <TooltipProvider>
@@ -64,11 +66,17 @@ function RootLayout() {
           OPT-IN: a permanent column of every project is a standing invitation to leave the thread
           you are in, so it is off unless asked for. Hidden, the way back is the status bar's home
           crumb (StatusRow's home button), which costs a click exactly when you meant to switch. */}
-      {railVisible ? <ProjectRail /> : null}
+      {railOn ? (
+        <div className={onGrid ? "hidden" : "contents"}>
+          <ProjectRail />
+        </div>
+      ) : null}
       <div className={railVisible ? RAIL_INSET_CLASS : undefined}>
         <Outlet />
       </div>
-      {atHome && !isMobile ? <HomeSwitcher railVisible={railVisible} /> : null}
+      {/* The Console's placement of the Projects | Console pill. The grid draws its own, at the head of
+          the page (HomeSwitcher.tsx). */}
+      {isConsolePath(pathname) && !isMobile ? <HomeSwitcher railVisible={railVisible} /> : null}
       {/* HOSTED BY THE LAYOUT, not by the board: the toaster lived inside <App/>, so `showToast` from
           anywhere else raised a toast with nowhere to render — silently, since the store field is set
           either way. The full-screen page, outside this layout, mounts the same set (PageHosts). */}

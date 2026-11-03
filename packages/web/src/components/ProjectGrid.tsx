@@ -1,31 +1,38 @@
-// THE MACHINE'S HOME PAGE: every project Frizz knows about, one card each, and a way to add another.
+// THE MACHINE'S HOME PAGE: every project Frizz knows about as one icon, and a way to add another.
 //
 // It renders at `/` and nothing else; a project's own board lives at `/project/<slug>`, which is what
-// freed the root. The RAIL and the tooltip provider are NOT here — they belong to the layout route
-// that stays mounted across a navigation (routes.tsx), which is what stops the rail rebuilding itself
-// every time you use it.
+// freed the root. The tooltip provider is NOT here — it belongs to the layout route that stays mounted
+// across a navigation (routes.tsx), as does the rail, which that layout hides on this page because the
+// grid is the rail drawn larger.
 //
-// It draws entirely from the registry index — one file read, no databases opened. Answering a list
-// request by opening forty projects is exactly the cost lazy activation exists to avoid, so a card
-// deliberately shows only what the index holds. (The server does open them all in the background about
-// a second after boot — server/tenant-prime.ts — but on its own clock, never on a request's.)
+// A HOME SCREEN, not a list of cards (maintainer 2026-11-03, choosing it from six mockups): the project's
+// square at 64px with its queue badge, its name, and a line saying how much is running. The page's head is
+// the Projects | Console pill, where the mockup had a search field (HomeSwitcher.tsx). The cards it
+// replaced also showed each project's path, slug and when it was last opened; the path is the tile's
+// tooltip now, and the rest is in the rename dialog or nowhere.
+//
+// It draws from the registry index and the rail's counts — one file read and one cheap poll, no
+// databases opened. Answering a list request by opening forty projects is exactly the cost lazy
+// activation exists to avoid. (The server does open them all in the background about a second after
+// boot — server/tenant-prime.ts — but on its own clock, never on a request's.)
 import * as RadixDialog from "@radix-ui/react-dialog"
-import * as RadixDropdown from "@radix-ui/react-dropdown-menu"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState, type ReactNode } from "react"
-import { Ellipsis, ImagePlus, Loader2, Settings as SettingsIcon } from "lucide-react"
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { Ellipsis, ImagePlus, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
 import { Link, useNavigate } from "react-router"
 import { useSnapshot } from "valtio"
-import { slugify, type ProjectCard } from "@frizz/shared"
+import { slugify, type ProjectCard, type ProjectRailCounts } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
-import { relativeAge } from "../lib/activityTime.ts"
 import { projectHref } from "../lib/base-path.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { showToast, store } from "../store.ts"
+import { BoxSpinner } from "./BoxSpinner.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
-import { ProjectIconMenu, ProjectSquare, warmProjectPicker } from "./ProjectRail.tsx"
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/Menu.tsx"
+import { HomeTabs } from "./HomeSwitcher.tsx"
+import { ProjectSquare, useProjectIconChange, warmProjectPicker } from "./ProjectRail.tsx"
 import { SettingsDrawer } from "./SettingsDrawer.tsx"
-import { Z_DIALOG, Z_SELECT } from "../lib/layers.ts"
+import { Z_DIALOG } from "../lib/layers.ts"
 
 /**
  * The mark, at the size where it is legible AS a mark.
@@ -41,162 +48,212 @@ function shortPath(path: string, home: string | undefined): string {
   return home && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
 }
 
-// `px-3 py-2.5`, not `px-4 py-3`: the grid runs three across, so a card is ~290px wide and its
-// three lines are the whole point — the padding is what was left to give (2026-09-19, "make it a
-// little denser"). The two menu triggers below are placed from this inset; change it and re-derive them.
+// The empty page's "Add a project" card: the one card left on this page, drawn only on an empty machine.
 const CARD_BASE =
   "flex flex-col gap-1 rounded-lg border px-3 py-2.5 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-focus-ink-60"
 
-// Above the phone breakpoint only: below it the page is MobileProjectList, a plain list, and no card
-// renders at all (phone design 2026-09-30). The card carried `max-[700px]` row overrides until then.
-
-/** The card's icon is the rail's square at card size, and the one place to change it. */
+/** The phone list's icon, the rail's square at list-row size. */
 const CARD_ICON = 34
 
-function Card({ project, home }: { project: ProjectCard; home: string | undefined }) {
-  const opened = relativeAge(project.lastOpenedAt)
+/** A tile's square: the rail's square at the size where a project's own logo reads as one. */
+const TILE_ICON = 64
+
+/**
+ * A tile's width. The name row inside it keeps 18px a side for the ⋯ trigger and its counterweight
+ * (TileName), so a name truncates at 76px — "pullfrog-app" fits. Eight tiles and their 8px gaps fill the
+ * grid's 952px cap; the mockup's 104px tiles left a name 60px, which cut "frizz-cloud" short.
+ */
+const TILE_PX = 112
+
+/** The tile badge's width per digit count, a whole-pixel pill: round at one digit, 6px longer per digit after. */
+function tileBadgeWidth(count: number): number {
+  return count < 10 ? 20 : count < 100 ? 26 : 32
+}
+
+/**
+ * The project's queue, on its square's top-right corner — the home screen's badge, where the rail puts
+ * its smaller one bottom-right (ProjectRail QueueBadge). The same count: threads waiting on the human.
+ * The 2px ring in the page's colour is the cut-out that makes it read as sitting ON the square.
+ */
+function TileBadge({ count }: { count: number }) {
+  return (
+    <span
+      aria-label={`${count} in the queue`}
+      data-home-tile-queue={count}
+      className="pointer-events-none absolute -right-2 -top-2 flex h-5 items-center justify-center rounded-full bg-accent-fill text-[12px] font-semibold leading-none proportional-nums text-on-accent ring-2 ring-bg"
+      style={{ width: tileBadgeWidth(count) }}
+    >
+      {/* The cap band, not the line box, for the reason the rail's badge gives. */}
+      <span style={{ textBox: "trim-both cap alphabetic" } as CSSProperties}>{count}</span>
+    </span>
+  )
+}
+
+/**
+ * The line under a name: how many of the project's threads are running, the rail tooltip's "in play"
+ * reduced to the one number that says "something is happening there". Always laid out, empty or not, so
+ * every row of tiles keeps one height.
+ */
+function TileStatus({ project, running }: { project: ProjectCard; running: number }) {
+  return (
+    <span className="mt-1 flex h-[13px] max-w-full items-baseline gap-1 text-[11px] leading-[13px] text-muted">
+      {project.stale ? (
+        <span className="truncate">Folder is missing</span>
+      ) : running > 0 ? (
+        <>
+          {/* `items-baseline` sits the spinner's bottom on the text's baseline; the translate then lifts
+              its centre onto the cap band's — a correction the browser computes from the font, so it
+              holds at any size. The spinner is a 10px box whose ink is its box. */}
+          <span className="shrink-0 translate-y-[calc(5px_-_0.5cap)]">
+            <BoxSpinner size={10} />
+          </span>
+          <span className="truncate">{running} working</span>
+        </>
+      ) : null}
+    </span>
+  )
+}
+
+/**
+ * One project on the home screen.
+ *
+ * THE NAME IS THE LINK, AND ITS `::after` IS THE TILE: an absolutely-placed pseudo-element covering the
+ * whole cell, so the square, the name and the status line are one click target — while the ⋯ trigger,
+ * which cannot sit inside an <a> (a button nested in a link is invalid, and a click on it would
+ * navigate), is a sibling lifted above that cover. The link's `truncate` does not clip the cover: an
+ * absolute box is clipped only by an overflow on its containing block's side of the tree, and the cover's
+ * containing block is the cell.
+ */
+function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: ProjectRailCounts | undefined; home: string | undefined }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const icon = useProjectIconChange(project)
+  const queued = counts?.queued ?? 0
   return (
-    // A relatively-positioned WRAPPER, not a bordered card of its own: the icon menu's trigger has to
-    // sit OUTSIDE the <a> (a button nested in a link is invalid, and clicking it would navigate), so
-    // the link fills the wrapper and the trigger is laid over the square from outside it.
-    // `group/card`: the hover lift is keyed to the WRAPPER so the card still lights when the pointer is
-    // on the icon trigger, which covers the square from outside the link — otherwise the row would go
-    // flat the moment you reached its own picture.
-    <div className="group/card relative">
-      <Link
-        to={projectHref(project.slug)}
-        // `pr-9` overrides CARD_BASE's `px-3` on the right only, and it is reserved UNCONDITIONALLY
-        // rather than on hover: the overflow trigger sits over that strip, and three truncating lines
-        // that reflow the moment the pointer arrives read as the card flinching away from it. 36 is the
-        // trigger's own 32px footprint (28px box, 4px from the edge) plus 4px, so the truncated text
-        // never runs up against a box it cannot see.
-        className={`${CARD_BASE} flex-row items-center gap-3 border-border bg-panel pr-9 group-hover/card:border-border-strong group-hover/card:bg-panel-2 ${
-          project.stale ? "opacity-60" : ""
-        }`}
-      >
-        <span className={`shrink-0 ${project.stale ? "grayscale" : ""}`}>
-          <ProjectSquare project={project} size={CARD_ICON} />
-        </span>
-        {/* min-w-0 is what makes truncate real: a flex item will not shrink below its content
-            without it, so a long name would push its slug straight through the card border. */}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="flex min-w-0 items-baseline gap-2">
-            <span className="min-w-0 truncate text-[13px] font-medium text-fg">{project.name}</span>
-            {/* Shown only when it is not simply the name: a directory called "app" under "pullfrog"
-                lives at /pullfrog-app and that is worth saying, while "nub" would just repeat itself. */}
-            {project.slug !== project.name ? (
-              <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-muted-70">
-                /{project.slug}
-              </span>
-            ) : null}
-          </span>
-          <span className="truncate text-[11px] text-muted" title={project.path}>
-            {shortPath(project.path, home)}
-          </span>
-          <span className="truncate text-[11px] text-muted-70">
-            {project.stale ? "Directory is missing" : opened ? `Opened ${opened}` : "Never opened"}
-          </span>
-        </span>
-      </Link>
-      {/* THE ICON IS THE CONTROL. The trigger is the square's own footprint — same size, same corner
-          radius, laid exactly over it. The offsets are the link's frame, which this sits outside of:
-          13 is its 1px border plus `px-3`, and the square is centred in the link, so `top-1/2` plus the
-          translate centres this on it. It draws nothing until the
-          pointer is over the square, when a scrim and an image glyph say "this changes the picture" —
-          the scrim at 75%, because at 60% a monogram's letters and a logo's strokes still showed
-          through and tangled with the glyph (measured at dsf 6, 2026-08-24). It stays lit while its
-          menu is open (Radix stamps `data-state` on the trigger) and for a keyboard user once focused.
-          It sat in the card's bottom-right corner until 2026-08-24, where nothing tied it to the
-          picture it changed (maintainer: hover the logo, or lack thereof, and the button should appear
-          there). Hovering the square now hits this, not the link, so the square is no longer part of
-          the click target — the rest of the row still is. */}
-      <ProjectIconMenu project={project}>
-        <button
-          type="button"
-          aria-label={`Change the icon for ${project.name}`}
-          style={{ width: CARD_ICON, height: CARD_ICON }}
-          className="icon-focus-outline absolute left-[13px] top-1/2 flex -translate-y-1/2 items-center justify-center rounded-[30%] bg-black/75 text-on-overlay opacity-0 outline-none transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-focus-ink-60 data-[state=open]:opacity-100"
+    <div data-home-tile={project.slug} className="group/tile relative flex flex-col items-center pb-1 pt-1.5" style={{ width: TILE_PX }}>
+      {/* The lift is the hover, not a fill: a fill behind the square would show around the badge's
+          cut-out in a colour the ring is not. */}
+      <span className="relative transition-transform duration-150 ease-out group-hover/tile:-translate-y-[3px]">
+        <span
+          className={`block rounded-[30%] shadow-[0_6px_18px_-6px] shadow-shadow-ink/70 group-has-[a:focus-visible]/tile:ring-2 group-has-[a:focus-visible]/tile:ring-focus-ink-60 group-has-[a:focus-visible]/tile:ring-offset-2 group-has-[a:focus-visible]/tile:ring-offset-bg ${
+            project.stale ? "opacity-60 grayscale" : ""
+          }`}
         >
-          <ImagePlus size={16} strokeWidth={1.75} />
-        </button>
-      </ProjectIconMenu>
-      {/* THE OVERFLOW MENU — everything you can do to a project that is not "change its picture", which
-          has its own control on the square. It sits OUTSIDE the <a> for the same reason that one does:
-          a button nested in a link is invalid, and clicking it would navigate.
-          THE OFFSET IS INK, NOT BOX. The card's left inset is 13px — its 1px border plus `px-3` — and
-          the square is a filled tile whose ink IS its box, so that is what the eye reads there. The
-          ellipsis paints only 10 of the 15px glyph it draws at, centred in a 28px hit area, which is
-          9px of dead space a side (measured 2026-08-26). 4 + 9 = the same 13, so the two ends of the
-          card balance; at the old 17px inset this was `right-[4px]`, and `right-[5px]` had put the
-          mark at 14 where it read as crowding the border.
-          It is revealed by the CARD's hover rather than its own, because a control nobody can see until
-          they happen to cross nine pixels of empty box is a control nobody finds. */}
-      <ProjectMenu onRename={() => setRenaming(true)} onDelete={() => setConfirmingDelete(true)}>
-        <button
-          type="button"
-          aria-label={`More actions for ${project.name}`}
-          className="icon-focus-outline absolute right-[8px] top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted opacity-0 outline-none transition-opacity hover:bg-hover-strong hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-focus-ink-60 group-hover/card:opacity-100 data-[state=open]:opacity-100"
-        >
-          <Ellipsis size={15} />
-        </button>
-      </ProjectMenu>
-      {renaming ? (
-        <RenameProjectDialog project={project} home={home} onClose={() => setRenaming(false)} />
-      ) : null}
-      {confirmingDelete ? (
-        <DeleteProjectDialog project={project} home={home} onClose={() => setConfirmingDelete(false)} />
-      ) : null}
+          <ProjectSquare project={project} size={TILE_ICON} />
+        </span>
+        {queued > 0 ? <TileBadge count={queued} /> : null}
+      </span>
+      <TileName
+        project={project}
+        home={home}
+        menu={
+          <Menu onOpenChange={(open) => { if (open) icon.warm() }}>
+            <MenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`More actions for ${project.name}`}
+                // 14px of layout, 24px of target: the `before` box reaches 5px past each edge, so the
+                // trigger is easy to hit without widening the gutter the name gives up for it.
+                // `-mt-1`: standing on the baseline, the box reaches 14px above it and the name's line
+                // only ~11.8px, so the row grew 2px and every name sat 2px below "Add a project". The
+                // margin takes the box out of the row's height without moving it, since baseline
+                // alignment places its border box, not its margin box.
+                className="icon-focus-outline relative z-[1] -mt-1 flex size-3.5 shrink-0 translate-y-[calc(7px_-_0.5ex)] items-center justify-center rounded text-muted opacity-0 outline-none transition-opacity before:absolute before:-inset-[5px] before:content-[''] hover:bg-hover-strong hover:text-fg focus-visible:opacity-100 group-hover/tile:opacity-100 data-[state=open]:bg-hover-strong data-[state=open]:text-fg data-[state=open]:opacity-100"
+              >
+                <Ellipsis size={14} className="block" />
+              </button>
+            </MenuTrigger>
+            <MenuContent align="start">
+              <MenuItem icon={<ImagePlus size={13} />} onSelect={icon.choose}>
+                {icon.uploading ? "Uploading…" : "Choose an icon…"}
+              </MenuItem>
+              <MenuItem icon={<RotateCcw size={13} />} onSelect={icon.reset}>
+                {icon.resetLabel}
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={<Pencil size={13} />} onSelect={() => setRenaming(true)}>
+                Rename…
+              </MenuItem>
+              <MenuItem icon={<Trash2 size={13} />} danger onSelect={() => setConfirmingDelete(true)}>
+                Delete project…
+              </MenuItem>
+            </MenuContent>
+          </Menu>
+        }
+      />
+      <TileStatus project={project} running={counts?.running ?? 0} />
+      {icon.fileInput}
+      {renaming ? <RenameProjectDialog project={project} home={home} onClose={() => setRenaming(false)} /> : null}
+      {confirmingDelete ? <DeleteProjectDialog project={project} home={home} onClose={() => setConfirmingDelete(false)} /> : null}
     </div>
   )
 }
 
 /**
- * A project's own menu: rename, and delete.
+ * The name, with the project's menu to its LEFT (maintainer 2026-11-03: "put a three-dot menu to the
+ * left of each project name").
  *
- * Deliberately NOT folded into the icon menu: that menu's trigger is an image glyph laid over the
- * project's square and labelled "change the icon", and hanging a delete off it would make the one
- * irreversible action in this page reachable from a control that says it changes a picture.
+ * THE NAME STAYS CENTRED UNDER ITS SQUARE: the trigger takes 14px of the row and an empty span the same
+ * 14px on the other side, so the pair balances and the name's centre is the square's (0.25px off,
+ * measured 2026-11-03). The trigger is revealed by the TILE's hover, and stays lit while its menu is open
+ * or it holds keyboard focus; the space is reserved either way, because a name that slid sideways as the
+ * pointer arrived would read as the tile flinching.
  *
- * The items do NOT name the project, even though naming it would read better: a name here is a
- * directory basename of any length, and this content has a min width and no max, so a long one would
- * stretch the menu past the card it is anchored to. The card is the subject and each dialog names it
- * in full, so nothing is lost by leaving it out.
+ * THE GAP IS 4px OF BOX. The ellipsis paints 9.33px of its 14px, so that is ~6.7px of ink to the name, and
+ * the trigger's fill, lit while its menu is open, stops 4px short of the first letter. At 2px of box the
+ * fill all but touched the name.
+ *
+ * THE DOTS SIT ON THE NAME'S X-HEIGHT CENTRE, not its cap band: they are a midline ellipsis, drawn where a
+ * typeset `⋯` sits, and the names beside them are lowercase repository names far more often than not
+ * (at the cap band's centre they rode 1px high of "frizz"). `items-baseline` stands the trigger on the
+ * name's baseline — the SVG is its only content and a replaced element's baseline is its bottom edge, so
+ * the 14px box's bottom is the baseline — and `translate-y-[calc(7px_-_0.5ex)]` drops the box's centre,
+ * where the dots are drawn, onto the x-height's. The browser computes `ex` from the font, so it holds at
+ * any size.
  */
-function ProjectMenu({
-  onRename,
-  onDelete,
-  children,
-}: {
-  onRename: () => void
-  onDelete: () => void
-  children: ReactNode
-}) {
+function TileName({ project, home, menu }: { project: ProjectCard; home: string | undefined; menu: ReactNode }) {
   return (
-    <RadixDropdown.Root>
-      <RadixDropdown.Trigger asChild>{children}</RadixDropdown.Trigger>
-      <RadixDropdown.Portal>
-        <RadixDropdown.Content
-          align="end"
-          sideOffset={6}
-          className={`${Z_SELECT} min-w-[170px] rounded-lg border border-border bg-panel p-1 shadow-xl shadow-shadow-ink/40`}
-        >
-          <RadixDropdown.Item
-            className="cursor-pointer rounded px-2 py-1.5 text-[12.5px] text-fg outline-none data-[highlighted]:bg-panel-2"
-            onSelect={onRename}
-          >
-            Rename…
-          </RadixDropdown.Item>
-          <RadixDropdown.Item
-            className="cursor-pointer rounded px-2 py-1.5 text-[12.5px] text-danger outline-none data-[highlighted]:bg-danger-fill/10 data-[highlighted]:text-danger-soft"
-            onSelect={onDelete}
-          >
-            Delete project…
-          </RadixDropdown.Item>
-        </RadixDropdown.Content>
-      </RadixDropdown.Portal>
-    </RadixDropdown.Root>
+    <span className="mt-2 flex max-w-full items-baseline gap-1 text-[12px] leading-[15px]">
+      {menu}
+      <Link
+        to={projectHref(project.slug)}
+        title={`${project.name} — ${shortPath(project.path, home)}`}
+        className="min-w-0 truncate text-fg/90 outline-none after:absolute after:inset-0 after:rounded-2xl after:content-[''] group-hover/tile:text-fg"
+      >
+        {project.name}
+      </Link>
+      <span aria-hidden className="w-3.5 shrink-0" />
+    </span>
+  )
+}
+
+/** The first tile: a dashed square that opens the folder picker. FIRST, so it is always in the upper-left
+ *  cell — after the projects it sat wherever the list happened to end (maintainer 2026-10-10: "move the
+ *  Add a project card to the upper left"). */
+function AddTile({ pending, onClick }: { pending: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-home-add
+      // The picker is built while the pointer is on its way to the click — see warmProjectPicker.
+      onPointerEnter={warmProjectPicker}
+      onFocus={warmProjectPicker}
+      onClick={onClick}
+      disabled={pending}
+      className="group/tile flex flex-col items-center pb-1 pt-1.5 outline-none"
+      style={{ width: TILE_PX }}
+    >
+      <span
+        className="flex items-center justify-center rounded-[30%] border border-dashed border-border-strong text-muted-70 transition-[colors,transform] duration-150 ease-out group-hover/tile:-translate-y-[3px] group-hover/tile:border-accent group-hover/tile:text-fg group-focus-visible/tile:ring-2 group-focus-visible/tile:ring-focus-ink-60 group-focus-visible/tile:ring-offset-2 group-focus-visible/tile:ring-offset-bg"
+        style={{ width: TILE_ICON, height: TILE_ICON }}
+      >
+        {pending ? <Loader2 size={20} className="animate-spin" /> : <Plus size={22} strokeWidth={1.6} />}
+      </span>
+      <span className="mt-2 max-w-full truncate text-[12px] leading-[15px] text-muted group-hover/tile:text-fg">
+        {pending ? "Choosing a folder…" : "Add a project"}
+      </span>
+      <span className="mt-1 h-[13px]" />
+    </button>
   )
 }
 
@@ -426,11 +483,9 @@ function DeleteProjectDialog({
 }
 
 /**
- * The phantom card.
+ * The empty machine's one card: what the page is for, before there is a project to show.
  *
- * Dashed and never filled: it is an affordance, not a project, and on a grid whose whole job is
- * "pick one of these" a solid card that is not one of these is a small lie. On an empty machine it
- * is the only thing on the page, so it grows a line of explanation instead of being a footnote.
+ * Dashed and never filled, like the home screen's Add tile, because it is an affordance, not a project.
  */
 function PhantomCard({
   hero,
@@ -667,10 +722,20 @@ export function ProjectGrid() {
     queryKey: ["projectsList"],
     queryFn: () => rpc.projectsList(),
   })
+  // The rail's poll, under the rail's key: one request feeds the rail on a board, the Console tab's count
+  // and every tile here.
+  const counts = useQuery({
+    queryKey: ["projectsRailCounts"],
+    queryFn: () => rpc.projectsRailCounts(),
+    refetchInterval: 5_000,
+  })
   // The home directory is only ever used to shorten a path for display, so a miss costs a longer row.
   const home = data?.[0]?.path.match(/^(\/(?:Users|home)\/[^/]+)\//u)?.[1]
   const empty = data !== undefined && data.length === 0
   const isMobile = useIsMobile()
+  const fallbackDialog = fallback ? (
+    <AddProjectDialog reason={fallback.reason} proposed={proposed} onClose={() => setFallback(null)} />
+  ) : null
 
   // Below the phone breakpoint the page is a list, not a grid (MobileProjectList). The two one-shot
   // readers above still ran — `?add=` and `?unknown=` belong to this arrival on either shell — and the
@@ -679,74 +744,68 @@ export function ProjectGrid() {
     return (
       <>
         <MobileProjectList projects={data} home={home} />
-        {fallback ? (
-          <AddProjectDialog reason={fallback.reason} proposed={proposed} onClose={() => setFallback(null)} />
-        ) : null}
+        {fallbackDialog}
       </>
+    )
+  }
+
+  // An empty machine has nothing to switch between and nothing to show in a grid: it gets the welcome,
+  // and the one card that does something about it.
+  if (empty) {
+    return (
+      <div className="flex min-h-dvh w-full flex-col px-6 py-14">
+        <div className="m-auto flex w-full flex-col items-center">
+          <div className="mb-6 flex flex-col items-center gap-2.5 text-center">
+            <img src="/favicon.svg" width={MARK_PX} height={MARK_PX} alt="" className="rounded-[17px]" />
+            <h1 className="text-[19px] font-semibold tracking-[-0.01em] text-fg">Welcome to Frizz</h1>
+            <p className="max-w-[420px] text-[13px] leading-relaxed text-muted">
+              A project is a folder on this machine. Frizz keeps one board of threads per project, and
+              serves them all from here.
+            </p>
+          </div>
+          <div className="grid w-full max-w-[360px] grid-cols-1">
+            <PhantomCard hero pending={pick.isPending} onClick={() => pick.mutate()} />
+          </div>
+          <p className="mt-6 text-[11.5px] text-muted-70">
+            Or run{" "}
+            <code className="rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-muted">frizz</code>{" "}
+            inside a repository, and this page offers to add it.
+          </p>
+        </div>
+        {fallbackDialog}
+      </div>
     )
   }
 
   return (
     // m-auto rather than justify-center: a centred flex column CLIPS its overflow at the top once
     // the content is taller than the viewport, and forty projects will be. Auto margins centre while
-    // still letting the page scroll from its real top. The top clears the floating home switcher
-    // (HomeSwitcher, 62px with its air) with the page's own 22px to spare.
-    <div className="flex min-h-dvh w-full flex-col px-6 pb-14 pt-[84px] max-[700px]:px-0 max-[700px]:py-10">
+    // still letting the page scroll from its real top.
+    <div data-home-grid-page className="flex min-h-dvh w-full flex-col px-10 py-16">
       <div className="m-auto flex w-full flex-col items-center">
-      <div className="mb-6 flex flex-col items-center gap-2.5 text-center">
-        <img src="/favicon.svg" width={MARK_PX} height={MARK_PX} alt="" className="rounded-[17px]" />
-        <h1 className="text-[19px] font-semibold tracking-[-0.01em] text-fg">
-          {empty ? "Welcome to Frizz" : "Select a project"}
-        </h1>
-        {empty ? (
-          <p className="max-w-[420px] text-[13px] leading-relaxed text-muted">
-            A project is a folder on this machine. Frizz keeps one board of threads per project, and
-            serves them all from here.
-          </p>
-        ) : null}
-      </div>
-
-      {error ? (
-        <p className="text-[13px] text-muted">Could not read the project registry: {String(error)}</p>
-      ) : isPending ? (
-        <p className="text-[13px] text-muted">Loading…</p>
-      ) : (
-        <>
-          {/* THREE ACROSS WHEN THE WINDOW ALLOWS IT, FEWER WHEN IT DOES NOT. `auto-fill` fits as many
-              272px tracks as the width holds and stretches them, and the 900px cap is what makes three
-              the ceiling: a fourth track would need 1112. So the grid is one column in the narrowest
-              window (a phone gets MobileProjectList instead), two from there to 832px of content width, and three above — the page pads
-              24 a side and the rail reserves 57, so three columns arrive at a 937px window. It was two
-              across at 720 until 2026-09-19 (maintainer: "three columns when possible"). */}
+        <h1 className="sr-only">Projects</h1>
+        <HomeTabs />
+        {error ? (
+          <p className="mt-14 text-[13px] text-muted">Could not read the project registry: {String(error)}</p>
+        ) : isPending ? (
+          <p className="mt-14 text-[13px] text-muted">Loading…</p>
+        ) : (
+          // AS MANY ACROSS AS THE WINDOW HOLDS, EIGHT AT MOST: fixed-width tracks, so a tile is the same
+          // size in every window and the row centres rather than stretching its gaps. 952px is eight
+          // 112px tiles and their seven 8px gaps.
           <div
-            className={`grid w-full gap-2 ${
-              empty ? "max-w-[360px] grid-cols-1" : "max-w-[900px] grid-cols-[repeat(auto-fill,minmax(272px,1fr))]"
-            }`}
+            data-home-grid
+            className="mt-14 grid w-full max-w-[952px] justify-center gap-x-2 gap-y-6"
+            style={{ gridTemplateColumns: `repeat(auto-fill, ${TILE_PX}px)` }}
           >
-            {/* FIRST, so it is always the upper-left cell: after the projects it sat wherever the list
-                happened to end, a different place on every machine and after every add (maintainer
-                2026-10-10: "move the Add a project card to the upper left"). */}
-            <PhantomCard hero={empty} pending={pick.isPending} onClick={() => pick.mutate()} />
+            <AddTile pending={pick.isPending} onClick={() => pick.mutate()} />
             {data.map((project) => (
-              <Card key={project.id} project={project} home={home} />
+              <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} />
             ))}
           </div>
-          {empty ? (
-            <p className="mt-6 text-[11.5px] text-muted-70">
-              Or run{" "}
-              <code className="rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-muted">
-                frizz
-              </code>{" "}
-              inside a repository, and this page offers to add it.
-            </p>
-          ) : null}
-        </>
-      )}
-
+        )}
       </div>
-      {fallback ? (
-        <AddProjectDialog reason={fallback.reason} proposed={proposed} onClose={() => setFallback(null)} />
-      ) : null}
+      {fallbackDialog}
     </div>
   )
 }

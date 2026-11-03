@@ -13,9 +13,12 @@ import test from "node:test"
 //     dialog only while Projects was the kept home.
 //   · The houses — the status row's and the rail's — go to the grid even while the Console is the kept
 //     home. They followed the kept home until 2026-10-27, so on the Console the house went nowhere.
-//   · It sits at the top-left of the Console's sidebar — its left edge on the prompt box's, above the
-//     status row — and in that same spot on the grid, with the rail and without it, wide and stacked.
-//     It was centred over the page until 2026-10-26.
+//   · On the Console it sits at the top-left of the sidebar — its left edge on the prompt box's, above
+//     the status row — with the rail and without it, wide and stacked. It was centred over the page
+//     until 2026-10-26.
+//   · On the grid it heads the page, centred over the project icons where the home screen's search field
+//     was mocked (2026-11-03), and the rail is hidden there, since the grid is the rail drawn larger.
+//     From 2026-10-26 until then it stood in the Console's corner on the grid too.
 //
 // Real server, one project (nothing is dispatched):
 //   nub scripts/adhoc-stack.mjs --port=<port> --project=<throwaway repo>
@@ -36,7 +39,7 @@ const tabsOf = (page: Page) =>
 const lit = async (page: Page) => (await tabsOf(page)).filter((t) => t.selected === "true").map((t) => t.tab)
 const kept = (page: Page) => page.evaluate((key) => localStorage.getItem(key), KEY)
 const at = (page: Page) => page.evaluate(() => location.pathname + location.search)
-const onGrid = (page: Page) => page.waitForFunction(() => location.pathname === "/" && document.querySelector("h1")?.textContent === "Select a project", { timeout: 15_000 })
+const onGrid = (page: Page) => page.waitForFunction(() => location.pathname === "/" && document.querySelector("[data-home-grid]") !== null, { timeout: 15_000 })
 
 test("the home switcher's tabs are links, and the lit tab is the page on screen", { skip: !baseUrl || !addDir, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
@@ -115,7 +118,7 @@ test("the home switcher's tabs are links, and the lit tab is the page on screen"
   }
 })
 
-test("the home switcher stands at the top-left of the Console's sidebar, and in the same spot on the grid", { skip: !baseUrl, timeout: 120_000 }, async () => {
+test("the home switcher stands at the top-left of the Console's sidebar, and heads the grid", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   const api = createRpcClient(`${baseUrl}/`)
@@ -151,10 +154,30 @@ test("the home switcher stands at the top-left of the Console's sidebar, and in 
         assert.ok(Math.abs(pill.x - status.x) < 0.5, `${where}: the pill's left edge ${pill.x} is the status row's ${status.x}`)
         assert.ok(pill.bottom <= status.y, `${width}px: the pill ends (${pill.bottom}) above the status row (${status.y})`)
         assert.ok(pillRight <= sidebar, `${where}: the pill (right ${pillRight}) fits in the sidebar (right ${sidebar})`)
-        // The Projects tab lands on the grid with the pill exactly where it was.
+        // The Projects tab lands on the grid, where the one pill heads the page, centred over the icons
+        // and above them, and the rail is out of the way: hidden, with no inset kept for it.
         await page.click('[data-home-tab="projects"]')
         await onGrid(page)
-        assert.deepEqual(await box(page, "[data-home-switcher]"), pill, `${where}: the pill does not move between the two homes`)
+        const onTheGrid = await page.evaluate(() => {
+          const pills = document.querySelectorAll("[data-home-switcher]")
+          const p = pills[0].getBoundingClientRect()
+          const g = document.querySelector("[data-home-grid]")!.getBoundingClientRect()
+          const rail = document.querySelector('nav[aria-label="Projects"]')
+          return {
+            pills: pills.length,
+            frames: document.querySelectorAll("[data-home-switcher-frame]").length,
+            centreOffset: (p.left + p.right) / 2 - (g.left + g.right) / 2,
+            above: p.bottom < g.top,
+            railWidth: rail ? rail.getBoundingClientRect().width : 0,
+            inset: getComputedStyle(document.querySelector("[data-home-grid-page]")!.parentElement!).paddingLeft,
+          }
+        })
+        assert.equal(onTheGrid.pills, 1, `${where}: one pill on the grid`)
+        assert.equal(onTheGrid.frames, 0, `${where}: the Console's fixed corner is not drawn on the grid`)
+        assert.ok(Math.abs(onTheGrid.centreOffset) < 1, `${where}: the pill is centred over the grid (off by ${onTheGrid.centreOffset})`)
+        assert.ok(onTheGrid.above, `${where}: the pill heads the grid`)
+        assert.equal(onTheGrid.railWidth, 0, `${where}: the rail is hidden on the grid`)
+        assert.equal(onTheGrid.inset, "0px", `${where}: the grid keeps no inset for a hidden rail`)
         // The rail's house, clicked on the Console with the Console kept, lands on the grid too, and wears
         // no Console count (the switcher's tab does).
         if (projectRail && width > 800) {
@@ -165,7 +188,6 @@ test("the home switcher stands at the top-left of the Console's sidebar, and in 
           await page.click("[data-rail-home]")
           await onGrid(page)
           assert.equal(await at(page), "/", `${where}: the rail's house lands on a plain /`)
-          assert.equal(await page.$eval("[data-rail-home]", (a) => a.getAttribute("aria-current")), "page", `${where}: on the grid the house is the current page`)
         }
         await page.close()
       }
