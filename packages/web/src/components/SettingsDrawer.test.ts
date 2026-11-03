@@ -74,7 +74,7 @@ test("the drawer is one untabbed list of interface preferences, with no project 
   // (The note above the component NAMES the retired tab in prose; what must be gone is the markup.)
   assert.doesNotMatch(source, /role="tab(?:list)?"|SettingsTabs|label: "(?:Project|Frizz) settings"/)
   const fields = [...source.matchAll(/<SettingsField label="([^"]+)"/g)].map((m) => m[1])
-  assert.deepEqual(fields, ["Appearance", "Project sidebar", "Wrap code", "Queue order", "Dictation", "Desktop notifications", "Local file links"])
+  assert.deepEqual(fields, ["Appearance", "Project sidebar", "Wrap code", "Dictation", "Desktop notifications", "Local file links"])
   // The triage prompt has exactly one editor, and it is the picker's.
   assert.doesNotMatch(source, /GithubPromptEditor|githubPrompt|<textarea/)
   assert.match(promptPopoverSource, /<GithubPromptEditor draft=\{draft\} onChange=\{update\} rows=\{14\} \/>/)
@@ -181,7 +181,7 @@ test("there is no diff density setting — diffs always open collapsed", () => {
 // block by lib/codeBlocks.e2e.test.ts. This guards the wiring those two depend on.
 test("wrap code is an Off|On browser preference with its own explanation, mirrored onto the page at boot", () => {
   assert.match(source, /label="Wrap code" help=\{SETTINGS_HELP\.wrapCode\}/)
-  const toggle = source.slice(source.indexOf("function WrapCodeToggle"), source.indexOf("function QueueOrderControl"))
+  const toggle = source.slice(source.indexOf("function WrapCodeToggle"), source.indexOf("function PermHint"))
   assert.match(toggle, /<OnOffToggle value=\{wrapCode\} onChange=\{\(on\) => \(prefs\.wrapCode = on\)\} \/>/)
   assert.match(helpSource, /\bwrapCode:/)
   // Client-only: it must not have grown a key in the server's settings draft.

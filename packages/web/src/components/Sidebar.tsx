@@ -35,6 +35,7 @@ import { useProjectScope } from "../lib/projectScope.tsx"
 import { clampToSlots, edgeScrollVelocity, heldStep, moveItem, nearestSlot, shiftFor, type RowSlot } from "../lib/railReorder.ts"
 import { activeSidebarSection, markerRow, queueCardGeometry, queueNavigationSettled, railRevealDelta, scrolledToDocumentBottom } from "../lib/sidebarScrollspy.ts"
 import { SIDEBAR_WIDTH_CLASS } from "../lib/boardColumns.ts"
+import { RailViewChips } from "./RailViewChips.tsx"
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactElement, ReactNode, RefObject } from "react"
 
 // THE LEFT SIDEBAR — the thread list as a FLOATING column (no border, no fill: it floats in the
@@ -280,6 +281,9 @@ export function Sidebar() {
             (maintainer 2026-10-20: "should look like they scroll behind the prompt box. no black padding
             under it"). At rest nothing moves: the first row sits where it did. */}
         <div ref={railRef} data-sidebar-rail className="-mt-5 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden pt-5 max-[800px]:overflow-y-visible">
+          {/* THE QUEUE'S ORDER, as a chip above every band (RailViewChips.tsx): a board has nothing to group,
+              so the Console's grouping chip is not drawn here. */}
+          <RailViewChips />
           {/* PINNED — the human's shelf, at the very top, above the cue (maintainer 2026-09-02). Each row
               carries the same rest-time column as the cue, and the pin itself appears only on hover, as the
               unpin verb (colinhacks/frizz#66: "show the updated times first and only show the pin/unpin on hover?

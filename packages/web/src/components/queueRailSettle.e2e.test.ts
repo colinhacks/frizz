@@ -210,9 +210,9 @@ async function recordConsoleDispatch(group: "status" | "project", pick: string):
       const tick = () => {
         const rail = document.querySelector("[data-sidebar-rail]")!
         // Everything the rail drew before the click, by a name that survives the dispatch: band labels by
-        // their word (the count beside it changes), project headers, rows, and the grouping switch.
+        // their word (the count beside it changes), project headers, rows, and the view chips.
         const tops: Record<string, number> = {}
-        tops.switch = top(document.querySelector("[data-console-group-switch]"))!
+        tops.chips = top(document.querySelector("[data-rail-view-chips]"))!
         for (const label of rail.querySelectorAll<HTMLElement>(".uppercase")) tops[`label:${label.innerText.trim().split(/\s+/)[0].toLowerCase()}`] = top(label)!
         for (const header of rail.querySelectorAll<HTMLElement>("[data-console-project-header]")) tops[`project:${block(header)}`] = top(header)!
         for (const row of rail.querySelectorAll<HTMLElement>("[data-sidebar-item]")) if (!row.dataset.sidebarItem!.endsWith("~started-thread")) tops[`row:${row.dataset.sidebarItem}`] = top(row)!
@@ -265,7 +265,7 @@ test("the Console, by status: a dispatch is one Running row at the click, and on
   const { frames, errors } = await recordConsoleDispatch("status", "beta")
   const { moved } = assertOneArrival(frames)
   // The new row leads the Running band; the two rows already running step down under it. The Queue
-  // band above, its label, the Running label and the grouping switch are where they were.
+  // band above, its label, the Running label and the view chips are where they were.
   assert.deepEqual(moved.sort(), ["row:alpha~long-job-alpha", "row:beta~long-job-beta"], "something other than the Running rows under the new one moved")
   assert.deepEqual(errors, [])
 })

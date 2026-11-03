@@ -137,11 +137,6 @@ export function SettingsDrawer({ offerUpdate = false }: {
               <WrapCodeToggle />
             </SettingsField>
 
-            {/* Client-only VIEW preference (localStorage): applies immediately, wired to prefs. */}
-            <SettingsField label="Queue order" help={SETTINGS_HELP.queueOrder}>
-              <QueueOrderControl />
-            </SettingsField>
-
             {/* Client-only (localStorage): whether the prompt box offers its own microphone. */}
             <SettingsField label="Dictation" help={SETTINGS_HELP.dictation}>
               <DictationToggle />
@@ -537,32 +532,6 @@ function DictationToggle() {
 function WrapCodeToggle() {
   const { wrapCode } = useSnapshot(prefs)
   return <OnOffToggle value={wrapCode} onChange={(on) => (prefs.wrapCode = on)} />
-}
-
-// Queue/rested-band direction: client-only (localStorage prefs proxy), applies live to the Needs-you
-// queue and the sidebar's rested rows the instant it flips. FIFO by default (oldest-active first).
-function QueueOrderControl() {
-  const { queueOrder } = useSnapshot(prefs)
-  const opts: { v: "fifo" | "lifo"; label: string }[] = [
-    { v: "fifo", label: "Oldest first" },
-    { v: "lifo", label: "Newest first" },
-  ]
-  return (
-    <div className="inline-flex w-fit rounded-md border border-border bg-bg p-0.5">
-      {opts.map((o) => (
-        <button
-          key={o.v}
-          onClick={() => (prefs.queueOrder = o.v)}
-          aria-pressed={queueOrder === o.v}
-          className={`rounded px-3 py-1 text-[12px] transition-colors ${
-            queueOrder === o.v ? "bg-fg text-bg" : "text-muted hover:text-fg"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 // Quiet, small permission-state line under the notifications toggle. Everything is muted (the old

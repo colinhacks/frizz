@@ -7,7 +7,6 @@ export const SETTINGS_HELP = {
   appearance: "Applies to this browser across all projects. System follows the device appearance.",
   localFileOpener: "Chooses how vetted local artifact links open. Markdown files open in Frizz's own reader (which carries an Open action that uses this setting), and image clicks always use the OS default viewer.",
   wrapCode: "Wraps a long line of code onto the next line, in code blocks and in Edit diffs, so nothing is hidden off the right edge. Turn it off to keep every line on one line and scroll the block sideways instead. Applies immediately in this browser.",
-  queueOrder: "Orders the Needs-you queue and the sidebar's rested threads by when each was last active. Oldest first (FIFO, default) surfaces the longest-waiting item first so you cycle through everything; Newest first (LIFO) keeps the most recently active on top. Applies immediately in this browser.",
   dictation: "Shows a microphone in the prompt box that transcribes speech on this device, in the browsers that can (Chrome and Edge on a desktop). Turn it off if you dictate with another tool. Applies immediately in this browser.",
   notifications: "Shows a desktop notification when work needs attention while this window is hidden.",
   projectRail: "Shows a permanent column of every project on this machine down the left edge. Off by default: Frizz's home is one board, and a standing list of the others is an easy way to leave the thread you were in. With it off, the home crumb in the status bar is the way back to the projects page.",

@@ -111,6 +111,12 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
       return label.startsWith("Unpin")
     }
     const hasAge = (id: string) => page.$eval(`[data-sidebar-item="${id}"]`, (el) => el.querySelector("[data-rail-rested-age]") !== null)
+    // The grouping is a chip that opens a menu (RailViewChips.tsx): open it, then pick.
+    const pickGroup = async (group: "status" | "project") => {
+      await page.click(`${rail} [data-rail-view-chip="group"]`)
+      await page.waitForSelector(`[data-rail-view-option="${group}"]`)
+      await page.click(`[data-rail-view-option="${group}"]`)
+    }
     const pinVerb = async (id: string) => {
       await page.hover(`[data-sidebar-item="${id}"]`)
       await page.click(`[data-sidebar-item="${id}"] [data-sidebar-pin][data-pin-shelf="console"]`)
@@ -225,7 +231,7 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     await waitCards([kB2, kB1, kA2], "the cards follow the shelf")
 
     // 6. BY PROJECT wears each board's pins and no Console band.
-    await page.click('[data-console-group="project"]')
+    await pickGroup("project")
     await page.waitForSelector("[data-console-project-header]")
     assert.equal(await page.$(`${rail} [data-console-pinned]`), null)
     assert.equal(await offersUnpin(kA2), false, "a Console pin offers no unpin By project")
@@ -234,7 +240,7 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     await page.hover(`[data-sidebar-item="${kA1}"]`)
     assert.ok(await page.$(`[data-sidebar-item="${kA1}"] [data-sidebar-pin][data-pin-shelf="board"]`), "and its pin verb is the board's")
     await page.mouse.move(5, 5)
-    await page.click('[data-console-group="status"]')
+    await pickGroup("status")
     await page.waitForSelector(`${rail} [data-console-pinned]`)
 
     // 7. UNPIN from the band: B1 goes back to Queue with its rest time.

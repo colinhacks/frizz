@@ -19,7 +19,6 @@ import {
   consoleRunning,
   consoleSnoozed,
   projectBlocks,
-  setConsoleGroup,
   setRunningExpanded,
   showMoreOfBand,
   toggleBand,
@@ -27,7 +26,6 @@ import {
   useConsoleGroup,
   useRunningExpanded,
   type ConsoleFoldedBand,
-  type ConsoleGroup,
 } from "../lib/consoleBoard.ts"
 import { bareSlug, keyProject, threadKey } from "../lib/threadKey.ts"
 import { rpcFor } from "../api/rpc.ts"
@@ -39,6 +37,7 @@ import { SIDEBAR_WIDTH_CLASS } from "../lib/boardColumns.ts"
 import { DispatchForm } from "./NewThreadModal.tsx"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { ProjectSquare } from "./ProjectRail.tsx"
+import { RailViewChips } from "./RailViewChips.tsx"
 import { PinnedBand, SectionHeader, StartingRow, SubAgentRows, ThreadRow, useQueueScrollspy } from "./Sidebar.tsx"
 import { StatusRow } from "./StatusRow.tsx"
 
@@ -52,8 +51,8 @@ import { StatusRow } from "./StatusRow.tsx"
 //   · "By status" adds Snoozed and Done under Queue and Running, collapsed until opened and paged behind
 //     "Show more" (lib/consoleBoard.ts); "By project" stays Queue and Running alone, what needs the
 //     operator now;
-//   · a switch between the two groupings, "By status" and "By project", with no label: the two words say
-//     what they do (maintainer 2026-10-11);
+//   · a chip choosing between the two groupings, "By status" and "By project", in front of the queue
+//     order's chip that every board has (RailViewChips.tsx);
 //   · "By status" keeps a pin shelf of its own, apart from every project board's (lib/consoleBoard.ts
 //     PINS): a Pinned band above Queue, drawn and dragged like a board's;
 //   · the home switcher between the grid and the Console stands at its top-left (HomeSwitcher.tsx), so
@@ -145,16 +144,16 @@ export function ConsoleSidebar() {
           <ConsoleDispatch />
         </div>
         {/* The list scrolls BEHIND the prompt box, as a project's does (Sidebar.tsx): its scroll edge is
-            the box's bottom edge, and the 20px between them is the list's own top padding. The grouping
-            switch is the list's first item, so it scrolls away with the rows rather than standing fixed
-            over them (maintainer 2026-10-20: "the tab switcher in the sidebar should scroll with the rest
-            of the sidebar"). At rest nothing moves: the switch and the rows sit where they did.
-            Every scroller here keeps a 7px scrollbar gutter (styles.css, `--sbw`), which inside the list
-            would leave the switch 7px short of the prompt box's right edge. So the list reaches 7px past
-            the column, its scrollbar standing in the gap beside it, and the rows take the 7px back. */}
+            the box's bottom edge, and the 20px between them is the list's own top padding. The view chips
+            are the list's first item, so they scroll away with the rows rather than standing fixed over
+            them (maintainer 2026-10-20: "the tab switcher in the sidebar should scroll with the rest of the
+            sidebar"). Every scroller here keeps a 7px scrollbar gutter (styles.css, `--sbw`), which inside
+            the list would leave anything spanning it 7px short of the prompt box's right edge. So the list
+            reaches 7px past the column, its scrollbar standing in the gap beside it, and the rows take the
+            7px back. */}
         <div ref={railRef} data-sidebar-rail className="-mt-5 -mr-[var(--sbw)] min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-10 pt-5 max-[800px]:mr-0 max-[800px]:overflow-y-visible">
-          <GroupSwitch group={group} />
-          {/* The rows keep the column's measure; only the switch spans the scrollbar's gutter (above). */}
+          <RailViewChips group={group} />
+          {/* The rows keep the column's measure, out of the scrollbar's gutter (above). */}
           <div className="mr-[var(--sbw)] max-[800px]:mr-0">
             {group === "status" ? (
               <>
@@ -357,45 +356,6 @@ function FoldedBand({ band, label, threads, render }: { band: ConsoleFoldedBand;
         <ShowMoreButton leading={<RowSquare project={undefined} />} data-console-band-more={band} onClick={() => showMoreOfBand(band)} />
       ) : null}
     </section>
-  )
-}
-
-/**
- * "By status" | "By project": a segmented control as wide as the prompt box, the chosen half raised. It
- * is the first thing in the scrolling list, not chrome over it (see the rail above).
- *
- * It was two borderless words until 2026-10-13, and that read as the prompt box's footer rather than the
- * list's header: 12px of muted text 12px under the box, and lighter than the project names it groups. Of
- * seven mockups the maintainer chose this one ("I do think it's got to be full width. Option C: segmented
- * control"). Full width, it spans the list it sorts; the list's 20px top padding separates it from the
- * box. The idiom is the GitHub picker's `Segmented` (GithubPickerModal.tsx), stretched to the
- * column: a bordered track, the chosen segment lifted to `elevated`. The track's 10px corner less its 4px
- * inset (border + `p-[3px]`) is the segments' 6px (`rounded-md`), so the two arcs share a centre.
- */
-function GroupSwitch({ group }: { group: ConsoleGroup }) {
-  const option = (value: ConsoleGroup, label: string) => (
-    <button
-      type="button"
-      aria-pressed={group === value}
-      data-console-group={value}
-      onClick={() => setConsoleGroup(value)}
-      className={`h-[26px] min-w-0 flex-1 truncate rounded-md px-2 text-[12.5px] font-medium leading-none outline-none transition-colors focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${
-        group === value ? "bg-elevated text-fg shadow-sm shadow-shadow-ink/30" : "text-muted-70 hover:text-fg"
-      }`}
-    >
-      {label}
-    </button>
-  )
-  return (
-    <div
-      role="group"
-      aria-label="Group the list"
-      className="mx-0.5 mb-3 flex shrink-0 gap-[3px] rounded-[10px] border border-border bg-fg/[0.03] p-[3px]"
-      data-console-group-switch
-    >
-      {option("status", "By status")}
-      {option("project", "By project")}
-    </div>
   )
 }
 
