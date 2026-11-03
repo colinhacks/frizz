@@ -101,3 +101,48 @@ test("a reload paints the font, the project rail and the sidebar column in their
     await set({})
   }
 })
+
+// THE LOADER IS CENTRED ON THE PAGE, not on the workpane. The reserved sidebar column above puts the
+// workpane where the board will put it, and the loader used to sit inside the workpane: 269px right of
+// centre at 1440px on every reload of a project with a sidebar (2026-11-02, "spinner isn't centered while
+// loading a project page"). The board is withheld here — its HTTP read never answered and no socket
+// opened — so the loader stays up long enough to measure; the reserved column being present is the
+// condition that broke it, so the test asserts it first.
+test("while the board loads, the spinner is centred on the page beside the reserved sidebar column", {
+  skip: !baseUrl,
+  timeout: 90_000,
+}, async () => {
+  const { launchHeadless } = await import("../../../scripts/lib/headless-browser.mjs")
+  const browser = await launchHeadless()
+  try {
+    for (const [width, height] of [[1440, 900], [1000, 800], [760, 900]] as const) {
+      const page = await browser.newPage()
+      await page.setViewport({ width, height, deviceScaleFactor: 1 })
+      await page.goto(`${baseUrl}/project/frizz`, { waitUntil: "networkidle2" })
+      await page.waitForSelector("aside:not([data-sidebar-reserved]) [data-status-row]", { timeout: 20_000 })
+      await page.setRequestInterception(true)
+      page.on("request", (request) => { if (!/\/rpc\/board/.test(request.url())) void request.continue() })
+      await page.evaluateOnNewDocument(() => {
+        class Closed extends EventTarget { readyState = 0; send() {} close() {} }
+        Object.assign(window, { WebSocket: Closed, EventSource: Closed })
+      })
+      await page.reload({ waitUntil: "domcontentloaded" })
+      await page.waitForSelector('[role="status"][aria-label="Loading project"] .animate-spin', { timeout: 20_000 })
+      const at = await page.evaluate(() => {
+        const spinner = document.querySelector('[aria-label="Loading project"] .animate-spin')!.getBoundingClientRect()
+        const rail = document.querySelector('nav[aria-label="Projects"]')?.getBoundingClientRect()
+        const left = rail && rail.width > 0 ? rail.right : 0
+        return {
+          reserved: document.querySelector("[data-sidebar-reserved]") !== null,
+          dx: spinner.left + spinner.width / 2 - (left + (innerWidth - left) / 2),
+          dy: spinner.top + spinner.height / 2 - innerHeight / 2,
+        }
+      })
+      assert.equal(at.reserved, true, `${width}px: the reload reserved the sidebar column`)
+      assert.ok(Math.abs(at.dx) <= 0.5 && Math.abs(at.dy) <= 0.5, `${width}px: the spinner is centred on the page: ${JSON.stringify(at)}`)
+      await page.close()
+    }
+  } finally {
+    await browser.close()
+  }
+})

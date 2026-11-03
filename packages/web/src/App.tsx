@@ -244,9 +244,10 @@ export function App() {
         {reserveSidebar && <aside aria-hidden className={onConsole ? CONSOLE_SIDEBAR_COLUMN_CLASS : SIDEBAR_COLUMN_CLASS} data-sidebar-reserved />}
         <main
           id="workpane"
-          // min-h-screen where content is vertically CENTERED: the boot loader and the empty queue's
-          // prompt box (TodosView's flex-1 centering needs a full-height parent); populated queues just
-          // top-align and grow past. Threads render in DRAWERS, never here.
+          // min-h-screen where content is vertically CENTERED: the empty queue's prompt box (TodosView's
+          // flex-1 centering needs a full-height parent); populated queues just top-align and grow past.
+          // Before the board it holds the page at the height the queue will give it. Threads render in
+          // DRAWERS, never here.
           // The Console's first card opens on the sidebar's top line (CONSOLE_TOP_PX), less the queue
           // column's own 32px of top padding. Top-anchored, not centred like a board's: its sidebar is.
           style={onConsole ? { paddingTop: CONSOLE_TOP_PX - 32 } : undefined}
@@ -258,14 +259,9 @@ export function App() {
             snap.view === "todos" ? "" : "rounded-lg border border-border bg-panel"
           }`}
         >
-          {/* Until the first board snapshot lands, show a quiet loader — NEVER a view's empty state
-              (which would flash "Nothing pending" on every hard reload). Only board !== null renders
-              real views. */}
-          {!board ? (
-            <div className="flex-1 flex items-center justify-center">
-              <span className="block h-5 w-5 rounded-full border-2 border-muted/50 border-t-transparent animate-spin" />
-            </div>
-          ) : (
+          {/* Only board !== null renders real views: before it, the loader below — NEVER a view's empty
+              state, which would flash "Nothing pending" on every hard reload. */}
+          {board && (
             <ErrorBoundary label="the queue" resetKeys={[snap.view]}>
               {snap.view.startsWith("status:") && <StatusListView status={snap.view.slice(7)} />}
               {snap.view === "todos" && <TodosView />}
@@ -273,6 +269,15 @@ export function App() {
           )}
         </main>
       </div>
+      {/* Until the first board snapshot lands, a quiet loader centred on the PAGE — the box beside the
+          project rail, one window tall — not on the workpane. It sat in the workpane until 2026-11-02,
+          and a reload with the sidebar column reserved put it 269px right of centre at 1440px (187px at
+          1000px), and 64px low where the pair stacks, under the reserved column's top padding. */}
+      {!board && (
+        <div role="status" aria-label="Loading project" className="pointer-events-none absolute inset-x-0 top-0 flex h-screen items-center justify-center">
+          <span className="block h-5 w-5 rounded-full border-2 border-muted/50 border-t-transparent animate-spin" />
+        </div>
+      )}
         </>
       )}
 
