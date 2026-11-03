@@ -25,6 +25,7 @@ import { CommandPalette } from "./components/CommandPalette.tsx"
 import { StatusListView } from "./components/StatusListView.tsx"
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx"
 import { PageFrame } from "./components/PageFrame.tsx"
+import { FrizzLoader } from "./components/FrizzLoader.tsx"
 
 // The not-signed-in hint fires at most once per page load. A module-scoped flag (not React state)
 // keeps it from re-firing across re-renders, effect re-runs, or a StrictMode double-invoke.
@@ -269,13 +270,14 @@ export function App() {
           )}
         </main>
       </div>
-      {/* Until the first board snapshot lands, a quiet loader centred on the PAGE — the box beside the
-          project rail, one window tall — not on the workpane. It sat in the workpane until 2026-11-02,
-          and a reload with the sidebar column reserved put it 269px right of centre at 1440px (187px at
-          1000px), and 64px low where the pair stacks, under the reserved column's top padding. */}
+      {/* Until the first board snapshot lands, the mark writing itself (FrizzLoader), centred on the
+          PAGE — the box beside the project rail, one window tall — not on the workpane. It sat in the
+          workpane until 2026-11-02, and a reload with the sidebar column reserved put it 269px right of
+          centre at 1440px (187px at 1000px), and 64px low where the pair stacks, under the reserved
+          column's top padding. */}
       {!board && (
-        <div role="status" aria-label="Loading project" className="pointer-events-none absolute inset-x-0 top-0 flex h-screen items-center justify-center">
-          <span className="block h-5 w-5 rounded-full border-2 border-muted/50 border-t-transparent animate-spin" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex h-screen items-center justify-center">
+          <FrizzLoader label="Loading project" />
         </div>
       )}
         </>

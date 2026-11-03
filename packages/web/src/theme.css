@@ -125,6 +125,9 @@
   --frizz-muted: #8b8f96;
   --frizz-faint: #5f646d;
   --frizz-accent: #e8b923;
+  /* The logo's gold, for the mark itself (FrizzLoader). Not the accent: light spends its accent in blue. */
+  --frizz-brand: #e8b923;
+  --frizz-brand-glow: color-mix(in srgb, #e8b923 55%, transparent);
   --frizz-accent-fg: #ffffff;
   --frizz-user-bubble: #d5d7da;
   --frizz-user-bubble-fg: #0d0e10;
@@ -324,6 +327,9 @@
   --frizz-muted: #606060;
   --frizz-faint: #636363;
   --frizz-accent: #416896;
+  /* A glow reads as light only on a dark page; on a light one it is a smudge. */
+  --frizz-brand: #b07d00;
+  --frizz-brand-glow: transparent;
   --frizz-accent-fg: #ffffff;
   --frizz-user-bubble: #f4f4f4;
   --frizz-user-bubble-fg: #292929;
@@ -498,6 +504,8 @@
     --frizz-muted: #606060;
     --frizz-faint: #636363;
     --frizz-accent: #416896;
+    --frizz-brand: #b07d00;
+    --frizz-brand-glow: transparent;
     --frizz-accent-fg: #ffffff;
     --frizz-user-bubble: #f4f4f4;
     --frizz-user-bubble-fg: #292929;
