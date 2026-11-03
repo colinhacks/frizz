@@ -1061,6 +1061,8 @@ const MONITOR_EVENT_FENCE_PREFIX = "cmdmon"
 const MONITOR_EXITED_FENCE_PREFIX = "cmdmon-exited"
 const MONITOR_EXPIRED_FENCE_PREFIX = "cmdmon-expired"
 const MONITOR_CANCELLED_FENCE_PREFIX = "cmdmon-cancelled"
+/** How often SOURCE 13 sweeps the logs of monitors that ended (command-watch.ts pruneMonitorOutputs). */
+const MONITOR_OUTPUT_PRUNE_EVERY_MS = 60 * 60_000
 function isCommandWatchFenceId(fenceId: string): boolean {
   return fenceId.startsWith(`${COMMAND_WATCH_FENCE_PREFIX}:`)
     || fenceId.startsWith(`${COMMAND_WATCH_EXPIRED_FENCE_PREFIX}:`)
@@ -4010,6 +4012,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     for (const [id, live] of monitors) if (!armedIds.has(id)) stopMonitor(live, "dropped")
     const service = deps.commandWatches
     if (!service) return
+    // Settled monitors' output logs, swept at most hourly (MONITOR_OUTPUT_KEEP_MS has why they go).
+    if (service.pruneMonitorOutputs && nowMs - lastMonitorOutputPruneAt >= MONITOR_OUTPUT_PRUNE_EVERY_MS) {
+      lastMonitorOutputPruneAt = nowMs
+      const pruned = service.pruneMonitorOutputs((id) => deps.storage.getCommandWatch(id), nowMs)
+      if (pruned.length > 0) log(`waker: removed ${pruned.length} ended monitor output log(s)`)
+    }
     for (const w of armed) {
       if (w.kind === "monitor") {
         evalMonitor(service, w, nowMs)
@@ -4129,6 +4137,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     lastWakeAtMs: number
   }
   const monitors = new Map<string, LiveMonitor>()
+  let lastMonitorOutputPruneAt = -Infinity
 
   function nextWakeAt(live: LiveMonitor): number {
     live.lastWakeAtMs = Math.max(now(), live.lastWakeAtMs + 1)

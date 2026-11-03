@@ -10,11 +10,11 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MONITOR_FLOOD_MAX_EVENTS, MONITOR_LINE_MAX_CHARS, parseMergedWake, parseMonitorWake, type BoardSnapshot, type Settings } from "@frizz/shared"
-import { createCommandWatchService, monitorOutputPath, monitorOutputSink, psElapsedMs, reapStaleMonitor, startMonitorProcess, type CommandWatchService, type MonitorEvent } from "./command-watch.ts"
+import { createCommandWatchService, MONITOR_OUTPUT_KEEP_MS, monitorOutputPath, monitorOutputSink, pruneMonitorOutputs, psElapsedMs, reapStaleMonitor, startMonitorProcess, type CommandWatchService, type MonitorEvent } from "./command-watch.ts"
 import { createScheduler } from "./scheduler.ts"
 import { createStorage, type SessionRow, type Storage } from "./storage.ts"
 import { createRouter } from "./router.ts"
@@ -213,6 +213,13 @@ test("registration hands back what the script printed in its window; later lines
     assert.equal(h.storage.getCommandWatch(id)!.pid, null)
     await h.s.tick()
     assert.equal(h.wakes().length, 2, "no wake for the drop, nor for the killed script")
+    // Its output log outlives it for a day (a drawer open at the drop still reads it), then the
+    // scheduler's sweep removes it.
+    const log = monitorOutputPath(join(h.dir, "monitors"), id)
+    assert.match(readFileSync(log, "utf8"), /ERROR two/)
+    h.clock.ms += MONITOR_OUTPUT_KEEP_MS + 61_000
+    await h.s.tick()
+    assert.equal(existsSync(log), false, "the sweep removed the ended monitor's log")
   } finally { await h.s.stop() }
 })
 
@@ -462,4 +469,22 @@ test("a monitor's drawer reads its script and everything it printed; the human's
     assert.match(h.resumes.at(-1) ?? "", /^🛑 The human stopped your monitor `cmw_[a-z0-9]+` from the board after 1 event — Greetings\n\nRegister it again only if they ask for it\.\n/m, "the worker is told who stopped it, and what to do")
     assert.deepEqual(await h.router.stopMonitor.handler({ input: { slug: "t", id } }), { stopped: false }, "a second stop finds nothing armed")
   } finally { await h.close() }
+})
+
+test("an ended monitor's output log is removed a day after it ended, and an armed one's never", () => {
+  const dir = mkdtempSync(join(tmpdir(), "monitor-prune-"))
+  try {
+    const now = Date.parse("2026-11-03T12:00:00.000Z")
+    const rows: Record<string, { state: "armed" | "cancelled" | "passed"; settled_at: number | null }> = {
+      cmw_armed: { state: "armed", settled_at: null },
+      cmw_recent: { state: "cancelled", settled_at: now - MONITOR_OUTPUT_KEEP_MS + 60_000 },
+      cmw_old: { state: "passed", settled_at: now - MONITOR_OUTPUT_KEEP_MS - 60_000 },
+    }
+    for (const id of [...Object.keys(rows), "cmw_orphan"]) writeFileSync(monitorOutputPath(dir, id), "x\n")
+    writeFileSync(join(dir, "notes.txt"), "not a monitor's")
+    assert.deepEqual(pruneMonitorOutputs(dir, (id) => rows[id], now).sort(), ["cmw_old", "cmw_orphan"])
+    assert.deepEqual(["cmw_armed", "cmw_recent", "cmw_old", "cmw_orphan"].map((id) => existsSync(monitorOutputPath(dir, id))), [true, true, false, false])
+    assert.ok(existsSync(join(dir, "notes.txt")), "only a monitor's log is ever removed")
+    assert.deepEqual(pruneMonitorOutputs(join(dir, "missing"), () => undefined, now), [], "no directory, nothing to do")
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

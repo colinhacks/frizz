@@ -29,7 +29,7 @@
 // has no such reading at all. Neither can hibernate either (hibernation is Claude-only), so the memory
 // the watch exists to free is not there to free. Refusing is the sound answer until one of those changes.
 import { execFileSync, spawn } from "node:child_process"
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir, userInfo } from "node:os"
 import { join } from "node:path"
 import { StringDecoder } from "node:string_decoder"
@@ -586,6 +586,35 @@ export function monitorOutputSink(path: string, maxBytes = MONITOR_OUTPUT_MAX_BY
   }
 }
 
+/** How long a SETTLED monitor's log is kept. Only its drawer reads it, and only a drawer already open
+ *  when the monitor ended can still reach it — its row leaves the board then — so a day is ample, and
+ *  without a limit every monitor a project ever ran would leave up to MONITOR_OUTPUT_MAX_BYTES behind. */
+export const MONITOR_OUTPUT_KEEP_MS = 24 * 60 * 60_000
+
+/** Deletes the logs no monitor needs: one whose row is gone (its thread was deleted), or settled more than
+ *  `keepMs` ago. An armed monitor's log is never touched. Returns the ids whose logs it removed. */
+export function pruneMonitorOutputs(
+  dir: string,
+  rowOf: (id: string) => Pick<CommandWatchRow, "state" | "settled_at"> | undefined,
+  nowMs: number,
+  keepMs = MONITOR_OUTPUT_KEEP_MS,
+): string[] {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  return names.flatMap((name) => {
+    const id = /^(cmw_[A-Za-z0-9_-]+)\.log$/.exec(name)?.[1]
+    if (!id) return []
+    const row = rowOf(id)
+    if (row && (row.state === "armed" || (row.settled_at ?? nowMs) + keepMs > nowMs)) return []
+    rmSync(join(dir, name), { force: true })
+    return [id]
+  })
+}
+
 /** Monitors running right now, server-wide (every project's scheduler shares this count, as checks share
  *  serverRunLimiter). */
 let monitorsRunning = 0
@@ -677,6 +706,8 @@ export interface CommandWatchService {
   monitorsRunning?(): number
   /** Kill a monitor a previous server left running (reapStaleMonitor). */
   reapStaleMonitor?(pid: number, startedAtMs: number): boolean
+  /** Delete the output logs no monitor needs any more (pruneMonitorOutputs). */
+  pruneMonitorOutputs?(rowOf: (id: string) => Pick<CommandWatchRow, "state" | "settled_at"> | undefined, nowMs: number): string[]
 }
 
 export interface CommandWatchServiceOptions {
@@ -725,6 +756,7 @@ export function createCommandWatchService(opts: CommandWatchServiceOptions): Com
     },
     monitorsRunning: () => monitorsRunning,
     reapStaleMonitor: (pid, startedAtMs) => reapStaleMonitor(pid, startedAtMs, opts.readPs),
+    pruneMonitorOutputs: (rowOf, nowMs) => opts.monitorOutputDir ? pruneMonitorOutputs(opts.monitorOutputDir, rowOf, nowMs) : [],
   }
 }
 
