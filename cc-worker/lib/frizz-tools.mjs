@@ -841,10 +841,75 @@ const WATCH_COMMAND = {
   },
 }
 
+// ONE REGISTRATION, MANY WAKES (2026-11-02): a script the SERVER keeps running, every stdout line a wake.
+// Claude Code's own Monitor tool moved into the server, so it outlives the session's turns and the thread
+// can hibernate under it. A command watch row of kind `monitor`; see packages/server/src/command-watch.ts.
+const MONITOR = {
+  name: "monitor",
+  description:
+    "WAKE ON EVERY LINE A LONG-RUNNING SCRIPT PRINTS. Give Frizz a script that keeps running and prints a " +
+    "line each time something happens — a log tail filtered to the lines you would act on, a poll loop that " +
+    "prints each new PR comment, a listener on a socket — and the SERVER runs it for you: every line it " +
+    "prints on stdout wakes you with that line, for as long as `--for` lasts. Register once, woken many " +
+    "times. Nothing of yours runs meanwhile, so your thread can hibernate while it rests; Claude Code's own " +
+    "Monitor tool dies with your session after at most 30 minutes, and pins your process tree while it runs.\n\n" +
+    "STDOUT IS THE EVENT STREAM. Lines printed within 200ms of each other are one event; blank lines are " +
+    "nothing. Stderr is never an event, but its tail is reported when the script exits — merge it with " +
+    "`2>&1` into a filter if its failures are what you watch for. Every stage of a pipe must flush per line " +
+    "(`grep --line-buffered`, `awk` with `fflush()`), or lines sit in a buffer unseen.\n\n" +
+    "EVERY EVENT IS A TURN OF YOURS, so print only what you would act on — never raw logs. Events are " +
+    "merged while you work and for 5m after each wake, so a burst costs one turn; but a monitor that prints " +
+    "30 events inside 10m is stopped, and you are told to tighten its filter. Cover the failure signals as " +
+    "well as the success one: silence reads exactly like \"still running\".\n\n" +
+    "IT RUNS ON THE SERVER, NOT IN YOUR SHELL: `/bin/sh -c` in the project root, with the server's " +
+    "environment and PATH, stdin closed. Nothing your session exported, no aliases, no functions; use " +
+    "absolute paths. Registration watches it for 2s: anything it prints by then, or its exit, is in the " +
+    "reply instead of a wake. If Frizz restarts, the script is started again from the top — so make its " +
+    "first lines harmless to repeat (baseline silently, then print only what is new).\n\n" +
+    "IT ENDS when the script exits (you are woken once with the exit code and its last output), when " +
+    "`--for` runs out, or when you drop it. A poll loop that should stop on a known end — a CI run " +
+    "finishing — exits itself. ONLY ON A THREAD WITH NO PERMISSION CHECKS: Frizz refuses it unless this " +
+    "thread runs in `bypassPermissions` mode with Claude Code's sandbox off, and refuses it on Codex.\n\n" +
+    "Name its id in your ```awaiting fence — `commands: [cmw_…]` with `status: watching` — and come to rest. " +
+    "Idempotent on the exact script text. `list` reads back what is armed; `drop` stops one (so does " +
+    "`frizzctl unwatch <id>`). Only ever your OWN thread's.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["add", "list", "drop"],
+        description: "`add` starts a monitor (idempotent per script); `drop` stops one by id; `list` reads back every monitor and command watch armed on this thread.",
+      },
+      command: {
+        type: "string",
+        description:
+          "Required for `add`. The script, as one shell command line run with `/bin/sh -c` in the project root. " +
+          "Each line it prints on stdout is an event. A longer script belongs in a file this line runs.",
+      },
+      description: {
+        type: "string",
+        description:
+          "Optional for `add`, and worth giving: what it watches, in a few words (\"errors in deploy.log\", " +
+          "\"new comments on acme/app#62\"). It labels every wake and the row the human sees.",
+      },
+      for: {
+        type: "string",
+        description: "Required for `add`. How long to keep it running, as a DURATION — `2h`, `1d`, `7d` (max 7d). When it runs out the script is stopped and you are woken once.",
+      },
+      id: {
+        type: "string",
+        description: "Required for `drop`. The `cmw_…` id `add` printed (or that `list` and `frizzctl activity` show).",
+      },
+    },
+    required: ["action"],
+  },
+}
+
 // WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER and WATCH_COMMAND after it: the tool list is read by position
 // in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
 // breaks nothing.
-const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND]
+const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR]
 
 /** @type {Record<string, (args: Record<string, unknown>) => Promise<string>>} */
 const HANDLERS = {
@@ -865,6 +930,7 @@ const HANDLERS = {
   [UNLINK.name]: unlink,
   [STEER.name]: steer,
   [WATCH_COMMAND.name]: watchCommand,
+  [MONITOR.name]: monitor,
 }
 
 // The slug out of whatever a worker has in hand for a thread: the slug itself, the `[title](/thread/<slug>)`
@@ -1700,8 +1766,8 @@ async function unwatch(args) {
   if (id.startsWith("cmw_")) {
     const dropped = (await callRpc("dropOwnCommandWatch", { slug, id }))?.result
     const head = dropped?.dropped
-      ? `Command watch ${id} dropped. Frizz will not run it again, and it will not wake you.`
-      : `No ARMED command watch ${id} on this thread — it already passed, expired or was cancelled, or the id is not one of yours.`
+      ? `Command watch or monitor ${id} dropped. Frizz will not run it again, and it will not wake you.`
+      : `No ARMED command watch or monitor ${id} on this thread — it already ended, expired or was cancelled, or the id is not one of yours.`
     return `${head}\n\n${armedCommandWatchList(dropped)}`
   }
   if (id.startsWith("tmr_")) {
@@ -1950,14 +2016,26 @@ async function watchIssue(args) {
  * @param {{ watches?: Array<{id: string, command: string, every: string, expiresAt: string, runs: number, lastRun?: {outcome: string, exitCode: number|null}}> }|undefined} result */
 function armedCommandWatchList(result) {
   const watches = Array.isArray(result?.watches) ? result.watches : []
-  if (!watches.length) return "No command watches are armed on this thread — none will wake you."
+  if (!watches.length) return "No command watches or monitors are armed on this thread — none will wake you."
   const lines = watches.map((w) => {
+    if (w.monitor) {
+      const events = `${w.monitor.events} event${w.monitor.events === 1 ? "" : "s"} so far`
+      const latest = w.monitor.lastEvent ? `, the latest at ${w.monitor.lastEvent.at}: ${firstLine(w.monitor.lastEvent.text)}` : ""
+      const label = w.monitor.description ? ` "${w.monitor.description}"` : ""
+      return `  ${w.id}  monitor${label}, running until ${w.expiresAt} — ${events}${latest}\n    $ ${w.command}`
+    }
     const last = !w.lastRun
       ? "no check finished yet"
       : `last check ${commandRunClause(w.lastRun)}`
     return `  ${w.id}  every ${w.every}, until ${w.expiresAt} — ${w.runs} check${w.runs === 1 ? "" : "s"}, ${last}\n    $ ${w.command}`
   })
-  return `Command watches on this thread now:\n${lines.join("\n")}`
+  return `Command watches and monitors on this thread now:\n${lines.join("\n")}`
+}
+
+/** One line of an event, short enough for a list. @param {string} text */
+function firstLine(text) {
+  const line = String(text ?? "").split("\n")[0].trim()
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line
 }
 
 /** "exited 1", "timed out", … — how one check ended. @param {{outcome: string, exitCode: number|null}} run */
@@ -2043,6 +2121,64 @@ async function watchCommand(args) {
   )
 }
 
+/** The `monitor` handler: start, stop, or read back this thread's monitors.
+ * @param {Record<string, unknown>} args @returns {Promise<string|Refused>} */
+async function monitor(args) {
+  const slug = threadSlug()
+  const action = typeof args.action === "string" ? args.action.trim() : ""
+  if (action !== "add" && action !== "list" && action !== "drop") {
+    throw new Error("`action` must be one of \"add\", \"list\" or \"drop\"")
+  }
+  if (action === "list") {
+    return armedCommandWatchList((await callRpc("listOwnCommandWatches", { slug }))?.result)
+  }
+  if (action === "drop") {
+    const id = typeof args.id === "string" ? args.id.trim() : ""
+    if (!id) throw new Error("`id` is required to drop a monitor — take it from `add` or from `list`")
+    const result = (await callRpc("dropOwnCommandWatch", { slug, id }))?.result
+    const head = result?.dropped
+      ? `Monitor ${id} stopped. Its script was killed, and it will not wake you again.`
+      : `No ARMED monitor ${id} on this thread — its script already ended, its \`for\` ran out or Frizz stopped it, or the id is not one of yours.`
+    return `${head}\n\n${armedCommandWatchList(result)}`
+  }
+
+  const command = typeof args.command === "string" ? args.command.trim() : ""
+  if (!command) throw new Error("`command` is required — a script that keeps running and prints a line per event")
+  const forValue = typeof args.for === "string" ? args.for.trim() : ""
+  if (!forValue) throw new Error("`for` is required — how long to keep it running, a DURATION like `6h` or `3d` (max 7d)")
+  const description = typeof args.description === "string" && args.description.trim() ? args.description.trim() : undefined
+  const result = (await callRpc("addOwnMonitor", { slug, command, for: forValue, ...(description ? { description } : {}) }))?.result
+  const printed = Array.isArray(result?.events) && result.events.length
+    ? `\n\nIt printed in its first 2s (handed to you here, not as a wake):\n${result.events.map((e) => e.split("\n").map((l) => `  ${l}`).join("\n")).join("\n")}`
+    : ""
+  if (result?.refused) {
+    const ran = result.exited ? `\n\n${outputTail(result.exited.output)}` : ""
+    return new Refused(`NOT registered. ${result.refused}${printed}${ran}`)
+  }
+  if (result?.exited) {
+    return (
+      `NOTHING IS RUNNING: your script ${commandRunClause(result.exited)} within its first 2s, so the monitor ended ` +
+      `as soon as it started. A monitor's script must keep running — loop, tail, or listen.${printed}\n\n${outputTail(result.exited.output)}`
+    )
+  }
+  const id = result?.id ?? "(unknown)"
+  if (result?.alreadyArmed) {
+    return (
+      `Already running this script as ${id} (until ${result.expiresAt}) — nothing new was started, and its ` +
+      `original expiry stands.\n\n${armedCommandWatchList(result)}`
+    )
+  }
+  const clamped = result?.clamped?.for
+    ? `\n\nYOUR \`--for ${result.clamped.for}\` was capped at the 7d ceiling — what is listed below is what you hold.`
+    : ""
+  return (
+    `Monitoring as ${id}: Frizz keeps your script running until ${result?.expiresAt}, and every line it prints wakes ` +
+    `you with that line. Nothing of yours runs meanwhile.${printed}${clamped}\n\n` +
+    `NAME IT IN YOUR \`\`\`awaiting FENCE (\`commands: [${id}]\`, \`status: watching\`) and come to rest. STOP IT ` +
+    `when it stops mattering (\`frizzctl monitor drop ${id}\`).\n\n${armedCommandWatchList(result)}`
+  )
+}
+
 /**
  * HOW EACH COMMAND IS SPELLED ON A COMMAND LINE. The schema above already says what a command takes;
  * this says the three things a schema cannot:
@@ -2123,6 +2259,17 @@ const CLI = {
     positional: ["action"],
     then: { add: ["target"], drop: ["id"] },
     examples: ["frizzctl watch-issue add acme/app#482 --for 30d", "frizzctl watch-issue list", "frizzctl watch-issue drop isw_ab12cd34"],
+  },
+  monitor: {
+    group: "Waiting",
+    summary: "Wake on every line a long-running script prints (a filtered log tail, a poll loop)",
+    positional: ["action"],
+    then: { add: ["command"], drop: ["id"] },
+    examples: [
+      'frizzctl monitor add "tail -F /var/log/app.log | grep --line-buffered -E \'ERROR|FATAL\'" --description "errors in app.log" --for 1d',
+      "frizzctl monitor list",
+      "frizzctl monitor drop cmw_ab12cd34ef56",
+    ],
   },
   watch_command: {
     group: "Waiting",

@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { createHash, randomUUID } from "node:crypto"
-import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
+import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { autonomousGoalOf, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
 import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, githubStatusKey, idlePrsOf, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, parkWaitsOnThisSide, readAwaitingPark, readGithubStatusBook, unaccountedItems, type AwaitingPark, type GithubStatusBook } from "./awaiting.ts"
 import type { CommandWatchRow, PrWatchRow, SessionRow, Storage, ThreadQuestionRow } from "./storage.ts"
-import type { CommandRunResult, CommandWatchService } from "./command-watch.ts"
+import type { CommandRunResult, CommandWatchService, MonitorEvent, MonitorProcess } from "./command-watch.ts"
 import type { Tailer } from "./tailer.ts"
 import type { SessionTelemetry } from "./tailer.ts"
 import type { LimitFault } from "./backend/types.ts"
@@ -834,7 +834,7 @@ function armedCommandWatchIdsOf(storage: Storage, slug: string): ReadonlySet<str
 /** The same set as the nudge and the corrections print it: the id, and the command as its label. */
 function commandWatchOps(storage: Storage, slug: string): { id: string; label: string }[] {
   return storage.listCommandWatches(slug, { armedOnly: true })
-    .map((w) => ({ id: w.id, label: w.command.trim().replace(/\s+/g, " ").slice(0, 80) }))
+    .map((w) => ({ id: w.id, label: w.kind === "monitor" ? `monitor: ${monitorLabel(w)}` : w.command.trim().replace(/\s+/g, " ").slice(0, 80) }))
 }
 
 // A row's live ON SCHEDULE trigger, if it has one. A switched-off trigger deliberately reads as ABSENT
@@ -1053,10 +1053,22 @@ function isOwnWatchExpiredFenceId(fenceId: string): boolean {
 const COMMAND_WATCH_FENCE_PREFIX = "cmdwatch"
 const COMMAND_WATCH_EXPIRED_FENCE_PREFIX = "cmdwatch-expired"
 const COMMAND_WATCH_CANCELLED_FENCE_PREFIX = "cmdwatch-cancelled"
+/** A MONITOR's wakes (`frizzctl monitor`, 2026-11-02): one per EVENT, keyed by the event's number so
+ *  each is its own piece of news, plus the three ways a monitor ends. The event prefix is not one of the
+ *  wake store's quiet-window exemptions, so a burst of events merges into one turn; the three endings
+ *  are, for the command watch's reason (wake-store.ts). */
+const MONITOR_EVENT_FENCE_PREFIX = "cmdmon"
+const MONITOR_EXITED_FENCE_PREFIX = "cmdmon-exited"
+const MONITOR_EXPIRED_FENCE_PREFIX = "cmdmon-expired"
+const MONITOR_CANCELLED_FENCE_PREFIX = "cmdmon-cancelled"
 function isCommandWatchFenceId(fenceId: string): boolean {
   return fenceId.startsWith(`${COMMAND_WATCH_FENCE_PREFIX}:`)
     || fenceId.startsWith(`${COMMAND_WATCH_EXPIRED_FENCE_PREFIX}:`)
     || fenceId.startsWith(`${COMMAND_WATCH_CANCELLED_FENCE_PREFIX}:`)
+    || fenceId.startsWith(`${MONITOR_EVENT_FENCE_PREFIX}:`)
+    || fenceId.startsWith(`${MONITOR_EXITED_FENCE_PREFIX}:`)
+    || fenceId.startsWith(`${MONITOR_EXPIRED_FENCE_PREFIX}:`)
+    || fenceId.startsWith(`${MONITOR_CANCELLED_FENCE_PREFIX}:`)
 }
 
 /** A batch of question settlements handed over as one message. The ids are IN the key so a second
@@ -1403,6 +1415,24 @@ export interface Scheduler {
   /** Resolves once every command-watch check in flight has finished and been recorded (SOURCE 13 starts
    *  them without awaiting, so a two-minute check never holds up the tick). Tests await it between ticks. */
   commandRunsIdle?(): Promise<void>
+  /** Start a MONITOR the router just armed, and watch it for MONITOR_REGISTRATION_WINDOW_MS: what it
+   *  printed in that window, and whether it already exited, go back in `frizzctl monitor add`'s reply
+   *  instead of waking the thread. A monitor that exited is settled. */
+  startMonitor?(id: string, windowMs?: number): Promise<MonitorStartResult>
+  /** Stop a monitor's script now if its row is no longer armed (the worker dropped it), rather than at
+   *  the next pass. */
+  releaseMonitor?(id: string): Promise<void>
+}
+
+/** What registration learned in its window (Scheduler.startMonitor). */
+export interface MonitorStartResult {
+  running: boolean
+  /** Each event it printed in the window, its lines joined. */
+  events: string[]
+  /** How it ended, when it ended inside the window. */
+  exited?: CommandWatchRun
+  /** Why it could not be started at all (the server-wide cap, a service with no monitors). */
+  refused?: string
 }
 
 /** The FENCE key a wire kind is written as. The wire kinds stayed SINGULAR through the 2026-08-24 YAML
@@ -2683,7 +2713,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // A command watch's settled rows, by id: one that PASSED has already woken the thread, the way a
       // fired timer has, and one that expired or was cancelled is a wait that is over for another reason.
       const settledCommands = new Map(
-        deps.storage.listCommandWatches(row.slug).filter((w) => w.state !== "armed").map((w) => [w.id, w.state] as const),
+        deps.storage.listCommandWatches(row.slug).filter((w) => w.state !== "armed").map((w) => [w.id, w] as const),
       )
       const deadAll = unaccountedItems(park.items, live)
       // A COMMAND WATCH THAT SETTLED UNDER THIS REST HAS ITS OWN WAKE ON THE WAY (2026-10-11). SOURCE 13
@@ -2695,10 +2725,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // and a later fence naming the spent id is corrected as usual.
       const ownWakeInFlight = (i: { kind: string; value: string }): boolean => {
         if (i.kind !== "command") return false
-        const settled = settledCommands.get(i.value)
-        const prefix = settled === "passed" ? COMMAND_WATCH_FENCE_PREFIX
-          : settled === "expired" ? COMMAND_WATCH_EXPIRED_FENCE_PREFIX
-          : settled === "cancelled" ? COMMAND_WATCH_CANCELLED_FENCE_PREFIX
+        const watch = settledCommands.get(i.value)
+        const settled = watch?.state
+        // A MONITOR's endings ride their own prefixes; its `passed` is the script ending on its own.
+        const monitor = watch?.kind === "monitor"
+        const prefix = settled === "passed" ? (monitor ? MONITOR_EXITED_FENCE_PREFIX : COMMAND_WATCH_FENCE_PREFIX)
+          : settled === "expired" ? (monitor ? MONITOR_EXPIRED_FENCE_PREFIX : COMMAND_WATCH_EXPIRED_FENCE_PREFIX)
+          : settled === "cancelled" ? (monitor ? MONITOR_CANCELLED_FENCE_PREFIX : COMMAND_WATCH_CANCELLED_FENCE_PREFIX)
           : undefined
         if (!prefix) return false
         const wake = outbox.get(wakeDeliveryId(row.slug, row.session_id, `${prefix}:${i.value}`))
@@ -2844,7 +2877,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       )
       const finishedItem = (i: { kind: string; value: string }) =>
         finishedHandles.has(i.value) || (i.kind === "timer" && firedTimers.has(i.value)) ||
-        (i.kind === "command" && settledCommands.get(i.value) === "passed")
+        (i.kind === "command" && settledCommands.get(i.value)?.state === "passed")
       const status = park.items.map((i) => {
         const gone = deadAll.some((d) => d.kind === i.kind && d.value === i.value)
         // AN UNREGISTERED PR GETS ITS OWN NOTE, because "nothing by that name" is true but useless for
@@ -2860,10 +2893,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           // note points back at the transcript rather than at a result that is not a thing.
           : i.kind === "timer" && firedTimers.has(i.value)
           ? "already FIRED — its wake was delivered; there is nothing left to wait on"
-          : i.kind === "command" && settledCommands.get(i.value) === "passed"
-          ? "already PASSED — its wake was delivered; there is nothing left to wait on"
+          : i.kind === "command" && settledCommands.get(i.value)?.state === "passed"
+          ? settledCommands.get(i.value)?.kind === "monitor"
+            ? "already ENDED — its script exited and that wake was delivered; there is nothing left to wait on"
+            : "already PASSED — its wake was delivered; there is nothing left to wait on"
           : i.kind === "command" && settledCommands.has(i.value)
-          ? `no longer armed (${settledCommands.get(i.value)}) — register it again with \`frizzctl watch-command add\` if you still need the wait`
+          ? `no longer armed (${settledCommands.get(i.value)?.state}) — register it again with \`frizzctl ${settledCommands.get(i.value)?.kind === "monitor" ? "monitor" : "watch-command"} add\` if you still need the wait`
           : finishedItem(i)
           ? "FINISHED — its result is waiting for you"
           : i.kind === "shell" && staleShellHandles.has(i.value)
@@ -3944,6 +3979,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     // between the two leaves the row armed and expired, and the next pass re-enqueues under the same
     // delivery id, which the outbox dedupes — so the wake goes out exactly once either way.
     for (const w of deps.storage.expiredCommandWatches(nowMs)) {
+      if (w.kind === "monitor") {
+        expireMonitor(w, nowMs)
+        continue
+      }
       commandRuns.get(w.id)?.abort.abort()
       const row = deps.storage.getSession(w.thread_slug)
       if (threadIsLive(row)) {
@@ -3963,9 +4002,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     // killed now rather than left to finish a question nobody is asking.
     const armedIds = new Set(armed.map((w) => w.id))
     for (const [id, run] of commandRuns) if (!armedIds.has(id)) run.abort.abort()
+    // …and a MONITOR whose row left `armed` is stopped, the same rule for a process that never ends.
+    for (const [id, live] of monitors) if (!armedIds.has(id)) stopMonitor(live, "dropped")
     const service = deps.commandWatches
     if (!service) return
     for (const w of armed) {
+      if (w.kind === "monitor") {
+        evalMonitor(service, w, nowMs)
+        continue
+      }
       if (commandRuns.has(w.id)) continue
       const dueAt = w.last_run_at !== null ? w.last_run_at + w.every_ms : w.created_at
       if (nowMs < dueAt) continue
@@ -4041,6 +4086,219 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     deps.storage.settleCommandWatch(w.id, "passed", atMs)
     log(`waker: settled ${w.thread_slug} — command watch ${w.id} passed`)
     kick()
+  }
+
+  // ---- SOURCE 13, MONITORS: ONE SCRIPT, MANY WAKES (2026-11-02) ------------------------------------
+  // `frizzctl monitor add`: a command watch row of kind `monitor`, whose script this scheduler STARTS and
+  // keeps running for as long as the row is armed. Every event the script prints (command-watch.ts
+  // startMonitorProcess batches its lines) is recorded on the row and queued as its own wake, keyed by the
+  // event's number; the outbox's quiet window merges a burst into one turn. A monitor ends three ways, each
+  // with one wake that skips the window: its script exits on its own (settled `passed`), its `for` runs
+  // out (`expired`), or Frizz stops it (`cancelled`: the gate closed, or it printed a flood).
+  //
+  // THE PROCESS IS THIS SERVER'S, THE ROW IS DURABLE. A server that stops kills every script and leaves
+  // the rows armed; the next server starts each again from the top, first killing any group a crashed
+  // server left running (its pid is on the row). So a script is restart-safe exactly when printing its
+  // first lines again is harmless — the contract says so.
+  //
+  // THE GATE IS ASKED AT EVERY START, AND AGAIN EVERY MONITOR_GATE_RECHECK_MS while the script runs: a
+  // check asks it before each run, and a monitor has only the one run, so it would otherwise keep running
+  // for a thread that left `bypassPermissions` days ago.
+  const MONITOR_GATE_RECHECK_MS = 60_000
+  interface LiveMonitor {
+    id: string
+    slug: string
+    proc?: MonitorProcess
+    /** Why Frizz is killing it. Set ⇒ its exit is not news: whoever stopped it settled the row, or the
+     *  server is stopping and leaves the row armed for the next one. */
+    stopping?: "expired" | "dropped" | "cancelled" | "archived" | "server"
+    gateCheckedAt: number
+    /** The instants of its recent events, inside MONITOR_FLOOD_WINDOW_MS. */
+    recent: number[]
+    /** Set while registration watches it: events and an exit go back in the reply, not as wakes. */
+    registration?: { events: string[]; exited?: CommandWatchRun }
+    /** Resolves once its exit has been handled. */
+    ended: Promise<void>
+    /** The instant its last wake was queued. A merged delivery orders its parts by queue time, then by a
+     *  hash, so two of one monitor's wakes queued in the same millisecond — the script's last lines and
+     *  its exit always are — could read backwards; each is stamped strictly after the one before. */
+    lastWakeAtMs: number
+  }
+  const monitors = new Map<string, LiveMonitor>()
+
+  function nextWakeAt(live: LiveMonitor): number {
+    live.lastWakeAtMs = Math.max(now(), live.lastWakeAtMs + 1)
+    return live.lastWakeAtMs
+  }
+
+  function stopMonitor(live: LiveMonitor, why: NonNullable<LiveMonitor["stopping"]>): void {
+    if (live.stopping) return
+    live.stopping = why
+    live.proc?.stop()
+  }
+
+  function evalMonitor(service: CommandWatchService, w: CommandWatchRow, nowMs: number): void {
+    const live = monitors.get(w.id)
+    const row = deps.storage.getSession(w.thread_slug)
+    // An ARCHIVED thread's monitor stays armed, as its checks do, but its script does not run: nothing can
+    // be woken. Reopened, the next pass starts it again.
+    if (!threadIsLive(row)) {
+      if (live) stopMonitor(live, "archived")
+      return
+    }
+    if (live?.stopping) return
+    if (!live || nowMs - live.gateCheckedAt >= MONITOR_GATE_RECHECK_MS) {
+      const refusal = service.refusal(row)
+      if (refusal) {
+        cancelMonitor(row, w, refusal, nowMs)
+        return
+      }
+      if (live) live.gateCheckedAt = nowMs
+    }
+    if (!live) launchMonitor(service, w, nowMs)
+  }
+
+  /** Start a monitor's script. Returns the live entry, or why it could not start. */
+  function launchMonitor(service: CommandWatchService, w: CommandWatchRow, nowMs: number, registration?: LiveMonitor["registration"]): LiveMonitor | string {
+    if (!service.startMonitor) return "this server cannot run monitors"
+    // A group a crashed server left running is killed before a fresh one starts (reapStaleMonitor).
+    if (w.pid !== null && service.reapStaleMonitor?.(w.pid, w.command)) {
+      log(`waker: killed monitor ${w.id}'s stale process group ${w.pid}, left running by an earlier server`)
+    }
+    const live: LiveMonitor = { id: w.id, slug: w.thread_slug, gateCheckedAt: nowMs, recent: [], ...(registration ? { registration } : {}), ended: Promise.resolve(), lastWakeAtMs: 0 }
+    const proc = service.startMonitor(w.thread_slug, w.command, (event) => onMonitorEvent(live, event))
+    if (!proc) {
+      log(`waker: monitor ${w.id} not started — the server already runs ${service.monitorsRunning?.() ?? "its limit of"} monitors`)
+      return "the server already runs as many monitors as it allows at once"
+    }
+    live.proc = proc
+    monitors.set(w.id, live)
+    deps.storage.noteMonitorStart(w.id, proc.pid ?? null)
+    live.ended = proc.done
+      .then((run) => onMonitorExit(live, run))
+      .catch((err) => log(`waker: monitor ${w.id} exit failed to record: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => { if (monitors.get(w.id) === live) monitors.delete(w.id) })
+    log(`waker: started monitor ${w.id} for ${w.thread_slug} (pid ${proc.pid ?? "?"})`)
+    return live
+  }
+
+  function onMonitorEvent(live: LiveMonitor, event: MonitorEvent): void {
+    if (stopped || live.stopping) return
+    const atMs = nextWakeAt(live)
+    const text = event.lines.join("\n")
+    // Recorded only onto a row still ARMED: a drop that landed while the line was in flight wins.
+    const n = deps.storage.recordMonitorEvent(live.id, { atMs, text: text.slice(0, 500) })
+    if (n === undefined) {
+      stopMonitor(live, "dropped")
+      return
+    }
+    if (live.registration) {
+      live.registration.events.push(event.more > 0 ? `${text}\n…and ${event.more} more line${event.more === 1 ? "" : "s"}` : text)
+      return
+    }
+    const w = deps.storage.getCommandWatch(live.id)
+    const row = deps.storage.getSession(live.slug)
+    if (!w || !threadIsLive(row)) return
+    enqueueCommandWatchWake(
+      row,
+      `${MONITOR_EVENT_FENCE_PREFIX}:${live.id}:${n}`,
+      monitorEventWakeMessage({ id: live.id, label: monitorLabel(w), lines: event.lines, more: event.more, event: n }),
+      `monitor ${live.id} event ${n}`,
+      atMs,
+    )
+    // THE FLOOD BOUND, after the event that reached it is queued: that event is still news.
+    live.recent = live.recent.filter((t) => atMs - t < MONITOR_FLOOD_WINDOW_MS)
+    live.recent.push(atMs)
+    if (live.recent.length >= MONITOR_FLOOD_MAX_EVENTS) cancelMonitor(row, deps.storage.getCommandWatch(live.id) ?? w, MONITOR_FLOOD_REASON, atMs)
+    kick()
+  }
+
+  function onMonitorExit(live: LiveMonitor, run: CommandRunResult): void {
+    const atMs = nextWakeAt(live)
+    deps.storage.recordMonitorExit(live.id, { atMs, outcome: run.outcome, exitCode: run.exitCode, output: run.output })
+    if (live.stopping || stopped) return
+    // IT ENDED ON ITS OWN — the end of the watch, whatever the code: a monitor is not restarted when its
+    // script exits, only when the server does.
+    const w = deps.storage.getCommandWatch(live.id)
+    if (!w || w.state !== "armed") return
+    if (live.registration) {
+      live.registration.exited = { at: new Date(run.finishedAtMs).toISOString(), outcome: run.outcome, exitCode: run.exitCode, output: run.output }
+      deps.storage.settleCommandWatch(live.id, "passed", atMs)
+      return
+    }
+    const row = deps.storage.getSession(live.slug)
+    if (threadIsLive(row)) {
+      enqueueCommandWatchWake(
+        row,
+        `${MONITOR_EXITED_FENCE_PREFIX}:${live.id}`,
+        monitorExitedWakeMessage({ id: live.id, label: monitorLabel(w), command: w.command, events: w.events, run }),
+        `monitor ${live.id} ended (${run.outcome === "exit" ? `exit ${run.exitCode}` : run.outcome}) after ${w.events} event(s)`,
+        atMs,
+      )
+    }
+    deps.storage.settleCommandWatch(live.id, "passed", atMs)
+    log(`waker: settled ${live.slug} — monitor ${live.id} ended on its own`)
+    kick()
+  }
+
+  function expireMonitor(w: CommandWatchRow, at: number): void {
+    const live = monitors.get(w.id)
+    if (live) stopMonitor(live, "expired")
+    const nowMs = live ? Math.max(at, nextWakeAt(live)) : at
+    const row = deps.storage.getSession(w.thread_slug)
+    // Wake THEN settle, the command watch's crash rule.
+    if (threadIsLive(row)) {
+      enqueueCommandWatchWake(
+        row,
+        `${MONITOR_EXPIRED_FENCE_PREFIX}:${w.id}`,
+        monitorExpiredWakeMessage({ id: w.id, label: monitorLabel(w), command: w.command, events: w.events }),
+        `monitor ${w.id} expired after ${w.events} event(s)`,
+        nowMs,
+      )
+    }
+    deps.storage.settleCommandWatch(w.id, "expired", nowMs)
+    log(`waker: settled ${w.thread_slug} — monitor ${w.id} expired`)
+  }
+
+  function cancelMonitor(row: SessionRow, w: CommandWatchRow, reason: string, at: number): void {
+    const live = monitors.get(w.id)
+    if (live) stopMonitor(live, "cancelled")
+    const nowMs = live ? Math.max(at, nextWakeAt(live)) : at
+    enqueueCommandWatchWake(
+      row,
+      `${MONITOR_CANCELLED_FENCE_PREFIX}:${w.id}`,
+      monitorCancelledWakeMessage({ id: w.id, command: w.command, events: w.events, reason }),
+      `monitor ${w.id} cancelled: ${reason}`,
+      nowMs,
+    )
+    deps.storage.settleCommandWatch(w.id, "cancelled", nowMs)
+    log(`waker: settled ${w.thread_slug} — monitor ${w.id} cancelled: ${reason}`)
+  }
+
+  async function startMonitor(id: string, windowMs = MONITOR_REGISTRATION_WINDOW_MS): Promise<MonitorStartResult> {
+    const w = deps.storage.getCommandWatch(id)
+    if (!w || w.state !== "armed" || w.kind !== "monitor") return { running: false, events: [], refused: `no armed monitor ${id}` }
+    if (monitors.has(id)) return { running: true, events: [] }
+    const service = deps.commandWatches
+    if (!service) return { running: false, events: [], refused: "this server cannot run monitors" }
+    const live = launchMonitor(service, w, now(), { events: [] })
+    if (typeof live === "string") return { running: false, events: [], refused: live }
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([live.ended, new Promise<void>((resolve) => { timer = setTimeout(resolve, windowMs) })])
+    if (timer) clearTimeout(timer)
+    const seen = live.registration ?? { events: [] }
+    delete live.registration
+    if (seen.exited) return { running: false, events: seen.events, exited: seen.exited }
+    return { running: true, events: seen.events }
+  }
+
+  async function releaseMonitor(id: string): Promise<void> {
+    const live = monitors.get(id)
+    if (!live) return
+    const w = deps.storage.getCommandWatch(id)
+    if (w && w.state === "armed") return
+    stopMonitor(live, "dropped")
+    await live.ended
   }
 
   /** THE ANSWER DELIVERY PASS. The human answered on the board; this is what puts it in front of the
@@ -4970,9 +5228,16 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // its last recorded check, so the next server runs it again on the same cadence.
       for (const run of commandRuns.values()) run.abort.abort()
       await commandRunsIdle()
+      // Every monitor's script is killed, group and all; its row stays ARMED, so the next server starts it
+      // again (evalMonitor). Leaving it running would orphan a process nothing reads.
+      const ending = [...monitors.values()]
+      for (const live of ending) stopMonitor(live, "server")
+      await Promise.all(ending.map((live) => live.ended))
     },
     tick,
     kick,
     commandRunsIdle,
+    startMonitor,
+    releaseMonitor,
   }
 }

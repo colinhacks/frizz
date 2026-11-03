@@ -509,7 +509,61 @@ test("`watch-command` registers for the calling thread, reads a refusal as exit 
     const dropped = await run(["unwatch", "cmw_abc"], { env: worker(fake) })
     assert.equal(dropped.code, 0)
     assert.ok(fake.seen[0]?.url.endsWith("/rpc/dropOwnCommandWatch"), fake.seen[0]?.url)
-    assert.match(dropped.stdout, /^Command watch cmw_abc dropped\./)
+    assert.match(dropped.stdout, /^Command watch or monitor cmw_abc dropped\./)
+  } finally {
+    fake.close()
+  }
+})
+
+// `monitor` (2026-11-02): a script the server keeps running. The command line owes the right body, the
+// lines the script printed in registration's window, a refusal as exit 2, a script that ended at once
+// read as "nothing running", and `drop` reaching the command watch's own RPC.
+test("`monitor` starts for the calling thread, hands back its first lines, reads a refusal as exit 2, and drops", async () => {
+  let mode: "running" | "refused" | "exited" = "running"
+  const view = (command: string) => ({
+    id: "cmw_mon", command, every: "0s", state: "armed", createdAt: "2026-11-02T14:00:00.000Z", expiresAt: "2026-11-03T14:00:00.000Z", runs: 1,
+    monitor: { description: "errors in app.log", events: 1, lastEvent: { at: "2026-11-02T14:00:01.000Z", text: "ERROR boot" } },
+  })
+  const fake = await fakeFrizz((procedure, body) => {
+    if (procedure === "dropOwnCommandWatch") return { result: { dropped: true, watches: [] } }
+    if (procedure !== "addOwnMonitor") return undefined
+    if (mode === "refused") {
+      return { result: { refused: "Frizz will not run a monitor for this thread: this thread runs in `default` permission mode. Run the script with Claude Code's Monitor tool, or in a background shell, instead.", alreadyArmed: false, running: false, events: [], watches: [] } }
+    }
+    if (mode === "exited") {
+      return { result: { id: "cmw_mon", alreadyArmed: false, running: false, events: ["done"], exited: { at: "2026-11-02T14:00:00.000Z", outcome: "exit", exitCode: 0, output: "done\n" }, watches: [] } }
+    }
+    return { result: { id: "cmw_mon", alreadyArmed: false, running: true, events: ["ERROR boot"], expiresAt: "2026-11-03T14:00:00.000Z", watches: [view(body.command as string)] } }
+  })
+  try {
+    const script = "tail -F app.log | grep --line-buffered ERROR"
+    const armed = await run(["monitor", "add", script, "--description", "errors in app.log", "--for", "1d"], { env: worker(fake) })
+    assert.equal(armed.code, 0, armed.stderr)
+    assert.deepEqual(fake.seen.at(-1)?.body, { slug: "the-caller", command: script, for: "1d", description: "errors in app.log" })
+    assert.match(armed.stdout, /^Monitoring as cmw_mon: Frizz keeps your script running until 2026-11-03T14:00:00.000Z/)
+    assert.match(armed.stdout, /It printed in its first 2s \(handed to you here, not as a wake\):\n {2}ERROR boot/)
+    assert.match(armed.stdout, /`commands: \[cmw_mon\]`, `status: watching`/)
+    assert.match(armed.stdout, /cmw_mon {2}monitor "errors in app\.log", running until 2026-11-03T14:00:00.000Z — 1 event so far, the latest at 2026-11-02T14:00:01.000Z: ERROR boot\n {4}\$ tail -F/)
+
+    mode = "refused"
+    const refused = await run(["monitor", "add", "true", "--for", "1h"], { env: worker(fake) })
+    assert.equal(refused.code, 2)
+    assert.match(refused.stdout, /^NOT registered\. Frizz will not run a monitor for this thread/)
+
+    mode = "exited"
+    const exited = await run(["monitor", "add", "echo done", "--for", "1h"], { env: worker(fake) })
+    assert.equal(exited.code, 0)
+    assert.match(exited.stdout, /^NOTHING IS RUNNING: your script exited 0 within its first 2s/)
+
+    const missing = await run(["monitor", "add", "true"], { env: worker(fake) })
+    assert.equal(missing.code, 1)
+    assert.match(missing.stderr, /`for` is required/)
+
+    fake.seen.length = 0
+    const dropped = await run(["monitor", "drop", "cmw_mon"], { env: worker(fake) })
+    assert.equal(dropped.code, 0)
+    assert.ok(fake.seen[0]?.url.endsWith("/rpc/dropOwnCommandWatch"), fake.seen[0]?.url)
+    assert.match(dropped.stdout, /^Monitor cmw_mon stopped\./)
   } finally {
     fake.close()
   }

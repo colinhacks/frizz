@@ -32,8 +32,9 @@ import { execFileSync, spawn } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir, userInfo } from "node:os"
 import { join } from "node:path"
-import { COMMAND_WATCH_FALLBACK, COMMAND_WATCH_OUTPUT_MAX_BYTES, COMMAND_WATCH_RUN_TIMEOUT_MS } from "@frizz/shared"
-import type { SessionRow } from "./storage.ts"
+import { StringDecoder } from "node:string_decoder"
+import { COMMAND_WATCH_FALLBACK, COMMAND_WATCH_OUTPUT_MAX_BYTES, COMMAND_WATCH_RUN_TIMEOUT_MS, MONITOR_BATCH_MS, MONITOR_EVENT_MAX_LINES, MONITOR_LINE_MAX_CHARS, MONITOR_SERVER_MAX_RUNNING, type MonitorStatus } from "@frizz/shared"
+import type { CommandWatchRow, SessionRow } from "./storage.ts"
 
 /** How a check ended. `exit` is the only outcome with an exit status; exit 0 is the only pass. */
 export interface CommandRunResult {
@@ -362,6 +363,221 @@ export function commandWatchRefusal(
   return undefined
 }
 
+// ---- MONITORS: ONE SCRIPT, MANY WAKES (2026-11-02) --------------------------------------------------
+// `frizzctl monitor`. Where a check above is a question asked on a cadence, a monitor is a script the
+// server STARTS ONCE and keeps running for as long as it is armed; every line it prints on stdout is an
+// event the scheduler turns into a wake (SOURCE 13, scheduler.ts). Same shell, same gate, same group-kill
+// discipline as a check — and the same reason to exist: run here, the script holds nothing of the
+// thread's, so the thread can hibernate while it rests on it.
+
+/** One event: the lines a monitor printed within MONITOR_BATCH_MS of each other, and how many more the
+ *  same burst printed past MONITOR_EVENT_MAX_LINES. Blank lines are not events and are not counted. */
+export interface MonitorEvent {
+  lines: string[]
+  more: number
+}
+
+export interface MonitorProcessSpec {
+  command: string
+  cwd: string
+  env: Record<string, string | undefined>
+  onEvent: (event: MonitorEvent) => void
+  /** Tests only: a shorter batch window than MONITOR_BATCH_MS. */
+  batchMs?: number
+}
+
+export interface MonitorProcess {
+  /** The pid of `/bin/sh`, which LEADS the script's process group (`detached`). */
+  pid: number | undefined
+  /** Kill the whole group: SIGTERM, then SIGKILL after a grace. `done` still resolves, as `signal`. */
+  stop(): void
+  /** Resolves once the script has ended and every line it printed has been handed to `onEvent`: how it
+   *  ended, and the tail of stdout and stderr together (stderr is never an event, but it is how a script
+   *  says why it died). Never rejects. */
+  done: Promise<CommandRunResult>
+}
+
+/**
+ * Start one monitor: `/bin/sh -c <command>` in `cwd`, stdin closed, leading its own process group.
+ *
+ * LINES ARE BATCHED, NOT DEBOUNCED: the first line of a burst opens a MONITOR_BATCH_MS window and the
+ * window's end flushes whatever arrived in it, so a steady stream still reaches `onEvent` every window
+ * instead of never. A line longer than MONITOR_LINE_MAX_CHARS is cut, and the rest of it dropped up to its
+ * newline, so a script that never prints a newline cannot grow this process without bound.
+ */
+export function startMonitorProcess(spec: MonitorProcessSpec): MonitorProcess {
+  const startedAtMs = Date.now()
+  const batchMs = spec.batchMs ?? MONITOR_BATCH_MS
+  const tail: Buffer[] = []
+  let tailHeld = 0
+  const keepTail = (chunk: Buffer) => {
+    tail.push(chunk)
+    tailHeld += chunk.length
+    while (tailHeld - tail[0]!.length >= COMMAND_WATCH_OUTPUT_MAX_BYTES && tail.length > 1) tailHeld -= tail.shift()!.length
+  }
+
+  let batch: string[] = []
+  let more = 0
+  let batchTimer: NodeJS.Timeout | null = null
+  const flush = () => {
+    if (batchTimer) clearTimeout(batchTimer)
+    batchTimer = null
+    if (batch.length === 0 && more === 0) return
+    const event = { lines: batch, more }
+    batch = []
+    more = 0
+    try {
+      spec.onEvent(event)
+    } catch {
+      // The scheduler's handler records and enqueues; a fault there must not take the reader down with it.
+    }
+  }
+  const pushLine = (raw: string) => {
+    const line = raw.replace(/\r$/, "")
+    if (!line.trim()) return
+    if (batch.length < MONITOR_EVENT_MAX_LINES) {
+      batch.push(line.length > MONITOR_LINE_MAX_CHARS ? `${line.slice(0, MONITOR_LINE_MAX_CHARS)}…` : line)
+    } else {
+      more++
+    }
+    if (!batchTimer) batchTimer = setTimeout(flush, batchMs)
+  }
+  const decoder = new StringDecoder("utf8")
+  let partial = ""
+  let overlong = false
+  const readStdout = (text: string) => {
+    let rest = text
+    for (;;) {
+      const nl = rest.indexOf("\n")
+      if (nl === -1) break
+      const piece = rest.slice(0, nl)
+      rest = rest.slice(nl + 1)
+      if (overlong) {
+        overlong = false
+        pushLine(partial)
+      } else {
+        pushLine(partial + piece)
+      }
+      partial = ""
+    }
+    if (overlong) return
+    partial += rest
+    if (partial.length > MONITOR_LINE_MAX_CHARS) {
+      // Kept one character over the limit so pushLine cuts it and marks the cut; the rest of the line is
+      // dropped up to its newline.
+      partial = partial.slice(0, MONITOR_LINE_MAX_CHARS + 1)
+      overlong = true
+    }
+  }
+
+  let child: ReturnType<typeof spawn>
+  let resolveDone!: (r: CommandRunResult) => void
+  const done = new Promise<CommandRunResult>((resolve) => { resolveDone = resolve })
+  let settled = false
+  let stopping = false
+  const timers: NodeJS.Timeout[] = []
+  const finish = (outcome: CommandRunResult["outcome"], exitCode: number | null, extra?: string) => {
+    if (settled) return
+    settled = true
+    for (const t of timers) clearTimeout(t)
+    // The script's last words: a line it printed without a trailing newline is still a line.
+    const last = partial + (overlong ? "" : decoder.end())
+    partial = ""
+    if (last) pushLine(last)
+    flush()
+    if (extra) keepTail(Buffer.from(extra))
+    resolveDone({ outcome, exitCode, output: outputTail(tail), startedAtMs, finishedAtMs: Date.now() })
+  }
+  try {
+    child = spawn("/bin/sh", ["-c", spec.command], {
+      cwd: spec.cwd,
+      env: spec.env as NodeJS.ProcessEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+      windowsHide: true,
+    })
+  } catch (err) {
+    finish("error", null, `could not start /bin/sh: ${err instanceof Error ? err.message : String(err)}`)
+    return { pid: undefined, stop: () => {}, done }
+  }
+  child.stdout?.on("data", (chunk: Buffer) => {
+    keepTail(chunk)
+    readStdout(decoder.write(chunk))
+  })
+  child.stderr?.on("data", keepTail)
+  child.on("error", (err) => finish("error", null, `could not start /bin/sh: ${err.message}`))
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+  const conclude = () => {
+    if (!exit) return
+    if (stopping || exit.signal) finish("signal", null)
+    else finish("exit", exit.code)
+  }
+  child.on("exit", (code, signal) => {
+    exit = { code, signal }
+    // Reap whatever the script left in its group, then let the pipes drain — runWatchCommand's rule.
+    killGroup(child.pid, "SIGKILL")
+    timers.push(setTimeout(() => {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      conclude()
+    }, DRAIN_AFTER_EXIT_MS))
+  })
+  child.on("close", conclude)
+  return {
+    pid: child.pid,
+    stop() {
+      if (settled || stopping) return
+      stopping = true
+      killGroup(child.pid, "SIGTERM")
+      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), KILL_GRACE_MS))
+    },
+    done,
+  }
+}
+
+/** Monitors running right now, server-wide (every project's scheduler shares this count, as checks share
+ *  serverRunLimiter). */
+let monitorsRunning = 0
+
+/**
+ * A monitor a previous server left running: the server died without killing it (SIGKILL, a crash, the
+ * machine sleeping through a restart). Its row still records the group it led, and the next server must
+ * kill it before starting a fresh copy, or the thread is woken twice per line — once by nobody, since
+ * the orphan's stdout pipe is gone, but its side effects (a poll every 30s) run on forever.
+ *
+ * PID REUSE IS THE RISK, so the group is killed only when the pid is STILL a group leader running
+ * `/bin/sh -c` with this exact script: a recycled pid belongs to something else and fails both tests.
+ * Returns whether it killed anything.
+ */
+export function reapStaleMonitor(pid: number, command: string, readPs: (pid: number) => string | undefined = psLine): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false
+  const line = readPs(pid)?.trim()
+  if (!line) return false
+  const match = /^(\d+)\s+(.*)$/s.exec(line)
+  if (!match || Number(match[1]) !== pid) return false
+  if (match[2] !== `/bin/sh -c ${command}`) return false
+  killGroup(pid, "SIGKILL")
+  return true
+}
+
+/** `<pgid> <argv>` for one pid, or undefined when it is gone. */
+function psLine(pid: number): string | undefined {
+  try {
+    return execFileSync("/bin/ps", ["-ww", "-o", "pgid=,command=", "-p", String(pid)], { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] })
+  } catch {
+    return undefined
+  }
+}
+
+/** A monitor row's reading, as its read-back and its board row carry it. */
+export function monitorStatusOf(w: Pick<CommandWatchRow, "description" | "events" | "last_event_at" | "last_event">): MonitorStatus {
+  return {
+    ...(w.description ? { description: w.description } : {}),
+    events: w.events,
+    ...(w.last_event_at !== null && w.last_event !== null ? { lastEvent: { at: new Date(w.last_event_at).toISOString(), text: w.last_event } } : {}),
+  }
+}
+
 // ---- THE SERVICE --------------------------------------------------------------------------------
 
 /** What the scheduler and the router need from this module, bound to one project. */
@@ -373,6 +589,15 @@ export interface CommandWatchService {
   /** The registration's first check: short timeout, its own small bound, and `undefined` when no slot is
    *  free right now (the caller arms without one rather than holding the worker's RPC open). */
   probe(slug: string, command: string): Promise<CommandRunResult | undefined>
+  /** Start a MONITOR's script for `slug`, or undefined when the server already runs
+   *  MONITOR_SERVER_MAX_RUNNING of them. The slot is held until the script's `done` resolves. The three
+   *  monitor members are optional so a test fake about checks alone need not stub them: absent, no
+   *  monitor is ever started and registration refuses one. */
+  startMonitor?(slug: string, command: string, onEvent: (event: MonitorEvent) => void): MonitorProcess | undefined
+  /** How many monitors the server runs right now, across every project. */
+  monitorsRunning?(): number
+  /** Kill a monitor a previous server left running (reapStaleMonitor). */
+  reapStaleMonitor?(pid: number, command: string): boolean
 }
 
 export interface CommandWatchServiceOptions {
@@ -385,6 +610,11 @@ export interface CommandWatchServiceOptions {
   gate?: Omit<CommandWatchGateOptions, "cwd">
   /** Tests only: a private bound instead of the server-wide one. */
   limiter?: <T>(fn: () => Promise<T>) => Promise<T>
+  /** Tests only: how a monitor's script is started, and its batch window. */
+  startMonitorProcess?: (spec: MonitorProcessSpec) => MonitorProcess
+  monitorBatchMs?: number
+  /** Tests only: the stale-group check (reapStaleMonitor's `ps` read). */
+  readPs?: (pid: number) => string | undefined
 }
 
 export function createCommandWatchService(opts: CommandWatchServiceOptions): CommandWatchService {
@@ -404,6 +634,15 @@ export function createCommandWatchService(opts: CommandWatchServiceOptions): Com
         probesActive--
       }
     },
+    startMonitor(slug, command, onEvent) {
+      if (monitorsRunning >= MONITOR_SERVER_MAX_RUNNING) return undefined
+      monitorsRunning++
+      const proc = (opts.startMonitorProcess ?? startMonitorProcess)({ command, cwd: opts.cwd, env: opts.env(slug), onEvent, batchMs: opts.monitorBatchMs })
+      void proc.done.finally(() => { monitorsRunning-- })
+      return proc
+    },
+    monitorsRunning: () => monitorsRunning,
+    reapStaleMonitor: (pid, command) => reapStaleMonitor(pid, command, opts.readPs),
   }
 }
 

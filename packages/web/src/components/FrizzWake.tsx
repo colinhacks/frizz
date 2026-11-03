@@ -30,8 +30,8 @@
 // shell has a body; and three marks on one row that all looked clickable (an underlined title, an
 // accent ref, the corner glyph) with no hierarchy between them.
 import { Fragment, useId, useRef, useState, type ReactNode } from "react"
-import { AlarmClock, Bell, Bot, Github, Hourglass, MessageCircleOff, RefreshCw, TerminalSquare } from "lucide-react"
-import { isGithubWakeBacklog, isInjectedNoise, isParkCorrection, parseCommandWatchWake, parseGithubWakeSteer, parseInterruptEndedWake, parseLimitModelSwitchWake, parseLimitResumeWake, parseMergedWake, parseOwnWatchExpiredWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchGoneWake, parsePrWatchStateWake, parsePrWatchWake, parseQuestionsCancelledWake, parseRecurringPrompt, parseShellDoneWake, parseTimerWake, stripWakeTrailer, type CommandWatchWake, type GithubWakeSteer, type InterruptEndedSubAgent, type LimitWindow, type MergedWakePart, type ParkWake, type PrWatchStateWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
+import { AlarmClock, Bell, Bot, Github, Hourglass, MessageCircleOff, Radio, RefreshCw, TerminalSquare } from "lucide-react"
+import { isGithubWakeBacklog, isInjectedNoise, isParkCorrection, parseCommandWatchWake, parseMonitorWake, type MonitorWake, parseGithubWakeSteer, parseInterruptEndedWake, parseLimitModelSwitchWake, parseLimitResumeWake, parseMergedWake, parseOwnWatchExpiredWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchGoneWake, parsePrWatchStateWake, parsePrWatchWake, parseQuestionsCancelledWake, parseRecurringPrompt, parseShellDoneWake, parseTimerWake, stripWakeTrailer, type CommandWatchWake, type GithubWakeSteer, type InterruptEndedSubAgent, type LimitWindow, type MergedWakePart, type ParkWake, type PrWatchStateWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
 import { commandWatchName } from "./AwaitingBackgroundCard.tsx"
 import { useMermaidIslands } from "./CodexRichOutput.tsx"
 import { QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
@@ -104,6 +104,8 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
   if (ownLapsed) return <OwnWatchExpiredDivider kind={ownLapsed.kind} sourceId={sourceId} at={at} />
   const command = parseCommandWatchWake(text)
   if (command) return <CommandWatchDivider wake={command} sourceId={sourceId} at={at} />
+  const monitor = parseMonitorWake(text)
+  if (monitor) return <MonitorDivider wake={monitor} sourceId={sourceId} at={at} />
   const interrupted = parseInterruptEndedWake(text)
   if (interrupted) return <InterruptEndedDivider agents={interrupted.agents} sourceId={sourceId} at={at} />
   // The ONE wake on the registered-question path frizz writes in its own voice. Its sibling — the human's
@@ -482,6 +484,54 @@ function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; s
         // and what it printed in the mono they were written in, the sentence between them in prose.
         <div id={bodyId} className="mt-1.5 flex flex-col gap-1.5 border-l border-border/70 pl-3 text-[13px] text-muted [overflow-wrap:anywhere]">
           <div className="whitespace-pre-wrap font-mono text-[12px]">{wake.command}</div>
+          <div>{wake.summary}</div>
+          {wake.output !== undefined && <div className="whitespace-pre-wrap font-mono text-[12px]">{wake.output}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---- THE MONITOR HAIRLINE --------------------------------------------------------------------------
+// A `frizzctl monitor` (2026-11-02): a script the server keeps running, every line it prints a wake. Its
+// EVENTS are the news, so an event's hairline names the monitor and how many lines it printed, and the
+// lines themselves are the disclosure — the reader opens it to see what the worker was woken with. Its
+// ENDINGS (the script exited, its time ran out, Frizz stopped it) read like a command watch's, under the
+// same broadcast glyph its board row wears. The trailer — how to drop it, how to register it again — is
+// addressed to the worker and never drawn.
+function MonitorDivider({ wake, sourceId, at }: { wake: MonitorWake; sourceId?: string; at?: string }) {
+  const [open, setOpen] = useState(false)
+  const bodyId = useId()
+  const lines = `${wake.count} line${wake.count === 1 ? "" : "s"}`
+  // The narrow row keeps the news alone, the command watch's reason: the label would be squeezed to «».
+  const outcome = wake.kind === "event" ? lines
+    : wake.kind === "exited" ? "Ended"
+    : wake.kind === "expired" ? "Expired"
+    : "Stopped"
+  const tail = wake.kind === "event" ? lines
+    : wake.kind === "exited" ? "ended"
+    : wake.kind === "expired" ? "expired"
+    : "stopped by Frizz"
+  return (
+    <div data-frizz-msg={sourceId} className="flex flex-col">
+      <WakeDivider
+        icon={Radio}
+        marker="event"
+        at={at}
+        onClick={() => setOpen((v) => !v)}
+        ariaExpanded={open}
+        ariaControls={bodyId}
+        ariaLabel={`${open ? "Collapse" : "Expand"} ${wake.kind === "event" ? "what this monitor printed" : "how this monitor ended"}`}
+      >
+        <span className={`min-w-0 truncate ${WAKE_DIVIDER_NARROW_ONLY}`}>{outcome}</span>
+        <span className={`flex min-w-0 items-center gap-1 ${WAKE_DIVIDER_WIDE_ONLY}`}>
+          <DividerQuotedTitle lead="Monitor" title={wake.label ?? commandWatchName(wake.command ?? wake.id)} tail={tail} />
+        </span>
+        <DividerHint open={open} />
+      </WakeDivider>
+      {open && (
+        <div id={bodyId} className="mt-1.5 flex flex-col gap-1.5 border-l border-border/70 pl-3 text-[13px] text-muted [overflow-wrap:anywhere]">
+          {wake.command !== undefined && <div className="whitespace-pre-wrap font-mono text-[12px]">{wake.command}</div>}
           <div>{wake.summary}</div>
           {wake.output !== undefined && <div className="whitespace-pre-wrap font-mono text-[12px]">{wake.output}</div>}
         </div>

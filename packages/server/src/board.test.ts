@@ -2027,6 +2027,7 @@ const ARMED_COMMAND: CommandWatchRow = {
   id: "cmw_12f995833a5b", thread_slug: "t", command: "node others-idle.mjs", every_ms: 120_000, state: "armed",
   created_at: Date.parse(FENCE_AT), expires_at: Date.parse("2026-08-13T05:00:00.000Z"), settled_at: null,
   runs: 24, last_run_at: Date.parse("2026-08-12T23:00:00.000Z"), last_outcome: "exit", last_exit: 1, last_output: "active: Layout shift\n",
+  kind: "check", description: null, events: 0, last_event_at: null, last_event: null, pid: null,
 }
 
 test("an armed command watch gets a row carrying its command, cadence and last check, fence or no fence", () => {
@@ -2761,4 +2762,21 @@ test("board: archivedAt is when the thread was marked done, shown only while it 
     storage.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// A MONITOR (2026-11-02) rides the command watch's row and reads its events in place of a cadence.
+test("an armed monitor's row carries its description and events, not a cadence", () => {
+  const monitor: CommandWatchRow = {
+    ...ARMED_COMMAND, id: "cmw_0a1b2c3d4e5f", command: "tail -F app.log | grep --line-buffered ERROR", every_ms: 0, runs: 1,
+    last_run_at: null, last_outcome: null, last_exit: null, last_output: null,
+    kind: "monitor", description: "errors in app.log", events: 3,
+    last_event_at: Date.parse("2026-08-12T23:30:00.000Z"), last_event: "ERROR disk full", pid: 4242,
+  }
+  const [view] = fenceWatchViews("t", parked({ kind: "command", value: monitor.id }), FENCE_AT, {}, [], [], [], {}, [monitor])
+  assert.equal(view.kind, "command")
+  assert.deepEqual(view.command?.monitor, {
+    description: "errors in app.log", events: 3,
+    lastEvent: { at: "2026-08-12T23:30:00.000Z", text: "ERROR disk full" },
+  })
+  assert.equal(view.command?.lastRun, undefined)
 })

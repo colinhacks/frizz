@@ -473,6 +473,21 @@ export interface CommandWatchRow {
   last_outcome: "exit" | "timeout" | "signal" | "error" | null
   last_exit: number | null
   last_output: string | null
+  /** `check` is the one-shot command watch above; `monitor` (2026-11-02, `frizzctl monitor`) is a script
+   *  the server keeps RUNNING, each stdout line an event that wakes the thread. A monitor's `every_ms` is
+   *  0, its `runs` counts STARTS (one, plus one per server restart that respawned it), its `last_*` is how
+   *  the script ended, and `passed` is its state once the script ended on its own — the state CHECK
+   *  predates monitors, and every live file has it, so the word is reused rather than the table rebuilt. */
+  kind: "check" | "monitor"
+  /** A monitor's label, in the worker's words. Null on a check, and on a monitor registered without one. */
+  description: string | null
+  /** A monitor's events so far, and the newest one. Zero and null on a check. */
+  events: number
+  last_event_at: number | null
+  last_event: string | null
+  /** The process group a RUNNING monitor leads, so a server that died without killing it can find and
+   *  kill it on its next boot before starting a fresh one. Null on a check and on a monitor not running. */
+  pid: number | null
 }
 
 /** What one finished check writes back onto its row. */
@@ -841,6 +856,16 @@ export interface Storage {
   dropCommandWatch(slug: string, id: string, settledAtMs: number): boolean
   /** Terminal: the command passed, ran out of time, or Frizz may no longer run it. Guarded on `armed`. */
   settleCommandWatch(id: string, state: "passed" | "expired" | "cancelled", settledAtMs: number): boolean
+  // ---- MONITORS (`frizzctl monitor`, 2026-11-02) — command_watch rows of kind 'monitor' ------------
+  armMonitor(monitor: { id: string; slug: string; command: string; description?: string | null; createdAtMs: number; expiresAtMs: number }): CommandWatchRow
+  /** A monitor's script was started (again): counts the start and records the group it leads. */
+  noteMonitorStart(id: string, pid: number | null): boolean
+  /** One event printed. Returns the monitor's event count after it, or undefined when the row is no
+   *  longer armed (a drop that landed while the line was in flight wins). */
+  recordMonitorEvent(id: string, event: { atMs: number; text: string }): number | undefined
+  /** How the script ended, and its process group forgotten. Not guarded on `armed`: an exit after a drop
+   *  is still how it ended. */
+  recordMonitorExit(id: string, run: CommandWatchRunRecord): boolean
   // A label is a stable slot: re-registering it updates the destination without moving the row.
   upsertThreadLink(link: { id: string; slug: string; kind: "link" | "file"; label: string; target: string; createdAtMs: number }): ThreadLinkRow
   listThreadLinks(slug: string): ThreadLinkRow[]
@@ -1479,7 +1504,14 @@ export function ensureStorageSchema(db: Database): void {
   // so a wake that then failed every attempt left the answer reading delivered and nothing re-offered
   // it. The column names the carrying wake, so `delivered` can wait for that wake to land.
   // `thread_question.handle` (2026-10-13): the id a worker chose in its ```question fence.
-  for (const [table, column] of [["pr_watch", "kind TEXT NOT NULL DEFAULT 'pull'"], ["thread_question", "delivery_id TEXT"], ["thread_question", "handle TEXT"]] as const) {
+  // `command_watch.kind` and the monitor columns (2026-11-02, `frizzctl monitor`): a monitor is a row in
+  // the command watch's table, and every live file predates them. See CommandWatchRow.
+  for (const [table, column] of [
+    ["pr_watch", "kind TEXT NOT NULL DEFAULT 'pull'"], ["thread_question", "delivery_id TEXT"], ["thread_question", "handle TEXT"],
+    ["command_watch", "kind TEXT NOT NULL DEFAULT 'check'"], ["command_watch", "description TEXT"],
+    ["command_watch", "events INTEGER NOT NULL DEFAULT 0"], ["command_watch", "last_event_at INTEGER"],
+    ["command_watch", "last_event TEXT"], ["command_watch", "pid INTEGER"],
+  ] as const) {
     try {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`)
     } catch {
@@ -2123,6 +2155,27 @@ export function createStorage(source: string | Database, projectId: string): Sto
     WHERE project_id = @project_id AND id = ? AND state = 'armed'
   `)
   const delCommandWatches = scope.prepare("DELETE FROM command_watch WHERE project_id = @project_id AND thread_slug = ?")
+  const armMonitorStmt = scope.prepare<{
+    id: string; slug: string; command: string; description: string | null; createdAtMs: number; expiresAtMs: number
+  }, CommandWatchRow>(`
+    INSERT INTO command_watch (project_id, id, thread_slug, command, every_ms, state, created_at, expires_at, settled_at,
+                               runs, kind, description, events)
+    VALUES (@project_id, @id, @slug, @command, 0, 'armed', @createdAtMs, @expiresAtMs, NULL, 0, 'monitor', @description, 0)
+    RETURNING *
+  `)
+  const noteMonitorStartStmt = scope.prepare(`
+    UPDATE command_watch SET runs = runs + 1, pid = ?
+    WHERE project_id = @project_id AND id = ? AND state = 'armed' AND kind = 'monitor'
+  `)
+  const recordMonitorEventStmt = scope.prepare<[number, string, string], { events: number }>(`
+    UPDATE command_watch SET events = events + 1, last_event_at = ?, last_event = ?
+    WHERE project_id = @project_id AND id = ? AND state = 'armed' AND kind = 'monitor'
+    RETURNING events
+  `)
+  const recordMonitorExitStmt = scope.prepare(`
+    UPDATE command_watch SET pid = NULL, last_run_at = ?, last_outcome = ?, last_exit = ?, last_output = ?
+    WHERE project_id = @project_id AND id = ? AND kind = 'monitor'
+  `)
   const upsertThreadLinkStmt = scope.prepare<{
     id: string; slug: string; kind: "link" | "file"; label: string; target: string; createdAtMs: number
   }, ThreadLinkRow>(`
@@ -2966,6 +3019,19 @@ export function createStorage(source: string | Database, projectId: string): Sto
       recordCommandWatchRunStmt.run(run.atMs, run.outcome, run.exitCode, run.output, id).changes === 1,
     dropCommandWatch: (slug, id, settledAtMs) => dropCommandWatchStmt.run(settledAtMs, id, slug).changes === 1,
     settleCommandWatch: (id, state, settledAtMs) => settleCommandWatchStmt.run(state, settledAtMs, id).changes === 1,
+    armMonitor: (monitor) =>
+      armMonitorStmt.get({
+        id: monitor.id,
+        slug: monitor.slug,
+        command: monitor.command,
+        description: monitor.description?.trim() || null,
+        createdAtMs: monitor.createdAtMs,
+        expiresAtMs: monitor.expiresAtMs,
+      })!,
+    noteMonitorStart: (id, pid) => noteMonitorStartStmt.run(pid, id).changes === 1,
+    recordMonitorEvent: (id, event) => recordMonitorEventStmt.get(event.atMs, event.text, id)?.events,
+    recordMonitorExit: (id, run) =>
+      recordMonitorExitStmt.run(run.atMs, run.outcome, run.exitCode, run.output, id).changes === 1,
     upsertThreadLink: (link) => upsertThreadLinkStmt.get(link)!,
     listThreadLinks: (slug) => threadLinksBySlugStmt.all(slug),
     threadLinksBySlug: () => registryBySlug("thread_link", () => groupBySlug(threadLinksStmt.all()), sameRows),
