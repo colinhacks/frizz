@@ -236,9 +236,10 @@ open until the verifier releases it, and a restart of the stack by pid.
 - **`--wakers` arms every scheduler source**, the sign-off reminder included: a scripted rest with no
   sign-off is reminded within a tick (10s). Script a reply for it or end the turn on a fence.
 - **Boot it from a shell with no Frizz worker variables** (`env -u FRIZZ_STATE_DIR -u FRIZZ_SERVER_LOCK
-  -u FRIZZ_PROJECT_ID -u FRIZZ_NODE -u FRIZZ_THREAD -u FRIZZ_PERM_DIR -u FRIZZ_NATIVE_ASK …`). A scripted
-  tool call puts its own `--plugin-dir`'s `bin/` first on PATH, as Claude Code does, so its `frizzctl` is
-  the checkout's own.
+  -u FRIZZ_PROJECT_ID -u FRIZZ_NODE -u FRIZZ_THREAD -u FRIZZ_PERM_DIR -u FRIZZ_NATIVE_ASK …`). Claude
+  Code APPENDS its plugin's `bin/` to the PATH it inherited, and so does the scripted worker, so a
+  `frizzctl` already on that PATH wins; the stack strips the installed one a Frizz thread passes down, so
+  a worker's `frizzctl`, live or scripted, is the checkout's own.
 - **`FRIZZ_LOG_PATH=/abs/server.log`** in the stack's environment is the only way to read the scheduler's
   log (`waker: queued …`, `waker: sent …`): the stack's stdout carries none of it.
 - **A wake to a Claude thread is never filed `delivered` on arrival.** It is `leased` when sent and settled

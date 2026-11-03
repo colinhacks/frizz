@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url"
 const BIN = join(dirname(fileURLToPath(import.meta.url)), "scripted-claude.mjs")
 
 /** One scripted session in a throwaway HOME. `args` are the CLI's own (`--session-id=…`, `--resume=…`). */
-function session(home, cwd, args) {
-  const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, HOME: home }, stdio: ["pipe", "pipe", "inherit"] })
+function session(home, cwd, args, env = {}) {
+  const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, HOME: home, ...env }, stdio: ["pipe", "pipe", "inherit"] })
   const results = []
   let buffered = ""
   child.stdout.on("data", (chunk) => {
@@ -126,18 +126,26 @@ test("a turn script states each turn: its commands run for real, its text is wri
   box.done()
 })
 
-test("a tool call sees the plugin's bin first on PATH, as Claude Code's Bash does", async () => {
+// Claude Code APPENDS a plugin's bin to the PATH it inherited (measured 2026-11-03), so a `frizzctl`
+// already on that PATH shadows the plugin's — the reason adhoc-stack.mjs strips an inherited one.
+test("a tool call finds the plugin's bin LAST on PATH, as Claude Code's Bash does", async () => {
   const box = sandbox()
   mkdirSync(join(box.cwd, "plugin", "bin"), { recursive: true })
+  mkdirSync(join(box.cwd, "inherited"), { recursive: true })
   writeFileSync(join(box.cwd, "plugin", "bin", "frizzctl"), "#!/bin/sh\necho the-plugin-frizzctl\n", { mode: 0o755 })
+  writeFileSync(join(box.cwd, "inherited", "frizzctl"), "#!/bin/sh\necho an-inherited-frizzctl\n", { mode: 0o755 })
   writeFileSync(box.file, JSON.stringify({ think: 0, turns: [{ tools: ["frizzctl"], text: "Ran it." }] }))
-  const s = session(box.home, box.cwd, ["--session-id=22222222-2222-4222-8222-222222222222", `--plugin-dir=${join(box.cwd, "plugin")}`])
-  try {
-    await s.say(`[script file=${box.file} disklag=0 resultlag=5] go`)
-  } finally {
-    await s.stop()
+  const ran = async (id, PATH) => {
+    const s = session(box.home, box.cwd, [`--session-id=${id}`, `--plugin-dir=${join(box.cwd, "plugin")}`], { PATH })
+    try {
+      await s.say(`[script file=${box.file} disklag=0 resultlag=5] go`)
+    } finally {
+      await s.stop()
+    }
+    return story(box.transcript(id))[2]
   }
-  assert.equal(story(box.transcript("22222222-2222-4222-8222-222222222222"))[2], "→ the-plugin-frizzctl")
+  assert.equal(await ran("22222222-2222-4222-8222-222222222222", "/usr/bin:/bin"), "→ the-plugin-frizzctl", "with none inherited, the plugin's runs")
+  assert.equal(await ran("44444444-4444-4444-8444-444444444444", `${join(box.cwd, "inherited")}:/usr/bin:/bin`), "→ an-inherited-frizzctl", "one already on PATH wins")
   box.done()
 })
 

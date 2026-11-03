@@ -849,10 +849,12 @@ const MONITOR = {
   description:
     "WAKE ON EVERY LINE A LONG-RUNNING SCRIPT PRINTS. Give Frizz a script that keeps running and prints a " +
     "line each time something happens — a log tail filtered to the lines you would act on, a poll loop that " +
-    "prints each new PR comment, a listener on a socket — and the SERVER runs it for you: every line it " +
-    "prints on stdout wakes you with that line, for as long as `--for` lasts. Register once, woken many " +
-    "times. Nothing of yours runs meanwhile, so your thread can hibernate while it rests; Claude Code's own " +
-    "Monitor tool dies with your session after at most 30 minutes, and pins your process tree while it runs.\n\n" +
+    "prints each new row a query returns, a listener on a socket — and the SERVER runs it for you: every " +
+    "line it prints on stdout wakes you with that line, for as long as `--for` lasts. Register once, woken " +
+    "many times. Nothing of yours runs meanwhile, so your thread can hibernate while it rests; Claude Code's " +
+    "own Monitor tool lives in your session, pins your process tree while it runs, and dies with it. A pull " +
+    "request or an issue needs none of this: `watch-pr` and `watch-issue` already wake you on each comment, " +
+    "review and check.\n\n" +
     "STDOUT IS THE EVENT STREAM. Lines printed within 200ms of each other are one event; blank lines are " +
     "nothing. Stderr is never an event, but its tail is reported when the script exits — merge it with " +
     "`2>&1` into a filter if its failures are what you watch for. Every stage of a pipe must flush per line " +
@@ -865,7 +867,8 @@ const MONITOR = {
     "environment and PATH, stdin closed. Nothing your session exported, no aliases, no functions; use " +
     "absolute paths. Registration watches it for 2s: anything it prints by then, or its exit, is in the " +
     "reply instead of a wake. If Frizz restarts, the script is started again from the top — so make its " +
-    "first lines harmless to repeat (baseline silently, then print only what is new).\n\n" +
+    "first lines harmless to repeat (baseline silently, then print only what is new: `tail -n0 -F` starts " +
+    "at the end of the file). What happened while it was down is the script's to catch up on, or missed.\n\n" +
     "IT ENDS when the script exits (you are woken once with the exit code and its last output), when " +
     "`--for` runs out, or when you drop it. A poll loop that should stop on a known end — a CI run " +
     "finishing — exits itself. ONLY ON A THREAD WITH NO PERMISSION CHECKS: Frizz refuses it unless this " +
@@ -2266,7 +2269,7 @@ const CLI = {
     positional: ["action"],
     then: { add: ["command"], drop: ["id"] },
     examples: [
-      'frizzctl monitor add "tail -F /var/log/app.log | grep --line-buffered -E \'ERROR|FATAL\'" --description "errors in app.log" --for 1d',
+      'frizzctl monitor add "tail -n0 -F /var/log/app.log | grep --line-buffered -E \'ERROR|FATAL\'" --description "errors in app.log" --for 1d',
       "frizzctl monitor list",
       "frizzctl monitor drop cmw_ab12cd34ef56",
     ],

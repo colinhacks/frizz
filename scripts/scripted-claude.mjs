@@ -75,7 +75,10 @@
 //           { "command": "…", "description": "…", "ms": 500, "timeout": 30000 } ],
 //         "agents": [{ "description": "…", "ms": 4000, "steps": 2, "result": "…" }],   background sub-agents
 //         "shells": [{ "description": "…", "ms": 4000 }],                            and shells, launched first
-//         "text": "the final message, verbatim" } ],
+//         "text": "the final message, verbatim",
+//         "textFile": "/abs/rest.md" } ],        or the final message READ when it is written, so a tool
+//                                            call earlier in the same turn can compose it (an id a
+//                                            command printed, named in the fence that rests on it)
 //     "otherwise": { "tools": [], "text": "…" } }      answers a message no entry takes
 //
 // Every incoming message that starts a turn (the dispatch prompt first, then each follow-up, wake, answer
@@ -85,7 +88,7 @@
 // keyed on a wake's lead (`"on": "⚠️ Your ```question fence "`) answers that wake whenever it arrives.
 //
 // A tool command runs through `/bin/sh -c` in the worker's own cwd and environment — the broker daemon's,
-// with `<--plugin-dir>/bin` first on PATH as Claude Code has it — so `frizzctl` is the one beside the
+// with `<--plugin-dir>/bin` last on PATH as Claude Code has it — so `frizzctl` is the one beside the
 // stack's own server and reaches that server. Its result is written the way Claude Code
 // writes a Bash result: stdout then stderr, and for a non-zero exit `Exit code N` on the first line with
 // `is_error: true`. `"ms"` holds the call open that long after the command returns.
@@ -171,6 +174,7 @@ function loadScript(file) {
       think: Number.isFinite(raw.think) ? raw.think : undefined,
       tools: (Array.isArray(raw.tools) ? raw.tools : []).map((t) => (typeof t === "string" ? { command: t } : t)).filter((t) => typeof t?.command === "string"),
       text: typeof raw.text === "string" && raw.text.trim() ? raw.text : "(a scripted turn with no text)",
+      textFile: typeof raw.textFile === "string" ? raw.textFile : undefined,
       agents: Array.isArray(raw.agents) ? raw.agents.filter((a) => a && typeof a === "object") : [],
       shells: Array.isArray(raw.shells) ? raw.shells.filter((a) => a && typeof a === "object") : [],
       used: 0,
@@ -199,12 +203,12 @@ function takeEntry(text, { log = true } = {}) {
   }
   return entry
 }
-// Claude Code puts an enabled plugin's `bin/` first on its Bash PATH, which is how a worker's `frizzctl`
-// is the one beside the server that dispatched it (`--plugin-dir=<repo>/cc-worker`) and not whatever a
-// `frizzctl` further down the inherited PATH happens to be: a stack booted from inside a Frizz worker
-// inherits the machine's installed one.
+// Claude Code APPENDS an enabled plugin's `bin/` to its Bash PATH (measured 2026-11-03: the last of 27
+// entries), and so does this stand-in, so a `frizzctl` earlier on the inherited PATH wins here exactly as
+// it would for a live worker. A stack booted from inside a Frizz worker inherits the machine's installed
+// one; adhoc-stack.mjs strips it, which is what makes the worker's `frizzctl` this checkout's.
 const pluginDir = optionValue("--plugin-dir")
-const toolEnv = pluginDir && process.env.PATH ? { ...process.env, PATH: `${join(pluginDir, "bin")}:${process.env.PATH}` } : process.env
+const toolEnv = pluginDir && process.env.PATH ? { ...process.env, PATH: `${process.env.PATH}:${join(pluginDir, "bin")}` } : process.env
 function runShell(tool) {
   return new Promise((resolve) => {
     execFile("/bin/sh", ["-c", tool.command], { cwd, env: toolEnv, timeout: Number.isFinite(tool.timeout) ? tool.timeout : 30_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -450,7 +454,17 @@ async function runScriptedTurn(entry, kind) {
     send({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, ...(failed ? { is_error: true } : {}) }] }, parent_tool_use_id: null, uuid: resultUuid, session_id: sessionId, isSynthetic: true })
     deliverAtToolBoundary()
   }
-  await finishTurn(`msg_scripted_${turnNumber}`, turnNumber === 1 && scriptFault ? `${scriptFault}\n\n${entry.text}` : entry.text, s)
+  const text = entry.textFile ? turnText(entry.textFile) : entry.text
+  await finishTurn(`msg_scripted_${turnNumber}`, turnNumber === 1 && scriptFault ? `${scriptFault}\n\n${text}` : text, s)
+}
+
+/** A `textFile` turn's message, read now. A file that is missing or empty says so, as the message. */
+function turnText(file) {
+  try {
+    return readFileSync(file, "utf8").trim() || `(scripted-claude: ${file} is empty)`
+  } catch (error) {
+    return `(scripted-claude: could not read ${file}: ${error instanceof Error ? error.message : String(error)})`
+  }
 }
 
 /** Start the turn that answers `text`: the script's entry for it, or a generated one. */

@@ -565,13 +565,18 @@ sub-agent alone does not.
   it with `status: watching`. A Bash call that names no `timeout` moves to the background at the
   tool's default, so the watcher names one sized to the wait (up to 24h) and loops until its terminal
   condition. A helper must not hand back while its own watcher is still live.
-- **Woken on every occurrence, not once** (each new comment on a PR, each ERROR in a log, each CI step
-  as it lands) → `frizzctl monitor add "<script printing one line per event>" --description "<what>"
-  --for 1d`, then rest on its id (`commands: [cmw_…]`) with `status: watching`. The server keeps the
-  script running across your turns, and every line it prints wakes you. Where Frizz refuses it (the
-  same gate as above), use Claude Code's `Monitor` instead.
-- **Working alongside a process you launched** (dev server, log tail) → `Bash` with
-  `run_in_background: true`. Never put shell job control (`&`, `nohup … &`, `disown`) inside the
+- **Resting, but woken on EACH occurrence rather than the first** (each ERROR a log tail turns up,
+  each new row a poll finds, each message a listener receives) → `frizzctl monitor add "<script
+  printing one line per occurrence>" --description "<what>" --for 1d`, then rest on its id
+  (`commands: [cmw_…]`) with `status: watching`. The server keeps the script running across your
+  rests, a hibernation and a restart, and each line it prints wakes you; lines printed within 5m of your
+  last wake arrive together. A pull request or an issue needs none of this: `watch-pr` and
+  `watch-issue` already wake you on each comment, review and check. Where Frizz refuses a monitor (the
+  same gate as above), a background shell whose script exits on the first occurrence wakes you once:
+  rest on it, then start it again.
+- **Working alongside a process you launched** (a dev server, a build whose output you read as you go)
+  → `Bash` with `run_in_background: true`. Its output is yours to read; it wakes you only when it
+  exits. Never put shell job control (`&`, `nohup … &`, `disown`) inside the
   command to imitate the native flag: frizz's hook rejects an escaping job, because the process could
   survive without a lifecycle id or wake.
 - `Monitor` streams events INTO an active turn (`persistent: true` runs until `TaskStop` or session

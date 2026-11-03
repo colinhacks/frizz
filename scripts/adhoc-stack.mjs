@@ -112,6 +112,13 @@ if (!flag("reaper")) process.env.FRIZZ_ORPHAN_REAPER_OFF = "1"
 // on every one of the maintainer's live boards. Off by default for the same reason the reaper is; pass
 // --prime when what you are verifying is the priming (a sandbox HOME, where it costs nothing).
 if (!flag("prime")) process.env.FRIZZ_TENANT_PRIME_OFF = "1"
+// A worker's `frizzctl` is the first one on its PATH, and Claude Code APPENDS its plugin's `bin/` to the
+// PATH it inherited (measured 2026-11-03: the 27th entry of 27). A stack booted from inside a Frizz thread
+// inherits that thread's plugin bin, `…/Frizz/current/cc-worker/bin` — the INSTALLED release's — so a live
+// worker here ran the installed `frizzctl`, not this checkout's: it answered `frizzctl monitor` with "no
+// command" while the checkout had one. Drop every inherited worker-plugin bin, so the one Claude Code
+// appends for this stack's plugin is the only one.
+if (process.env.PATH) process.env.PATH = process.env.PATH.split(":").filter((dir) => !/[/\\]cc-worker[/\\]bin[/\\]?$/.test(dir)).join(":")
 process.chdir(projectDir)
 
 // Optional: drop a tiny fixture note so the board isn't stone empty when eyeballing the shell. Off by

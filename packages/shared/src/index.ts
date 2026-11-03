@@ -2917,7 +2917,8 @@ function unfence(text: string): string {
 // ---- THE WORKER'S MONITORS (2026-11-02) ------------------------------------------------------------
 // `frizzctl monitor`. ONE registration, MANY wakes: a script the SERVER keeps running for the thread, and
 // every line it prints on stdout is an event that wakes the thread — a log tail filtered to its errors, a
-// loop that prints each new PR comment, a listener on a socket. The command watch above wakes ONCE, when a
+// loop that prints each new row a query returns, a listener on a socket (a PR or an issue needs none:
+// its watcher already wakes on each comment). The command watch above wakes ONCE, when a
 // check passes; a monitor is the wait that keeps reporting (maintainer 2026-11-02: "there needs to be a
 // way to register a script once that can trigger multiple wakeups. like a monitor").
 //
