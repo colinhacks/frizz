@@ -477,6 +477,35 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .frizz-rail-heartbeat { animation: none; opacity: 1; }
 }
+/* The home screen's badge ring (ProjectGrid.tsx TileBadge) — the sidebar spinner's faint outline and
+   travelling segment, in the badge's own accent, round a project's badge while it has threads in flight.
+   It is the ring the rail's badge wore from 2026-09-24 to 2026-10-11 (#41), drawn by its own box so it
+   cannot drift off the badge's centre: a full-strength arc a quarter of the way round over a 35% base of
+   the same ink, rotated by `--frizz-badge-lap`, over a solid page-colour base so the faint part reads the
+   same over any icon. The badge face and its cut-out, painted above it, cover all but the outer 2px.
+   1.1s is BoxSpinner's lap, so the badge and the sidebar's rows spin at one tempo. Under reduced motion
+   the segment holds still on its outline: the ring is the signal, the motion only emphasises it. */
+@property --frizz-badge-lap {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.frizz-tile-badge-ring {
+  background:
+    conic-gradient(
+      from var(--frizz-badge-lap),
+      currentColor 0 24%,
+      color-mix(in srgb, currentColor 35%, transparent) 24% 100%
+    ),
+    var(--color-bg);
+  animation: frizz-tile-badge-lap 1.1s linear infinite;
+}
+@keyframes frizz-tile-badge-lap {
+  to { --frizz-badge-lap: 360deg; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .frizz-tile-badge-ring { animation: none; }
+}
 @keyframes frizz-live-pulse {
   50% { opacity: 0.62; box-shadow: 0 0 0 2px color-mix(in srgb, var(--live-dot) 14%, transparent); }
 }

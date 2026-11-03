@@ -6,7 +6,7 @@
 // grid is the rail drawn larger.
 //
 // A HOME SCREEN, not a list of cards (maintainer 2026-11-03, choosing it from six mockups): the project's
-// square at 64px with its queue badge, its name, and a line saying how much is running. The page's head is
+// square at 64px with its badge, and its name. The page's head is
 // the Projects | Console pill, where the mockup had a search field (HomeSwitcher.tsx). The cards it
 // replaced also showed each project's path, slug and when it was last opened; the path is the tile's
 // tooltip now, and the rest is in the rename dialog or nowhere.
@@ -26,7 +26,6 @@ import { rpc } from "../api/rpc.ts"
 import { projectHref } from "../lib/base-path.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { showToast, store } from "../store.ts"
-import { BoxSpinner } from "./BoxSpinner.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/Menu.tsx"
 import { HomeTabs } from "./HomeSwitcher.tsx"
@@ -70,46 +69,50 @@ function tileBadgeWidth(count: number): number {
   return count < 10 ? 20 : count < 100 ? 26 : 32
 }
 
-/**
- * The project's queue, on its square's top-right corner — the home screen's badge, where the rail puts
- * its smaller one bottom-right (ProjectRail QueueBadge). The same count: threads waiting on the human.
- * The 2px ring in the page's colour is the cut-out that makes it read as sitting ON the square.
- */
-function TileBadge({ count }: { count: number }) {
-  return (
-    <span
-      aria-label={`${count} in the queue`}
-      data-home-tile-queue={count}
-      className="pointer-events-none absolute -right-2 -top-2 flex h-5 items-center justify-center rounded-full bg-accent-fill text-[12px] font-semibold leading-none proportional-nums text-on-accent ring-2 ring-bg"
-      style={{ width: tileBadgeWidth(count) }}
-    >
-      {/* The cap band, not the line box, for the reason the rail's badge gives. */}
-      <span style={{ textBox: "trim-both cap alphabetic" } as CSSProperties}>{count}</span>
-    </span>
-  )
+/** `2 running, 3 in the queue` — the rail tooltip's split, in the words of the sidebar's own bands. */
+function tileCountsLabel(queued: number, running: number): string {
+  const parts: string[] = []
+  if (running) parts.push(`${running} running`)
+  if (queued) parts.push(`${queued} in the queue`)
+  return parts.join(", ")
 }
 
 /**
- * The line under a name: how many of the project's threads are running, the rail tooltip's "in play"
- * reduced to the one number that says "something is happening there". Always laid out, empty or not, so
- * every row of tiles keeps one height.
+ * The project's badge, on its square's top-right corner: how many of its threads are in play — waiting
+ * on the human (the queue) PLUS in flight — with a spinner lapping it while any are in flight.
+ *
+ * ONE MARK FOR BOTH, issue #41's badge (maintainer 2026-09-24: "the number inside the yellow dot should
+ * be the sum"), which the rail wore until 2026-10-11, when it went back to the queue alone. The home
+ * screen drew the queue here and a "N working" line under the name until the maintainer asked for this
+ * badge instead (2026-11-03: "I don't know why that would exist in addition to the badge … We should
+ * just have that same thing again"). A badge with no ring is purely a queue count; the ring is what tells
+ * work in flight from work waiting at a glance. The tile's tooltip splits the sum.
+ *
+ * THE CUT-OUT AND THE RING. The face's 2px `ring-bg` box-shadow is the cut-out that makes it read as
+ * sitting ON the square, and it is also the gap to the running ring: `.frizz-tile-badge-ring` is a disc
+ * 4px outside the face, under it, so the face and its cut-out cover all but its outer 2px — a circle
+ * round one digit, a pill round two. Whole pixels throughout, so nothing here lands on the half-pixel
+ * Chrome snaps box edges to; the rail's version (1.25px of ring at 16px) needed a scale and a 0.5px
+ * shadow to get its fractions (629d4f76 has it). The wrapper sizes to the face, so the ring follows a
+ * two-digit badge into a pill without measuring anything.
  */
-function TileStatus({ project, running }: { project: ProjectCard; running: number }) {
+function TileBadge({ queued, running }: { queued: number; running: number }) {
+  const count = queued + running
   return (
-    <span className="mt-1 flex h-[13px] max-w-full items-baseline gap-1 text-[11px] leading-[13px] text-muted">
-      {project.stale ? (
-        <span className="truncate">Folder is missing</span>
-      ) : running > 0 ? (
-        <>
-          {/* `items-baseline` sits the spinner's bottom on the text's baseline; the translate then lifts
-              its centre onto the cap band's — a correction the browser computes from the font, so it
-              holds at any size. The spinner is a 10px box whose ink is its box. */}
-          <span className="shrink-0 translate-y-[calc(5px_-_0.5cap)]">
-            <BoxSpinner size={10} />
-          </span>
-          <span className="truncate">{running} working</span>
-        </>
-      ) : null}
+    <span
+      aria-label={tileCountsLabel(queued, running)}
+      data-home-tile-count={count}
+      data-home-tile-running={running || undefined}
+      className="pointer-events-none absolute -right-2 -top-2 flex"
+    >
+      {running ? <span aria-hidden className="frizz-tile-badge-ring absolute -inset-1 rounded-full text-accent-fill" /> : null}
+      <span
+        className="relative flex h-5 items-center justify-center rounded-full bg-accent-fill text-[12px] font-semibold leading-none proportional-nums text-on-accent ring-2 ring-bg"
+        style={{ width: tileBadgeWidth(count) }}
+      >
+        {/* The cap band, not the line box, for the reason the rail's badge gives. */}
+        <span style={{ textBox: "trim-both cap alphabetic" } as CSSProperties}>{count}</span>
+      </span>
     </span>
   )
 }
@@ -118,7 +121,7 @@ function TileStatus({ project, running }: { project: ProjectCard; running: numbe
  * One project on the home screen.
  *
  * THE NAME IS THE LINK, AND ITS `::after` IS THE TILE: an absolutely-placed pseudo-element covering the
- * whole cell, so the square, the name and the status line are one click target — while the ⋯ trigger,
+ * whole cell, so the square and the name are one click target — while the ⋯ trigger,
  * which cannot sit inside an <a> (a button nested in a link is invalid, and a click on it would
  * navigate), is a sibling lifted above that cover. The link's `truncate` does not clip the cover: an
  * absolute box is clipped only by an overflow on its containing block's side of the tree, and the cover's
@@ -129,6 +132,8 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
   const [renaming, setRenaming] = useState(false)
   const icon = useProjectIconChange(project)
   const queued = counts?.queued ?? 0
+  const running = counts?.running ?? 0
+  const inPlay = tileCountsLabel(queued, running)
   return (
     <div data-home-tile={project.slug} className="group/tile relative flex flex-col items-center pb-1 pt-1.5" style={{ width: TILE_PX }}>
       {/* The lift is the hover, not a fill: a fill behind the square would show around the badge's
@@ -141,11 +146,13 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
         >
           <ProjectSquare project={project} size={TILE_ICON} />
         </span>
-        {queued > 0 ? <TileBadge count={queued} /> : null}
+        {queued + running > 0 ? <TileBadge queued={queued} running={running} /> : null}
       </span>
       <TileName
         project={project}
-        home={home}
+        // Native, not the app's Tooltip: that one opens with no delay, and sweeping the pointer across a
+        // grid of these would flash one per tile.
+        title={[project.name, project.stale ? "Folder is missing" : inPlay, shortPath(project.path, home)].filter(Boolean).join("\n")}
         menu={
           <Menu onOpenChange={(open) => { if (open) icon.warm() }}>
             <MenuTrigger asChild>
@@ -181,7 +188,8 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
           </Menu>
         }
       />
-      <TileStatus project={project} running={counts?.running ?? 0} />
+      {/* Only a missing folder takes a line here; every other state is the badge's. */}
+      {project.stale ? <span className="mt-1 max-w-full truncate text-[11px] leading-[13px] text-muted">Folder is missing</span> : null}
       {icon.fileInput}
       {renaming ? <RenameProjectDialog project={project} home={home} onClose={() => setRenaming(false)} /> : null}
       {confirmingDelete ? <DeleteProjectDialog project={project} home={home} onClose={() => setConfirmingDelete(false)} /> : null}
@@ -211,13 +219,13 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
  * where the dots are drawn, onto the x-height's. The browser computes `ex` from the font, so it holds at
  * any size.
  */
-function TileName({ project, home, menu }: { project: ProjectCard; home: string | undefined; menu: ReactNode }) {
+function TileName({ project, title, menu }: { project: ProjectCard; title: string; menu: ReactNode }) {
   return (
     <span className="mt-2 flex max-w-full items-baseline gap-1 text-[12px] leading-[15px]">
       {menu}
       <Link
         to={projectHref(project.slug)}
-        title={`${project.name} — ${shortPath(project.path, home)}`}
+        title={title}
         className="min-w-0 truncate text-fg/90 outline-none after:absolute after:inset-0 after:rounded-2xl after:content-[''] group-hover/tile:text-fg"
       >
         {project.name}

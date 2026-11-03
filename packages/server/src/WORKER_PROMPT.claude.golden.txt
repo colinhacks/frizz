@@ -658,6 +658,10 @@ complete, self-contained message, not a drip. It reaches a thread in ANY project
 not only yours: pass the thread's full link (`/project/<project>/thread/<slug>`), or add
 `--project <project>` to a bare slug.
 
+`frizzctl threads` lists every thread on your board — its slug, the title the human sees, and where it
+sits: spinning, in the human's queue, parked or done — and `frizzctl threads <project>` another
+project's. It is how you find the thread to send to, and whether one is already on the work in front of you.
+
 A message wrapped in `<thread-message>` came from another thread, which it names: a colleague's
 message, not the human's. Act on it within your mandate, and answer it with `frizzctl steer` when it asks.
 

@@ -909,10 +909,52 @@ const MONITOR = {
   },
 }
 
-// WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER and WATCH_COMMAND after it: the tool list is read by position
-// in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
+// A BOARD'S THREADS, as another agent reads them (2026-11-03). Until then a worker could message any
+// thread on the machine (`steer`) and start one anywhere (`spawn-thread`), but had no way to see which
+// threads exist, what they are called, or whether they are working, waiting or finished — so it could not
+// find the thread already on its bug, or the slug of the one it should tell. packages/server/src/
+// thread-listing.ts is the readout; the band in it is the sidebar's own.
+const THREADS = {
+  name: "threads",
+  description:
+    "LIST THE THREADS ON A BOARD — your own project's, or any other project this Frizz serves — each by " +
+    "its slug, the title the human's sidebar shows, and where it sits on the board:\n\n" +
+    "  rested   — in the human's QUEUE: it came to rest with a card waiting on them (a question, a " +
+    "handoff, finished work, a failure).\n" +
+    "  active   — open with no card, in practice SPINNING: a turn in flight, or its own sub-agents, " +
+    "shells or CI still running.\n" +
+    "  snoozed  — PARKED: the human snoozed it, or its worker rested on something outside the thread " +
+    "(a review, a release, a timer).\n" +
+    "  done     — archived. Left out unless `--all`, because on a long-lived board it is nearly every " +
+    "thread; the count is always printed.\n\n" +
+    "Each row also says what the thread is doing right now (the tool call in flight), the first line of " +
+    "its newest message, what it is waiting on (sub-agents, shells, watched PRs, open questions), and how " +
+    "long ago it last moved.\n\n" +
+    "USE IT BEFORE YOU DUPLICATE SOMEONE'S WORK, AND TO FIND WHO TO TELL. Another thread may already be on " +
+    "the bug you just found, or waiting on the commit you just landed; the slug in the first column is " +
+    "what `frizzctl steer` takes (with `--project` for a thread on another board).\n\n" +
+    "`--json` prints the whole listing — every field, ISO timestamps — for `jq`. It only reads: nothing is " +
+    "changed, and no thread is woken by being listed.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      project: {
+        type: "string",
+        description:
+          "Another project's board: its slug, as its board URL shows it (`/project/<slug>/…`), or any link " +
+          "into that board. Omitted ⇒ your own project.",
+      },
+      all: { type: "boolean", description: "Also list the Done band — every archived thread, newest first." },
+      json: { type: "boolean", description: "Print the listing as JSON instead of text." },
+    },
+    required: [],
+  },
+}
+
+// WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER, WATCH_COMMAND, MONITOR and THREADS after it: the tool list is
+// read by position in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
 // breaks nothing.
-const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR]
+const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS]
 
 /** @type {Record<string, (args: Record<string, unknown>) => Promise<string>>} */
 const HANDLERS = {
@@ -934,6 +976,7 @@ const HANDLERS = {
   [STEER.name]: steer,
   [WATCH_COMMAND.name]: watchCommand,
   [MONITOR.name]: monitor,
+  [THREADS.name]: threads,
 }
 
 // The slug out of whatever a worker has in hand for a thread: the slug itself, the `[title](/thread/<slug>)`
@@ -975,6 +1018,105 @@ async function steer(args) {
     "Its reply, if it sends one, arrives as your next input and wakes you — do not rest waiting for it. " +
     `Link for your handoff: [${result.title}](${href})`
   )
+}
+
+/** The `threads` handler: one board's threads, from this project's `listThreads`, which finds the other
+ *  project itself when one is named (as `steer` and `spawn-thread --project` do).
+ * @param {Record<string, unknown>} args @returns {Promise<string>} */
+async function threads(args) {
+  const raw = typeof args.project === "string" ? args.project.trim() : ""
+  const project = raw ? decodeURIComponent(PROJECT_SEGMENT.exec(raw)?.[1] ?? raw) : ""
+  const result = (await callRpc("listThreads", { ...(project ? { project } : {}), ...(args.all === true ? { all: true } : {}) }))?.result
+  if (!result?.project || !Array.isArray(result.threads) || !result.counts) {
+    throw new Error(`listThreads returned no listing: ${JSON.stringify(result)?.slice(0, 300)}`)
+  }
+  if (args.json === true) return JSON.stringify(result, null, 2)
+  // THE CALLER IS MARKED, not left out: a worker reading its own board should see itself where the human
+  // sees it. Optional — a shell with no thread can list a board too, and simply has no row to mark.
+  const own = !project || result.project.id === projectSegment()
+  const caller = own ? process.env.FRIZZ_THREAD_SLUG || process.env.FRIZZ_THREAD || "" : ""
+  return threadsReport(result, { caller, all: args.all === true, nowMs: Date.now() })
+}
+
+const BAND_HEADINGS = {
+  rested: "Rested — in the human's queue",
+  active: "Active — spinning",
+  snoozed: "Snoozed — parked",
+  done: "Done — archived",
+}
+
+/** How long ago an instant was, in the house duration grammar (`40m`, `2h 35m`, `3d 4h`; see
+ *  `packages/web/src/lib/durationLabels.ts`). @param {string|undefined} iso @param {number} nowMs */
+function agoLabel(iso, nowMs) {
+  const at = Date.parse(iso ?? "")
+  if (!Number.isFinite(at)) return undefined
+  const s = Math.max(0, Math.floor((nowMs - at) / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`
+  const d = Math.floor(h / 24)
+  if (d < 7) return h % 24 ? `${d}d ${h % 24}h` : `${d}d`
+  if (d < 30) return `${Math.floor(d / 7)}w`
+  if (d < 365) return `${Math.floor(d / 30)}mo`
+  return `${Math.floor(d / 365)}y`
+}
+
+const plural = (/** @type {number} */ n, /** @type {string} */ one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+/** One thread's facts line: what it is doing or waiting on, and when it last moved.
+ * @param {any} t @param {number} nowMs */
+function threadFacts(t, nowMs) {
+  const facts = []
+  if (t.runtime === "running" || t.runtime === "spawning") facts.push(t.doing ? `turn in flight: ${t.doing}` : "turn in flight")
+  if (t.runtime === "perm-prompt") facts.push("on a permission prompt")
+  if (t.questions > 0) facts.push(`${plural(t.questions, "question")} open`)
+  if (t.subAgents > 0) facts.push(`${plural(t.subAgents, "sub-agent")} running`)
+  if (t.shells > 0) facts.push(`${plural(t.shells, "shell")} running`)
+  for (const w of t.watches ?? []) facts.push(`watching ${w}`)
+  if (t.limited) facts.push("stopped by a usage limit")
+  else if (t.crashed) facts.push("crashed mid-turn")
+  else if (t.runtime === "exited" && t.band !== "done" && t.fence !== "done") facts.push("worker exited")
+  if (t.fence === "done") facts.push("signed off done")
+  // An awaiting fence on a QUEUED thread is a handoff (`needs_input`, `steps:`); elsewhere it is the park
+  // the band already states, and the watches above already name what it is parked on.
+  else if (t.fence === "awaiting" && t.band === "rested") facts.push("handed off to the human")
+  if (t.snoozedUntil) facts.push(`snoozed until ${t.snoozedUntil}`)
+  const moved = t.band === "done"
+    ? agoLabel(t.archivedAt ?? t.lastActivityAt, nowMs)
+    : agoLabel(t.lastActivityAt ?? t.restedAt ?? t.spawnedAt, nowMs)
+  if (moved) facts.push(`${t.band === "done" ? "archived" : "last moved"} ${moved} ago`)
+  return facts.join(" · ")
+}
+
+/** The text readout: a count line, then one block per band, one thread per two or three lines.
+ * @param {any} result @param {{ caller: string, all: boolean, nowMs: number }} opts */
+function threadsReport(result, { caller, all, nowMs }) {
+  const { counts } = result
+  const open = counts.rested + counts.active + counts.snoozed
+  const tally = [`${counts.rested} rested`, `${counts.active} active`, `${counts.snoozed} snoozed`].join(", ")
+  const doneNote = all ? `${counts.done} done` : `${counts.done} done, not listed (\`--all\` lists them)`
+  const head = `${result.project.name} (\`${result.project.slug}\`) — ${plural(open, "open thread")} (${tally}); ${doneNote}.`
+  if (result.threads.length === 0) return `${head}\n\nNothing to list.`
+  const blocks = []
+  for (const band of ["rested", "active", "snoozed", "done"]) {
+    const rows = result.threads.filter((/** @type {any} */ t) => t.band === band)
+    if (!rows.length) continue
+    const lines = rows.map((/** @type {any} */ t) => {
+      const mark = [t.slug === caller ? "this thread" : "", t.pinned ? "pinned" : ""].filter(Boolean).join(", ")
+      const out = [`  ${t.slug}  ${t.title}${mark ? `  (${mark})` : ""}`]
+      const facts = threadFacts(t, nowMs)
+      if (facts) out.push(`    ${facts}`)
+      if (t.lastLine) out.push(`    > ${t.lastLine.replace(/\s+/g, " ").slice(0, 160)}`)
+      return out.join("\n")
+    })
+    blocks.push(`${BAND_HEADINGS[/** @type {keyof typeof BAND_HEADINGS} */ (band)]}\n${lines.join("\n")}`)
+  }
+  const steerHint = result.project.id === projectSegment()
+    ? "Message one with `frizzctl steer <slug>`."
+    : `Message one with \`frizzctl steer <slug> --project ${result.project.slug}\`.`
+  return `${head}\n\n${blocks.join("\n\n")}\n\n${steerHint} \`--json\` prints every field.`
 }
 
 /** @param {Record<string, unknown>} args @returns {Promise<string>} */
@@ -2323,6 +2465,12 @@ const CLI = {
     summary: "Remove a saved link or file",
     positional: ["id"],
     examples: ["frizzctl unlink lnk_ab12cd34"],
+  },
+  threads: {
+    group: "Other threads",
+    summary: "List a project's threads: each one's slug, title and where it sits on the board",
+    positional: ["project"],
+    examples: ["frizzctl threads", "frizzctl threads nub", "frizzctl threads --all --json"],
   },
   steer: {
     group: "Other threads",

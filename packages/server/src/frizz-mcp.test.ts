@@ -70,7 +70,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     rpc.send({ jsonrpc: "2.0", method: "notifications/initialized" })
     rpc.send({ jsonrpc: "2.0", id: 2, method: "tools/list" })
     const list = await rpc.next(2)
-    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ["spawn_thread", "goal", "timer", "watch_pr", "watch", "unwatch", "ask", "unask", "done", "title", "activity", "link", "unlink", "watch_issue", "secret", "steer", "watch_command", "monitor"])
+    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ["spawn_thread", "goal", "timer", "watch_pr", "watch", "unwatch", "ask", "unask", "done", "title", "activity", "link", "unlink", "watch_issue", "secret", "steer", "watch_command", "monitor", "threads"])
     assert.deepEqual(list.result.tools.find((t: { name: string }) => t.name === "link").inputSchema.required, ["label", "target"])
     assert.deepEqual(list.result.tools.find((t: { name: string }) => t.name === "unlink").inputSchema.required, ["id"])
     for (const required of ["prompt", "model", "effort"]) {
@@ -142,10 +142,14 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     // `wch_…` id of any watch holding one. It takes NOTHING: there is no thread parameter and no filter,
     // because the only correct answer is "everything you have running", and a worker that has lost its
     // ids cannot be trusted to name them.
-    assert.equal(list.result.tools.length, 18)
+    assert.equal(list.result.tools.length, 19)
     // `monitor` (2026-11-02) — `action` alone is required, and no thread parameter, like every registry.
     assert.deepEqual(list.result.tools[17].inputSchema.required, ["action"])
     assert.deepEqual(Object.keys(list.result.tools[17].inputSchema.properties), ["action", "command", "description", "for", "id"])
+    // `threads` (2026-11-03) — a READ of any board, so nothing is required, and no caller parameter at all.
+    assert.equal(list.result.tools[18].name, "threads")
+    assert.deepEqual(list.result.tools[18].inputSchema.required, [])
+    assert.deepEqual(Object.keys(list.result.tools[18].inputSchema.properties), ["project", "all", "json"])
     assert.deepEqual(list.result.tools[10].inputSchema.required, [])
     assert.deepEqual(Object.keys(list.result.tools[10].inputSchema.properties), [])
     // `watch_issue` — the issue twin of `watch_pr`, same shape: `action` alone is required, and NO thread
