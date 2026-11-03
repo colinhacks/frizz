@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { COMMAND_WATCH_FALLBACK, commandWatchCancelledWakeMessage, commandWatchExpiredWakeMessage, commandWatchPassedWakeMessage, formatGithubWakeSteer, interruptEndedSubAgentsMessage, limitModelSwitchSteer, limitResumeSteer, mergedWakeMessage, ownWatchExpiredWakeMessage, parkExpiredWakeMessage, parkFinishedWakeMessage, PR_WATCH_ARMED_TRAILER, prWatchExpiredWakeMessage, prWatchGoneWakeMessage, prWatchWakeMessage, questionsCancelledWakeMessage, restPromptMessage, shellDoneMessage, timerPromptMessage } from "@frizz/shared"
+import { COMMAND_WATCH_FALLBACK, MONITOR_FLOOD_REASON, monitorCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, commandWatchCancelledWakeMessage, commandWatchExpiredWakeMessage, commandWatchPassedWakeMessage, formatGithubWakeSteer, interruptEndedSubAgentsMessage, limitModelSwitchSteer, limitResumeSteer, mergedWakeMessage, ownWatchExpiredWakeMessage, parkExpiredWakeMessage, parkFinishedWakeMessage, PR_WATCH_ARMED_TRAILER, prWatchExpiredWakeMessage, prWatchGoneWakeMessage, prWatchWakeMessage, questionsCancelledWakeMessage, restPromptMessage, shellDoneMessage, timerPromptMessage } from "@frizz/shared"
 import type { ChatMessage } from "./hooks.ts"
 import { Message } from "./components/ChatView.tsx"
 import "./styles.css"
@@ -153,6 +153,18 @@ const messages: ChatMessage[] = [
   wake("w22", commandWatchPassedWakeMessage({ id: "cmw_3d480448ae89", command: "/Users/colin/.local/share/nub/node/26.11.1/bin/node /Users/colin/Documents/frizz/.frizz/threads/a74bbfc8/screen-unlocked.mjs", output: "newest: keywardd: screen unlocked", runs: 49, armedMs: 8_040_000 })),
   wake("w23", commandWatchExpiredWakeMessage({ id: "cmw_6197f27a1cb0", command: "npm view frizz-server@0.13.14 version", lastRun: { outcome: "exit", exitCode: 1, output: "npm error code E404\nnpm error 404 No match found for version 0.13.14" } })),
   wake("w24", commandWatchCancelledWakeMessage({ id: "cmw_a1b2c3d4e5f6", command: "gh run view 18273645 --exit-status", reason: `this thread runs in \`default\` permission mode. ${COMMAND_WATCH_FALLBACK}` })),
+  // A MONITOR (`frizzctl monitor`, 2026-11-02): one hairline per EVENT, named by the worker's
+  // description, the lines it printed behind the disclosure; then the three ways one ends. The last pair
+  // went out MERGED — the script's final line and its exit, which the scheduler queues together — and
+  // must draw exactly the two hairlines it would apart.
+  wake("w27", monitorEventWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "errors in deploy.log", lines: ["ERROR 502 from upstream api.internal", "ERROR retry budget exhausted"], event: 3 })),
+  wake("w28", monitorExitedWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "CI steps on nubjs/nub#879", command: "/Users/colin/.local/share/nub/node/26.11.1/bin/node /Users/colin/Documents/frizz/.frizz/threads/a74bbfc8/ci-steps.mjs 879", events: 6, run: { outcome: "exit", exitCode: 1, output: "gh: HTTP 502: Bad Gateway\n" } })),
+  wake("w29", monitorExpiredWakeMessage({ id: "cmw_6197f27a1cb0", label: "new comments on acme/app#62", command: "node poll-comments.mjs acme/app#62", events: 0 })),
+  wake("w30", monitorCancelledWakeMessage({ id: "cmw_a1b2c3d4e5f6", command: "tail -F /var/log/app.log", events: 30, reason: MONITOR_FLOOD_REASON })),
+  wake("w31", mergedWakeMessage([
+    { reason: "monitor cmw_0a1b2c3d4e5f event 7", message: monitorEventWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "CI steps on nubjs/nub#879", lines: ["test (macos-14): pass"], event: 7 }) },
+    { reason: "monitor cmw_0a1b2c3d4e5f ended (exit 0) after 7 event(s)", message: monitorExitedWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "CI steps on nubjs/nub#879", command: "node ci-steps.mjs 879", events: 7, run: { outcome: "exit", exitCode: 0, output: "" } }) },
+  ], Date.now())),
   // SUB-AGENTS AN INTERRUPT TOOK WITH IT — "Interrupt and send" ends every background child with the
   // turn. The same fallback card until 2026-10-14, telling the operator to re-dispatch them. One
   // hairline per child, the way each child's own completion is drawn.
