@@ -109,10 +109,11 @@ export function getSettings(storage: Storage, home: string): Settings {
 export function setSettings(storage: Storage, next: Settings, home: string): Settings {
   const validated = Settings.parse(next)
   // A launch prefix that does not split into words would fail every worker it is applied to, so the
-  // save refuses it here rather than the next dispatch discovering it. The schema itself stays a plain
+  // save refuses a NEW one here rather than the next dispatch discovering it (only a changed prefix is
+  // judged; see launchPrefixSettingsError for why). The schema itself stays a plain
   // string on purpose (see Settings.launchPrefix): a refinement there would also fail the READ, and a
   // read miss resets every setting to its default.
-  const prefixError = launchPrefixSettingsError(validated)
+  const prefixError = launchPrefixSettingsError(validated, getSettings(storage, home))
   if (prefixError) throw new Error(prefixError)
   writeMachineSettings(pickMachine(validated), home)
   storage.setSetting(SETTINGS_KEY, validated)

@@ -205,6 +205,13 @@ test("a launch prefix that does not parse is refused at save, and the stored set
       /Claude Code launch prefix: `\$` is shell syntax/,
     )
     assert.deepEqual(getSettings(alpha, box.home).launchPrefix, { claude: "op run --" })
+
+    // A stored prefix that no longer parses (written by hand here) must not hold every OTHER setting
+    // hostage: the save that leaves it untouched goes through.
+    alpha.setSetting("settings", { ...defaultSettings(), launchPrefix: { claude: "a | b" } })
+    const saved = setSettings(alpha, { ...getSettings(alpha, box.home), notifications: false }, box.home)
+    assert.equal(saved.notifications, false)
+    assert.equal(saved.launchPrefix?.claude, "a | b", "the untouched prefix is kept as it was")
   } finally {
     box.done()
   }

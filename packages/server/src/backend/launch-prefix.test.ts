@@ -55,6 +55,9 @@ test("a prefix that cannot be used throws a sentence naming the runtime and the 
 test("the settings save names the first prefix that does not parse, and only that", () => {
   assert.equal(launchPrefixSettingsError({ launchPrefix: { claude: "op run --", codex: "" } }), undefined)
   assert.match(launchPrefixSettingsError({ launchPrefix: { codex: "a | b" } }) ?? "", /^Codex launch prefix: `\|` is shell syntax/)
+  // Only a CHANGED prefix is judged, so a stored one that no longer parses cannot block other saves.
+  assert.equal(launchPrefixSettingsError({ launchPrefix: { codex: "a | b" } }, { launchPrefix: { codex: "a | b" } }), undefined)
+  assert.match(launchPrefixSettingsError({ launchPrefix: { codex: "a | c" } }, { launchPrefix: { codex: "a | b" } }) ?? "", /shell syntax/)
   // A command that is not installed is not a save error: the field is for the machine that RUNS it.
   assert.equal(launchPrefixSettingsError({ launchPrefix: { claude: "frizz-no-such-tool --" } }), undefined)
 })

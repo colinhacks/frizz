@@ -64,11 +64,16 @@ function commandRunnable(command: string, cwd: string, env: NodeJS.ProcessEnv): 
   return (env.PATH ?? "").split(delimiter).some((dir) => dir !== "" && runnable(join(dir, command)))
 }
 
-/** The message for a prefix the settings save must refuse, or undefined when every prefix parses. */
-export function launchPrefixSettingsError(settings: LaunchPrefixSettings): string | undefined {
+/** The message for a prefix the settings save must refuse, or undefined when it may be stored.
+ *
+ *  Only a prefix this save CHANGES is judged. Every settings write carries the whole object, so judging
+ *  them all would let one stored prefix that no longer parses (a hand edit, a parser that later
+ *  tightened) refuse every save of every OTHER setting — the notifications toggle included — with an
+ *  error about a field the operator did not touch. That prefix still fails its own launch, loudly. */
+export function launchPrefixSettingsError(settings: LaunchPrefixSettings, stored?: LaunchPrefixSettings): string | undefined {
   for (const runtime of ["claude", "codex"] as const) {
     const text = settings?.launchPrefix?.[runtime]
-    if (!text?.trim()) continue
+    if (!text?.trim() || text === stored?.launchPrefix?.[runtime]) continue
     const parsed = parseLaunchPrefix(text)
     if (!parsed.ok) return `${RUNTIME_LABEL[runtime]} launch prefix: ${parsed.error}`
   }
