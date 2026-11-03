@@ -6,7 +6,6 @@ import {
   type CodexModel,
   type DispatchInput,
   type DispatchPreferences,
-  type ProviderAuth,
   type SetDispatchPreferenceInput,
   type Settings,
   type SteerThreadResult,
@@ -40,7 +39,7 @@ import { readCodexModels } from "./backend/codex-models.ts"
 import { createAcpBackend } from "./backend/acp-transcript.ts"
 import { createAcpBridge, type AcpBridge } from "./backend/acp-bridge.ts"
 import { readClaudeAuthState, readClaudePreflightAuth, readCodexAuthState, readCodexBinaryState } from "./backend/auth-status.ts"
-import { hasLaunchPrefix, launchPrefixArgv } from "./backend/launch-prefix.ts"
+import { launchPrefixArgv, launchPrefixAwareAuth } from "./backend/launch-prefix.ts"
 import { frizzCliEnv, withFrizzCliOnPath, type AgentBackend } from "./backend/types.ts"
 import { sanitizeProviderChildEnvironment } from "./backend/claude-agent-sdk.ts"
 import { commandWatchEnvironment, createCommandWatchService, type CommandWatchService } from "./command-watch.ts"
@@ -1106,19 +1105,12 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     // a positive signed-out against its CLI (readClaudePreflightAuth — the comment there records why
     // the CLI must not sit on the signed-in path); Codex reads the local auth.json/env. Both block
     // only on a positive "signed-out" — everything else fails open.
-    //
-    // A runtime with a LAUNCH PREFIX is not gated at all: the prefix is the operator saying how that
-    // runtime starts, and supplying its credentials (a token proxy, `op run`, an API key in the
-    // environment) is one of the things it is for — so "no local sign-in" says nothing about whether
-    // the worker can authenticate. It reads "unknown", on which the gate fails open, and a worker that
-    // genuinely cannot sign in reports so itself. Checked first, so Claude's CLI confirmation is not run
-    // for a verdict that would be thrown away.
+    // A runtime with a LAUNCH PREFIX is not gated at all (launchPrefixAwareAuth says why).
     preflightAuth: (kind) =>
-      hasLaunchPrefix(getSettings(storage, home), kind)
-        ? Promise.resolve<ProviderAuth>("unknown")
-        : kind === "codex"
+      launchPrefixAwareAuth(getSettings(storage, home), kind, () =>
+        kind === "codex"
           ? Promise.resolve(readCodexAuthState())
-          : readClaudePreflightAuth({ claudeBin: opts.claudeBin, cwd: project.dir }),
+          : readClaudePreflightAuth({ claudeBin: opts.claudeBin, cwd: project.dir })),
     preflightCodexBinary: () => readCodexBinaryState(opts.codexBin ?? "codex"),
   })
 

@@ -3,7 +3,7 @@
 import { accessSync, constants as fsConstants, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { delimiter, isAbsolute, join, resolve } from "node:path"
-import { parseLaunchPrefix, type Settings } from "@frizz/shared"
+import { parseLaunchPrefix, type ProviderAuth, type Settings } from "@frizz/shared"
 
 export type LaunchPrefixRuntime = "claude" | "codex"
 
@@ -80,4 +80,14 @@ export function launchPrefixSettingsError(settings: LaunchPrefixSettings): strin
 export function recordedLaunchPrefix(value: unknown): { launchPrefix?: string[] } {
   if (!Array.isArray(value) || value.length === 0 || !value.every((word) => typeof word === "string")) return {}
   return { launchPrefix: value as string[] }
+}
+
+/** The dispatch sign-in gate's verdict for a runtime. A runtime with a launch prefix is never gated:
+ *  the prefix is the operator saying how that runtime starts, and supplying its credentials (a token
+ *  proxy, `op run`, an API key in the environment) is one of the things it is for — so "no local
+ *  sign-in" says nothing about whether the worker can authenticate. It reads "unknown", on which the
+ *  gate fails open, and a worker that genuinely cannot sign in reports so itself. `read` is not even
+ *  called then, so Claude's CLI confirmation is not run for a verdict that would be thrown away. */
+export function launchPrefixAwareAuth(settings: LaunchPrefixSettings, runtime: string, read: () => Promise<ProviderAuth>): Promise<ProviderAuth> {
+  return hasLaunchPrefix(settings, runtime) ? Promise.resolve("unknown") : read()
 }

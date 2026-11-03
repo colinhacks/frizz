@@ -121,6 +121,12 @@ Give a thread a standing goal. Frizz sends it as a prompt every time the agent c
   <img src="assets/goal.png" alt="The goal panel open above a queue card's prompt box: a goal saying to keep going until the test suite is green, sent at every rest and every 30 minutes." width="100%">
 </p>
 
+### Launch prefix
+
+Start every worker through a command of your own: a secret injector, a token proxy, a sandbox. Set it per project under the gear beside **Claude Code** or **Codex** in the model picker. With `op run --env-file .env --` there, a new Claude worker starts as `op run --env-file .env -- claude …`, so the variables 1Password injects are in the worker's environment and nowhere on disk.
+
+The command gets the worker's environment, and must run the command after it with stdin and stdout passed through and stay running until it exits (`exec` does both). Frizz splits the prefix into words like a shell would but never runs it in one, so for variables or pipes, write the shell in: `sh -c 'export ANTHROPIC_BASE_URL="$(my-proxy url)"; exec "$@"' sh`. Claude picks up a change on the next thread you dispatch. Codex's prefix wraps the app-server a project's Codex threads share, and Frizz restarts it once no Codex turn is running. With a prefix set, Frizz no longer refuses to dispatch when it finds no local sign-in, since the prefix may be what supplies the credentials.
+
 <br/>
 
 <h2 align="center">CLI</h2>

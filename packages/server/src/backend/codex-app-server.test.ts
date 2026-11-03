@@ -275,6 +275,7 @@ function harness(
   authReplacementWaitMs?: number,
   getSettings?: () => { codexContextWindow?: number },
   frizzMcp?: import("./types.ts").FrizzMcp,
+  launchPrefix?: () => string[],
 ) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-codex-app-server-"))
   const dbPath = join(dir, "ui.db")
@@ -322,6 +323,7 @@ function harness(
       ...(authReplacementWaitMs === undefined ? {} : { authReplacementWaitMs }),
       ...(getSettings ? { getSettings } : {}),
       ...(frizzMcp ? { frizzMcp } : {}),
+      ...(launchPrefix ? { launchPrefix } : {}),
     })
     bridges.push(bridge)
     return bridge
@@ -439,6 +441,47 @@ test("live Codex error notices are turn-scoped and clear on recovery", async () 
     proc.completeActiveTurn()
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(h.bridge.turnLiveness("failure", "failure-sid")?.providerError, undefined)
+  } finally { h.close() }
+})
+
+// The project's Codex LAUNCH PREFIX is a property of the app-server PROCESS, which every Codex thread in
+// the project shares, so a change has to replace that process — and must do it the way an account
+// change does: at a turn boundary, resuming the thread on the replacement, never mid-turn. These are the
+// same three beats as the account test below, plus the case only a prefix has: one that cannot be used.
+test("the app-server starts through the project's launch prefix, and a changed prefix replaces it at the next turn", async () => {
+  let prefix: () => string[] = () => ["op", "run", "--env-file", ".env", "--"]
+  const h = harness(CODEX_APP_SERVER_SUPPORTED_VERSION, undefined, undefined, undefined, undefined, undefined, undefined, () => prefix())
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "prefixed", sessionId: "frizz-session-prefix", cwd: h.dir, ephemeral: false })
+    await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "first" })
+    assert.equal(h.calls[0]!.binary, "op", "the prefix's command is what starts")
+    assert.deepEqual(h.calls[0]!.args.slice(0, 5), ["run", "--env-file", ".env", "--", "/opt/codex"], "…with the codex command after the prefix's words")
+    assert.equal(h.calls[0]!.args[5], "app-server")
+    h.processes[0]!.completeActiveTurn()
+    await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "first turn completion")
+
+    prefix = () => ["env", "OPENAI_BASE_URL=http://127.0.0.1:8787/v1"]
+    await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "second" })
+    assert.equal(h.processes.length, 2, "the app-server started through the old prefix must be replaced")
+    assert.equal(h.processes[0]!.killed, true)
+    assert.equal(h.calls[1]!.binary, "env")
+    assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "thread/resume"), "the thread resumes on the replacement")
+    assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "turn/start"), "the follow-up runs on the replacement")
+    assert.ok(h.diagnostics.some((event) => (event as { event?: string }).event === "launch-prefix-applied"))
+    assert.ok(!h.diagnostics.some((event) => (event as { event?: string }).event === "auth-account-refreshed"), "a prefix change is not reported as an account change")
+
+    h.processes[1]!.completeActiveTurn()
+    await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "second turn completion")
+    await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "third" })
+    assert.equal(h.processes.length, 2, "an unchanged prefix must not churn the app-server")
+
+    // A prefix that cannot be used never tears down a working app-server to fail its replacement.
+    h.processes[1]!.completeActiveTurn()
+    await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "third turn completion")
+    prefix = () => { throw new Error("The Codex launch prefix in this project's settings cannot be used: A single quote is never closed.") }
+    await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "fourth" })
+    assert.equal(h.processes.length, 2, "the running app-server keeps serving")
+    assert.ok(h.processes[1]!.clientRequests.filter((message) => message.method === "turn/start").length >= 3)
   } finally { h.close() }
 })
 

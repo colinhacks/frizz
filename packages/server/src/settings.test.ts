@@ -194,3 +194,18 @@ test("retired font preferences are stripped from every settings source without r
     box.done()
   }
 })
+
+test("a launch prefix that does not parse is refused at save, and the stored settings are left as they were", () => {
+  const box = sandbox()
+  try {
+    const alpha = box.open("alpha")
+    setSettings(alpha, { ...defaultSettings(), launchPrefix: { claude: "op run --" } }, box.home)
+    assert.throws(
+      () => setSettings(alpha, { ...defaultSettings(), launchPrefix: { claude: "op run --env-file=$HOME/.env --" } }, box.home),
+      /Claude Code launch prefix: `\$` is shell syntax/,
+    )
+    assert.deepEqual(getSettings(alpha, box.home).launchPrefix, { claude: "op run --" })
+  } finally {
+    box.done()
+  }
+})
