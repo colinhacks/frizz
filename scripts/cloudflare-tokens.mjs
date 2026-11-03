@@ -1,34 +1,30 @@
-// Mints the Cloudflare API tokens frizz.sh runs on, and hands each one straight to the one place
-// that uses it, so no Cloudflare token is ever in a file, an argv, a terminal or a transcript:
+// Mints the two Cloudflare API tokens frizz.sh's CI runs on, and hands each one straight to the one
+// place that uses it, so neither is ever in a file, an argv, a terminal or a transcript:
 //
 //   github-actions workers-deploy   Workers Scripts Edit, Workers Routes Edit on frizz.sh
 //                                   -> CLOUDFLARE_API_TOKEN in the `workers-deploy` environment
 //   github-actions workers-drift    Workers Scripts Read
 //                                   -> the repository secret CLOUDFLARE_READ_TOKEN
-//   laptop read-only (Keyward)      reads the account and the frizz.sh zone, writes nothing
-//                                   -> Keyward's CLOUDFLARE_API_TOKEN for this repository
 //
 // WHY. From 2026-09-21 to 2026-10-08 an attacker deployed backdoored builds of both frizz.sh Workers
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
 // the token that can deploy lives only in a GitHub environment that waits for the maintainer's
-// approval, and the laptop holds a token that cannot change anything, sealed in Keyward and released
-// to one command per Touch ID. A Worker change goes through workers-deploy.yml; anything else that
-// writes uses a token minted for that one task.
+// approval, and every Cloudflare credential on the laptop is held by `cf-keyward` (the global
+// `cloudflare` skill): the full sign-in sealed in Keyward, one Touch ID per use, and a read-only token
+// that can change nothing.
 //
-// INPUT: a short-lived BOOTSTRAP token, account-owned, with Account API Tokens Edit, Account Settings
-// Read and Zone Read, in CLOUDFLARE_BOOTSTRAP_TOKEN or on stdin (a Frizz `kind: secret` pipe). It
-// mints these three tokens and nothing else. `--stash-bootstrap` also seals it in Keyward, so a
-// re-run costs a Touch ID rather than a new token; `--delete-bootstrap` revokes it when the job is
-// done (then `keyward rm CLOUDFLARE_BOOTSTRAP_TOKEN`).
+// THE CREDENTIAL that mints them is the admin sign-in, which `cf-keyward admin` releases as
+// CLOUDFLARE_API_TOKEN. Failing that, a short-lived dashboard token with Account API Tokens Edit,
+// Account Settings Read and Zone Read works too, in CLOUDFLARE_BOOTSTRAP_TOKEN or on stdin (a Frizz
+// `kind: secret` pipe); `--delete-bootstrap` revokes such a token when the job is done.
 //
 // ROTATION is a re-run: each new token is in place before the older tokens of the same name are
 // revoked. Every run ends with an audit of the account's members and API tokens, flagging any token
-// this script does not manage.
+// this script does not manage. `--audit` alone also runs on the read-only token.
 //
-//   nub scripts/cloudflare-tokens.mjs --stash-bootstrap < '<secret pipe>'
-//   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- nub scripts/cloudflare-tokens.mjs [--only=deploy,drift,laptop] [--dry-run]
-//   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- nub scripts/cloudflare-tokens.mjs --audit
-//   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- nub scripts/cloudflare-tokens.mjs --delete-bootstrap
+//   cf-keyward admin --reason "mint frizz.sh's CI tokens" -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
+//   cf-keyward read -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit
+//   env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs < '<secret pipe>'
 
 import { spawnSync } from "node:child_process"
 import { dirname } from "node:path"
@@ -58,13 +54,6 @@ export const TOKENS = [
     account: ["Workers Scripts Read"],
     zone: [],
     sink: { kind: "gh", secret: "CLOUDFLARE_READ_TOKEN" },
-  },
-  {
-    key: "laptop",
-    name: "laptop read-only (Keyward)",
-    account: ["Account Settings Read", "Workers Scripts Read", "Workers KV Storage Read", "Workers Tail Read?", "Account API Tokens Read?"],
-    zone: ["Zone Read", "DNS Read", "Workers Routes Read"],
-    sink: { kind: "keyward", secret: "CLOUDFLARE_API_TOKEN" },
   },
 ]
 
@@ -136,10 +125,8 @@ function client(token) {
 
 /** Hand `value` to its sink on stdin. Returns null on success, or what went wrong (never the value). */
 function deliver(sink, value, repoRoot) {
-  const [command, args] =
-    sink.kind === "gh"
-      ? ["gh", ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])]]
-      : ["keyward", ["set", sink.secret]]
+  const command = "gh"
+  const args = ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])]
   const result = spawnSync(command, args, { input: value, cwd: repoRoot, encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`
   if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
@@ -147,11 +134,7 @@ function deliver(sink, value, repoRoot) {
 }
 
 function describeSink(sink) {
-  return sink.kind === "gh"
-    ? sink.env
-      ? `GitHub environment ${sink.env} secret ${sink.secret}`
-      : `GitHub repository secret ${sink.secret}`
-    : `Keyward ${sink.secret} (repository ${REPO})`
+  return sink.env ? `GitHub environment ${sink.env} secret ${sink.secret}` : `GitHub repository secret ${sink.secret}`
 }
 
 async function readStdin() {
@@ -165,9 +148,15 @@ async function whoAmI(cf) {
   try {
     return { kind: "account", ...(await cf("GET", `/accounts/${ACCOUNT_ID}/tokens/verify`)) }
   } catch (error) {
-    // Cloudflare answers a token of the other kind with anything from 400 to 404.
+    // Cloudflare answers a token of the other kind with anything from 400 to 404, and an OAuth access
+    // token (the admin sign-in) is neither kind, so it fails both and is only named.
     if (!(error.status >= 400 && error.status < 500)) throw error
-    return { kind: "user", ...(await cf("GET", "/user/tokens/verify")) }
+    try {
+      return { kind: "user", ...(await cf("GET", "/user/tokens/verify")) }
+    } catch (again) {
+      if (!(again.status >= 400 && again.status < 500)) throw again
+      return { kind: "oauth", id: null }
+    }
   }
 }
 
@@ -197,7 +186,7 @@ async function audit(cf, selfId) {
     const managed = new Set(TOKENS.map((t) => t.name))
     for (const t of await listTokens(cf)) {
       const groups = (t.policies ?? []).flatMap((p) => (p.permission_groups ?? []).map((g) => g.name)).join(", ")
-      const tag = t.id === selfId ? "THIS BOOTSTRAP" : managed.has(t.name) ? "managed here" : "NOT MANAGED HERE"
+      const tag = t.id === selfId ? "THIS CREDENTIAL" : managed.has(t.name) ? "managed here" : "NOT MANAGED HERE"
       console.log(`  [${tag}] ${t.name}  id ${t.id}  ${t.status}  issued ${t.issued_on ?? "-"}  last used ${t.last_used_on ?? "never"}  expires ${t.expires_on ?? "never"}`)
       console.log(`      ${groups || "(no permission groups listed)"}`)
     }
@@ -213,27 +202,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const only = args.find((a) => a.startsWith("--only="))?.slice("--only=".length).split(",")
     const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
-    // An audit only reads, so the laptop's Keyward token serves for it as well as the bootstrap.
-    const bootstrap = (
-      process.env.CLOUDFLARE_BOOTSTRAP_TOKEN ||
-      (flag("--audit") ? process.env.CLOUDFLARE_API_TOKEN : "") ||
-      (await readStdin())
-    ).trim()
-    if (!bootstrap) {
-      console.error("no bootstrap token: set CLOUDFLARE_BOOTSTRAP_TOKEN (keyward run) or pipe it on stdin")
+    const credential = (process.env.CLOUDFLARE_BOOTSTRAP_TOKEN || process.env.CLOUDFLARE_API_TOKEN || (await readStdin())).trim()
+    if (!credential) {
+      console.error('no credential: run under `cf-keyward admin --reason "…" --`, or pipe a bootstrap token on stdin')
       process.exit(1)
     }
-    const cf = client(bootstrap)
+    const cf = client(credential)
     const me = await whoAmI(cf)
-    console.log(`bootstrap: ${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`)
-
-    if (flag("--stash-bootstrap")) {
-      const failure = deliver({ kind: "keyward", secret: "CLOUDFLARE_BOOTSTRAP_TOKEN" }, bootstrap, repoRoot)
-      if (failure) throw new Error(`could not stash the bootstrap token: ${failure}`)
-      console.log("bootstrap sealed in Keyward as CLOUDFLARE_BOOTSTRAP_TOKEN (repository scope); `keyward rm` it once --delete-bootstrap has run")
-    }
+    console.log(
+      me.kind === "oauth"
+        ? "credential: not an API token, so the admin sign-in's access token (cf-keyward admin), or an invalid one"
+        : `credential: ${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`,
+    )
 
     if (flag("--delete-bootstrap")) {
+      if (me.kind === "oauth") throw new Error("--delete-bootstrap revokes a bootstrap API token; this credential is the sign-in, which `cf-keyward` keeps")
       const path = me.kind === "account" ? `/accounts/${ACCOUNT_ID}/tokens/${me.id}` : `/user/tokens/${me.id}`
       await cf("DELETE", path)
       console.log(`revoked the bootstrap token ${me.id}`)
@@ -259,7 +242,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if (flag("--dry-run")) {
         console.log("\n--dry-run: nothing minted")
       } else {
-        const existing = await listTokens(cf)
+        const existing = await listTokens(cf).catch((error) => {
+          console.error(`could not list the account's tokens (${error.message}); older tokens of these names are not revoked, see the audit`)
+          return []
+        })
         for (const p of plans) {
           const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, {
             name: p.spec.name,
