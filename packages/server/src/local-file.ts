@@ -111,6 +111,11 @@ export type LocalTextRead = { path: string; text: string; truncated: boolean; bi
 // even a PDF whose first 8 KiB happen to hold no NUL. The web's `PDF_FILE_PATH` must match.
 export const PDF_FILE_EXT = /\.pdf$/i
 
+// An HTML page is text, but the browser is its viewer: a worker links a mockup or a report for the
+// human to open, never to edit. So an editor preference hands one to the system opener, as it does a
+// binary file (openLocalFile). The web's `HTML_FILE_PATH` must match.
+export const HTML_FILE_EXT = /\.html?$/i
+
 // The binary sniff: a NUL in the first 8 KiB, git's own tell. Compressed and media formats carry one
 // within a few bytes; UTF-8 text never does.
 const SNIFF_BYTES = 8192
@@ -347,7 +352,9 @@ export async function openLocalFile(
   if (chosen === "copy") return { action: "copy", path }
   // An editor is the opener for TEXT. Cursor handed a PDF or a zip shows a binary-file warning, so a
   // file the reader would call binary goes where a double-click would send it: the system's own app.
-  const selected = (chosen === "cursor" || chosen === "vscode") && isBinaryLocalFile(path) ? "system" : chosen
+  // An HTML page goes there too — the browser — since nobody clicks a linked page to edit its source.
+  const editor = chosen === "cursor" || chosen === "vscode"
+  const selected = editor && (HTML_FILE_EXT.test(path) || isBinaryLocalFile(path)) ? "system" : chosen
 
   const spec = localFileOpenCommand(path, selected, options)
   const child = (options.spawn ?? defaultSpawn)(spec.command, spec.args, {

@@ -225,6 +225,27 @@ test("an editor preference never receives a binary file: a PDF or a zip goes to 
   }
 })
 
+test("an editor preference never receives an HTML page: it goes to the system's own app, the browser", async () => {
+  const root = mkdtempSync(join(tmpdir(), "frizz-local-file-html-opener-"))
+  const page = join(root, "options.html")
+  const legacy = join(root, "report.HTM")
+  const script = join(root, "build.ts")
+  for (const file of [page, legacy, script]) writeFileSync(file, "<!doctype html><p>safe</p>")
+  const argvFor = async (file: string, opener: LocalFileOpener) => {
+    const calls: SpawnCall[] = []
+    await openLocalFile(file, opener, [root], { platform: "darwin", spawn: fakeSpawn(calls), env: {}, exists: () => false })
+    return [calls[0]!.command, ...calls[0]!.args]
+  }
+  for (const file of [page, legacy]) {
+    const real = realpathSync(file)
+    assert.deepEqual(await argvFor(file, "cursor"), ["open", real], file)
+    assert.deepEqual(await argvFor(file, "vscode"), ["open", real], file)
+    assert.deepEqual(await argvFor(file, "finder"), ["open", "-R", real], file)
+  }
+  // The rule is the page's extension, not its bytes: other text still goes to the editor.
+  assert.deepEqual(await argvFor(script, "cursor"), ["open", "-a", "Cursor", realpathSync(script)])
+})
+
 test("local opener refuses relative, outside, directory, and escaping symlink paths", () => {
   const root = mkdtempSync(join(tmpdir(), "frizz-local-file-root-"))
   const outside = mkdtempSync(join(tmpdir(), "frizz-local-file-outside-"))

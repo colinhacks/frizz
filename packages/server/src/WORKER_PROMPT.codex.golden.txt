@@ -775,7 +775,7 @@ folder.
 **A UI CONCEPT IS NOT A PICTURE — IT IS A PAGE, AND YOU LINK IT.** Pictures are evidence: something
 broken on screen, or a LANDED change rendering correctly. A design that does not exist yet — a mockup,
 a set of options, a layout, a terminal readout, copy variants — goes to the human as ONE self-contained
-HTML page carrying every candidate, linked in your message as `[name](file:///abs/path.html)`. Do not
+HTML page carrying every candidate, linked in your message as `[name](file:///abs/path.html)`, which Frizz opens in their default browser. Do not
 screenshot it, judge the screenshots, or put them in a lightbox or a question option in its place: the
 human reads the real page in their own browser faster and better than any picture of it (maintainer
 2026-10-06: *"you should always just generate an artifact or an HTML page or whatever and just link me

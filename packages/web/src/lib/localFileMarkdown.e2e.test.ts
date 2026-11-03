@@ -73,6 +73,7 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
         // Cursor no matter what "Local file links" said. Both slash forms arrive as the path they name.
         "/fixture/plan.md",
         "/fixture/trace.json",
+        "/fixture/options.html",
         // Windows destinations carry a path too. The file URL's leading slash stays until the
         // server normalizes it for its own filesystem.
         "D:/fixture/win-report.md",
@@ -106,6 +107,8 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
     // wrote a `cursor://`/`vscode://` destination, only the path it named.
     await page.click('button[data-local-path="/fixture/plan.md"]')
     await page.click('button[data-local-path="/fixture/trace.json"]')
+    // A linked HTML page goes to the opener, which is the browser: Frizz renders no page itself.
+    await page.click('button[data-local-path="/fixture/options.html"]')
     // And the Windows set routes by the same rule, in both separators: `.md` to Frizz's own reader,
     // anything else to the opener. The click handler reads an extension, never a platform.
     await page.click('button[data-local-path="D:/fixture/win-report.md"]')
@@ -118,7 +121,7 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
       drawers: (window as unknown as { __localFileFixtureDrawers: () => unknown[] }).__localFileFixtureDrawers(),
     }))
     assert.deepEqual(routed, {
-      opened: ["/fixture/trace.json", "D:\\fixture\\win-trace.json"],
+      opened: ["/fixture/trace.json", "/fixture/options.html", "D:\\fixture\\win-trace.json"],
       drawers: [
         { kind: "markdown", path: "/fixture/report.md" },
         { kind: "markdown", path: "/fixture/contract.pdf" },
@@ -147,6 +150,7 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
     }))
     assert.deepEqual(fromHeaders.opened, [
       "/fixture/trace.json",
+      "/fixture/options.html",
       "D:\\fixture\\win-trace.json",
       "/fixture/src/app.ts",
     ])
@@ -161,6 +165,36 @@ test("Markdown local image syntax uses the gated image proxy and local files rem
       { kind: "markdown", path: "/fixture/notes.md" },
     ])
     assert.equal(fromHeaders.expanded, expandedBefore)
+
+    // A WIDE /full window, where the reader opens beside the thread: other text now opens there as
+    // source, but an HTML page still goes to the browser. Before 2026-11-02 the page's width alone
+    // decided, so the same link rendered on a narrow window and showed its source on a wide one.
+    type SplitWindow = { __localFileFixtureOpened?: string[]; __localFileFixturePanels: () => string[]; __localFileFixtureSplit: (on: boolean) => void }
+    await page.evaluate(() => (window as unknown as SplitWindow).__localFileFixtureSplit(true))
+    await page.click('button[data-local-path="/fixture/options.html"]')
+    // The control: proves the split is live, so the page's route is the HTML rule and not a narrow window.
+    await page.click('button[data-local-path="/fixture/trace.json"]')
+    await page.waitForFunction(() => (window as unknown as SplitWindow).__localFileFixturePanels().length > 0)
+    const wide = await page.evaluate(() => ({
+      opened: (window as unknown as SplitWindow).__localFileFixtureOpened ?? [],
+      panels: (window as unknown as SplitWindow).__localFileFixturePanels(),
+    }))
+    assert.deepEqual(wide.opened.slice(fromHeaders.opened.length), ["/fixture/options.html"])
+    assert.deepEqual(wide.panels, ["/fixture/trace.json"])
+
+    // ON A PHONE the desktop opener is the wrong machine, and the server serves a page only as a
+    // download, so a page opens as source in the reader, as any other text file does there.
+    const phone = await browser.newPage()
+    phone.on("pageerror", (error) => pageErrors.push(String(error)))
+    await phone.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
+    await phone.goto(`${baseUrl}/local-file-opener-fixture.html`, { waitUntil: "domcontentloaded" })
+    await phone.waitForSelector('button[data-local-path="/fixture/options.html"]')
+    await phone.click('button[data-local-path="/fixture/options.html"]')
+    await phone.waitForFunction(() => (window as unknown as { __localFileFixtureDrawers: () => unknown[] }).__localFileFixtureDrawers().length > 0)
+    assert.deepEqual(await phone.evaluate(() => ({
+      opened: (window as unknown as { __localFileFixtureOpened?: string[] }).__localFileFixtureOpened ?? [],
+      drawers: (window as unknown as { __localFileFixtureDrawers: () => unknown[] }).__localFileFixtureDrawers(),
+    })), { opened: [], drawers: [{ kind: "markdown", path: "/fixture/options.html" }] })
 
     assert.deepEqual(pageErrors, [])
   } finally {

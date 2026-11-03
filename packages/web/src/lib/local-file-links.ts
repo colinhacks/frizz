@@ -4,7 +4,7 @@ import { openLightbox, pushMarkdownDrawer, showToast, store } from "../store.ts"
 import { copyTextToClipboard } from "./clipboard.ts"
 import { lightboxImageFor } from "./lightbox.ts"
 import { localFileQuery } from "./localFileQuery.ts"
-import { browserShowsPdf, isLightboxPath, isLocalMarkdownFile, isLocalPdfFile, localImageUrl } from "./markdownTargets.ts"
+import { browserShowsPdf, isLightboxPath, isLocalHtmlFile, isLocalMarkdownFile, isLocalPdfFile, localImageUrl } from "./markdownTargets.ts"
 import { basename } from "./paths.ts"
 import { isMobileViewport } from "./mobile.ts"
 
@@ -91,6 +91,11 @@ function openPicture(source: HTMLElement, path: string): void {
 //   · a PDF → the reader, in the browser's own PDF viewer; on a phone, the phone's own (a new tab). A
 //     desktop browser that would download PDFs rather than show them has no viewer to lend, so there
 //     a PDF goes to the desktop opener like any other binary file.
+//   · an HTML page → the desktop opener, at EVERY width: the browser is the only thing that shows a
+//     page as its author meant (maintainer 2026-11-02, of a worker's options page that a wide /full
+//     window drew as source: "it opens in my browser instead of in Frizz"). On a phone the desktop
+//     opener is the wrong machine and the server will not serve a page to render, so there it opens
+//     as source, the same as any other text file.
 //   · anything else → wherever the board sends code on this surface. On the desktop board that is the
 //     desktop opener, as it always was. Where the surface is the reader's SOURCE view — the /full split
 //     panel, a phone — the server's read decides first: text opens the reader, and a binary file falls
@@ -122,7 +127,7 @@ export function openLocalPath(path: string, image = false): void {
     else void open(path, false)
     return
   }
-  if (!store.splitFileViewer && !isMobileViewport()) {
+  if ((isLocalHtmlFile(path) || !store.splitFileViewer) && !isMobileViewport()) {
     void open(path, false)
     return
   }

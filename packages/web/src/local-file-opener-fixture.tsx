@@ -21,6 +21,8 @@ const HOME_DIR = "/fixture/home"
 type FixtureWindow = Window & {
   __localFileFixtureOpened?: string[]
   __localFileFixtureDrawers?: () => { kind: string; path?: string }[]
+  __localFileFixturePanels?: () => string[]
+  __localFileFixtureSplit?: (on: boolean) => void
 }
 
 const nativeFetch = window.fetch.bind(window)
@@ -39,6 +41,10 @@ window.fetch = async (input, init) => {
 
 ;(window as FixtureWindow).__localFileFixtureDrawers = () =>
   store.drawers.map((d) => ({ kind: d.kind, path: d.path }))
+// The /full page's split reader, which StandaloneThreadPage switches on at a wide window: a text file
+// then opens beside the thread instead of in a drawer, and the e2e test asserts an HTML page does not.
+;(window as FixtureWindow).__localFileFixturePanels = () => store.filePanels.map((p) => p.path)
+;(window as FixtureWindow).__localFileFixtureSplit = (on) => { store.splitFileViewer = on }
 
 installLocalFileLinkInterceptor()
 createRoot(document.getElementById("root")!).render(
@@ -65,6 +71,11 @@ createRoot(document.getElementById("root")!).render(
           "The plan survives in [`plan.md`](cursor://file/fixture/plan.md).",
           "",
           "The raw capture is [`trace.json`](vscode://file//fixture/trace.json).",
+          "",
+          // A self-contained page, linked the way the worker contract tells a worker to link one. It goes
+          // to the desktop opener (the browser) at every width — never the source reader beside the
+          // thread on a wide /full window — and on a phone opens as source (lib/local-file-links.ts).
+          "The options are on [this page](file:///fixture/options.html).",
           "",
           // Both drive separators, a file URL pathname, and an inline Windows screenshot.
           "The Windows write-up is in [`win-report.md`](D:/fixture/win-report.md).",

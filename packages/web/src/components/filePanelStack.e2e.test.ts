@@ -231,13 +231,22 @@ test("full-screen file links open what Frizz can show and hand the rest to the s
     await page.waitForFunction(() => document.querySelectorAll("[data-file-viewer-slot]").length === 0)
     assert.equal(opened.length, 1, "neither the picture nor the text reached the opener")
 
+    // An HTML page is text too, but the browser is its viewer: on this wide window, where text opens
+    // beside the thread as source, a linked page still goes to the opener (maintainer 2026-11-02).
+    await page.click(link("options.html"))
+    await page.waitForFunction(() => document.querySelectorAll("[data-file-viewer-slot]").length === 0)
+    const toBrowser = Date.now() + 10_000
+    while (opened.length < 2 && Date.now() < toBrowser) await new Promise((r) => setTimeout(r, 50))
+    assert.match(opened[1] ?? "", /\/options\.html$/)
+    assert.equal((await state()).panels, 0, "and no source panel opened for it")
+
     // A browser that would DOWNLOAD a PDF (Chrome's "Download PDF files", or this shell as it really
     // is) has no viewer to lend the panel, so a PDF falls through to the opener like the zip did.
     await page.evaluate(pdfViewer, false)
     const toOpener = page.waitForRequest((r) => r.url().endsWith("/openLocalFile") && (r.postData() ?? "").includes("report.pdf"), { timeout: 10_000 })
     await page.click(link("report.pdf"))
     await toOpener
-    assert.match(opened[1] ?? "", /\/report\.pdf$/)
+    assert.match(opened[2] ?? "", /\/report\.pdf$/)
     assert.equal((await state()).panels, 0, "and opens no blank panel")
     await page.evaluate(pdfViewer, true)
 
@@ -267,8 +276,13 @@ test("full-screen file links open what Frizz can show and hand the rest to the s
     } finally {
       rmSync(downloads, { recursive: true, force: true })
     }
-    assert.equal(opened.length, 2, "nothing on the phone reached the desktop opener")
+    assert.equal(opened.length, 3, "nothing on the phone reached the desktop opener")
     assert.equal(await page.$$eval(".frizz-sheet-panel", (els) => els.length), 0, "and no reader opened for either")
+    // An HTML page on a phone opens as source in the reader: the desktop opener is the wrong machine,
+    // and the server serves a page only as a sandboxed download, never as a document to render.
+    await page.click(link("options.html"))
+    await page.waitForFunction(() => document.querySelector(".frizz-sheet-panel")?.textContent?.includes("page source, shown only on a phone"))
+    assert.equal(opened.length, 3, "and the page did not reach the desktop opener either")
 
     await page.evaluate(async () => {
       const path = "/src/api/rpc.ts"; const { rpc } = await import(path)

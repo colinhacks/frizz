@@ -153,6 +153,15 @@ export function isLocalPdfFile(path: string): boolean {
   return PDF_FILE_PATH.test(path.trim())
 }
 
+// Must match the server's `HTML_FILE_EXT`. A page — the self-contained mockup, options page or report
+// a worker links for the human to open — whose only faithful view is the browser: Frizz never renders
+// one itself (`/local-file` serves it as a sandboxed download), so its source is the wrong thing to show.
+const HTML_FILE_PATH = /\.html?$/i
+
+export function isLocalHtmlFile(path: string): boolean {
+  return HTML_FILE_PATH.test(path.trim())
+}
+
 // The browser's own word on whether it renders a PDF inline. False where it would DOWNLOAD one instead —
 // Chrome with "Download PDF files" switched on, the headless shell — and an iframe there is a blank panel
 // plus a stray download, so a PDF is then not something Frizz can show. Absent only from browsers older

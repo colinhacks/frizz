@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { isLocalMarkdownFile, localFileDir, localImageUrl, localImageUrlForTarget, localMarkdownTarget, resolveRelativeLocalPath } from "./markdownTargets.ts"
+import { isLocalHtmlFile, isLocalMarkdownFile, localFileDir, localImageUrl, localImageUrlForTarget, localMarkdownTarget, resolveRelativeLocalPath } from "./markdownTargets.ts"
 
 test("absolute POSIX and file URLs become local targets with decoded proxy paths", () => {
   assert.deepEqual(
@@ -135,6 +135,13 @@ test("a local Markdown file is recognized by extension, editor suffix and all", 
     assert.equal(isLocalMarkdownFile(path), true, path)
   for (const path of ["/repo/notes.txt", "/repo/md", "/repo/a.md.bak", "/repo/docs", "/repo/a.mdxx"])
     assert.equal(isLocalMarkdownFile(path), false, path)
+})
+
+test("a local HTML page is recognized by extension, .htm and any case included", () => {
+  for (const path of ["/repo/mockups/options.html", "/repo/report.HTM", "D:\\scratch\\page.Html", " /a/b.html "])
+    assert.equal(isLocalHtmlFile(path), true, path)
+  for (const path of ["/repo/index.html.bak", "/repo/notes.md", "/repo/html", "/repo/page.xhtml", "/repo/a.htmlx"])
+    assert.equal(isLocalHtmlFile(path), false, path)
 })
 
 test("a document's relative links resolve against its own directory", () => {

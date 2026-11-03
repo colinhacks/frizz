@@ -73,8 +73,8 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
   // SPLIT MODE for the file reader: while this page is mounted (and the window is wide enough for two
   // real columns), a click on a local file renders beside the thread instead of as a sheet over it —
   // Markdown, a PDF, or any other file the server reads as text (a project file in the rail's Edited
-  // files list, say); lib/local-file-links.ts openLocalPath sends a binary one to the desktop opener
-  // instead. Tracked live so shrinking the window falls back to the drawer for later
+  // files list, say); lib/local-file-links.ts openLocalPath sends a binary one, and an HTML page, to the
+  // desktop opener instead. Tracked live so shrinking the window falls back to the drawer for later
   // clicks; a panel already open stays (its layout degrades gracefully, and yanking it on resize
   // would lose the reader's place).
   useEffect(() => {
