@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml"
 import { z } from "zod"
 import { InteractionLifecycle, InteractionOpaqueId, InteractionRevision, InteractionThreadSlug } from "./interactions.ts"
+import { LAUNCH_PREFIX_MAX_LENGTH } from "./launch-prefix.ts"
 import { ThreadSlug } from "./thread-slug.ts"
 
 // ---- Attachment intake (drag/drop, paste, file picker) ----
@@ -4944,6 +4945,19 @@ export const Settings = z.object({
     command: z.string().trim().min(1).max(1_024),
     args: z.array(z.string().max(1_024)).max(32).optional(),
   })).max(32).optional(),
+  // A command each runtime's workers are started THROUGH, per runtime: `op run --env-file .env --`
+  // makes a new Claude worker start as `op run --env-file .env -- /path/to/claude …`. Kept as the text
+  // the operator typed and split into words by parseLaunchPrefix (launch-prefix.ts), the one parser the
+  // settings field and the spawn share; it is never run in a shell. Claude applies it at every fork of a
+  // thread's worker; Codex to the app-server the project's Codex threads share, which is replaced at
+  // the next moment no Codex turn is running once the prefix changes. ACP agents need no key here:
+  // their `command` above is already the operator's own. A string rather than a refined argv so a
+  // stored value the parser later stops accepting fails ITS launch, not the whole settings parse
+  // (getSettings falls back to every default on a parse miss). Optional so an old blob parses.
+  launchPrefix: z.object({
+    claude: z.string().max(LAUNCH_PREFIX_MAX_LENGTH).optional(),
+    codex: z.string().max(LAUNCH_PREFIX_MAX_LENGTH).optional(),
+  }).optional(),
   // The GitHub batch-dispatch prompt template (the picker's per-item worker prompt). Optional: when
   // unset OR blank the server falls back to its exported DEFAULT_GITHUB_PROMPT. Substitution tokens
   // the server fills: {repo} {n} {title} {url} {labels} {body}. The leading `THREAD: <slug>` tag is
@@ -6842,6 +6856,7 @@ export * from "./question-fence.ts"
 export * from "./delta.ts"
 export * from "./drainable-worker.ts"
 export * from "./interactions.ts"
+export * from "./launch-prefix.ts"
 export * from "./receipt-bus.ts"
 export * from "./relay-protocol.ts"
 export * from "./shell-writes.ts"
