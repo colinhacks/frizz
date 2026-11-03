@@ -2964,8 +2964,9 @@ export const AddOwnMonitorInput = z.object({
   slug: ThreadSlug,
   /** Run with `/bin/sh -c` in the project root, with the server's environment. Each stdout line is an event. */
   command: z.string().trim().min(1).max(COMMAND_WATCH_COMMAND_MAX),
-  /** What it watches, in the worker's words — the label on every wake and on the board row. */
-  description: z.string().trim().max(MONITOR_DESCRIPTION_MAX).optional(),
+  /** What it watches, in the worker's words — the name on its row and drawer, and the label on every wake.
+   *  Required (2026-11-03), as a sub-agent's description is: without one the row could only show the script. */
+  description: z.string().trim().min(1).max(MONITOR_DESCRIPTION_MAX),
   /** How long to keep it running, as a DURATION. Clamped to COMMAND_WATCH_FOR_MAX_MS and reported. */
   for: z.string().trim().min(1).max(16),
 }).strict()
@@ -3007,7 +3008,9 @@ export function monitorLabel(input: { command: string; description?: string | nu
 const MONITOR_EVENT_HEAD = /^📟 Your monitor `(cmw_[a-z0-9]+)` printed (\d+) lines? \(event (\d+)\) — (.+)$/m
 const MONITOR_EXITED_HEAD = /^⏹️ Your monitor `(cmw_[a-z0-9]+)` (exited \d+|was killed by a signal|could not be started) after (\d+) events? and is no longer armed — (.+)$/m
 const MONITOR_EXPIRED_HEAD = /^⏰ Your monitor `(cmw_[a-z0-9]+)` ran out its `for` after (\d+) events? and was stopped — (.+)$/m
-const MONITOR_CANCELLED_HEAD = /^⚠️ Frizz stopped your monitor `(cmw_[a-z0-9]+)` after (\d+) events?: (.*)$/m
+const MONITOR_CANCELLED_HEAD = /^(⚠️ Frizz|🛑 The human) stopped your monitor `(cmw_[a-z0-9]+)`(?: from the board)? after (\d+) events? — (.+)$/m
+// The head frizz-server 0.15.42 wrote: no label, the reason after a colon, and only Frizz could stop one.
+const MONITOR_CANCELLED_HEAD_0_15_42 = /^⚠️ Frizz stopped your monitor `(cmw_[a-z0-9]+)` after (\d+) events?: (.*)$/m
 
 // Each wake's closing paragraph is addressed to the worker about its own registration. Named once so the
 // chat's parser cuts exactly what the composer wrote.
@@ -3064,10 +3067,20 @@ export function monitorExpiredWakeMessage(input: { id: string; label: string; co
   ].join("\n")
 }
 
-/** The wake a monitor sends when Frizz stops it: the gate closed under it, or it printed a flood. */
-export function monitorCancelledWakeMessage(input: { id: string; command: string; events: number; reason: string }): string {
+/** The wake a monitor sends when something other than its script ends it: FRIZZ (the gate closed under
+ *  it, or it printed a flood) or THE HUMAN, from its drawer on the board. It names the monitor, as every
+ *  other monitor wake does — the one that did not drew its divider as the raw script — and says WHO,
+ *  because "Frizz stopped your monitor: the human stopped it" told the worker two things at once.
+ *  `reason` is a clause in sentence-fragment form ("it printed 30 events…"); it gets its own paragraph. */
+export function monitorCancelledWakeMessage(input: { id: string; label: string; command: string; events: number; reason: string; by?: "frizz" | "human" }): string {
+  const events = `${input.events} event${input.events === 1 ? "" : "s"}`
+  const reason = input.reason.trim()
   return [
-    `⚠️ Frizz stopped your monitor \`${input.id}\` after ${input.events} event${input.events === 1 ? "" : "s"}: ${input.reason}`,
+    input.by === "human"
+      ? `🛑 The human stopped your monitor \`${input.id}\` from the board after ${events} — ${input.label}`
+      : `⚠️ Frizz stopped your monitor \`${input.id}\` after ${events} — ${input.label}`,
+    "",
+    reason.charAt(0).toUpperCase() + reason.slice(1),
     "",
     codeBlock(input.command, "sh"),
     "",
@@ -3080,13 +3093,18 @@ export const MONITOR_FLOOD_REASON =
   `it printed ${MONITOR_FLOOD_MAX_EVENTS} events inside ${formatElapsed(MONITOR_FLOOD_WINDOW_MS)}, and every event is a turn of yours. ` +
   "Register it again with a tighter filter: print only the lines you would act on (`grep --line-buffered`), never raw logs."
 
+/** What a monitor the HUMAN stopped from its drawer tells its worker (scheduler.stopMonitorByHuman). */
+export const MONITOR_STOPPED_BY_HUMAN_REASON = "register it again only if they ask for it."
+
 /** A monitor's wake, read back for the chat's divider. Plain text, like CommandWatchWake. */
 export interface MonitorWake {
   kind: "event" | "exited" | "expired" | "cancelled"
   id: string
-  /** The description or the squeezed command — the divider names the monitor by it. Absent on a
-   *  cancellation, whose head carries the reason instead. */
+  /** The description or the squeezed command — the divider names the monitor by it. Absent only on a
+   *  cancellation frizz-server 0.15.42 wrote, whose head carried the reason instead. */
   label?: string
+  /** A cancellation's author: Frizz (a closed gate, a flood) or the human, from the board. */
+  by?: "frizz" | "human"
   /** How many lines this event printed (`event`), or how many events it had printed in all. */
   count: number
   /** The lines (`event`), or the end of the output (`exited`). */
@@ -3114,14 +3132,25 @@ export function parseMonitorWake(text: string): MonitorWake | null {
   const exited = MONITOR_EXITED_HEAD.exec(t)
   const expired = exited ? null : MONITOR_EXPIRED_HEAD.exec(t)
   const cancelled = exited || expired ? null : MONITOR_CANCELLED_HEAD.exec(t)
-  const head = exited ?? expired ?? cancelled
+  const cancelledOld = exited || expired || cancelled ? null : MONITOR_CANCELLED_HEAD_0_15_42.exec(t)
+  const head = exited ?? expired ?? cancelled ?? cancelledOld
   if (!head || head.index !== 0) return null
   const block = /\n\n(`{3,})sh\n([\s\S]*?)\n\1(?=\n|$)/.exec(t)
   const command = block ? { command: block[2] } : {}
   const plural = (n: number) => `${n} event${n === 1 ? "" : "s"}`
   if (cancelled) {
-    const n = Number(cancelled[2])
-    return { kind: "cancelled", id: cancelled[1], count: n, summary: `Frizz stopped it after ${plural(n)}: ${unfence(cancelled[3].trim()).replace(/\.$/, "")}.`, ...command }
+    const n = Number(cancelled[3])
+    const by = cancelled[1] === "🛑 The human" ? "human" as const : "frizz" as const
+    // The reason is the paragraph between the head and the script.
+    const reason = unfence(t.slice(cancelled[0].length, block?.index ?? t.length).trim())
+    const summary = by === "human"
+      ? `You stopped it from the board after ${plural(n)}.`
+      : `Frizz stopped it after ${plural(n)}.${reason ? ` ${reason}` : ""}`
+    return { kind: "cancelled", id: cancelled[2], label: cancelled[4], by, count: n, summary, ...command }
+  }
+  if (cancelledOld) {
+    const n = Number(cancelledOld[2])
+    return { kind: "cancelled", id: cancelledOld[1], by: "frizz", count: n, summary: `Frizz stopped it after ${plural(n)}: ${unfence(cancelledOld[3].trim()).replace(/\.$/, "")}.`, ...command }
   }
   if (expired) {
     const n = Number(expired[2])

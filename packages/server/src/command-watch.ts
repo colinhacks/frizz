@@ -29,7 +29,7 @@
 // has no such reading at all. Neither can hibernate either (hibernation is Claude-only), so the memory
 // the watch exists to free is not there to free. Refusing is the sound answer until one of those changes.
 import { execFileSync, spawn } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, userInfo } from "node:os"
 import { join } from "node:path"
 import { StringDecoder } from "node:string_decoder"
@@ -382,6 +382,8 @@ export interface MonitorProcessSpec {
   cwd: string
   env: Record<string, string | undefined>
   onEvent: (event: MonitorEvent) => void
+  /** Every chunk the script writes, stdout and stderr as they interleave: what its drawer shows. */
+  onOutput?: (chunk: Buffer) => void
   /** Tests only: a shorter batch window than MONITOR_BATCH_MS. */
   batchMs?: number
 }
@@ -500,11 +502,22 @@ export function startMonitorProcess(spec: MonitorProcessSpec): MonitorProcess {
     finish("error", null, `could not start /bin/sh: ${err instanceof Error ? err.message : String(err)}`)
     return { pid: undefined, stop: () => {}, done }
   }
+  const output = (chunk: Buffer) => {
+    try {
+      spec.onOutput?.(chunk)
+    } catch {
+      // A log that cannot be written costs the drawer its output, never the monitor its events.
+    }
+  }
   child.stdout?.on("data", (chunk: Buffer) => {
     keepTail(chunk)
+    output(chunk)
     readStdout(decoder.write(chunk))
   })
-  child.stderr?.on("data", keepTail)
+  child.stderr?.on("data", (chunk: Buffer) => {
+    keepTail(chunk)
+    output(chunk)
+  })
   child.on("error", (err) => finish("error", null, `could not start /bin/sh: ${err.message}`))
   let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null
   const conclude = () => {
@@ -532,6 +545,44 @@ export function startMonitorProcess(spec: MonitorProcessSpec): MonitorProcess {
       timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), KILL_GRACE_MS))
     },
     done,
+  }
+}
+
+// A MONITOR'S OUTPUT LOG (2026-11-03): everything its script printed, stdout and stderr as they interleaved,
+// so its row OPENS the way a background shell's does — onto the script and what it said — instead of being
+// the one row on the card with nothing behind it. Events are the lines that woke the worker; the log is
+// also the lines that did not (stderr, a filter's misses), which is what a monitor that never fires is
+// diagnosed from. One file per monitor in the project's state dir, kept across restarts with a marker at
+// each fresh start, and capped: past MONITOR_OUTPUT_MAX_BYTES it is cut to its newest half.
+export const MONITOR_OUTPUT_MAX_BYTES = 1024 * 1024
+
+export function monitorOutputPath(dir: string, id: string): string {
+  return join(dir, `${id.replace(/[^A-Za-z0-9_-]/g, "")}.log`)
+}
+
+/** Appends a script's output to its log, marking a start after an earlier run, and keeps the file under its cap. */
+export function monitorOutputSink(path: string, maxBytes = MONITOR_OUTPUT_MAX_BYTES, nowIso = () => new Date().toISOString()): (chunk: Buffer) => void {
+  let size = 0
+  try {
+    mkdirSync(join(path, ".."), { recursive: true })
+    size = existsSync(path) ? statSync(path).size : 0
+    if (size > 0) {
+      const marker = Buffer.from(`\n[Frizz started the script again at ${nowIso()}]\n`)
+      appendFileSync(path, marker)
+      size += marker.length
+    } else {
+      writeFileSync(path, "")
+    }
+  } catch {
+    // Unwritable: every append below fails the same way and is swallowed by the process's own guard.
+  }
+  return (chunk) => {
+    appendFileSync(path, chunk)
+    size += chunk.length
+    if (size <= maxBytes) return
+    const kept = readFileSync(path).subarray(-Math.floor(maxBytes / 2))
+    writeFileSync(path, kept)
+    size = kept.length
   }
 }
 
@@ -594,6 +645,18 @@ export function monitorStatusOf(w: Pick<CommandWatchRow, "description" | "events
   }
 }
 
+/** How a monitor that is no longer armed ended, in a word or two for its drawer's header. `passed` is a
+ *  monitor whose script ended by itself (the state CHECK predates monitors). */
+export function monitorEndedLabel(w: Pick<CommandWatchRow, "state" | "last_outcome" | "last_exit">): string {
+  if (w.state === "passed") {
+    if (w.last_outcome === "exit") return `exited ${w.last_exit ?? "?"}`
+    return w.last_outcome === "signal" ? "killed" : "could not run"
+  }
+  if (w.state === "expired") return "expired"
+  if (w.state === "dropped") return "dropped"
+  return "stopped"
+}
+
 // ---- THE SERVICE --------------------------------------------------------------------------------
 
 /** What the scheduler and the router need from this module, bound to one project. */
@@ -609,7 +672,7 @@ export interface CommandWatchService {
    *  MONITOR_SERVER_MAX_RUNNING of them. The slot is held until the script's `done` resolves. The three
    *  monitor members are optional so a test fake about checks alone need not stub them: absent, no
    *  monitor is ever started and registration refuses one. */
-  startMonitor?(slug: string, command: string, onEvent: (event: MonitorEvent) => void): MonitorProcess | undefined
+  startMonitor?(slug: string, command: string, onEvent: (event: MonitorEvent) => void, id?: string): MonitorProcess | undefined
   /** How many monitors the server runs right now, across every project. */
   monitorsRunning?(): number
   /** Kill a monitor a previous server left running (reapStaleMonitor). */
@@ -626,6 +689,8 @@ export interface CommandWatchServiceOptions {
   gate?: Omit<CommandWatchGateOptions, "cwd">
   /** Tests only: a private bound instead of the server-wide one. */
   limiter?: <T>(fn: () => Promise<T>) => Promise<T>
+  /** Where each monitor's output log is kept (monitorOutputPath); absent, nothing is kept. */
+  monitorOutputDir?: string
   /** Tests only: how a monitor's script is started, and its batch window. */
   startMonitorProcess?: (spec: MonitorProcessSpec) => MonitorProcess
   monitorBatchMs?: number
@@ -650,10 +715,11 @@ export function createCommandWatchService(opts: CommandWatchServiceOptions): Com
         probesActive--
       }
     },
-    startMonitor(slug, command, onEvent) {
+    startMonitor(slug, command, onEvent, id) {
       if (monitorsRunning >= MONITOR_SERVER_MAX_RUNNING) return undefined
       monitorsRunning++
-      const proc = (opts.startMonitorProcess ?? startMonitorProcess)({ command, cwd: opts.cwd, env: opts.env(slug), onEvent, batchMs: opts.monitorBatchMs })
+      const onOutput = opts.monitorOutputDir && id ? monitorOutputSink(monitorOutputPath(opts.monitorOutputDir, id)) : undefined
+      const proc = (opts.startMonitorProcess ?? startMonitorProcess)({ command, cwd: opts.cwd, env: opts.env(slug), onEvent, onOutput, batchMs: opts.monitorBatchMs })
       void proc.done.finally(() => { monitorsRunning-- })
       return proc
     },

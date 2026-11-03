@@ -180,7 +180,7 @@ import {
 } from "@frizz/shared"
 import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
-import { monitorStatusOf } from "./command-watch.ts"
+import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command-watch.ts"
 import { listAcpAgents } from "./backend/acp-agents.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
@@ -3913,6 +3913,60 @@ export function createRouter(ctx: AppContext) {
     // A command watch row of kind `monitor`, so `drop` and `list` are the command watch's own RPCs above.
     // Same gate first, for the same reason; then the caps; then the row is armed and the script started,
     // and registration watches it for a moment so a script that cannot run is reported here.
+    // A MONITOR'S DRAWER (2026-11-03): its script and everything it printed, the way a background shell's
+    // drawer reads its output file. The log is written by the monitor's own process (command-watch.ts
+    // monitorOutputSink); `ended` says how a monitor that is no longer running stopped.
+    monitorOutput: query({
+      input: z.object({ slug: ThreadSlug, id: z.string() }).strict(),
+      output: z.object({
+        command: z.string().nullable(),
+        description: z.string().nullable(),
+        output: z.string(),
+        truncated: z.boolean(),
+        state: z.enum(["running", "ended", "gone"]),
+        ended: z.string().nullable(),
+        events: z.number(),
+        startedAt: z.string().nullable(),
+        stoppable: z.boolean(),
+      }),
+      handler: async ({ input }) => {
+        const w = ctx.storage.getCommandWatch(input.id)
+        if (!w || w.kind !== "monitor" || w.thread_slug !== input.slug) {
+          return { command: null, description: null, output: "", truncated: false, state: "gone" as const, ended: null, events: 0, startedAt: null, stoppable: false }
+        }
+        const content = readBackgroundShellOutput(monitorOutputPath(join(ctx.project.stateDir, "monitors"), w.id))
+        const running = w.state === "armed"
+        return {
+          command: w.command,
+          description: w.description,
+          ...content,
+          state: running ? "running" as const : "ended" as const,
+          ended: running ? null : monitorEndedLabel(w),
+          events: w.events,
+          startedAt: new Date(w.created_at).toISOString(),
+          stoppable: running,
+        }
+      },
+    }),
+
+    // The HUMAN's stop, from the monitor's drawer. Unlike the worker's own drop, it wakes the worker: the
+    // monitor ended under it, and its park names a monitor that is gone.
+    stopMonitor: mutation({
+      input: z.object({ slug: ThreadSlug, id: z.string() }).strict(),
+      output: z.object({ stopped: z.boolean() }),
+      handler: async ({ input }) => {
+        const stopped = await ctx.scheduler?.stopMonitorByHuman?.(input.slug, input.id)
+        if (stopped === undefined) {
+          // No scheduler (wakers off): settle the row, so its script is not started again; nobody is woken.
+          const w = ctx.storage.getCommandWatch(input.id)
+          if (!w || w.kind !== "monitor" || w.state !== "armed" || w.thread_slug !== input.slug) return { stopped: false }
+          ctx.storage.settleCommandWatch(input.id, "cancelled", Date.now())
+          return { stopped: true }
+        }
+        return { stopped }
+      },
+    }),
+
     addOwnMonitor: mutation({
       input: AddOwnMonitorInput,
       output: AddOwnMonitorResult,

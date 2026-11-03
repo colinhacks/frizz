@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Copy, TerminalSquare } from "lucide-react"
+import { Copy, Radio, TerminalSquare } from "lucide-react"
 import { showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
-import { useBackgroundShellOutput } from "../hooks.ts"
+import { useBackgroundShellOutput, useMonitorOutput } from "../hooks.ts"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
 import { elapsedSince } from "../lib/durationLabels.ts"
 import { Sheet } from "./ui/Sheet.tsx"
@@ -32,22 +32,10 @@ export function BackgroundShellSheet({
   depth: number
   widthDepth: number
 }) {
-  const scrollerRef = useRef<HTMLDivElement>(null)
   const query = useBackgroundShellOutput(slug, shellId)
   const state = query.data?.state
-  const command = query.data?.command
-  const output = query.data?.output ?? ""
   const [stopping, setStopping] = useState(false)
   const qc = useQueryClient()
-
-  // Follow live output only while the reader remains close to the bottom; inspecting earlier lines
-  // must not be interrupted by the next 1.5s poll.
-  useEffect(() => {
-    const element = scrollerRef.current
-    if (!element) return
-    const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-    if (distance < 160) element.scrollTop = element.scrollHeight
-  }, [output])
 
   const age = elapsedSince(startedAt)
   const stateLabel = state === "running" ? `running${age ? ` ${age}` : ""}` : state === "done" ? "finished" : state === "gone" ? "unavailable" : ""
@@ -77,6 +65,161 @@ export function BackgroundShellSheet({
       .finally(() => setStopping(false))
   }
 
+  return (
+    <OutputSheet
+      id={id}
+      depth={depth}
+      widthDepth={widthDepth}
+      kind="background-shell"
+      title={label}
+      icon={<TerminalSquare aria-hidden size={14} className="shrink-0 text-muted-60" />}
+      stateLabel={stateLabel}
+      command={query.data?.command}
+      output={query.data?.output ?? ""}
+      truncated={query.data?.truncated === true}
+      running={state === "running"}
+      loading={query.isLoading}
+      unavailable={unavailable}
+      unavailableText="Background shell output is no longer available."
+      noCommandText="Command unavailable for this background operation."
+      emptyText={state === "done" ? "No output was captured." : "No output yet."}
+      stop={!unavailable && query.data?.stoppable ? { label: "Stop shell", stopping, onStop: stop } : undefined}
+      // A RUNNING shell frizz cannot reach states why where nothing offers to stop it, because "no
+      // control and no explanation" is what sent the maintainer looking for a stop in the first place.
+      // A finished shell needs neither (its state readout already says "finished").
+      footer={!unavailable && !query.data?.stoppable && state === "running" ? query.data?.stopNote ?? undefined : undefined}
+    />
+  )
+}
+
+/**
+ * A MONITOR's drawer (2026-11-03): the same sheet as a background shell's, because a monitor IS a shell
+ * the server runs — its row opens onto the script and everything it printed, stdout and stderr together,
+ * the lines that woke the worker and the ones that did not. The server keeps that log (command-watch.ts,
+ * monitorOutputSink); this reads it, polling while the script runs.
+ *
+ * Its stop is the HUMAN's, and unlike the worker's own drop it wakes the worker with why: the monitor
+ * ended under a thread that may be resting on it.
+ */
+export function MonitorSheet({
+  id,
+  slug,
+  monitorId,
+  label,
+  depth,
+  widthDepth,
+}: {
+  id: number
+  slug: string
+  monitorId: string
+  label: string
+  depth: number
+  widthDepth: number
+}) {
+  const query = useMonitorOutput(slug, monitorId)
+  const data = query.data
+  const [stopping, setStopping] = useState(false)
+  const qc = useQueryClient()
+
+  const events = data ? `${data.events} event${data.events === 1 ? "" : "s"}` : ""
+  const age = elapsedSince(data?.startedAt ?? undefined)
+  const stateLabel = data?.state === "running"
+    ? [`running${age ? ` ${age}` : ""}`, events].join(" · ")
+    : data?.state === "ended"
+      ? [data.ended ?? "ended", events].join(" · ")
+      : data?.state === "gone" ? "unavailable" : ""
+  const unavailable = query.isError || data?.state === "gone"
+
+  function stop() {
+    if (stopping) return
+    setStopping(true)
+    rpc.stopMonitor({ slug, id: monitorId })
+      .then(({ stopped }) => {
+        showToast(stopped ? "Monitor stopped — the worker was told" : "This monitor had already ended")
+        void qc.invalidateQueries({ queryKey: ["monitorOutput", slug, monitorId] })
+      })
+      .catch((error: unknown) => {
+        showToast(error instanceof Error ? error.message : "Could not stop this monitor")
+      })
+      .finally(() => setStopping(false))
+  }
+
+  return (
+    <OutputSheet
+      id={id}
+      depth={depth}
+      widthDepth={widthDepth}
+      kind="monitor"
+      title={data?.description || label}
+      icon={<Radio aria-hidden size={14} className="shrink-0 text-muted-60" />}
+      stateLabel={stateLabel}
+      command={data?.command}
+      output={data?.output ?? ""}
+      truncated={data?.truncated === true}
+      running={data?.state === "running"}
+      loading={query.isLoading}
+      unavailable={unavailable}
+      unavailableText="This monitor is no longer available."
+      noCommandText="Script unavailable for this monitor."
+      emptyText={data?.state === "ended" ? "It printed nothing." : "Nothing printed yet."}
+      stop={!unavailable && data?.stoppable ? { label: "Stop monitor", stopping, onStop: stop } : undefined}
+    />
+  )
+}
+
+/** The sheet both drawers draw: a header with the state and the stop, the command, and the output. */
+function OutputSheet({
+  id,
+  depth,
+  widthDepth,
+  kind,
+  title,
+  icon,
+  stateLabel,
+  command,
+  output,
+  truncated,
+  running,
+  loading,
+  unavailable,
+  unavailableText,
+  noCommandText,
+  emptyText,
+  stop,
+  footer,
+}: {
+  id: number
+  depth: number
+  widthDepth: number
+  /** Names the data attributes (`data-background-shell-output`, `data-monitor-output`, …). */
+  kind: "background-shell" | "monitor"
+  title: string
+  icon: ReactNode
+  stateLabel: string
+  command: string | null | undefined
+  output: string
+  truncated: boolean
+  running: boolean
+  loading: boolean
+  unavailable: boolean
+  unavailableText: string
+  noCommandText: string
+  emptyText: string
+  stop?: { label: string; stopping: boolean; onStop: () => void }
+  footer?: string
+}) {
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const attr = (part: string) => ({ [`data-${kind}-${part}`]: "" }) as Record<`data-${string}`, string>
+
+  // Follow live output only while the reader remains close to the bottom; inspecting earlier lines
+  // must not be interrupted by the next 1.5s poll.
+  useEffect(() => {
+    const element = scrollerRef.current
+    if (!element) return
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight
+    if (distance < 160) element.scrollTop = element.scrollHeight
+  }, [output])
+
   async function copyCommand() {
     if (!command) return
     try {
@@ -92,21 +235,21 @@ export function BackgroundShellSheet({
       {(close) => (
         <>
           <SheetHeader
-            title={label}
-            icon={<TerminalSquare aria-hidden size={14} className="shrink-0 text-muted-60" />}
+            title={title}
+            icon={icon}
             meta={stateLabel ? <span className="shrink-0 whitespace-nowrap text-[11.5px] text-muted-60">{stateLabel}</span> : undefined}
             // The stop, as the sub-agent drawer's: the header's far-right check (DrawerStopCheck), only
-            // for a shell frizz can really end. `-mr-1` puts its ink 21px from the edge, where the thread
-            // header's sits — this header's `px-4` is 4px wider than that one's `px-3`.
-            actions={!unavailable && query.data?.stoppable
-              ? <span className="-mr-1 flex shrink-0"><DrawerStopCheck data-stop-background-shell="" label="Stop shell" stopping={stopping} onStop={stop} /></span>
+            // for an operation frizz can really end. `-mr-1` puts its ink 21px from the edge, where the
+            // thread header's sits — this header's `px-4` is 4px wider than that one's `px-3`.
+            actions={stop
+              ? <span className="-mr-1 flex shrink-0"><DrawerStopCheck {...attr("stop")} {...(kind === "background-shell" ? { "data-stop-background-shell": "" } : {})} label={stop.label} stopping={stop.stopping} onStop={stop.onStop} /></span>
               : undefined}
             onClose={close}
           />
 
           <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {unavailable ? (
-              <div className="flex h-full items-center justify-center px-8 text-center text-[13px] text-muted">Background shell output is no longer available.</div>
+              <div className="flex h-full items-center justify-center px-8 text-center text-[13px] text-muted">{unavailableText}</div>
             ) : (
               // The drawer body is NEVER gated behind a full-height spinner: a slow first fetch (HTTP pool
               // contention on a busy instance) then reads as "stuck rendering forever" behind a context-free
@@ -127,22 +270,22 @@ export function BackgroundShellSheet({
                       painting "Command unavailable for this background operation." in shell grammar
                       would colour a sentence as though it were a script. */}
                   {command ? (
-                    <CodeBody data-background-shell-command text={command} language="bash" className={commandBlockClass} />
+                    <CodeBody {...attr("command")} text={command} language="bash" className={commandBlockClass} />
                   ) : (
-                    <pre data-background-shell-command className={commandBlockClass}>{query.isLoading ? "Loading…" : "Command unavailable for this background operation."}</pre>
+                    <pre {...attr("command")} className={commandBlockClass}>{loading ? "Loading…" : noCommandText}</pre>
                   )}
                 </section>
                 <section>
                   <div className="mb-2 flex items-center gap-2">
                     <h2 className="petite-caps text-[10px] text-muted-65">Output</h2>
-                    {state === "running" && <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="shell-drawer" />}
-                    {query.data?.truncated && <span className="text-[10.5px] text-muted-50">Showing latest 512 KB</span>}
+                    {running && <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator={kind === "monitor" ? "monitor-drawer" : "shell-drawer"} />}
+                    {truncated && <span className="text-[10.5px] text-muted-50">Showing latest 512 KB</span>}
                   </div>
                   {output ? (
-                    <pre data-background-shell-output className={`font-mono-keep min-h-40 whitespace-pre-wrap break-words ${BLOCK_RADIUS} border border-border bg-inset px-4 py-3 text-[12px] leading-relaxed text-fg/85`}>{output}</pre>
+                    <pre {...attr("output")} className={`font-mono-keep min-h-40 whitespace-pre-wrap break-words ${BLOCK_RADIUS} border border-border bg-inset px-4 py-3 text-[12px] leading-relaxed text-fg/85`}>{output}</pre>
                   ) : (
-                    <div data-background-shell-output className={`flex min-h-40 items-center justify-center ${BLOCK_RADIUS} border border-border bg-inset px-4 text-center text-[12px] text-muted-60`}>
-                      {state === "done" ? "No output was captured." : "No output yet."}
+                    <div {...attr("output")} className={`flex min-h-40 items-center justify-center ${BLOCK_RADIUS} border border-border bg-inset px-4 text-center text-[12px] text-muted-60`}>
+                      {emptyText}
                     </div>
                   )}
                 </section>
@@ -150,15 +293,12 @@ export function BackgroundShellSheet({
             )}
           </div>
 
-          {/* A RUNNING shell frizz cannot reach states why where nothing offers to stop it, because "no
-              control and no explanation" is what sent the maintainer looking for a stop in the first
-              place. A finished shell needs neither (its state readout already says "finished"). */}
-          {!unavailable && !query.data?.stoppable && state === "running" && query.data?.stopNote && (
+          {footer && (
             <footer
-              data-background-shell-stop-note
+              {...attr("stop-note")}
               className="w-full shrink-0 border-t border-border/70 bg-panel/95 px-4 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[11.5px] text-muted-70"
             >
-              {query.data.stopNote}
+              {footer}
             </footer>
           )}
         </>

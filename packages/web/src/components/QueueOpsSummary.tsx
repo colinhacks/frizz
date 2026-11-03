@@ -4,13 +4,14 @@ import type { BgShellView, ThreadView } from "@frizz/shared"
 import { CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, type TranscriptShellRecord } from "../lib/childOps.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
-import { queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
+import { isMonitorWatch, queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
 import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
 import { QueueSubAgentLines } from "./QueueSubAgentLines.tsx"
 import { useSurfaceOpsThread } from "./ThreadSurface.tsx"
+import { pushMonitorDrawer } from "../store.ts"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 
 // THE QUEUE CARD'S LIVE OPS, CONDENSED: one line of counts at the right, just above the docked prompt
@@ -65,7 +66,8 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
   shell: "Background shells running for this thread",
   pr: "Pull requests this thread is watching",
   issue: "Issues this thread is watching",
-  command: "Command watches and monitors this thread is waiting on",
+  command: "Command watches this thread is waiting on",
+  monitor: "Monitors this thread is waiting on",
   timer: "Timers this thread has set",
   file: "Files saved for this thread",
   link: "Links saved for this thread",
@@ -128,7 +130,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
         >
           {group.key === "agent"
             ? <QueueSubAgentLines slug={thread.id} subAgents={thread.subAgents ?? []} className="" />
-            : group.key === "command" || group.key === "timer"
+            : group.key === "command" || group.key === "monitor" || group.key === "timer"
             ? <WaitPanelRows thread={thread} kind={group.key} />
             : <BackgroundOpsStrip slug={thread.id} includeAgents={false} only={group.key} transcriptShells={transcriptShells} className="" />}
         </OpsCount>
@@ -259,6 +261,7 @@ function CountMark({ kind, states }: { kind: QueueOpsKind; states: readonly (str
     case "pr":
     case "issue": return <Dot hue="github" states={states} />
     case "command":
+    case "monitor":
     case "timer": return <Dot hue="github" states={states} />
     case "file": return <FileText aria-hidden className="h-[1em] w-[1em] text-muted-45" />
     case "link": return <ExternalLink aria-hidden className="h-[1em] w-[1em] text-muted-45" />
@@ -274,14 +277,16 @@ function Dot({ hue, states }: { hue: "agent" | "shell" | "github"; states: reado
 // panel on the line speaks one row. Their readings are the awaiting card's (CommandWatchRow, TimerRow):
 // a command watch's cadence beside how long it has watched, as a PR row's check count sits beside its
 // age, and a timer's countdown alone — beside it, the time since it was set would read as a second clock.
-// Neither has a drawer to open or a registration the human may drop, so neither is a button or has a ×.
-function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" | "timer" }) {
+// A MONITOR's row opens its drawer (MonitorSheet), as a shell's does — its stop lives there, beside what
+// it printed. A plain command watch and a timer have no drawer, so their rows are not buttons, and none
+// carries a ×.
+function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" | "monitor" | "timer" }) {
   const now = useNowMs()
   const { commands, timers } = threadOps(thread)
   return (
     <div className="flex flex-col gap-0.5">
-      {kind === "command"
-        ? commands.map((watch) => (
+      {kind !== "timer"
+        ? commands.filter((watch) => isMonitorWatch(watch) === (kind === "monitor")).map((watch) => (
             <ChildOpRow
               key={watch.id}
               kind="COMMAND"
@@ -291,6 +296,7 @@ function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" |
               startedAt={watch.createdAt}
               counter={commandWatchStatus(watch)}
               title={commandWatchTitle(watch, now)}
+              onOpen={watch.command?.monitor ? () => pushMonitorDrawer(thread.id, watch.target, { label: commandWatchLabel(watch) }) : undefined}
             />
           ))
         : timers.map((watch) => (

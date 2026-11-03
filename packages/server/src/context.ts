@@ -1113,6 +1113,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   // process and the gate is in command-watch.ts.
   const commandWatches = createCommandWatchService({
     cwd: project.dir,
+    monitorOutputDir: join(project.stateDir, "monitors"),
     env: (slug) => {
       const base = sanitizeProviderChildEnvironment(process.env)
       const cli = resolveFrizzCli(frizzMcpTarget)

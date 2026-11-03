@@ -27,3 +27,16 @@ test("the counts name a command watch and a timer, each by its own kind", () => 
   ] } as unknown as ThreadView
   assert.deepEqual(queueOpsCounts(t).map(({ key, n }) => ({ key, n })), [{ key: "command", n: 2 }, { key: "timer", n: 1 }])
 })
+
+// A MONITOR is a command watch row on the board and its own count over the prompt box (2026-11-03): the
+// count read "1 command" over a thread whose card, rail and drawer all called it a monitor.
+test("the counts name a monitor apart from a command watch", () => {
+  const watch = (target: string, monitor: boolean) => ({
+    id: `command:t:${target}`, kind: "command", target, state: "armed", createdAt: "2026-11-03T10:00:00.000Z",
+    command: { command: "tail -F x.log", every: "0s", expiresAt: "2026-11-04T10:00:00.000Z", runs: 0, ...(monitor ? { monitor: { description: "Errors in x.log", events: 1 } } : {}) },
+  })
+  const t = (watches: unknown[]) => ({ id: "t", state: "rested", subAgents: [], links: [], bgShells: [], watches }) as unknown as ThreadView
+  const read = (watches: unknown[]) => queueOpsCounts(t(watches)).map(({ key, n, one }) => ({ key, n, one }))
+  assert.deepEqual(read([watch("cmw_m", true)]), [{ key: "monitor", n: 1, one: "monitor" }])
+  assert.deepEqual(read([watch("cmw_m", true), watch("cmw_n", true), watch("cmw_c", false)]), [{ key: "command", n: 1, one: "command" }, { key: "monitor", n: 2, one: "monitor" }])
+})

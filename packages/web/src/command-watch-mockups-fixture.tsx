@@ -241,14 +241,14 @@ function CommandWatchRowRich() {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-col">
-        <CommandWatchRow watch={watch} now={Date.now()} />
+        <CommandWatchRow watch={watch} slug="fixture" now={Date.now()} />
         <div className="flex items-center gap-2 pl-[26px] pb-1 text-[11px] text-muted-60">
           <CheckStrip runs={RUNS} />
           <span>24 checks · last 1m ago, exited 1</span>
         </div>
       </div>
       <div className="flex flex-col">
-        <CommandWatchRow watch={brokenWatch} now={Date.now()} />
+        <CommandWatchRow watch={brokenWatch} slug="fixture" now={Date.now()} />
         <div className="flex items-center gap-2 pl-[26px] pb-1 text-[11px] text-danger-soft">
           <CheckStrip runs={6} broken />
           <span>can never pass: exit 127, gh: command not found</span>

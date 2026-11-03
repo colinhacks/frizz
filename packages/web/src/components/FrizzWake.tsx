@@ -496,7 +496,7 @@ function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; s
 // A `frizzctl monitor` (2026-11-02): a script the server keeps running, every line it prints a wake. Its
 // EVENTS are the news, so an event's hairline names the monitor and how many lines it printed, and the
 // lines themselves are the disclosure — the reader opens it to see what the worker was woken with. Its
-// ENDINGS (the script exited, its time ran out, Frizz stopped it) read like a command watch's, under the
+// ENDINGS (the script exited, its time ran out, Frizz or the human stopped it) read like a command watch's, under the
 // same broadcast glyph its board row wears. The trailer — how to drop it, how to register it again — is
 // addressed to the worker and never drawn.
 function MonitorDivider({ wake, sourceId, at }: { wake: MonitorWake; sourceId?: string; at?: string }) {
@@ -511,6 +511,7 @@ function MonitorDivider({ wake, sourceId, at }: { wake: MonitorWake; sourceId?: 
   const tail = wake.kind === "event" ? lines
     : wake.kind === "exited" ? "ended"
     : wake.kind === "expired" ? "expired"
+    : wake.by === "human" ? "stopped by you"
     : "stopped by Frizz"
   return (
     <div data-frizz-msg={sourceId} className="flex flex-col">

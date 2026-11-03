@@ -83,6 +83,11 @@ function armedTimerFireAt(t: Pick<ThreadView, "watches">, nowMs: number): string
   return best?.at
 }
 
+/** The worker's description of the thread's first armed monitor that has one. */
+function armedMonitorName(t: Pick<ThreadView, "watches">): string | undefined {
+  return (t.watches ?? []).find((w) => w.kind === "command" && w.state === "armed" && w.command?.monitor?.description)?.command?.monitor?.description
+}
+
 /**
  * When a parked thread comes back, if anything says so: the human's own snooze instant, else the
  * earliest armed timer. Undefined for a park with no clock behind it (a PR watch, the resting card's
@@ -133,7 +138,7 @@ export function rowSecondLine(
     if (parked) {
       const prose = awaitingProse(parked)
       if (prose) return handoffLine(prose)
-      const wait = awaitingWaitClause(parked.hints)
+      const wait = awaitingWaitClause(parked.hints, t.watches)
       if (wait) return { text: `${wait.charAt(0).toUpperCase()}${wait.slice(1)}` }
     }
     if (signedOff) {
@@ -151,7 +156,7 @@ export function rowSecondLine(
     const native = questionsLine((t.pendingAsk?.questions ?? []).map((q) => q.question))
     if (native) return { text: native }
     if (t.runtime === "perm-prompt") return { text: "Waiting on a permission prompt" }
-    const gloss = t.lastFence?.kind === "awaiting" ? hintGloss(t.lastFence.hints) : null
+    const gloss = t.lastFence?.kind === "awaiting" ? hintGloss(t.lastFence.hints, t.watches) : null
     return gloss ? { text: gloss } : handoff()
   }
   // The live line is the call the agent is waiting on, labelled exactly as the chat's working indicator
@@ -164,8 +169,12 @@ export function rowSecondLine(
     return t.activity ? { text: t.activity } : handoff()
   }
   if (kind === "snoozed" && futureSnoozedUntil(t, nowMs) !== undefined) return { text: "Snoozed by you" }
-  const gloss = t.lastFence?.kind === "awaiting" ? hintGloss(t.lastFence.hints) : null
+  const gloss = t.lastFence?.kind === "awaiting" ? hintGloss(t.lastFence.hints, t.watches) : null
   if (gloss) return { text: gloss }
+  // A monitor the worker registered and rested on without naming it in a fence: its name is still the
+  // one thing on this row a reader recognises, as the fenced one's is (hintGloss).
+  const monitor = kind === "monitor" ? armedMonitorName(t) : undefined
+  if (monitor) return { text: `Monitor: ${monitor}` }
   if ((kind === "snoozed" || kind === "timer") && armedTimerFireAt(t, nowMs)) return { text: "Waiting on a timer" }
   return handoff() ?? (t.activity ? { text: t.activity } : null)
 }

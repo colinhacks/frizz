@@ -46,6 +46,11 @@ const base = {
 
 const liveChild = [{ id: "a1", label: "c", startedAt: "2026-08-01T09:05:00.000Z", state: "running" as const }]
 
+const monitorWatch = {
+  id: "command:monitor:cmw_0123456789ab", kind: "command", target: "cmw_0123456789ab", state: "armed", createdAt: "2026-11-03T09:00:00.000Z",
+  command: { command: "tail -n0 -F app.log | grep --line-buffered ERROR", every: "0s", expiresAt: "2099-11-04T09:00:00.000Z", runs: 0, monitor: { description: "Errors in app.log", events: 3 } },
+}
+
 // One thread per state the rail can resolve, named by the kind sessionIndicatorKind returns for it.
 const STATES: { kind: string; t: ThreadView }[] = [
   // OWN TURN RUNNING: the empty spinner. Until 2026-09-20 this slot was a turn-idle parent with a live
@@ -84,6 +89,11 @@ const STATES: { kind: string; t: ThreadView }[] = [
   // It draws the same hourglass as the `snoozed` slot (Sidebar.tsx hourglassMark), so the two measure
   // identically by construction; the slot exists so the QUEUED arm is what gets measured.
   { kind: "timer", t: { ...base, id: "timer", runtime: "turn-idle", needsYou: true, awaitingBackground: true, watches: [{ id: "timer:t:tmr_1", kind: "timer", target: "tmr_1", state: "armed", createdAt: "2026-09-07T09:00:00.000Z", timer: { fireAt: "2099-09-07T16:00:00.000Z", prompt: "re-check the deploy" } }] } as unknown as ThreadView },
+  // AWAITING A MONITOR (2026-11-03): the radio (Sidebar.tsx monitorMark). Queued — a `needs_input` rest
+  // beside a REGISTERED armed monitor, no fence — and parked `watching` with the fence naming it, which is
+  // where the board files most monitor parks; both draw the same mark, so both arms are measured.
+  { kind: "monitor", t: { ...base, id: "monitor", runtime: "turn-idle", needsYou: true, awaitingBackground: true, watches: [monitorWatch] } as unknown as ThreadView },
+  { kind: "monitor-snoozed", t: { ...base, id: "monitor-snoozed", runtime: "turn-idle", needsYou: false, awaitingBackground: true, waitStatus: "watching", watches: [monitorWatch], lastFence: { kind: "awaiting", body: "", hints: [{ kind: "command", value: "cmw_0123456789ab" }, { kind: "status", value: "watching" }] } } as unknown as ThreadView },
   { kind: "archived", t: { ...base, id: "archived", state: "archived", runtime: "exited", needsYou: false } as unknown as ThreadView },
   // AWAITING A PR (2026-09-04). A REGISTERED watch and no fence, deliberately: that is the shape the
   // worker contract now steers workers toward, and it is the one the rail used to miss entirely. The

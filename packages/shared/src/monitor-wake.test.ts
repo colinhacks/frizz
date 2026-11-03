@@ -11,6 +11,7 @@ import {
   monitorExpiredWakeMessage,
   monitorLabel,
   MONITOR_FLOOD_REASON,
+  MONITOR_STOPPED_BY_HUMAN_REASON,
   parseCommandWatchWake,
   parseMergedWake,
   parseMonitorWake,
@@ -52,10 +53,23 @@ test("an expiry and a cancellation read back as what ended them", () => {
   assert.deepEqual(parseMonitorWake(monitorExpiredWakeMessage({ id: ID, label: "l", command: SCRIPT, events: 0 })), {
     kind: "expired", id: ID, label: "l", count: 0, command: SCRIPT, summary: "Expired after 0 events; Frizz stopped the script.",
   })
-  const flood = parseMonitorWake(monitorCancelledWakeMessage({ id: ID, command: SCRIPT, events: 30, reason: MONITOR_FLOOD_REASON }))!
-  assert.equal(flood.kind, "cancelled")
-  assert.equal(flood.count, 30)
-  assert.match(flood.summary, /^Frizz stopped it after 30 events: it printed 30 events inside 10m/)
+  const floodText = monitorCancelledWakeMessage({ id: ID, label: "errors in app.log", command: SCRIPT, events: 30, reason: MONITOR_FLOOD_REASON })
+  assert.match(floodText, /^⚠️ Frizz stopped your monitor `cmw_0a1b2c3d4e5f` after 30 events — errors in app\.log\n\nIt printed 30 events inside 10m/)
+  const flood = parseMonitorWake(floodText)!
+  assert.deepEqual([flood.kind, flood.by, flood.label, flood.count, flood.command], ["cancelled", "frizz", "errors in app.log", 30, SCRIPT])
+  assert.match(flood.summary, /^Frizz stopped it after 30 events\. It printed 30 events inside 10m, .* never raw logs\.$/)
+  assert.doesNotMatch(flood.summary, /`/, "the reason reads as prose, its code spans unwrapped")
+  // THE HUMAN'S STOP says so, to the worker in the wake and to the reader in the divider.
+  const human = parseMonitorWake(monitorCancelledWakeMessage({ id: ID, label: "l", command: SCRIPT, events: 1, reason: MONITOR_STOPPED_BY_HUMAN_REASON, by: "human" }))!
+  assert.deepEqual([human.kind, human.by, human.label, human.summary], ["cancelled", "human", "l", "You stopped it from the board after 1 event."])
+})
+
+// frizz-server 0.15.42 shipped monitors with an unnamed cancellation, and its wakes stay in transcripts.
+test("a cancellation 0.15.42 wrote still reads back", () => {
+  const old = `⚠️ Frizz stopped your monitor \`${ID}\` after 2 events: this thread runs in \`default\` permission mode.\n\n\`\`\`sh\n${SCRIPT}\n\`\`\`\n\nNothing about it will wake you now.`
+  assert.deepEqual(parseMonitorWake(old), {
+    kind: "cancelled", id: ID, by: "frizz", count: 2, command: SCRIPT, summary: "Frizz stopped it after 2 events: this thread runs in default permission mode.",
+  })
 })
 
 test("a merged delivery of a monitor's wakes splits back into each one", () => {

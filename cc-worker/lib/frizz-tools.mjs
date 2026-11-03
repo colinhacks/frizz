@@ -893,8 +893,9 @@ const MONITOR = {
       description: {
         type: "string",
         description:
-          "Optional for `add`, and worth giving: what it watches, in a few words (\"errors in deploy.log\", " +
-          "\"new comments on acme/app#62\"). It labels every wake and the row the human sees.",
+          "Required for `add`. What it watches, in a few words, sentence case (\"Errors in deploy.log\", " +
+          "\"Failed jobs in jobs.ndjson\"): the name the human sees on its row and its drawer, and the label " +
+          "on every wake. Never the script itself.",
       },
       for: {
         type: "string",
@@ -2291,8 +2292,9 @@ async function monitor(args) {
   if (!command) throw new Error("`command` is required — a script that keeps running and prints a line per event")
   const forValue = typeof args.for === "string" ? args.for.trim() : ""
   if (!forValue) throw new Error("`for` is required — how long to keep it running, a DURATION like `6h` or `3d` (max 7d)")
-  const description = typeof args.description === "string" && args.description.trim() ? args.description.trim() : undefined
-  const result = (await callRpc("addOwnMonitor", { slug, command, for: forValue, ...(description ? { description } : {}) }))?.result
+  const description = typeof args.description === "string" ? args.description.trim() : ""
+  if (!description) throw new Error("`description` is required — what it watches in a few words (\"Errors in deploy.log\"), the name the human sees on its row")
+  const result = (await callRpc("addOwnMonitor", { slug, command, for: forValue, description }))?.result
   const printed = Array.isArray(result?.events) && result.events.length
     ? `\n\nIt printed in its first 2s (handed to you here, not as a wake):\n${result.events.map((e) => e.split("\n").map((l) => `  ${l}`).join("\n")).join("\n")}`
     : ""

@@ -147,6 +147,19 @@ import type {
 // Per-call transport options — declared here (not in rpc.ts) only because two procedures name it in
 // their signature. It is a CLIENT-side extension: the drift gate compares `Parameters<…>[0]`, so an
 // extra trailing optional argument is deliberately invisible to it.
+/** A monitor's drawer (`monitorOutput`): its script, everything it printed, and how it ended. */
+export interface MonitorOutput {
+  command: string | null
+  description: string | null
+  output: string
+  truncated: boolean
+  state: "running" | "ended" | "gone"
+  ended: string | null
+  events: number
+  startedAt: string | null
+  stoppable: boolean
+}
+
 export interface RpcCallOpts {
   signal?: AbortSignal
 }
@@ -174,6 +187,8 @@ export interface Api {
   // ended; `note` narrates the fan-out, including any descendant that could NOT be stopped.
   subAgentStop(input: { slug: string; id: string }): Promise<{ stopped: boolean; descendantsStopped: number; note: string | null }>
   backgroundShellOutput(input: { slug: string; id: string }): Promise<{ command: string | null; output: string; truncated: boolean; state: "running" | "done" | "gone"; stoppable: boolean; stopNote: string | null }>
+  monitorOutput(input: { slug: string; id: string }): Promise<MonitorOutput>
+  stopMonitor(input: { slug: string; id: string }): Promise<{ stopped: boolean }>
   // The ops strip's live output counter, batched over every shell row it is showing. `lines: null` is
   // "no readable output yet" (a shell still between its tool_use and its launch ack) — never zero, and
   // never an omission, which would stop the poll before the path ever arrived.
@@ -438,6 +453,8 @@ export const PROCEDURES = {
   subAgentSteer: "mutation",
   subAgentStop: "mutation",
   backgroundShellOutput: "query",
+  monitorOutput: "query",
+  stopMonitor: "mutation",
   backgroundShellActivity: "query",
   stopBackgroundOp: "mutation",
   pendingInteractions: "query",

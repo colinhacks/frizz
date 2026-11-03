@@ -7,7 +7,7 @@ import { closeDrawerAnimated, closeSettingsAnimated } from "../lib/overlays.ts"
 import { dismissOpenSelect } from "../lib/selectOverlay.ts"
 import { ThreadSheet } from "./ThreadSheet.tsx"
 import { SubAgentSheet } from "./SubAgentSheet.tsx"
-import { BackgroundShellSheet } from "./BackgroundShellSheet.tsx"
+import { BackgroundShellSheet, MonitorSheet } from "./BackgroundShellSheet.tsx"
 import { MarkdownDrawer } from "./MarkdownDrawer.tsx"
 import { ThreadDrawer } from "./ThreadDrawer.tsx"
 import { ErrorBoundary, DrawerErrorSheet } from "./ErrorBoundary.tsx"
@@ -108,6 +108,16 @@ export function DrawerStack({ onEscapeAtRest }: { onEscapeAtRest?: () => void } 
             shellId={d.subId ?? ""}
             label={d.label ?? "Background shell"}
             startedAt={d.startedAt}
+            depth={i}
+            widthDepth={widthDepth}
+          />
+        ) : d.kind === "monitor" ? (
+          <MonitorSheet
+            key={d.id}
+            id={d.id}
+            slug={d.slug}
+            monitorId={d.subId ?? ""}
+            label={d.label ?? "Monitor"}
             depth={i}
             widthDepth={widthDepth}
           />

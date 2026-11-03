@@ -2,14 +2,14 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useQueryClient } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useSnapshot } from "valtio"
-import { AlarmClock, Check, ChevronRight, CircleDashed, Ellipsis, Github, Hourglass, Loader2, Pin, PinOff, RotateCcw, Timer } from "lucide-react"
+import { AlarmClock, Check, ChevronRight, CircleDashed, Ellipsis, Github, Hourglass, Loader2, Pin, PinOff, Radio, RotateCcw, Timer } from "lucide-react"
 import { hasLiveSubAgents, type BoardSnapshot, type ThreadView } from "@frizz/shared"
 import { store, openThread, scrollToQueueCard, queueCardTargetY, pushSubAgentDrawer, showToast, queueCardViewportTop } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { useBoardThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
 import type { PinShelf } from "../groups.ts"
-import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
+import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
@@ -1264,9 +1264,9 @@ function StatusChip({ status }: { status: string }) {
  *  fence is just its state. */
 // `tail` is one more clause AFTER the fence's own — the timer arm's countdown — so the sentence still
 // reads state, then what is waited on, then when: "At rest — waiting on a timer — fires in 34m".
-function popover(t: Pick<ThreadView, "lastFence">, state: string | null, tail: string | null = null): string {
+function popover(t: Pick<ThreadView, "lastFence" | "watches">, state: string | null, tail: string | null = null): string {
   const hints = t.lastFence?.kind === "awaiting" ? t.lastFence.hints : []
-  const wait = awaitingWaitClause(hints)
+  const wait = awaitingWaitClause(hints, t.watches)
   const head = [state, wait, tail].filter((part) => Boolean(part)).join(" — ")
   return [head, awaitingReason(t)].filter((line) => Boolean(line)).join("\n\n")
 }
@@ -1479,6 +1479,18 @@ const hourglassMark = <StatusBox><Hourglass size={9} className="text-muted-70" /
 // (scripts/verify-rail-status-glyphs.mjs, the `user-snoozed` slot).
 const alarmMark = <StatusBox><AlarmClock size={9} className="text-muted/70" /></StatusBox>
 
+// THE ONE MARK FOR "THIS THREAD IS WAITING ON A MONITOR" (`frizzctl monitor`, 2026-11-03) — lucide's
+// Radio, the broadcast glyph the monitor's own rows already wear on the resting card and in the ops strip
+// (AwaitingBackgroundCard CommandWatchRow), so the rail and the card name the wait with one picture. It
+// is drawn by every arm whose row is resting on an armed monitor: the queued `monitor` kind and the
+// Snoozed band's `watching` rest, which is where the board files a monitor park. Before it, the same
+// wait wore the hourglass in Snoozed (a clock nothing had set) and the ellipsis in the queue.
+// Size 9 and the family's tone, like the hourglass and the alarm clock: an odd size centres on the 13px
+// content box's pixel grid, and the glyph is symmetric about its own viewBox centre on both axes (its
+// arcs mirror at x=12 and span y 4.9–19.1), so it needs no nudge. scripts/verify-rail-status-glyphs.mjs
+// measures it in the `monitor` and `monitor-snoozed` slots.
+const monitorMark = <StatusBox><Radio size={9} className="text-muted-70" /></StatusBox>
+
 /** "fires in 34m" for the SOONEST armed timer — the resting card's TimerRow countdown, so the rail's
  *  hover and the card never count down in two vocabularies. The row drops the verb its "Timers" heading
  *  implies ("in 34m"); this tooltip is a sentence with no heading, so it keeps it. A due-but-undelivered
@@ -1493,6 +1505,13 @@ function timerWake(t: Pick<ThreadView, "watches">, nowMs = Date.now()): string |
     .sort((a, b) => a - b)[0]
   if (soonest === undefined) return null
   return soonest > nowMs ? `fires in ${formatCompactElapsed(soonest - nowMs)}` : "firing…"
+}
+
+/** "waiting on the monitor “Errors in app.log”" for a thread resting on monitors it never named in a
+ *  fence — the same clause the fence would have produced, built from the registered rows. */
+function armedMonitorsClause(t: Pick<ThreadView, "watches">): string {
+  const monitors = (t.watches ?? []).filter((w) => w.kind === "command" && w.state === "armed" && w.command?.monitor)
+  return awaitingWaitClause(monitors.map((w) => ({ kind: "command", value: w.target })), monitors) ?? "waiting on a monitor"
 }
 
 function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: string | null } {
@@ -1520,7 +1539,7 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
   if (kind === "background") {
     // The fence, when there is one, names the shell itself (and any PR riding beside it), so the lead
     // drops to a bare "At rest" rather than saying "a background shell" twice in one sentence.
-    const fenced = t.lastFence?.kind === "awaiting" && awaitingWaitClause(t.lastFence.hints) !== null
+    const fenced = t.lastFence?.kind === "awaiting" && awaitingWaitClause(t.lastFence.hints, t.watches) !== null
     return {
       node: restIsWorking(t) ? shellDot : restingShellDot,
       tip: popover(t, fenced ? "At rest" : "At rest — a background shell is still running"),
@@ -1576,8 +1595,15 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
   // ("waiting on a timer and a background shell"), a synthesized one for a worker that registered the
   // timer and rested without fencing, and the countdown either way — the one thing about this row the
   // rail cannot show, and what the operator most wants on hover.
+  // AWAITING A MONITOR, IN THE QUEUE — the radio, on a `needs_input` rest beside an armed monitor (a
+  // `watching` one parks, and the Snoozed arm below draws the same mark). The tooltip names it: the
+  // fence's own clause, or one built from the registered monitors for a worker that rested without one.
+  if (kind === "monitor") {
+    const fenced = t.lastFence?.kind === "awaiting" && awaitingWaitClause(t.lastFence.hints, t.watches) !== null
+    return { node: monitorMark, tip: popover(t, fenced ? "At rest" : `At rest — ${armedMonitorsClause(t)}`) }
+  }
   if (kind === "timer") {
-    const fenced = t.lastFence?.kind === "awaiting" && awaitingWaitClause(t.lastFence.hints) !== null
+    const fenced = t.lastFence?.kind === "awaiting" && awaitingWaitClause(t.lastFence.hints, t.watches) !== null
     return { node: hourglassMark, tip: popover(t, fenced ? "At rest" : "At rest — waiting on a timer", timerWake(t)) }
   }
   if (kind === "snoozed") {
@@ -1639,13 +1665,13 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
       // human's own alarm clock rather than a dot claiming something is running.
       if (eventSnoozed) {
         const live = (t.bgShells ?? []).some((s) => s.state === "running") || hasLiveSubAgents(t)
-        return { node: waitNamesPr(t) ? github : live ? restingShellDot : alarmMark, tip: eventSnoozed }
+        return { node: waitNamesPr(t) ? github : awaitingMonitor(t) ? monitorMark : live ? restingShellDot : alarmMark, tip: eventSnoozed }
       }
       // A `watching` REST WITH NO FENCE TO READ (2026-10-05): a worker that rested behind a watch it
       // registered, which the board reads as a watcher. The mark is the watch's own, as above.
       if (t.waitStatus === "watching") {
         const shell = (t.bgShells ?? []).some((s) => s.state === "running")
-        return { node: waitNamesPr(t) ? github : shell ? restingShellDot : hourglass, tip: "Snoozed until its watch reports back" }
+        return { node: waitNamesPr(t) ? github : awaitingMonitor(t) ? monitorMark : shell ? restingShellDot : hourglass, tip: "Snoozed until its watch reports back" }
       }
       const timed = typeof t.revalidate === "string" ? formatAutoSnoozedUntil(t.revalidate) : null
       return { node: hourglass, tip: timed ?? "Auto-snoozed until a scheduled check" }
@@ -1669,11 +1695,15 @@ function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: str
     // A TIMER — or a fence naming nothing the rail draws a shape for — is "parked on the clock", and
     // wears the hourglass. It drew lucide's Clock until 2026-09-07, when the queued timer wait two arms
     // up took the hourglass and the parked one had to match it: one wait, one mark (see hourglassMark).
+    // A MONITOR comes second, for the PR's reason: it is the subject of the wait, not live work of the
+    // thread's own, and the shell or timer beside it is incidental — a dev server, a backstop.
     const mark = waitNamesPr(t)
       ? github
-      : hk === "shell" || hk === "agent"
-        ? restingShellDot
-        : hourglass
+      : awaitingMonitor(t)
+        ? monitorMark
+        : hk === "shell" || hk === "agent"
+          ? restingShellDot
+          : hourglass
     return { node: mark, tip: popover(t, eventSnoozed ?? "Snoozed", hk === "timer" ? timerWake(t) : null) }
   }
   // At rest (no fence, nothing pending) with the process still ALIVE — a worker that came to rest

@@ -10,11 +10,11 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MONITOR_FLOOD_MAX_EVENTS, MONITOR_LINE_MAX_CHARS, parseMergedWake, parseMonitorWake, type BoardSnapshot, type Settings } from "@frizz/shared"
-import { createCommandWatchService, psElapsedMs, reapStaleMonitor, startMonitorProcess, type CommandWatchService, type MonitorEvent } from "./command-watch.ts"
+import { createCommandWatchService, monitorOutputPath, monitorOutputSink, psElapsedMs, reapStaleMonitor, startMonitorProcess, type CommandWatchService, type MonitorEvent } from "./command-watch.ts"
 import { createScheduler } from "./scheduler.ts"
 import { createStorage, type SessionRow, type Storage } from "./storage.ts"
 import { createRouter } from "./router.ts"
@@ -128,7 +128,7 @@ function row(slug: string, over: Partial<SessionRow> = {}): SessionRow {
 
 /** The real service — real `/bin/sh`, real batching — with the gate held by the test. */
 function realService(dir: string, gate: { refusal?: string }): CommandWatchService {
-  const real = createCommandWatchService({ cwd: dir, env: () => process.env, monitorBatchMs: 50 })
+  const real = createCommandWatchService({ cwd: dir, env: () => process.env, monitorBatchMs: 50, monitorOutputDir: join(dir, "monitors") })
   return { ...real, refusal: () => gate.refusal }
 }
 
@@ -162,6 +162,27 @@ function harness(opts: { wakeQuietWindowMs?: number; storage?: Storage; dir?: st
   const wakes = () => resumes.flatMap((r) => (parseMergedWake(r.message)?.map((p) => p.body) ?? [r.message]).map(parseMonitorWake))
   return { dir, storage, resumes, wakes, clock, gate, s, arm }
 }
+
+test("a monitor's output log keeps what it printed, marks a fresh start, and stays under its cap", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-monitor-log-"))
+  try {
+    const path = monitorOutputPath(join(dir, "monitors"), "cmw_0a1b2c3d4e5f")
+    assert.equal(path, join(dir, "monitors", "cmw_0a1b2c3d4e5f.log"))
+    assert.equal(monitorOutputPath(dir, "../../etc/passwd"), join(dir, "etcpasswd.log"), "an id can never name a path")
+    const first = monitorOutputSink(path, 64, () => "T1")
+    first(Buffer.from("tick-1\n"))
+    first(Buffer.from("oops\n"))
+    assert.equal(readFileSync(path, "utf8"), "tick-1\noops\n")
+    // The server restarted and runs the script again: the log goes on, with the seam marked.
+    const second = monitorOutputSink(path, 64, () => "T2")
+    second(Buffer.from("tick-2\n"))
+    assert.equal(readFileSync(path, "utf8"), "tick-1\noops\n\n[Frizz started the script again at T2]\ntick-2\n")
+    // Past the cap it keeps its newest half.
+    second(Buffer.from("x".repeat(40) + "\n"))
+    assert.ok(statSync(path).size <= 64)
+    assert.match(readFileSync(path, "utf8"), /x{20,}\n$/)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
 
 test("registration hands back what the script printed in its window; later lines wake, one wake per event", async () => {
   const h = harness()
@@ -348,14 +369,17 @@ function rpcHarness() {
     currentSeq: () => 0, deltasSince: () => null, snapshotState: async () => ({ board: ({}) as never, seq: 0 }),
     rebuild: async () => snapshot, refresh: () => snapshot, start: async () => {}, stop: async () => {},
   }
+  // An idle worker, so a wake the test causes is delivered on the next tick.
+  const tele = { turn: "idle", permPrompt: false, subAgents: [], bgShells: [], pendingQuestion: false } as unknown as SessionTelemetry
   const tailer: Tailer = {
-    get: () => undefined, foreignIds: () => [], subAgent: () => undefined,
+    get: () => tele, foreignIds: () => [], subAgent: () => undefined,
     forget: () => {}, start: () => {}, stop: () => {}, tick: () => {},
   }
   const gate: { refusal?: string } = {}
   const commandWatches = realService(dir, gate)
+  const resumes: string[] = []
   const scheduler = createScheduler({
-    storage, tailer, log: () => {}, wakeQuietWindowMs: 0, resume: () => {},
+    storage, tailer, log: () => {}, wakeQuietWindowMs: 0, resume: (_slug, message) => void resumes.push(message),
     fetchPr: async () => undefined, fetchGithubReview: async () => [], commandWatches,
   })
   const ctx = {
@@ -363,7 +387,7 @@ function rpcHarness() {
     getSettings: () => ({ permissionMode: "auto" }) as unknown as Settings,
   } as unknown as AppContext
   return {
-    storage, gate, router: createRouter(ctx),
+    storage, gate, scheduler, resumes, router: createRouter(ctx),
     close: async () => { await scheduler.stop(); storage.close(); rmSync(dir, { recursive: true, force: true }) },
   }
 }
@@ -373,7 +397,7 @@ test("add: the gate first; then the script starts, and its first lines come back
   try {
     h.storage.upsertSession(row("t"))
     h.gate.refusal = "this thread runs in `default` permission mode. Run the check in a background shell instead."
-    const refused = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; sleep 30", for: "1h" } })
+    const refused = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; sleep 30", description: "greetings", for: "1h" } })
     assert.match(refused.refused!, /^Frizz will not run a monitor for this thread: this thread runs in `default`/)
     assert.match(refused.refused!, /Monitor tool, or in a background shell, instead\.$/)
     assert.deepEqual(h.storage.listCommandWatches("t"), [], "a refusal stores nothing")
@@ -388,7 +412,7 @@ test("add: the gate first; then the script starts, and its first lines come back
     assert.deepEqual(added.watches[0].monitor, { description: "greetings from sh", events: 1, lastEvent: added.watches[0].monitor!.lastEvent })
     assert.equal(added.watches[0].monitor!.lastEvent!.text, "hi")
 
-    const again = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; sleep 30", for: "1h" } })
+    const again = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; sleep 30", description: "greetings", for: "1h" } })
     assert.equal(again.alreadyArmed, true)
     assert.equal(again.id, added.id)
 
@@ -402,9 +426,40 @@ test("add: a script the server cannot run (127) is refused, with its output, and
   const h = rpcHarness()
   try {
     h.storage.upsertSession(row("t"))
-    const added = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "my-local-only-tool --watch", for: "1h" } })
+    const added = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "my-local-only-tool --watch", description: "greetings", for: "1h" } })
     assert.match(added.refused!, /could not run here \(`\/bin\/sh` exited 127\)/)
     assert.equal(added.exited?.exitCode, 127)
     assert.deepEqual(h.storage.listCommandWatches("t", { armedOnly: true }), [])
+  } finally { await h.close() }
+})
+
+test("a monitor's drawer reads its script and everything it printed; the human's stop kills it and tells the worker", async () => {
+  const h = rpcHarness()
+  try {
+    h.storage.upsertSession(row("t"))
+    const added = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; echo 'not an event' >&2; sleep 30", description: "Greetings", for: "1h" } })
+    assert.equal(added.running, true)
+    const id = added.id!
+    const open = await h.router.monitorOutput.handler({ input: { slug: "t", id } })
+    assert.equal(open.state, "running")
+    assert.equal(open.command, "echo hi; echo 'not an event' >&2; sleep 30")
+    assert.equal(open.description, "Greetings")
+    assert.equal(open.events, 1)
+    assert.equal(open.stoppable, true)
+    assert.match(open.output, /^hi\n/)
+    assert.match(open.output, /not an event/, "stderr is in the drawer, though it never wakes anyone")
+    assert.equal((await h.router.monitorOutput.handler({ input: { slug: "other", id } })).state, "gone", "never another thread's")
+
+    const pid = h.storage.getCommandWatch(id)!.pid!
+    assert.deepEqual(await h.router.stopMonitor.handler({ input: { slug: "t", id } }), { stopped: true })
+    assert.equal(alive(pid), false, "the script is dead before the stop answers")
+    const ended = await h.router.monitorOutput.handler({ input: { slug: "t", id } })
+    assert.deepEqual([ended.state, ended.ended, ended.stoppable], ["ended", "stopped", false])
+    assert.match(ended.output, /^hi\n/, "and its output stays readable")
+    await h.scheduler.tick()
+    const wake = parseMonitorWake(h.resumes.at(-1) ?? "")
+    assert.deepEqual([wake?.kind, wake?.by, wake?.label, wake?.summary], ["cancelled", "human", "Greetings", "You stopped it from the board after 1 event."])
+    assert.match(h.resumes.at(-1) ?? "", /^🛑 The human stopped your monitor `cmw_[a-z0-9]+` from the board after 1 event — Greetings\n\nRegister it again only if they ask for it\.\n/m, "the worker is told who stopped it, and what to do")
+    assert.deepEqual(await h.router.stopMonitor.handler({ input: { slug: "t", id } }), { stopped: false }, "a second stop finds nothing armed")
   } finally { await h.close() }
 })

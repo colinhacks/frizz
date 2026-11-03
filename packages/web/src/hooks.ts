@@ -433,6 +433,15 @@ export function useBackgroundShellOutput(slug: string, id: string) {
   })
 }
 
+/** A monitor's drawer: its script, what it printed and how it ended, polled while it runs. */
+export function useMonitorOutput(slug: string, id: string) {
+  return useQuery({
+    queryKey: ["monitorOutput", slug, id],
+    queryFn: () => rpc.monitorOutput({ slug, id }),
+    refetchInterval: (query) => (query.state.data?.state === "running" ? 1500 : false),
+  })
+}
+
 // The ops strip's LIVE OUTPUT COUNTER: lines produced, per shell row on screen, refreshed while any of
 // them is still running. One batched request per poll for the whole strip.
 //

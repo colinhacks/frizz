@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { COMMAND_WATCH_FALLBACK, MONITOR_FLOOD_REASON, monitorCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, commandWatchCancelledWakeMessage, commandWatchExpiredWakeMessage, commandWatchPassedWakeMessage, formatGithubWakeSteer, interruptEndedSubAgentsMessage, limitModelSwitchSteer, limitResumeSteer, mergedWakeMessage, ownWatchExpiredWakeMessage, parkExpiredWakeMessage, parkFinishedWakeMessage, PR_WATCH_ARMED_TRAILER, prWatchExpiredWakeMessage, prWatchGoneWakeMessage, prWatchWakeMessage, questionsCancelledWakeMessage, restPromptMessage, shellDoneMessage, timerPromptMessage } from "@frizz/shared"
+import { COMMAND_WATCH_FALLBACK, MONITOR_FLOOD_REASON, MONITOR_STOPPED_BY_HUMAN_REASON, monitorCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, commandWatchCancelledWakeMessage, commandWatchExpiredWakeMessage, commandWatchPassedWakeMessage, formatGithubWakeSteer, interruptEndedSubAgentsMessage, limitModelSwitchSteer, limitResumeSteer, mergedWakeMessage, ownWatchExpiredWakeMessage, parkExpiredWakeMessage, parkFinishedWakeMessage, PR_WATCH_ARMED_TRAILER, prWatchExpiredWakeMessage, prWatchGoneWakeMessage, prWatchWakeMessage, questionsCancelledWakeMessage, restPromptMessage, shellDoneMessage, timerPromptMessage } from "@frizz/shared"
 import type { ChatMessage } from "./hooks.ts"
 import { Message } from "./components/ChatView.tsx"
 import "./styles.css"
@@ -160,7 +160,9 @@ const messages: ChatMessage[] = [
   wake("w27", monitorEventWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "errors in deploy.log", lines: ["ERROR 502 from upstream api.internal", "ERROR retry budget exhausted"], event: 3 })),
   wake("w28", monitorExitedWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "CI steps on nubjs/nub#879", command: "/Users/colin/.local/share/nub/node/26.11.1/bin/node /Users/colin/Documents/frizz/.frizz/threads/a74bbfc8/ci-steps.mjs 879", events: 6, run: { outcome: "exit", exitCode: 1, output: "gh: HTTP 502: Bad Gateway\n" } })),
   wake("w29", monitorExpiredWakeMessage({ id: "cmw_6197f27a1cb0", label: "new comments on acme/app#62", command: "node poll-comments.mjs acme/app#62", events: 0 })),
-  wake("w30", monitorCancelledWakeMessage({ id: "cmw_a1b2c3d4e5f6", command: "tail -F /var/log/app.log", events: 30, reason: MONITOR_FLOOD_REASON })),
+  wake("w30", monitorCancelledWakeMessage({ id: "cmw_a1b2c3d4e5f6", label: "errors in app.log", command: "tail -F /var/log/app.log", events: 30, reason: MONITOR_FLOOD_REASON })),
+  // …and the human's own stop, from the monitor's drawer: "stopped by you", not "by Frizz".
+  wake("w32", monitorCancelledWakeMessage({ id: "cmw_b2c3d4e5f6a1", label: "Failed jobs in jobs.ndjson", command: "tail -n0 -F jobs.ndjson | jq --unbuffered -c 'select(.state==\"failed\")'", events: 4, reason: MONITOR_STOPPED_BY_HUMAN_REASON, by: "human" })),
   wake("w31", mergedWakeMessage([
     { reason: "monitor cmw_0a1b2c3d4e5f event 7", message: monitorEventWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "CI steps on nubjs/nub#879", lines: ["test (macos-14): pass"], event: 7 }) },
     { reason: "monitor cmw_0a1b2c3d4e5f ended (exit 0) after 7 event(s)", message: monitorExitedWakeMessage({ id: "cmw_0a1b2c3d4e5f", label: "CI steps on nubjs/nub#879", command: "node ci-steps.mjs 879", events: 7, run: { outcome: "exit", exitCode: 0, output: "" } }) },

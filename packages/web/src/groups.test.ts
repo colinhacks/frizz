@@ -1167,6 +1167,35 @@ test("sessionIndicatorKind: a wait on an armed timer wears the hourglass, in the
   assert.equal(restIsWorking(bench), true)
 })
 
+// A MONITOR IS AN EVENT SOURCE, NOT A CLOCK AND NOT A BARE REST (2026-11-03) — the radio, in whichever
+// band the row sits. The same registered-row reading as the timer above: the board only synthesizes rows
+// for ARMED monitors, so a fence naming one that ended cannot advertise a wake that will not come.
+test("sessionIndicatorKind: a rest on an armed monitor wears the monitor's mark, below a PR and above a timer", () => {
+  const monitorRow = {
+    id: "command:t:cmw_1", kind: "command" as const, target: "cmw_1", state: "armed" as const, createdAt: "2026-11-03T00:00:00.000Z",
+    command: { command: "tail -n0 -F app.log | grep --line-buffered ERROR", every: "0s", expiresAt: "2026-11-04T00:00:00.000Z", runs: 0, monitor: { description: "Errors in app.log", events: 2 } },
+  }
+  const queued = thread({ kind: "session", runtime: "turn-idle", awaitingBackground: true, needsYou: true, watches: [monitorRow] })
+  assert.equal(sessionIndicatorKind(queued), "monitor", "a queued monitor rest is the radio, not the bare-rest ellipsis")
+  // A plain command watch is not a monitor: it keeps the bare rest it always had.
+  const { monitor: _monitor, ...plain } = monitorRow.command
+  assert.equal(sessionIndicatorKind({ ...queued, awaitingBackground: false, watches: [{ ...monitorRow, command: plain }] }), "rest")
+  // Parked `watching`, which is where the board files a monitor park, the row is snoozed; the Sidebar's
+  // Snoozed arm draws the same radio for it (awaitingMonitor).
+  assert.equal(sessionIndicatorKind({ ...queued, needsYou: false, waitStatus: "watching" }), "snoozed")
+  // A PR beside it is the subject; a timer beside it is its backstop; a stray dev server is neither.
+  const prRow = { id: "github:t:acme/app#1", kind: "github" as const, target: "acme/app#1", state: "armed" as const, createdAt: "2026-11-03T00:00:00.000Z" }
+  const timerRow = { id: "timer:t:tmr_1", kind: "timer" as const, target: "tmr_1", state: "armed" as const, createdAt: "2026-11-03T00:00:00.000Z", timer: { fireAt: "2026-11-04T00:00:00.000Z", prompt: "p" } }
+  assert.equal(sessionIndicatorKind({ ...queued, watches: [monitorRow, prRow] }), "pr")
+  assert.equal(sessionIndicatorKind({ ...queued, watches: [timerRow, monitorRow] }), "monitor")
+  assert.equal(sessionIndicatorKind({ ...queued, bgShells: liveShell }), "monitor")
+  // A `working` rest spins for the shell the worker named, as it does beside a timer.
+  assert.equal(sessionIndicatorKind({ ...queued, needsYou: false, bgShells: liveShell, waitStatus: "working" }), "background")
+  // An ended monitor has no armed row, and a running turn is motion whatever it has registered.
+  assert.equal(sessionIndicatorKind({ ...queued, awaitingBackground: false, watches: [{ ...monitorRow, state: "fired" as const }] }), "rest")
+  assert.equal(sessionIndicatorKind({ ...queued, runtime: "running", needsYou: false }), "working")
+})
+
 // THE BAND IS THE WORKER'S ANSWER (2026-10-05) — ThreadView.waitStatus, which the server derives from the
 // fence's `status:` line and what it can see moving. "Not in the queue" used to mean the Running band, so a
 // thread parked for a day on a watcher spun among the running rows and counted as running work (maintainer

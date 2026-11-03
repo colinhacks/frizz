@@ -611,18 +611,22 @@ test("`monitor` starts for the calling thread, hands back its first lines, reads
     assert.match(armed.stdout, /cmw_mon {2}monitor "errors in app\.log", running until 2026-11-03T14:00:00.000Z — 1 event so far, the latest at 2026-11-02T14:00:01.000Z: ERROR boot\n {4}\$ tail -F/)
 
     mode = "refused"
-    const refused = await run(["monitor", "add", "true", "--for", "1h"], { env: worker(fake) })
+    const refused = await run(["monitor", "add", "true", "--description", "x", "--for", "1h"], { env: worker(fake) })
     assert.equal(refused.code, 2)
     assert.match(refused.stdout, /^NOT registered\. Frizz will not run a monitor for this thread/)
 
     mode = "exited"
-    const exited = await run(["monitor", "add", "echo done", "--for", "1h"], { env: worker(fake) })
+    const exited = await run(["monitor", "add", "echo done", "--description", "x", "--for", "1h"], { env: worker(fake) })
     assert.equal(exited.code, 0)
     assert.match(exited.stdout, /^NOTHING IS RUNNING: your script exited 0 within its first 2s/)
 
     const missing = await run(["monitor", "add", "true"], { env: worker(fake) })
     assert.equal(missing.code, 1)
     assert.match(missing.stderr, /`for` is required/)
+    // A monitor is named by its description on every surface, so one without a name is refused.
+    const unnamed = await run(["monitor", "add", "true", "--for", "1h"], { env: worker(fake) })
+    assert.equal(unnamed.code, 1)
+    assert.match(unnamed.stderr, /`description` is required/)
 
     fake.seen.length = 0
     const dropped = await run(["monitor", "drop", "cmw_mon"], { env: worker(fake) })

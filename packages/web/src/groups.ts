@@ -492,11 +492,22 @@ export function awaitingTimerWatch(t: ThreadView): boolean {
   return (t.watches ?? []).some((w) => w.kind === "timer" && w.state === "armed")
 }
 
+/** AWAITING A MONITOR (`frizzctl monitor`) — a thread at rest with an armed monitor: a script the server
+ *  keeps running, every line it prints a wake. It earns its own mark (Sidebar.tsx monitorMark) in
+ *  whichever band the row sits, for the reason a PR and a timer have theirs: until 2026-11-03 a monitor
+ *  park wore the hourglass in Snoozed, which promised a clock nothing had set, and the bare-rest
+ *  ellipsis in the queue, which said nothing would wake it at all. REGISTERED rows, fence or no fence,
+ *  like awaitingTimerWatch: an armed monitor wakes the thread whether or not the worker named it. */
+export function awaitingMonitor(t: Pick<ThreadView, "runtime" | "watches">): boolean {
+  if (t.runtime !== "turn-idle") return false
+  return (t.watches ?? []).some((w) => w.kind === "command" && w.state === "armed" && Boolean(w.command?.monitor))
+}
+
 // One status-priority decision shared by the sidebar renderer and its tests. The order is important:
 // an archived row at rest stays archived even if stale attention metadata lingers; a real human ask
 // stays a question after the worker exits; live work stays working; and a completed handoff stays a
 // check instead of being mislabelled as a crash merely because `needsYou` also puts it in the queue.
-export type SessionIndicatorKind = "archived" | "needs-input" | "working" | "background" | "pr" | "timer" | "done" | "stalled" | "limit" | "snoozed" | "rest"
+export type SessionIndicatorKind = "archived" | "needs-input" | "working" | "background" | "pr" | "monitor" | "timer" | "done" | "stalled" | "limit" | "snoozed" | "rest"
 
 // NO RAIL MARK FOR AN ARMED STOP HOOK, and the reason is worth keeping because one shipped briefly
 // (2026-08-02, removed the same day — maintainer: "the whole point of a stop hook is that it means the
@@ -583,6 +594,11 @@ export function sessionIndicatorKind(t: ThreadView): SessionIndicatorKind {
   // subject is a review queue somewhere else. BELOW the done fence and the limit kill, which are both
   // later facts than the park — a killed or dismissed thread is not awaiting anything.
   if (awaitingPrWatch(t)) return "pr"
+  // AWAITING A MONITOR — the radio, in whichever band the row sits (awaitingMonitor). Below the PR, which
+  // is the subject of any wait it is part of; above the timer, which beside a monitor is its backstop.
+  // NOT FOR A `working` REST, for the timer's reason: the board reads a monitor alone as `watching`, so a
+  // `working` rest here is spinning for a shell the worker named, and that shell is the motion.
+  if (awaitingMonitor(t) && !restIsWorking(t)) return "monitor"
   // AWAITING A TIMER — the hourglass, in whichever band the row sits (awaitingTimerWatch). Below the
   // PR mark: a timer beside a PR watch is the watch's backstop, not the subject. Above the dot: a timer
   // park in the QUEUE wore the shell's blue dot until 2026-09-07, which claimed live work behind a

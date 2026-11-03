@@ -1,4 +1,4 @@
-import { awaitingQuestions, awaitingSteps, RETIRED_AWAITING_KINDS, type AwaitingHint } from "@frizz/shared"
+import { awaitingQuestions, awaitingSteps, RETIRED_AWAITING_KINDS, type AwaitingHint, type ThreadWatchView } from "@frizz/shared"
 import { githubRefUrl } from "./githubRef.ts"
 
 /** AN ```awaiting FENCE THAT NAMES QUESTIONS DRAWS NO CARD (maintainer 2026-10-08: "if there are
@@ -200,20 +200,44 @@ function stripFenceSyntax(body: string): string {
  *
  *  Order is fixed by KIND, not by the order the worker wrote the fence in, so two fences naming the
  *  same things read identically. Null when the fence names nothing — a park the server refuses anyway,
- *  so the popover says what it knows and invents no wait. */
-export function awaitingWaitClause(hints: readonly AwaitingHint[]): string | null {
+ *  so the popover says what it knows and invents no wait.
+ *
+ *  `watches` is the thread's registered rows, read for one thing: which `commands:` entries are MONITORS
+ *  (`frizzctl monitor`). A fence names a monitor by its `cmw_…` id, exactly as it names a command watch,
+ *  and the two are different waits — one check that passes once against a script whose every line is a
+ *  wake — so the clause tells them apart, and a lone monitor is NAMED by the worker's own description the
+ *  way a PR is named by its ref: it is the one thing on the row the reader would recognise. */
+export function awaitingWaitClause(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[] = []): string | null {
   const count = (kind: AwaitingHint["kind"]) => hints.filter((h) => h.kind === kind && h.value.trim()).length
+  const monitors = fenceMonitors(hints, watches)
   const parts = [
     // Steps first: the reader is the one being waited on, which outranks anything frizz is watching.
     plural(count("step"), "step from you", "steps from you"),
     plural(count("question"), "answer from you", "answers from you"),
     ...prWatchRefs(hints).map((pr) => pr.ref),
+    monitors.length === 1 && monitors[0]!.command?.monitor?.description
+      ? `the monitor “${monitors[0]!.command.monitor.description}”`
+      : plural(monitors.length, "monitor", "monitors"),
     plural(count("shell"), "background shell", "background shells"),
     plural(count("agent"), "sub-agent", "sub-agents"),
     plural(count("timer"), "timer", "timers"),
-    plural(count("command"), "command watch", "command watches"),
+    plural(count("command") - monitors.length, "command watch", "command watches"),
   ].filter((part): part is string => part !== null)
   return parts.length > 0 ? `waiting on ${joinList(parts)}` : null
+}
+
+/** The armed MONITORS a fence's `commands:` entries name, in fence order, deduped. An id that names a
+ *  plain command watch, or nothing the board knows, is not one — it stays a counted command watch. */
+function fenceMonitors(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[]): ThreadWatchView[] {
+  const byId = new Map(watches.filter((w) => w.kind === "command" && w.state === "armed" && w.command?.monitor).map((w) => [w.target, w]))
+  const seen = new Set<string>()
+  return hints.flatMap((h) => {
+    const id = h.value.trim()
+    const monitor = h.kind === "command" ? byId.get(id) : undefined
+    if (!monitor || seen.has(id)) return []
+    seen.add(id)
+    return [monitor]
+  })
 }
 
 /** "a timer" / "2 timers" / nothing at all — the counted form, because the ids themselves are noise. */
@@ -234,11 +258,15 @@ function joinList(parts: readonly string[]): string {
  *  The desktop rail dropped its subtitle entirely (maintainer 2026-08-19) and moved every fence detail
  *  into the row's hover popover. A phone has no hover, so the mobile row keeps the one fragment worth a
  *  line without one: a PR ref names a THING rather than describing a wait, and it exists nowhere else on
- *  that row. Everything else the fence carries — the ids, the duration, the worker's own prose — stays
- *  off it, exactly as it does on the rail. */
-export function hintGloss(hints: readonly AwaitingHint[]): string | null {
+ *  that row. A MONITOR's description is the same kind of name (2026-11-03) — the worker's words for what
+ *  it watches, which is required at registration so there is always one to show. Everything else the
+ *  fence carries — the ids, the duration, the worker's own prose — stays off it, exactly as it does on
+ *  the rail. `watches` is read only to tell a monitor's `cmw_…` id from a command watch's. */
+export function hintGloss(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[] = []): string | null {
   const pr = hints.find((h) => h.kind === "pr")
   if (pr) return `PR ${pr.value}`
   const issue = hints.find((h) => h.kind === "issue")
-  return issue ? `Issue ${issue.value}` : null
+  if (issue) return `Issue ${issue.value}`
+  const monitor = fenceMonitors(hints, watches).find((w) => w.command?.monitor?.description)
+  return monitor ? `Monitor: ${monitor.command!.monitor!.description}` : null
 }

@@ -37,7 +37,7 @@ import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels
 import { useNowMs } from "../lib/liveClock.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { restingOnSteps } from "../lib/stepsAnswer.ts"
-import { pushBackgroundShellDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
+import { pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
 import { SHELL_WATCHED_NOTE } from "../lib/threadOps.ts"
@@ -885,17 +885,23 @@ export function commandWatchesHead(commands: readonly ThreadWatchView[]): string
   return monitors === 0 ? "Command watches" : monitors === commands.length ? "Monitors" : "Command watches and monitors"
 }
 
-export function CommandWatchRow({ watch, now }: { watch: ThreadWatchView; now: number }) {
-  const Mark = watch.command?.monitor ? Radio : RefreshCw
+// A MONITOR'S ROW OPENS its drawer (MonitorSheet: the script and everything it printed), as a shell's
+// opens its output — a monitor is a shell the server runs. A command watch's has nothing behind it yet:
+// its last check is in the tooltip, and it keeps the non-interactive row.
+export function CommandWatchRow({ watch, slug, now }: { watch: ThreadWatchView; slug: string; now: number }) {
+  const monitor = watch.command?.monitor
+  const Mark = monitor ? Radio : RefreshCw
+  const name = commandWatchLabel(watch)
   return (
     <WaitRow
       testKind="command"
       testId={watch.target}
       mark={<Mark size={12} className={`${ON_CAP} text-muted-60`} />}
-      name={commandWatchLabel(watch)}
+      name={name}
       oneLine
       title={commandWatchTitle(watch, now)}
       status={commandWatchStatus(watch)}
+      onOpen={monitor ? () => pushMonitorDrawer(slug, watch.target, { label: name }) : undefined}
     />
   )
 }
@@ -1056,7 +1062,7 @@ function awaitingWaitGroups(thread: Pick<ThreadView, "id" | "subAgents" | "bgShe
     { head: "Issues", rows: issues.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     // Waiting on the world, as a PR is, so it reads after them — and ahead of the timers, which wait on
     // nothing but the clock.
-    { head: commandWatchesHead(commands), rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} now={now} />) },
+    { head: commandWatchesHead(commands), rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} slug={thread.id} now={now} />) },
     { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} now={now} />) },
   ].filter((g) => g.rows.length > 0)
 }

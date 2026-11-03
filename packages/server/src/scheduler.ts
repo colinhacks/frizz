@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { createHash, randomUUID } from "node:crypto"
-import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
+import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { autonomousGoalOf, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
 import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, githubStatusKey, idlePrsOf, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, parkWaitsOnThisSide, readAwaitingPark, readGithubStatusBook, unaccountedItems, type AwaitingPark, type GithubStatusBook } from "./awaiting.ts"
 import type { CommandWatchRow, PrWatchRow, SessionRow, Storage, ThreadQuestionRow } from "./storage.ts"
@@ -1422,6 +1422,10 @@ export interface Scheduler {
   /** Stop a monitor's script now if its row is no longer armed (the worker dropped it), rather than at
    *  the next pass. */
   releaseMonitor?(id: string): Promise<void>
+  /** The HUMAN stopped a monitor from its drawer: kill the script, settle the row `cancelled`, and wake the
+   *  worker with why, as any other end of a monitor does. False when no armed monitor of this thread has
+   *  the id. */
+  stopMonitorByHuman?(slug: string, id: string): Promise<boolean>
 }
 
 /** What registration learned in its window (Scheduler.startMonitor). */
@@ -4166,7 +4170,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       log(`waker: killed monitor ${w.id}'s stale process group ${w.pid}, left running by an earlier server`)
     }
     const live: LiveMonitor = { id: w.id, slug: w.thread_slug, gateCheckedAt: nowMs, recent: [], ...(registration ? { registration } : {}), ended: Promise.resolve(), lastWakeAtMs: 0 }
-    const proc = service.startMonitor(w.thread_slug, w.command, (event) => onMonitorEvent(live, event))
+    const proc = service.startMonitor(w.thread_slug, w.command, (event) => onMonitorEvent(live, event), w.id)
     if (!proc) {
       log(`waker: monitor ${w.id} not started — the server already runs ${service.monitorsRunning?.() ?? "its limit of"} monitors`)
       return "the server already runs as many monitors as it allows at once"
@@ -4261,15 +4265,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     log(`waker: settled ${w.thread_slug} — monitor ${w.id} expired`)
   }
 
-  function cancelMonitor(row: SessionRow, w: CommandWatchRow, reason: string, at: number): void {
+  function cancelMonitor(row: SessionRow, w: CommandWatchRow, reason: string, at: number, by: "frizz" | "human" = "frizz"): void {
     const live = monitors.get(w.id)
     if (live) stopMonitor(live, "cancelled")
     const nowMs = live ? Math.max(at, nextWakeAt(live)) : at
     enqueueCommandWatchWake(
       row,
       `${MONITOR_CANCELLED_FENCE_PREFIX}:${w.id}`,
-      monitorCancelledWakeMessage({ id: w.id, command: w.command, events: w.events, reason }),
-      `monitor ${w.id} cancelled: ${reason}`,
+      monitorCancelledWakeMessage({ id: w.id, label: monitorLabel(w), command: w.command, events: w.events, reason, by }),
+      by === "human" ? `monitor ${w.id} stopped by the human` : `monitor ${w.id} cancelled: ${reason}`,
       nowMs,
     )
     deps.storage.settleCommandWatch(w.id, "cancelled", nowMs)
@@ -4291,6 +4295,20 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     delete live.registration
     if (seen.exited) return { running: false, events: seen.events, exited: seen.exited }
     return { running: true, events: seen.events }
+  }
+
+  async function stopMonitorByHuman(slug: string, id: string): Promise<boolean> {
+    const w = deps.storage.getCommandWatch(id)
+    if (!w || w.kind !== "monitor" || w.state !== "armed" || w.thread_slug !== slug) return false
+    const row = deps.storage.getSession(slug)
+    const live = monitors.get(id)
+    if (row && threadIsLive(row)) cancelMonitor(row, w, MONITOR_STOPPED_BY_HUMAN_REASON, now(), "human")
+    else {
+      if (live) stopMonitor(live, "cancelled")
+      deps.storage.settleCommandWatch(id, "cancelled", now())
+    }
+    await live?.ended
+    return true
   }
 
   async function releaseMonitor(id: string): Promise<void> {
@@ -5240,5 +5258,6 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     commandRunsIdle,
     startMonitor,
     releaseMonitor,
+    stopMonitorByHuman,
   }
 }
