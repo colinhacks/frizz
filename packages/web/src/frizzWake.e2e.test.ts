@@ -147,6 +147,40 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         assert.match(passed, /newest: keywardd: screen unlocked/)
         assert.match(await disclosed("w23"), /Its last check exited 1, ending:npm error code E404/)
         assert.match(await disclosed("w24"), /Frizz stopped it: this thread runs in default permission mode\.$/)
+        // A MONITOR's events and endings (2026-11-02): hairlines, none of the worker's instructions ("Drop
+        // it with frizzctl monitor drop", "register it again"), the lines behind the disclosure; and the
+        // merged pair is two hairlines, the event before the exit.
+        const monitors = await page.evaluate(() => ["w27", "w28", "w29", "w30", "w31"].map((id) => {
+          // A merged delivery's id is on its FIRST part only (MergedWake), so read from its container.
+          const first = document.querySelector(`[data-frizz-msg="${id}"]`)!
+          const el = first.closest('[data-frizz-wake="merged"]') ?? first
+          return {
+            id, card: !!el.querySelector(".md-body"), text: el.textContent ?? "",
+            lines: [...el.querySelectorAll("[data-wake-divider]")].map((d) => (d.textContent ?? "").replace(/\s+/g, " ").trim()),
+          }
+        }))
+        for (const wake of monitors) {
+          assert.ok(wake.lines.length > 0 && !wake.card, `${wake.id} is a hairline`)
+          assert.doesNotMatch(wake.text, /Your monitor|frizzctl|wakes you|register it again|Nothing about it/, wake.id)
+        }
+        const [event, exited, expired, flood, merged] = monitors
+        // Each hairline's text carries BOTH widths' labels (one is hidden by CSS), so it is matched, not
+        // anchored: the wide label names the monitor, the narrow one is the news alone.
+        assert.match(event.lines[0], /^2 linesMonitor «errors in deploy\.log» 2 lines/)
+        assert.match(exited.lines[0], /^EndedMonitor «CI steps on nubjs\/nub#879» ended/)
+        assert.match(expired.lines[0], /^ExpiredMonitor «new comments on acme\/app#62» expired/)
+        assert.match(flood.lines[0], /^StoppedMonitor «tail -F app\.log» stopped by Frizz/, "named by its script with the path cut, as the board row is")
+        assert.equal(merged.lines.length, 2)
+        assert.match(merged.lines[0], /^1 lineMonitor «CI steps on nubjs\/nub#879» 1 line/)
+        assert.match(merged.lines[1], /^EndedMonitor «CI steps on nubjs\/nub#879» ended/)
+        const printed = await disclosed("w27")
+        assert.match(printed, /ERROR 502 from upstream api\.internal\s*ERROR retry budget exhausted/)
+        assert.match(printed, /Event 3: 2 lines\./)
+        const ended = await disclosed("w28")
+        assert.match(ended, /ci-steps\.mjs 879/)
+        assert.match(ended, /The script exited 1 after 6 events\./)
+        assert.match(ended, /gh: HTTP 502: Bad Gateway/)
+        assert.match(await disclosed("w30"), /Frizz stopped it after 30 events: it printed 30 events inside 10m/)
         // Several children are several hairlines, one each, in the order the note named them.
         assert.deepEqual(await page.$$eval('[data-frizz-msg="w26"] [data-wake-divider]', (els) => els.map((el) => el.querySelector("[title]")?.getAttribute("title"))), ["Survey the dev server readouts", "Fix the cache collision", "Review the diff"])
         assert.deepEqual(result.headings, ["What it carries"])

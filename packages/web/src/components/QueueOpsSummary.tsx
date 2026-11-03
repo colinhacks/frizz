@@ -6,7 +6,7 @@ import { useNowMs } from "../lib/liveClock.ts"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
 import { queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
-import { commandWatchName, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
+import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
 import { QueueSubAgentLines } from "./QueueSubAgentLines.tsx"
@@ -65,7 +65,7 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
   shell: "Background shells running for this thread",
   pr: "Pull requests this thread is watching",
   issue: "Issues this thread is watching",
-  command: "Command watches this thread is waiting on",
+  command: "Command watches and monitors this thread is waiting on",
   timer: "Timers this thread has set",
   file: "Files saved for this thread",
   link: "Links saved for this thread",
@@ -285,7 +285,7 @@ function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" |
             <ChildOpRow
               key={watch.id}
               kind="COMMAND"
-              label={commandWatchName(watch.command?.command ?? watch.target)}
+              label={commandWatchLabel(watch)}
               state="running"
               density="sheet"
               startedAt={watch.createdAt}

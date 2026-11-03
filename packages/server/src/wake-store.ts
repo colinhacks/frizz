@@ -69,6 +69,10 @@ export const WAKE_QUIET_EXEMPT_HINT_PREFIXES = [
   "signoff:", "park:retired:", "park:nameless:", "park:dead:", "park:needs-input:",
   "park:question-fence:", "park:done-open-question:",
   "cmdwatch:", "cmdwatch-expired:", "cmdwatch-cancelled:",
+  // A MONITOR's three endings (2026-11-02), for the same reason: each settles the row and ends the park.
+  // Its EVENTS (`cmdmon:`) are NOT here — the row stays armed under them, so the park keeps holding, and a
+  // monitor printing every minute is exactly the burst the window exists to merge into one turn.
+  "cmdmon-exited:", "cmdmon-expired:", "cmdmon-cancelled:",
 ] as const
 
 export function isQuietWindowExempt(hintKey: string): boolean {

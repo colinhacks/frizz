@@ -44,12 +44,18 @@ test("the drift token only reads Workers, and has no zone policy at all", () => 
   assert.deepEqual(ids(plan), [{ resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-r"] }])
 })
 
-test("the laptop token reads and never writes, and skips an optional group the account lacks", () => {
-  const plan = planToken(spec("laptop"), { groups, accountId: "acct", zoneId: "zone1" })
+test("only the two CI tokens are minted here, and both go to GitHub", () => {
+  assert.deepEqual(TOKENS.map((t) => [t.key, t.sink.secret, t.sink.env ?? null]), [
+    ["deploy", "CLOUDFLARE_API_TOKEN", "workers-deploy"],
+    ["drift", "CLOUDFLARE_READ_TOKEN", null],
+  ])
+})
+
+test("an optional group the account lacks is skipped rather than failing the plan", () => {
+  const plan = planToken({ account: ["Workers Scripts Read", "Workers Tail Read?"], zone: [] }, { groups, accountId: "acct", zoneId: "zone1" })
   assert.deepEqual(plan.missing, [])
-  assert.deepEqual(plan.skipped, ["Workers Tail Read", "Account API Tokens Read"])
-  const names = plan.policies.flatMap((p) => p.permission_groups.map((g) => g.name))
-  assert.ok(names.length > 0 && names.every((n) => n.endsWith(" Read")), names.join(", "))
+  assert.deepEqual(plan.skipped, ["Workers Tail Read"])
+  assert.deepEqual(ids(plan), [{ resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-r"] }])
 })
 
 test("a required group the account does not offer is reported, so nothing gets minted", () => {

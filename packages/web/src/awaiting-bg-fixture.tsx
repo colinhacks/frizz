@@ -155,6 +155,15 @@ const thread = {
             id: "command:demo:cmw_1a2b3c4d5e6f", kind: "command", target: "cmw_1a2b3c4d5e6f", state: "armed", createdAt: ago(9),
             command: { command: "npm view acme@4.2.0 version", every: "5m", expiresAt: new Date(Date.now() + 6 * 3_600_000).toISOString(), runs: 2, lastRun: { at: ago(4), outcome: "exit", exitCode: 1, output: "npm ERR! 404 No match found for version 4.2.0" } },
           },
+          // …and a MONITOR (2026-11-02): the same section, named by its description, its events as status.
+          {
+            id: "command:demo:cmw_0a1b2c3d4e5f", kind: "command", target: "cmw_0a1b2c3d4e5f", state: "armed", createdAt: ago(14),
+            command: {
+              command: "tail -F /var/log/acme/deploy.log | grep --line-buffered -E 'ERROR|FATAL'", every: "0s",
+              expiresAt: new Date(Date.now() + 20 * 3_600_000).toISOString(), runs: 1,
+              monitor: { description: "errors in deploy.log", events: 3, lastEvent: { at: ago(2), text: "ERROR 502 from upstream api.internal" } },
+            },
+          },
           {
             id: "timer:demo:tmr_a1b2c3d4e5f6", kind: "timer", target: "tmr_a1b2c3d4e5f6", state: "armed", createdAt: ago(3),
             timer: { fireAt: new Date(Date.now() + 47 * 60_000).toISOString(), prompt: "Re-check the release run and the registry." },

@@ -320,7 +320,9 @@ exactly ONE of them.
     reproduction or a maintainer's triage. An issue has no CI and no merge, so it never says either.
   - `commands:` — command watches you REGISTERED with `frizzctl watch-command add`, by their `cmw_…`
     id: a shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
-    output. Only in `bypassPermissions` mode with Claude Code's sandbox off; Frizz refuses it otherwise.
+    output. A monitor from `frizzctl monitor add` is named here too: a script the server keeps
+    running, waking you on every line it prints. Only in `bypassPermissions` mode with Claude Code's
+    sandbox off; Frizz refuses both otherwise.
   - `for:` — **REQUIRED**, and a DURATION: `30s`, `15m`, `2h`, `3d`. Never an instant. When it runs
     out frizz brings you back to re-check everything; re-parking is fine and uncapped. Capped at a day,
     except on a park naming ONLY `prs:` and `issues:`, where it runs to a year, and one naming
@@ -563,14 +565,19 @@ sub-agent alone does not.
   it with `status: watching`. A Bash call that names no `timeout` moves to the background at the
   tool's default, so the watcher names one sized to the wait (up to 24h) and loops until its terminal
   condition. A helper must not hand back while its own watcher is still live.
+- **Woken on every occurrence, not once** (each new comment on a PR, each ERROR in a log, each CI step
+  as it lands) → `frizzctl monitor add "<script printing one line per event>" --description "<what>"
+  --for 1d`, then rest on its id (`commands: [cmw_…]`) with `status: watching`. The server keeps the
+  script running across your turns, and every line it prints wakes you. Where Frizz refuses it (the
+  same gate as above), use Claude Code's `Monitor` instead.
 - **Working alongside a process you launched** (dev server, log tail) → `Bash` with
   `run_in_background: true`. Never put shell job control (`&`, `nohup … &`, `disown`) inside the
   command to imitate the native flag: frizz's hook rejects an escaping job, because the process could
   survive without a lifecycle id or wake.
 - `Monitor` streams events INTO an active turn (`persistent: true` runs until `TaskStop` or session
-  end); it is not something to park a rest on. `TaskOutput` is deprecated — use `Read` on that output
-  path for diagnostics. `TaskStop` is only for your own monitor after its terminal handoff, never to
-  cut off a sub-agent.
+  end); it is not something to park a rest on — `frizzctl monitor` is. `TaskOutput` is deprecated —
+  use `Read` on that output path for diagnostics. `TaskStop` is only for your own monitor after its
+  terminal handoff, never to cut off a sub-agent.
 
 These live tasks do not survive the session ending. Never fake a wait with `echo waiting` or repeated
 foreground sleeps.

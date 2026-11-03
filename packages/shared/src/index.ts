@@ -2434,6 +2434,19 @@ export const CommandWatchRun = z.object({
 }).strict()
 export type CommandWatchRun = z.infer<typeof CommandWatchRun>
 
+/** A MONITOR's reading (`frizzctl monitor`, 2026-11-02): a script the server keeps running, whose every
+ *  line on stdout is an event that wakes the thread. Carried on a command watch's read-back and on its
+ *  board row in place of a cadence, which a monitor does not have. */
+export const MonitorStatus = z.object({
+  /** The worker's own words for what it watches ("errors in deploy.log"), when it gave any. */
+  description: z.string().optional(),
+  /** Events printed so far: each batch of lines that woke (or will wake) the thread is one. */
+  events: z.number().int().nonnegative(),
+  /** The newest event's text, trimmed, and when it was printed. */
+  lastEvent: z.object({ at: z.string(), text: z.string() }).strict().optional(),
+}).strict()
+export type MonitorStatus = z.infer<typeof MonitorStatus>
+
 export const ThreadWatchView = z.object({
   id: z.string(),
   kind: ThreadWatchKind,
@@ -2467,6 +2480,9 @@ export const ThreadWatchView = z.object({
     expiresAt: z.string(),
     runs: z.number().int().nonnegative(),
     lastRun: CommandWatchRun.optional(),
+    /** A MONITOR's own reading (`frizzctl monitor`), and present on nothing else: the row is a running
+     *  script, so its status is how many events it has printed, not a cadence. */
+    monitor: MonitorStatus.optional(),
   }).strict().optional(),
 }).strict()
 export type ThreadWatchView = z.infer<typeof ThreadWatchView>
@@ -2707,6 +2723,10 @@ export const CommandWatchView = z.object({
   /** How many checks have run since it was armed, the registration's own first check included. */
   runs: z.number().int().nonnegative(),
   lastRun: CommandWatchRun.optional(),
+  /** Present on a MONITOR (`frizzctl monitor`) and nothing else: a script the server keeps RUNNING, whose
+   *  every printed line is a wake. A monitor has no cadence and no checks, so `every` reads `0s` and
+   *  `runs` 0 on one; read this instead. */
+  monitor: MonitorStatus.optional(),
 }).strict()
 export type CommandWatchView = z.infer<typeof CommandWatchView>
 
@@ -2892,6 +2912,229 @@ export function parseCommandWatchWake(text: string): CommandWatchWake | null {
 /** Inline code spans read as plain words outside Markdown: `default` → default. */
 function unfence(text: string): string {
   return text.replace(/`([^`]+)`/g, "$1")
+}
+
+// ---- THE WORKER'S MONITORS (2026-11-02) ------------------------------------------------------------
+// `frizzctl monitor`. ONE registration, MANY wakes: a script the SERVER keeps running for the thread, and
+// every line it prints on stdout is an event that wakes the thread — a log tail filtered to its errors, a
+// loop that prints each new PR comment, a listener on a socket. The command watch above wakes ONCE, when a
+// check passes; a monitor is the wait that keeps reporting (maintainer 2026-11-02: "there needs to be a
+// way to register a script once that can trigger multiple wakeups. like a monitor").
+//
+// It is Claude Code's own Monitor tool moved into the server, for the command watch's reason: that tool
+// is a process of the session, so it dies with it, caps at 30 minutes, and pins the thread's whole
+// process tree while it runs (hibernation refuses a thread holding one). Run here, the script holds
+// nothing of the thread's, outlives its turns, and wakes it cold.
+//
+// A MONITOR IS A COMMAND WATCH ROW (`kind = 'monitor'`, a `cmw_…` id), so everything that already reads a
+// command watch reads it: the `commands:` fence key a worker parks on, `frizzctl unwatch`, `frizzctl
+// activity`, the board's row, the gate, the per-thread cap. What differs is only the process and the news.
+//
+// EVENTS RIDE THE QUIET WINDOW. Each batch of lines is its own wake, and a burst merges into one turn
+// under the outbox's five-minute window (wake-store.ts), exactly as a PR watcher's review burst does — a
+// monitor printing every minute costs a turn every five, not every one. Its END (the script exited, its
+// `for` ran out, Frizz stopped it) skips the window, as a command watch's does: it ends the park.
+
+/** Lines that arrive within this long of each other are one event, Claude Code's Monitor's own 200ms:
+ *  a multi-line message printed in one go reaches the worker as one event, not one per line. */
+export const MONITOR_BATCH_MS = 200
+/** The longest single line kept, in characters; a longer one is cut and marked. A log line is short; a
+ *  JSON blob dumped whole belongs in a file the event names. */
+export const MONITOR_LINE_MAX_CHARS = 1000
+/** The most lines one event carries. The rest are counted ("…and 40 more lines"), not delivered. */
+export const MONITOR_EVENT_MAX_LINES = 40
+/** THE FLOOD BOUND. A monitor that prints this many events inside MONITOR_FLOOD_WINDOW_MS is stopped
+ *  and the thread told to tighten its filter — Claude Code stops a firehose monitor the same way. Thirty
+ *  in ten minutes is an event every 20 seconds, sustained: no filter that means it prints that often. */
+export const MONITOR_FLOOD_MAX_EVENTS = 30
+export const MONITOR_FLOOD_WINDOW_MS = 10 * 60_000
+/** How long registration watches the new script before answering. A typo, a binary missing from the
+ *  server's PATH, or a script that prints its first event at once is reported in `frizzctl monitor add`'s
+ *  own reply, while the worker is still there to read it, instead of as a wake after it rested. */
+export const MONITOR_REGISTRATION_WINDOW_MS = 2_000
+/** The longest description accepted. It is one line: the board row's name and every wake's label. */
+export const MONITOR_DESCRIPTION_MAX = 120
+/** How many monitors the whole SERVER runs at once, across every project. Each is a live process for as
+ *  long as it is armed; a registration past this is refused rather than queued, so no worker rests on a
+ *  monitor that is not running. */
+export const MONITOR_SERVER_MAX_RUNNING = 32
+
+export const AddOwnMonitorInput = z.object({
+  slug: ThreadSlug,
+  /** Run with `/bin/sh -c` in the project root, with the server's environment. Each stdout line is an event. */
+  command: z.string().trim().min(1).max(COMMAND_WATCH_COMMAND_MAX),
+  /** What it watches, in the worker's words — the label on every wake and on the board row. */
+  description: z.string().trim().max(MONITOR_DESCRIPTION_MAX).optional(),
+  /** How long to keep it running, as a DURATION. Clamped to COMMAND_WATCH_FOR_MAX_MS and reported. */
+  for: z.string().trim().min(1).max(16),
+}).strict()
+export type AddOwnMonitorInput = z.infer<typeof AddOwnMonitorInput>
+
+export const AddOwnMonitorResult = z.object({
+  /** Present when the call was REFUSED: the gate, the caps, or a script that could not run here. Nothing
+   *  is armed, and the text says why and what to use instead. */
+  refused: z.string().optional(),
+  id: z.string().optional(),
+  /** This exact command already runs as a monitor on this thread; nothing new was registered. */
+  alreadyArmed: z.boolean().default(false),
+  /** Still running when registration stopped watching it (MONITOR_REGISTRATION_WINDOW_MS). */
+  running: z.boolean().default(false),
+  /** The events it printed while registration watched — handed back here rather than woken. */
+  events: z.array(z.string()).default([]),
+  /** It EXITED while registration watched: how, and the end of what it printed. Nothing stays armed. */
+  exited: CommandWatchRun.optional(),
+  expiresAt: z.string().optional(),
+  /** The `for` the worker wrote, present ONLY when it was clamped. */
+  clamped: z.object({ for: z.string() }).strict().optional(),
+  watches: z.array(CommandWatchView),
+}).strict()
+export type AddOwnMonitorResult = z.infer<typeof AddOwnMonitorResult>
+
+/** Appended to every refusal to run a monitor: what the worker can use instead. Claude Code's own Monitor
+ *  tool runs the same script inside the session — bounded to 30 minutes and pinning the thread's
+ *  process tree while it runs, which is why the server-run one exists, but a working wait. */
+export const MONITOR_FALLBACK = "Run the script with Claude Code's Monitor tool, or in a background shell, instead."
+
+/** A monitor's name in its wakes: the worker's description, else its command squeezed onto one line. */
+export function monitorLabel(input: { command: string; description?: string | null }): string {
+  const described = input.description?.trim().replace(/\s+/g, " ")
+  if (described) return described
+  const command = input.command.trim().replace(/\s+/g, " ")
+  return command.length > 80 ? `${command.slice(0, 79)}…` : command
+}
+
+const MONITOR_EVENT_HEAD = /^📟 Your monitor `(cmw_[a-z0-9]+)` printed (\d+) lines? \(event (\d+)\) — (.+)$/m
+const MONITOR_EXITED_HEAD = /^⏹️ Your monitor `(cmw_[a-z0-9]+)` (exited \d+|was killed by a signal|could not be started) after (\d+) events? and is no longer armed — (.+)$/m
+const MONITOR_EXPIRED_HEAD = /^⏰ Your monitor `(cmw_[a-z0-9]+)` ran out its `for` after (\d+) events? and was stopped — (.+)$/m
+const MONITOR_CANCELLED_HEAD = /^⚠️ Frizz stopped your monitor `(cmw_[a-z0-9]+)` after (\d+) events?: (.*)$/m
+
+// Each wake's closing paragraph is addressed to the worker about its own registration. Named once so the
+// chat's parser cuts exactly what the composer wrote.
+const MONITOR_EVENT_TRAILER =
+  "The monitor is still running and wakes you again on its next line. Drop it with `frizzctl monitor drop <id>` once you no longer need it."
+const MONITOR_EXITED_TRAILER =
+  "Its script ended, so nothing more will come from it. If you still need the watch, find out why it stopped and register it again with `frizzctl monitor add`."
+const MONITOR_EXPIRED_TRAILER =
+  "If you still need the watch, register it again with `frizzctl monitor add` and a fresh `--for`. If it was the only thing you were waiting on, end in a proper terminal state instead of parking on it again."
+const MONITOR_CANCELLED_TRAILER = "Nothing about it will wake you now."
+
+/** The wake one event sends: the lines a monitor printed, in one batch. */
+export function monitorEventWakeMessage(input: { id: string; label: string; lines: readonly string[]; more?: number; event: number }): string {
+  const shown = input.lines.length
+  const more = input.more ?? 0
+  const total = shown + more
+  return [
+    `📟 Your monitor \`${input.id}\` printed ${total} line${total === 1 ? "" : "s"} (event ${input.event}) — ${input.label}`,
+    "",
+    codeBlock(input.lines.join("\n")),
+    ...(more > 0 ? ["", `…and ${more} more line${more === 1 ? "" : "s"} in the same burst, not shown.`] : []),
+    "",
+    MONITOR_EVENT_TRAILER.replace("<id>", input.id),
+  ].join("\n")
+}
+
+/** The wake a monitor sends when its script ends on its own — the end of the watch, whatever the code. */
+export function monitorExitedWakeMessage(input: {
+  id: string; label: string; command: string; events: number
+  run: Pick<CommandWatchRun, "outcome" | "exitCode" | "output">
+}): string {
+  const how = input.run.outcome === "exit" ? `exited ${input.run.exitCode ?? "?"}`
+    : input.run.outcome === "error" ? "could not be started" : "was killed by a signal"
+  const output = input.run.output.trim()
+  return [
+    `⏹️ Your monitor \`${input.id}\` ${how} after ${input.events} event${input.events === 1 ? "" : "s"} and is no longer armed — ${input.label}`,
+    "",
+    codeBlock(input.command, "sh"),
+    "",
+    output ? `Its output ended (stderr included):\n\n${codeBlock(output)}` : "It printed nothing more.",
+    "",
+    MONITOR_EXITED_TRAILER,
+  ].join("\n")
+}
+
+/** The wake a monitor sends when its `for` runs out: Frizz killed the script. */
+export function monitorExpiredWakeMessage(input: { id: string; label: string; command: string; events: number }): string {
+  return [
+    `⏰ Your monitor \`${input.id}\` ran out its \`for\` after ${input.events} event${input.events === 1 ? "" : "s"} and was stopped — ${input.label}`,
+    "",
+    codeBlock(input.command, "sh"),
+    "",
+    MONITOR_EXPIRED_TRAILER,
+  ].join("\n")
+}
+
+/** The wake a monitor sends when Frizz stops it: the gate closed under it, or it printed a flood. */
+export function monitorCancelledWakeMessage(input: { id: string; command: string; events: number; reason: string }): string {
+  return [
+    `⚠️ Frizz stopped your monitor \`${input.id}\` after ${input.events} event${input.events === 1 ? "" : "s"}: ${input.reason}`,
+    "",
+    codeBlock(input.command, "sh"),
+    "",
+    MONITOR_CANCELLED_TRAILER,
+  ].join("\n")
+}
+
+/** The reason a FLOOD stops a monitor, in the cancellation wake. */
+export const MONITOR_FLOOD_REASON =
+  `it printed ${MONITOR_FLOOD_MAX_EVENTS} events inside ${formatElapsed(MONITOR_FLOOD_WINDOW_MS)}, and every event is a turn of yours. ` +
+  "Register it again with a tighter filter: print only the lines you would act on (`grep --line-buffered`), never raw logs."
+
+/** A monitor's wake, read back for the chat's divider. Plain text, like CommandWatchWake. */
+export interface MonitorWake {
+  kind: "event" | "exited" | "expired" | "cancelled"
+  id: string
+  /** The description or the squeezed command — the divider names the monitor by it. Absent on a
+   *  cancellation, whose head carries the reason instead. */
+  label?: string
+  /** How many lines this event printed (`event`), or how many events it had printed in all. */
+  count: number
+  /** The lines (`event`), or the end of the output (`exited`). */
+  output?: string
+  /** How it ended, in a sentence. Never the closing instructions to the worker. */
+  summary: string
+  /** The script, when the wake carries it (every kind but `event`). */
+  command?: string
+}
+
+/** A monitor's wake, read back — which of the four it is and what a reader is owed — or null. */
+export function parseMonitorWake(text: string): MonitorWake | null {
+  const t = text.trim()
+  const event = MONITOR_EVENT_HEAD.exec(t)
+  if (event && event.index === 0) {
+    const block = /\n\n(`{3,})\n([\s\S]*?)\n\1(?=\n|$)/.exec(t)
+    const more = /\n\n…and (\d+) more lines? in the same burst, not shown\./.exec(t)
+    const lines = Number(event[2])
+    return {
+      kind: "event", id: event[1], label: event[4], count: lines,
+      ...(block ? { output: block[2] } : {}),
+      summary: `Event ${event[3]}: ${lines} line${lines === 1 ? "" : "s"}${more ? `, ${more[1]} not shown` : ""}.`,
+    }
+  }
+  const exited = MONITOR_EXITED_HEAD.exec(t)
+  const expired = exited ? null : MONITOR_EXPIRED_HEAD.exec(t)
+  const cancelled = exited || expired ? null : MONITOR_CANCELLED_HEAD.exec(t)
+  const head = exited ?? expired ?? cancelled
+  if (!head || head.index !== 0) return null
+  const block = /\n\n(`{3,})sh\n([\s\S]*?)\n\1(?=\n|$)/.exec(t)
+  const command = block ? { command: block[2] } : {}
+  const plural = (n: number) => `${n} event${n === 1 ? "" : "s"}`
+  if (cancelled) {
+    const n = Number(cancelled[2])
+    return { kind: "cancelled", id: cancelled[1], count: n, summary: `Frizz stopped it after ${plural(n)}: ${unfence(cancelled[3].trim()).replace(/\.$/, "")}.`, ...command }
+  }
+  if (expired) {
+    const n = Number(expired[2])
+    return { kind: "expired", id: expired[1], label: expired[3], count: n, summary: `Expired after ${plural(n)}; Frizz stopped the script.`, ...command }
+  }
+  const n = Number(exited![3])
+  const rest = block ? t.slice(block.index + block[0].length) : ""
+  const printed = /\n\n(`{3,})\n([\s\S]*?)\n\1(?=\n|$)/.exec(rest)
+  const how = exited![2]
+  return {
+    kind: "exited", id: exited![1], label: exited![4], count: n,
+    summary: `The script ${how} after ${plural(n)}.`,
+    ...command, ...(printed ? { output: printed[2] } : {}),
+  }
 }
 
 // ---- THE WORKER'S REGISTERED QUESTIONS (2026-08-26) ------------------------------------------------

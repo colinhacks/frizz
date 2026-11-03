@@ -14,6 +14,7 @@ import type { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
 import { isHeadlessRow, isBrokerClaudeRow, sessionTitleLocked, type ThreadQuestionRow } from "./storage.ts"
 import type { Storage, SessionRow, PrWatchRow, ThreadTimerRow, ThreadWatchRow, ThreadLinkRow, CommandWatchRow } from "./storage.ts"
+import { monitorStatusOf } from "./command-watch.ts"
 import { threadLinkView } from "./thread-links.ts"
 import { normalizeObservedThreadModel } from "./backend/thread-profiles.ts"
 import { claudeModelStanding } from "./backend/claude-model-upgrade.ts"
@@ -929,6 +930,9 @@ export function fenceWatchViews(
         ...(w.last_run_at !== null && w.last_outcome
           ? { lastRun: { at: new Date(w.last_run_at).toISOString(), outcome: w.last_outcome, exitCode: w.last_exit, output: w.last_output ?? "" } }
           : {}),
+        // A MONITOR (`frizzctl monitor`, 2026-11-02) is a running script, not a check on a cadence: its
+        // row reads its events instead. The same projection as the worker's read-back.
+        ...(w.kind === "monitor" ? { monitor: monitorStatusOf(w) } : {}),
       },
     })
   }

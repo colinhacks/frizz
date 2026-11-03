@@ -123,6 +123,9 @@ import {
   DropOwnCommandWatchResult,
   ListOwnCommandWatchesInput,
   OwnCommandWatchesResult,
+  AddOwnMonitorInput,
+  AddOwnMonitorResult,
+  MONITOR_SERVER_MAX_RUNNING,
   type CommandWatchView,
   type CommandWatchRun,
   COMMAND_WATCH_EVERY_MIN_MS,
@@ -175,6 +178,7 @@ import {
 } from "@frizz/shared"
 import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
+import { monitorStatusOf } from "./command-watch.ts"
 import { listAcpAgents } from "./backend/acp-agents.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
@@ -222,7 +226,7 @@ import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
+import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
@@ -1695,6 +1699,7 @@ export function createRouter(ctx: AppContext) {
       ...(w.last_run_at !== null && w.last_outcome
         ? { lastRun: { at: new Date(w.last_run_at).toISOString(), outcome: w.last_outcome, exitCode: w.last_exit, output: w.last_output ?? "" } }
         : {}),
+      ...(w.kind === "monitor" ? { monitor: monitorStatusOf(w) } : {}),
     }
   }
   function armedCommandWatchViews(slug: string): CommandWatchView[] {
@@ -3876,7 +3881,86 @@ export function createRouter(ctx: AppContext) {
         // Scoped to the caller's own slug in storage, like every drop.
         const dropped = ctx.storage.dropCommandWatch(input.slug, input.id, Date.now())
         if (dropped) ctx.board.refresh()
+        // A MONITOR's script is killed now, not at the next pass: "dropped" means nothing runs any more.
+        if (dropped) await ctx.scheduler?.releaseMonitor?.(input.id)
         return { dropped, watches: armedCommandWatchViews(input.slug) }
+      },
+    }),
+
+    // ---- THE WORKER'S MONITORS (`frizzctl monitor add`, 2026-11-02) --------------------------------
+    // A script the server keeps RUNNING, each stdout line a wake (scheduler SOURCE 13, command-watch.ts).
+    // A command watch row of kind `monitor`, so `drop` and `list` are the command watch's own RPCs above.
+    // Same gate first, for the same reason; then the caps; then the row is armed and the script started,
+    // and registration watches it for a moment so a script that cannot run is reported here.
+    addOwnMonitor: mutation({
+      input: AddOwnMonitorInput,
+      output: AddOwnMonitorResult,
+      handler: async ({ input }) => {
+        const row = ctx.storage.getSession(input.slug)
+        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (row.state === "archived" || row.archived === 1) {
+          throw new Error("Reopen this thread before registering a monitor on it")
+        }
+        const refuse = (refused: string) => ({ refused, alreadyArmed: false, running: false, events: [], watches: armedCommandWatchViews(input.slug) })
+        const service = ctx.commandWatches
+        const gate = service ? service.refusal(row) : `this server cannot run monitors. ${MONITOR_FALLBACK}`
+        if (gate) return refuse(`Frizz will not run a monitor for this thread: ${gate.replace(COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK)}`)
+        if (!service?.startMonitor || !ctx.scheduler?.startMonitor) return refuse(`Frizz will not run a monitor for this thread: this server cannot run monitors. ${MONITOR_FALLBACK}`)
+        const command = input.command.trim()
+        const description = input.description?.trim().replace(/\s+/g, " ") || undefined
+        const armed = ctx.storage.listCommandWatches(input.slug, { armedOnly: true })
+        // IDEMPOTENT ON THE SCRIPT TEXT, the command watch's rule: a second copy would wake twice per line.
+        const existing = armed.find((w) => w.kind === "monitor" && w.command === command)
+        if (existing) {
+          return {
+            id: existing.id, alreadyArmed: true, running: true, events: [],
+            expiresAt: new Date(existing.expires_at).toISOString(), watches: armedCommandWatchViews(input.slug),
+          }
+        }
+        if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
+          throw new Error(`this thread already has ${armed.length} command watches and monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+        }
+        if ((service.monitorsRunning?.() ?? 0) >= MONITOR_SERVER_MAX_RUNNING) {
+          return refuse(`Frizz already runs ${MONITOR_SERVER_MAX_RUNNING} monitors across every project, its limit. ${MONITOR_FALLBACK}`)
+        }
+        const forAsked = parseAwaitingDurationRaw(input.for)
+        if (forAsked === null) throw new Error(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
+        // CLAMPED, NOT REFUSED, and REPORTED — every `for` in the product follows that rule.
+        const forMs = Math.min(forAsked, COMMAND_WATCH_FOR_MAX_MS)
+        const now = Date.now()
+        const id = `cmw_${randomUUID().replace(/-/g, "").slice(0, 12)}`
+        // A registration trumps a done — see setOwnThreadTimer.
+        ctx.storage.clearThreadDone(input.slug)
+        ctx.storage.armMonitor({ id, slug: input.slug, command, description, createdAtMs: now, expiresAtMs: now + forMs })
+        const started = await ctx.scheduler.startMonitor(id)
+        ctx.board.refresh()
+        const clamped = forMs !== forAsked ? { clamped: { for: input.for } } : {}
+        if (started.refused) {
+          ctx.storage.settleCommandWatch(id, "cancelled", Date.now())
+          ctx.board.refresh()
+          return refuse(`Frizz could not start your monitor: ${started.refused}. ${MONITOR_FALLBACK}`)
+        }
+        if (started.exited) {
+          // ENDED INSIDE THE WINDOW. 127 and 126 are the shell's "not found" / "not executable", almost
+          // always a binary on the worker's PATH and not the server's, so they are named as such.
+          const notHere = started.exited.outcome === "error" || (started.exited.outcome === "exit" && (started.exited.exitCode === 126 || started.exited.exitCode === 127))
+          return {
+            id, alreadyArmed: false, running: false, events: started.events, exited: started.exited,
+            ...(notHere
+              ? {
+                refused:
+                  `Your script could not run here (${started.exited.outcome === "error" ? "the shell did not start" : `\`/bin/sh\` exited ${started.exited.exitCode}`}). ` +
+                  `The server runs it with \`/bin/sh -c\` in ${ctx.project.dir}, with the server's own PATH, not your shell's: ` +
+                  `use absolute paths, or ${MONITOR_FALLBACK.charAt(0).toLowerCase()}${MONITOR_FALLBACK.slice(1)}`,
+              }
+              : {}),
+            ...clamped, watches: armedCommandWatchViews(input.slug),
+          }
+        }
+        return {
+          id, alreadyArmed: false, running: true, events: started.events,
+          expiresAt: new Date(now + forMs).toISOString(), ...clamped, watches: armedCommandWatchViews(input.slug),
+        }
       },
     }),
 

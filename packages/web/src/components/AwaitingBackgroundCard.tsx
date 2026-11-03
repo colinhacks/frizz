@@ -26,7 +26,7 @@
 // and the parent genuinely resumes; measured 15/15 times on a live worker thread, with idle windows as
 // short as 0.13s. This card is what makes that alternation legible.)
 import { Fragment, useEffect, useState, type ReactNode } from "react"
-import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, RefreshCw, TerminalSquare, X } from "lucide-react"
+import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, Radio, RefreshCw, TerminalSquare, X } from "lucide-react"
 import type { AwaitingHint, GithubIssueStatus, GithubWatchStatus, ThreadView, ThreadWatchView } from "@frizz/shared"
 import { awaitingFenceTitle, awaitingSteps, commandRunClause, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
@@ -869,13 +869,30 @@ export function commandWatchName(command: string): string {
   return command.trim().replace(/\s+/g, " ").replace(/(^|[\s'"=])\/(?:[^\s'"/]*\/){2,}(?=[^\s'"/])/g, "$1")
 }
 
+// A MONITOR (`frizzctl monitor`, 2026-11-02) is a command watch row too — a script the server keeps
+// RUNNING, every line it prints a wake — so it shares the section and the row, and differs in three
+// readings: its NAME is the worker's description when it gave one (the script is the tooltip's first
+// line), its STATUS is how many events it has printed (it has no cadence), and its MARK is a broadcast
+// glyph rather than the re-run arrows, since nothing about it repeats.
+/** A command watch row's name: a monitor's description, else the command with its paths cut. */
+export function commandWatchLabel(watch: ThreadWatchView): string {
+  return watch.command?.monitor?.description || commandWatchName(watch.command?.command ?? watch.target)
+}
+
+/** The section's heading over a thread's command watch rows, by which kinds it holds. */
+export function commandWatchesHead(commands: readonly ThreadWatchView[]): string {
+  const monitors = commands.filter((w) => w.command?.monitor).length
+  return monitors === 0 ? "Command watches" : monitors === commands.length ? "Monitors" : "Command watches and monitors"
+}
+
 export function CommandWatchRow({ watch, now }: { watch: ThreadWatchView; now: number }) {
+  const Mark = watch.command?.monitor ? Radio : RefreshCw
   return (
     <WaitRow
       testKind="command"
       testId={watch.target}
-      mark={<RefreshCw size={12} className={`${ON_CAP} text-muted-60`} />}
-      name={commandWatchName(watch.command?.command ?? watch.target)}
+      mark={<Mark size={12} className={`${ON_CAP} text-muted-60`} />}
+      name={commandWatchLabel(watch)}
       oneLine
       title={commandWatchTitle(watch, now)}
       status={commandWatchStatus(watch)}
@@ -887,6 +904,18 @@ export function CommandWatchRow({ watch, now }: { watch: ThreadWatchView; now: n
  *  Shared with the command watches' panel over the prompt box (QueueOpsSummary). */
 export function commandWatchTitle(watch: ThreadWatchView, now: number): string {
   const spec = watch.command
+  const monitor = spec?.monitor
+  if (spec && monitor) {
+    const latest = monitor.lastEvent
+    return [
+      spec.command,
+      "Kept running by Frizz; every line it prints wakes the thread.",
+      latest
+        ? `${monitor.events} event${monitor.events === 1 ? "" : "s"} so far. The last, ${compactElapsedSince(latest.at, now)} ago:`
+        : "No events yet.",
+      latest?.text.trim() || null,
+    ].filter(Boolean).join("\n\n")
+  }
   const last = spec?.lastRun
   const lastLine = spec && last
     ? `${spec.runs} check${spec.runs === 1 ? "" : "s"} so far. The last, ${compactElapsedSince(last.at, now)} ago, ${commandRunClause(last)}.`
@@ -900,6 +929,8 @@ export function commandWatchTitle(watch: ThreadWatchView, now: number): string {
 }
 
 export function commandWatchStatus(watch: ThreadWatchView): string {
+  const monitor = watch.command?.monitor
+  if (monitor) return monitor.events === 0 ? "running" : `${monitor.events} event${monitor.events === 1 ? "" : "s"}`
   return watch.command ? `every ${watch.command.every}` : "armed"
 }
 
@@ -1025,7 +1056,7 @@ function awaitingWaitGroups(thread: Pick<ThreadView, "id" | "subAgents" | "bgShe
     { head: "Issues", rows: issues.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     // Waiting on the world, as a PR is, so it reads after them — and ahead of the timers, which wait on
     // nothing but the clock.
-    { head: "Command watches", rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} now={now} />) },
+    { head: commandWatchesHead(commands), rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} now={now} />) },
     { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} now={now} />) },
   ].filter((g) => g.rows.length > 0)
 }
