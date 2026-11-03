@@ -541,29 +541,45 @@ let monitorsRunning = 0
 
 /**
  * A monitor a previous server left running: the server died without killing it (SIGKILL, a crash, the
- * machine sleeping through a restart). Its row still records the group it led, and the next server must
- * kill it before starting a fresh copy, or the thread is woken twice per line — once by nobody, since
- * the orphan's stdout pipe is gone, but its side effects (a poll every 30s) run on forever.
+ * machine sleeping through a restart). Its row still records the group it led and when it started, and
+ * the next server must kill it before starting a fresh copy, or the thread is woken twice per line —
+ * once by nobody, since the orphan's stdout pipe is gone, but its side effects (a poll every 30s) run on.
  *
- * PID REUSE IS THE RISK, so the group is killed only when the pid is STILL a group leader running
- * `/bin/sh -c` with this exact script: a recycled pid belongs to something else and fails both tests.
- * Returns whether it killed anything.
+ * PID REUSE IS THE RISK, so the group is killed only when the pid STILL leads its own process group AND
+ * started within MONITOR_START_TOLERANCE_MS of the instant the row recorded: a recycled pid started later,
+ * and almost never leads a group. NOT THE COMMAND LINE, which was the first test and does not survive the
+ * shell: `/bin/sh` (bash, on macOS) replaces itself with a script that is one simple command, so a monitor
+ * of `node watch.mjs` reads `node watch.mjs` in `ps`, not `/bin/sh -c node watch.mjs` — caught by the
+ * suite under load, where the exec won the race against the read. Returns whether it killed anything.
  */
-export function reapStaleMonitor(pid: number, command: string, readPs: (pid: number) => string | undefined = psLine): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false
+export function reapStaleMonitor(pid: number, startedAtMs: number, readPs: (pid: number) => string | undefined = psLine, nowMs = Date.now()): boolean {
+  if (!Number.isInteger(pid) || pid <= 1 || !Number.isFinite(startedAtMs)) return false
   const line = readPs(pid)?.trim()
   if (!line) return false
-  const match = /^(\d+)\s+(.*)$/s.exec(line)
+  const match = /^(\d+)\s+(\S+)$/.exec(line)
   if (!match || Number(match[1]) !== pid) return false
-  if (match[2] !== `/bin/sh -c ${command}`) return false
+  const elapsed = psElapsedMs(match[2])
+  if (elapsed === undefined || Math.abs(nowMs - elapsed - startedAtMs) > MONITOR_START_TOLERANCE_MS) return false
   killGroup(pid, "SIGKILL")
   return true
 }
 
-/** `<pgid> <argv>` for one pid, or undefined when it is gone. */
+/** How far a process's start, as `ps` reads it (whole seconds), may sit from the instant the row recorded
+ *  just after spawning it. */
+export const MONITOR_START_TOLERANCE_MS = 5_000
+
+/** `ps`'s `etime` — `[[dd-]hh:]mm:ss` — in milliseconds, or undefined when it is not one. */
+export function psElapsedMs(etime: string): number | undefined {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(etime.trim())
+  if (!match) return undefined
+  const [, d = "0", h = "0", m, s] = match
+  return (((Number(d) * 24 + Number(h)) * 60 + Number(m)) * 60 + Number(s)) * 1000
+}
+
+/** `<pgid> <etime>` for one pid, or undefined when it is gone. */
 function psLine(pid: number): string | undefined {
   try {
-    return execFileSync("/bin/ps", ["-ww", "-o", "pgid=,command=", "-p", String(pid)], { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] })
+    return execFileSync("/bin/ps", ["-o", "pgid=,etime=", "-p", String(pid)], { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] })
   } catch {
     return undefined
   }
@@ -597,7 +613,7 @@ export interface CommandWatchService {
   /** How many monitors the server runs right now, across every project. */
   monitorsRunning?(): number
   /** Kill a monitor a previous server left running (reapStaleMonitor). */
-  reapStaleMonitor?(pid: number, command: string): boolean
+  reapStaleMonitor?(pid: number, startedAtMs: number): boolean
 }
 
 export interface CommandWatchServiceOptions {
@@ -642,7 +658,7 @@ export function createCommandWatchService(opts: CommandWatchServiceOptions): Com
       return proc
     },
     monitorsRunning: () => monitorsRunning,
-    reapStaleMonitor: (pid, command) => reapStaleMonitor(pid, command, opts.readPs),
+    reapStaleMonitor: (pid, startedAtMs) => reapStaleMonitor(pid, startedAtMs, opts.readPs),
   }
 }
 

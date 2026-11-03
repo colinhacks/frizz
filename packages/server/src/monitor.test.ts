@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MONITOR_FLOOD_MAX_EVENTS, MONITOR_LINE_MAX_CHARS, parseMergedWake, parseMonitorWake, type BoardSnapshot, type Settings } from "@frizz/shared"
-import { createCommandWatchService, reapStaleMonitor, startMonitorProcess, type CommandWatchService, type MonitorEvent } from "./command-watch.ts"
+import { createCommandWatchService, psElapsedMs, reapStaleMonitor, startMonitorProcess, type CommandWatchService, type MonitorEvent } from "./command-watch.ts"
 import { createScheduler } from "./scheduler.ts"
 import { createStorage, type SessionRow, type Storage } from "./storage.ts"
 import { createRouter } from "./router.ts"
@@ -86,21 +86,33 @@ test("stop() kills the script's whole group, a background child included", async
   await until(() => !alive(child), "the background child to die")
 })
 
-test("a stale group is reaped only when its pid still leads `/bin/sh -c` with this exact script", async () => {
-  const script = "sleep 31; echo stale-monitor-marker"
-  const child = spawn("/bin/sh", ["-c", script], { detached: true, stdio: "ignore" })
+test("a stale group is reaped only when its pid still leads its group AND started when the row says", async () => {
+  // ONE simple command, which `/bin/sh` replaces itself with: what `ps` reads is `sleep 31`, never the
+  // `/bin/sh -c …` the server spawned. The first reaper matched on that command line, and missed exactly
+  // this shape — the commonest monitor there is (`node watch.mjs`, `tail -F x`).
+  const child = spawn("/bin/sh", ["-c", "sleep 31"], { detached: true, stdio: "ignore" })
   const pid = child.pid!
+  const startedAt = Date.now()
   try {
     await until(() => alive(pid), "the stale script")
-    assert.equal(reapStaleMonitor(pid, "sleep 31; echo some-other-script"), false, "another script is not ours")
-    assert.equal(reapStaleMonitor(pid, script, () => `${pid + 1} /bin/sh -c ${script}`), false, "not a group leader")
-    assert.equal(reapStaleMonitor(pid, script, () => undefined), false, "gone")
+    assert.equal(reapStaleMonitor(pid, startedAt - 60_000), false, "a pid that started a minute after the row's instant is somebody else's")
+    assert.equal(reapStaleMonitor(pid, startedAt, () => `${pid + 1} 00:01`), false, "not a group leader")
+    assert.equal(reapStaleMonitor(pid, startedAt, () => undefined), false, "gone")
+    assert.equal(reapStaleMonitor(pid, startedAt, () => `${pid} garbage`), false, "an unreadable start")
     assert.ok(alive(pid))
-    assert.equal(reapStaleMonitor(pid, script), true, "the real `ps` reading matches")
-    await until(() => { try { process.kill(pid, 0); return child.exitCode !== null || child.signalCode !== null } catch { return true } }, "the stale group to die")
+    assert.equal(reapStaleMonitor(pid, startedAt), true, "the real `ps` reading matches")
+    await until(() => child.exitCode !== null || child.signalCode !== null, "the stale group to die")
   } finally {
     try { process.kill(-pid, "SIGKILL") } catch {}
   }
+})
+
+test("ps's elapsed time reads in every shape it prints", () => {
+  assert.equal(psElapsedMs("00:07"), 7_000)
+  assert.equal(psElapsedMs(" 12:34"), 754_000)
+  assert.equal(psElapsedMs("01:02:03"), 3_723_000)
+  assert.equal(psElapsedMs("2-01:02:03"), 176_523_000)
+  assert.equal(psElapsedMs("soon"), undefined)
 })
 
 // ---- THE SCHEDULER --------------------------------------------------------------------------------
@@ -286,13 +298,17 @@ test("a server that stops kills the script and leaves the row armed; the next se
 test("a crashed server's group is killed before the next server starts a fresh one", async () => {
   const h = harness()
   h.storage.upsertSession(row("t"))
+  // A single command, which the shell execs into — the shape the first reaper missed under load.
   const command = "sleep 32"
   const id = h.arm("t", command)
-  // What a SIGKILLed server leaves: a live group, and its pid on an armed row.
+  // What a SIGKILLed server leaves: a live group, and its pid and start on an armed row.
   const orphan = spawn("/bin/sh", ["-c", command], { detached: true, stdio: "ignore" })
+  const startedAt = Date.now()
   try {
     await until(() => alive(orphan.pid!), "the orphan")
-    h.storage.noteMonitorStart(id, orphan.pid!)
+    // Past the shell's exec, so `ps` reads `sleep 32`, as it does on a loaded machine.
+    await sleep(300)
+    h.storage.noteMonitorStart(id, orphan.pid!, startedAt)
     await h.s.tick()
     await until(() => orphan.exitCode !== null || orphan.signalCode !== null, "the orphan to be reaped")
     const w = h.storage.getCommandWatch(id)!

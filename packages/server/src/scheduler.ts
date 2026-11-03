@@ -4162,7 +4162,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   function launchMonitor(service: CommandWatchService, w: CommandWatchRow, nowMs: number, registration?: LiveMonitor["registration"]): LiveMonitor | string {
     if (!service.startMonitor) return "this server cannot run monitors"
     // A group a crashed server left running is killed before a fresh one starts (reapStaleMonitor).
-    if (w.pid !== null && service.reapStaleMonitor?.(w.pid, w.command)) {
+    if (w.pid !== null && w.pid_started_at !== null && service.reapStaleMonitor?.(w.pid, w.pid_started_at)) {
       log(`waker: killed monitor ${w.id}'s stale process group ${w.pid}, left running by an earlier server`)
     }
     const live: LiveMonitor = { id: w.id, slug: w.thread_slug, gateCheckedAt: nowMs, recent: [], ...(registration ? { registration } : {}), ended: Promise.resolve(), lastWakeAtMs: 0 }
@@ -4173,7 +4173,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
     live.proc = proc
     monitors.set(w.id, live)
-    deps.storage.noteMonitorStart(w.id, proc.pid ?? null)
+    // The wall clock, not the scheduler's: it is compared with the start `ps` reads off the real process.
+    deps.storage.noteMonitorStart(w.id, proc.pid ?? null, Date.now())
     live.ended = proc.done
       .then((run) => onMonitorExit(live, run))
       .catch((err) => log(`waker: monitor ${w.id} exit failed to record: ${err instanceof Error ? err.message : String(err)}`))

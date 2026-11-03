@@ -486,8 +486,11 @@ export interface CommandWatchRow {
   last_event_at: number | null
   last_event: string | null
   /** The process group a RUNNING monitor leads, so a server that died without killing it can find and
-   *  kill it on its next boot before starting a fresh one. Null on a check and on a monitor not running. */
+   *  kill it on its next boot before starting a fresh one, and the wall-clock instant it was started, which
+   *  is how that boot tells the group from a recycled pid (command-watch.ts reapStaleMonitor). Null on a
+   *  check and on a monitor not running. */
   pid: number | null
+  pid_started_at: number | null
 }
 
 /** What one finished check writes back onto its row. */
@@ -859,7 +862,7 @@ export interface Storage {
   // ---- MONITORS (`frizzctl monitor`, 2026-11-02) — command_watch rows of kind 'monitor' ------------
   armMonitor(monitor: { id: string; slug: string; command: string; description?: string | null; createdAtMs: number; expiresAtMs: number }): CommandWatchRow
   /** A monitor's script was started (again): counts the start and records the group it leads. */
-  noteMonitorStart(id: string, pid: number | null): boolean
+  noteMonitorStart(id: string, pid: number | null, startedAtMs: number): boolean
   /** One event printed. Returns the monitor's event count after it, or undefined when the row is no
    *  longer armed (a drop that landed while the line was in flight wins). */
   recordMonitorEvent(id: string, event: { atMs: number; text: string }): number | undefined
@@ -1511,6 +1514,7 @@ export function ensureStorageSchema(db: Database): void {
     ["command_watch", "kind TEXT NOT NULL DEFAULT 'check'"], ["command_watch", "description TEXT"],
     ["command_watch", "events INTEGER NOT NULL DEFAULT 0"], ["command_watch", "last_event_at INTEGER"],
     ["command_watch", "last_event TEXT"], ["command_watch", "pid INTEGER"],
+    ["command_watch", "pid_started_at INTEGER"],
   ] as const) {
     try {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`)
@@ -2164,7 +2168,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     RETURNING *
   `)
   const noteMonitorStartStmt = scope.prepare(`
-    UPDATE command_watch SET runs = runs + 1, pid = ?
+    UPDATE command_watch SET runs = runs + 1, pid = ?, pid_started_at = ?
     WHERE project_id = @project_id AND id = ? AND state = 'armed' AND kind = 'monitor'
   `)
   const recordMonitorEventStmt = scope.prepare<[number, string, string], { events: number }>(`
@@ -2173,7 +2177,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     RETURNING events
   `)
   const recordMonitorExitStmt = scope.prepare(`
-    UPDATE command_watch SET pid = NULL, last_run_at = ?, last_outcome = ?, last_exit = ?, last_output = ?
+    UPDATE command_watch SET pid = NULL, pid_started_at = NULL, last_run_at = ?, last_outcome = ?, last_exit = ?, last_output = ?
     WHERE project_id = @project_id AND id = ? AND kind = 'monitor'
   `)
   const upsertThreadLinkStmt = scope.prepare<{
@@ -3028,7 +3032,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
         createdAtMs: monitor.createdAtMs,
         expiresAtMs: monitor.expiresAtMs,
       })!,
-    noteMonitorStart: (id, pid) => noteMonitorStartStmt.run(pid, id).changes === 1,
+    noteMonitorStart: (id, pid, startedAtMs) => noteMonitorStartStmt.run(pid, pid === null ? null : startedAtMs, id).changes === 1,
     recordMonitorEvent: (id, event) => recordMonitorEventStmt.get(event.atMs, event.text, id)?.events,
     recordMonitorExit: (id, run) =>
       recordMonitorExitStmt.run(run.atMs, run.outcome, run.exitCode, run.output, id).changes === 1,

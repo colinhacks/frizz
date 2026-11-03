@@ -2027,7 +2027,7 @@ const ARMED_COMMAND: CommandWatchRow = {
   id: "cmw_12f995833a5b", thread_slug: "t", command: "node others-idle.mjs", every_ms: 120_000, state: "armed",
   created_at: Date.parse(FENCE_AT), expires_at: Date.parse("2026-08-13T05:00:00.000Z"), settled_at: null,
   runs: 24, last_run_at: Date.parse("2026-08-12T23:00:00.000Z"), last_outcome: "exit", last_exit: 1, last_output: "active: Layout shift\n",
-  kind: "check", description: null, events: 0, last_event_at: null, last_event: null, pid: null,
+  kind: "check", description: null, events: 0, last_event_at: null, last_event: null, pid: null, pid_started_at: null,
 }
 
 test("an armed command watch gets a row carrying its command, cadence and last check, fence or no fence", () => {
@@ -2770,7 +2770,7 @@ test("an armed monitor's row carries its description and events, not a cadence",
     ...ARMED_COMMAND, id: "cmw_0a1b2c3d4e5f", command: "tail -F app.log | grep --line-buffered ERROR", every_ms: 0, runs: 1,
     last_run_at: null, last_outcome: null, last_exit: null, last_output: null,
     kind: "monitor", description: "errors in app.log", events: 3,
-    last_event_at: Date.parse("2026-08-12T23:30:00.000Z"), last_event: "ERROR disk full", pid: 4242,
+    last_event_at: Date.parse("2026-08-12T23:30:00.000Z"), last_event: "ERROR disk full", pid: 4242, pid_started_at: Date.parse("2026-08-12T22:00:00.000Z"),
   }
   const [view] = fenceWatchViews("t", parked({ kind: "command", value: monitor.id }), FENCE_AT, {}, [], [], [], {}, [monitor])
   assert.equal(view.kind, "command")
