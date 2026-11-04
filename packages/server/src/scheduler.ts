@@ -2,7 +2,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { createHash, randomUUID } from "node:crypto"
 import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
-import { autonomousGoalOf, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
+import { autonomousGoalOf, childOfRow, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
 import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, githubStatusKey, idlePrsOf, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, parkWaitsOnThisSide, readAwaitingPark, readGithubStatusBook, unaccountedItems, type AwaitingPark, type GithubStatusBook } from "./awaiting.ts"
 import type { CommandWatchRow, PrWatchRow, SessionRow, Storage, ThreadQuestionRow } from "./storage.ts"
 import type { CommandRunResult, CommandWatchService, MonitorEvent, MonitorProcess } from "./command-watch.ts"
@@ -10,10 +10,11 @@ import type { Tailer } from "./tailer.ts"
 import type { SessionTelemetry } from "./tailer.ts"
 import type { LimitFault } from "./backend/types.ts"
 import { codexLimitFault, codexLimitRecovery } from "./backend/codex-usage-limit.ts"
-import type { ProviderError } from "@frizz/shared"
+import type { ProviderError, ThreadMessageSender, ThreadView } from "@frizz/shared"
 import { limitFaultResetKey, limitPauseIsStale, mayHaveLiveBackgroundWork, quotaWindowKeyFor, quotaWindowRecovered, scopedQuotaWindow, scopedQuotaWindowRecovered, textResetInstant } from "./backend/usage-limit.ts"
 import { claudeFallbackModel, claudeModelFromLimitName, claudeProfile, normalizeObservedThreadModel } from "./backend/thread-profiles.ts"
 import { createWakeDeliveryStore, WAKE_QUIET_WINDOW_MS, type WakeDelivery } from "./wake-store.ts"
+import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 // The board owns the registered-done lifetime rule, and the waker must read it by exactly the same rule
 // or the two disagree about whether a thread is finished.
 import { answersInFlight, answersReceivedAt, registeredDoneFence, safeQuestionSpec, wakeQuestionAnswer } from "./board.ts"
@@ -1350,6 +1351,34 @@ const REVIEW_SEEN_CAP = 300
 // how many it did not get named individually.
 const REVIEW_STEER_CAP = 10
 
+/** How a child's rest reads to its parent, in one clause (evalChildHandoffs). */
+export function childRestOutcome(
+  view: Pick<ThreadView, "crashed" | "providerError">,
+  tele: Pick<SessionTelemetry, "lastFence">,
+  registeredDone: boolean,
+): string {
+  if (registeredDone || tele.lastFence?.kind === "done") return "it signed off as done"
+  if (view.crashed) return "its worker stopped mid-turn without signing off"
+  if (view.providerError) return `it stopped on a provider error (${view.providerError.message})`
+  if (tele.lastFence?.kind === "awaiting") return "it is waiting on you"
+  return "it came to rest without a sign-off"
+}
+
+/** The body of the `<thread-message>` a parent receives when its child rests (evalChildHandoffs). The
+ *  wrapper (formatThreadMessage) already names the child and how to answer it; this says what happened
+ *  and carries the child's own words, capped so one runaway message cannot flood the parent's context. */
+export function childHandoffMessage(input: { slug: string; title: string; outcome: string; handoff: string }): string {
+  const CAP = 24_000
+  const text = input.handoff.trim()
+  const handoff = text.length > CAP ? `${text.slice(0, CAP)}\n\n[… cut at ${CAP} characters; the rest is in the child's own thread]` : text
+  return (
+    `Your child thread «${input.title}» (\`${input.slug}\`) came to rest: ${input.outcome}. This is its handoff, ` +
+    "which came to you instead of the human. Answer it, or send it more work, with " +
+    `\`frizzctl steer ${input.slug} --message-file <file|->\`; what it needs from the human is yours to ask.\n\n` +
+    (handoff || "(It wrote nothing.)")
+  )
+}
+
 export interface SchedulerDeps {
   storage: Storage
   tailer: Tailer
@@ -1396,6 +1425,17 @@ export interface SchedulerDeps {
   retryMaxMs?: number
   maxDeliveryAttempts?: number
   deliveryBatchSize?: number
+  // CHILD THREADS (evalChildHandoffs). The board's current thread views — the cached snapshot, which is
+  // where a child's verdict (ThreadView.handoffToParent) is derived by the same rule that builds the
+  // queue. Absent ⇒ no child handoff is ever delivered, which is what a test not about them wants.
+  boardThreads?: () => Promise<readonly ThreadView[]>
+  // The FULL text of a thread's last assistant message, read from its transcript (the tailer keeps only
+  // a 200-character preview). What a parent is handed when its child rests without a registered done.
+  lastAssistantText?: (slug: string) => string | undefined
+  // Hand a child's handoff to its parent as a `<thread-message>` — the router's `ctx.threadInbox`, the
+  // same delivery `frizzctl steer` makes, so it wakes a resting parent, reaches a running one at its next
+  // tool boundary and reopens an archived one. Resolves once the message is handed to the runtime.
+  deliverToThread?: (sent: { from: ThreadMessageSender; to: string; message: string }) => Promise<unknown>
   // Deterministic hard-crash fault injection. Throwing here escapes tick without compensating writes,
   // exactly like process death at the named durability boundary. Never configured in production.
   crashPoint?: (point: SchedulerCrashPoint, delivery: WakeDelivery) => void
@@ -1444,8 +1484,8 @@ export interface MonitorStartResult {
 /** The FENCE key a wire kind is written as. The wire kinds stayed SINGULAR through the 2026-08-24 YAML
  *  cutover; the grammar the worker writes did not, so every message that quotes a fence line back at a
  *  worker has to translate — printing `i.kind` raw teaches a spelling the parser now refuses. */
-const AWAITING_KEY_OF: Record<"shell" | "agent" | "timer" | "pr" | "issue" | "command", string> = {
-  shell: "shells", agent: "agents", timer: "timers", pr: "prs", issue: "issues", command: "commands",
+const AWAITING_KEY_OF: Record<"shell" | "agent" | "timer" | "pr" | "issue" | "command" | "thread", string> = {
+  shell: "shells", agent: "agents", timer: "timers", pr: "prs", issue: "issues", command: "commands", thread: "threads",
 }
 
 // ---- THE MID-TURN HOLD'S BOUND ------------------------------------------------------------------
@@ -2473,6 +2513,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         spawnedAt: row.spawned_at,
         sightings: tele.questionSightings,
         autonomousGoal: autonomousGoalOf(row),
+        childOf: childOfRow(deps.storage, row),
         faultBook: deps.questionFaults,
       })
       if (sync.registered.length > 0) log(`waker: ${row.slug} registered question(s) ${sync.registered.map((q) => q.handle).join(", ")}`)
@@ -2680,7 +2721,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     // Read once per pass: which watched PRs wait on nothing but their own thread (parkWaitsOnThisSide).
     const github = readGithubStatusBook(deps.storage.getSetting(GITHUB_STATUS_SETTING))
     const idlePrs = idlePrsOf(github)
-    for (const row of deps.storage.allSessions()) {
+    const rows = deps.storage.allSessions()
+    // CHILD THREADS: every parent's children, for a park that names them under `threads:`.
+    const children = childrenByParent(rows)
+    for (const row of rows) {
       if (row.state === "archived" || row.archived === 1) continue
       const tele = deps.tailer.get(row.slug)
       if (!tele || tele.turn !== "idle") continue
@@ -2715,6 +2759,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         // (needsInputParkHolds). A `needs_input` handoff naming its own green PR is exactly the rest this
         // asks for, and a fence with no answer is judged by rules that never see the PR readings.
         awaitingNeedsInput(tele.lastFence.hints) === false ? idlePrs : undefined,
+        liveChildThreads(children.get(row.slug) ?? [], (slug) => deps.tailer.get(slug)),
       )
       // A command watch's settled rows, by id: one that PASSED has already woken the thread, the way a
       // fired timer has, and one that expired or was cancelled is a wait that is over for another reason.
@@ -2760,7 +2805,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // the one party whose reply wakes the thread, from the queue it is already in. With no `for:` it
       // falls through the malformed-fence skip below and is simply honoured; with one, it expires.
       // `questions:` name the human the same way (2026-10-05), and the answer is the wake.
-      const nameless = park.items.length === 0 && !parkOnHuman(park)
+      // CHILD THREADS: a child's `status: needs_input` names its PARENT the way `steps:` name the human — the
+      // parent's reply is the wake, and SOURCE 17 hands it the handoff — so it needs nothing else named.
+      const onParent = awaitingNeedsInput(tele.lastFence.hints) === true && childOfRow(deps.storage, row) !== undefined
+      const nameless = park.items.length === 0 && !parkOnHuman(park) && !onParent
       // HONOURED ⇒ the corrective allowance comes back. A park frizz can actually honour is the one
       // event that proves a correction landed, and — unlike any activity signal — not one frizz can
       // cause by correcting. Guarded on a non-zero count so this is a transition, not a write on every
@@ -2915,6 +2963,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           ? "NOT REGISTERED — register it with `frizzctl watch-issue add` first, then name it here"
           : i.kind === "command"
           ? "NOT REGISTERED — register it with `frizzctl watch-command add` first, then name the id it gives you here"
+          : i.kind === "thread"
+          ? (children.get(row.slug)?.some((c) => c.slug === i.value)
+            ? "ALREADY REPORTED — that child's latest handoff was delivered to you; read it, and steer the child if it needs more"
+            : "NOT YOUR CHILD — name only a thread you started with `frizzctl spawn-child`, by its slug")
           : "NOT RUNNING (nothing by that name)"
         // The PLURAL key, because that is what the worker has to write. `i.kind` is the internal wire
         // kind and stayed singular through the 2026-08-24 YAML cutover; printing it raw taught a
@@ -5125,6 +5177,54 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   }
 
+  // ---- SOURCE 17: A CHILD THREAD CAME TO REST, AND ITS HANDOFF IS ITS PARENT'S ---------------------------
+  // CHILD THREADS (Settings.childThreads, 2026-11-04). A thread spawned with `frizzctl spawn-child` reports
+  // to the thread that spawned it, not to the human: a rest that would have queued it (board.ts
+  // deriveChildHandoff, carried on the view as `handoffToParent`) is handed to the parent here, once,
+  // as a `<thread-message>` from the child — so the parent answers with `frizzctl steer <child>` exactly
+  // as it answers any thread.
+  //
+  // ONCE PER REST, DURABLY: the child's row remembers the rest it last reported (child_reported_at), so
+  // the level-triggered sweep below, a restart and a pruned outbox all agree it was said.
+  //
+  // NOT WHILE FRIZZ IS STILL TALKING TO THE CHILD. A bare rest earns the child a sign-off nudge, a dead
+  // park name a correction, a refused question a fault — each an open wake on the CHILD, enqueued by an
+  // earlier pass in this same tick. Reporting that rest would hand the parent a premature handoff and then
+  // a second, real one; so a child with any wake of its own still open is left for a later tick, when it
+  // has either answered (a new rest) or Frizz has given up nudging it (and the rest is the handoff).
+  async function evalChildHandoffs(): Promise<void> {
+    if (!deps.boardThreads || !deps.deliverToThread) return
+    const views = await deps.boardThreads()
+    const open = new Set(outbox.listOpen().map((d) => d.slug))
+    for (const view of views) {
+      if (!view.handoffToParent || !view.parentSlug || !view.handoffRestAt) continue
+      const row = deps.storage.getSession(view.id)
+      if (!row || row.state === "archived" || row.archived === 1) continue
+      const tele = deps.tailer.get(row.slug)
+      // The snapshot is a cache: its verdict must be about the rest the tailer sees now.
+      if (!tele || tele.turn !== "idle" || tele.lastAssistantAt !== view.handoffRestAt) continue
+      if (row.child_reported_at && Date.parse(row.child_reported_at) >= Date.parse(view.handoffRestAt)) continue
+      if (open.has(row.slug)) continue
+      const parent = deps.storage.getSession(view.parentSlug)
+      if (!parent) continue
+      const done = registeredDoneFence(deps.storage.getThreadDone(row.slug), tele.lastUserAt)
+      const handoff = done ? deps.storage.getThreadDone(row.slug)!.body : deps.lastAssistantText?.(row.slug) ?? tele.lastAssistant ?? ""
+      const title = view.title || row.slug
+      try {
+        await deps.deliverToThread({
+          from: { slug: row.slug, title },
+          to: parent.slug,
+          message: childHandoffMessage({ slug: row.slug, title, outcome: childRestOutcome(view, tele, Boolean(done)), handoff }),
+        })
+      } catch (err) {
+        log(`waker: child handoff ${row.slug} → ${parent.slug} failed, retrying next tick: ${err instanceof Error ? err.message : String(err)}`)
+        continue
+      }
+      deps.storage.setChildReportedAt(row.slug, view.handoffRestAt)
+      log(`waker: child ${row.slug} reported its rest to ${parent.slug}`)
+    }
+  }
+
   async function runTick(): Promise<void> {
     try {
       await evalLimits(now())
@@ -5170,6 +5270,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     } catch (err) {
       if (err instanceof InjectedSchedulerCrash) throw err
       log(`waker: recurring-prompt rest pass failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    // SOURCE 17 after every pass that can wake a CHILD for its own rest (the nudge, the corrections, the
+    // Goal): it stands down while any of their wakes is open, so they must be in the outbox first.
+    try {
+      await evalChildHandoffs()
+    } catch (err) {
+      if (err instanceof InjectedSchedulerCrash) throw err
+      log(`waker: child handoff pass failed: ${err instanceof Error ? err.message : String(err)}`)
     }
     try {
       evalCompactPrompts(now())

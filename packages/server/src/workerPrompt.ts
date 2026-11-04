@@ -1741,6 +1741,32 @@ finished but the thread found more**.`
 // finding the board's `followUp` route, the slug and the session id, then curled it — Claude Code's own
 // cross-session SendMessage reaches only a live process. `steer` is that delivery as a command; this section
 // exists because a worker that does not know it can message a thread relays through the human instead.
+// CHILD THREADS (Settings.childThreads, 2026-11-04): included only while the operator has the experiment
+// switched on (buildWorkerPrompt's \`childThreads\`), so a worker on a machine that has not opted in is never
+// taught a command that would refuse it. A CHILD's own instructions are its prompt's footer
+// (shared childThreadFooter), not this section: this one is for the thread that might spawn one.
+const CHILD_THREADS = `## Child threads (an experiment the operator switched on)
+
+\`frizzctl spawn-child\` starts a CHILD THREAD: a full Frizz thread on your board, on Claude Code or Codex, that
+works for YOU. It runs on its harness's own runtime with the project's skills and instructions, rests like any
+thread, and owns its own watchers. Every rest of its that would have gone to the human — its \`done\`, a
+\`needs_input\` handoff, a stop or a crash — comes to YOU instead, as a \`<thread-message>\` that wakes you; answer
+it, or give it more work, with \`frizzctl steer <slug>\`. It sits under your thread on the board, never in the
+queue. Only a permission approval, a secret it needs and a usage-limit stop still reach the human directly.
+
+**Pick by whether the work must WAIT.** An in-session sub-agent stays the tool for a helper that finishes inside
+your turn — a review, a research prong, a verification pass: it is cheaper (no worker prompt, no cold start, no
+process of its own) and its result comes straight back. A child thread is for what a sub-agent structurally
+cannot do: work that must REST and be woken — above all a pull request it opened and must shepherd through CI
+and review rounds on its own watcher — work on the OTHER harness, and work that must outlive your process. A
+sub-agent's \`frizzctl\` acts as you, so a watcher it registers wakes you, and a finished sub-agent cannot be
+woken at all; a child has its own thread, so its watchers wake it.
+
+**Rest on a child that is still working** by naming it in your \`\`\`awaiting fence — \`threads: [<slug>]\` with
+\`status: working\` — and its handoff ends the park. \`frizzctl activity\` lists your live children. **What a child
+asks is yours to decide:** a decision it needs arrives in its handoff, and you answer it with \`steer\` or take it
+to the human in a \`\`\`question of your own. A child cannot start children of its own.`
+
 const STEER_THREADS = `## Steering another thread
 
 When another thread needs what you have — results it is waiting on, a finding that changes its work, the
@@ -1860,7 +1886,7 @@ checks. Depth scales with blast radius and yields to the project's conventions.`
  */
 const MONITORS_DIR_FALLBACK = "<frizz>/cc-worker/skills/gh/scripts"
 
-export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitorsDir?: string } = {}): string {
+export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitorsDir?: string; childThreads?: boolean } = {}): string {
   // Claude gets the LEAN list: frizz mechanics + the autonomy anchor, and nothing that merely narrates
   // good engineering. Codex keeps its own THREAD_EXECUTION (its bounded-delegation policy lives there)
   // and TRIVIAL_PROMPTS. See the SIZING note at the top of this file.
@@ -1878,6 +1904,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     kind === "claude" ? CLAUDE_INTERRUPTED_CALL : null,
     THREAD_NAME,
     SPAWN_THREAD,
+    opts.childThreads ? CHILD_THREADS : null,
     STEER_THREADS,
     lean ? null : THREAD_EXECUTION[kind],
     AGENT_COMPLETION,

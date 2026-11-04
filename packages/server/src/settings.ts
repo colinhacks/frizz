@@ -29,7 +29,7 @@ const SETTINGS_KEY = "settings"
  * hypothetical: the first run of this change wrote `notifications: false` into the maintainer's own
  * settings, which would have quietly turned their desktop notifications off.
  */
-const MACHINE_KEYS = ["notifications", "localFileOpener", "projectRail"] as const
+const MACHINE_KEYS = ["notifications", "localFileOpener", "projectRail", "childThreads"] as const
 type MachineSettings = Pick<Settings, (typeof MACHINE_KEYS)[number]>
 const MachineSettingsRecord = Settings.partial()
 
@@ -90,6 +90,8 @@ export const defaultSettings = (): Settings => ({
   codexContextWindow: undefined,
   // Hidden until asked for — see the schema for why.
   projectRail: false,
+  // An experiment, off until the operator turns it on — see the schema.
+  childThreads: false,
 })
 
 // Settings persist as one JSON blob under settings['settings']. Read merges over defaults

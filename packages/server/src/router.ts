@@ -22,7 +22,11 @@ import {
   SteerThreadResult,
   SpawnThreadInput,
   SpawnThreadResult,
+  SpawnChildInput,
+  SpawnChildResult,
+  childThreadFooter,
   type ThreadMessageSender,
+  PermissionMode,
   formatThreadMessage,
   spawnedThreadFooter,
   parseThreadMessage,
@@ -214,6 +218,8 @@ import { claudeModelStanding, claudeModelUpgradeBlock, claudeModelUpgradeDue, cl
 import { log as frizzLog } from "./logging.ts"
 import { audited, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
 import { codexSandbox } from "./backend/codex.ts"
+import { liveBrokerRecords } from "./backend/claude-broker-host.ts"
+import { hibernationVerdict } from "./thread-hibernation.ts"
 import type { CodexSandboxMode } from "./backend/codex-app-server.ts"
 import { readQuota } from "./quota.ts"
 import { readAuthSnapshot } from "./backend/auth-status.ts"
@@ -222,7 +228,8 @@ import { threadProfileOptions, validateThreadProfile } from "./backend/thread-pr
 import { adoptionRuntimeBinding, type AdoptionPaneLookup, type ExpectedAdoptionPane } from "./adoption-recovery.ts"
 import { parseIssueRef, parsePrRef, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING } from "./awaiting.ts"
 import { isBrokerClaudeRow, type CommandWatchRow, type SessionRow, type Storage, type SubAgentSteerRow, type ThreadQuestionRow } from "./storage.ts"
-import { syncQuestionFences } from "./question-fences.ts"
+import { childOfRow, syncQuestionFences } from "./question-fences.ts"
+import { liveChildThreads } from "./child-threads.ts"
 import type { SessionTelemetry } from "./tailer.ts"
 import { backgroundShellLineCount, readBackgroundShellOutput } from "./background-shell-output.ts"
 import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
@@ -922,6 +929,43 @@ export function createRouter(ctx: AppContext) {
     return shown.aiTitle || shown.title || row.slug
   }
 
+  // CHILD THREADS: a permission change on a parent reaches the children on its own harness (a mode does
+  // not map across harnesses — see spawnChild). Each child's intent is persisted, which every later start
+  // of its worker reads. Applying it to a LIVE worker follows the parent's own two paths: a Codex child is
+  // retuned in place (the running turn keeps its policy; the next one takes the new one), and a Claude
+  // child's daemon is retired so its next turn starts under the new flag — but only while it is idle with
+  // nothing in flight, by the same verdict hibernation uses, because retiring a working child would kill
+  // its turn, its sub-agents and its shells. A Claude child that is mid-work keeps its old mode until its
+  // worker next starts (a restart, or hibernation after an hour at rest).
+  function cascadePermissionToChildren(parentSlug: string, kind: "claude" | "codex", mode: PermissionMode): void {
+    const nowMs = Date.now()
+    const daemons = new Map(liveBrokerRecords(ctx.project.stateDir).map((r) => [r.sessionId, r.createdAt]))
+    for (const child of ctx.storage.allSessions()) {
+      if (child.parent_slug !== parentSlug || child.state === "archived" || child.archived === 1) continue
+      if ((child.backend ?? "claude") !== kind) continue
+      ctx.storage.setPermissionMode(child.slug, mode)
+      if (kind === "codex") {
+        const bridge = ctx.codexAppServer
+        if (bridge && bridge.binding(child.slug, child.session_id)) {
+          void bridge.setSandbox({ threadSlug: child.slug, sessionId: child.session_id, sandbox: codexSandbox(mode) as CodexSandboxMode }).catch(() => {})
+        }
+        continue
+      }
+      const startedAt = daemons.get(child.session_id)
+      if (startedAt === undefined) continue
+      const verdict = hibernationVerdict({
+        slug: child.slug,
+        sessionId: child.session_id,
+        row: child,
+        telemetry: ctx.tailer.get(child.slug),
+        pendingInteractions: ctx.storage.interactions.listPending({ projectId: ctx.project.id, threadSlug: child.slug, sessionId: child.session_id }).length,
+        daemonStartedAtMs: Date.parse(String(startedAt)),
+      }, { nowMs, idleMs: 0, minDaemonAgeMs: 0 })
+      if (verdict.hibernate) ctx.claudeBroker?.retireDaemon({ threadSlug: child.slug, sessionId: child.session_id })
+    }
+    ctx.board.refresh()
+  }
+
   // THE RECEIVING HALF OF `frizzctl steer`: one `<thread-message>` into a thread of THIS project. The
   // sender is the caller's to have verified — this project's own `steerThread` for a sender here, the
   // sending project's for one elsewhere, which reaches this through `ctx.threadInbox` below.
@@ -1233,7 +1277,7 @@ export function createRouter(ctx: AppContext) {
         // a SECOND time — and it matters more now that the deliveryId IS the SDK input uuid: the SDK
         // rejects an id that is still outstanding, so a replay would surface as an error on the
         // operator's send instead of the no-op it should be.
-        const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, ctx.project.dir)
+        const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, ctx.project.dir, { childThreads: ctx.getSettings().childThreads })
         // Is this thread MID-TURN right now? Sampled BEFORE the bridge call on purpose: a cold resume
         // takes seconds, and by the time it returns the turn this very message started reads as
         // in-flight — which would gray the one send that is provably being read. The tailer's `turn`
@@ -1786,6 +1830,7 @@ export function createRouter(ctx: AppContext) {
       spawnedAt: row.spawned_at,
       sightings: ctx.tailer.get(slug)?.questionSightings,
       autonomousGoal: autonomousGoal(row),
+      childOf: childOfRow(ctx.storage, row),
       faultBook: ctx.questionFaults,
     })
   }
@@ -2131,7 +2176,7 @@ export function createRouter(ctx: AppContext) {
         // Claude's `default` — see coldResumePermission — or rebuilds it with no worker contract,
         // which the daemon it forks would then keep for every later message.
         permissionMode: coldResumePermission(row, ctx.getSettings()),
-        appendSystemPrompt: claudeWorkerSystemPrompt(row.session_id, ctx.project.dir),
+        appendSystemPrompt: claudeWorkerSystemPrompt(row.session_id, ctx.project.dir, { childThreads: ctx.getSettings().childThreads }),
         model: row.model ?? undefined,
         effort: row.effort ?? undefined,
         // Frizz's own notice, not the operator's reply to anything: an open card stays open.
@@ -2844,6 +2889,47 @@ export function createRouter(ctx: AppContext) {
       }, (result: SpawnThreadResult) => ({ detail: { spawned: result.slug, ...(result.project ? { spawnedIn: result.project } : {}) } })),
     }),
 
+    // CHILD THREADS — `frizzctl spawn-child` (Settings.childThreads, 2026-11-04). A new thread on THIS board,
+    // dispatched exactly as any thread is (so it runs on its harness's own runtime, with the project's
+    // skills and instructions), plus one link: the calling thread becomes its parent. The board keeps the
+    // child out of the human's queue and hands its rests to the parent (board.ts deriveChildHandoff,
+    // scheduler SOURCE 17). colinhacks/frizz#71 tried this with a runtime of its own and was closed for
+    // giving up the harness's tooling; this one has no runtime of its own to give anything up.
+    //
+    // PERMISSIONS: a child on the parent's own harness starts in the parent's CURRENT mode — what the
+    // operator chose for that thread, not the dispatch default — and setThreadPermission cascades later
+    // changes. One on the other harness starts in that harness's dispatch default: the modes do not map
+    // across (a Codex `auto` is a sandbox with no network, which would cut the child off from `frizzctl`).
+    spawnChild: mutation({
+      input: SpawnChildInput,
+      output: SpawnChildResult,
+      handler: ({ input }) => audit("spawnChild", {
+        project: thisProject,
+        thread: input.from,
+        detail: { prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
+      }, async (): Promise<SpawnChildResult> => {
+        if (!ctx.getSettings().childThreads) {
+          return { refused: "child threads are an experiment that is switched off on this machine (Settings → Child threads). Use an in-session sub-agent, or `frizzctl spawn-thread` for separate work" }
+        }
+        const sender = ctx.storage.getSession(input.from)
+        if (!sender) throw new Error(`the calling thread ${input.from} is not registered in this project`)
+        if (sender.parent_slug && ctx.storage.getSession(sender.parent_slug)) {
+          return { refused: "this thread is itself a child thread, and children cannot start children of their own. Use an in-session sub-agent, or hand the work back to your parent in your handoff" }
+        }
+        const kind = input.backend ?? "claude"
+        const inherited = kind === (sender.backend ?? "claude")
+          ? PermissionMode.safeParse(sender.permission_pending ?? sender.permission_mode)
+          : undefined
+        const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender) }
+        const { from: _from, ...rest } = input
+        const made = await ctx.dispatcher.dispatch(
+          { ...rest, prompt: input.prompt + childThreadFooter(from) },
+          { backend: kind, parentSlug: sender.slug, ...(inherited?.success ? { permissionMode: inherited.data } : {}) },
+        )
+        return { slug: made.slug, sessionId: made.sessionId }
+      }, (result: SpawnChildResult) => ({ detail: "refused" in result ? { refused: result.refused } : { spawned: result.slug } })),
+    }),
+
     // The × on a FAILED send's bubble, and the second half of its Edit (the client has already put the
     // words back into the prompt box). The only way a failed entry leaves the ledger by hand — nothing
     // ages it, so without this a failure the operator has dealt with would sit at the tail for good.
@@ -3025,7 +3111,7 @@ export function createRouter(ctx: AppContext) {
         if (!bridge) throw new Error("Claude session broker is unavailable; cannot compact this thread")
         // The same cold-resume inputs a follow-up carries: a hibernated daemon is resumed to run the
         // command, and it must come back as the worker it was.
-        const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, ctx.project.dir)
+        const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, ctx.project.dir, { childThreads: ctx.getSettings().childThreads })
         await bridge.followUp({
           threadSlug: input.slug,
           sessionId: row.session_id,
@@ -3078,13 +3164,17 @@ export function createRouter(ctx: AppContext) {
               const applied = await bridge.setSandbox({ threadSlug: input.slug, sessionId: permRow.session_id, sandbox })
               // A change made against a RUNNING turn is accepted and durable, but the running turn keeps
               // the policy it started under — so say "next turn", never "applied to the live session".
-              if (applied.applied) return { effect: applied.turnInFlight ? "next-turn" as const : "applied" as const }
+              if (applied.applied) {
+                cascadePermissionToChildren(input.slug, "codex", input.permissionMode)
+                return { effect: applied.turnInFlight ? "next-turn" as const : "applied" as const }
+              }
             } catch {
               // A bridge that cannot reach the app-server (or a thread it no longer holds) is not an
               // error the operator needs to see: the intent is already persisted and the next resume
               // carries it. Fall through to the pre-existing "next-resume" answer.
             }
           }
+          cascadePermissionToChildren(input.slug, "codex", input.permissionMode)
           return { effect: "next-resume" as const }
         }
         // Claude: persist the operator's intent, then RETIRE THE WORKER PROCESS so the next turn starts
@@ -3117,6 +3207,7 @@ export function createRouter(ctx: AppContext) {
           threadSlug: input.slug,
           sessionId: permRow.session_id,
         }) === true
+        cascadePermissionToChildren(input.slug, "claude", input.permissionMode)
         return { effect: retired ? "next-turn" as const : "next-resume" as const }
       },
     }),
@@ -3650,6 +3741,14 @@ export function createRouter(ctx: AppContext) {
             since: new Date(w.created_at).toISOString(), until: new Date(w.expires_at).toISOString(),
           })
         }
+        // CHILD THREADS still working for this one, by the slug a `threads:` fence line names them with — the
+        // same liveness the park check reads (child-threads.ts), so the list and the check cannot disagree.
+        const children = ctx.storage.allSessions().filter((row) => row.parent_slug === input.slug)
+        const liveChildren = liveChildThreads(children, (slug) => ctx.tailer.get(slug))
+        for (const child of children) {
+          if (!liveChildren.has(child.slug)) continue
+          activity.push({ kind: "thread", id: child.slug, label: threadTitleOf(child), since: child.spawned_at })
+        }
         // The WATCHES are already readable: each armed one rides its live item as `watchId`, and the
         // scheduler settles a watch the tick its target stops being live, so an armed row always has an
         // item to ride. The QUESTIONS had nowhere at all — hence their own list.
@@ -4144,6 +4243,14 @@ export function createRouter(ctx: AppContext) {
         // which no amount of contract text read hours earlier can do. The tool stays PRESENT rather than
         // being hidden: a worker that wants to ask and finds nowhere to put it fakes a question in prose
         // that nothing parses, and the human never sees it at all.
+        // CHILD THREADS: a child's decisions are its parent's (question-fences.ts childOf). Secrets aside.
+        const parent = childOfRow(ctx.storage, row)
+        if (parent && !input.questions.every((q) => q.secret)) {
+          throw new Error(
+            `This is a child thread of «${parent.title}» (\`${parent.slug}\`): a decision goes to that thread, not the ` +
+            "human. Write it in your handoff and rest with `status: needs_input`; Frizz hands the handoff to your parent.",
+          )
+        }
         const goal = autonomousGoal(row)
         // A batch of SECRET requests is exempt: a credential is not a call the worker can decide, it is
         // a value only the human holds — the same footing as `steps:`, which autonomous mode allows.

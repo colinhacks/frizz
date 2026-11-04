@@ -30,6 +30,7 @@ function plausible(procedure: string, body: any): unknown {
     case "dispatch": return { slug: "spawned-child" }
     case "steerThread": return { slug: body.to, title: "The other thread", delivery: "resting" }
     case "spawnThread": return { slug: "spawned-child", sessionId: "sid-spawned-child", project: body.project }
+    case "spawnChild": return { slug: "spawned-child", sessionId: "sid-spawned-child" }
     case "upsertOwnLink": return { link: { id: "lnk_1", kind: "url", label: body.label, target: body.target } }
     case "dropOwnLink": return { dropped: true }
     case "listThreads": return { project: { slug: "frizz", id: "proj-1", name: "frizz" }, threads: [], counts: { rested: 0, active: 0, snoozed: 0, done: 0 } }

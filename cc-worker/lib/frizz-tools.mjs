@@ -110,6 +110,48 @@ const SPAWN_THREAD = {
   },
 }
 
+// CHILD THREADS (an experiment behind Settings → Child threads, 2026-11-04). The server's `spawnChild`
+// (router.ts) is the whole of it; this is its spelling.
+const SPAWN_CHILD = {
+  name: "spawn_child",
+  description:
+    "AN EXPERIMENT, switched on in Frizz's Settings (refused, exit 2, while it is off). Start a CHILD THREAD: a " +
+    "new thread on YOUR board, on Claude Code or Codex, that works for YOU. It is a full Frizz thread — its own " +
+    "session, scratch directory and watchers — dispatched like any other, so it runs on its harness's own runtime " +
+    "with the project's skills and instructions, and it can rest, own a PR watcher and be woken by it. What makes " +
+    "it a child: every rest of its that would have gone to the human's queue — its `done`, a `needs_input` " +
+    "handoff, a crash — is handed to YOU instead, as a message that wakes you, and it sits under your thread on " +
+    "the board rather than in the queue. Answer it, or give it more work, with `frizzctl steer <slug>`. Only a " +
+    "permission approval, a secret it needs and a usage-limit stop still go to the human directly. " +
+    "WHEN TO USE IT, and when not: an in-session sub-agent is still the tool for a helper that finishes inside your " +
+    "turn — a review, a research prong, a verification pass — because it is cheaper (no worker prompt, no cold " +
+    "start, no process of its own). A child thread is for work a sub-agent structurally cannot do: work that must " +
+    "REST and be woken (a pull request it opened and must shepherd through CI and review rounds), work on the OTHER " +
+    "harness, or work that must survive your process. Rest on a running child with `threads: [<slug>]` in your " +
+    "```awaiting fence. A child cannot start children of its own. You MUST choose `model` and `effort` by the " +
+    "child's task, as for `spawn-thread`.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      prompt: {
+        type: "string",
+        description: "The full task for the child. Be self-contained — it starts with empty context, and is told it is your child.",
+      },
+      model: SPAWN_THREAD.inputSchema.properties.model,
+      effort: SPAWN_THREAD.inputSchema.properties.effort,
+      backend: {
+        type: "string",
+        enum: ["claude", "codex"],
+        description:
+          "Optional harness (default `claude`). If `codex`, `model` must be a codex model id. A child on your own " +
+          "harness starts in your current permission mode; one on the other starts in that harness's default.",
+      },
+      title: { type: "string", description: "Optional short title for the child (else derived from the prompt)." },
+    },
+    required: ["prompt", "model", "effort"],
+  },
+}
+
 const GOAL = {
   name: "goal",
   description:
@@ -955,11 +997,12 @@ const THREADS = {
 // WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER, WATCH_COMMAND, MONITOR and THREADS after it: the tool list is
 // read by position in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
 // breaks nothing.
-const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS]
+const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD]
 
 /** @type {Record<string, (args: Record<string, unknown>) => Promise<string>>} */
 const HANDLERS = {
   [SPAWN_THREAD.name]: spawnThread,
+  [SPAWN_CHILD.name]: spawnChild,
   [GOAL.name]: goal,
   [TIMER.name]: timer,
   [WATCH_PR.name]: watchPr,
@@ -1207,14 +1250,14 @@ async function activity() {
   // keys are PLURAL sequences, so an id printed on its own line is no longer something a worker can copy
   // into a fence — it has to see the shape. This command is where the contract sends a worker that has lost
   // an id, so printing the retired one-line-per-item form would teach the very grammar frizz refuses.
-  const byKind = { shell: [], agent: [], timer: [], pr: [], issue: [], command: [] }
+  const byKind = { shell: [], agent: [], timer: [], pr: [], issue: [], command: [], thread: [] }
   for (const i of items) if (byKind[i.kind] && i.id) byKind[i.kind].push(i.id)
-  const block = Object.entries({ shells: byKind.shell, agents: byKind.agent, timers: byKind.timer, prs: byKind.pr, issues: byKind.issue, commands: byKind.command })
+  const block = Object.entries({ shells: byKind.shell, agents: byKind.agent, timers: byKind.timer, prs: byKind.pr, issues: byKind.issue, commands: byKind.command, threads: byKind.thread })
     .filter(([, ids]) => ids.length > 0)
     .map(([key, ids]) => `  ${key}: [${ids.join(", ")}]`)
   // The template guesses `status:` from the kinds — a shell or a sub-agent is usually work that finishes
   // by itself, a PR, an issue or a timer a watch — and the prose tells the worker to correct it.
-  const status = byKind.shell.length + byKind.agent.length > 0 ? "working" : "watching"
+  const status = byKind.shell.length + byKind.agent.length + byKind.thread.length > 0 ? "working" : "watching"
   return (
     `${items.length} thing${items.length === 1 ? "" : "s"} running on this thread:\n\n${lines.join("\n")}\n\n` +
     "Name the ones you are ACTUALLY waiting on in your ```awaiting fence. The frontmatter is YAML — one " +
@@ -1457,6 +1500,32 @@ async function spawnThread(args) {
   const slug = payload?.result?.slug
   if (typeof slug !== "string" || !slug) throw new Error(`dispatch response missing a slug: ${JSON.stringify(payload)?.slice(0, 300)}`)
   return spawnedReceipt(slug, typeof body.title === "string" ? body.title : slug, undefined)
+}
+
+async function spawnChild(args) {
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : ""
+  if (!prompt) throw new Error("`prompt` is required and must be a non-empty string")
+  const model = typeof args.model === "string" ? args.model.trim() : ""
+  if (!model) throw new Error("`model` is required — choose one by the child's task (claude: opus/sonnet/haiku, opus being the top tier; codex: a gpt-5.6 model id). There is no default.")
+  const effort = typeof args.effort === "string" ? args.effort.trim() : ""
+  if (!effort) throw new Error("`effort` is required — choose one by complexity (low/medium/high/xhigh/max). There is no default.")
+  /** @type {Record<string, unknown>} */
+  const body = { prompt, model, effort, from: threadSlug() }
+  const title = typeof args.title === "string" ? args.title.trim() : ""
+  if (title) body.title = title
+  if (args.backend === "claude" || args.backend === "codex") body.backend = args.backend
+  // The server writes the footer that tells the child it is one (shared childThreadFooter): only it can
+  // name this thread by its board title.
+  const result = (await callRpc("spawnChild", body))?.result
+  if (result?.refused) return new Refused(`NO CHILD WAS STARTED: ${result.refused}.`)
+  if (typeof result?.slug !== "string" || !result.slug) throw new Error(`spawnChild returned no slug: ${JSON.stringify(result)?.slice(0, 300)}`)
+  return (
+    `Started child thread \`${result.slug}\`. It works for you: when it rests with a handoff — done, needing ` +
+    `input, or stopped — Frizz hands it to you as a message that wakes you. Send it more with ` +
+    `\`frizzctl steer ${result.slug} --message-file <file|->\`. To rest while it works, name it in your fence: ` +
+    `\`threads: [${result.slug}]\`.\n\nIt sits under your thread on the board; this link opens it:\n\n` +
+    `[${title || result.slug}](/thread/${result.slug})`
+  )
 }
 
 /** What the spawner reads back. `project` is the new thread's project slug when it is not ours.
@@ -2491,6 +2560,14 @@ const CLI = {
     examples: [
       'frizzctl spawn-thread --model opus --effort high --title "Port the relay to Bun" --prompt-file prompt.md',
       'frizzctl spawn-thread --project nub --model opus --effort high --title "Bump the SDK pin" --prompt-file prompt.md',
+    ],
+  },
+  spawn_child: {
+    group: "Other threads",
+    summary: "Start a child thread that reports to this one (an experiment, off by default)",
+    examples: [
+      'frizzctl spawn-child --model opus --effort high --title "Fix the resolver and shepherd its PR" --prompt-file prompt.md',
+      'frizzctl spawn-child --backend codex --model gpt-5.6-sol --effort high --prompt-file prompt.md',
     ],
   },
 }
