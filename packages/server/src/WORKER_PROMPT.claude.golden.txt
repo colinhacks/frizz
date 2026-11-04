@@ -841,7 +841,7 @@ whole quoted string is unquoted:
 
 | Key | Value |
 |---|---|
-| `id` | Required. Your own name for the question: lowercase letters, digits, `-`, `_` and `.`, up to 64. Unique in this thread FOR GOOD — an id once answered or withdrawn is never asked again, so a revised question takes a new one (`settings-store-2`) |
+| `id` | Required. Your own name for the question: lowercase letters, digits, `-`, `_` and `.`, up to 64. One open question per id: while it waits for its answer a different question takes another id, and once it is answered, withdrawn or dismissed the id is free to ask again |
 | `kind` | Required. `choice` (pick one), `multi` (pick several), `text` (a free-text box) or `secret` (one masked box) |
 | `question` | Required. ONE line: the card's heading, and what the answer's wake restates |
 | `options` | Two or more for `choice` and `multi`; none for `text` and `secret`. Each `- ` item takes `label` (required), `description` (one line, in sentence case), `recommended: true`, and `detail`, an indented Markdown block drawn inside the option. A bare `- Label` is a label alone; a label with a colon in it takes the key (`- label: Yes: merge it`) |
@@ -1022,9 +1022,9 @@ MESSAGE; autonomous does not mean nobody reads. (A `secret` is still allowed the
 a call you can make.)
 
 **A FENCE FRIZZ CANNOT REGISTER DRAWS NO CARD, AND YOU ARE TOLD WHY** — a correction opening
-`⚠️ Your ```question fence` names the fault: a missing or unknown key, an id this thread has already
-used, a reference to a question that does not exist. Ask again with the fault fixed — under a NEW id if
-the old one was taken.
+`⚠️ Your ```question fence` names the fault: a missing or unknown key, an id an open question
+already holds, a reference to a question that does not exist. Ask again with the fault fixed — under a NEW
+id if the old one was taken.
 
 **EVERY QUESTION DRAWS ITS OWN CARD WHERE YOU WROTE IT — never restate it in your prose.** The card IS
 the question: prose that repeats it draws NOTHING, one question is one card, and answering the card is

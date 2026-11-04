@@ -116,6 +116,10 @@ test("a rest whose only fence names a question that closed without an answer is 
   assert.equal(showsRestedCard({ ...speaks, closedQuestions: closed("dismissed") }, text), true)
   assert.equal(showsRestedCard({ ...speaks, closedQuestions: closed("withdrawn") }, text), true)
   assert.equal(showsRestedCard({ ...speaks, closedQuestions: [{ ...closed("dismissed")[0], handle: "other" }] }, text), false, "some other question closed, not this one")
+  // A closed question's id asked AGAIN: the newest fence is the new, open question — whether or not it
+  // still stands — so this rest asked something.
+  const reasked = { id: "qst_2", askedAt: "2026-10-14T11:00:00.000Z", standing: false, spec: { handle: "retry-policy", question: "Retry or quarantine?", kind: "question" as const, options: [{ label: "Retry" }, { label: "Quarantine" }] } }
+  assert.equal(showsRestedCard({ ...speaks, closedQuestions: closed("withdrawn"), questions: [reasked] }, text), false)
   // …and it composes with a refusal in the same message.
   const both = `${text}\n\n\`\`\`question\nid: ghost\n\`\`\``
   assert.equal(showsRestedCard({ ...speaks, closedQuestions: closed("dismissed") }, both, new Set(["ghost"])), true)

@@ -12,7 +12,7 @@
 // card says that instead, beside the header's Retry. Both are last in ChatView's chain: every rung above
 // is a harder reading of the same slot and wins it.
 import { CircleDashed, TriangleAlert } from "lucide-react"
-import { hasStandingQuestion, questionFencesLive, type ThreadView } from "@frizz/shared"
+import { hasStandingQuestion, questionFencesLive, questionHandles, type ThreadView } from "@frizz/shared"
 import { splitFenceBlocks } from "../lib/fenceBlocks.ts"
 import { hasQuestionBlock, splitMessageQuestions } from "../lib/questionBlocks.ts"
 import { CARD_BODY, TranscriptCard } from "./TranscriptCard.tsx"
@@ -76,9 +76,11 @@ export function showsRestedCard(thread: RestedCardThread | undefined, lastAssist
   //
   // NOR ONE WHOSE QUESTION CLOSED WITHOUT AN ANSWER (the board's `closedQuestions`): dismissed by the
   // human, cancelled because the thread runs autonomously, or withdrawn by the worker. Nobody is being
-  // asked, and the fence draws its question closed (ClosedQuestionCard).
+  // asked, and the fence draws its question closed (ClosedQuestionCard) — unless an OPEN question carries
+  // the same id: a closed question's id may be asked again, and then the newest fence is that new ask.
   if (!questionFencesLive(thread.spawnedAt)) {
-    const closed = thread.closedQuestions ?? []
+    const openNames = new Set((thread.questions ?? []).flatMap((q) => questionHandles(q.spec).map((h) => h.toLowerCase())))
+    const closed = (thread.closedQuestions ?? []).filter((q) => !openNames.has(q.handle.toLowerCase()))
     const notAsking = closed.length === 0 ? refusedFences : new Set([...(refusedFences ?? []), ...closed.map((q) => q.handle.toLowerCase())])
     return !splitMessageQuestions(lastAssistantText, true, notAsking).some((seg) => seg.kind === "question")
   }

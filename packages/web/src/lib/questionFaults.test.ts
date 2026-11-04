@@ -139,7 +139,7 @@ test("marking is stable: the same message object for the same refusals, and one 
 })
 
 test("the server's reasons ride on the refused message, and the human reads the first one up to its dash", () => {
-  const used = "`id: store` is already used by a different question on this thread — choose a new id (an id is never reused, even once its question is settled)"
+  const used = "`id: store` is already used by a different question on this thread that is still open — choose a new id, or reference that one with `id: store` alone (an id is free again once its question is answered, withdrawn or dismissed)"
   const marked = withRefusedFences(REUSED, [{ at: at(12), id: "store", faults: [used] }], [ROW])
   assert.deepEqual(marked[4].refusedReasons && [...marked[4].refusedReasons], [["store", [used]]])
   assert.equal(marked[1].refusedReasons, undefined)
@@ -147,7 +147,7 @@ test("the server's reasons ride on the refused message, and the human reads the 
   assert.notEqual(withRefusedFences(REUSED, [{ at: at(12), id: "store", faults: ["other"] }], [ROW])[4], marked[4])
   assert.notEqual(questionFaultsKey([{ at: at(12), id: "store", faults: [used] }]), questionFaultsKey([{ at: at(12), id: "store", faults: ["other"] }]))
 
-  assert.equal(refusalSummary([used]), "`id: store` is already used by a different question on this thread")
+  assert.equal(refusalSummary([used]), "`id: store` is already used by a different question on this thread that is still open")
   assert.equal(refusalSummary(["a `secret` cannot be a follow-up — its answer would ride inside its parent's, unmasked"]), "a `secret` cannot be a follow-up")
   // A head that is only the offending line keeps the clause naming what is wrong with it.
   assert.equal(refusalSummary(["`kind: question` — the kinds are `choice`, `multi`, `text`, `secret`"]), "`kind: question` — the kinds are `choice`, `multi`, `text`, `secret`")

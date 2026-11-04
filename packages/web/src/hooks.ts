@@ -20,7 +20,9 @@ import { reconcileLatestPage, type PaginatedTranscriptData } from "./lib/transcr
 // `refusedFences`: the ids of this message's ```question fences the server refused to register, hung on
 // the message by the surface that draws it (lib/questionFaults withRefusedFences) — presentation only,
 // never in the cache. `refusedReasons` maps each to the server's reasons, which its card shows.
-export type ChatMessage = TranscriptMessage & { queued?: boolean; deliveryId?: string; restReply?: boolean; refusedFences?: ReadonlySet<string>; refusedReasons?: ReadonlyMap<string, readonly string[]> }
+// `questionOwners`: for a question id the thread has asked more than once (a settled id asked again), the
+// row it named when this message was written (lib/questionOwners) — presentation only, the same way.
+export type ChatMessage = TranscriptMessage & { queued?: boolean; deliveryId?: string; restReply?: boolean; refusedFences?: ReadonlySet<string>; refusedReasons?: ReadonlyMap<string, readonly string[]>; questionOwners?: ReadonlyMap<string, string> }
 export type TranscriptData = Partial<Omit<PaginatedTranscriptData, "messages">> & { messages: ChatMessage[] }
 
 // `mergeToolRuns` stays deleted: mutating transcript truth before the ordered-parts walk hoisted tools

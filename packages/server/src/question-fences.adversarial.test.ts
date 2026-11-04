@@ -218,9 +218,14 @@ test("a restart's refold of registered, answered, withdrawn and re-asked ids min
     const byHandle = () => new Map(h.storage.listThreadQuestions("t").map((q) => [q.handle, q]))
     h.storage.answerThreadQuestion(byHandle().get("answered")!.id, JSON.stringify({ questionId: "x", question: "SQLite or a JSON file?", chosen: ["SQLite"] }), Date.parse(at(2)))
     h.storage.withdrawThreadQuestion("t", byHandle().get("withdrawn")!.id, Date.parse(at(2)))
-    // After the answer the worker asks the answered id again (refused), then references the open one.
-    transcript.push({ at: at(3), text: choice("answered") }, { at: at(4), text: fence("id: still-open") })
+    // After the answer the worker asks both settled ids again (each a new question under its freed id),
+    // then references them and the open one.
+    transcript.push(
+      { at: at(3), text: `${choice("answered")}\n\n${choice("withdrawn", "Withdraw me, then ask me again?")}` },
+      { at: at(4), text: `${fence("id: still-open")}\n\n${fence("id: answered")}\n\n${fence("id: withdrawn")}` },
+    )
     const live = sync(h.storage, transcript)
+    assert.deepEqual(live.registered.map((q) => [q.handle, q.asked_at]), [["answered", Date.parse(at(3))], ["withdrawn", Date.parse(at(3))]])
     const before = JSON.stringify(h.storage.listThreadQuestions("t"))
     // THE RESTART: a new process, an empty memo, the same file folded from byte 0 — twice over, as a
     // registrar sweep and as a scheduler tick both read it.
@@ -230,8 +235,8 @@ test("a restart's refold of registered, answered, withdrawn and re-asked ids min
       assert.deepEqual(again.faults, live.faults, "and no fault the live run had not already raised")
       assert.equal(JSON.stringify(h.storage.listThreadQuestions("t")), before, "no row moved — asked_at, state and answer are as they were")
     }
-    assert.equal(live.faults.length, 1)
-    assert.match(live.faults[0].faults[0], /already asked and answered/)
+    assert.deepEqual(live.faults, [])
+    assert.equal(h.storage.listThreadQuestions("t").length, 5)
   } finally { h.close() }
 })
 

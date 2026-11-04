@@ -1792,10 +1792,11 @@ export function createRouter(ctx: AppContext) {
   }
 
   /** A question by the id the worker knows it by: its own fence id (a follow-up's resolves to the root it
-   *  rides in), or the `qst_…` an `ask` minted. */
+   *  rides in), or the `qst_…` an `ask` minted. The NEWEST row carrying it: an id is free again once its
+   *  question settles (question-fences.ts), so the older rows under it are settled history. */
   function findOwnQuestion(slug: string, id: string): ThreadQuestionRow | undefined {
     const want = id.trim().toLowerCase()
-    return ctx.storage.listThreadQuestions(slug).find((q) => {
+    return ctx.storage.listThreadQuestions(slug).findLast((q) => {
       if (q.id.toLowerCase() === want || q.handle?.toLowerCase() === want) return true
       const spec = parseQuestionSpec(q.spec)
       return spec ? questionHandles(spec).some((h) => h.toLowerCase() === want) : false
