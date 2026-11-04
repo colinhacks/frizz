@@ -6622,9 +6622,9 @@ export function parsePrWatchWake(text: string): PrWatchWake | null {
   return null
 }
 
-// The server's gh-CLI availability signal. `installed`/`inRepo`/`nameWithOwner` are STABLE for the
-// process lifetime (resolved once at boot); `authed` can flip mid-session (the user runs
-// `gh auth login`) so it is re-checked live on each githubStatus query.
+// The server's GitHub availability signal. `installed`/`inRepo`/`nameWithOwner` are STABLE for the
+// process lifetime (resolved once at boot); `authed` is whether FRIZZ is signed in to GitHub with its
+// own credential (Settings → GitHub), never the operator's `gh` sign-in, and can flip mid-session.
 export const GithubStatus = z.object({
   installed: z.boolean(),
   inRepo: z.boolean(),
@@ -6632,6 +6632,25 @@ export const GithubStatus = z.object({
   authed: z.boolean(),
 })
 export type GithubStatus = z.infer<typeof GithubStatus>
+
+// Frizz's own GitHub sign-in, for Settings (server: github-credential.ts). Machine-wide: one credential
+// serves every project's watchers, cards and picker.
+export const GithubAccount = z.object({
+  signedIn: z.boolean(),
+  /** "app" — Frizz's GitHub App, signed in here; "token" — a stored token; "env" — FRIZZ_GITHUB_TOKEN. */
+  source: z.enum(["app", "token", "env"]).optional(),
+  login: z.string().nullable(),
+  /** Why a stored sign-in stopped working. */
+  problem: z.string().optional(),
+  /** Whether this build knows Frizz's GitHub App, i.e. whether "Sign in" can be offered at all. */
+  appRegistered: z.boolean(),
+  signIn: z.discriminatedUnion("phase", [
+    z.object({ phase: z.literal("idle") }),
+    z.object({ phase: z.literal("pending"), userCode: z.string(), verificationUri: z.string(), expiresAt: z.number() }),
+    z.object({ phase: z.literal("failed"), message: z.string() }),
+  ]),
+})
+export type GithubAccount = z.infer<typeof GithubAccount>
 
 // ── Hovercards for the GitHub references autolinked into prose ───────────────────────────────────
 //

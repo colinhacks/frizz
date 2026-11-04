@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type AddressInfo } from "node:net";
 import { createServer as createHttpServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, lstatSync, readlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, lstatSync, readlinkSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { test } from "node:test";
@@ -2671,6 +2671,7 @@ test("--sandbox keeps the operator's XDG-rooted identity readable after the scru
 test("--sandbox shares credentials with the real home, but no state", () => {
   // A fake "real" home with the files the cloud screens read.
   const real = mkdtempSync(join(tmpdir(), "frizz-realhome-"));
+  // The operator's own `gh` sign-in is NOT shared: the server no longer reads it.
   mkdirSync(join(real, ".config", "gh"), { recursive: true });
   writeFileSync(join(real, ".config", "gh", "hosts.yml"), "github.com:\n  user: ada\n");
   mkdirSync(join(real, ".cloudflared"), { recursive: true });
@@ -2680,13 +2681,23 @@ test("--sandbox shares credentials with the real home, but no state", () => {
   mkdirSync(join(real, ".frizz"), { recursive: true });
   writeFileSync(join(real, ".frizz", "cloud.json"), JSON.stringify({ hostname: "real.example.com", serve: "external" }));
   writeFileSync(join(real, ".frizz", "identity.key"), "real-key");
+  // Frizz's own GitHub credential (github-credential.ts) — the legacy root, since `.frizz` exists here.
+  mkdirSync(join(real, ".frizz", "github"), { recursive: true });
+  writeFileSync(join(real, ".frizz", "github", "credential.json"), '{"kind":"token","token":"t"}');
 
   const cwd = process.cwd();
   const env: NodeJS.ProcessEnv = {};
   const sandbox = prepareSandbox(env, real);
   try {
     // Credentials come through, live.
-    assert.equal(readFileSync(join(sandbox.home, ".config", "gh", "hosts.yml"), "utf8"), "github.com:\n  user: ada\n");
+    assert.equal(existsSync(join(sandbox.home, ".config", "gh")), false, "the operator's gh sign-in stays out");
+    const sandboxGithub = join(frizzPaths({ home: sandbox.home, env }).data, "github");
+    assert.equal(readFileSync(join(sandboxGithub, "credential.json"), "utf8"), '{"kind":"token","token":"t"}');
+    // A renewal writes a sibling and renames it over the file; through the linked DIRECTORY it lands
+    // in the real home, so the real board never holds a spent refresh token.
+    writeFileSync(join(sandboxGithub, "credential.json.tmp"), "renewed");
+    renameSync(join(sandboxGithub, "credential.json.tmp"), join(sandboxGithub, "credential.json"));
+    assert.equal(readFileSync(join(real, ".frizz", "github", "credential.json"), "utf8"), "renewed");
     assert.equal(readFileSync(join(sandbox.home, ".cloudflared", "cert.pem"), "utf8"), "cert");
     assert.equal(readFileSync(join(sandbox.home, ".cloudflared", "0000-tunnel.json"), "utf8"), "{}");
     assert.equal(readFileSync(claimIdentityPath(sandbox.home), "utf8"), "real-key");

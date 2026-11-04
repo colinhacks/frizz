@@ -140,8 +140,8 @@ Options:
   --no-app               print the URL without opening a browser
   --port <port>          request a fixed port for a new workspace server
   --sandbox              a disposable Frizz to try things in: throwaway home and project, its
-                         own port, deleted when this terminal closes; credentials (gh,
-                         cloudflared, Claude, Codex, the machine's frizz.sh key) are shared
+                         own port, deleted when this terminal closes; credentials (Frizz's
+                         GitHub sign-in, cloudflared, Claude, Codex, the machine's frizz.sh key) are shared
   --link                 print a fresh single-use access link for the running board
   --sessions             list the devices signed in to the running board
   --sign-out <id|all>    sign one device out, or every one of them

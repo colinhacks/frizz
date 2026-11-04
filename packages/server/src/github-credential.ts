@@ -1,0 +1,458 @@
+import { execFile } from "node:child_process"
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { promisify } from "node:util"
+import { frizzRoots } from "./frizz-paths.ts"
+
+// FRIZZ'S OWN GITHUB CREDENTIAL — the one thing every server-side GitHub read authenticates with.
+//
+// Until 2026-11-04 the server borrowed the operator's `gh` sign-in: the PR and issue watchers and the
+// hovercards ran `gh auth token`, and the picker ran `gh` itself. That token lives in the login
+// keychain with `repo`, `workflow` and `delete_repo`, and any process can read it the same way. On this
+// machine it is moving behind Keyward (`keyward -- gh …`, one Touch ID at a time, nothing while the
+// screen is locked), which the watchers cannot use: they poll every minute, all night, locked.
+//
+// So the server has a credential of its own, and it is READ-ONLY by construction rather than by
+// promise:
+//   · "app"   — a user token from Frizz's GitHub App, signed in through GitHub's device flow. The
+//               App's permissions are all read-only, and a user token can never exceed its App's
+//               permissions, whatever the person who signed in can do. It lasts 8 hours; its refresh
+//               token lasts 6 months and rolls on every refresh. A device-flow token refreshes with
+//               the public client id alone, so Frizz renews it itself, unattended.
+//   · "token" — a pasted fine-grained token (the stopgap). Nothing to refresh.
+//   · FRIZZ_GITHUB_TOKEN in the server's environment overrides both — for tests, CI, and a self-hosted
+//     server that injects its own. The FRIZZ_ prefix keeps it out of every worker's environment
+//     (worker-env.ts), which a GITHUB_TOKEN would not.
+//
+// AT REST it is a 0600 file in Frizz's data root. The keychain would add nothing: Node reaches it only
+// through `/usr/bin/security`, which any process may run — exactly how `gh auth token` leaks today.
+// Keyward cannot release while the screen is locked and cannot take the 8-hourly rewrite. What protects
+// this credential is what it cannot do: no write of any kind, anywhere.
+//
+// THERE IS NO FALLBACK TO `gh`'S OWN SIGN-IN, and that is the point. Signed out here means GitHub is
+// signed out for the server. `runFrizzGh` gives every `gh` child this token in GH_TOKEN and an empty
+// private GH_CONFIG_DIR, so a `gh` the server runs cannot find the operator's account even when no
+// Frizz credential exists.
+
+export type StoredGithubCredential =
+  | {
+    kind: "app"
+    clientId: string
+    accessToken: string
+    /** Epoch ms. */
+    accessExpiresAt: number
+    refreshToken: string
+    /** Epoch ms. */
+    refreshExpiresAt: number
+    login: string | null
+    savedAt: number
+  }
+  | {
+    kind: "token"
+    token: string
+    login: string | null
+    savedAt: number
+  }
+
+export interface GithubCredentialStatus {
+  signedIn: boolean
+  /** Where the credential came from. Absent while signed out. */
+  source?: "app" | "token" | "env"
+  login: string | null
+  /** Why a stored credential stopped working (a refresh GitHub refused). Absent while it works. */
+  problem?: string
+}
+
+export class GithubCredentialError extends Error {
+  readonly githubFailureKind = "gh-auth" as const
+}
+
+const GITHUB = "https://github.com"
+const REQUEST_TIMEOUT_MS = 15_000
+/** Refresh this long before the access token runs out, so no poll ever carries a dying token. */
+const REFRESH_MARGIN_MS = 10 * 60_000
+
+/** `<data>/github` — the credential file and gh's private, empty config dir. 0700. */
+export function githubCredentialDir(): string {
+  return join(frizzRoots().data, "github")
+}
+
+export function githubCredentialPath(): string {
+  return join(githubCredentialDir(), "credential.json")
+}
+
+/** The GH_CONFIG_DIR every server-run `gh` gets: Frizz's own, holding no account. */
+export function frizzGhConfigDir(): string {
+  return join(githubCredentialDir(), "gh-config")
+}
+
+function ensureDir(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 })
+  chmodSync(path, 0o700)
+}
+
+function isString(v: unknown): v is string {
+  return typeof v === "string" && v.length > 0
+}
+
+/** Parse the stored file; anything malformed reads as signed out rather than throwing. */
+export function parseStoredCredential(raw: unknown): StoredGithubCredential | null {
+  const c = raw as Record<string, unknown> | null
+  if (!c || typeof c !== "object") return null
+  const login = isString(c.login) ? c.login : null
+  const savedAt = typeof c.savedAt === "number" ? c.savedAt : 0
+  if (c.kind === "token" && isString(c.token)) return { kind: "token", token: c.token, login, savedAt }
+  if (
+    c.kind === "app" && isString(c.clientId) && isString(c.accessToken) && isString(c.refreshToken)
+    && typeof c.accessExpiresAt === "number" && typeof c.refreshExpiresAt === "number"
+  ) {
+    return {
+      kind: "app",
+      clientId: c.clientId,
+      accessToken: c.accessToken,
+      accessExpiresAt: c.accessExpiresAt,
+      refreshToken: c.refreshToken,
+      refreshExpiresAt: c.refreshExpiresAt,
+      login,
+      savedAt,
+    }
+  }
+  return null
+}
+
+export function readGithubCredential(): StoredGithubCredential | null {
+  try {
+    return parseStoredCredential(JSON.parse(readFileSync(githubCredentialPath(), "utf8")))
+  } catch {
+    return null
+  }
+}
+
+/** Atomic and private: written to a 0600 sibling, then renamed over the old file. */
+export function writeGithubCredential(credential: StoredGithubCredential): void {
+  ensureDir(githubCredentialDir())
+  const path = githubCredentialPath()
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(credential), { mode: 0o600 })
+  chmodSync(tmp, 0o600)
+  renameSync(tmp, path)
+  memo = { credential, problem: undefined }
+}
+
+export function clearGithubCredential(): void {
+  rmSync(githubCredentialPath(), { force: true })
+  memo = { credential: null, problem: undefined }
+}
+
+// The credential as this process last read or wrote it, plus why it stopped working, if it did. The
+// file is re-read when the memo is empty, so a sign-in another process wrote (none does today) or a
+// file deleted by hand is picked up on the next status query.
+let memo: { credential: StoredGithubCredential | null; problem: string | undefined } | undefined
+let refreshing: Promise<string> | undefined
+
+/** Test-only: forget the in-memory copy. */
+export function resetGithubCredentialMemo(): void {
+  memo = undefined
+  refreshing = undefined
+}
+
+function current(): { credential: StoredGithubCredential | null; problem: string | undefined } {
+  return (memo ??= { credential: readGithubCredential(), problem: undefined })
+}
+
+function envToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  const v = env.FRIZZ_GITHUB_TOKEN?.trim()
+  return v ? v : null
+}
+
+export function githubCredentialStatus(): GithubCredentialStatus {
+  if (envToken()) return { signedIn: true, source: "env", login: null }
+  const { credential, problem } = current()
+  if (!credential) return { signedIn: false, login: null }
+  if (problem) return { signedIn: false, source: credential.kind, login: credential.login, problem }
+  if (credential.kind === "app" && credential.refreshExpiresAt <= Date.now()) {
+    return { signedIn: false, source: "app", login: credential.login, problem: "The GitHub sign-in expired after six months unused." }
+  }
+  return { signedIn: true, source: credential.kind, login: credential.login }
+}
+
+/** Cheap and local: does the server hold a credential it believes works? No network. */
+export function githubSignedIn(): boolean {
+  return githubCredentialStatus().signedIn
+}
+
+interface TokenDeps {
+  request?: typeof globalThis.fetch
+  now?: () => number
+}
+
+/** The token every server-side GitHub read sends. Refreshes an App token that is close to expiry,
+ *  once, however many callers ask at the same moment. Throws GithubCredentialError when signed out. */
+export async function frizzGithubToken(deps: TokenDeps = {}): Promise<string> {
+  const fromEnv = envToken()
+  if (fromEnv) return fromEnv
+  const now = deps.now ?? Date.now
+  const { credential, problem } = current()
+  if (!credential) throw new GithubCredentialError("Frizz is not signed in to GitHub. Sign in from Frizz's Settings.")
+  if (problem) throw new GithubCredentialError(`Frizz's GitHub sign-in stopped working: ${problem} Sign in again from Frizz's Settings.`)
+  if (credential.kind === "token") return credential.token
+  if (credential.accessExpiresAt - REFRESH_MARGIN_MS > now()) return credential.accessToken
+  return await (refreshing ??= refreshAppToken(credential, deps).finally(() => { refreshing = undefined }))
+}
+
+/** Another process sharing this folder (a sandbox stack links it in) may have renewed first. A fresher
+ *  App credential on disk than the one held in memory is adopted rather than refreshed again. */
+function adoptNewerFromDisk(held: Extract<StoredGithubCredential, { kind: "app" }>, now: number): StoredGithubCredential | null {
+  const onDisk = readGithubCredential()
+  if (!onDisk || onDisk.kind !== "app" || onDisk.refreshToken === held.refreshToken) return null
+  if (onDisk.accessExpiresAt - REFRESH_MARGIN_MS <= now) return null
+  memo = { credential: onDisk, problem: undefined }
+  return onDisk
+}
+
+/** A read came back 401 with this token: GitHub revoked it before its expiry. The next call refreshes
+ *  (an App token) or reports the sign-in broken (a pasted token, which nothing can renew). */
+export function rejectFrizzGithubToken(token: string): void {
+  const { credential } = current()
+  if (!credential) return
+  if (credential.kind === "app" && credential.accessToken === token) {
+    memo = { credential: { ...credential, accessExpiresAt: 0 }, problem: undefined }
+  } else if (credential.kind === "token" && credential.token === token) {
+    memo = { credential, problem: "GitHub refused the stored token (revoked or expired)." }
+  }
+}
+
+interface OAuthTokenResponse {
+  access_token?: unknown
+  expires_in?: unknown
+  refresh_token?: unknown
+  refresh_token_expires_in?: unknown
+  error?: unknown
+  error_description?: unknown
+  interval?: unknown
+}
+
+async function postForm(path: string, form: Record<string, string>, deps: TokenDeps): Promise<OAuthTokenResponse> {
+  const request = deps.request ?? globalThis.fetch
+  const response = await request(`${GITHUB}${path}`, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(form).toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  const text = await response.text()
+  let body: OAuthTokenResponse
+  try {
+    body = JSON.parse(text) as OAuthTokenResponse
+  } catch {
+    throw new Error(`GitHub answered ${path} with HTTP ${response.status} and no JSON`)
+  }
+  if (!response.ok && !body.error) throw new Error(`GitHub answered ${path} with HTTP ${response.status}`)
+  return body
+}
+
+/** A token response → the stored App credential. Null when GitHub did not hand back a usable pair. */
+export function appCredentialFrom(body: OAuthTokenResponse, clientId: string, login: string | null, now: number): StoredGithubCredential | null {
+  if (!isString(body.access_token)) return null
+  // An App with expiring tokens turned OFF answers with no refresh token and no expiry. Stored as a
+  // plain token: it is still read-only, and there is nothing to renew.
+  if (!isString(body.refresh_token)) return { kind: "token", token: body.access_token, login, savedAt: now }
+  const expiresIn = typeof body.expires_in === "number" ? body.expires_in : 8 * 3600
+  const refreshIn = typeof body.refresh_token_expires_in === "number" ? body.refresh_token_expires_in : 182 * 86400
+  return {
+    kind: "app",
+    clientId,
+    accessToken: body.access_token,
+    accessExpiresAt: now + expiresIn * 1000,
+    refreshToken: body.refresh_token,
+    refreshExpiresAt: now + refreshIn * 1000,
+    login,
+    savedAt: now,
+  }
+}
+
+async function refreshAppToken(credential: Extract<StoredGithubCredential, { kind: "app" }>, deps: TokenDeps): Promise<string> {
+  const now = deps.now ?? Date.now
+  const adopted = adoptNewerFromDisk(credential, now())
+  if (adopted?.kind === "app") return adopted.accessToken
+  let body: OAuthTokenResponse
+  try {
+    // No client_secret: GitHub does not require one to refresh a token the device flow issued.
+    body = await postForm("/login/oauth/access_token", {
+      client_id: credential.clientId,
+      grant_type: "refresh_token",
+      refresh_token: credential.refreshToken,
+    }, deps)
+  } catch (error) {
+    // Network trouble is not a broken sign-in: keep the credential and let the next poll try again.
+    throw new GithubCredentialError(`Could not refresh Frizz's GitHub token: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const next = appCredentialFrom(body, credential.clientId, credential.login, now())
+  if (!next) {
+    // Spent by the other process sharing this folder in the moment between our read and our refresh?
+    const raced = adoptNewerFromDisk(credential, now())
+    if (raced?.kind === "app") return raced.accessToken
+    // GitHub refused the refresh token itself — revoked, expired, or already spent by someone else.
+    // That is the one sign of a copied refresh token, so it is surfaced, never retried in a loop.
+    const reason = isString(body.error_description) ? body.error_description : isString(body.error) ? body.error : "no token in the response"
+    memo = { credential, problem: `GitHub refused to renew it (${reason}).` }
+    throw new GithubCredentialError(`Frizz's GitHub sign-in could not be renewed: ${reason}. Sign in again from Frizz's Settings.`)
+  }
+  writeGithubCredential(next)
+  return next.kind === "app" ? next.accessToken : next.token
+}
+
+// ── Device-flow sign-in ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The client id of Frizz's GitHub App — public by design: device flow has no secret. Still the
+ * placeholder until the App is registered; `FRIZZ_GITHUB_APP_CLIENT_ID` overrides it. This is NOT
+ * the OAuth App in src/github-device-flow.ts: that one proves who claims a frizz.sh name and must
+ * carry no permissions at all, and the registrar refuses a GitHub App token outright.
+ */
+export const GITHUB_APP_CLIENT_ID_PLACEHOLDER = "frizz-github-app-client-id-not-set"
+export const FRIZZ_GITHUB_APP_CLIENT_ID: string = GITHUB_APP_CLIENT_ID_PLACEHOLDER
+
+export function githubAppClientId(env: NodeJS.ProcessEnv = process.env): string | null {
+  const id = env.FRIZZ_GITHUB_APP_CLIENT_ID?.trim() || FRIZZ_GITHUB_APP_CLIENT_ID
+  return id === GITHUB_APP_CLIENT_ID_PLACEHOLDER ? null : id
+}
+
+export interface GithubDeviceSignIn {
+  userCode: string
+  verificationUri: string
+  /** Epoch ms after which the code is dead. */
+  expiresAt: number
+}
+
+type SignInState =
+  | { phase: "idle" }
+  | { phase: "pending"; prompt: GithubDeviceSignIn }
+  | { phase: "failed"; message: string }
+
+let signIn: SignInState = { phase: "idle" }
+let signInGeneration = 0
+
+export function githubSignInState(): SignInState {
+  if (signIn.phase === "pending" && signIn.prompt.expiresAt <= Date.now()) signIn = { phase: "failed", message: "The code expired before it was entered." }
+  return signIn
+}
+
+/** Ask GitHub for a device code, then poll for the token in the background. A second start replaces
+ *  the first. Resolves with the code to show; the sign-in itself lands through githubSignInState(). */
+export async function startGithubSignIn(deps: TokenDeps & { clientId?: string; sleep?: (ms: number) => Promise<void> } = {}): Promise<GithubDeviceSignIn> {
+  const clientId = deps.clientId ?? githubAppClientId()
+  if (!clientId) throw new Error("Frizz's GitHub App is not registered yet, so there is nothing to sign in to.")
+  const now = deps.now ?? Date.now
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const body = await postForm("/login/device/code", { client_id: clientId }, deps) as Record<string, unknown>
+  if (!isString(body.device_code) || !isString(body.user_code) || !isString(body.verification_uri)) {
+    throw new Error(`GitHub did not issue a device code${isString(body.error_description) ? `: ${body.error_description}` : ""}`)
+  }
+  const prompt: GithubDeviceSignIn = {
+    userCode: body.user_code,
+    verificationUri: body.verification_uri,
+    expiresAt: now() + (typeof body.expires_in === "number" ? body.expires_in : 900) * 1000,
+  }
+  const generation = ++signInGeneration
+  signIn = { phase: "pending", prompt }
+  let interval = (typeof body.interval === "number" ? body.interval : 5) * 1000
+  const deviceCode = body.device_code
+  void (async () => {
+    while (generation === signInGeneration && now() < prompt.expiresAt) {
+      await sleep(interval)
+      if (generation !== signInGeneration) return
+      let res: OAuthTokenResponse
+      try {
+        res = await postForm("/login/oauth/access_token", {
+          client_id: clientId,
+          device_code: deviceCode,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        }, deps)
+      } catch {
+        continue // a network blip mid-poll: keep polling until the code expires
+      }
+      if (res.error === "authorization_pending") continue
+      if (res.error === "slow_down") {
+        interval = (typeof res.interval === "number" ? res.interval : interval / 1000 + 5) * 1000
+        continue
+      }
+      if (generation !== signInGeneration) return
+      const login = isString(res.access_token) ? await fetchLogin(res.access_token, deps) : null
+      const credential = appCredentialFrom(res, clientId, login, now())
+      if (!credential) {
+        const reason = isString(res.error_description) ? res.error_description : isString(res.error) ? res.error : "no token in the response"
+        signIn = { phase: "failed", message: reason }
+        return
+      }
+      writeGithubCredential(credential)
+      signIn = { phase: "idle" }
+      return
+    }
+    if (generation === signInGeneration && signIn.phase === "pending") signIn = { phase: "failed", message: "The code expired before it was entered." }
+  })()
+  return prompt
+}
+
+export function cancelGithubSignIn(): void {
+  signInGeneration++
+  signIn = { phase: "idle" }
+}
+
+/** Store a pasted token (the stopgap), after checking GitHub accepts it. Returns the account login. */
+export async function saveGithubToken(token: string, deps: TokenDeps = {}): Promise<string | null> {
+  const trimmed = token.trim()
+  if (!trimmed) throw new Error("The token is empty.")
+  const login = await fetchLogin(trimmed, deps)
+  if (login === null) throw new Error("GitHub did not accept that token.")
+  writeGithubCredential({ kind: "token", token: trimmed, login, savedAt: (deps.now ?? Date.now)() })
+  return login
+}
+
+async function fetchLogin(token: string, deps: TokenDeps): Promise<string | null> {
+  try {
+    const response = await (deps.request ?? globalThis.fetch)("https://api.github.com/user", {
+      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "user-agent": "frizz" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) return null
+    const body = await response.json() as { login?: unknown }
+    return isString(body.login) ? body.login : null
+  } catch {
+    return null
+  }
+}
+
+// ── `gh`, run as Frizz ─────────────────────────────────────────────────────────────────────────
+
+const pexec = promisify(execFile)
+
+/** The environment for a `gh` the server runs: Frizz's token (or none), an empty private config dir,
+ *  no prompts, no pager. Without a Frizz credential `gh` is simply signed out — it cannot find the
+ *  operator's account, because GH_CONFIG_DIR names no user and GH_TOKEN wins over the keychain. */
+export function frizzGhEnv(token: string | null, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base }
+  for (const key of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_HOST"]) delete env[key]
+  if (token) env.GH_TOKEN = token
+  env.GH_CONFIG_DIR = frizzGhConfigDir()
+  env.GH_PROMPT_DISABLED = "1"
+  env.GH_PAGER = "cat"
+  env.GH_NO_UPDATE_NOTIFIER = "1"
+  return env
+}
+
+/** Run `gh` with Frizz's credential, never the operator's. An args array, no shell. Signed out, it
+ *  still runs (signed out), so callers see gh's own "not logged in" error rather than a different one. */
+export async function runFrizzGh(
+  args: string[],
+  opts: { cwd?: string; timeout: number; maxBuffer: number },
+): Promise<{ stdout: string; stderr: string }> {
+  let token: string | null = null
+  try {
+    token = await frizzGithubToken()
+  } catch {
+    token = null
+  }
+  ensureDir(frizzGhConfigDir())
+  return await pexec("gh", args, { cwd: opts.cwd, timeout: opts.timeout, maxBuffer: opts.maxBuffer, env: frizzGhEnv(token) })
+}

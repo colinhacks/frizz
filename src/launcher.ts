@@ -351,8 +351,8 @@ export function prepareSandbox(env: NodeJS.ProcessEnv = process.env, realHome: s
 /**
  * What a sandbox SHARES with the real home: credentials, never state.
  *
- * The board reads credentials out of $HOME too — `gh` its config dir (for the GitHub cards and the
- * workers; a frizz.sh claim never reads it), cloudflared its cert and tunnel credentials, the agents
+ * The board reads credentials out of $HOME too — Frizz's own GitHub credential (for the GitHub cards
+ * and watchers; a frizz.sh claim never reads it), cloudflared its cert and tunnel credentials, the agents
  * their sessions — and a sandbox with none of them would say "not signed in" on every screen. So those are linked in. The one that MATTERS is the claim identity key:
  * the registrar knows a name's holder by that key alone, so a name claimed with a throwaway key would
  * be "taken" against the real board for the length of a lease. Linking the real key makes a sandbox
@@ -383,10 +383,15 @@ function shareCredentials(realHome: string, home: string, realEnv: NodeJS.Proces
   mkdirSync(dirname(realKey), { recursive: true });
   mkdirSync(dirname(sandboxKey), { recursive: true });
   link(realKey, sandboxKey);
-  // gh keeps hosts.yml under its config dir; the dir itself is the unit gh reads and refreshes.
-  if (existsSync(join(realHome, ".config", "gh"))) {
-    mkdirSync(join(home, ".config"), { recursive: true });
-    link(join(realHome, ".config", "gh"), join(home, ".config", "gh"));
+  // Frizz's own GitHub credential (github-credential.ts), for the GitHub cards and watchers — never the
+  // operator's `gh` sign-in, which the server no longer reads. The DIRECTORY is linked, not the file:
+  // an App token is renewed by writing a sibling and renaming it over the file, and a rename over a
+  // linked file would land in the sandbox and leave the real board holding a spent refresh token.
+  const realGithub = join(frizzPaths({ home: realHome, env: realEnv }).data, "github");
+  if (existsSync(realGithub)) {
+    const sandboxGithub = join(frizzPaths({ home, env: sandboxEnv }).data, "github");
+    mkdirSync(dirname(sandboxGithub), { recursive: true });
+    link(realGithub, sandboxGithub);
   }
   const cloudflared = join(realHome, ".cloudflared");
   if (existsSync(cloudflared)) {
@@ -436,8 +441,8 @@ Options:
   --dev                  explicitly use the unsafe source watcher and Vite/HMR, not an artifact
   --port <port>          request a fixed port for a new workspace server
   --sandbox              a disposable Frizz to try things in: throwaway home and project, its
-                         own port, deleted when this terminal closes; credentials (gh,
-                         cloudflared, Claude, Codex, the machine's frizz.sh key) are shared
+                         own port, deleted when this terminal closes; credentials (Frizz's
+                         GitHub sign-in, cloudflared, Claude, Codex, the machine's frizz.sh key) are shared
   --link                 print a fresh single-use access link for the already-running board
   --sessions             list the devices holding a session on the already-running board
   --sign-out <id|all>    revoke one device's session, or every one of them

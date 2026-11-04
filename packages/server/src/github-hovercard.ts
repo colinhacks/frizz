@@ -1,5 +1,6 @@
 import type { GithubRefCard, GithubRefPreviewResult } from "@frizz/shared"
 import { defaultGetToken } from "./github-review.ts"
+import { rejectFrizzGithubToken } from "./github-credential.ts"
 
 // Hovercard data for the GitHub references the web client autolinks into rendered prose — `#123`,
 // `owner/repo#123`, a bare commit hash (web/lib/githubAutolink.ts mints those anchors).
@@ -283,15 +284,9 @@ export function createGithubHovercardService(deps: GithubHovercardDeps = {}): Gi
   // In-flight de-duplication: two prose blocks rendering the same ref in the same frame, or a hover
   // landing on a ref the page-load batch is still fetching, must not each open a request.
   const inflight = new Map<string, Promise<void>>()
-  let tokenPromise: Promise<string> | undefined
-
-  const token = async (): Promise<string> => {
-    if (!tokenPromise) {
-      tokenPromise = getToken()
-      tokenPromise.catch(() => { tokenPromise = undefined })
-    }
-    return tokenPromise
-  }
+  const onTokenRejected = deps.getToken ? () => {} : rejectFrizzGithubToken
+  // Asked per batch, never cached here: the credential store keeps it in memory and renews it.
+  const token = getToken
 
   const isFresh = (ref: ParsedRef, entry: CacheEntry, refresh: boolean): boolean => {
     if (isImmutableRef(ref) && entry.card) return true
@@ -320,9 +315,9 @@ export function createGithubHovercardService(deps: GithubHovercardDeps = {}): Gi
       })
       const text = await response.text()
       if (!response.ok) {
-        // 401/403 usually means the token went stale (a `gh auth logout`, an expired PAT). Drop it so
-        // the next batch re-reads one rather than failing forever against a dead credential.
-        if (response.status === 401 || response.status === 403) tokenPromise = undefined
+        // 401 means GitHub revoked the token before its expiry. Tell the credential store, which renews
+        // an App token on the next ask rather than failing forever against a dead one.
+        if (response.status === 401) onTokenRejected(authToken)
         throw new Error(`GitHub GraphQL returned HTTP ${response.status}`)
       }
       let body: unknown

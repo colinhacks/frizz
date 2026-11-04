@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
+import { frizzGithubToken, rejectFrizzGithubToken } from "./github-credential.ts"
 
-const execFileAsync = promisify(execFile)
-const GH_TIMEOUT_MS = 30_000
-const GH_MAX_BUFFER = 1024 * 1024
+
 const REQUEST_TIMEOUT_MS = 30_000
 const MAX_REFS_PER_REQUEST = 20
 const RATE_LIMIT_RESERVE = 100
@@ -168,6 +165,8 @@ export type GithubReviewFetcher = (ref: GithubReviewRef) => Promise<GithubReview
 
 interface GithubReviewFetcherDeps {
   getToken?: () => Promise<string>
+  /** GitHub answered 401/403 to this token. Defaults to telling the credential store, which refreshes. */
+  onTokenRejected?: (token: string) => void
   request?: typeof globalThis.fetch
   now?: () => number
 }
@@ -195,31 +194,11 @@ function conciseError(error: unknown): string {
   return raw.trim().split(/\r?\n/, 1)[0]?.slice(0, 300) || "unknown error"
 }
 
-// Exported because the hovercard fetcher (github-hovercard.ts) needs the SAME token, read the same
-// way: `gh auth token` is the one credential source frizz has, and duplicating this would mean two
-// copies of the ENOENT/timeout/`githubFailureKind` classification drifting apart.
+// Exported because the hovercard fetcher (github-hovercard.ts) needs the SAME token. It is FRIZZ'S OWN
+// GitHub credential (github-credential.ts), never the operator's `gh auth token`: these reads run every
+// minute, all night, with the screen locked, so they cannot borrow a sign-in that sits behind Touch ID.
 export async function defaultGetToken(): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(
-      "gh",
-      ["auth", "token", "--hostname", "github.com"],
-      {
-        timeout: GH_TIMEOUT_MS,
-        maxBuffer: GH_MAX_BUFFER,
-        env: { ...process.env, GH_PROMPT_DISABLED: "1" },
-      },
-    )
-    const token = stdout.trim()
-    if (!token) throw new Error("GitHub CLI returned an empty token")
-    return token
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code
-    if (code === "ENOENT") throw Object.assign(new Error("GitHub CLI executable was not found on PATH"), { githubFailureKind: "gh-missing" })
-    if ((error as { killed?: unknown })?.killed || code === "ETIMEDOUT") {
-      throw Object.assign(new Error(`GitHub CLI token lookup timed out after ${GH_TIMEOUT_MS / 1000}s`), { githubFailureKind: "timeout" })
-    }
-    throw Object.assign(new Error(`GitHub CLI could not provide an authenticated token: ${conciseError(error)}`), { githubFailureKind: "gh-auth" })
-  }
+  return await frizzGithubToken()
 }
 
 // Pure GraphQL-shape normalizer. Missing authors/timestamps are tolerated; an absent PR or malformed
@@ -542,7 +521,7 @@ function failureFromStatus(status: number, body: unknown, headers: Headers): Git
     }
   }
   if (status === 401 || status === 403) {
-    return { kind: "gh-auth", message: `GitHub rejected the CLI token (HTTP ${status})${apiMessage ? `: ${apiMessage}` : ""}` }
+    return { kind: "gh-auth", message: `GitHub rejected Frizz's token (HTTP ${status})${apiMessage ? `: ${apiMessage}` : ""}` }
   }
   return { kind: "http", message: `GitHub GraphQL returned HTTP ${status}${apiMessage ? `: ${apiMessage}` : ""}` }
 }
@@ -554,24 +533,20 @@ function failureFromStatus(status: number, body: unknown, headers: Headers): Git
 // a 60s cadence, the next batch is silently deferred long enough to stay within the budget.
 export function createGithubReviewFetcher(deps: GithubReviewFetcherDeps = {}): GithubReviewFetcher {
   const getToken = deps.getToken ?? defaultGetToken
+  const onTokenRejected = deps.onTokenRejected ?? (deps.getToken ? () => {} : rejectFrizzGithubToken)
   const request = deps.request ?? globalThis.fetch
   const now = deps.now ?? Date.now
-  let tokenPromise: Promise<string> | undefined
   let notBeforeMs = 0
   let rateLimitBlockedUntilMs = 0
   let pending = new Map<string, PendingRef>()
   let flushScheduled = false
 
+  // Asked once per batch, never cached here: the credential store keeps it in memory and renews an App
+  // token before it expires, which a copy held here would outlive.
   const token = async (): Promise<string> => {
-    if (!tokenPromise) {
-      tokenPromise = getToken().then((value) => {
-        const trimmed = value.trim()
-        if (!trimmed) throw Object.assign(new Error("GitHub CLI returned an empty token"), { githubFailureKind: "gh-auth" })
-        return trimmed
-      })
-      tokenPromise.catch(() => { tokenPromise = undefined })
-    }
-    return tokenPromise
+    const trimmed = (await getToken()).trim()
+    if (!trimmed) throw Object.assign(new Error("Frizz's GitHub credential is empty"), { githubFailureKind: "gh-auth" })
+    return trimmed
   }
 
   const updateBudget = (rate: RateLimitShape | undefined) => {
@@ -710,7 +685,7 @@ export function createGithubReviewFetcher(deps: GithubReviewFetcherDeps = {}): G
     const body = parseJson(text)
     if (!response.ok) {
       const failure = failureFromStatus(response.status, body, response.headers)
-      if (failure.kind === "gh-auth") tokenPromise = undefined
+      if (failure.kind === "gh-auth" && response.status === 401) onTokenRejected(authToken)
       if (failure.kind === "rate-limit" && failure.retryAt) {
         const retryAt = Date.parse(failure.retryAt)
         notBeforeMs = Math.max(notBeforeMs, retryAt)

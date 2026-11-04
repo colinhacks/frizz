@@ -18,7 +18,6 @@ import {
   renderGithubPrompt,
   effectiveTemplate,
   ghAuthed,
-  resetGhAuthedCache,
   gitGithubRemote,
   githubRemoteNameWithOwner,
   DEFAULT_GITHUB_PROMPT,
@@ -26,10 +25,11 @@ import {
   type HydratedIssue,
   type HydratedPr,
 } from "./github.ts"
+import { resetGithubCredentialMemo, writeGithubCredential } from "./github-credential.ts"
+import { resetFrizzRoots } from "./frizz-paths.ts"
 
 // The parsing/scoring/templating fns are pure, so those tests inject gh output rather than shelling
-// out. The ghAuthed tests at the bottom are the exception: that probe IS a subprocess, so they run it
-// against a stub `gh` prepended to PATH.
+// out. The ghAuthed tests at the bottom put a signed-in stub `gh` on PATH to prove it is NOT consulted.
 
 // ---- reactionCount ----
 
@@ -440,112 +440,65 @@ test("effectiveTemplate: a non-blank override is used verbatim", () => {
   assert.equal(effectiveTemplate("my custom {title}"), "my custom {title}")
 })
 
-// ---- ghAuthed (the ONLY tests here that shell out — through a stub `gh` on PATH) ----
+// ---- ghAuthed: Frizz's OWN credential, never the operator's `gh` sign-in ----
 //
-// This gate decides whether the whole GitHub feature is visible, and its historic failure mode was a
-// FALSE NEGATIVE that hid everything with no explanation. So it is exercised against a real execFile
-// against a real (stubbed) binary rather than a mock: the seam under test IS the subprocess.
+// Until 2026-11-04 this gate asked `gh auth status`, so it read whatever account the operator's `gh`
+// was signed into. Now it reads only github-credential.ts. The stub `gh` on PATH below answers every
+// auth question "signed in" — it stands for the operator's own sign-in — and must change nothing.
 
-// Write a `gh` stub whose behavior per subcommand is driven by GH_STUB_MODE, prepend it to PATH, run
-// the probe, restore PATH. POSIX-only (a shell script isn't executable via execFile on Windows).
-const stubScript = `#!/bin/sh
-case "$GH_STUB_MODE:$1 $2" in
-  *":auth status")
-    case "$GH_STUB_MODE" in
-      status-ok) exit 0 ;;
-      old-gh) echo "unknown flag: --active" >&2; exit 1 ;;
-      *) echo "not logged in" >&2; exit 1 ;;
-    esac ;;
-  *":auth token")
-    case "$GH_STUB_MODE" in
-      old-gh|offline) echo "gho_stubtoken"; exit 0 ;;
-      blank-token) echo "   "; exit 0 ;;
-      *) echo "no oauth token" >&2; exit 1 ;;
-    esac ;;
+const signedInGh = `#!/bin/sh
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "auth token") echo "gho_operator_token"; exit 0 ;;
 esac
 exit 1
 `
 
-async function withStubGh<T>(mode: string, run: () => Promise<T>): Promise<T> {
-  const dir = mkdtempSync(join(tmpdir(), "gh-stub-"))
-  writeFileSync(join(dir, "gh"), stubScript, { mode: 0o755 })
-  const path = process.env.PATH
-  process.env.PATH = `${dir}:${path ?? ""}`
-  process.env.GH_STUB_MODE = mode
-  // ghAuthed caches its positive answer process-wide, so without this every scenario after the first
-  // signed-in one would read that cache instead of this stub and pass for the wrong reason.
-  resetGhAuthedCache()
+async function withFrizzHome<T>(run: (home: string) => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), "frizz-gh-home-"))
+  const bin = mkdtempSync(join(tmpdir(), "gh-stub-"))
+  writeFileSync(join(bin, "gh"), signedInGh, { mode: 0o755 })
+  const saved = { HOME: process.env.HOME, PATH: process.env.PATH, XDG_DATA_HOME: process.env.XDG_DATA_HOME, FRIZZ_GITHUB_TOKEN: process.env.FRIZZ_GITHUB_TOKEN }
+  process.env.HOME = home
+  process.env.XDG_DATA_HOME = join(home, "data")
+  process.env.PATH = `${bin}:${saved.PATH ?? ""}`
+  delete process.env.FRIZZ_GITHUB_TOKEN
+  resetFrizzRoots()
+  resetGithubCredentialMemo()
   try {
-    return await run()
+    return await run(home)
   } finally {
-    resetGhAuthedCache()
-    process.env.PATH = path
-    delete process.env.GH_STUB_MODE
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-// The same stub, but it neither clears the cache on the way in nor on the way out — the two caching
-// tests below are precisely about what SURVIVES a call, so they cannot use the isolating variant.
-async function withStubGhLeavingCache<T>(mode: string, run: () => Promise<T>): Promise<T> {
-  const dir = mkdtempSync(join(tmpdir(), "gh-stub-"))
-  writeFileSync(join(dir, "gh"), stubScript, { mode: 0o755 })
-  const path = process.env.PATH
-  process.env.PATH = `${dir}:${path ?? ""}`
-  process.env.GH_STUB_MODE = mode
-  try {
-    return await run()
-  } finally {
-    process.env.PATH = path
-    delete process.env.GH_STUB_MODE
-    rmSync(dir, { recursive: true, force: true })
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+    resetFrizzRoots()
+    resetGithubCredentialMemo()
+    rmSync(home, { recursive: true, force: true })
+    rmSync(bin, { recursive: true, force: true })
   }
 }
 
 const posixOnly = { skip: process.platform === "win32" ? "the stub is a POSIX shell script" : false }
 
-test("ghAuthed: `gh auth status --active` exit 0 → signed in", posixOnly, async () => {
-  assert.equal(await withStubGh("status-ok", ghAuthed), true)
+test("ghAuthed: the operator's signed-in `gh` does NOT sign Frizz in", posixOnly, async () => {
+  await withFrizzHome(async () => {
+    assert.equal(await ghAuthed(), false)
+  })
 })
 
-test("ghAuthed: an older gh with no --active flag still reads as signed in (falls back to `gh auth token`)", posixOnly, async () => {
-  // --active landed in gh 2.57.0; apt still ships 2.4.x. The credential is right there in the keyring.
-  assert.equal(await withStubGh("old-gh", ghAuthed), true)
+test("ghAuthed: a stored Frizz credential signs it in, with no `gh` involved", posixOnly, async () => {
+  await withFrizzHome(async () => {
+    writeGithubCredential({ kind: "token", token: "github_pat_frizz", login: "frizz-reader", savedAt: 1 })
+    assert.equal(await ghAuthed(), true)
+  })
 })
 
-test("ghAuthed: a network-failed `auth status` (offline/VPN/rate limit) still reads as signed in", posixOnly, async () => {
-  // `auth status` VALIDATES the token against the API and blames the credential when it can't reach it.
-  assert.equal(await withStubGh("offline", ghAuthed), true)
-})
-
-test("ghAuthed: genuinely signed out — both probes fail → false", posixOnly, async () => {
-  assert.equal(await withStubGh("signed-out", ghAuthed), false)
-})
-
-test("ghAuthed: a blank `gh auth token` is NOT a credential → false", posixOnly, async () => {
-  assert.equal(await withStubGh("blank-token", ghAuthed), false)
-})
-
-// `gh auth status` is a NETWORK round trip (345-394ms measured 2026-09-04) and githubStatus runs it on
-// every page load. These two pin the asymmetry that makes caching it safe.
-
-test("ghAuthed: the TRUE answer is cached, so a signed-in operator pays the round trip once", posixOnly, async () => {
-  // Arm the cache against a signed-in gh, then ask again against a gh that reports signed OUT and holds
-  // no token. Only the cache can return true through that, so this fails the moment the caching goes.
-  resetGhAuthedCache()
-  assert.equal(await withStubGhLeavingCache("status-ok", ghAuthed), true)
-  assert.equal(await withStubGhLeavingCache("signed-out", ghAuthed), true, "the cached positive must answer without shelling out")
-  resetGhAuthedCache()
-})
-
-test("ghAuthed: the FALSE answer is NOT cached, so a mid-session `gh auth login` shows up at once", posixOnly, async () => {
-  // Signing in is exactly the transition the live re-check exists to catch. A cache that stored the
-  // boolean rather than only the positive would swallow it for a whole TTL, so the second call must
-  // genuinely re-probe. No reset between the two — that is the point.
-  resetGhAuthedCache()
-  assert.equal(await withStubGhLeavingCache("signed-out", ghAuthed), false)
-  assert.equal(await withStubGhLeavingCache("status-ok", ghAuthed), true, "a signed-out result must not be remembered")
-  resetGhAuthedCache()
+test("ghAuthed: FRIZZ_GITHUB_TOKEN signs it in", posixOnly, async () => {
+  await withFrizzHome(async () => {
+    process.env.FRIZZ_GITHUB_TOKEN = "github_pat_env"
+    assert.equal(await ghAuthed(), true)
+  })
 })
 
 // ---- githubRemoteNameWithOwner (the local, no-network half of the same gate) ----

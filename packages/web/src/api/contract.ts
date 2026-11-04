@@ -85,6 +85,7 @@ import type {
   TranscriptPage,
   TranscriptEarlierInput,
   GithubStatus,
+  GithubAccount,
   GithubListResult,
   GithubBatchInput,
   GithubBatchResult,
@@ -427,6 +428,11 @@ export interface Api {
   // `authed` is re-checked live per call. githubList reads the repo's issues/PRs; githubDispatchBatch
   // hydrates each selected item fresh + spins up one thread per item (sequential, reuses dispatch).
   githubStatus(): Promise<GithubStatus>
+  // Frizz's OWN GitHub sign-in (Settings → GitHub): read-only, machine-wide, never the operator's `gh`.
+  githubAccount(): Promise<GithubAccount>
+  githubSignInStart(input: Record<never, never>): Promise<GithubAccount>
+  githubSignInCancel(input: Record<never, never>): Promise<GithubAccount>
+  githubSignOut(input: Record<never, never>): Promise<GithubAccount>
   githubList(input: { kind: "issues" | "prs"; sort: "recent" | "reactions"; page?: number; perPage?: number }): Promise<GithubListResult>
   githubDispatchBatch(input: GithubBatchInput): Promise<GithubBatchResult>
   // Hovercards for the `#123` / commit-hash anchors the autolinker mints in prose. ONE call carries
@@ -559,6 +565,10 @@ export const PROCEDURES = {
   dispatchPreferenceSet: "mutation",
   githubPromptDefaults: "query",
   githubStatus: "query",
+  githubAccount: "query",
+  githubSignInStart: "mutation",
+  githubSignInCancel: "mutation",
+  githubSignOut: "mutation",
   githubList: "query",
   githubDispatchBatch: "mutation",
   githubRefPreview: "query",

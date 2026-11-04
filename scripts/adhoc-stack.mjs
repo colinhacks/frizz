@@ -70,6 +70,9 @@ const realHome = process.env.HOME
 // machine's real copies; a stack that must exercise provisioning itself sets FRIZZ_RUNTIMES_DIR.
 // Resolved FIRST: everything below changes what `frizzPaths()` answers.
 const realRuntimes = join(frizzPaths({ home: realHome }).cache, "runtimes")
+// Frizz's own GitHub credential (packages/server/src/github-credential.ts) — what the board's GitHub
+// cards and PR/issue watchers read. Never the operator's `gh` sign-in, which the server no longer uses.
+const realGithubCredentials = join(frizzPaths({ home: realHome }).data, "github")
 // Frizz's own state. A sandbox HOME gets its `.frizz`; the REAL home is never given one, because that
 // folder existing is what tells every Frizz process on the machine to use it (lib/adhoc-frizz-root.mjs).
 const frizzRoot = adhocFrizzRoot({ home, realHome, legacyExists: existsSync(join(home, ".frizz")) })
@@ -100,6 +103,12 @@ if (creds) {
     try { mkdirSync(join(home, dirname(name)), { recursive: true }); symlinkSync(join(realHome, name), join(home, name)) } catch {}
   }
   try { symlinkSync(join(realHome, ".frizz", "builds"), join(home, ".frizz", "builds")) } catch {}
+  // The DIRECTORY, not the file: a token renewal renames a sibling over the file, and through a linked
+  // file that would land here and leave the real board holding a spent refresh token.
+  if (existsSync(realGithubCredentials) && home !== realHome) {
+    const stackGithub = join(frizzPaths({ home }).data, "github")
+    try { mkdirSync(dirname(stackGithub), { recursive: true }); symlinkSync(realGithubCredentials, stackGithub) } catch {}
+  }
 }
 if (!flag("wakers")) process.env.FRIZZ_WAKERS_OFF = "1"
 // A disposable stack must never reap the real machine's leaked worker processes (the orphan reaper

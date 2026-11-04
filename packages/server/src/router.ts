@@ -62,6 +62,7 @@ import {
   ReorderConsolePinnedThreadsInput,
   SetThreadSnoozeInput,
   GithubStatus,
+  GithubAccount,
   GithubListInput,
   GithubRefPreviewInput,
   GithubRefPreviewResult,
@@ -206,6 +207,7 @@ import { resolveThreadLink, threadLinkView } from "./thread-links.ts"
 import { listBoardThreads } from "./thread-listing.ts"
 import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
 import { createGithubHovercardService } from "./github-hovercard.ts"
+import { cancelGithubSignIn, clearGithubCredential, githubAppClientId, githubCredentialStatus, githubSignInState, startGithubSignIn } from "./github-credential.ts"
 import { slugify, resolveSlug, resolveLegacyThreadFile, claudeWorkerSystemPrompt, coldResumePermission } from "./dispatch.ts"
 import { readCodexModels } from "./backend/codex-models.ts"
 import { peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
@@ -247,6 +249,22 @@ const SlugInput = z.object({ slug: ThreadSlug }).strict()
 // boundary. This intentionally rejects stale model/effort pairs; neither is normalized, clamped, or
 // replaced with Settings defaults. Permission is NOT part of the tuple: dispatch stamps it server-side
 // (workerDispatchPermission — the non-interactive floor, raised to bypass only when Settings asks).
+/** Settings → GitHub: the stored credential's status plus any sign-in in progress. */
+function githubAccountView(): GithubAccount {
+  const status = githubCredentialStatus()
+  const state = githubSignInState()
+  return {
+    signedIn: status.signedIn,
+    ...(status.source ? { source: status.source } : {}),
+    login: status.login,
+    ...(status.problem ? { problem: status.problem } : {}),
+    appRegistered: githubAppClientId() !== null,
+    signIn: state.phase === "pending"
+      ? { phase: "pending", userCode: state.prompt.userCode, verificationUri: state.prompt.verificationUri, expiresAt: state.prompt.expiresAt }
+      : state,
+  }
+}
+
 export function validateGithubDispatchProfile(
   input: z.infer<typeof GithubBatchInput>,
   codexModels?: readonly z.infer<typeof CodexModel>[],
@@ -5096,8 +5114,8 @@ export function createRouter(ctx: AppContext) {
     // ---- GitHub-first batch dispatch ----
 
     // gh availability: installed (cache-warmed resolveInstalled) + inRepo/nameWithOwner (cache-warmed
-    // resolveRepo) + a LIVE authed re-check (never cached — a mid-session `gh auth login` reflects on
-    // the next query). The repo is resolved only when authed (gh repo view needs auth), so a
+    // resolveRepo) + a LIVE authed re-check — whether FRIZZ holds its own GitHub credential (local, no
+    // network), so a sign-in from Settings reflects on the next query. The repo is resolved only when authed (gh repo view needs auth), so a
     // cached-negative inRepo from an unauthed/racy boot never sticks; neither does a cached-negative
     // installed. Never throws (all probes degrade to false/null).
     githubStatus: query({
@@ -5108,6 +5126,38 @@ export function createRouter(ctx: AppContext) {
         const authed = await ghAuthed()
         const nameWithOwner = authed ? await resolveRepo() : (ctx.github?.nameWithOwner ?? null)
         return { installed: true, inRepo: nameWithOwner !== null, nameWithOwner, authed }
+      },
+    }),
+
+    // Frizz's OWN GitHub sign-in (github-credential.ts) — what Settings → GitHub reads and drives.
+    // Machine-wide, so not project-scoped: one credential serves every project's watchers and cards.
+    githubAccount: query({
+      output: GithubAccount,
+      handler: async () => githubAccountView(),
+    }),
+    githubSignInStart: mutation({
+      input: z.object({}),
+      output: GithubAccount,
+      handler: async () => {
+        await startGithubSignIn()
+        return githubAccountView()
+      },
+    }),
+    githubSignInCancel: mutation({
+      input: z.object({}),
+      output: GithubAccount,
+      handler: async () => {
+        cancelGithubSignIn()
+        return githubAccountView()
+      },
+    }),
+    githubSignOut: mutation({
+      input: z.object({}),
+      output: GithubAccount,
+      handler: async () => {
+        cancelGithubSignIn()
+        clearGithubCredential()
+        return githubAccountView()
       },
     }),
 

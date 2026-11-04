@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
 import { createHash, randomUUID } from "node:crypto"
 import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { autonomousGoalOf, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
@@ -30,7 +28,7 @@ import {
 } from "./github-review.ts"
 import { isNoisePrActivity } from "./pr-watch-noise.ts"
 
-const execFileAsync = promisify(execFile)
+import { githubSignedIn, runFrizzGh } from "./github-credential.ts"
 
 export {
   isBotGithubActor,
@@ -1238,7 +1236,8 @@ function timerIdOf(fenceId: string): string {
   return fenceId.slice(TIMER_FENCE_PREFIX.length + 1)
 }
 
-// Default gh-backed PR fetcher. Uses the USER'S `gh` (their auth) via execFile — NO shell. Any failure
+// Default gh-backed PR fetcher. Runs `gh` AS FRIZZ (runFrizzGh: Frizz's own read-only credential, never
+// the operator's sign-in), args array, NO shell. Any failure
 // (gh missing → ENOENT, not authed / rate-limited → nonzero exit, malformed JSON) resolves to undefined
 // so the tick logs + skips and NEVER crashes. Timeout-bounded so a hung gh can't wedge the scheduler.
 /** The first line gh printed on stderr, or the process-level reason — what a worker or an operator can
@@ -1249,6 +1248,11 @@ export function conciseGhError(err: unknown): string {
   if (code === "ENOENT") return "the `gh` CLI is not installed on the PATH of the process Frizz runs as"
   if ((err as { killed?: unknown })?.killed || code === "ETIMEDOUT") return "`gh` did not answer within 15s"
   const stderr = typeof (err as { stderr?: unknown })?.stderr === "string" ? (err as { stderr: string }).stderr : ""
+  // Signed out, gh tells the reader to run `gh auth login`, which is the operator's sign-in and would
+  // change nothing here: the server's `gh` runs on Frizz's own credential (github-credential.ts).
+  if (!githubSignedIn() && /gh auth login|not logged in|authentication required/i.test(stderr)) {
+    return "Frizz is not signed in to GitHub — sign it in from Frizz's Settings (its own read-only credential, not `gh auth login`)"
+  }
   const line = stderr.trim().split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0)
   if (line) return line.slice(0, 300)
   const message = err instanceof Error ? err.message : String(err)
@@ -1259,15 +1263,14 @@ export type PrProbe = { ok: true } | { ok: false; reason: string }
 
 /** CAN FRIZZ READ THIS PR AT ALL — asked at registration, so a watcher that could never fire is refused
  *  on the spot rather than armed. Reported 2026-08-25: a worker parked 12h+ on a watcher, and among the
- *  ways that happens is a PR the server's own `gh` cannot see (signed out on github.com, an SSO-gated
+ *  ways that happens is a PR the server's own `gh` cannot see (Frizz not signed in to GitHub, an SSO-gated
  *  org, a repo that does not exist, no `gh` on the daemon's PATH) — every poll failed, silently, and the
  *  worker rested believing it was covered. One `gh pr view`, the same call the poll makes. */
 export async function probePrReadable(ref: PrRef): Promise<PrProbe> {
   try {
-    await execFileAsync(
-      "gh",
+    await runFrizzGh(
       ["pr", "view", String(ref.number), "--repo", `${ref.owner}/${ref.repo}`, "--json", "state"],
-      { timeout: 15_000, maxBuffer: 1_000_000, env: { ...process.env, GH_PAGER: "cat", GH_PROMPT_DISABLED: "1" } },
+      { timeout: 15_000, maxBuffer: 1_000_000 },
     )
     return { ok: true }
   } catch (err) {
@@ -1285,10 +1288,9 @@ export async function probePrReadable(ref: PrRef): Promise<PrProbe> {
  *  tell, and the refusal names the right tool. */
 export async function probeIssueReadable(ref: PrRef): Promise<PrProbe> {
   try {
-    const { stdout } = await execFileAsync(
-      "gh",
+    const { stdout } = await runFrizzGh(
       ["issue", "view", String(ref.number), "--repo", `${ref.owner}/${ref.repo}`, "--json", "state,url"],
-      { timeout: 15_000, maxBuffer: 1_000_000, env: { ...process.env, GH_PAGER: "cat", GH_PROMPT_DISABLED: "1" } },
+      { timeout: 15_000, maxBuffer: 1_000_000 },
     )
     const url = (JSON.parse(stdout) as { url?: unknown })?.url
     if (typeof url === "string" && /\/pull\/\d+$/.test(url)) {
@@ -1306,10 +1308,9 @@ export async function probeIssueReadable(ref: PrRef): Promise<PrProbe> {
 // kept for the one honest case, a response frizz cannot interpret (below).
 async function defaultFetchPr(ref: PrRef): Promise<PrStatus | undefined> {
   try {
-    const { stdout } = await execFileAsync(
-      "gh",
+    const { stdout } = await runFrizzGh(
       ghPrViewArgs(ref),
-      { timeout: 15_000, maxBuffer: 8_000_000, env: { ...process.env, GH_PAGER: "cat", GH_PROMPT_DISABLED: "1" } },
+      { timeout: 15_000, maxBuffer: 8_000_000 },
     )
     const j = JSON.parse(stdout) as {
       state?: unknown; mergedAt?: unknown; statusCheckRollup?: unknown; headRefOid?: unknown
@@ -1320,10 +1321,9 @@ async function defaultFetchPr(ref: PrRef): Promise<PrStatus | undefined> {
     // so a later accurate read could then fire an already-merged PR. Undefined = try again next poll.
     if (typeof j.state !== "string" || !j.state) return undefined
     if (typeof j.headRefOid !== "string" || !j.headRefOid) return undefined
-    const runs = await execFileAsync(
-      "gh",
+    const runs = await runFrizzGh(
       ["run", "list", "--repo", `${ref.owner}/${ref.repo}`, "--commit", j.headRefOid, "--limit", "100", "--json", "name,workflowName,status,conclusion,databaseId,event,createdAt"],
-      { timeout: 15_000, maxBuffer: 8_000_000, env: { ...process.env, GH_PAGER: "cat", GH_PROMPT_DISABLED: "1" } },
+      { timeout: 15_000, maxBuffer: 8_000_000 },
     )
     const workflowRuns = JSON.parse(runs.stdout)
     if (!Array.isArray(workflowRuns)) return undefined
