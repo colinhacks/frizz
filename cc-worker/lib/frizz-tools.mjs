@@ -1118,6 +1118,11 @@ function threadFacts(t, nowMs) {
   if (t.questions > 0) facts.push(`${plural(t.questions, "question")} open`)
   if (t.subAgents > 0) facts.push(`${plural(t.subAgents, "sub-agent")} running`)
   if (t.shells > 0) facts.push(`${plural(t.shells, "shell")} running`)
+  // Its child threads have no row of their own (they report to it, not to the human), so they are named here.
+  if (Array.isArray(t.children) && t.children.length) {
+    const busy = (/** @type {any} */ c) => c.runtime === "running" || c.runtime === "spawning"
+    facts.push(`child threads: ${t.children.map((/** @type {any} */ c) => `${c.slug}${busy(c) ? " (turn in flight)" : ""}`).join(", ")}`)
+  }
   for (const w of t.watches ?? []) facts.push(`watching ${w}`)
   if (t.limited) facts.push("stopped by a usage limit")
   else if (t.crashed) facts.push("crashed mid-turn")

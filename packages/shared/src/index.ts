@@ -5607,6 +5607,9 @@ export const ThreadListing = z.object({
   subAgents: z.number().int(),
   /** Background shells still running. */
   shells: z.number().int(),
+  /** CHILD THREADS it started (`frizzctl spawn-child`) that are still open. A child is never a row of its
+   *  own here, as on the board (drawnUnderParent), so this is how another thread finds one to steer. */
+  children: z.array(z.object({ slug: ThreadSlug, title: z.string(), runtime: RuntimeState }).strict()).optional(),
   /** What its armed watches are on: `owner/repo#N` for a PR or issue, the prompt for a timer, the
    *  command for a command watch. */
   watches: z.array(z.string()),
