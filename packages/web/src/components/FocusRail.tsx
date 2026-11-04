@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useSnapshot } from "valtio"
 import { isDirectSubAgent, type EditedFile, type ThreadLinkView, type ThreadView } from "@frizz/shared"
-import { useHomeDir, useProjectDir, useTranscript } from "../hooks.ts"
+import { useChildThreads, useHomeDir, useProjectDir, useTranscript } from "../hooks.ts"
 import { shellWatched, threadOps } from "../lib/threadOps.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
 import { editedFileTree, flattenEditedFileTree } from "../lib/editedFileTree.ts"
@@ -14,7 +14,7 @@ import { useNowMs } from "../lib/liveClock.ts"
 import { tildePath } from "../lib/paths.ts"
 import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
-import { AgentRow, BgShellRow, CommandWatchRow, commandWatchesHead, GithubWatchRow, ON_CAP, ROW_INSET, TimerRow, WaitGrid, WaitRow, type WaitGroup } from "./AwaitingBackgroundCard.tsx"
+import { AgentRow, BgShellRow, ChildThreadRow, CommandWatchRow, commandWatchesHead, GithubWatchRow, ON_CAP, ROW_INSET, TimerRow, WaitGrid, WaitRow, type WaitGroup } from "./AwaitingBackgroundCard.tsx"
 import { transcriptBackgroundShells } from "../lib/transcriptShells.ts"
 
 // THE FULLSCREEN PAGE'S OPERATIONAL RAIL — what is going on in this thread, listed beside the transcript
@@ -228,7 +228,9 @@ export function FocusRail({ thread }: { thread: ThreadView }) {
   // (AgentRow, BgShellRow). Each agent and shell row carries the strip's stop/clear ×, under its gate,
   // and a shell a watch names says so in its tooltip, as the strip's row does (shellWatched).
   const transcriptShells = useMemo(() => transcriptBackgroundShells(transcript.data?.messages ?? []), [transcript.data?.messages])
-  const { agents: unresolved, shells, prs, issues, commands, timers } = threadOps(thread, transcriptShells)
+  // The thread's CHILD THREADS, the same list its rail rows and the counts over its prompt box draw.
+  const childThreads = useChildThreads(thread.id)
+  const { agents: unresolved, children, shells, prs, issues, commands, timers } = threadOps(thread, transcriptShells, childThreads)
   const isWatched = shellWatched(thread)
   // ONE LEVEL of children: the rail's rows are the awaiting card's table (AgentRow), which draws no tree,
   // where the panel over a prompt box indents a child's own children under it (ChildOpRow `depth`). A
@@ -242,6 +244,8 @@ export function FocusRail({ thread }: { thread: ThreadView }) {
   // preference (lib/prefs.ts), so it holds across threads and reloads.
   const groups: WaitGroup[] = [
     { head: "Sub-agents", rows: agents.map((a) => <AgentRow key={a.id ?? a.label} agent={a} slug={thread.id} now={now} onDismiss={childOpDismisser(thread.id, a)} />) },
+    // Beside the sub-agents they resemble, as the counts over a prompt box order them (lib/queueOpsCounts).
+    { head: "Child threads", rows: children.map((c) => <ChildThreadRow key={c.id} child={c} now={now} />) },
     { head: "Background shells", rows: shells.map((s) => <BgShellRow key={s.id ?? s.label} shell={s} slug={thread.id} now={now} onDismiss={childOpDismisser(thread.id, s, "SHELL")} watched={isWatched(s)} />) },
     { head: "Pull requests", rows: prs.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     { head: "Issues", rows: issues.map((w) => <GithubWatchRow key={w.id} watch={w} />) },

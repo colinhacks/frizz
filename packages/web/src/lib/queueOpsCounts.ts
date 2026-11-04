@@ -1,8 +1,9 @@
 import type { BgShellView, ThreadView, ThreadWatchView } from "@frizz/shared"
 import type { TranscriptShellRecord } from "./childOps.ts"
 import { threadOps } from "./threadOps.ts"
+import { childThreadState } from "./childThreads.ts"
 
-export type QueueOpsKind = "agent" | "shell" | "pr" | "issue" | "command" | "monitor" | "timer" | "file" | "link"
+export type QueueOpsKind = "agent" | "child" | "shell" | "pr" | "issue" | "command" | "monitor" | "timer" | "file" | "link"
 
 export interface QueueOpsCount {
   readonly key: QueueOpsKind
@@ -24,10 +25,18 @@ export interface QueueOpsCount {
 // its rows and points the reader here instead (AwaitingBackgroundCard), so a kind with no count is a wait
 // shown nowhere. The command watches and timers joined on 2026-10-15 for that reason. The rail lists one
 // thing more, the files the worker edited, which are not a wait.
-export function queueOpsCounts(thread: ThreadView, transcriptShells: readonly (BgShellView & TranscriptShellRecord)[] = []): QueueOpsCount[] {
-  const { agents, shells, prs, issues, commands, timers, files, links } = threadOps(thread, transcriptShells)
+export function queueOpsCounts(
+  thread: ThreadView,
+  transcriptShells: readonly (BgShellView & TranscriptShellRecord)[] = [],
+  childThreads: readonly ThreadView[] = [],
+): QueueOpsCount[] {
+  const { agents, children, shells, prs, issues, commands, timers, files, links } = threadOps(thread, transcriptShells, childThreads)
   const counts: QueueOpsCount[] = [
     { key: "agent", n: agents.length, one: "agent", many: "agents", states: agents.map((agent) => agent.state) },
+    // CHILD THREADS, beside the sub-agents they resemble: work this thread handed to an agent of its own.
+    // Their own count rather than more "agents", because each is a whole thread — it opens a drawer, not
+    // a sub-agent transcript — and the panel says which threads (lib/childThreads).
+    { key: "child", n: children.length, one: "child thread", many: "child threads", states: children.map(childThreadState) },
     { key: "shell", n: shells.length, one: "shell", many: "shells", states: shells.map((shell) => shell.state) },
     { key: "pr", n: prs.length, one: "PR", many: "PRs", states: ["running"] },
     { key: "issue", n: issues.length, one: "issue", many: "issues", states: ["running"] },

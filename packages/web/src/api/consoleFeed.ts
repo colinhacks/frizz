@@ -78,8 +78,15 @@ function emptyUnion(): BoardSnapshot {
 
 /** A project's thread under its key. `dependsOn` names threads of the same project, so it is keyed too. */
 // A plain value on the merged board, like every thread on a project's (store.ts plainThreads).
+// A child thread's `parentSlug` names a thread of the same project too, and is keyed so the Console finds
+// the parent it is drawn under (lib/childThreads) by plain string identity, as everything else does.
 export function keyThread(project: string, t: ThreadView): ThreadView {
-  return plainThreads([{ ...t, id: threadKey(project, t.id), dependsOn: t.dependsOn.map((slug) => threadKey(project, slug)) }])[0]
+  return plainThreads([{
+    ...t,
+    id: threadKey(project, t.id),
+    dependsOn: t.dependsOn.map((slug) => threadKey(project, slug)),
+    ...(t.parentSlug ? { parentSlug: threadKey(project, t.parentSlug) } : {}),
+  }])[0]
 }
 
 // THE MERGED THREADS ARRAY IS A PLAIN VALUE, like a project page's (store.ts plainArray): every change

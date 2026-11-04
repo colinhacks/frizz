@@ -109,3 +109,29 @@ test("re-clicking the open parent thread closes the child stacked over it", () =
   assert.deepEqual(shape(), [{ kind: "thread", slug: "parent", subId: undefined }])
   assert.equal(store.drawers[0]?.id, parentId)
 })
+
+test("a child thread opened over its parent's drawer stacks; closing it lands back on the parent", () => {
+  resetStore()
+  const row = (id: string, parentSlug?: string) => ({ id, runtime: "turn-idle", needsYou: false, ...(parentSlug ? { parentSlug } : {}) })
+  store.board = { threads: [row("parent"), row("kid", "parent"), row("stranger")] } as unknown as typeof store.board
+  try {
+    pushDrawer("thread", "parent")
+    pushDrawer("thread", "kid")
+    assert.deepEqual(shape(), [
+      { kind: "thread", slug: "parent", subId: undefined },
+      { kind: "thread", slug: "kid", subId: undefined },
+    ])
+    // Over the parent's DOC too: the doc and the thread are one family.
+    resetStore()
+    pushDrawer("doc", "parent")
+    pushDrawer("thread", "kid")
+    assert.deepEqual(shape().map((d) => d.slug), ["parent", "kid"])
+    // A thread that is not the open drawer's child is a lateral move, as ever.
+    resetStore()
+    pushDrawer("thread", "stranger")
+    pushDrawer("thread", "kid")
+    assert.deepEqual(shape(), [{ kind: "thread", slug: "kid", subId: undefined }])
+  } finally {
+    store.board = null
+  }
+})

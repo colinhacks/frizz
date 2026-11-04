@@ -6,7 +6,7 @@ import { AlarmClock, Check, ChevronRight, CircleDashed, Ellipsis, Github, Hourgl
 import { hasLiveSubAgents, type BoardSnapshot, type ThreadView } from "@frizz/shared"
 import { store, openThread, scrollToQueueCard, queueCardTargetY, pushSubAgentDrawer, showToast, queueCardViewportTop } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
-import { useBoardThreads } from "../hooks.ts"
+import { useBoardThreads, useChildThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
 import type { PinShelf } from "../groups.ts"
 import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
@@ -14,6 +14,7 @@ import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
+import { ChildThreadRows } from "./ChildThreadRows.tsx"
 import { ExpandThreadLink } from "./ExpandThreadLink.tsx"
 import { visibleChildOps } from "../lib/childOps.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
@@ -1203,9 +1204,14 @@ function RowPinButton({ t, shelf, className = "" }: { t: ThreadView; shelf: PinS
 // clear the parent row's indicator column). The liveness policy is the rail's own and is deliberately
 // unchanged: running OR stale, and only children carrying an id (the drill-in drawer's RPC handle —
 // see lib/childOps.ts, which lists all three surfaces' divergent policies in one place).
+//
+// The thread's CHILD THREADS follow its sub-agents here (ChildThreadRows): a child is no row of its own on
+// the board (shared drawnUnderParent), so under its parent is where the rail draws it. Read untracked
+// (hooks.ts useChildThreads), so a row re-renders only when one of ITS children changes.
 export function SubAgentRows({ t }: { t: ThreadView }) {
   const subs = visibleChildOps(t.subAgents ?? [], "rail")
-  if (subs.length === 0) return null
+  const childThreads = useChildThreads(t.id)
+  if (subs.length === 0 && childThreads.length === 0) return null
   return (
     <div className="flex flex-col">
       {subs.map((s) => (
@@ -1227,6 +1233,7 @@ export function SubAgentRows({ t }: { t: ThreadView }) {
           title={s.subagentType ? `[${s.subagentType}] ${s.label}` : s.label}
         />
       ))}
+      <ChildThreadRows parent={t.id} childThreads={childThreads} density="rail" />
     </div>
   )
 }

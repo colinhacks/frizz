@@ -4106,7 +4106,8 @@ export const ThreadView = z.object({
   consolePinnedAt: z.string().optional(),
   /** CHILD THREADS (Settings.childThreads): the thread that spawned this one with `frizzctl spawn-child`.
    *  Present only while that thread still exists. A child is never a row of its own on the board — not in
-   *  any band, the queue, a count or a badge (isChildThread) — and is drawn under its parent instead. */
+   *  any band, the queue, a count or a badge — and is drawn under its parent instead, unless it stands at a
+   *  gate only the human can settle (drawnUnderParent). */
   parentSlug: z.string().optional(),
   /** This child's rest is one that would have put it in the human's queue, so its handoff goes to its
    *  PARENT instead (board.ts deriveChildHandoff; the scheduler delivers it once per rest). A permission
@@ -4263,6 +4264,36 @@ export type ThreadView = z.infer<typeof ThreadView>
  */
 export function queuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou" | "state">): boolean {
   return t.kind === "session" && t.foreign !== true && t.needsYou === true && t.state !== "archived"
+}
+
+// ── CHILD THREADS ──────────────────────────────────────────────────────────────────────────────────
+// A thread another thread started with `frizzctl spawn-child` (Settings.childThreads, 2026-11-04). It
+// reports to that parent, not to the human, so the board draws it UNDER ITS PARENT — beside the parent's
+// sub-agents, on the rail and in the ops over its prompt box — and nowhere else.
+//
+// ONE GATE FOR EVERY BAND, and it lives at the bottom of them: `sectionAt` answers null for a child the
+// board does not row, so the sidebar's sections, the rail's counts (here and on the server), the phone
+// board, the Console and `frizzctl threads` all drop it without each remembering to. The pins
+// (web groups.ts isPinned) and the settled partition (web lib/boardPartition.ts) ask the same predicate,
+// because both run ahead of `sectionAt`.
+//
+// THE ONE EXCEPTION is a child at a gate no thread can settle: a permission prompt, a native ask, a
+// secret question or a usage-limit stop. The server leaves `needsYou` set for exactly those
+// (board.ts deriveChildHandoff), and such a child queues as a card of its own — the human has to answer
+// it, and a card is where answering happens. Every other rest is its parent's to read.
+//
+// Rendering never reads Settings.childThreads: the setting gates spawning, and a child spawned while it
+// was on is still a child after it is turned off.
+
+/** The thread was started by another thread on its board, which still exists (ThreadView.parentSlug). */
+export function isChildThread(t: Pick<ThreadView, "parentSlug">): boolean {
+  return typeof t.parentSlug === "string" && t.parentSlug.length > 0
+}
+
+/** A child the board draws only under its parent: every child except one queued for the human at a hard
+ *  gate. An archived child is never queued, so it is drawn under its parent too — never in Done. */
+export function drawnUnderParent(t: Pick<ThreadView, "parentSlug" | "needsYou" | "state">): boolean {
+  return isChildThread(t) && !(t.needsYou === true && t.state !== "archived")
 }
 
 // ── THE SIDEBAR'S BANDS ────────────────────────────────────────────────────────────────────────────
@@ -4468,6 +4499,9 @@ export function sectionAt(t: ThreadView, nowMs: number): SectionKey | null {
   // needs-you/awaiting distinction renders as the row INDICATOR and the queue cards, not as sections.
   // Legacy (.frizz-file) rows are HIDDEN entirely (null; not even a shelf). Foreign never rows.
   if (t.kind !== "session") return null
+  // A CHILD THREAD is drawn under its parent, never in a band of its own — unless the human must answer
+  // it (drawnUnderParent). Ahead of the Done rule, so an archived child does not fill the Done band.
+  if (drawnUnderParent(t)) return null
   // Archived → Done, UNLESS it's actively running: a live, in-flight session must never sit under Done
   // (maintainer, hit 3×). It shows in the Active band with its spinner while it works, and drops back
   // to Done only once it comes to rest still-archived. (A user BUMP un-archives it for good via
@@ -4725,6 +4759,8 @@ export function needsAction(t: ThreadView): boolean {
  */
 export function boardAskThread(t: ThreadView): boolean {
   if (t.kind === "session" && t.foreign === true) return false
+  // The pin branch below reads no section, so a pinned child is excluded here (drawnUnderParent).
+  if (drawnUnderParent(t)) return false
   const pinned = t.kind === "session" && typeof t.pinnedAt === "string"
   return (pinned || sectionOf(t) === "active") && needsAction(t)
 }

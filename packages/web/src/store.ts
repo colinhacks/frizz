@@ -276,7 +276,15 @@ function stacksOver(below: Drawer, next: Pick<Drawer, "kind" | "slug">): boolean
   if (next.kind === "markdown") return true
   if (next.kind === "subagent" || next.kind === "shell" || next.kind === "monitor") return (below.kind === "thread" || below.kind === "doc") && below.slug === next.slug
   if (next.kind === "doc") return below.kind === "thread" && below.slug === next.slug
-  if (next.kind === "thread") return below.kind === "doc" && below.slug === next.slug
+  if (next.kind === "thread") {
+    if (below.kind === "doc" && below.slug === next.slug) return true
+    // A CHILD THREAD opened from its parent (lib/childThreads) is a drill-in like a sub-agent: its drawer
+    // stacks over the parent's thread or doc drawer, so closing it lands back on the parent. Any other
+    // thread over a thread is a lateral move and replaces it. (On the Console both ids are keys: the
+    // feed keys `parentSlug` with the thread's own id, api/consoleFeed keyThread.)
+    const parent = threadSnapshotBySlug(next.slug)?.parentSlug
+    return parent !== undefined && (below.kind === "thread" || below.kind === "doc") && below.slug === parent
+  }
   return false
 }
 

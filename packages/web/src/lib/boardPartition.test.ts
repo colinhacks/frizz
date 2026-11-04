@@ -66,6 +66,9 @@ function randomThread(id: string, r: () => number): ThreadView {
     runningSince: r() < 0.5 ? `2026-09-${String(1 + Math.floor(r() * 28)).padStart(2, "0")}T00:00:00.000Z` : undefined,
     archivedAt: r() < 0.5 ? `2026-09-${String(1 + Math.floor(r() * 28)).padStart(2, "0")}T00:00:00.000Z` : undefined,
     title: `${id} v${Math.floor(r() * 1000)}`,
+    // A child thread is never settled and never sectioned (shared drawnUnderParent): the partition must
+    // carry it live, and every derivation below must drop it the way the whole-board form does.
+    parentSlug: r() < 0.1 ? "parent" : undefined,
   } as Partial<ThreadView>)
 }
 

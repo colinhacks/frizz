@@ -10,6 +10,9 @@ import { mergeBackgroundShells, visibleChildOps, type TranscriptShellRecord } fr
 export interface ThreadOps {
   /** Every child still unresolved — running, rested or stale — at every depth (visibleChildOps "card"). */
   agents: readonly SubAgentView[]
+  /** The CHILD THREADS this thread started (`frizzctl spawn-child`) that are still open, oldest first —
+   *  threads of their own, drawn under this one rather than in any band (lib/childThreads). */
+  children: readonly ThreadView[]
   /** The board's shells and the transcript's, one row per process (mergeBackgroundShells). */
   shells: readonly BgShellView[]
   prs: readonly ThreadWatchView[]
@@ -22,7 +25,9 @@ export interface ThreadOps {
 }
 
 /** `transcriptShells` are the shells read off the transcript, whose Codex background execs the board
- *  reports none of (lib/transcriptShells); every caller passes them.
+ *  reports none of (lib/transcriptShells); every caller passes them. `children` are the thread's child
+ *  threads, which are other rows of the board rather than fields of this one, so the caller reads them
+ *  (hooks.ts useChildThreads, the same list the rail's rows under the thread draw).
  *
  *  A WATCH IS LISTED WHILE IT IS ARMED AND ITS THREAD IS NOT ARCHIVED. An archived thread watches nothing,
  *  though its registrations stay armed for the day it is reopened: the scheduler neither fires its timers
@@ -30,12 +35,17 @@ export interface ThreadOps {
  *  past-due timer read "firing…" forever and a PR row froze on its last reading. A SHELL watch
  *  is never a row of its own: the shell it waits on is already one, and listing the watch too would name
  *  one process twice (2026-08-14); it is marked on that shell's row instead (shellWatched). */
-export function threadOps(thread: ThreadView, transcriptShells: readonly (BgShellView & TranscriptShellRecord)[] = []): ThreadOps {
+export function threadOps(
+  thread: ThreadView,
+  transcriptShells: readonly (BgShellView & TranscriptShellRecord)[] = [],
+  children: readonly ThreadView[] = [],
+): ThreadOps {
   const armed = listedWatches(thread)
   const github = armed.filter((watch) => watch.kind === "github")
   const saved = thread.links ?? []
   return {
     agents: visibleChildOps(thread.subAgents ?? [], "card"),
+    children,
     shells: mergeBackgroundShells(thread.bgShells ?? [], transcriptShells),
     prs: github.filter((watch) => watch.subject !== "issue"),
     issues: github.filter((watch) => watch.subject === "issue"),

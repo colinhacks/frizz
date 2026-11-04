@@ -28,16 +28,17 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, Radio, RefreshCw, TerminalSquare, X } from "lucide-react"
 import type { AwaitingHint, GithubIssueStatus, GithubWatchStatus, ThreadView, ThreadWatchView } from "@frizz/shared"
-import { awaitingFenceTitle, awaitingSteps, commandRunClause, isDirectSubAgent } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
-import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
+import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
+import { childThreadStartedAt, childThreadState } from "../lib/childThreads.ts"
 import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { restingOnSteps } from "../lib/stepsAnswer.ts"
-import { pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
+import { openThread, pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
 import { SHELL_WATCHED_NOTE } from "../lib/threadOps.ts"
@@ -529,7 +530,7 @@ export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, ti
    *  is right, because the whole row is the link. */
   ghRef?: string
   title?: string
-  testKind: "github" | "shell" | "agent" | "timer" | "command" | "file" | "link"
+  testKind: "github" | "shell" | "agent" | "thread" | "timer" | "command" | "file" | "link"
   testId: string
 }) {
   const tree = indent !== undefined
@@ -976,6 +977,35 @@ export function AgentRow({ agent, slug, now, onDismiss }: { agent: ThreadView["s
       title={agent.id ? `Open this sub-agent${profile ? ` (${profile})` : ""} — ${stale ? CHILD_STALE_TITLE : `working for ${elapsed}`}` : agent.label}
       status={elapsed}
       dismiss={railDismiss(onDismiss, agent.state === "running", !!agent.id, "AGENT", agent.label)}
+    />
+  )
+}
+
+// ---- THE CHILD THREADS -----------------------------------------------------------------------------
+// A thread this one started with `frizzctl spawn-child` (lib/childThreads), on the full page's rail, in
+// the sub-agent row's shape: the same spinner while it works, the flat dot of a stale child once its
+// worker crashed, and the HOLLOW dot every child-row surface gives a rested child (CHILD_RESTED_DOT_CLASS)
+// at rest — in the spinner's 12px box, so the mark column keeps one footprint. The status says what the
+// mark cannot: how long it has been working, or "needs you" when it waits on a gate only the human can
+// settle, else "rested". The row opens the child (store.ts openThread). No ×: a thread is stopped or
+// archived from its own page, not from a row of its parent's.
+export function ChildThreadRow({ child, now }: { child: ThreadView; now: number }) {
+  const title = displayTitle(child)
+  const state = childThreadState(child)
+  const elapsed = compactElapsedSince(childThreadStartedAt(child), now)
+  const mark = state === "running"
+    ? <Spinner tone="border-accent" />
+    : <span aria-hidden className={`inline-block size-3 p-[3px] ${ON_CAP}`}><span className={state === "stale" ? CHILD_STALE_DOT_CLASS : CHILD_RESTED_DOT_CLASS} /></span>
+  const status = child.needsYou ? CHILD_THREAD_NEEDS_YOU : state === "running" ? elapsed : state === "stale" ? "stale" : "rested"
+  return (
+    <WaitRow
+      testKind="thread"
+      testId={child.id}
+      mark={mark}
+      name={title}
+      onOpen={() => openThread(child.id)}
+      title={`Open child thread — ${state === "running" ? `working for ${elapsed}` : state === "stale" ? CHILD_THREAD_STALE_TITLE : child.needsYou ? CHILD_THREAD_NEEDS_YOU : CHILD_THREAD_RESTED_TITLE}`}
+      status={status}
     />
   )
 }
