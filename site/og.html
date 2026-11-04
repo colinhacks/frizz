@@ -7,22 +7,22 @@
     <meta charset="utf-8" />
     <link rel="stylesheet" href="/site.css" />
     <style>
-      html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; background: #0d0e10; }
-      .og { display: grid; grid-template-columns: 300px 1fr; gap: 72px; align-items: center; height: 630px; padding: 0 96px; }
-      .og img { width: 300px; height: 300px; display: block; }
-      .og h1 { font-size: 60px; line-height: 1.06; letter-spacing: -0.035em; margin: 0 0 24px; max-width: 16ch; }
-      .og p { font: 24px/1.4 var(--sans); color: var(--muted); margin: 0; max-width: 24ch; }
-      .og code { font-size: 24px; color: var(--fg); }
-      .og .prompt { color: var(--accent); }
+      html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; background: var(--paper); }
+      .og { display: grid; grid-template-columns: 200px 1fr; gap: 60px; align-items: center; height: 630px; padding: 0 84px 0 92px; }
+      .og img { width: 200px; height: 200px; filter: drop-shadow(0 10px 18px rgba(70, 50, 15, 0.22)) drop-shadow(0 28px 40px rgba(70, 50, 15, 0.16)); }
+      .og h1 { margin: 0; font-size: 62px; line-height: 1.04; font-weight: 720; letter-spacing: -0.05em; color: var(--ink); }
+      .og p { margin: 26px 0 0; font-size: 26px; line-height: 1.4; color: var(--ink-2); letter-spacing: -0.012em; }
+      .og .install { margin-top: 34px; height: 56px; padding: 0 26px; }
+      .og .install code { font-size: 22px; }
     </style>
   </head>
   <body>
     <div class="og">
-      <img src="/img/og-mark.svg" alt="" />
+      <img src="/img/fff-tile.png" alt="" />
       <div>
-        <h1>An opinionated agent console.</h1>
-        <p>Run many Claude Code and Codex agents at once from one browser tab.</p>
-        <p style="margin-top:28px"><code><span class="prompt">$</span> npx frizz</code></p>
+        <h1>The agent console for<br />Claude&nbsp;Code and Codex.</h1>
+        <p>Run many agents at once from one browser tab.</p>
+        <div class="install"><code><span class="dollar">$</span>npx frizz</code></div>
       </div>
     </div>
   </body>

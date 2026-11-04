@@ -1,159 +1,452 @@
-/* frizz.sh — reads like a rendered markdown document in the board's own skin: the same dark tokens as
-   packages/web/src/styles.css and JetBrains Mono throughout (first in the app's --font-mono stack; the
-   board is mono-forward by default). Heading rules and code chips mirror GitHub's markdown. */
+/* frizz.sh — warm paper, near-black ink, and the brand's one gold. The dark Frizz board sits on the page
+   as an object, which is the contrast the whole design leans on: no glows, no gradients behind text,
+   no glass. Inter for everything that is prose; Geist Mono only where something is literally code.
+   The homepage (body.home) and the remote-access guides (.doc) share the tokens, nav and footer. */
 
-@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: normal; font-display: swap; src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-style: normal; font-display: swap; src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono"; font-weight: 600; font-style: normal; font-display: swap; src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Inter.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/GeistMono.woff2") format("woff2"); }
 
 :root {
-  --bg: #0d0e10;
-  --panel: #131519;
-  --elevated: #1c1f25;
-  --border: #26282d;
-  --border-strong: #33363c;
-  --fg: #e6e7e9;
-  --fg-2: #b6b9bf;
-  --muted: #8b8f96;
-  --accent: #e8b923;
-  --radius: 12px;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Consolas, Menlo, monospace;
-  --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --measure: 740px;
-  --wide: 1120px;
-  --gutter: 24px;
+  color-scheme: light;
+  --paper: #f6f3ec;
+  --paper-hi: #fbfaf6;
+  --paper-lo: #eeeae0;
+  --ink: #141311;
+  --ink-2: #3d3a34;
+  --ink-3: #6b665c;
+  --ink-4: #a39d90;
+  --rule: rgba(20, 19, 17, 0.1);
+  --rule-2: rgba(20, 19, 17, 0.16);
+  --gold: #e8b923;
+  --gold-deep: #cf9412;
+  --gold-ink: #8a5f00;
+  --app: #0c0e10;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --pad: clamp(20px, 4vw, 48px);
+  --max: 1200px;
+  --co: 208px; /* the board's callout column: label + reach */
+  /* An object on paper: a dark hairline, then stacked warm-tinted shadows from tight to wide. */
+  --shadow-object:
+    0 0 0 1px rgba(20, 15, 5, 0.9),
+    0 1px 1px rgba(70, 50, 15, 0.08),
+    0 2px 4px rgba(70, 50, 15, 0.07),
+    0 6px 12px rgba(70, 50, 15, 0.07),
+    0 16px 32px rgba(70, 50, 15, 0.09),
+    0 36px 72px -8px rgba(70, 50, 15, 0.13),
+    0 72px 140px -24px rgba(70, 50, 15, 0.2);
+  --shadow-small:
+    0 0 0 1px rgba(20, 15, 5, 0.85),
+    0 1px 2px rgba(70, 50, 15, 0.08),
+    0 4px 10px rgba(70, 50, 15, 0.08),
+    0 14px 30px -4px rgba(70, 50, 15, 0.12),
+    0 34px 70px -18px rgba(70, 50, 15, 0.2);
 }
 
-* { box-sizing: border-box; }
-html { color-scheme: dark; -webkit-text-size-adjust: 100%; }
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font: 15px/1.65 var(--mono);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 18px;
+  line-height: 1.55;
+  font-feature-settings: "calt", "kern";
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
 }
-a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
-a:hover { text-decoration-color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
-code, pre { font-family: var(--mono); }
-p code, li code { font-size: 0.875em; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; padding: 0.08em 0.36em; white-space: nowrap; }
-/* ONE base rhythm. 1em resolved to 15px here while lists and code blocks used 16, which read
-   as jitter rather than as a decision. */
-p { margin: 0 0 20px; }
+img { display: block; max-width: 100%; height: auto; }
+a { color: inherit; }
+a:focus-visible { outline: 2px solid var(--gold-deep); outline-offset: 3px; border-radius: 6px; }
+::selection { background: rgba(232, 185, 35, 0.38); color: var(--ink); }
+code, kbd, pre { font-family: var(--mono); font-feature-settings: "liga" 0, "calt" 0; }
+.wrap { max-width: calc(var(--max) + var(--pad) * 2); margin: 0 auto; padding: 0 var(--pad); }
 
-/* Top bar. */
-.top {
-  position: sticky; top: 0; z-index: 10;
-  display: flex; align-items: center; gap: 28px;
-  height: 52px; padding: 0 var(--gutter);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-  font-family: var(--mono); font-size: 13px;
+/* Inline code and keys, in prose on both kinds of page. */
+p code, li code, td code {
+  font-size: 0.86em; padding: 0.12em 0.38em; border-radius: 6px;
+  background: var(--paper-lo); box-shadow: inset 0 0 0 1px var(--rule);
 }
-.wordmark { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-weight: 500; font-size: 14px; }
-.wordmark img { border-radius: 5px; display: block; }
-.top-nav { display: flex; gap: 22px; margin-left: auto; }
-.top-nav a { color: var(--muted); text-decoration: none; white-space: nowrap; }
-.top-nav a:hover { color: var(--fg); }
-.top-nav a.ext::after { content: "\2197"; margin-left: 3px; font-size: 11px; }
-
-main { padding: 0 var(--gutter) 40px; }
-
-/* The document column. */
-.doc { max-width: var(--measure); margin: 0 auto; }
-.doc:first-child { padding-top: 56px; }
-.mark { width: 112px; margin-bottom: 20px; }
-.mark svg { display: block; width: 100%; height: auto; }
-/* JS sets the dash to the path length and lets the transition unroll it — a single stroke, drawn once. */
-#fff-path { transition: stroke-dashoffset 1.7s cubic-bezier(0.55, 0, 0.2, 1) 0.12s; }
-h1, h2, h3 { font-family: var(--mono); font-weight: 500; line-height: 1.25; margin: 0; }
-h1 { font-size: 40px; letter-spacing: -0.03em; margin-bottom: 20px; }
-.lede { font-size: 17px; color: var(--fg-2); margin-bottom: 20px; }
-/* GitHub-markdown H2: a hairline under the heading, generous space above. */
-/*
- * ONE SCALE, and the ratios are the point.
- *
- * A heading belongs to what FOLLOWS it, so the space above is larger than the space below — but only
- * about twice, not nine times. It was 8px under a 40px h1 and 72px above every h2, which read as a
- * tagline glued to the title and a chasm before each section. The h2 already carries a rule; the rule
- * is what separates sections, and the margin only has to give it air. GitHub's markdown, which the
- * rest of this file mirrors, uses 24px there.
- *
- * h3 had NO margin-top at all, so a sub-heading sat directly against the paragraph above it.
- */
-h2 { font-size: 22px; letter-spacing: -0.01em; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin: 44px 0 20px; }
-h3 { font-size: 17px; margin: 28px 0 8px; }
-.doc ul { margin: 0 0 20px; padding-left: 1.4em; }
-.doc li { margin: 0.3em 0; }
-.doc li::marker { color: var(--muted); }
-
-.term {
-  margin: 0 0 20px; padding: 14px 18px;
-  background: var(--panel); border: 1px solid var(--border-strong); border-radius: 8px;
-  font-size: 15px; line-height: 1.5; overflow-x: auto; white-space: pre;
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 0 0.42em; border-radius: 6px;
+  font: 600 0.82em/1.6 var(--sans); text-align: center; color: var(--ink);
+  background: var(--paper-hi);
+  box-shadow: inset 0 0 0 1px var(--rule-2), 0 1.5px 0 var(--rule-2);
+  position: relative; top: -0.08em;
 }
-.term .prompt { color: var(--accent); }
-/* The install row: the command block and its copy button share one height; the button reads as a
-   quiet control, and its label is the receipt ("Copied"). */
-.install { display: flex; align-items: stretch; gap: 10px; margin: 0 0 20px; }
-.install .term { flex: 1; margin: 0; }
+
+/* ---------- nav ---------- */
+.nav {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--paper);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.25s ease;
+}
+.nav.scrolled, .nav.ruled { border-bottom-color: var(--rule); }
+.nav-in { display: flex; align-items: center; height: 64px; gap: 28px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 650; font-size: 18px; letter-spacing: -0.02em; }
+.brand img { width: 26px; height: 26px; border-radius: 7px; }
+.nav-links { display: flex; align-items: center; gap: 28px; margin-left: auto; font-size: 15px; font-weight: 500; }
+.nav-links a { text-decoration: none; color: var(--ink-2); transition: color 0.15s; }
+.nav-links a:hover { color: var(--ink); }
+.nav-gh {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 14px 0 12px; border-radius: 999px;
+  background: var(--ink); color: var(--paper-hi) !important;
+}
+.nav-gh svg { width: 16px; height: 16px; }
+
+/* ---------- footer ---------- */
+.foot { padding: 56px 0; }
+.foot-in { display: flex; align-items: center; gap: 26px; font-size: 15px; color: var(--ink-3); }
+.foot-in a { text-decoration: none; color: var(--ink-2); }
+.foot-in a:hover { color: var(--ink); }
+.foot-in .brand { color: var(--ink); font-size: 16px; }
+.foot-in .brand img { width: 22px; height: 22px; border-radius: 6px; }
+.foot-in .sp { flex: 1; }
+
+/* ---------- install pill (hero and closing slab) ---------- */
+.cta { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 14px 26px; margin-top: 32px; }
+.install {
+  display: inline-flex; align-items: center;
+  height: 54px; padding: 0 6px 0 22px; border-radius: 999px;
+  background: var(--ink); color: #f4f1ea;
+  box-shadow: 0 1px 2px rgba(70, 50, 15, 0.15), 0 8px 20px -6px rgba(70, 50, 15, 0.35);
+}
+.install code { font-size: 17px; font-weight: 500; white-space: nowrap; }
+.install code .dollar { color: var(--gold); margin-right: 0.6em; user-select: none; }
 .copy {
-  font: 500 13px/1 var(--mono); color: var(--fg-2);
-  background: var(--panel); border: 1px solid var(--border-strong); border-radius: 8px;
-  padding: 0 16px; cursor: pointer; min-width: 84px;
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 42px; margin-left: 16px; padding: 0 16px 0 13px; border: 0; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1); color: #f4f1ea;
+  font: 560 15px/1 var(--sans); letter-spacing: -0.005em; cursor: pointer;
+  transition: background 0.15s;
 }
-.copy:hover { background: var(--elevated); color: var(--fg); }
-
-.shot { margin: 0; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
-.shot img { display: block; width: 100%; height: auto; }
-.doc .shot { margin: 28px 0 8px; }
-
-/* Feature rows: text beside its screenshot, sides alternating. Wider than the document column so the
-   screenshots stay legible; the text column's inner edge lines up with the column's edge. */
-.rows { max-width: var(--wide); margin: 56px auto 0; display: grid; gap: 64px; }
-.row { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 48px; align-items: center; }
-.row:nth-child(even) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-.row:nth-child(even) .row-text { order: 2; }
-.row-text p { color: var(--fg-2); margin: 0; font-size: 14px; line-height: 1.6; }
-
-.foot {
-  max-width: var(--measure); margin: 0 auto; padding: 28px var(--gutter) 48px;
-  display: flex; gap: 22px; align-items: center;
-  font-family: var(--mono); font-size: 13px; color: var(--muted);
-  border-top: 1px solid var(--border);
+.copy:hover { background: rgba(255, 255, 255, 0.17); }
+.copy:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+.copy svg { width: 15px; height: 15px; flex: none; }
+/* Both labels share one grid cell, so "Copied" never changes the pill's width. */
+.copy .lbl { display: inline-grid; justify-items: start; }
+.copy .lbl > span { grid-area: 1 / 1; }
+.copy .w-done, .copy.done .w-copy { visibility: hidden; }
+.copy.done .w-done { visibility: visible; }
+.copy .i-done { display: none; color: var(--gold); }
+.copy.done .i-copy { display: none; }
+.copy.done .i-done { display: block; }
+/* gap 6px, not 8: the arrow's path starts 3/16 into its box, so 8px of gap drew a 10.2px ink gap where
+   the pill's icon-to-label pairs read 8.3px. */
+.ghlink {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 17px; font-weight: 580; text-decoration: none; color: var(--ink);
+  letter-spacing: -0.01em;
 }
-.foot .spacer { flex: 1; }
-.foot a { color: var(--muted); text-decoration: none; }
-.foot a:hover { color: var(--fg); }
+.ghlink svg { width: 18px; height: 18px; }
+.ghlink .arr { transition: transform 0.2s ease; }
+.ghlink:hover .arr { transform: translateX(3px); }
 
-@media (max-width: 760px) {
-  .doc:first-child { padding-top: 40px; }
-  h1 { font-size: 34px; }
-  .rows { gap: 44px; margin-top: 44px; }
-  .row, .row:nth-child(even) { grid-template-columns: 1fr; gap: 16px; }
-  .row:nth-child(even) .row-text { order: 0; }
-}
+/* ============================== homepage ============================== */
 
-/* Docs pages. The landing page is one document; these are the same document several times over, so
-   they borrow .doc wholesale and add only what a guide needs that a homepage never did. */
-.crumb { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
-.crumb a { color: var(--muted); text-decoration: none; }
-.crumb .arrow { margin-right: 4px; }
-.crumb a:hover { color: var(--fg); }
-.lede { color: var(--fg-2); font-size: 16px; margin-top: 0; }
-/* A callout is the one place a guide raises its voice, so it gets the accent rule and nothing else —
-   no icon, no tinted panel, nothing that would read as a different kind of component. The margin is
-   reset because a blockquote's UA default is 40px on each side, which would indent it past the
-   measure and lose the rule against the text it belongs to. */
-.callout {
-  margin: 0 0 20px; padding: 2px 0 2px 18px;
-  border-left: 2px solid var(--accent); color: var(--fg-2);
+.hero { padding-top: clamp(40px, 6vh, 72px); text-align: center; }
+.tile {
+  width: 72px; height: 72px; margin: 0 auto 30px;
+  border-radius: 19px; background: #0d0e10;
+  display: grid; place-items: center;
+  box-shadow: 0 0 0 1px rgba(20, 15, 5, 0.9), 0 2px 4px rgba(70, 50, 15, 0.1), 0 10px 24px -4px rgba(70, 50, 15, 0.22), 0 24px 44px -16px rgba(70, 50, 15, 0.3);
 }
-.callout p { margin: 0; }
-.doc table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 14px; }
-.doc th, .doc td { text-align: left; padding: 9px 28px 9px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
-.doc th { color: var(--muted); font-weight: 500; }
+.tile svg { width: 84%; height: 84%; overflow: visible; }
+.hero h1 {
+  max-width: 13em; margin: 0 auto;
+  font-size: clamp(46px, 7.6vw, 112px);
+  line-height: 1.04;
+  font-weight: 720;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+.swashed { position: relative; display: inline-block; white-space: nowrap; }
+.swashed > span { position: relative; z-index: 1; }
+/* The swash is stretched to its words but keeps a height and pen width set in em, so a longer phrase
+   gets a longer stroke, not a taller and heavier one. */
+.swash {
+  position: absolute; z-index: 0;
+  left: -0.04em; width: calc(100% + 0.08em);
+  bottom: -0.13em; height: 0.36em;
+  overflow: visible; pointer-events: none;
+}
+.swash path { stroke-width: 0.105em; }
+.sub {
+  max-width: 31em; margin: 32px auto 0;
+  font-size: clamp(18px, 1.45vw, 21px); line-height: 1.5; color: var(--ink-2);
+  letter-spacing: -0.012em; text-wrap: balance;
+}
+.meta { margin: 22px 0 0; font-size: 14.5px; color: var(--ink-3); letter-spacing: -0.003em; }
+.meta span + span::before { content: "·"; margin: 0 0.6em; color: var(--ink-4); }
+
+/* The board, as an object on the page, with callouts on wide screens and numbered markers below. */
+.stage { position: relative; margin: clamp(56px, 7vh, 80px) auto 0; max-width: 1680px; padding: 0 var(--pad); }
+.window {
+  position: relative; margin: 0 auto;
+  width: min(1060px, 100%);
+  border-radius: 18px; overflow: hidden;
+  background: var(--app);
+  box-shadow: var(--shadow-object);
+  aspect-ratio: 1760 / 1100;
+}
+.window::after { /* a hairline on the bezel's top edge */
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+.window img { width: 100%; height: 100%; }
+@media (min-width: 1240px) { .stage { padding: 0 24px; } .window { width: min(1100px, calc(100% - 2 * var(--co))); } }
+.leaders { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.stage .callout {
+  position: absolute; width: 170px; font-size: 14.5px; line-height: 1.35; letter-spacing: -0.008em;
+  opacity: 0; transform: translateY(4px); transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.stage .callout b { display: block; font-weight: 640; color: var(--ink); }
+.stage .callout span { display: block; color: var(--ink-3); margin-top: 2px; text-wrap: balance; }
+.stage .callout.l { text-align: right; }
+.stage.on .callout { opacity: 1; transform: none; }
+.leader-line { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+.stage.on .leader-line { stroke-dashoffset: 0; }
+.dot { opacity: 0; transform-box: fill-box; transform-origin: center; transform: scale(0.3); transition: opacity 0.3s ease, transform 0.4s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.stage.on .dot { opacity: 1; transform: none; }
+.legend, .num-marker { display: none; }
+
+/* Entrance: the hero rises once, the mark draws as one pen stroke, then the swash under the H1. */
+.js .hero .rise { opacity: 0; transform: translateY(18px); }
+.js .hero.in .rise { opacity: 1; transform: none; transition: opacity 0.8s ease, transform 1s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.js .hero.in .rise.d1 { transition-delay: 0.08s; }
+.js .hero.in .rise.d2 { transition-delay: 0.16s; }
+.js .hero.in .rise.d3 { transition-delay: 0.24s; }
+.js .hero.in .rise.d4 { transition-delay: 0.32s; }
+.js .stage .window { opacity: 0; transform: translateY(56px) scale(0.985); }
+.js .hero.in .stage .window { opacity: 1; transform: none; transition: opacity 1s ease 0.3s, transform 1.4s cubic-bezier(0.16, 0.84, 0.24, 1) 0.3s; }
+.mark-path { stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0; }
+.drawn .mark-path { opacity: 1; stroke-dashoffset: 0; transition: stroke-dashoffset 2.1s cubic-bezier(0.55, 0.06, 0.3, 1), opacity 0.01s; }
+/* The swash's stroke does not scale with its stretched viewBox, which a dash offset cannot follow, so it
+   is drawn by wiping a clip from left to right instead. */
+.js .swash { clip-path: inset(-60% 100% -60% -4%); }
+.js .hero.in .swash { clip-path: inset(-60% -4% -60% -4%); transition: clip-path 0.9s cubic-bezier(0.6, 0, 0.25, 1) 1.05s; }
+
+/* Section type. */
+.home section { position: relative; }
+.kicker { margin: 0 0 18px; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--gold-ink); }
+.home h2 {
+  margin: 0; font-size: clamp(40px, 5.5vw, 78px); line-height: 1; font-weight: 710;
+  letter-spacing: -0.045em; text-wrap: balance;
+}
+.lead { margin: 24px 0 0; max-width: 32em; font-size: clamp(18px, 1.35vw, 20px); color: var(--ink-2); letter-spacing: -0.01em; text-wrap: pretty; }
+
+/* Who it is for. */
+.fit { padding: clamp(120px, 13vw, 190px) 0 0; }
+.fit-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(40px, 5vw, 80px); align-items: start; }
+.fit-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-2); }
+.fit-list li { position: relative; padding: 26px 0 28px 52px; border-bottom: 1px solid var(--rule); font-size: clamp(22px, 2.05vw, 29px); line-height: 1.24; font-weight: 640; letter-spacing: -0.03em; text-wrap: pretty; }
+.fit-list li em { font-style: normal; color: var(--ink-3); font-weight: 560; }
+.fit-list svg { position: absolute; left: 2px; top: calc(26px + 0.62em - 13px); width: 26px; height: 26px; overflow: visible; }
+.fit-list svg path { stroke: var(--gold-deep); }
+
+/* How it works: the steps scroll past a sticky screenshot that follows the active one. */
+.story { padding: clamp(120px, 14vw, 200px) 0 0; }
+.story-head { max-width: 760px; }
+.story-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(40px, 5vw, 80px); margin-top: 24px; }
+.steps { position: relative; padding-left: 44px; }
+.rail { position: absolute; left: 7px; top: 0; bottom: 0; width: 2px; }
+.rail::before { content: ""; position: absolute; inset: 0; background: var(--rule); border-radius: 2px; }
+.rail i { position: absolute; left: 0; top: 0; width: 2px; height: 100%; background: var(--gold); border-radius: 2px; transform-origin: top; transform: scaleY(0); }
+.step { min-height: 78vh; display: flex; flex-direction: column; justify-content: center; position: relative; padding: 40px 0; }
+.step-in { position: relative; }
+.step-in::before { /* the rail's stop for this step, centred on the label's x-height */
+  content: ""; position: absolute; left: -44px; top: calc(0.775em - 8px); font-size: 15px; width: 16px; height: 16px; border-radius: 50%; z-index: 1;
+  background: var(--paper); box-shadow: inset 0 0 0 2px var(--rule-2);
+  transition: box-shadow 0.3s ease, background 0.3s ease;
+}
+.step.past .step-in::before, .step.active .step-in::before { background: var(--gold); box-shadow: inset 0 0 0 2px var(--gold), 0 0 0 4px var(--paper); }
+.step-label { display: flex; align-items: baseline; gap: 12px; margin: 0 0 16px; font-size: 15px; font-weight: 600; color: var(--ink-3); letter-spacing: -0.005em; }
+.step-label .n { font-variant-numeric: tabular-nums; color: var(--gold-ink); }
+.step h3 { margin: 0; font-size: clamp(32px, 3.3vw, 46px); line-height: 1.04; font-weight: 700; letter-spacing: -0.04em; text-wrap: balance; }
+.step p { margin: 20px 0 0; font-size: 18px; color: var(--ink-2); max-width: 26em; text-wrap: pretty; }
+.step .mshot { display: none; }
+.js .step .step-in > * { opacity: 0.28; transition: opacity 0.45s ease; }
+.js .step.active .step-in > * { opacity: 1; }
+.visual { position: relative; }
+.visual-in { position: sticky; top: calc(50vh - 248px); height: 560px; }
+.slide {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transform: translateY(22px) scale(0.975); transition: opacity 0.5s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  pointer-events: none;
+}
+.slide.active { opacity: 1; transform: none; }
+.slide img { max-width: 100%; max-height: 100%; width: auto; height: auto; border-radius: 14px; box-shadow: var(--shadow-small); background: var(--app); }
+.progress { position: absolute; left: 0; right: 0; bottom: -64px; display: flex; justify-content: center; gap: 6px; }
+.progress button {
+  border: 0; background: none; padding: 8px 4px; cursor: pointer;
+  font: 560 13.5px/1 var(--sans); color: var(--ink-4); letter-spacing: -0.003em; transition: color 0.2s;
+}
+.progress button::before { content: ""; display: block; width: 100%; min-width: 72px; height: 3px; border-radius: 3px; background: var(--rule); margin-bottom: 10px; transition: background 0.3s; }
+.progress button.active { color: var(--ink); }
+.progress button.active::before { background: var(--ink); }
+.progress button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 4px; }
+
+/* What it is not. */
+.not { padding: clamp(120px, 14vw, 200px) 0 0; }
+.not-grid { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 64px; border-top: 1px solid var(--rule-2); }
+.not-item { padding: 34px 32px 0 0; }
+.not-item + .not-item { padding-left: 32px; border-left: 1px solid var(--rule); }
+.not-item h3 { margin: 0; font-size: clamp(30px, 3.1vw, 44px); line-height: 1.02; font-weight: 700; letter-spacing: -0.042em; }
+.not-item p { margin: 16px 0 0; font-size: 17.5px; color: var(--ink-2); max-width: 22em; text-wrap: pretty; }
+
+/* Remote access: the terminal's R menu, then one card per guide. */
+.remote { padding: clamp(120px, 14vw, 200px) 0 0; scroll-margin-top: 40px; }
+.remote-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(40px, 6vw, 96px); align-items: center; }
+.termwin { border-radius: 16px; background: #0d0e10; color: #d9d6cf; box-shadow: var(--shadow-small); overflow: hidden; }
+.termwin-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.termwin-bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); }
+.termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.42); }
+.termwin pre { margin: 0; padding: 26px 28px 30px; font: 400 15px/1.75 var(--mono); white-space: pre; overflow-x: auto; }
+.termwin .dim { color: rgba(255, 255, 255, 0.42); }
+.termwin .hl, .termwin .title { color: #fff; }
+.termwin .title { font-weight: 500; }
+.termwin .caret { color: var(--gold); }
+.opts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-top: 64px; }
+.opt {
+  display: flex; flex-direction: column; padding: 22px; border-radius: 18px; text-decoration: none;
+  background: var(--paper-hi); box-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(70, 50, 15, 0.04);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.opt:hover { box-shadow: 0 0 0 1px var(--rule-2), 0 2px 4px rgba(70, 50, 15, 0.06), 0 14px 28px -10px rgba(70, 50, 15, 0.18); transform: translateY(-2px); }
+.opt b { font-size: 17px; font-weight: 640; letter-spacing: -0.02em; line-height: 1.25; }
+.opt span { margin-top: 6px; font-size: 15px; line-height: 1.42; color: var(--ink-3); flex: 1; }
+.opt .go { margin-top: 18px; flex: none; font-size: 14px; font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
+.opt .go svg { width: 13px; height: 13px; transition: transform 0.2s ease; }
+.opt:hover .go svg { transform: translateX(3px); }
+.auth { margin: 28px 0 0; font-size: 16.5px; color: var(--ink-2); max-width: 30em; text-wrap: pretty; }
+.auth strong { font-weight: 640; color: var(--ink); }
+
+/* Closing slab: the mark drawn large on the app's own black. */
+.finale { padding: clamp(120px, 14vw, 200px) 0 0; }
+.slab {
+  position: relative; border-radius: 34px; background: #0d0e10; color: #f4f1ea; overflow: hidden;
+  padding: clamp(64px, 8vw, 112px) var(--pad) clamp(64px, 7vw, 96px); text-align: center;
+  box-shadow: var(--shadow-object);
+}
+.slab .big-mark { width: clamp(132px, 13vw, 184px); margin: 0 auto 40px; display: block; overflow: visible; }
+.home .slab h2 { color: #fbfaf6; }
+.slab p { margin: 22px auto 0; max-width: 30em; font-size: clamp(18px, 1.4vw, 20px); color: rgba(244, 241, 234, 0.66); letter-spacing: -0.01em; text-wrap: balance; }
+.slab .cta { margin-top: 40px; }
+.slab .install { background: #f6f3ec; color: var(--ink); box-shadow: none; }
+.slab .install code .dollar { color: var(--gold-deep); }
+.slab .copy { background: rgba(20, 19, 17, 0.08); color: var(--ink); }
+.slab .copy:hover { background: rgba(20, 19, 17, 0.14); }
+.slab .copy .i-done { color: var(--gold-deep); }
+.slab .ghlink { color: #f4f1ea; }
+
+/* ============================== guides ============================== */
+
+.doc { max-width: calc(720px + var(--pad) * 2); margin: 0 auto; padding: 56px var(--pad) 72px; }
+.crumb { margin: 0 0 28px; font-size: 15px; font-weight: 500; }
+.crumb a { display: inline-flex; align-items: center; gap: 5px; /* the arrow's ink ends 3/16 short of its box */ color: var(--ink-3); text-decoration: none; }
+.crumb a:hover { color: var(--ink); }
+.crumb .arrow { width: 15px; height: 15px; }
+.doc h1 { margin: 0; font-size: clamp(40px, 6vw, 60px); line-height: 1.02; font-weight: 720; letter-spacing: -0.045em; text-wrap: balance; }
+.doc .lede { margin: 22px 0 0; font-size: 20px; line-height: 1.5; color: var(--ink-2); letter-spacing: -0.012em; text-wrap: pretty; }
+.doc h2 { margin: 56px 0 14px; font-size: 28px; line-height: 1.15; font-weight: 680; letter-spacing: -0.03em; }
+.doc h3 { margin: 32px 0 10px; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
+.doc p, .doc li { font-size: 17px; line-height: 1.65; color: var(--ink-2); }
+.doc p { margin: 0 0 18px; }
+.doc strong { color: var(--ink); font-weight: 640; }
+.doc ul { margin: 0 0 18px; padding-left: 1.3em; }
+.doc li { margin: 0.35em 0; }
+.doc li::marker { color: var(--ink-4); }
+.doc a { text-decoration: underline; text-decoration-color: var(--rule-2); text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 0.15s; }
+.doc a:hover { text-decoration-color: var(--gold-deep); }
+.doc .crumb a { text-decoration: none; }
+/* A command block in a guide: the same dark terminal as the homepage's, without the window bar. */
+.term {
+  margin: 0 0 18px; padding: 18px 22px;
+  background: #0d0e10; color: #d9d6cf; border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(20, 15, 5, 0.9), 0 1px 2px rgba(70, 50, 15, 0.08), 0 8px 20px -8px rgba(70, 50, 15, 0.25);
+  font-size: 14.5px; line-height: 1.65; overflow-x: auto; white-space: pre;
+}
+.term code { font: inherit; }
+.term .prompt { color: var(--gold); }
+.doc .callout { margin: 0 0 18px; padding: 4px 0 4px 20px; border-left: 3px solid var(--gold); }
+.doc .callout p { margin: 0; }
+.doc table { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 15.5px; }
+.doc th, .doc td { text-align: left; padding: 10px 28px 10px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.doc th { color: var(--ink-3); font-weight: 600; }
+.doc td { color: var(--ink-2); }
 .doc tbody tr:last-child td { border-bottom: none; }
-.doc td:last-child, .doc th:last-child { padding-right: 0; color: var(--fg-2); }
+.doc td:last-child, .doc th:last-child { padding-right: 0; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1239px) {
+  .stage .callout, .leaders { display: none; }
+  .num-marker {
+    display: grid; place-items: center; position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%;
+    background: var(--gold); color: var(--ink); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums;
+    box-shadow: 0 0 0 3px rgba(12, 14, 16, 0.85);
+  }
+  .legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px 24px; max-width: 1060px; margin: 40px auto 0; padding: 0; list-style: none; text-align: left; }
+  .legend li { display: grid; grid-template-columns: 24px 1fr; gap: 0 12px; font-size: 15px; line-height: 1.38; }
+  .legend .k { grid-row: span 2; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--paper-hi); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums; }
+  .legend b { font-weight: 640; letter-spacing: -0.01em; }
+  .legend span { color: var(--ink-3); }
+}
+@media (max-width: 1023px) {
+  .nav-links .opt-link { display: none; }
+  .fit-grid { grid-template-columns: 1fr; gap: 36px; }
+  .story-grid { grid-template-columns: 1fr; }
+  .visual { display: none; }
+  .steps { padding-left: 0; }
+  .rail, .step-in::before { display: none; }
+  .js .step .step-in > * { opacity: 1; }
+  .step { min-height: 0; padding: 64px 0 0; }
+  .step .mshot { display: block; margin: 32px 0 0; border-radius: 14px; box-shadow: var(--shadow-small); background: var(--app); width: 100%; }
+  .not-grid { grid-template-columns: 1fr; border-top: 0; margin-top: 40px; }
+  .not-item, .not-item + .not-item { padding: 28px 0 30px; border-left: 0; border-top: 1px solid var(--rule-2); }
+  .remote-grid { grid-template-columns: 1fr; }
+  .opts { grid-template-columns: repeat(2, 1fr); margin-top: 44px; }
+  .legend { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  body { font-size: 17px; }
+  .nav-in { height: 58px; }
+  .nav-links { gap: 18px; }
+  .nav-gh { height: 34px; }
+  .tile { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 26px; }
+  .hero h1 { font-size: min(11.4vw, 56px); line-height: 1.04; }
+  .sub { margin-top: 24px; font-size: 18px; }
+  .cta { flex-direction: column; gap: 18px; margin-top: 30px; }
+  .meta { font-size: 13.5px; }
+  .meta span:nth-child(3) { display: block; margin-top: 4px; }
+  .meta span:nth-child(3)::before { content: none; }
+  .window { border-radius: 10px; }
+  .stage { padding: 0; margin-top: 48px; }
+  .stage .window { width: auto; margin: 0 var(--pad); }
+  .legend { grid-template-columns: 1fr; gap: 14px; padding: 0 var(--pad); margin-top: 30px; }
+  .num-marker { width: 20px; height: 20px; margin: -10px 0 0 -10px; font-size: 11.5px; box-shadow: 0 0 0 2px rgba(12, 14, 16, 0.85); }
+  .opts { grid-template-columns: 1fr; gap: 10px; }
+  .opt { padding: 18px 20px; }
+  .opt .go { display: none; }
+  .termwin pre { font-size: 13px; padding: 20px; }
+  .slab { border-radius: 26px; }
+  .foot-in { flex-wrap: wrap; gap: 12px 20px; }
+  .foot-in .sp { flex-basis: 100%; height: 0; }
+  .doc { padding-top: 36px; }
+  .doc .lede { font-size: 18px; }
+  .doc h2 { margin-top: 44px; font-size: 24px; }
+  .term { font-size: 13px; padding: 16px 18px; border-radius: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .js .hero .rise, .js .stage .window { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .mark-path, .leader-line { opacity: 1 !important; stroke-dashoffset: 0 !important; transition: none !important; }
+  .js .swash { clip-path: none !important; transition: none !important; }
+  .stage .callout, .dot { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .slide, .js .step .step-in > *, .opt, .rail i { transition: none !important; }
+  .slide { transform: none !important; }
+}
