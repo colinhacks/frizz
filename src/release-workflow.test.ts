@@ -59,7 +59,8 @@ esac
     const { port } = server.address() as { port: number };
     // Asynchronously: this process serves the registry the script reads, so it must not block.
     const child = spawn(process.execPath, [join(repo, "scripts", "tag-release.mjs"), ...args], {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FRIZZ_RELEASE_REPO: "acme/frizz", FRIZZ_NPM_REGISTRY: `http://127.0.0.1:${port}/` },
+      // GH_TOKEN keeps scripts/lib/gh-command.mjs on the stub `gh`, never the real Keyward.
+      env: { ...process.env, GH_TOKEN: "stub", PATH: `${dir}:${process.env.PATH}`, FRIZZ_RELEASE_REPO: "acme/frizz", FRIZZ_NPM_REGISTRY: `http://127.0.0.1:${port}/` },
     });
     let stderr = "";
     child.stderr.on("data", (bytes) => { stderr += bytes; });
@@ -165,7 +166,9 @@ esac
   t.after(() => server.close());
   const { port } = server.address() as { port: number };
   const child = spawn(process.execPath, [join(repo, "scripts", "release-notes.mjs"), "frizz-server", "1.2.3"], {
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FRIZZ_RELEASE_REPO: "acme/frizz", FRIZZ_RELEASE_GIT_DIR: work, FRIZZ_NPM_REGISTRY: `http://127.0.0.1:${port}/` },
+    // GH_TOKEN keeps scripts/lib/gh-command.mjs on the stub `gh`: this `gh` answers "signed out", and on
+    // a machine with Keyward installed the script would otherwise ask the real Keyward for a Touch ID.
+    env: { ...process.env, GH_TOKEN: "stub", PATH: `${dir}:${process.env.PATH}`, FRIZZ_RELEASE_REPO: "acme/frizz", FRIZZ_RELEASE_GIT_DIR: work, FRIZZ_NPM_REGISTRY: `http://127.0.0.1:${port}/` },
   });
   let stdout = "", stderr = "";
   child.stdout.on("data", (bytes) => { stdout += bytes; });
