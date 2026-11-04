@@ -13,7 +13,7 @@ import { copyTextToClipboard } from "../lib/clipboard.ts"
 // it at github.com/login/device, and the server polls GitHub until they have. The row polls the server
 // meanwhile, and only then, so a signed-in Settings costs one read per open.
 
-const BUTTON = "button-outline rounded-md px-3 py-1.5 text-[12px] text-fg outline-none transition-colors hover:bg-panel-2 disabled:opacity-45"
+const BUTTON = "button-outline shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-[12px] text-fg outline-none transition-colors hover:bg-panel-2 disabled:opacity-45"
 
 export const GITHUB_ACCOUNT_KEY = ["githubAccount"] as const
 

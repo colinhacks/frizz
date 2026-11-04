@@ -144,9 +144,7 @@ export function clearGithubCredential(): void {
   memo = { credential: null, problem: undefined }
 }
 
-// The credential as this process last read or wrote it, plus why it stopped working, if it did. The
-// file is re-read when the memo is empty, so a sign-in another process wrote (none does today) or a
-// file deleted by hand is picked up on the next status query.
+// The credential as this process last read or wrote it, plus why it stopped working, if it did.
 let memo: { credential: StoredGithubCredential | null; problem: string | undefined } | undefined
 let refreshing: Promise<string> | undefined
 
@@ -157,7 +155,10 @@ export function resetGithubCredentialMemo(): void {
 }
 
 function current(): { credential: StoredGithubCredential | null; problem: string | undefined } {
-  return (memo ??= { credential: readGithubCredential(), problem: undefined })
+  // Holding nothing, look again: a sign-in another process wrote into this folder (a sandbox stack and
+  // the real board share it) is picked up on the next read rather than at the next restart.
+  if (!memo?.credential) memo = { credential: readGithubCredential(), problem: undefined }
+  return memo
 }
 
 function envToken(env: NodeJS.ProcessEnv = process.env): string | null {

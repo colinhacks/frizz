@@ -298,7 +298,7 @@ const WATCH_PR = {
         type: "string",
         description:
           "Required for `add`. The pull request, as `owner/repo#123` or a GitHub PR URL. A ref that " +
-          "cannot be parsed, or a PR the server's own `gh` cannot read, is REFUSED rather than stored — " +
+          "cannot be parsed, or a PR Frizz's own GitHub sign-in cannot read, is REFUSED rather than stored — " +
           "a watcher that can never fire is worse than no watcher, because you would come to rest " +
           "believing you were covered. A refusal names the reason; a transient one is worth one retry.",
       },
@@ -365,7 +365,7 @@ const WATCH_ISSUE = {
         type: "string",
         description:
           "Required for `add`. The issue, as `owner/repo#123` or a GitHub issue URL. A ref that cannot " +
-          "be parsed, a PR URL, or an issue the server's own `gh` cannot read, is REFUSED rather than " +
+          "be parsed, a PR URL, or an issue Frizz's own GitHub sign-in cannot read, is REFUSED rather than " +
           "stored — a watcher that can never fire is worse than none. A refusal names the reason.",
       },
       for: {
