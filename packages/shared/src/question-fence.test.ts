@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import { fencedInteriors, mayHoldQuestionFence, questionFenceOpener } from "./code-fences.ts"
 import { AskedQuestionSchema, askedQuestionFaults } from "./index.ts"
-import { assembleQuestionFences, questionFenceBlocks, questionFencesIn, questionHandles, readQuestionFence } from "./question-fence.ts"
+import { assembleQuestionFences, questionFenceBlocks, questionFenceDraft, questionFencesIn, questionHandles, readQuestionFence } from "./question-fence.ts"
 
 const fence = (body: string, ticks = "```") => `${ticks}question\n${body}\n${ticks}`
 
@@ -173,6 +173,21 @@ test("a follow-up whose option is missing is refused with its parent's real labe
   const underText = questionFencesIn(`${fence("id: t\nkind: text\nquestion: T?")}\n${fence("id: c\nkind: text\nwhen: t = anything\nquestion: C?")}`)
   assert.deepEqual(underText.asks.map((a) => a.id), ["t"])
   assert.match(underText.faults[0].faults[0], /`t` is a free-text question with no options to follow — ask this as its own question, without the `when:` line/)
+})
+
+test("a fence that does not read still drafts its question for the page, and one that reads drafts nothing", () => {
+  // Two recommended options: refused, and the draft keeps both options and the context.
+  const body = "id: e\nkind: choice\nquestion: Q?\noptions:\n  - label: x\n    recommended: true\n  - label: y\n    recommended: true\n---\nWhy it matters."
+  assert.equal(readQuestionFence(body).form, "invalid")
+  assert.deepEqual(questionFenceDraft(body), {
+    handle: "e", question: "Q?", context: "Why it matters.", kind: "question",
+    options: [{ label: "x", recommended: true }, { label: "y", recommended: true }],
+  })
+  // The read itself is unchanged by the draft: the server registers from it, and nothing else.
+  assert.deepEqual(Object.keys(readQuestionFence(body)).sort(), ["faults", "form", "id"])
+  assert.equal(questionFenceDraft("id: ok\nkind: text\nquestion: Fine?"), undefined, "a fence that reads is its own ask")
+  assert.equal(questionFenceDraft("id: ref"), undefined, "a reference asks nothing")
+  assert.equal(questionFenceDraft("---\nid: x\nkind: text\nquestion: Q?\n---"), undefined, "front matter wrapped in `---` has no question line")
 })
 
 test("labels that differ only in case are two options, and a `when:` names one of them exactly", () => {

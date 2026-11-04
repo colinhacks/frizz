@@ -1606,6 +1606,15 @@ html[data-code-wrap="off"] {
 .md-body details > summary::-webkit-details-marker {
   display: none;
 }
+/* The folded bytes of a question fence that did not read and had no question to draw
+   (RegisteredQuestionCards InvalidQuestionFence): a footnote to the "Question not asked" line above it,
+   so its label wears that line's 13px and muted tone rather than the prose's 14px foreground, which read
+   louder than the reason it hangs from. The chevron is sized in em and follows. */
+[data-question-invalid] .md-body details > summary {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-muted);
+}
 .md-body .md-summary-label {
   min-width: 0;
 }

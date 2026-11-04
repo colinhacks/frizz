@@ -155,12 +155,23 @@ test("the server's reasons ride on the refused message, and the human reads the 
   assert.equal(refusalSummary(undefined), undefined)
 })
 
-test("a fence that did not read carries the reader's faults to the page, over its own bytes", () => {
-  const broken = fence("id: x\nkind: pick\nquestion: Q?")
+test("a fence that did not read carries the reader's faults to the page, and its question as far as it reads", () => {
+  // The secret written as a follow-up, five of 2026-10's 25 refusals: drawn as the question, never its YAML.
+  const broken = fence("id: new-token\nkind: secret\nwhen: rotate = Yes\nquestion: The new token for the tap")
   const segs = splitMessageQuestions(`Before.\n\n${broken}`, true)
   assert.deepEqual(segs.map((s) => s.kind), ["prose", "invalidFence"])
-  assert.equal(segs[1].kind === "invalidFence" && segs[1].text.trimEnd(), broken, "the worker's own bytes, fence and all — markdown draws the code block")
-  assert.match(segs[1].kind === "invalidFence" ? segs[1].faults.join("\n") : "", /`kind: pick` — the kinds are/)
+  const seg = segs[1]
+  assert.ok(seg.kind === "invalidFence")
+  assert.match(seg.faults.join("\n"), /a `secret` cannot be a follow-up/)
+  assert.deepEqual(seg.draft, { handle: "new-token", question: "The new token for the tap", kind: "question", secret: true })
+  assert.equal(seg.text.trimEnd(), broken, "the bytes still ride along, for a fence with nothing to draw")
+  // An unknown kind draws its options as the choice it reads like, and a multi stays a multi.
+  const pick = splitMessageQuestions(fence("id: x\nkind: question\nquestion: Ship it?\noptions:\n  - Yes\n  - No"), true)[0]
+  assert.deepEqual(pick.kind === "invalidFence" && pick.draft?.options?.map((o) => o.label), ["Yes", "No"])
+  assert.equal(pick.kind === "invalidFence" && pick.draft?.kind, "question")
+  // With no `question:` line there is no card to draw, only the reason over the folded bytes.
+  const headless = splitMessageQuestions(fence("id: x\nkind: choice\noptions:\n  - Yes\n  - No"), true)[0]
+  assert.equal(headless.kind === "invalidFence" && headless.draft, undefined)
 })
 
 test("a question that closed without an answer is still the row its message registered", () => {

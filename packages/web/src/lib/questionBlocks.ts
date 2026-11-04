@@ -2,7 +2,7 @@
 // one off as an answerable card WITHIN the message's narrative flow (prose stays in place). Pure
 // string logic, no DOM — unit-testable.
 
-import { insideFence, mayHoldQuestionFence, QUESTION_FENCE_KEYS, questionFenceBlocks, type AskedQuestion, type QuestionFenceRead } from "@frizz/shared"
+import { insideFence, mayHoldQuestionFence, QUESTION_FENCE_KEYS, questionFenceBlocks, questionFenceDraft, type AskedQuestion, type QuestionFenceRead } from "@frizz/shared"
 
 // The two answer MODES a ```question block can carry (the info-string picks one):
 //   question — single-select (radio feel) OR freetext; the default.
@@ -55,8 +55,10 @@ export type MessageSegment =
   // A readable ask the server REFUSED (its id spent, its parent settled, …): drawn greyed, headed "Question
   // not asked" over the server's reason, never answerable and never a claim on another row's card.
   | { kind: "refusedAsk"; id: string; spec: AskedQuestion }
-  // A fence that tried the grammar and failed to read: the reader's own faults over the worker's bytes.
-  | { kind: "invalidFence"; text: string; faults: string[] }
+  // A fence that tried the grammar and failed to read: the reader's own faults, and the question as far as
+  // it reads (`draft`, shared questionFenceDraft) — drawn greyed like a refused ask, never as its YAML.
+  // `text` is the worker's bytes, for a fence with no `question:` line to draw a card from.
+  | { kind: "invalidFence"; text: string; faults: string[]; draft?: AskedQuestion }
 
 // Opening fence begins a line: ```question, an OPTIONAL info-string of one or more space-separated
 // tokens (e.g. ```question multi, ```question danger), then a newline;
@@ -162,7 +164,10 @@ export function splitQuestionBlocks(text: string): MessageSegment[] {
 // the same fence with four backticks or an indent was a code block (the legacy reader knows one opener).
 // A card that cannot be answered and shows front matter is the worst of the three, so all of them are now
 // the code block: the worker's own bytes, plainly not a card, until its corrected fence lands. Since
-// 2026-11-04 the reader's faults ride with it (`invalidFence`), so the block says why it is not a card.
+// 2026-11-04 it is neither: the page draws its question as far as it reads, greyed, under the reader's
+// reason (`invalidFence`), like a fence the server refused — the maintainer, the same day: "I don't want
+// questions to be showing up as plain YAML". Only a fence with no `question:` line has nothing to draw,
+// and its bytes then sit collapsed under the reason.
 
 /** A message's segments under the grammar its thread speaks. `fenceGrammar` false (a legacy thread, or a
  *  surface that has no registered rows to resolve against) is splitQuestionBlocks unchanged. */
@@ -191,8 +196,8 @@ export function splitMessageQuestions(text: string, fenceGrammar: boolean, refus
       continue
     }
     if (b.read.form === "invalid") {
-      // The worker's bytes, which markdown draws as code, under the faults that kept it from reading.
-      out.push({ kind: "invalidFence", text: text.slice(b.start, b.end), faults: b.read.faults })
+      const draft = questionFenceDraft(b.body)
+      out.push({ kind: "invalidFence", text: text.slice(b.start, b.end), faults: b.read.faults, ...(draft ? { draft } : {}) })
       continue
     }
     const read = b.read

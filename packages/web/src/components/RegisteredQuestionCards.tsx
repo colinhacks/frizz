@@ -492,16 +492,19 @@ export function ClosedQuestionCard({ spec, state, wrap }: { spec: AskedQuestion;
 }
 const NOT_ANSWERED = { chosenIdxs: [] }
 
-/** A fence-written question the server REFUSED to register (lib/questionBlocks `refusedAsk`): its id was
- *  spent, its parent settled, the thread runs autonomously. The server's reason in one line, over the
- *  question drawn read-only and greyed. Until 2026-11-04 it drew as the worker's YAML in a code block,
- *  and a well-formed question refused only for reusing an id read as a fence the parser could not read.
- *  The reason sits OUTSIDE the greyed card: inside it, at the card's footnote size, it was the faintest
- *  text on the card while being the one line the reader came for. */
-export function RefusedQuestionCard({ spec, reasons, wrap }: { spec: AskedQuestion; reasons?: readonly string[]; wrap?: boolean }) {
+/** A ```question fence that asked nothing, drawn as the question it would have been: one the server
+ *  REFUSED to register (lib/questionBlocks `refusedAsk`: its id was spent, its parent settled, the thread
+ *  runs autonomously), or one that did not read (`invalidFence`, from its draft). The reason in one line,
+ *  over the question read-only and greyed. Until 2026-11-04 both drew as the worker's YAML in a code
+ *  block, and a well-formed question refused only for reusing an id read as a fence the parser could not
+ *  read (maintainer, the same day: "I don't want questions to be showing up as plain YAML"). The reason
+ *  sits OUTSIDE the greyed card: inside it, at the card's footnote size, it was the faintest text on the
+ *  card while being the one line the reader came for. */
+export function RefusedQuestionCard({ spec, reasons, unread, wrap }: { spec: AskedQuestion; reasons?: readonly string[]; unread?: boolean; wrap?: boolean }) {
   const question = useMemo(() => toParsedQuestion(spec).question, [spec])
+  const data = unread ? { "data-question-invalid": spec.handle } : { "data-question-refused-ask": spec.handle }
   return (
-    <QuestionNotAsked reasons={reasons} data-question-refused-ask={spec.handle}>
+    <QuestionNotAsked reasons={reasons} {...data}>
       {/* No `data-question-fence`: that names the card a question's id draws, and this id's is elsewhere. */}
       <div className="opacity-60">
         <QuestionBlockCard question={question} wrap={wrap} />
@@ -510,8 +513,9 @@ export function RefusedQuestionCard({ spec, reasons, wrap }: { spec: AskedQuesti
   )
 }
 
-/** A fence that tried the question grammar and did not read (lib/questionBlocks `invalidFence`): the
- *  reader's reason in the same line, over the worker's own bytes as the code block they are. */
+/** A fence that did not read and has no `question:` line to draw a card from (lib/questionBlocks
+ *  `invalidFence` with no draft): the reader's reason in the same line, and the worker's bytes folded
+ *  under it, never spread open on the page as front matter. */
 export function InvalidQuestionFence({ faults, children }: { faults: readonly string[]; children: ReactNode }) {
   return (
     <QuestionNotAsked reasons={faults} data-question-invalid="">

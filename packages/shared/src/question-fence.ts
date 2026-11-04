@@ -427,6 +427,19 @@ function readOptions(
  *  a fence it has seen before against the row it registered. `fence` is the character the fence around it
  *  is made of, which changes one thing only: which unclosed code block reads as the fence cut short. */
 export function readQuestionFence(body: string, fence: "`" | "~" = "`"): QuestionFenceRead {
+  return readFence(body, fence).read
+}
+
+/** What a fence that does NOT read would have asked, as far as it reads: its question, the options that
+ *  have a label, its context. For the page alone, which draws a refused fence as its question greyed
+ *  rather than as the worker's front matter (maintainer 2026-11-04: "I don't want questions to be showing
+ *  up as plain YAML"); nothing registers from it. Undefined when the fence reads (it is the ask itself)
+ *  and when it has no `question:` line to head a card with. */
+export function questionFenceDraft(body: string): AskedQuestion | undefined {
+  return readFence(body, "`").draft
+}
+
+function readFence(body: string, fence: "`" | "~"): { read: QuestionFenceRead; draft?: AskedQuestion } {
   const lines = body.split("\n").map((l) => l.replace(/\r$/, ""))
   // The FIRST unindented `---` ends the front matter; a later one is a horizontal rule in the body, and an
   // indented one belongs to a `detail: |` block.
@@ -437,7 +450,7 @@ export function readQuestionFence(body: string, fence: "`" | "~" = "`"): Questio
   // that never began, every key lands in the context, and the faults that would follow ("no `id:`", "no
   // `kind:`") deny what the worker can see on the page. Named for what it is instead, and alone.
   if (delimiter !== -1 && front.every((l) => l.trim() === "")) {
-    return { form: "invalid", faults: ["the fence opens with `---` — its keys start on the first line, and the one `---` goes BELOW them, before the context"] }
+    return { read: { form: "invalid", faults: ["the fence opens with `---` — its keys start on the first line, and the one `---` goes BELOW them, before the context"] } }
   }
   const fm = readFrontmatter(front)
   const faults = [...fm.faults]
@@ -452,8 +465,8 @@ export function readQuestionFence(body: string, fence: "`" | "~" = "`"): Questio
   // A REFERENCE: the id and nothing else. A body under it means the worker meant to ask.
   const others = [...fm.keys.keys()].filter((k) => k !== "id")
   if (others.length === 0 && !fm.options && !context) {
-    if (faults.length > 0) return { form: "invalid", ...(idOk ? { id } : {}), faults }
-    return { form: "ref", id }
+    if (faults.length > 0) return { read: { form: "invalid", ...(idOk ? { id } : {}), faults } }
+    return { read: { form: "ref", id } }
   }
 
   if (idOk && id.startsWith(RESERVED_QUESTION_ID_PREFIX)) {
@@ -532,18 +545,19 @@ export function readQuestionFence(body: string, fence: "`" | "~" = "`"): Questio
   if ((kind === "text" || kind === "secret") && fm.options) faults.push(`\`kind: ${kind}\` takes no options — it is ${kind === "secret" ? "one masked box" : "a free-text answer"}`)
   if (kind === "secret" && when) faults.push("a `secret` cannot be a follow-up — its answer would ride inside its parent's, unmasked; ask the parent now, and the secret on its own, without `when:`, once the answer that needs it arrives")
 
-  if (faults.length > 0 || !kind) return { form: "invalid", ...(idOk ? { id } : {}), faults }
   const spec: AskedQuestion = {
     handle: id,
     question,
     ...(context ? { context } : {}),
     ...(header ? { header } : {}),
-    kind: kind === "multi" ? "multi" : "question",
+    // A draft of an unknown kind (`kind: question`) still draws its options, as the choice it reads like.
+    kind: (kind ?? kindRaw) === "multi" ? "multi" : "question",
     ...(danger ? { danger: true } : {}),
     ...(kind === "secret" ? { secret: true } : {}),
     ...(options.length > 0 ? { options } : {}),
   }
-  return { form: "ask", id, spec, ...(when ? { when } : {}) }
+  if (faults.length > 0 || !kind) return { read: { form: "invalid", ...(idOk ? { id } : {}), faults }, ...(question ? { draft: spec } : {}) }
+  return { read: { form: "ask", id, spec, ...(when ? { when } : {}) } }
 }
 
 // ── A message's fences, assembled ──────────────────────────────────────────────────────────────────────

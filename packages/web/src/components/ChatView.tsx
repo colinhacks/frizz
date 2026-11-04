@@ -3707,13 +3707,16 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
           push(<RefusedQuestionCard key={`${keyBase}-${fi}-x${si}`} spec={seg.spec} reasons={m.refusedReasons?.get(seg.id.toLowerCase())} wrap={dense} />)
           continue
         }
-        // …and a fence that did not read, which stays the worker's code block under the reader's reason.
+        // …and a fence that did not read: its question as far as it reads, greyed under the reader's
+        // reason — or, with no `question:` line to draw, its bytes folded away under that reason.
         if (seg.kind === "invalidFence") {
-          push(
+          push(seg.draft ? (
+            <RefusedQuestionCard key={`${keyBase}-${fi}-i${si}`} spec={seg.draft} reasons={seg.faults} unread wrap={dense} />
+          ) : (
             <InvalidQuestionFence key={`${keyBase}-${fi}-i${si}`} faults={seg.faults}>
-              <ProseHtml md={seg.text} wrap={dense} />
-            </InvalidQuestionFence>,
-          )
+              <ProseHtml md={`<details>\n<summary>What the worker wrote</summary>\n\n${seg.text}\n\n</details>`} wrap={dense} />
+            </InvalidQuestionFence>
+          ))
           continue
         }
         qi.n += 1
