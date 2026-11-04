@@ -109,44 +109,21 @@ kbd {
 .foot-in .brand img { width: 22px; height: 22px; border-radius: 6px; }
 .foot-in .sp { flex: 1; }
 
-/* ---------- install pill (hero and closing slab) ---------- */
-.cta { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 14px 26px; margin-top: 32px; }
+/* ---------- the install command (hero and closing slab) ---------- */
+/* No copy button: the command is the call to action, set big, and one click selects all of it. */
+.cta { display: flex; justify-content: center; margin-top: 40px; }
 .install {
-  display: inline-flex; align-items: center;
-  height: 54px; padding: 0 6px 0 22px; border-radius: 999px;
-  background: var(--ink); color: #f4f1ea;
-  box-shadow: 0 1px 2px rgba(70, 50, 15, 0.15), 0 8px 20px -6px rgba(70, 50, 15, 0.35);
+  display: inline-flex; align-items: center; gap: 0.62em;
+  height: 72px; padding: 0 38px; border-radius: 999px;
+  background: var(--ink); color: #f6f3ec;
+  font: 600 26px/1 var(--mono); letter-spacing: -0.01em; white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(70, 50, 15, 0.15), 0 12px 28px -10px rgba(70, 50, 15, 0.45);
 }
-.install code { font-size: 17px; font-weight: 500; white-space: nowrap; }
-.install code .dollar { color: var(--gold); margin-right: 0.6em; user-select: none; }
-.copy {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 42px; margin-left: 16px; padding: 0 16px 0 13px; border: 0; border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1); color: #f4f1ea;
-  font: 560 15px/1 var(--sans); letter-spacing: -0.005em; cursor: pointer;
-  transition: background 0.15s;
-}
-.copy:hover { background: rgba(255, 255, 255, 0.17); }
-.copy:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-.copy svg { width: 15px; height: 15px; flex: none; }
-/* Both labels share one grid cell, so "Copied" never changes the pill's width. */
-.copy .lbl { display: inline-grid; justify-items: start; }
-.copy .lbl > span { grid-area: 1 / 1; }
-.copy .w-done, .copy.done .w-copy { visibility: hidden; }
-.copy.done .w-done { visibility: visible; }
-.copy .i-done { display: none; color: var(--gold); }
-.copy.done .i-copy { display: none; }
-.copy.done .i-done { display: block; }
-/* gap 6px, not 8: the arrow's path starts 3/16 into its box, so 8px of gap drew a 10.2px ink gap where
-   the pill's icon-to-label pairs read 8.3px. */
-.ghlink {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 17px; font-weight: 580; text-decoration: none; color: var(--ink);
-  letter-spacing: -0.01em;
-}
-.ghlink svg { width: 18px; height: 18px; }
-.ghlink .arr { transition: transform 0.2s ease; }
-.ghlink:hover .arr { transform: translateX(3px); }
+/* Lifted 0.04em: flex centres the line box, which left the lowercase's x-height 2.1px below the pill's
+   middle. This splits the difference between the x-height band and the cap band. */
+.install > span { transform: translateY(-0.04em); }
+.install .dollar { color: var(--gold); user-select: none; }
+.install .cmd { user-select: all; cursor: text; }
 
 /* ============================== homepage ============================== */
 
@@ -161,7 +138,7 @@ kbd {
 .hero h1 {
   max-width: 13em; margin: 0 auto;
   font-size: clamp(46px, 7.6vw, 112px);
-  line-height: 1.04;
+  line-height: 1.06;
   font-weight: 720;
   letter-spacing: -0.05em;
   text-wrap: balance;
@@ -173,12 +150,12 @@ kbd {
 .swash {
   position: absolute; z-index: 0;
   left: -0.04em; width: calc(100% + 0.08em);
-  bottom: -0.13em; height: 0.36em;
+  bottom: -0.115em; height: 0.36em;
   overflow: visible; pointer-events: none;
 }
 .swash path { stroke-width: 0.105em; }
 .sub {
-  max-width: 31em; margin: 32px auto 0;
+  max-width: 36em; margin: 32px auto 0;
   font-size: clamp(18px, 1.45vw, 21px); line-height: 1.5; color: var(--ink-2);
   letter-spacing: -0.012em; text-wrap: balance;
 }
@@ -193,13 +170,24 @@ kbd {
   border-radius: 18px; overflow: hidden;
   background: var(--app);
   box-shadow: var(--shadow-object);
-  aspect-ratio: 1760 / 1100;
 }
 .window::after { /* a hairline on the bezel's top edge */
   content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.035);
 }
-.window img { width: 100%; height: 100%; }
+/* A browser's toolbar, so the board reads as a web app at localhost:9393. */
+.browserbar { position: relative; display: flex; align-items: center; height: 46px; padding: 0 18px; background: #16171a; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.browserbar .dots { display: flex; gap: 8px; }
+.browserbar .dots i { width: 12px; height: 12px; border-radius: 50%; background: rgba(255, 255, 255, 0.14); }
+.browserbar .url {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 34%; height: 28px; padding-top: 1px; border-radius: 8px; /* 1px of top padding centres the digits' ink */
+  background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.74);
+  font: 500 13.5px/1 var(--sans); letter-spacing: -0.003em;
+}
+.shot { position: relative; aspect-ratio: 1760 / 1100; }
+.shot img { width: 100%; height: 100%; }
 @media (min-width: 1240px) { .stage { padding: 0 24px; } .window { width: min(1100px, calc(100% - 2 * var(--co))); } }
 .leaders { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .stage .callout {
@@ -250,52 +238,23 @@ kbd {
 .fit-list svg { position: absolute; left: 2px; top: calc(26px + 0.62em - 13px); width: 26px; height: 26px; overflow: visible; }
 .fit-list svg path { stroke: var(--gold-deep); }
 
-/* How it works: the steps scroll past a sticky screenshot that follows the active one. */
+/* How it works: each feature is a row, its screenshot beside its text, and everything scrolls together. */
 .story { padding: clamp(120px, 14vw, 200px) 0 0; }
 .story-head { max-width: 760px; }
-.story-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(40px, 5vw, 80px); margin-top: 24px; }
-.steps { position: relative; padding-left: 44px; }
-.rail { position: absolute; left: 7px; top: 0; bottom: 0; width: 2px; }
-.rail::before { content: ""; position: absolute; inset: 0; background: var(--rule); border-radius: 2px; }
-.rail i { position: absolute; left: 0; top: 0; width: 2px; height: 100%; background: var(--gold); border-radius: 2px; transform-origin: top; transform: scaleY(0); }
-.step { min-height: 78vh; display: flex; flex-direction: column; justify-content: center; position: relative; padding: 40px 0; }
-.step-in { position: relative; }
-.step-in::before { /* the rail's stop for this step, centred on the label's x-height */
-  content: ""; position: absolute; left: -44px; top: calc(0.775em - 8px); font-size: 15px; width: 16px; height: 16px; border-radius: 50%; z-index: 1;
-  background: var(--paper); box-shadow: inset 0 0 0 2px var(--rule-2);
-  transition: box-shadow 0.3s ease, background 0.3s ease;
-}
-.step.past .step-in::before, .step.active .step-in::before { background: var(--gold); box-shadow: inset 0 0 0 2px var(--gold), 0 0 0 4px var(--paper); }
+.rows { display: grid; gap: clamp(96px, 10vw, 144px); margin-top: clamp(72px, 8vw, 112px); }
+.row { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(40px, 5.5vw, 88px); align-items: center; }
 .step-label { display: flex; align-items: baseline; gap: 12px; margin: 0 0 16px; font-size: 15px; font-weight: 600; color: var(--ink-3); letter-spacing: -0.005em; }
 .step-label .n { font-variant-numeric: tabular-nums; color: var(--gold-ink); }
-.step h3 { margin: 0; font-size: clamp(32px, 3.3vw, 46px); line-height: 1.04; font-weight: 700; letter-spacing: -0.04em; text-wrap: balance; }
-.step p { margin: 20px 0 0; font-size: 18px; color: var(--ink-2); max-width: 26em; text-wrap: pretty; }
-.step .mshot { display: none; }
-.js .step .step-in > * { opacity: 0.28; transition: opacity 0.45s ease; }
-.js .step.active .step-in > * { opacity: 1; }
-.visual { position: relative; }
-.visual-in { position: sticky; top: calc(50vh - 248px); height: 560px; }
-.slide {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  opacity: 0; transform: translateY(22px) scale(0.975); transition: opacity 0.5s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
-  pointer-events: none;
-}
-.slide.active { opacity: 1; transform: none; }
-.slide img { max-width: 100%; max-height: 100%; width: auto; height: auto; border-radius: 14px; box-shadow: var(--shadow-small); background: var(--app); }
-.progress { position: absolute; left: 0; right: 0; bottom: -64px; display: flex; justify-content: center; gap: 6px; }
-.progress button {
-  border: 0; background: none; padding: 8px 4px; cursor: pointer;
-  font: 560 13.5px/1 var(--sans); color: var(--ink-4); letter-spacing: -0.003em; transition: color 0.2s;
-}
-.progress button::before { content: ""; display: block; width: 100%; min-width: 72px; height: 3px; border-radius: 3px; background: var(--rule); margin-bottom: 10px; transition: background 0.3s; }
-.progress button.active { color: var(--ink); }
-.progress button.active::before { background: var(--ink); }
-.progress button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 4px; }
+.row h3 { margin: 0; font-size: clamp(32px, 3.3vw, 46px); line-height: 1.04; font-weight: 700; letter-spacing: -0.04em; text-wrap: balance; }
+.row p:not(.step-label) { margin: 20px 0 0; font-size: 18px; color: var(--ink-2); max-width: 26em; text-wrap: pretty; }
+.row-shot { width: 100%; border-radius: 14px; box-shadow: var(--shadow-small); background: var(--app); }
 
 /* What it is not. */
 .not { padding: clamp(120px, 14vw, 200px) 0 0; }
-.not-grid { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 64px; border-top: 1px solid var(--rule-2); }
-.not-item { padding: 34px 32px 0 0; }
+/* Each item spans two rows of one shared grid, so a heading that wraps ("Not a worktree manager.") pushes
+   every paragraph down together instead of leaving its own out of line with the others. */
+.not-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: auto auto; margin-top: 56px; border-top: 1px solid var(--rule-2); }
+.not-item { display: grid; grid-row: span 2; grid-template-rows: subgrid; align-content: start; padding: 34px 32px 0 0; }
 .not-item + .not-item { padding-left: 32px; border-left: 1px solid var(--rule); }
 .not-item h3 { margin: 0; font-size: clamp(30px, 3.1vw, 44px); line-height: 1.02; font-weight: 700; letter-spacing: -0.042em; }
 .not-item p { margin: 16px 0 0; font-size: 17.5px; color: var(--ink-2); max-width: 22em; text-wrap: pretty; }
@@ -337,13 +296,9 @@ kbd {
 .slab .big-mark { width: clamp(132px, 13vw, 184px); margin: 0 auto 40px; display: block; overflow: visible; }
 .home .slab h2 { color: #fbfaf6; }
 .slab p { margin: 22px auto 0; max-width: 30em; font-size: clamp(18px, 1.4vw, 20px); color: rgba(244, 241, 234, 0.66); letter-spacing: -0.01em; text-wrap: balance; }
-.slab .cta { margin-top: 40px; }
+.slab .cta { margin-top: 44px; }
 .slab .install { background: #f6f3ec; color: var(--ink); box-shadow: none; }
-.slab .install code .dollar { color: var(--gold-deep); }
-.slab .copy { background: rgba(20, 19, 17, 0.08); color: var(--ink); }
-.slab .copy:hover { background: rgba(20, 19, 17, 0.14); }
-.slab .copy .i-done { color: var(--gold-deep); }
-.slab .ghlink { color: #f4f1ea; }
+.slab .install .dollar { color: var(--gold-deep); }
 
 /* ============================== guides ============================== */
 
@@ -398,17 +353,15 @@ kbd {
   .legend span { color: var(--ink-3); }
 }
 @media (max-width: 1023px) {
+  /* A 140px blur is wider than half the object at these sizes: it muddied the paper behind the legend and
+     rasterized with a visible step. The shadow scales down with the thing casting it. */
+  :root { --shadow-object: var(--shadow-small); }
   .nav-links .opt-link { display: none; }
   .fit-grid { grid-template-columns: 1fr; gap: 36px; }
-  .story-grid { grid-template-columns: 1fr; }
-  .visual { display: none; }
-  .steps { padding-left: 0; }
-  .rail, .step-in::before { display: none; }
-  .js .step .step-in > * { opacity: 1; }
-  .step { min-height: 0; padding: 64px 0 0; }
-  .step .mshot { display: block; margin: 32px 0 0; border-radius: 14px; box-shadow: var(--shadow-small); background: var(--app); width: 100%; }
+  .rows { gap: 72px; }
+  .row { grid-template-columns: 1fr; gap: 32px; }
   .not-grid { grid-template-columns: 1fr; border-top: 0; margin-top: 40px; }
-  .not-item, .not-item + .not-item { padding: 28px 0 30px; border-left: 0; border-top: 1px solid var(--rule-2); }
+  .not-item, .not-item + .not-item { grid-row: auto; grid-template-rows: auto; padding: 28px 0 30px; border-left: 0; border-top: 1px solid var(--rule-2); }
   .remote-grid { grid-template-columns: 1fr; }
   .opts { grid-template-columns: repeat(2, 1fr); margin-top: 44px; }
   .legend { grid-template-columns: repeat(2, 1fr); }
@@ -421,7 +374,12 @@ kbd {
   .tile { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 26px; }
   .hero h1 { font-size: min(11.4vw, 56px); line-height: 1.04; }
   .sub { margin-top: 24px; font-size: 18px; }
-  .cta { flex-direction: column; gap: 18px; margin-top: 30px; }
+  .cta { margin-top: 32px; }
+  .install { height: 60px; padding: 0 30px; font-size: 21px; }
+  .browserbar { height: 30px; padding: 0 12px; }
+  .browserbar .dots { gap: 5px; }
+  .browserbar .dots i { width: 8px; height: 8px; }
+  .browserbar .url { width: 46%; height: 19px; border-radius: 5px; font-size: 10.5px; }
   .meta { font-size: 13.5px; }
   .meta span:nth-child(3) { display: block; margin-top: 4px; }
   .meta span:nth-child(3)::before { content: none; }
@@ -429,7 +387,7 @@ kbd {
   .stage { padding: 0; margin-top: 48px; }
   .stage .window { width: auto; margin: 0 var(--pad); }
   .legend { grid-template-columns: 1fr; gap: 14px; padding: 0 var(--pad); margin-top: 30px; }
-  .num-marker { width: 20px; height: 20px; margin: -10px 0 0 -10px; font-size: 11.5px; box-shadow: 0 0 0 2px rgba(12, 14, 16, 0.85); }
+  .num-marker { width: 18px; height: 18px; margin: -9px 0 0 -9px; font-size: 10.5px; box-shadow: 0 0 0 2px rgba(12, 14, 16, 0.85); }
   .opts { grid-template-columns: 1fr; gap: 10px; }
   .opt { padding: 18px 20px; }
   .opt .go { display: none; }
@@ -447,6 +405,5 @@ kbd {
   .mark-path, .leader-line { opacity: 1 !important; stroke-dashoffset: 0 !important; transition: none !important; }
   .js .swash { clip-path: none !important; transition: none !important; }
   .stage .callout, .dot { opacity: 1 !important; transform: none !important; transition: none !important; }
-  .slide, .js .step .step-in > *, .opt, .rail i { transition: none !important; }
-  .slide { transform: none !important; }
+  .opt { transition: none !important; }
 }
