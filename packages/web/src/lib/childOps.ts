@@ -77,6 +77,10 @@ export const CHILD_OPEN_TITLE = { AGENT: "Open sub-agent transcript", SHELL: "Op
 export const CHILD_THREAD_RESTED_TITLE = "rested — it reports its rests to this thread"
 export const CHILD_THREAD_STALE_TITLE = "stale — its worker stopped without coming to rest"
 export const CHILD_THREAD_NEEDS_YOU = "needs you"
+// A child resting on a wait of its OWN (a quiet `watching`/`working` park: its PR's CI, its timer). Its
+// rest is not a handoff yet, so its parent is still waiting on it; the row says so instead of "rested".
+export const CHILD_THREAD_WAITING = "waiting"
+export const CHILD_THREAD_WAITING_TITLE = "waiting on a wait of its own — it reports to this thread when that ends"
 
 // ── HOW MUCH the child has done — the quiet counter beside its current step ──────────────────────
 //

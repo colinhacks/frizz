@@ -245,7 +245,7 @@ test("the resting card owns the heading, the glyph, the prose and the chips", ()
   assert.match(code, /const unrowed = listsWork \? unrowedWatchRefs\(work, hints\) : \[\]/, "a PR the table already rows gets no chip — one PR, one place")
   // A steps card lists none of the work: its box sits right under the steps (maintainer 2026-10-15).
   assert.match(code, /const listsWork = steps\.length === 0/)
-  assert.match(code, /const groups = listsWork \? awaitingWaitGroups\(work, now, \{ hints \}\) : \[\]/)
+  assert.match(code, /const groups = listsWork \? awaitingWaitGroups\(work, now, \{ hints, childThreads \}\) : \[\]/)
   // THE VERBS ARE THE ONLY THINGS THE RUNTIME MAY CHANGE, and each is withheld rather than re-styled: a
   // thread already bg-snoozed has no rest for the Snooze to park, and a thread that has left the rest its
   // steps were posted at has nobody waiting on the steps' Done (2026-10-03). A steps card takes no Snooze

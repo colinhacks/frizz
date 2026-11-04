@@ -32,7 +32,7 @@ import { awaitingFenceTitle, awaitingSteps, commandRunClause, displayTitle, isDi
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
-import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
+import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, CHILD_THREAD_WAITING, CHILD_THREAD_WAITING_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
 import { childThreadStartedAt, childThreadState } from "../lib/childThreads.ts"
 import { useChildThreads } from "../hooks.ts"
 import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels.ts"
@@ -987,9 +987,10 @@ export function AgentRow({ agent, slug, now, onDismiss }: { agent: ThreadView["s
 // the sub-agent row's shape: the same spinner while it works, the flat dot of a stale child once its
 // worker crashed, and the HOLLOW dot every child-row surface gives a rested child (CHILD_RESTED_DOT_CLASS)
 // at rest — in the spinner's 12px box, so the mark column keeps one footprint. The status says what the
-// mark cannot: how long it has been working, or "needs you" when it waits on a gate only the human can
-// settle, else "rested". The row opens the child (store.ts openThread). No ×: a thread is stopped or
-// archived from its own page, not from a row of its parent's.
+// mark cannot: how long it has been working, "needs you" when it waits on a gate only the human can
+// settle, "waiting" while it rests quietly on a wait of its own (its PR's CI, its timer), else "rested".
+// The row opens the child (store.ts openThread). No ×: a thread is stopped or archived from its own page,
+// not from a row of its parent's.
 export function ChildThreadRow({ child, now }: { child: ThreadView; now: number }) {
   const title = displayTitle(child)
   const state = childThreadState(child)
@@ -997,7 +998,8 @@ export function ChildThreadRow({ child, now }: { child: ThreadView; now: number 
   const mark = state === "running"
     ? <Spinner tone="border-accent" />
     : <span aria-hidden className={`inline-block size-3 p-[3px] ${ON_CAP}`}><span className={state === "stale" ? CHILD_STALE_DOT_CLASS : CHILD_RESTED_DOT_CLASS} /></span>
-  const status = child.needsYou ? CHILD_THREAD_NEEDS_YOU : state === "running" ? elapsed : state === "stale" ? "stale" : "rested"
+  const waiting = state === "rested" && !child.needsYou && child.waitStatus !== undefined
+  const status = child.needsYou ? CHILD_THREAD_NEEDS_YOU : state === "running" ? elapsed : state === "stale" ? "stale" : waiting ? CHILD_THREAD_WAITING : "rested"
   return (
     <WaitRow
       testKind="thread"
@@ -1005,7 +1007,7 @@ export function ChildThreadRow({ child, now }: { child: ThreadView; now: number 
       mark={mark}
       name={title}
       onOpen={() => openThread(child.id)}
-      title={`Open child thread — ${state === "running" ? `working for ${elapsed}` : state === "stale" ? CHILD_THREAD_STALE_TITLE : child.needsYou ? CHILD_THREAD_NEEDS_YOU : CHILD_THREAD_RESTED_TITLE}`}
+      title={`Open child thread — ${state === "running" ? `working for ${elapsed}` : state === "stale" ? CHILD_THREAD_STALE_TITLE : child.needsYou ? CHILD_THREAD_NEEDS_YOU : waiting ? CHILD_THREAD_WAITING_TITLE : CHILD_THREAD_RESTED_TITLE}`}
       status={status}
     />
   )
@@ -1039,7 +1041,8 @@ export interface AwaitingWaitOptions {
   hints?: readonly AwaitingHint[]
   /** The thread's CHILD THREADS (hooks.ts useChildThreads) — other rows of the board, so the component
    *  drawing the table reads them. The table rows the ones still WORKING, as it rows only the running
-   *  sub-agents (liveAgents): a parent parked on a child (`threads:`) is waiting on exactly those. */
+   *  sub-agents (liveAgents), and every one the fence names in `threads:` — a parent parked on a child
+   *  that is itself resting on its PR's CI is still waiting on it, and the card must say on what. */
   childThreads?: readonly ThreadView[]
 }
 
@@ -1070,7 +1073,8 @@ function awaitingWaitItems(thread: Pick<ThreadView, "id" | "subAgents" | "bgShel
   const declared = declaredShellWatches(thread)
   const shells = [...declared, ...hintedShellWatches(thread, opts.hints ?? [], declared)]
   const agents = liveAgents(thread)
-  const children = (opts.childThreads ?? []).filter((c) => childThreadState(c) === "running")
+  const named = new Set((opts.hints ?? []).filter((h) => h.kind === "thread").map((h) => h.value))
+  const children = (opts.childThreads ?? []).filter((c) => childThreadState(c) === "running" || named.has(c.id))
   const timers = armedTimerWatches(thread)
   const commands = armedCommandWatches(thread)
   return { prs, issues, shells, agents, children, timers, commands }

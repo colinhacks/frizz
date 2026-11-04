@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { AgentRow, AwaitingBackgroundCard, AwaitingWaitTable, BgShellRow, awaitingBackgroundKind, awaitingBackgroundSubject, hasAwaitingWaitRows, restingOnSteps, showsRestingCard } from "./AwaitingBackgroundCard.tsx"
+import { AgentRow, AwaitingBackgroundCard, AwaitingWaitTable, BgShellRow, ChildThreadRow, awaitingBackgroundKind, awaitingBackgroundSubject, hasAwaitingWaitRows, restingOnSteps, showsRestingCard } from "./AwaitingBackgroundCard.tsx"
 import { CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE } from "../lib/childOps.ts"
 import { commandWatchName } from "./AwaitingBackgroundCard.tsx"
 import type { ThreadView } from "@frizz/shared"
@@ -578,4 +578,20 @@ test("showsRestingCard stands down for a fence that names questions, and only fo
   assert.equal(showsRestingCard(rest([pr])), true, "the control: the same rest with no question keeps its card")
   assert.equal(showsRestingCard(rest([pr, { kind: "question", value: "qst_466f9d6ee188" }])), false)
   assert.equal(showsRestingCard(rest([pr, { kind: "question", value: "qst_466f9d6ee188" }, { kind: "step", value: "Run `npm login`" }])), true, "steps keep the card and its box")
+})
+
+// CHILD THREADS (2026-11-04): a parent parked on `threads: [slug]` waits on that child even while the
+// child rests quietly on a wait of its own (its PR's CI) — measured on a real stack, where the card said
+// only "Waiting for an external update." So a child the fence names is rowed at rest too, and its row
+// says it is waiting rather than rested.
+test("a child the fence names gets a row at rest, and reads waiting while it rests on its own wait", () => {
+  const parent = thread([], [])
+  const child = (over: Partial<ThreadView>) => ({ id: "child-pr", title: "Shepherd the PR", kind: "session", state: "open", runtime: "turn-idle", subAgents: [], bgShells: [], parentSlug: "demo-thread", ...over } as ThreadView)
+  const waitingChild = child({ waitStatus: "watching" })
+  assert.equal(hasAwaitingWaitRows(parent!, { hints: [{ kind: "thread", value: "child-pr" }], childThreads: [waitingChild] }), true)
+  assert.equal(hasAwaitingWaitRows(parent!, { hints: [], childThreads: [waitingChild] }), false, "an unnamed resting child is not what the park waits on")
+  assert.equal(hasAwaitingWaitRows(parent!, { hints: [], childThreads: [child({ runtime: "running" })] }), true, "a working child is rowed named or not")
+  const row = (c: ThreadView) => renderToStaticMarkup(createElement(ChildThreadRow, { child: c, now: Date.now() })).replace(/<[^>]+>/g, " ")
+  assert.match(row(waitingChild), /Shepherd the PR\s+waiting/)
+  assert.match(row(child({ handoffToParent: true })), /Shepherd the PR\s+rested/)
 })
