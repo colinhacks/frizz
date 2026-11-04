@@ -23,7 +23,7 @@
 // A fresh worker never runs `frizz on`, so such a cc is already dormant; we write cc's own per-session
 // `off` sentinel anyway via the shared config API (board survives as cc-worker's board
 // implementation) so a stale install is guaranteed inert. Cheap belt-and-suspenders. See DECISIONS.md.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { setSessionOverride, currentSessionId } from '../scripts/frizz/config.mjs';
 
@@ -48,7 +48,9 @@ const dir = process.env.CLAUDE_PROJECT_DIR ?? '.';
 let sid = null;
 try {
   sid = currentSessionId(input.session_id);
-  if (sid) setSessionOverride(dir, sid, 'off');
+  // Never into a project folder that has gone: CLAUDE_PROJECT_DIR keeps the old path after a rename,
+  // and the sentinel's `mkdir -p` would recreate it as an empty stub (see scratchpad.mjs).
+  if (sid && existsSync(dir)) setSessionOverride(dir, sid, 'off');
 } catch {
   /* best-effort — a failed sentinel write just leaves cc at its dormant default */
 }

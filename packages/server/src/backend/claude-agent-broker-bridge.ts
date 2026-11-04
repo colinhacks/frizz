@@ -502,11 +502,12 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
     // ones where it did not.
     let exit: ClaudeBrokerExitRecord | null = null
     try { exit = readClaudeBrokerExit(deps.stateDir, sessionId, lostGeneration) } catch { /* forensics degrade, never throw */ }
-    // A teardown FRIZZ PERFORMED is not a death to report. Three paths retire a daemon on purpose while
+    // A teardown FRIZZ PERFORMED is not a death to report. Four paths retire a daemon on purpose while
     // the conversation carries on — a launch-flag change (retireDaemon), a usage-limit resume
-    // (freshProcess), and hibernation (thread-hibernation.ts) — and every one of them ends with exactly
-    // the cold resume this function was written to attribute. Without the mark each of them told the
-    // operator their thread had crashed, in the same words a real crash uses.
+    // (freshProcess), hibernation (thread-hibernation.ts) and a folder rename (project-relocation.ts) —
+    // and every one of them ends with exactly the cold resume this function was written to attribute.
+    // Without the mark each of them told the operator their thread had crashed, in the same words a
+    // real crash uses.
     //
     // Narrow on PURPOSE, so genuine crash detection is untouched: the mark is one-shot (takeBrokerRetirement
     // consumed it before this call), and it only explains the daemon it actually named. A death whose exit

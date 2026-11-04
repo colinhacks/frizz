@@ -71,7 +71,9 @@ import {
 } from "./adoption-recovery.ts"
 import { acquireSharedOrphanReaper } from "./orphan-reaper.ts"
 import { hibernationEnabled, startThreadHibernator } from "./thread-hibernation.ts"
+import { startRelocationSweeper } from "./project-relocation.ts"
 import { liveBrokerRecords, resolveClaudeExecutableAbsolute } from "./backend/claude-broker-host.ts"
+import { liveAcpDaemonRecord, liveAcpDaemonSessionIds } from "./backend/acp-host.ts"
 import { createClaudeMcpProbe, type ClaudeMcpProbe } from "./backend/claude-mcp-probe.ts"
 import { inheritWorkerEnvironment } from "./backend/worker-env.ts"
 import { acpAgentSpecs } from "./backend/acp-agents.ts"
@@ -1275,6 +1277,25 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     }))
   }
   opts.startup?.afterPhase?.("thread hibernation")
+
+  // Finish a folder rename (project-relocation.ts): retire each daemon still running from the old
+  // folder as it comes to rest, and take down the link left there once none is. Not behind the
+  // hibernation switch — turning reclamation off must not leave a worker on a folder that has gone.
+  contextUnsubscribers.push(startRelocationSweeper({
+    stateDir: project.stateDir,
+    projectDir: project.dir,
+    liveDaemons: () => liveBrokerRecords(project.stateDir).map((r) => ({ sessionId: r.sessionId, createdAt: r.createdAt })),
+    otherLiveDaemons: () => liveAcpDaemonSessionIds(project.stateDir)
+      .map((sessionId) => liveAcpDaemonRecord(project.stateDir, sessionId))
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .map((r) => ({ sessionId: r.sessionId, createdAt: r.createdAt })),
+    rows: () => storage.allSessions(),
+    telemetry: (slug) => tailer.get(slug),
+    pendingInteractions: (threadSlug, sessionId) =>
+      storage.interactions.listPending({ projectId: project.id, threadSlug, sessionId }).length,
+    ...(claudeBroker ? { retire: (input: { threadSlug: string; sessionId: string; reason: "relocate" }) => claudeBroker.retireDaemon(input) } : {}),
+    log: (m) => frizzLog.info("relocate", m),
+  }))
 
   return {
     bootId,

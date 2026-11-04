@@ -239,6 +239,7 @@ import { detectProjectIcon } from "./project-icon.ts"
 import { pickDirectory, pickImageFile, warmDirectoryPicker, warmImagePicker } from "./directory-picker.ts"
 import Database from "./sqlite.ts"
 import { projectStateDir } from "./frizz-paths.ts"
+import { leaveRelocationLink, stampRelocation } from "./project-relocation.ts"
 
 const SlugInput = z.object({ slug: ThreadSlug }).strict()
 
@@ -4924,9 +4925,15 @@ export function createRouter(ctx: AppContext) {
      * `renameDirectory` is opt-in and the dialog only offers it when the folder is already named after
      * the project (maintainer 2026-09-18: "without actually changing the directory name by default").
      * It moves the folder to a sibling of the same name and re-registers the id there, then closes
-     * the tenant so the next request reopens it at the new path — a context built on the old one
-     * would spawn every worker into a directory that no longer exists. The launching project is
-     * refused: this process is standing in it, and its context is pinned to the old path.
+     * the tenant and reopens it at the new path — a context built on the old one would spawn every
+     * worker into a directory that no longer exists. The launching project is refused: this process
+     * is standing in it, and its context is pinned to the old path.
+     *
+     * A worker already running does NOT follow the folder. Claude Code holds its working directory as
+     * a path and refuses every Bash call once that path is gone, and `CLAUDE_PROJECT_DIR` stays the old
+     * path for the life of the session. So the rename leaves a link at the old path and retires each
+     * daemon that started there at its next rest, the worker that asked for the rename included; the
+     * link comes down once none is left (project-relocation.ts).
      */
     projectRename: mutation({
       input: z.object({
@@ -4944,13 +4951,25 @@ export function createRouter(ctx: AppContext) {
           if (ctx.launchProjectId === entry.id) {
             throw new Error("Frizz is running from this project's folder, so the folder cannot be renamed right now. Quit Frizz and start it from inside another project's folder first.")
           }
+          const from = entry.path
           path = moveProjectDirectory(entry.id, name).path
-          // Detached workers keep running through the rename (their cwd follows the inode); only
-          // Frizz's own view of the project has to be rebuilt, and the slug route does that lazily.
-          await ctx.teardownProject?.(entry.id, {})
+          // Live workers do not follow the inode: each one keeps the old path as its working directory
+          // and its CLAUDE_PROJECT_DIR. The link keeps their shells running until each is retired at
+          // rest and resumes here; the stamp, once the old tenant can start nothing more, marks which
+          // daemons are the old folder's (project-relocation.ts).
+          const stateDir = projectStateDir(entry.id)
+          leaveRelocationLink({ stateDir, from, to: path })
+          try {
+            await ctx.teardownProject?.(entry.id, {})
+          } finally {
+            stampRelocation(stateDir)
+          }
         }
         const updated = renameProject(entry.id, { name: name === basename(path) ? null : name, slug: name })
         if (!updated) throw new Error("No such project.")
+        // Reopened at once rather than on the next request, so its timers, watches and the relocation
+        // sweep keep running even when no tab is open on it — every project is open while Frizz runs.
+        if (path !== entry.path) void ctx.openProject?.(entry.id).catch(() => {})
         return projectCard(updated, !existsSync(updated.path))
       },
     }),

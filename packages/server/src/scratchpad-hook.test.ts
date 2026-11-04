@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, utimesSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, utimesSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -470,4 +470,29 @@ test("a Codex resume is silent, because it lost nothing — and only a resume is
   assert.match(additionalContext(runHook(dir, codex, { session_id: SID, source: "startup" })), /⟦scratch directory⟧/)
   // Without the flag — Claude's registration — a resume keeps its re-orientation.
   assert.match(additionalContext(runHook(dir, ["--mode=session-start"], { session_id: SID, source: "resume" })), /Context was just lost/)
+})
+
+// Claude Code fixes CLAUDE_PROJECT_DIR when a session starts, so after Frizz renames the project's
+// folder a worker's hooks still name the old path. On 2026-11-04 the next PostToolUse `mkdir -p`'d
+// that path back into being as an empty stub, and Claude Code then moved the session's working
+// directory into it. A folder that has gone is left gone, by this hook and by session-seed (which
+// writes its sentinel under the same variable on every SessionStart, compaction included).
+test("a project folder that has been renamed away is never recreated by a hook", () => {
+  const parent = mkdtempSync(join(tmpdir(), "scratchpad-hook-renamed-"))
+  const gone = join(parent, "renamed-away")
+  const transcript = writeTranscript(parent, 120_000)
+  runHook(gone, ["--mode=nudge", "--event=PostToolUse"], { session_id: SID, transcript_path: transcript })
+  runHook(gone, ["--mode=nudge"], { session_id: SID, transcript_path: transcript })
+  runHook(gone, ["--mode=session-start"], { session_id: SID, source: "compact" })
+  runHook(gone, ["--mode=precompact"], { session_id: SID, trigger: "auto" })
+  execFileSync("node", [join(here, "../../../cc-worker/hooks/session-seed.mjs")], {
+    input: JSON.stringify({ session_id: SID, source: "compact" }),
+    encoding: "utf8",
+    env: { ...process.env, CLAUDE_PROJECT_DIR: gone, FRIZZ_THREAD: "some-thread" },
+  })
+  assert.equal(existsSync(gone), false, "no hook made a stub of the old folder")
+  // The same hooks still write into a folder that is there — the guard is about absence, nothing else.
+  const dir = newProject()
+  runHook(dir, ["--mode=nudge", "--event=PostToolUse"], { session_id: SID, transcript_path: transcript })
+  assert.equal(existsSync(join(dir, ".frizz", "threads", SID, ".scratchpad-state.json")), true)
 })
