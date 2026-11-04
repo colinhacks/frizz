@@ -582,7 +582,7 @@ export function parseAskUserQuestionAnswers(result: unknown, questions: readonly
 //   prose bodies       narrowed to `reason:` so the fence is machine-checkable — then given back in full
 //                      below the `---` delimiter, where prose cannot be mistaken for structure.
 export const AwaitingHint = z.object({
-  kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command", "for", "title", "status", "needs_input", "step", "question"]),
+  kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command", "thread", "for", "title", "status", "needs_input", "step", "question"]),
   value: z.string(),
 })
 export type AwaitingHint = z.infer<typeof AwaitingHint>
@@ -667,7 +667,7 @@ const AWAITING_KEY_RE = /^([a-z][a-z_-]*):\s*(\S.*)?$/i
  *  recognised here so they never fall to the body, but are read verbatim rather than as YAML (see
  *  splitAwaitingFrontmatter). Anything else falls through to the body. `needs-input` is the same key
  *  spelled the way the other hyphenated kinds are. */
-const AWAITING_YAML_KEYS = new Set(["shells", "agents", "timers", "prs", "issues", "commands", "questions", "for", "title", "steps", "status", "needs_input", "needs-input"])
+const AWAITING_YAML_KEYS = new Set(["shells", "agents", "timers", "prs", "issues", "commands", "threads", "questions", "for", "title", "steps", "status", "needs_input", "needs-input"])
 
 /** Which singular hint kind each plural sequence key produces. The WIRE SHAPE is unchanged by the
  *  2026-08-24 cutover — every consumer still reads a flat `{kind, value}` list with SINGULAR kinds — so
@@ -684,6 +684,9 @@ const AWAITING_SEQUENCE_KEYS: { [key: string]: AwaitingItemKind | undefined } = 
   // `commands:` (2026-10-11) names a command watch registered with `frizzctl watch-command`, by its
   // `cmw_…` id. Checked like a timer: the row must be armed on THIS thread.
   commands: "command",
+  // `threads:` (2026-11-04, CHILD THREADS) names a child thread this thread started with `frizzctl
+  // spawn-child`, by its slug. Live while the child is working or has not yet reported its rest.
+  threads: "thread",
 }
 
 /** Defensive caps, shared so the sidebar gloss and the in-chat card can never render a divergent row.
@@ -1083,7 +1086,7 @@ export function awaitingNeedsInput(hints: readonly AwaitingHint[] | undefined): 
   return needsInput
 }
 
-export const AWAITING_ITEM_KINDS = ["shell", "agent", "timer", "pr", "issue", "command"] as const
+export const AWAITING_ITEM_KINDS = ["shell", "agent", "timer", "pr", "issue", "command", "thread"] as const
 export type AwaitingItemKind = (typeof AWAITING_ITEM_KINDS)[number]
 export function isAwaitingItemKind(kind: string): kind is AwaitingItemKind {
   return (AWAITING_ITEM_KINDS as readonly string[]).includes(kind)
@@ -4101,6 +4104,18 @@ export const ThreadView = z.object({
   // project's board, nor the other way round. The instant is the Console's pinned band's order across
   // every project, and like the project pin it outranks every derived state.
   consolePinnedAt: z.string().optional(),
+  /** CHILD THREADS (Settings.childThreads): the thread that spawned this one with `frizzctl spawn-child`.
+   *  Present only while that thread still exists. A child is never a row of its own on the board — not in
+   *  any band, the queue, a count or a badge — and is drawn under its parent instead, unless it stands at a
+   *  gate only the human can settle (drawnUnderParent). */
+  parentSlug: z.string().optional(),
+  /** This child's rest is one that would have put it in the human's queue, so its handoff goes to its
+   *  PARENT instead (board.ts deriveChildHandoff; the scheduler delivers it once per rest). A permission
+   *  prompt, a secret request and a usage-limit stop are not handoffs: they still queue for the human. */
+  handoffToParent: z.literal(true).optional(),
+  /** The instant of the rest `handoffToParent` describes (the tailer's lastAssistantAt), so the scheduler
+   *  can tell a verdict about the rest it sees from one a cached board still carries about an older rest. */
+  handoffRestAt: z.string().optional(),
   /** The EVENT snooze on the resting card is armed for this exact rest — the human has said "hide this
    *  until something reports". Distinct from `snoozedUntil`, which is a wall-clock park on the whole
    *  thread: this one has no deadline and clears itself when the thread comes to a NEW rest.
@@ -4249,6 +4264,36 @@ export type ThreadView = z.infer<typeof ThreadView>
  */
 export function queuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou" | "state">): boolean {
   return t.kind === "session" && t.foreign !== true && t.needsYou === true && t.state !== "archived"
+}
+
+// ── CHILD THREADS ──────────────────────────────────────────────────────────────────────────────────
+// A thread another thread started with `frizzctl spawn-child` (Settings.childThreads, 2026-11-04). It
+// reports to that parent, not to the human, so the board draws it UNDER ITS PARENT — beside the parent's
+// sub-agents, on the rail and in the ops over its prompt box — and nowhere else.
+//
+// ONE GATE FOR EVERY BAND, and it lives at the bottom of them: `sectionAt` answers null for a child the
+// board does not row, so the sidebar's sections, the rail's counts (here and on the server), the phone
+// board, the Console and `frizzctl threads` all drop it without each remembering to. The pins
+// (web groups.ts isPinned) and the settled partition (web lib/boardPartition.ts) ask the same predicate,
+// because both run ahead of `sectionAt`.
+//
+// THE ONE EXCEPTION is a child at a gate no thread can settle: a permission prompt, a native ask, a
+// secret question or a usage-limit stop. The server leaves `needsYou` set for exactly those
+// (board.ts deriveChildHandoff), and such a child queues as a card of its own — the human has to answer
+// it, and a card is where answering happens. Every other rest is its parent's to read.
+//
+// Rendering never reads Settings.childThreads: the setting gates spawning, and a child spawned while it
+// was on is still a child after it is turned off.
+
+/** The thread was started by another thread on its board, which still exists (ThreadView.parentSlug). */
+export function isChildThread(t: Pick<ThreadView, "parentSlug">): boolean {
+  return typeof t.parentSlug === "string" && t.parentSlug.length > 0
+}
+
+/** A child the board draws only under its parent: every child except one queued for the human at a hard
+ *  gate. An archived child is never queued, so it is drawn under its parent too — never in Done. */
+export function drawnUnderParent(t: Pick<ThreadView, "parentSlug" | "needsYou" | "state">): boolean {
+  return isChildThread(t) && !(t.needsYou === true && t.state !== "archived")
 }
 
 // ── THE SIDEBAR'S BANDS ────────────────────────────────────────────────────────────────────────────
@@ -4454,6 +4499,9 @@ export function sectionAt(t: ThreadView, nowMs: number): SectionKey | null {
   // needs-you/awaiting distinction renders as the row INDICATOR and the queue cards, not as sections.
   // Legacy (.frizz-file) rows are HIDDEN entirely (null; not even a shelf). Foreign never rows.
   if (t.kind !== "session") return null
+  // A CHILD THREAD is drawn under its parent, never in a band of its own — unless the human must answer
+  // it (drawnUnderParent). Ahead of the Done rule, so an archived child does not fill the Done band.
+  if (drawnUnderParent(t)) return null
   // Archived → Done, UNLESS it's actively running: a live, in-flight session must never sit under Done
   // (maintainer, hit 3×). It shows in the Active band with its spinner while it works, and drops back
   // to Done only once it comes to rest still-archived. (A user BUMP un-archives it for good via
@@ -4711,6 +4759,8 @@ export function needsAction(t: ThreadView): boolean {
  */
 export function boardAskThread(t: ThreadView): boolean {
   if (t.kind === "session" && t.foreign === true) return false
+  // The pin branch below reads no section, so a pinned child is excluded here (drawnUnderParent).
+  if (drawnUnderParent(t)) return false
   const pinned = t.kind === "session" && typeof t.pinnedAt === "string"
   return (pinned || sectionOf(t) === "active") && needsAction(t)
 }
@@ -4906,6 +4956,16 @@ export const Settings = z.object({
    * Machine-level: which chrome you want is a property of the person, not the repo.
    */
   projectRail: z.boolean(),
+  /**
+   * CHILD THREADS, an experiment (2026-11-04). On, a worker may run `frizzctl spawn-child`: a new thread
+   * in this project, on either harness, linked to the thread that spawned it. Its rests that would
+   * have queued for the human wake its parent instead, it can own its own PR watchers, and it sits
+   * under its parent on the board rather than in the queue. Off (the default), the command refuses and
+   * the worker contract never mentions it. A child spawned while it was on keeps its link either way.
+   *
+   * Machine-level, like the rail: whether to try an experiment is the person's call, not the repo's.
+   */
+  childThreads: z.boolean(),
   // There is no `font` key any more. The interface rendered in one of two type families as a machine
   // setting until 2026-09-19 (maintainer: "let's drop monospace as an option"); every surface is sans
   // now, and index.html pins `data-font="sans"` on <html> directly. Settings is a non-strict object,
@@ -5185,6 +5245,21 @@ export const SpawnThreadResult = z.object({
 }).strict()
 export type SpawnThreadResult = z.infer<typeof SpawnThreadResult>
 
+// CHILD THREADS (Settings.childThreads, 2026-11-04) — `frizzctl spawn-child`: a new thread on THIS board,
+// on either harness, linked to the calling thread, whose rests that would have queued for the human are
+// handed to the caller instead. Same fields as a spawn, minus `project`: a child is always a neighbour,
+// because its parent has to be able to read it and answer it.
+export const SpawnChildInput = DispatchInput.pick({ title: true, prompt: true, model: true, backend: true, effort: true }).extend({
+  from: ThreadSlug,
+}).strict()
+export type SpawnChildInput = z.infer<typeof SpawnChildInput>
+export const SpawnChildResult = z.union([
+  z.object({ slug: ThreadSlug, sessionId: z.string() }).strict(),
+  // The experiment is off, or the caller is itself a child. Exit 2 at the command, like every refusal.
+  z.object({ refused: z.string() }).strict(),
+])
+export type SpawnChildResult = z.infer<typeof SpawnChildResult>
+
 // Dismiss a FAILED send — the × on its bubble, or the second half of Edit (the text goes back into the
 // prompt box first). Only a failed entry can go: every other ledger state belongs to its transport.
 export const DismissFailedFollowUpInput = z.object({
@@ -5447,7 +5522,7 @@ export type OwnThreadTimersResult = z.infer<typeof OwnThreadTimersResult>
 // compaction, a long turn, a wake it did not expect) cannot write a correct fence at all. This is how it
 // gets them back, and it is the same list the sign-off nudge prints, so the two can never disagree.
 export const ThreadActivityItem = z.object({
-  kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command"]),
+  kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command", "thread"]),
   /** The string a `<kind>:` fence line must carry. For a shell that is the runtime task id the worker
    *  was shown; for a PR, `owner/repo#N`; for a timer, its `tmr_…` row id. */
   id: z.string(),
@@ -5532,6 +5607,9 @@ export const ThreadListing = z.object({
   subAgents: z.number().int(),
   /** Background shells still running. */
   shells: z.number().int(),
+  /** CHILD THREADS it started (`frizzctl spawn-child`) that are still open. A child is never a row of its
+   *  own here, as on the board (drawnUnderParent), so this is how another thread finds one to steer. */
+  children: z.array(z.object({ slug: ThreadSlug, title: z.string(), runtime: RuntimeState }).strict()).optional(),
   /** What its armed watches are on: `owner/repo#N` for a PR or issue, the prompt for a timer, the
    *  command for a command watch. */
   watches: z.array(z.string()),
@@ -6264,6 +6342,28 @@ export function formatThreadMessage(from: ThreadMessageSender, body: string): st
  * command's own (cc-worker/lib/frizz-tools.mjs `spawnThread`, which imports nothing), and it is this
  * sentence with no project.
  */
+/**
+ * CHILD THREADS: appended to the prompt of a thread spawned with `frizzctl spawn-child`. It is the child's
+ * whole account of what being a child means, because its contract is the ordinary worker contract: it signs
+ * off the same way, and Frizz routes the handoff to its parent (scheduler SOURCE 17).
+ */
+export function childThreadFooter(from: ThreadMessageSender): string {
+  return (
+    `\n\n---\nYou are a CHILD THREAD of the Frizz thread «${from.title}» (\`${from.slug}\`), which started you to do ` +
+    "this. You report to that thread, not to the human:\n" +
+    "- Sign off exactly as the contract says — `frizzctl done`, or an ```awaiting fence with `status: needs_input` " +
+    "when you need something (that fence needs nothing else named: your parent's reply is the wake). Frizz hands " +
+    "that handoff to your parent, which answers you with `frizzctl steer`. Write it for a colleague who knows the " +
+    "task but has not watched you work.\n" +
+    "- Your own waits are yours: a PR watcher, timer, monitor or shell you register wakes YOU, and a quiet park " +
+    "(`status: working` or `watching`) tells your parent nothing until you rest again.\n" +
+    "- A decision you need goes in that handoff's prose, never in a ```question fence: your parent decides it, " +
+    "or takes it to the human. Only a `kind: secret` question — a value only the human holds — still reaches the human directly.\n" +
+    `- Do not start child threads of your own; use in-session sub-agents. To tell your parent something mid-work, ` +
+    `run \`frizzctl steer ${from.slug} --message-file <file|->\`.`
+  )
+}
+
 export function spawnedThreadFooter(from: ThreadMessageSender): string {
   const where = from.project ? `, on the \`${from.project}\` project's board` : ""
   const steer = from.project ? `frizzctl steer ${from.slug} --project ${from.project}` : `frizzctl steer ${from.slug}`

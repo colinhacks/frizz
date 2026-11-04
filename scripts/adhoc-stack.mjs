@@ -6,7 +6,7 @@
 //   • HOME              → a fresh temp dir, so the SQLite DB + server.lock live in an empty ~/.frizz
 //   • PORT              → a unique high port, so it never fights the dev server on 5175
 //   • FRIZZ_WAKERS_OFF=1 → scheduler OFF by default (no wake side effects); pass --wakers to arm it
-// The project defaults to the frizz repo itself (a gh-authed repo, an empty board under the temp HOME).
+// The project defaults to the frizz repo itself (a GitHub repo, an empty board under the temp HOME).
 //
 // Usage:
 //   nub scripts/adhoc-stack.mjs [--port=4930] [--project=/abs/dir] [--claude-bin=/abs/bin] [--wakers] [--reaper] [--prime] [--keep] [--home=/abs] [--seed] [--prod [--web-dist=/abs]]

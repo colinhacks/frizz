@@ -5,6 +5,7 @@ let settings: Record<string, unknown> = {
   permissionMode: "auto",
   notifications: true,
   projectRail: false,
+  childThreads: false,
 }
 
 // Every settingsSet ATTEMPT the drawer makes, in order, with the millisecond it arrived. The autosave

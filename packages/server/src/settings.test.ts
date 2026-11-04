@@ -134,7 +134,7 @@ test("a pre-store settings.json is read until the next save promotes it into the
     assert.equal(getSettings(alpha, box.home).localFileOpener, "cursor")
 
     setSettings(alpha, { ...getSettings(alpha, box.home), notifications: false }, box.home)
-    assert.deepEqual(readMachineConfig(box.home, "settings", Settings.partial()), { notifications: false, localFileOpener: "cursor", projectRail: true })
+    assert.deepEqual(readMachineConfig(box.home, "settings", Settings.partial()), { notifications: false, localFileOpener: "cursor", projectRail: true, childThreads: false })
     assert.equal(JSON.parse(readFileSync(legacyMachineSettingsPath(box.home), "utf8")).notifications, undefined, "the legacy file is never written again")
     // The store now wins outright, even where the legacy file disagrees.
     writeLegacySettings(box.home, { localFileOpener: "vscode" })

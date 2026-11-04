@@ -306,13 +306,15 @@ async function refreshAppToken(credential: Extract<StoredGithubCredential, { kin
 // ── Device-flow sign-in ─────────────────────────────────────────────────────────────────────────
 
 /**
- * The client id of Frizz's GitHub App — public by design: device flow has no secret. Still the
- * placeholder until the App is registered; `FRIZZ_GITHUB_APP_CLIENT_ID` overrides it. This is NOT
+ * The client id of Frizz's GitHub App, "Frizz Agent Console" (github.com/apps/frizz-agent-console,
+ * owned by colinhacks, registered 2026-11-04) — public by design: device flow has no secret. Its
+ * permissions, all read-only: actions, checks, issues, metadata, pull_requests, statuses; no contents,
+ * no webhook. `FRIZZ_GITHUB_APP_CLIENT_ID` overrides it (a test, a self-hosted fork). This is NOT
  * the OAuth App in src/github-device-flow.ts: that one proves who claims a frizz.sh name and must
  * carry no permissions at all, and the registrar refuses a GitHub App token outright.
  */
 export const GITHUB_APP_CLIENT_ID_PLACEHOLDER = "frizz-github-app-client-id-not-set"
-export const FRIZZ_GITHUB_APP_CLIENT_ID: string = GITHUB_APP_CLIENT_ID_PLACEHOLDER
+export const FRIZZ_GITHUB_APP_CLIENT_ID: string = "Iv23licDruV3JtQIF3fI"
 
 export function githubAppClientId(env: NodeJS.ProcessEnv = process.env): string | null {
   const id = env.FRIZZ_GITHUB_APP_CLIENT_ID?.trim() || FRIZZ_GITHUB_APP_CLIENT_ID

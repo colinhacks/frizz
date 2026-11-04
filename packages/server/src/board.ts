@@ -25,6 +25,7 @@ import { frizzDirExists } from "./frizz.ts"
 import { githubStatusKey, idlePrsOf, liveActivityOf, needsInputParkHolds, parseIssueRef, parsePrRef, readAwaitingPark, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, type GithubIssueStatusBook, type GithubStatusBook } from "./awaiting.ts"
 import { findByPath } from "./project-registry.ts"
 import { parseDeliveryLedger } from "./delivery-ledger.ts"
+import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 import { effectivePermissionMode, fallbackTitle, resolveLegacyThreadFile } from "./dispatch.ts"
 import { ProducerStoppedError } from "./shutdown.ts"
 import { adoptionRuntimeBinding } from "./adoption-recovery.ts"
@@ -1052,6 +1053,34 @@ export function deriveDeliveryInFlight(
   )
 }
 
+/**
+ * CHILD THREADS (Settings.childThreads, 2026-11-04): does this child's rest go to its PARENT instead of
+ * the human? A child is spawned by another thread (`frizzctl spawn-child`) to do a piece of that thread's
+ * work, so the thread that asked is the one to read what it comes back with: its done, its needs_input
+ * handoff, a bare or refused rest, a crash. The scheduler hands each such rest to the parent exactly once
+ * (evalChildHandoffs); the parent decides what reaches the human.
+ *
+ * THREE THINGS STILL GO TO THE HUMAN, because no thread can settle them: a permission prompt or a typed
+ * interaction (an approval only the operator may give), a native ask on the turn, a `kind: secret`
+ * question (a value only the human holds — a child's other questions are refused at the fence, see
+ * question-fences.ts), and a usage-limit stop, which queues as a failed thread for the same reason it
+ * does anywhere (deriveNeedsYou). Orphaned children — the parent row is gone — are ordinary threads.
+ */
+export function deriveChildHandoff(input: {
+  parentSlug: string | undefined
+  queuesForHuman: boolean
+  runtime: RuntimeState
+  actionableInteraction: boolean
+  pendingAsk: boolean
+  limitPause: boolean
+  secretStanding: boolean
+}): boolean {
+  if (!input.parentSlug || !input.queuesForHuman) return false
+  if (input.actionableInteraction || input.runtime === "perm-prompt" || input.pendingAsk) return false
+  if (input.limitPause || input.secretStanding) return false
+  return true
+}
+
 export function deriveNeedsYou(
   row: SessionRow,
   tele: SessionTelemetry | undefined,
@@ -1087,6 +1116,9 @@ export function deriveNeedsYou(
   answerInFlight = false,
   // Told what queued the thread, where the card should say so — see QueuedBy. Only the view asks.
   queuedBy?: QueuedBy,
+  // CHILD THREADS this thread may still be waiting on (child-threads.ts liveChildThreads), for a park
+  // that names them under `threads:`. The caller's because only it holds every row.
+  liveChildren: ReadonlySet<string> = new Set(),
 ): boolean {
   // Snooze is explicit operator lifecycle state. It must be checked before provider/question/crash
   // gates so choosing Snooze from any queue card actually parks that card until its exact deadline.
@@ -1173,7 +1205,7 @@ export function deriveNeedsYou(
   // the legacy park rule would have excused it. The cut decides only whether the answer is REQUIRED.
   const answered = tele?.lastFence?.kind === "awaiting" && awaitingNeedsInput(tele.lastFence.hints) !== null
   if (answered || needsInputRequired(row.spawned_at)) {
-    return needsInputQueues(row, tele, runtime, nowMs, excuseLiveOwnWork, registeredPrWatches, armedTimerIds, github, queuedBy)
+    return needsInputQueues(row, tele, runtime, nowMs, excuseLiveOwnWork, registeredPrWatches, armedTimerIds, github, queuedBy, liveChildren)
   }
   // Declared parks are STRONGER excusals than the awaiting-background card below, so they are checked
   // first: a worker that declared an awaiting-human fence stays held even if a child of its is still
@@ -1300,8 +1332,9 @@ function needsInputQueues(
   armedTimerIds: ReadonlySet<string>,
   github: GithubStatusBook,
   queuedBy?: QueuedBy,
+  liveChildren: ReadonlySet<string> = new Set(),
 ): boolean {
-  const holds = excuseLiveOwnWork && quietParkHolds(tele, runtime, nowMs, registeredPrWatches, armedTimerIds, github)
+  const holds = excuseLiveOwnWork && quietParkHolds(tele, runtime, nowMs, registeredPrWatches, armedTimerIds, github, liveChildren)
   const held = holds && handoffStands(row, tele)
   if (holds && !held) return false
   const queued = runtime !== "exited" && tele?.lastFence?.kind !== "done" && (hasLiveOwnWork(tele, registeredPrWatches) || hasParkedTimerWatch(tele, armedTimerIds))
@@ -1319,6 +1352,7 @@ function quietParkHolds(
   registeredPrWatches: ReadonlySet<string>,
   armedTimerIds: ReadonlySet<string>,
   github: GithubStatusBook,
+  liveChildren: ReadonlySet<string> = new Set(),
 ): boolean {
   const fence = tele?.lastFence
   return runtime !== "exited" &&
@@ -1334,6 +1368,7 @@ function quietParkHolds(
         registeredPrWatches,
         new Set([...armedTimerIds].filter(isCommandWatchId)),
         idlePrsOf(github),
+        liveChildren,
       ),
       Date.parse(tele?.lastAssistantAt ?? ""),
       nowMs,
@@ -1800,6 +1835,9 @@ function sessionThreadView(
   // The ```question fences this thread's latest sync REFUSED (question-fences.ts QuestionFaultBook), so
   // the web can draw each as the code block it is instead of a card. Undefined when it refused nothing.
   questionFaults: readonly QuestionFenceFault[] | undefined = undefined,
+  // CHILD THREADS this thread may still be waiting on (child-threads.ts liveChildThreads), computed by the
+  // caller from every row in the build.
+  liveChildren: ReadonlySet<string> = new Set(),
 ): ThreadView {
   // A REGISTERED completion is presented to everything below as the ```done fence it replaces — same
   // shape, same three predicates, same card — so the two cannot render as two different endings while
@@ -1962,7 +2000,21 @@ function sessionThreadView(
   // Only the questions STANDING at this rest queue the thread (`standingIds`, above).
   const standingCount = standingIds.size
   const queuedBy: QueuedBy = {}
-  const needsYou = archived ? false : deriveNeedsYou(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, true, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches, standingCount, answerInFlight, queuedBy)
+  const queuesForHuman = archived ? false : deriveNeedsYou(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, true, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches, standingCount, answerInFlight, queuedBy, liveChildren)
+  // CHILD THREADS: a rest that would have queued a child for the human is its PARENT's to read instead —
+  // see deriveChildHandoff. Everything below reads the result, so a child handing off is out of the
+  // queue on every surface and in every count, the same way a quiet park is.
+  const parentSlug = row.parent_slug ? storage.getSession(row.parent_slug)?.slug : undefined
+  const handoffToParent = deriveChildHandoff({
+    parentSlug,
+    queuesForHuman,
+    runtime,
+    actionableInteraction: interactionPresence.needsUser,
+    pendingAsk: Boolean(tele?.pendingAsk),
+    limitPause: Boolean(limitPause),
+    secretStanding: questions.some((q) => q.standing && q.spec.secret === true),
+  })
+  const needsYou = queuesForHuman && !handoffToParent
   const deliveryInFlight = !archived && deriveDeliveryInFlight(row, runtime, needsYou, deliveryProcessGone, answerInFlight, nowMs)
   const awaitingBackground = archived ? false : deriveAwaitingBackground(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches, standingCount)
   // hasFreshDelivery rather than deliveryInFlight: the spin stops after a minute, and a message still on
@@ -2057,6 +2109,9 @@ function sessionThreadView(
     snoozePrompt: snoozedUntil ? row.snooze_prompt ?? undefined : undefined,
     pinnedAt: row.pinned_at ?? undefined,
     consolePinnedAt: row.console_pinned_at ?? undefined,
+    parentSlug,
+    handoffToParent: handoffToParent ? true as const : undefined,
+    handoffRestAt: handoffToParent ? tele?.lastAssistantAt : undefined,
     // The event-snooze, as a fact the CHAT can read. `awaitingBackground` still ignores it — that flag
     // states whether the thread is waiting, which the snooze does not change — so the suppression is a
     // presentation rule the client applies, not a second opinion about the thread's state.
@@ -2615,6 +2670,8 @@ export function createBoard(
     const registries = lastRegistries = readThreadRegistries(storage, lastRegistries)
     const brokerAlive: ClaudeBrokerLivenessSnapshot = deps.claudeBrokerLiveness?.() ?? claudeBrokerDaemonAlive
     const catalogue = claudeModels()
+    // CHILD THREADS: every parent's children, once per build, for the `threads:` park check below.
+    const children = childrenByParent(rows)
     const out: ThreadView[] = []
     for (const row of rows) {
       const cachedPresence = pendingInteractionCache.get(row.slug)
@@ -2668,6 +2725,7 @@ export function createBoard(
         issueBook,
         catalogue,
         faults,
+        liveChildThreads(children.get(row.slug) ?? [], (slug) => tailer.get(slug)),
       )
       if (inputs) archivedViews.set(row.slug, { inputs, view })
       else archivedViews.delete(row.slug)

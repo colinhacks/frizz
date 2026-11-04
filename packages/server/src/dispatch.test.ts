@@ -383,7 +383,11 @@ test("loadWorkerPrompt(codex) carries codex's OWN session/wake + model/effort/sa
   assert.match(c, /not the dashboard's portfolio orchestrator/)
   assert.match(c, /Work solo unless the TASK or a later human follow-up explicitly asks/)
   assert.match(c, /## Bounded native delegation/)
-  assert.match(c, /### CI\/review monitor selection/)
+  // A PR or issue wait is the server's `watch-pr` / `watch-issue` first (2026-11-04): it runs on Frizz's
+  // own credential, so it works where `gh` is signed in only through Keyward, which no monitor can use.
+  assert.match(c, /### Waiting on CI and reviews\n\n\*\*For a pull request or an issue, register `frizzctl watch-pr add`/)
+  assert.match(c, /`keyward --reason "<what it is for>" -- gh …`/)
+  assert.match(c, /`keyward: not released:` stop and report it — never retry/)
   assert.match(c, /project-local `AGENTS\.md`/)
   assert.match(c, /terminal event\/exit semantics/)
   assert.match(c, /never silently shadow it with Frizz/)

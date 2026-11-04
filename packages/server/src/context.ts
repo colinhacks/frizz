@@ -37,6 +37,7 @@ import { createClaudeBackend } from "./backend/claude.ts"
 import { createCodexBackend, codexSandbox } from "./backend/codex.ts"
 import { readCodexModels } from "./backend/codex-models.ts"
 import { createAcpBackend } from "./backend/acp-transcript.ts"
+import { readThreadTranscript } from "./transcript.ts"
 import { createAcpBridge, type AcpBridge } from "./backend/acp-bridge.ts"
 import { readClaudeAuthState, readClaudePreflightAuth, readCodexAuthState, readCodexBinaryState } from "./backend/auth-status.ts"
 import { launchPrefixArgv, launchPrefixAwareAuth } from "./backend/launch-prefix.ts"
@@ -503,13 +504,13 @@ export function deliverClaudeBrokerWake(deps: {
   cwd: string
   row: { session_id: string; model?: string | null; effort?: string | null; permission_mode?: string | null }
   /** The operator's Settings, for the floor a row with NO persisted mode cold-resumes at (coldResumePermission). */
-  settings: Pick<Settings, "permissionMode">
+  settings: Pick<Settings, "permissionMode"> & Partial<Pick<Settings, "childThreads">>
   deliveryMessage: string
   /** Retire the live daemon first — see the bridge's followUp contract and needsFreshProcessForLimit. */
   freshProcess?: boolean
 }): Promise<void> {
   const { bridge, slug, cwd, row, settings, deliveryMessage, freshProcess } = deps
-  const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, cwd)
+  const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, cwd, { childThreads: settings.childThreads })
   return bridge.followUp({
     threadSlug: slug,
     sessionId: row.session_id,
@@ -767,7 +768,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
         workerConfig: (_slug, sessionId) => codexWorkerThreadConfig(sessionId),
         // The worker contract, rebuilt for every resume exactly as dispatch builds it for the start —
         // see codexWorkerBaseInstructions for why a resume that sends none can lose it.
-        workerBaseInstructions: (_slug, sessionId) => codexWorkerBaseInstructions(sessionId, project.dir),
+        workerBaseInstructions: (_slug, sessionId) => codexWorkerBaseInstructions(sessionId, project.dir, { childThreads: getSettings(storage, home).childThreads }),
         db: storage.db,
         interactions: storage.interactions,
         codexBin: opts.codexBin,
@@ -837,7 +838,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     // Today's contract, not the one the thread was born with: that one is gone from the session. A thread
     // born under the MCP contract keeps its mount (mountsMcp above), and its agent is forked with
     // `frizzctl` on PATH like any other (frizzCli above), so the `frizzctl` contract still holds for it.
-    contractFor: (_slug, sessionId) => acpWorkerContract(sessionId, project.dir),
+    contractFor: (_slug, sessionId) => acpWorkerContract(sessionId, project.dir, { childThreads: getSettings(storage, home).childThreads }),
     onStatusChange: () => board?.refresh(),
   })
   resources.acpBridge = acpBridge
@@ -1142,11 +1143,30 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
 
   // Durable timer waker + legacy pr/ci compatibility. Reuses the SAME resume path as followUp;
   // boot-safe because it only fires on a condition it witnesses cross.
+  // The context this function returns, once it exists: the router binds `threadInbox` onto it after this
+  // function has returned, and the scheduler's child-handoff pass delivers through that (below).
+  const builtContext: { current?: AppContext } = {}
   const scheduler = createScheduler({
     storage,
     tailer,
     questionFaults,
     commandWatches,
+    // CHILD THREADS (scheduler SOURCE 17): the board's verdict on each child's rest, the child's own words,
+    // and the steer path that carries them to its parent.
+    boardThreads: async () => (await board.snapshot()).threads,
+    lastAssistantText: (slug) => {
+      const messages = readThreadTranscript(project, storage, slug, backendFor)
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]!
+        if (m.role === "assistant" && !m.kind && m.text.trim()) return m.text
+      }
+      return undefined
+    },
+    deliverToThread: async (sent) => {
+      const inbox = builtContext.current?.threadInbox
+      if (!inbox) throw new Error("the router has not bound this project's thread inbox yet")
+      return inbox(sent)
+    },
     // Second wake source: every thread a subscription window cut off mid-turn gets its own "continue"
     // once that window rolls, over this same delivery path. The quota reader supplies the fallback
     // instant for a weekly limit, whose message text carries a clock but no date; readQuota memoizes,
@@ -1297,7 +1317,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     log: (m) => frizzLog.info("relocate", m),
   }))
 
-  return {
+  const appContext: AppContext = {
     bootId,
     project,
     bus,
@@ -1336,4 +1356,6 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     codexBin: opts.codexBin,
     codexVersion: opts.codexVersion,
   }
+  builtContext.current = appContext
+  return appContext
 }

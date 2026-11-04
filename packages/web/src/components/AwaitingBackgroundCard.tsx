@@ -28,16 +28,18 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, Radio, RefreshCw, TerminalSquare, X } from "lucide-react"
 import type { AwaitingHint, GithubIssueStatus, GithubWatchStatus, ThreadView, ThreadWatchView } from "@frizz/shared"
-import { awaitingFenceTitle, awaitingSteps, commandRunClause, isDirectSubAgent } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
-import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
+import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, CHILD_THREAD_WAITING, CHILD_THREAD_WAITING_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
+import { childThreadStartedAt, childThreadState } from "../lib/childThreads.ts"
+import { useChildThreads } from "../hooks.ts"
 import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { restingOnSteps } from "../lib/stepsAnswer.ts"
-import { pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
+import { openThread, pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
 import { SHELL_WATCHED_NOTE } from "../lib/threadOps.ts"
@@ -529,7 +531,7 @@ export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, ti
    *  is right, because the whole row is the link. */
   ghRef?: string
   title?: string
-  testKind: "github" | "shell" | "agent" | "timer" | "command" | "file" | "link"
+  testKind: "github" | "shell" | "agent" | "thread" | "timer" | "command" | "file" | "link"
   testId: string
 }) {
   const tree = indent !== undefined
@@ -980,6 +982,37 @@ export function AgentRow({ agent, slug, now, onDismiss }: { agent: ThreadView["s
   )
 }
 
+// ---- THE CHILD THREADS -----------------------------------------------------------------------------
+// A thread this one started with `frizzctl spawn-child` (lib/childThreads), on the full page's rail, in
+// the sub-agent row's shape: the same spinner while it works, the flat dot of a stale child once its
+// worker crashed, and the HOLLOW dot every child-row surface gives a rested child (CHILD_RESTED_DOT_CLASS)
+// at rest — in the spinner's 12px box, so the mark column keeps one footprint. The status says what the
+// mark cannot: how long it has been working, "needs you" when it waits on a gate only the human can
+// settle, "waiting" while it rests quietly on a wait of its own (its PR's CI, its timer), else "rested".
+// The row opens the child (store.ts openThread). No ×: a thread is stopped or archived from its own page,
+// not from a row of its parent's.
+export function ChildThreadRow({ child, now }: { child: ThreadView; now: number }) {
+  const title = displayTitle(child)
+  const state = childThreadState(child)
+  const elapsed = compactElapsedSince(childThreadStartedAt(child), now)
+  const mark = state === "running"
+    ? <Spinner tone="border-accent" />
+    : <span aria-hidden className={`inline-block size-3 p-[3px] ${ON_CAP}`}><span className={state === "stale" ? CHILD_STALE_DOT_CLASS : CHILD_RESTED_DOT_CLASS} /></span>
+  const waiting = state === "rested" && !child.needsYou && child.waitStatus !== undefined
+  const status = child.needsYou ? CHILD_THREAD_NEEDS_YOU : state === "running" ? elapsed : state === "stale" ? "stale" : waiting ? CHILD_THREAD_WAITING : "rested"
+  return (
+    <WaitRow
+      testKind="thread"
+      testId={child.id}
+      mark={mark}
+      name={title}
+      onOpen={() => openThread(child.id)}
+      title={`Open child thread — ${state === "running" ? `working for ${elapsed}` : state === "stale" ? CHILD_THREAD_STALE_TITLE : child.needsYou ? CHILD_THREAD_NEEDS_YOU : waiting ? CHILD_THREAD_WAITING_TITLE : CHILD_THREAD_RESTED_TITLE}`}
+      status={status}
+    />
+  )
+}
+
 // ---- THE TABLE, AS A PIECE -----------------------------------------------------------------------
 // Every live wait the thread has out, grouped by kind — the resting card's real content, and since
 // 2026-08-28 the AWAITING FENCE CARD's too (ChatView.FenceCard). The two draw the SAME fence: the
@@ -1006,6 +1039,11 @@ export function AgentRow({ agent, slug, now, onDismiss }: { agent: ThreadView["s
 // 2026-09-24, so the option went with it.)
 export interface AwaitingWaitOptions {
   hints?: readonly AwaitingHint[]
+  /** The thread's CHILD THREADS (hooks.ts useChildThreads) — other rows of the board, so the component
+   *  drawing the table reads them. The table rows the ones still WORKING, as it rows only the running
+   *  sub-agents (liveAgents), and every one the fence names in `threads:` — a parent parked on a child
+   *  that is itself resting on its PR's CI is still waiting on it, and the card must say on what. */
+  childThreads?: readonly ThreadView[]
 }
 
 /** A fence's `shells:` hints as watch rows, for the shells the thread still has running. Skips any the
@@ -1035,26 +1073,30 @@ function awaitingWaitItems(thread: Pick<ThreadView, "id" | "subAgents" | "bgShel
   const declared = declaredShellWatches(thread)
   const shells = [...declared, ...hintedShellWatches(thread, opts.hints ?? [], declared)]
   const agents = liveAgents(thread)
+  const named = new Set((opts.hints ?? []).filter((h) => h.kind === "thread").map((h) => h.value))
+  const children = (opts.childThreads ?? []).filter((c) => childThreadState(c) === "running" || named.has(c.id))
   const timers = armedTimerWatches(thread)
   const commands = armedCommandWatches(thread)
-  return { prs, issues, shells, agents, timers, commands }
+  return { prs, issues, shells, agents, children, timers, commands }
 }
 
 /** Would the wait table draw at least one row for this thread? A card with a heading and no rows says
  *  less than nothing, so a caller asks first. */
 export function hasAwaitingWaitRows(thread: Pick<ThreadView, "id" | "subAgents" | "bgShells" | "watches">, opts: AwaitingWaitOptions = {}): boolean {
   const items = awaitingWaitItems(thread, opts)
-  return items.prs.length + items.issues.length + items.shells.length + items.agents.length + items.timers.length + items.commands.length > 0
+  return items.prs.length + items.issues.length + items.shells.length + items.agents.length + items.children.length + items.timers.length + items.commands.length > 0
 }
 
 function awaitingWaitGroups(thread: Pick<ThreadView, "id" | "subAgents" | "bgShells" | "watches">, now: number, opts: AwaitingWaitOptions = {}): Array<{ head: string; rows: ReactNode[] }> {
-  const { prs, issues, shells, agents, timers, commands } = awaitingWaitItems(thread, opts)
+  const { prs, issues, shells, agents, children, timers, commands } = awaitingWaitItems(thread, opts)
   // GROUPED BY KIND (maintainer 2026-08-15: "Definitely group them by kind"), and the order is the one
   // the ops strip already settled, for the same reason: a sub-agent and a shell are running RIGHT NOW,
   // a watched PR is waiting on somebody else, and a timer is waiting on nothing but the clock. Read
   // most-alive first. An empty group renders nothing — never a heading over no rows.
   return [
     { head: "Sub-agents", rows: agents.map((a) => <AgentRow key={a.id ?? a.label} agent={a} slug={thread.id} now={now} />) },
+    // Beside the sub-agents, as the full page's rail orders them: work this thread handed to a thread of its own.
+    { head: "Child threads", rows: children.map((c) => <ChildThreadRow key={c.id} child={c} now={now} />) },
     { head: "Background shells", rows: shells.map((w) => <ShellWatchRow key={w.id} watch={w} thread={thread} slug={thread.id} now={now} />) },
     { head: "Pull requests", rows: prs.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     // Its own group, under GitHub's own noun — an issue beside a PR under "Pull requests" would be the
@@ -1152,7 +1194,8 @@ export function AwaitingWaitTable({ thread, divider, hints }: {
   hints?: readonly AwaitingHint[]
 }) {
   const now = useNowMs()
-  return <WaitGrid groups={awaitingWaitGroups(thread, now, { hints })} divider={divider} />
+  const childThreads = useChildThreads(thread.id)
+  return <WaitGrid groups={awaitingWaitGroups(thread, now, { hints, childThreads })} divider={divider} />
 }
 
 /** Does the CHAT show the resting card at the bottom of this thread?
@@ -1322,7 +1365,8 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
   // The fence's own `shells:` ride along at rest too. The board already rows them then, so this is
   // idle in that case — it is what keeps the card whole where the board has forgotten the fence (a
   // bg-snoozed thread, see AwaitingWaitOptions).
-  const groups = listsWork ? awaitingWaitGroups(work, now, { hints }) : []
+  const childThreads = useChildThreads(work.id)
+  const groups = listsWork ? awaitingWaitGroups(work, now, { hints, childThreads }) : []
   const unrowed = listsWork ? unrowedWatchRefs(work, hints) : []
   // THE SNOOZE IS THE ONE THING THAT VARIES WITH THE RUNTIME, and the maintainer ruled it the only
   // thing that may (2026-09-04: "you can remove the snooze button and stuff because the interactive

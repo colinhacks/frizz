@@ -218,6 +218,10 @@ interface QuestionFenceSyncInput {
   sightings: readonly QuestionSighting[] | undefined
   /** The thread's armed Goal, when it runs autonomously — a question there is refused (secrets aside). */
   autonomousGoal?: string
+  /** CHILD THREADS: the parent this thread reports to — a question there is refused (secrets aside), because
+   *  the parent decides it or takes it to the human. Refused by a FAULT rather than a cancelled row: the
+   *  link never lifts the way a Goal does, so the same fence reads the same way on every tick. */
+  childOf?: { slug: string; title: string }
   /** Where this pass's faults are recorded for the board (QuestionFaultBook). Every production caller
    *  passes its context's one book. */
   faultBook?: QuestionFaultBook
@@ -234,6 +238,12 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
   const autonomousFault = input.autonomousGoal
     ? "this thread is running autonomously, so the question was not asked — decide it yourself and proceed, and say which way you went in your write-up. " +
       `Its standing instruction is: ${input.autonomousGoal.replace(/\s+/g, " ").slice(0, 400)}`
+    : undefined
+  const childFault = input.childOf
+    ? `this is a child thread of «${input.childOf.title}» (\`${input.childOf.slug}\`), so the question was not asked — ` +
+      "a decision goes to your PARENT, not the human: write it in your handoff's prose and rest with an ```awaiting fence " +
+      "carrying `status: needs_input`. Frizz hands that handoff to the parent, which answers you or takes it to the human. " +
+      "Only a `kind: secret` question still reaches the human directly"
     : undefined
   for (const sighting of input.sightings) {
     const atMs = Date.parse(sighting.at)
@@ -402,6 +412,10 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
       // one the worker had been told was not asked and had since decided, now on the human's board and
       // blocking `done`. The row also gives the web something true to draw in the fence's slot, where a
       // refusal it could not see stayed a card that looked askable.
+      if (childFault && !ask.spec.secret) {
+        refuse(ask.spec, ask.id, childFault)
+        continue
+      }
       if (autonomousFault && !ask.spec.secret) {
         const row = storage.askThreadQuestion({
           id: `qst_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
@@ -483,8 +497,8 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
         refuse(f.spec, f.id, `\`when: ${f.parent} = ${f.option}\` names \`${f.parent}\`, whose stored question could not be read — ask this as its own question, without the \`when:\` line`)
         continue
       }
-      if (autonomousFault) {
-        refuse(f.spec, f.id, autonomousFault)
+      if (autonomousFault ?? childFault) {
+        refuse(f.spec, f.id, (autonomousFault ?? childFault)!)
         continue
       }
       if (target.node.kind === "multi") {
@@ -659,6 +673,16 @@ export const QUESTION_FENCE_UNDER_DONE_HINT =
   "This rest also closed on a ```done fence, and a done fence cannot stand beside a question once it registers: " +
   "the message that carries the fixed fence carries no ```done fence, and the sign-off as done comes once the question is answered."
 
+/** CHILD THREADS: the parent a thread reports to, while that parent exists — what refuses its questions. */
+export function childOfRow(
+  storage: { getSession(slug: string): { slug: string; title?: string | null } | undefined },
+  row: { parent_slug?: string | null },
+): { slug: string; title: string } | undefined {
+  if (!row.parent_slug) return undefined
+  const parent = storage.getSession(row.parent_slug)
+  return parent ? { slug: parent.slug, title: parent.title || parent.slug } : undefined
+}
+
 /** The thread's armed Goal when it runs autonomously — the same reading the router's `ask` refused on. */
 export function autonomousGoalOf(row: { recurring_on_rest?: number | null; recurring_prompt?: string | null }): string | undefined {
   if (row.recurring_on_rest !== 1) return undefined
@@ -677,7 +701,9 @@ export function autonomousGoalOf(row: { recurring_on_rest?: number | null; recur
  * anything registered, though the caller refreshes the board either way.
  */
 export function createQuestionRegistrar(deps: {
-  storage: Pick<Storage, "allSessions" | "listThreadQuestions" | "askThreadQuestion" | "dismissThreadQuestion" | "growThreadQuestionSpec" | "clearThreadDone" | "resetParkBumps">
+  // `getSession` finds a child's parent (childOfRow); optional so a registrar test about questions alone
+  // need not spell it, and absent reads as "no parent".
+  storage: Pick<Storage, "allSessions" | "listThreadQuestions" | "askThreadQuestion" | "dismissThreadQuestion" | "growThreadQuestionSpec" | "clearThreadDone" | "resetParkBumps"> & Partial<Pick<Storage, "getSession">>
   tailer: { get(slug: string): { questionSightings?: QuestionSighting[] } | undefined }
   log?: (message: string) => void
   /** The board's reading of what each thread's latest sync refused (QuestionFaultBook). */
@@ -713,6 +739,7 @@ export function createQuestionRegistrar(deps: {
             spawnedAt: row.spawned_at,
             sightings,
             autonomousGoal: autonomousGoalOf(row),
+            childOf: deps.storage.getSession ? childOfRow({ getSession: deps.storage.getSession }, row) : undefined,
             faultBook: deps.faultBook,
           })
         } catch (err) {

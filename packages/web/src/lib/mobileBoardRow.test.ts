@@ -136,4 +136,7 @@ test("the agent count counts running children only", () => {
   assert.equal(agentSuffix(0), "")
   assert.equal(agentSuffix(1), "1 agent")
   assert.equal(agentSuffix(3), "3 agents")
+  // A parent's working CHILD THREADS ride the same suffix: the phone draws no rows under a row.
+  assert.equal(agentSuffix(1, 1), "1 agent · 1 child thread")
+  assert.equal(agentSuffix(0, 2), "2 child threads")
 })

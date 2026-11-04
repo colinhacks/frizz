@@ -9,6 +9,8 @@ import { threadOps } from "../lib/threadOps.ts"
 import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
+import { ChildThreadRows } from "./ChildThreadRows.tsx"
+import { useChildThreads } from "../hooks.ts"
 import { QueueSubAgentLines } from "./QueueSubAgentLines.tsx"
 import { useSurfaceOpsThread } from "./ThreadSurface.tsx"
 import { pushMonitorDrawer } from "../store.ts"
@@ -63,6 +65,7 @@ const HOVER_CLOSE_DELAY_MS = 150
 // What a panel is called, since it holds one kind of row.
 const PANEL_LABEL: Record<QueueOpsKind, string> = {
   agent: "Sub-agents running for this thread",
+  child: "Child threads this thread started",
   shell: "Background shells running for this thread",
   pr: "Pull requests this thread is watching",
   issue: "Issues this thread is watching",
@@ -76,10 +79,13 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
 export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thread: ThreadView; transcriptShells?: readonly (BgShellView & TranscriptShellRecord)[] }) {
   // The counts move with the transcript's Agent rows, not ahead of them (ThreadSurface opsThread).
   const thread = useSurfaceOpsThread(given)
+  // The thread's CHILD THREADS are other rows of the board, read here rather than off the thread (they
+  // are not held with the transcript the way its Agent rows are: a child is not drawn in this transcript).
+  const childThreads = useChildThreads(thread.id)
   const [openKind, setOpenKind] = useState<QueueOpsKind | null>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(closeTimer.current), [])
-  const groups = queueOpsCounts(thread, transcriptShells)
+  const groups = queueOpsCounts(thread, transcriptShells, childThreads)
   const line = useRef<HTMLDivElement>(null)
   // The last row of a kind can end, or be stopped from its × in the panel, while its panel is open —
   // and nothing then says close: the count unmounts and its panel with it, so no pointer leaves either
@@ -130,6 +136,8 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
         >
           {group.key === "agent"
             ? <QueueSubAgentLines slug={thread.id} subAgents={thread.subAgents ?? []} className="" />
+            : group.key === "child"
+            ? <div data-queue-child-threads className="flex min-w-0 flex-col gap-0.5"><ChildThreadRows parent={thread.id} childThreads={childThreads} density="card" /></div>
             : group.key === "command" || group.key === "monitor" || group.key === "timer"
             ? <WaitPanelRows thread={thread} kind={group.key} />
             : <BackgroundOpsStrip slug={thread.id} includeAgents={false} only={group.key} transcriptShells={transcriptShells} className="" />}
@@ -256,7 +264,8 @@ function OpsCount({ group, line, open, onOpen, onCloseSoon, onOpenChange, childr
 
 function CountMark({ kind, states }: { kind: QueueOpsKind; states: readonly (string | undefined)[] }) {
   switch (kind) {
-    case "agent": return <Dot hue="agent" states={states} />
+    case "agent":
+    case "child": return <Dot hue="agent" states={states} />
     case "shell": return <Dot hue="shell" states={states} />
     case "pr":
     case "issue": return <Dot hue="github" states={states} />

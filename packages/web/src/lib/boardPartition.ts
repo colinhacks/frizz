@@ -1,5 +1,5 @@
 import type { ThreadView } from "@frizz/shared"
-import { isActivelyRunning } from "@frizz/shared"
+import { drawnUnderParent, isActivelyRunning } from "@frizz/shared"
 
 // THE BOARD, SPLIT ONCE PER STATE INTO THE THREADS THAT CAN STILL MOVE AND THE ONES THAT CANNOT.
 //
@@ -23,11 +23,15 @@ import { isActivelyRunning } from "@frizz/shared"
 //     pinned (sectionThreads diverts a pin before sectionOf) nor foreign (dropped before).
 //   · externalThreads — not foreign.
 //   · optimisticallySteered with no stamp of its own — itself: no delivery in flight.
+// A CHILD THREAD is never settled, archived or not: sectionOf answers null for it, not "inactive"
+// (shared drawnUnderParent), so it must reach the derivations that drop it rather than be filed as Done.
+// It stays live for the index that draws it under its parent (lib/childThreads.ts), which reads `live`.
 export function settledThread(t: ThreadView): boolean {
   return (
     t.kind === "session" &&
     t.foreign !== true &&
     typeof t.pinnedAt !== "string" &&
+    !drawnUnderParent(t) &&
     t.state === "archived" &&
     t.deliveryInFlight !== true &&
     !isActivelyRunning(t)

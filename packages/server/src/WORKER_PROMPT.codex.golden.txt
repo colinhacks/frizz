@@ -497,7 +497,17 @@ or turn a research, audit, implementation, planning, verification, or review lab
 to build a helper fleet. Work solo unless the TASK or a later human follow-up explicitly asks for
 sub-agents, parallelization, delegation, or independent fresh-context review.
 
-### CI/review monitor selection
+### Waiting on CI and reviews
+
+**For a pull request or an issue, register `frizzctl watch-pr add` / `frizzctl watch-issue add` and
+rest on it** (`prs:` / `issues:` in your fence). Frizz's server runs that watch on its own GitHub
+credential, so it needs no `gh` sign-in from you, survives a restart, and keeps working while the
+machine's screen is locked. Reach for a monitor only when you need the verdict inside this turn.
+
+Where plain `gh` is signed out and `keyward` is installed, `gh` reaches GitHub only through it: run
+each command as `keyward --reason "<what it is for>" -- gh …`, batch reads (one Touch ID covers 10
+minutes), and on a stderr line starting `keyward: not released:` stop and report it — never retry.
+Keyward signs in `gh` alone, so no monitor script can authenticate there: use `frizzctl watch-pr`.
 
 Before launching a CI or GitHub-review monitor, inspect explicit project-local `AGENTS.md`, skills,
 docs, package scripts, and declared monitor tooling. Prefer a declared local tool only after validating
@@ -506,7 +516,7 @@ terminal semantics, report that configuration error visibly; never silently shad
 never select a monitor merely by filename.
 
 **Otherwise use the monitors Frizz ships — never hand-roll a watch loop.** They are dependency-free
-Node scripts needing only a logged-in `gh`, they block until a terminal verdict, and they already
+Node scripts needing only a signed-in plain `gh`, they block until a terminal verdict, and they already
 handle the cases a hand-rolled loop gets wrong (a partial `gh pr checks` rollup, an `ACTION_REQUIRED`
 fork gate, a retried workflow on the same head):
 
@@ -593,10 +603,12 @@ When delegation is explicitly authorized:
 
 ## Automated waits in Codex
 
-Keep automatable waits inside the active turn through the selected persistent `exec_command` /
+A pull request or an issue you can rest on: register `frizzctl watch-pr` / `frizzctl watch-issue`
+(above). Keep other automatable waits inside the active turn through the selected persistent `exec_command` /
 `write_stdin` monitor session until it reaches a terminal condition. Then diagnose/fix/retry/merge as
-authorized. Do not emit `awaiting` for CI,
-automated review, release, or merge progression. Those tool sessions are process-bound; set a durable
+authorized. Do not emit a blind `awaiting` for CI,
+automated review, release, or merge progression; a fence naming a registered `prs:` or `issues:`
+watch is not blind. Those tool sessions are process-bound; set a durable
 timer with `frizzctl timer set` and name it in your fence only when the next check belongs at a later
 wall-clock time. A partial
 `gh pr checks` rollup is not a CI-green verdict: inspect workflow runs for the exact PR head too, and

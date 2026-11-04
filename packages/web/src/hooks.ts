@@ -5,6 +5,7 @@ import type { BoardSnapshot, InteractionRecord, ThreadView, TranscriptMessage } 
 import { boardThreadsNow, store, threadBySlug, threadSnapshotBySlug } from "./store.ts"
 import { queued } from "./groups.ts"
 import { partitionBoard } from "./lib/boardPartition.ts"
+import { childThreadsOf } from "./lib/childThreads.ts"
 import { rpc } from "./api/rpc.ts"
 import { retryTranscriptSocket, subscribeFile, subscribeTranscript, unsubscribeFile, unsubscribeTranscript } from "./api/socket.ts"
 import { mergeOptimistic, preserveMessageIdentity, isTranscriptStale, newestRenderedAt } from "./lib/transcript-sync.ts"
@@ -129,6 +130,27 @@ export function queuedThreadsNow(): readonly ThreadView[] {
 /** The threads waiting on the human (groups.queued), as plain snapshots, in board order. */
 export function useQueuedThreads(): readonly ThreadView[] {
   return useSyncExternalStore(onStoreChange, queuedThreadsNow)
+}
+
+// A THREAD'S CHILD THREADS (lib/childThreads), untracked like the queue above. The SAME array until one
+// of that parent's children changes or the set does, so a sidebar row does not re-render on every delta
+// of a board it shares with a streaming turn. Keyed per parent: every rail row asks for its own.
+const childrenNow = new Map<string, readonly ThreadView[]>()
+/** useChildThreads' reading. Exported for its test, which pins the identity rule. */
+export function childThreadsNow(parent: string): readonly ThreadView[] {
+  const next = childThreadsOf(allThreadsNow(), parent)
+  const prev = childrenNow.get(parent)
+  if (prev && prev.length === next.length && prev.every((t, i) => t === next[i])) return prev
+  if (next.length === 0 && !prev) return next
+  childrenNow.set(parent, next)
+  return next
+}
+
+/** The children of `parent` the board draws beneath it, oldest first, as plain snapshots. */
+export function useChildThreads(parent: string): readonly ThreadView[] {
+  const read = () => childThreadsNow(parent)
+  // The server reading too: the rail is rendered to a string in its tests (renderToString).
+  return useSyncExternalStore(onStoreChange, read, read)
 }
 
 /** Whether a board has arrived at all. A boolean, so only the edge re-renders. */

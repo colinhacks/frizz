@@ -26,6 +26,7 @@
 //   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_BOOTSTRAP_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit
 
 import { spawnSync } from "node:child_process"
+import { ghCommand } from "./lib/gh-command.mjs"
 import { dirname } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { ACCOUNT_ID } from "./workers-drift.mjs"
@@ -130,7 +131,7 @@ function deliver(sink, value, repoRoot) {
   // `keyward set` stores for the repository the current directory belongs to, so it runs from here.
   const [command, args] =
     sink.kind === "gh"
-      ? ["gh", ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])]]
+      ? ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])])
       : ["keyward", ["set", ...(sink.about ? ["--about", sink.about] : []), sink.secret]]
   const result = spawnSync(command, args, { input: value, cwd: repoRoot, encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`

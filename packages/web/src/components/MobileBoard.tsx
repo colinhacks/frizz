@@ -3,7 +3,8 @@ import { useSnapshot } from "valtio"
 import { ArrowLeft, Check, Clock, Plus, Settings as SettingsIcon } from "lucide-react"
 import { activeBandThread, boardAskThread, type ThreadView } from "@frizz/shared"
 import { openThread, store } from "../store.ts"
-import { useBoard, useBoardThreads } from "../hooks.ts"
+import { useBoard, useBoardThreads, useChildThreads } from "../hooks.ts"
+import { childThreadState } from "../lib/childThreads.ts"
 import { prefs } from "../lib/prefs.ts"
 import {
   displayTitle,
@@ -289,7 +290,8 @@ function MobileThreadRow({
   const right = tab === "snoozed" ? (wakes ? `wakes ${wakes}` : null) : inMotion ? null : ageSpan(at, now)
   const projectDir = useSnapshot(store).board?.projectDir
   const line = rowSecondLine(t, kind, inMotion, now, projectDir)
-  const agents = agentSuffix(liveAgentCount(t))
+  const childThreads = useChildThreads(t.id)
+  const agents = agentSuffix(liveAgentCount(t), childThreads.filter((c) => childThreadState(c) === "running").length)
   return (
     <div className={kind === "snoozed" ? "mobile-row-dim" : undefined}>
       <SwipeRow

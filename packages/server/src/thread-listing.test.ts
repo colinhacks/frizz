@@ -146,6 +146,23 @@ function tenant(home: string, id: string, name: string, threads: ThreadView[]) {
   return { project, storage, board, tenants, router: createRouter(ctx) }
 }
 
+test("a child thread has no row of its own: its open parent names it, and a child at a hard gate rows", () => {
+  const board: ThreadView[] = [
+    thread("parent", { runtime: "turn-idle", waitStatus: "watching", lastFence: { kind: "awaiting", body: "", hints: [] }, lastActivityAt: at(60_000) }),
+    thread("child-working", { parentSlug: "parent", runtime: "running", lastActivityAt: at(5_000) }),
+    thread("child-rested", { parentSlug: "parent", handoffToParent: true, lastFence: { kind: "done", body: "", hints: [] }, lastActivityAt: at(30_000) }),
+    thread("child-archived", { parentSlug: "parent", state: "archived", archived: true, runtime: "exited", archivedAt: at(1000) }),
+    thread("child-on-a-prompt", { parentSlug: "parent", runtime: "perm-prompt", needsYou: true, lastActivityAt: at(2_000) }),
+  ]
+  const listed = listBoardThreads(board, PROJECT, { nowMs: NOW, all: true })
+  assert.deepEqual(listed.threads.map((t) => t.slug).sort(), ["child-on-a-prompt", "parent"], "only the parent, and the child the human must answer")
+  assert.deepEqual(listed.threads.find((t) => t.slug === "parent")?.children, [
+    { slug: "child-working", title: "child-working", runtime: "running" },
+    { slug: "child-rested", title: "child-rested", runtime: "turn-idle" },
+  ], "open children under drawnUnderParent's rule, archived ones left out")
+  assert.equal(listed.threads.find((t) => t.slug === "child-on-a-prompt")?.children, undefined)
+})
+
 test("`listThreads` reads this board, or another project's from that project's own tenant", async (t) => {
   const home = homeSandbox(t)
   const frizz = tenant(home, "5d6e7f80-1a2b-4c3d-8e9f-0a1b2c3d4e5f", "frizz", [thread("here", { runtime: "running" })])

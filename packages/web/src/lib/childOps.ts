@@ -68,7 +68,19 @@ export const CHILD_STALE_SHELL_TITLE = "stale — its process has exited, but no
 // runtime reading did not already say.
 
 // A command watch and a timer have nothing to open; their rows are never buttons, so their titles are unused.
-export const CHILD_OPEN_TITLE = { AGENT: "Open sub-agent transcript", SHELL: "Open background shell output", GITHUB: "Open this pull request on GitHub", COMMAND: "", TIMER: "" } as const
+export const CHILD_OPEN_TITLE = { AGENT: "Open sub-agent transcript", SHELL: "Open background shell output", GITHUB: "Open this pull request on GitHub", COMMAND: "", TIMER: "", CHILD: "Open child thread" } as const
+
+// A CHILD THREAD's settled marks say what they mean for a thread, not for a sub-agent (whose rested dot
+// means "its fan-out is still running"). A child at rest has handed its rest to its parent — or, at a
+// gate only the human can settle, is waiting on the human, which the row's counter names. A stale one's
+// worker crashed (ThreadView.crashed): nothing will move it until someone steers it.
+export const CHILD_THREAD_RESTED_TITLE = "rested — it reports its rests to this thread"
+export const CHILD_THREAD_STALE_TITLE = "stale — its worker stopped without coming to rest"
+export const CHILD_THREAD_NEEDS_YOU = "needs you"
+// A child resting on a wait of its OWN (a quiet `watching`/`working` park: its PR's CI, its timer). Its
+// rest is not a handoff yet, so its parent is still waiting on it; the row says so instead of "rested".
+export const CHILD_THREAD_WAITING = "waiting"
+export const CHILD_THREAD_WAITING_TITLE = "waiting on a wait of its own — it reports to this thread when that ends"
 
 // ── HOW MUCH the child has done — the quiet counter beside its current step ──────────────────────
 //
@@ -177,7 +189,9 @@ export const CHILD_DISMISS_TITLE = {
   settled: "Clear — stop tracking this finished operation",
 } as const
 export const CHILD_DISMISS_VERB = { running: "Stop", settled: "Clear" } as const
-export const CHILD_DISMISS_NOUN = { AGENT: "sub-agent", SHELL: "background shell", GITHUB: "PR watcher", COMMAND: "command watch", TIMER: "timer" } as const
+// A child thread's row carries no × (it is a thread: it is stopped or archived from its own drawer, and
+// its parent steers it), so its noun is here only to keep the record total over ChildOpKind.
+export const CHILD_DISMISS_NOUN = { AGENT: "sub-agent", SHELL: "background shell", GITHUB: "PR watcher", COMMAND: "command watch", TIMER: "timer", CHILD: "child thread" } as const
 
 // ── LIVENESS FILTERS — the surfaces' policies, in ONE place ──────────────────────────────────────
 //

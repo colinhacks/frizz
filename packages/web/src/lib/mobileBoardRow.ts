@@ -103,9 +103,14 @@ export function liveAgentCount(t: Pick<ThreadView, "subAgents">): number {
   return (t.subAgents ?? []).filter((s) => s.state === "running").length
 }
 
-/** " · 1 agent" / " · 3 agents", appended to the second line; empty when nothing is running. */
-export function agentSuffix(count: number): string {
-  return count > 0 ? `${count} ${count === 1 ? "agent" : "agents"}` : ""
+/** " · 1 agent" / " · 3 agents", appended to the second line; empty when nothing is running. CHILD
+ *  THREADS working for the thread follow (lib/childThreads), on the same rule — the phone draws no rows
+ *  under a row, so this count is where a parent's children are drawn there: "2 agents · 1 child thread". */
+export function agentSuffix(count: number, childThreads = 0): string {
+  const parts: string[] = []
+  if (count > 0) parts.push(`${count} ${count === 1 ? "agent" : "agents"}`)
+  if (childThreads > 0) parts.push(`${childThreads} ${childThreads === 1 ? "child thread" : "child threads"}`)
+  return parts.join(" · ")
 }
 
 /**

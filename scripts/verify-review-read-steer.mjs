@@ -18,7 +18,7 @@
 //
 // Requires `gh auth status` to be green. Exits nonzero on any failed assertion.
 
-import { execFileSync } from "node:child_process"
+import { execGh } from "./lib/gh-command.mjs"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -131,7 +131,7 @@ check("a worker can lift the command straight off the steer", Boolean(cmd), cmd 
 let comments = []
 let ran = false
 try {
-  const out = execFileSync("gh", [...cmd.split(" ").slice(1)], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
+  const out = execGh("Verify the review-read steer against a public PR", [...cmd.split(" ").slice(1)], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
   comments = JSON.parse(out)
   ran = true
 } catch (error) {
@@ -151,7 +151,7 @@ if (ran) {
   // Note the claim is NOT "the body is empty": a review may carry both a body and inline comments (and
   // on this PR some do). The defect is narrower and always true — the body does not CONTAIN the inline
   // comments, so a worker that reads only the body never sees them and goes hunting.
-  const body = execFileSync("gh", ["api", `repos/${repo}/pulls/${number}/reviews/${reviewId}`, "--jq", ".body"], { encoding: "utf8" }).trim()
+  const body = execGh("Verify the review-read steer against a public PR", ["api", `repos/${repo}/pulls/${number}/reviews/${reviewId}`, "--jq", ".body"], { encoding: "utf8" }).trim()
   console.log(`\n  control — the obvious read (\`…/reviews/${reviewId}\` → .body) returned ${body.length} chars`)
   const missed = comments.filter((c) => {
     const first = (c.body ?? "").split("<!--")[0].trim().slice(0, 80)

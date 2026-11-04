@@ -1,5 +1,6 @@
 import {
   displayTitle,
+  drawnUnderParent,
   futureSnoozedUntil,
   hasStandingQuestion,
   isDirectSubAgent,
@@ -18,8 +19,9 @@ import {
 const BAND_ORDER: readonly ThreadBand[] = ["rested", "active", "snoozed", "done"]
 const LAST_LINE_MAX = 200
 
-/** One thread as a listing row, or `null` for a row the sidebar never draws. */
-export function threadListing(t: ThreadView, nowMs: number): ThreadListing | null {
+/** One thread as a listing row, or `null` for a row the sidebar never draws. `children` are its open
+ *  child threads, which have no row of their own (drawnUnderParent) and are listed on their parent's. */
+export function threadListing(t: ThreadView, nowMs: number, children: readonly ThreadView[] = []): ThreadListing | null {
   const band = threadBandAt(t, nowMs)
   if (!band) return null
   const inFlight = t.runtime === "running" || t.runtime === "spawning"
@@ -44,6 +46,7 @@ export function threadListing(t: ThreadView, nowMs: number): ThreadListing | nul
     subAgents: (t.subAgents ?? []).filter((a) => isDirectSubAgent(a) && a.state === "running").length,
     shells: (t.bgShells ?? []).filter((s) => s.state === "running").length,
     watches: (t.watches ?? []).filter((w) => w.state === "armed" && w.kind !== "shell").map(watchLabel),
+    ...(children.length ? { children: children.map((c) => ({ slug: c.id, title: displayTitle(c), runtime: c.runtime })) } : {}),
     ...(t.limitPause ? { limited: true as const } : {}),
     ...(t.crashed ? { crashed: true as const } : {}),
     ...(t.spawnedAt ? { spawnedAt: t.spawnedAt } : {}),
@@ -79,8 +82,13 @@ export function listBoardThreads(
   const nowMs = opts.nowMs ?? Date.now()
   const counts = { rested: 0, active: 0, snoozed: 0, done: 0 }
   const rows: ThreadListing[] = []
+  const childrenOf = new Map<string, ThreadView[]>()
   for (const t of threads) {
-    const row = threadListing(t, nowMs)
+    if (!t.parentSlug || !drawnUnderParent(t) || t.state === "archived") continue
+    childrenOf.set(t.parentSlug, [...(childrenOf.get(t.parentSlug) ?? []), t])
+  }
+  for (const t of threads) {
+    const row = threadListing(t, nowMs, childrenOf.get(t.id))
     if (!row) continue
     counts[row.band] += 1
     if (row.band === "done" && !opts.all) continue

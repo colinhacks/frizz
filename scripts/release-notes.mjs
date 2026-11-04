@@ -19,6 +19,7 @@
 // A shell's notes count only the commits that touch the shell (`src/` outside tests, the root
 // package.json), since everything else ships in frizz-server.
 import { execFileSync } from "node:child_process"
+import { execGh } from "./lib/gh-command.mjs"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -53,7 +54,7 @@ const version = args[0] ?? JSON.parse(readFileSync(join(root, MANIFESTS[pkg]), "
 if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`not a release version: ${version}`)
 
 const git = (...a) => execFileSync("git", ["-C", gitDir, ...a], { encoding: "utf8" }).trim()
-const gh = (...a) => execFileSync("gh", a, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+const gh = (...a) => execGh(`Draft release notes for ${pkg} ${version}`, a, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
 const repo = process.env.FRIZZ_RELEASE_REPO ?? gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 const owner = repo.split("/")[0]
 

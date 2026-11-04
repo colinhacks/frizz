@@ -31,7 +31,7 @@
 //
 // The target is npm's recorded gitHead, never a local checkout, and an existing tag is never moved:
 // a re-run reports what is already there and creates only what is missing.
-import { execFileSync } from "node:child_process"
+import { execGh } from "./lib/gh-command.mjs"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -65,7 +65,7 @@ if (notes !== undefined) {
   if (faults.length) throw new Error(`${notesFile} is not release notes yet: ${faults.join("; ")}. Draft them with scripts/release-notes.mjs`)
 }
 
-const gh = (args, input) => execFileSync("gh", args, { encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim()
+const gh = (args, input) => execGh("Publish a Frizz release's tag and notes", args, { encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim()
 const ghOk = (args) => { try { gh(args); return true } catch { return false } }
 
 const repo = process.env.FRIZZ_RELEASE_REPO ?? gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])

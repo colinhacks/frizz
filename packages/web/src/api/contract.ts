@@ -61,6 +61,8 @@ import type {
   SteerThreadResult,
   SpawnThreadInput,
   SpawnThreadResult,
+  SpawnChildInput,
+  SpawnChildResult,
   SetOwnThreadTitleResult,
   GetOwnThreadRecurringPromptInput,
   OwnThreadRecurringPromptResult,
@@ -274,6 +276,7 @@ export interface Api {
   // ONE WORKER STARTING A THREAD ON ANOTHER PROJECT'S BOARD, called by `frizzctl spawn-thread --project`.
   // Declared here for the drift gate alone — the browser starts a thread with `dispatch`.
   spawnThread(input: SpawnThreadInput): Promise<SpawnThreadResult>
+  spawnChild(input: SpawnChildInput): Promise<SpawnChildResult>
   // THE PR WATCHER REGISTRY, called by `frizzctl watch-pr` rather than by this client. Declared here
   // for the same reason as its neighbours: rpc-contract.ts proves the two procedure NAME SETS are equal,
   // so an RPC the client cannot name is one nothing checks the shape of. No browser call site uses these.
@@ -498,6 +501,7 @@ export const PROCEDURES = {
   setOwnThreadTitle: "mutation",
   steerThread: "mutation",
   spawnThread: "mutation",
+  spawnChild: "mutation",
   addOwnPrWatch: "mutation",
   dropOwnPrWatch: "mutation",
   listOwnPrWatches: "mutation",

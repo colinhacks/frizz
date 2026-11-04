@@ -248,8 +248,14 @@ export function writeScratchDir(projectDir: string, sessionId: string): string {
 // The FIXED worker system prompt for `kind`, compiled in via workerPrompt.ts (single source of truth).
 // Not user-modifiable — project-specific conventions ride FRIZZ.md (frizzConfigBlock), appended
 // separately. Thin adapter kept so existing callers (spawn/adopt/resume builders + tests) are untouched.
-export function loadWorkerPrompt(kind: BackendKind = "claude"): string {
-  return buildWorkerPrompt(kind, { monitorsDir: monitorScriptsDir() })
+/** What a contract varies on besides its backend: today only whether the CHILD THREADS experiment is on
+ *  (Settings.childThreads), which every caller reads from its own settings. */
+export interface WorkerContractOptions {
+  childThreads?: boolean
+}
+
+export function loadWorkerPrompt(kind: BackendKind = "claude", contract: WorkerContractOptions = {}): string {
+  return buildWorkerPrompt(kind, { monitorsDir: monitorScriptsDir(), childThreads: contract.childThreads === true })
 }
 
 // The portable CI/review monitors, which ship inside the worker plugin (`sync-portable-monitors.mjs`
@@ -373,8 +379,8 @@ export function composePrompt(sessionId: string, prompt: string, kind: BackendKi
 // forks the daemon with whatever its caller passed, and a fork without it is a worker with no contract
 // for as long as that daemon lives: every later follow-up reconnects to it and its own copy is
 // ignored. So every caller that can reach the bridge's `followUp` builds it here.
-export function claudeWorkerSystemPrompt(sessionId: string, projectDir: string): string {
-  return [loadWorkerPrompt("claude"), scratchpadOrientation(sessionId, "claude"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+export function claudeWorkerSystemPrompt(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
+  return [loadWorkerPrompt("claude", contract), scratchpadOrientation(sessionId, "claude"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The codex twin: the `baseInstructions` a Codex worker's thread runs under. Sent with its
@@ -388,8 +394,8 @@ export function claudeWorkerSystemPrompt(sessionId: string, projectDir: string):
 // worker whose operator set either key back on THAT file, with no contract, after any Frizz restart
 // or app-server death (measured against a fake model: `instructions` read the file's text, before
 // and after a compaction).
-export function codexWorkerBaseInstructions(sessionId: string, projectDir: string): string {
-  return [loadWorkerPrompt("codex"), scratchpadOrientation(sessionId, "codex"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+export function codexWorkerBaseInstructions(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
+  return [loadWorkerPrompt("codex", contract), scratchpadOrientation(sessionId, "codex"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The block an ACP worker's contract is: the worker contract, the scratch line and the project's
@@ -398,8 +404,8 @@ export function codexWorkerBaseInstructions(sessionId: string, projectDir: strin
 // model to leave out "instructions and setup the assistant was given", and measured 2026-10-12 against
 // opencode 2.0.27 the request after `/compact` carried none of it), and on the first prompt into a FRESH
 // session that replaced one the agent could not load. The bridge asks for it through `contractFor`.
-export function acpWorkerContract(sessionId: string, projectDir: string): string {
-  return [loadWorkerPrompt("acp"), scratchpadOrientation(sessionId, "acp"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+export function acpWorkerContract(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
+  return [loadWorkerPrompt("acp", contract), scratchpadOrientation(sessionId, "acp"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The SYSTEM-level scratch-directory orientation (survives compaction, rebuilds on every resume).
@@ -897,12 +903,24 @@ export function buildClaudeResumeCommand(opts: {
   return argv
 }
 
+export interface DispatchOptions {
+  backend?: BackendKind
+  /** CHILD THREADS: the spawning thread, recorded as SessionRow.parent_slug. */
+  parentSlug?: string
+  /** CHILD THREADS: the mode to start in, in place of workerDispatchPermission's. */
+  permissionMode?: PermissionMode
+}
+
 export interface Dispatcher {
   // `opts.backend` selects the agent backend for THIS dispatch (Codex-support epic, Phase 2); omitted /
   // "claude" is the default, so the RPC path (which passes no opts until the Phase-3 UI picker wires
   // DispatchInput.backend through) is byte-identical to before. A codex dispatch pre-arms the cwd trust
   // gate, spawns the codex TUI, then sentinel-discovers + pins the rollout id on the row.
-  dispatch(input: DispatchInput, opts?: { backend?: BackendKind }): Promise<{ slug: string; sessionId: string }>
+  //
+  // `opts.parentSlug` and `opts.permissionMode` are SERVER-ONLY (never read off DispatchInput, whose
+  // permissionMode the RPC ignores): the router's `spawnChild` sets them for a child thread, which is
+  // linked to the thread that spawned it and starts in that thread's current permission mode.
+  dispatch(input: DispatchInput, opts?: DispatchOptions): Promise<{ slug: string; sessionId: string }>
   // Cold-adopt an EXISTING thread frizz didn't originate (e.g. a repo with a pre-existing .frizz
   // board): spawn a fresh worker pointed at the thread file. Frizz's contract makes this sound —
   // the doc, not the conversation, is the durable context; the worker reads it and continues.
@@ -1045,7 +1063,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         // provider/Frizz signal may still replace it through the title_auto CAS.
         const registryTitle = title
         const sessionId = randomUUID()
-        const permissionMode = workerDispatchPermission(kind, settings)
+        const permissionMode = opts?.permissionMode ?? workerDispatchPermission(kind, settings)
         // Resolve the profile ONCE for this session. It feeds both the CLI argv and the persisted row,
         // so the thread UI describes what this dispatch actually launched with rather than whatever the
         // mutable global defaults happen to be when the drawer is opened later.
@@ -1081,7 +1099,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
               model,
               effort,
               sandbox: codexSandbox(permissionMode) as "read-only" | "workspace-write" | "danger-full-access",
-              baseInstructions: codexWorkerBaseInstructions(sessionId, deps.project.dir),
+              baseInstructions: codexWorkerBaseInstructions(sessionId, deps.project.dir, { childThreads: settings.childThreads }),
               developerInstructions: CODEX_FIRST_OUTPUT_TITLE_DEVELOPER_INSTRUCTIONS,
               // No `config` here: the hooks and the reasoning summary are the bridge's to send
               // (codexWorkerThreadConfig), with this start and with every resume after it.
@@ -1120,6 +1138,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             // The contract this thread was just started with teaches `frizzctl`, and every resume hands it
             // the current one, which does too — so it is never handed the MCP tools (workerTaughtMcp).
             deps.storage.setWorkerSurface(slug, "cli")
+            if (opts?.parentSlug) deps.storage.setParentSlug(slug, opts.parentSlug)
             void deps.board.rebuild().catch(() => {})
             return { slug, sessionId }
           } catch (err) {
@@ -1145,7 +1164,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error(!bridge ? "The ACP bridge is unavailable; cannot start this thread." : `An ACP dispatch needs an agent: pick one in the composer (model \`acp:<agent>\`), got ${JSON.stringify(model ?? null)}.`)
           }
-          const firstPrompt = [acpWorkerContract(sessionId, deps.project.dir), prompt].filter(Boolean).join("\n\n")
+          const firstPrompt = [acpWorkerContract(sessionId, deps.project.dir, { childThreads: settings.childThreads }), prompt].filter(Boolean).join("\n\n")
           try {
             const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, agentId, modelId: acpModelIdFromModel(model), prompt: firstPrompt, userText: input.prompt })
             deps.storage.upsertSession({
@@ -1173,6 +1192,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             deps.storage.setAgentSession(slug, spawned.acpSessionId)
             deps.storage.setAcpAgent(slug, agentId)
             deps.storage.setWorkerSurface(slug, "cli")
+            if (opts?.parentSlug) deps.storage.setParentSlug(slug, opts.parentSlug)
             void deps.board.rebuild().catch(() => {})
             return { slug, sessionId }
           } catch (err) {
@@ -1198,7 +1218,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error("Claude session broker is unavailable; cannot start this thread.")
           }
-          const appendSystemPrompt = claudeWorkerSystemPrompt(sessionId, deps.project.dir)
+          const appendSystemPrompt = claudeWorkerSystemPrompt(sessionId, deps.project.dir, { childThreads: settings.childThreads })
           try {
             await bridge.spawnDispatch({
               threadSlug: slug,
@@ -1240,6 +1260,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             deps.storage.setBackend(slug, "claude")
             deps.storage.setClaudeRuntime(slug, "broker")
             deps.storage.setWorkerSurface(slug, "cli")
+            if (opts?.parentSlug) deps.storage.setParentSlug(slug, opts.parentSlug)
             void deps.board.rebuild().catch(() => {})
             return { slug, sessionId }
           } catch (err) {
@@ -1475,7 +1496,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
           cwd: deps.project.dir,
           prompt,
           permissionMode,
-          appendSystemPrompt: [claudeWorkerSystemPrompt(sessionId, deps.project.dir), adoption].filter(Boolean).join("\n\n"),
+          appendSystemPrompt: [claudeWorkerSystemPrompt(sessionId, deps.project.dir, { childThreads: deps.getSettings().childThreads }), adoption].filter(Boolean).join("\n\n"),
           model: settings.model,
           effort: settings.effort,
         })

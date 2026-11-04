@@ -144,6 +144,7 @@ export type AuditAction =
   | "subAgentSteer"
   | "steerThread"
   | "spawnThread"
+  | "spawnChild"
   | "answerQuestions"
   | "interactionResolve"
 

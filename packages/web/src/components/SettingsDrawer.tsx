@@ -156,6 +156,12 @@ export function SettingsDrawer({ offerUpdate = false }: {
               <GithubAccountField />
             </SettingsField>
 
+            {/* An experiment, so it sits below every preference an operator ordinarily adjusts and
+                above only the one power-user knob. Off by default (Settings.childThreads). */}
+            <SettingsField label="Child threads" help={SETTINGS_HELP.childThreads}>
+              <OnOffToggle value={draft.childThreads} onChange={(childThreads) => update({ ...draft, childThreads })} />
+            </SettingsField>
+
             {/* LAST, on purpose: which editor a vetted local path opens in is the one power-user
                 knob in the drawer, so it sits below everything an ordinary operator adjusts. */}
             <SettingsField label="Local file links" help={SETTINGS_HELP.localFileOpener}>

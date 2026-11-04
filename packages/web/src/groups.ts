@@ -10,6 +10,7 @@ import {
   isSnoozed,
   needsAction,
   queuedThread,
+  drawnUnderParent,
   sectionOf,
   type AwaitingHint,
   type SectionKey,
@@ -223,8 +224,11 @@ export const SECTION_ORDER: readonly SectionKey[] = ["active", "snoozed", "inact
 // override applied ABOVE it (sectionThreads diverts these rows before sectionOf runs), the same
 // altitude as the foreign drop. Deliberately ignores state: the pin outranks Done, Snoozed and the
 // queue alike — that is the whole feature.
+//
+// A CHILD THREAD's pin is not honoured while the board draws it under its parent (shared
+// drawnUnderParent): the shelf is a band like any other, and a child is a row of none of them.
 export function isPinned(t: ThreadView): boolean {
-  return t.kind === "session" && t.foreign !== true && typeof t.pinnedAt === "string"
+  return t.kind === "session" && t.foreign !== true && typeof t.pinnedAt === "string" && !drawnUnderParent(t)
 }
 
 // PINNED ON THE CONSOLE — the "By status" view's own shelf (maintainer 2026-10-19: "a separate pin
@@ -232,7 +236,7 @@ export function isPinned(t: ThreadView): boolean {
 // project's board is not pinned on the Console, nor the other way round, and each shelf has its own
 // order. Same eligibility as the board's pin, and it outranks state the same way.
 export function isConsolePinned(t: ThreadView): boolean {
-  return t.kind === "session" && t.foreign !== true && typeof t.consolePinnedAt === "string"
+  return t.kind === "session" && t.foreign !== true && typeof t.consolePinnedAt === "string" && !drawnUnderParent(t)
 }
 
 /** Which shelf a row's pin speaks for: its project board's, or the Console's "By status" view's. */

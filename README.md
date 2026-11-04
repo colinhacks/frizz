@@ -99,6 +99,8 @@ When the answer isn't one thing, the same card takes several: check any combinat
 
 Browse the repo's issues and pull requests from the composer, select any number of them, and each becomes its own thread.
 
+Sign Frizz in once from Settings → GitHub, with a device code. The sign-in is read-only: it can read issues, pull requests and checks on the accounts where you install [the Frizz GitHub App](https://github.com/apps/frizz-agent-console), plus public repos, and can't change anything. It's what watches pull requests and issues for your workers, overnight included, and it's separate from any `gh` sign-in of your own.
+
 <p align="center">
   <img src="assets/github.png" alt="The GitHub picker open over the composer, listing real open issues from colinhacks/zod with numbers, authors, and reaction counts; three are checked and a Start investigations button is enabled." width="100%">
 </p>
@@ -148,8 +150,9 @@ Options:
   --no-app               print the URL without opening a browser
   --port <port>          request a fixed port for a new workspace server
   --sandbox              a disposable Frizz to try things in: throwaway home and project, its
-                         own port, deleted when this terminal closes; credentials (gh,
-                         cloudflared, Claude, Codex, the machine's frizz.sh key) are shared
+                         own port, deleted when this terminal closes; credentials (Frizz's
+                         GitHub sign-in, cloudflared, Claude, Codex, the machine's frizz.sh
+                         key) are shared
   --link                 print a fresh single-use access link for the running board
   --debug                stream the full event feed to the terminal instead of the compact readout
   -h, --help             show this help
@@ -176,7 +179,7 @@ shows a single-use sign-in link as a QR; press L for a fresh one, or run --link 
 <details>
 <summary><b>Does anything leave my machine?</b></summary>
 
-> Nothing from Frizz. There's no account, no telemetry, and the server binds to `127.0.0.1`; reaching it from another device is something you switch on yourself (press R in its terminal). The agents themselves talk to their providers, and `gh` talks to GitHub, but Frizz is a local process looking at local files.
+> Nothing from Frizz. There's no account, no telemetry, and the server binds to `127.0.0.1`; reaching it from another device is something you switch on yourself (press R in its terminal). The agents themselves talk to their providers, and Frizz reads GitHub directly with the read-only sign-in you give it, but Frizz is a local process looking at local files.
 
 </details>
 

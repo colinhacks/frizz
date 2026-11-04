@@ -223,6 +223,14 @@ export interface SessionRow {
   // Either way it must go on being given them (workerTaughtMcp). A Claude thread is handed the current
   // contract at every fork and never reads this.
   worker_surface?: string | null
+  // CHILD THREADS (2026-11-04, behind Settings.childThreads). The thread that spawned this one with
+  // `frizzctl spawn-child`, in the same project. A child's rests that would have queued for the human go to
+  // this thread instead (board.ts deriveChildHandoff, scheduler evalChildHandoffs). NULL on every thread
+  // the human started and on every `spawn-thread`.
+  parent_slug?: string | null
+  // The child's rest (`lastAssistantAt`, ISO) whose handoff was last handed to its parent, so each rest is
+  // reported exactly once however many ticks see it, across restarts and outbox pruning alike.
+  child_reported_at?: string | null
 }
 
 /** Whether `row`'s worker was taught the MCP tools rather than the command line, and so still needs
@@ -1047,6 +1055,10 @@ export interface Storage {
   setAcpAgent(slug: string, agentId: string): void
   /** Record which worker surface this thread's contract taught it — see SessionRow.worker_surface. */
   setWorkerSurface(slug: string, surface: "cli"): void
+  /** Link a child thread to the thread that spawned it — see SessionRow.parent_slug. */
+  setParentSlug(slug: string, parentSlug: string): void
+  /** Record the child rest whose handoff reached its parent — see SessionRow.child_reported_at. */
+  setChildReportedAt(slug: string, at: string): void
   setProfile(slug: string, model: string, effort: string): void
   setPermissionMode(slug: string, permissionMode: string): void
   setPermissionPending(slug: string, permissionMode: string | null): void
@@ -1182,6 +1194,10 @@ export const STORAGE_SCHEMA = `
       -- ALTER list below.
       archived_at TEXT,
       running_since TEXT,
+      -- CHILD THREADS (SessionRow.parent_slug / child_reported_at): the spawning thread, and the child
+      -- rest last reported to it. Both in the ALTER list below.
+      parent_slug TEXT,
+      child_reported_at TEXT,
       -- THE RECURRING PROMPT (scheduler.ts SOURCES 4, 5 and 7): one text, three independent triggers —
       -- every time the thread rests, every N ms on a clock, and/or every time its context is compacted.
       -- All flags 0 = off; there is no separate enable column, because another flag could only ever
@@ -1494,7 +1510,7 @@ export function ensureStorageSchema(db: Database): void {
   // a file that already exists, and every live install predates any column below — so each rides one
   // additive ALTER here, exactly the stack the schema comment above says the unified file was born
   // without. Keep the list append-only; the try/catch is the "already there" case.
-  for (const column of ["pinned_at TEXT", "acp_agent TEXT", "worker_surface TEXT", "console_pinned_at TEXT", "archived_at TEXT", "running_since TEXT"]) {
+  for (const column of ["pinned_at TEXT", "acp_agent TEXT", "worker_surface TEXT", "console_pinned_at TEXT", "archived_at TEXT", "running_since TEXT", "parent_slug TEXT", "child_reported_at TEXT"]) {
     try {
       db.exec(`ALTER TABLE session ADD COLUMN ${column}`)
     } catch {
@@ -2432,6 +2448,8 @@ export function createStorage(source: string | Database, projectId: string): Sto
   const claudeRuntimeStmt = scope.prepare("UPDATE session SET claude_runtime = ? WHERE project_id = @project_id AND slug = ?")
   const acpAgentStmt = scope.prepare("UPDATE session SET acp_agent = ? WHERE project_id = @project_id AND slug = ?")
   const workerSurfaceStmt = scope.prepare("UPDATE session SET worker_surface = ? WHERE project_id = @project_id AND slug = ?")
+  const parentSlugStmt = scope.prepare("UPDATE session SET parent_slug = ? WHERE project_id = @project_id AND slug = ?")
+  const childReportedStmt = scope.prepare("UPDATE session SET child_reported_at = ? WHERE project_id = @project_id AND slug = ?")
   // Stamps profile_set_at alongside model/effort: the OPERATOR's set-time. Both backends' setThreadProfile
   // paths write through here, and the stamp is what marks the pair as CHOSEN rather than observed — the
   // board reads it to keep the composer selector on the pick (resolveSessionProfile), and the observed
@@ -2598,6 +2616,8 @@ export function createStorage(source: string | Database, projectId: string): Sto
     claude_runtime: row.claude_runtime ?? null,
     acp_agent: row.acp_agent ?? null,
     worker_surface: row.worker_surface ?? null,
+    parent_slug: row.parent_slug ?? null,
+    child_reported_at: row.child_reported_at ?? null,
   })
 
   const getAdoptionRuntimeSnapshot = db.transaction((slug: string) => ({
@@ -3134,6 +3154,8 @@ export function createStorage(source: string | Database, projectId: string): Sto
     setClaudeRuntime: (slug, runtime) => void claudeRuntimeStmt.run(runtime, slug),
     setAcpAgent: (slug, agentId) => void acpAgentStmt.run(agentId, slug),
     setWorkerSurface: (slug, surface) => void workerSurfaceStmt.run(surface, slug),
+    setParentSlug: (slug, parentSlug) => void parentSlugStmt.run(parentSlug, slug),
+    setChildReportedAt: (slug, at) => void childReportedStmt.run(at, slug),
     setProfile: (slug, model, effort) => void profileStmt.run(model, effort, new Date().toISOString(), slug),
     setPermissionMode: (slug, permissionMode) => void permissionModeStmt.run(permissionMode, new Date().toISOString(), slug),
     setPermissionPending: (slug, permissionMode) => void permissionPendingStmt.run(permissionMode, slug),

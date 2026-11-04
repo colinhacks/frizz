@@ -19,6 +19,8 @@ import {
   CHILD_STALE_DOT_CLASS,
   CHILD_STALE_SHELL_TITLE,
   CHILD_STALE_TITLE,
+  CHILD_THREAD_RESTED_TITLE,
+  CHILD_THREAD_STALE_TITLE,
 } from "../lib/childOps.ts"
 
 // GITHUB is a PR watcher the worker parked on. It is a child op in every way that matters to this row —
@@ -28,7 +30,12 @@ import {
 // re-runs until it passes, and a clock — and they joined on 2026-10-15, when the line of counts over the
 // prompt box became where a steps card's waits are listed. Both are parked waits as a PR watch is, so
 // they take its hue, and neither has anything to open or stop.
-export type ChildOpKind = "AGENT" | "SHELL" | "GITHUB" | "COMMAND" | "TIMER"
+//
+// CHILD is a CHILD THREAD (`frizzctl spawn-child`, 2026-11-04): a whole thread this one started, drawn
+// under it wherever its sub-agents are (lib/childThreads). It takes the sub-agent's hue — it is an agent
+// doing this thread's work — and opens the child's own drawer, stacked over the parent's (store.ts
+// stacksOver). It carries no ×: a thread is stopped or archived from its own drawer, not from a row.
+export type ChildOpKind = "AGENT" | "SHELL" | "GITHUB" | "COMMAND" | "TIMER" | "CHILD"
 
 // The ONE surface knob, and the only thing any caller may vary. It encodes REAL information-density
 // differences between the three places a child row appears — not styling preference:
@@ -133,7 +140,7 @@ export function ChildOpRow({
   const running = isRunningOperation(state)
   // ONE HUE PER RUNTIME CONCERN, and the row is the only place they are named. A sub-agent pulses the
   // accent-yellow, a background shell the azure blue, a PR watcher the green.
-  const LIVE_DOT_HUE = { AGENT: "frizz-live-dot--agent", SHELL: "frizz-live-dot--shell", GITHUB: "frizz-live-dot--github", COMMAND: "frizz-live-dot--github", TIMER: "frizz-live-dot--github" } as const
+  const LIVE_DOT_HUE = { AGENT: "frizz-live-dot--agent", SHELL: "frizz-live-dot--shell", GITHUB: "frizz-live-dot--github", COMMAND: "frizz-live-dot--github", TIMER: "frizz-live-dot--github", CHILD: "frizz-live-dot--agent" } as const
   // THE TAG IS FIVE CHARACTERS ON EVERY KIND. `GITHUB` is six, and before this column had a track of
   // its own it pushed that row's label 4.3px right of every other row under the mono stack (where
   // five-letter tags are pixel-identical at 21.39px). `WATCH` is also the more accurate word: the row is
@@ -144,7 +151,7 @@ export function ChildOpRow({
   // File/Link rows that share the strip beneath them. That is what closed the ~2px AGENT-vs-SHELL
   // raggedness the sans stack used to carry. Keep the words five letters anyway: the mono track is
   // sized to exactly that width.
-  const KIND_TAG = { AGENT: "AGENT", SHELL: "SHELL", GITHUB: "WATCH", COMMAND: "WATCH", TIMER: "TIMER" } as const
+  const KIND_TAG = { AGENT: "AGENT", SHELL: "SHELL", GITHUB: "WATCH", COMMAND: "WATCH", TIMER: "TIMER", CHILD: "CHILD" } as const
   const clickable = !!onOpen
   const rail = density === "rail"
   const sheet = density === "sheet"
@@ -169,8 +176,8 @@ export function ChildOpRow({
   // that is not running is FLAT on every density and every kind — a stale SHELL is a process the OS has
   // confirmed gone, so only its words differ (see CHILD_STALE_SHELL_TITLE).
   const quiet = state === "rested"
-    ? <span className={CHILD_RESTED_DOT_CLASS} title={CHILD_RESTED_TITLE} />
-    : <span className={CHILD_STALE_DOT_CLASS} title={kind === "SHELL" ? CHILD_STALE_SHELL_TITLE : CHILD_STALE_TITLE} />
+    ? <span className={CHILD_RESTED_DOT_CLASS} title={kind === "CHILD" ? CHILD_THREAD_RESTED_TITLE : CHILD_RESTED_TITLE} />
+    : <span className={CHILD_STALE_DOT_CLASS} title={kind === "SHELL" ? CHILD_STALE_SHELL_TITLE : kind === "CHILD" ? CHILD_THREAD_STALE_TITLE : CHILD_STALE_TITLE} />
   const indicator = rail ? (
     <span className="flex w-3.5 shrink-0 items-center justify-center">
       {running ? <BoxSpinner size={12} /> : quiet}

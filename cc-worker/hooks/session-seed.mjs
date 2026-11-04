@@ -23,7 +23,8 @@
 // A fresh worker never runs `frizz on`, so such a cc is already dormant; we write cc's own per-session
 // `off` sentinel anyway via the shared config API (board survives as cc-worker's board
 // implementation) so a stale install is guaranteed inert. Cheap belt-and-suspenders. See DECISIONS.md.
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setSessionOverride, currentSessionId } from '../scripts/frizz/config.mjs';
 
@@ -76,30 +77,77 @@ const core =
 const grounding =
   '⟦frizz worker re-grounding (post-compaction)⟧ Context was just compacted. You are still the frizz worker for effort `' + thread + '` — read whatever you left yourself in `' + scratch + '` NOW to recover your working state and to-do list before asserting anything, and re-read any code before claiming how it is structured. Your system prompt still carries the full contract; sign off as it says.';
 
-// AUTH-GATED gh guidance — teach the worker to use `gh` well, but ONLY when signed in.
-// Shell `gh auth status --active`: exit 0 = an active gh account is authenticated. The whole gate is
-// wrapped so it can NEVER throw into SessionStart, and it fails CLOSED — no gh binary, not authed, a
-// stall past the timeout, or any other error → we inject NOTHING (guidance is absent, not stale/wrong).
-// It re-evaluates on every start/resume/clear/compact, so a later `gh auth login` starts injecting on
-// the next turn boundary (and a `gh auth logout` stops it). See DECISIONS.md / plan §8.
+// AUTH-GATED gh guidance — teach the worker to use `gh` well, but ONLY when it can actually reach GitHub.
+// TWO TIERS, checked in order (2026-11-04, see DECISIONS.md):
+//   1. Plain `gh auth status --active` exits 0 — an active gh account is signed in, as on any machine
+//      that never adopted Keyward. Inject the plain block.
+//   2. Otherwise, a `keyward` executable on PATH — the maintainer's Secure Enclave vault, which hands gh
+//      its token in `GH_TOKEN` for one run at a time, so plain gh is signed OUT by design. Inject the
+//      Keyward block: every gh command goes through `keyward --reason "…" -- gh …`.
+// Neither → inject nothing. Tier 2 is found by walking PATH for the file, NEVER by running `keyward`:
+// a release raises a Touch ID sheet, and a SessionStart hook must not put one on the maintainer's screen.
+// The whole gate is wrapped so it can NEVER throw into SessionStart, and it fails CLOSED — no gh
+// binary, a stall past the timeout, an unreadable PATH entry, or any other error → that tier is absent
+// (guidance missing, not stale/wrong). It re-evaluates on every start/resume/clear/compact, so a later
+// `gh auth login` or `gh auth logout` changes the block at the next turn boundary.
+const ghReadOnly =
+  '• READ-ONLY BOUNDARY: never comment, label, assign, close, review, approve, or merge — no mutation of any kind — UNLESS the human explicitly asks in this session. Default to producing your findings/review as your final message, not as a GitHub post.\n';
+
 const ghBlock =
   '⟦gh available⟧ You are signed into the `gh` CLI and in a GitHub repo. Use `gh` EAGERLY and well — it is the fastest path to issue/PR/CI/release context, and you should reach for it before guessing:\n' +
   '• READ freely: `gh issue view N -R OWNER/REPO --comments`, `gh pr view N`, `gh pr diff N`, `gh pr checks N`, `gh run list`/`gh run view`, `gh api repos/OWNER/REPO/…`. Prefer `--json <fields>` over scraping human text.\n' +
   '• SEARCH across the repo (and GitHub) with `gh search issues`/`gh search prs` when hunting related work, duplicates, or prior art.\n' +
-  '• READ-ONLY BOUNDARY: never comment, label, assign, close, review, approve, or merge — no mutation of any kind — UNLESS the human explicitly asks in this session. Default to producing your findings/review as your final message, not as a GitHub post.\n' +
-  'Load the `frizz:gh` skill for the full playbook (recipes + explicit project-local monitor selection + native Monitor/background-Bash CI/PR watches).';
+  ghReadOnly +
+  'To wait on CI or reviews, register `frizzctl watch-pr add` / `frizzctl watch-issue add` rather than polling. Load the `frizz:gh` skill for the full playbook (recipes, waits, and the bundled monitors as a fallback).';
 
-let ghAuthed = false;
+const ghKeywardBlock =
+  '⟦gh available through Keyward⟧ Plain `gh` is signed OUT here; Keyward, the human\'s vault, signs it in for one run at a time. Run EVERY gh command as `keyward --reason "<what this command is for>" -- gh …` (`gh` must be the first word after `--`). It is still the fastest path to issue/PR/CI/release context — reach for it before guessing:\n' +
+  '• One Touch ID covers this repository\'s gh runs for 10 minutes (less if the screen locks), so BATCH your gh reads together rather than spreading them out. Prefer `--json <fields>`.\n' +
+  '• On any stderr line starting `keyward: not released:` (screen locked, declined), STOP and report it to the human; NEVER retry. A locked screen does not clear by retrying, and a decline was their answer.\n' +
+  '• WAITS: register `frizzctl watch-pr add` / `frizzctl watch-issue add` for CI and reviews — Frizz\'s server watches on its own credential, even while the screen is locked. Never poll gh; the bundled ci-watch/review-watch monitors cannot sign in under Keyward.\n' +
+  ghReadOnly +
+  'Load the `frizz:gh` skill for the full playbook (recipes and the exact Keyward failures).';
+
+/** Whether `name` is an executable file in some PATH directory. Stats files only, runs nothing. */
+function onPath(name) {
+  const win = process.platform === 'win32';
+  const exts = win ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').filter(Boolean) : [''];
+  for (const d of (process.env.PATH ?? '').split(delimiter)) {
+    if (!d) continue;
+    for (const ext of exts) {
+      try {
+        const file = join(d, name + ext);
+        if (!statSync(file).isFile()) continue;
+        if (!win) accessSync(file, constants.X_OK);
+        return true;
+      } catch {
+        /* absent, unreadable or not executable → keep looking */
+      }
+    }
+  }
+  return false;
+}
+
+/** @type {'plain' | 'keyward' | null} */
+let ghMode = null;
 try {
   execFileSync('gh', ['auth', 'status', '--active'], { stdio: 'ignore', timeout: 4000 });
-  ghAuthed = true;
+  ghMode = 'plain';
 } catch {
-  /* no gh / not authed / stalled → fail CLOSED: leave ghAuthed false, inject nothing */
+  /* no gh / not authed / stalled → fall through to the Keyward tier */
+}
+if (!ghMode) {
+  try {
+    if (onPath('keyward')) ghMode = 'keyward';
+  } catch {
+    /* fail CLOSED: inject nothing */
+  }
 }
 
 const parts = [core];
 if (input.source === 'compact') parts.push(grounding);
-if (ghAuthed) parts.push(ghBlock);
+if (ghMode === 'plain') parts.push(ghBlock);
+else if (ghMode === 'keyward') parts.push(ghKeywardBlock);
 
 process.stdout.write(
   JSON.stringify({

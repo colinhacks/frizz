@@ -106,10 +106,13 @@ export interface LiveActivity {
    *  other way round from the two above: absent reads as "none known", so a caller holding no GitHub
    *  reading never refuses a park on a PR (parkWaitsOnThisSide). */
   idlePrs?: ReadonlySet<string>
+  /** CHILD THREADS this thread may still be waiting on, by slug (child-threads.ts liveChildThreads).
+   *  Optional like `issues`: absent reads as "none", which makes a `threads:` entry unaccounted. */
+  threads?: ReadonlySet<string>
 }
 
 const LIVE_SET: Record<AwaitingItemKind, keyof LiveActivity> = {
-  shell: "shells", agent: "agents", timer: "timers", pr: "prs", issue: "issues", command: "commands",
+  shell: "shells", agent: "agents", timer: "timers", pr: "prs", issue: "issues", command: "commands", thread: "threads",
 }
 
 /** One shell or sub-agent as the fold reports it — the handles it answers to and whether it still runs. */
@@ -140,6 +143,7 @@ export function liveActivityOf(
   registeredIssueWatches: ReadonlySet<string> = new Set(),
   armedCommandWatches: ReadonlySet<string> = new Set(),
   idlePrs?: ReadonlySet<string>,
+  liveChildThreads: ReadonlySet<string> = new Set(),
 ): LiveActivity {
   const shells = new Set<string>()
   for (const sh of tele?.bgShells ?? []) {
@@ -151,7 +155,7 @@ export function liveActivityOf(
     if (a.state !== "running") continue
     for (const h of [a.taskId, a.id, a.label]) if (h) agents.add(h)
   }
-  return { shells, agents, timers: armedTimerIds, prs: registeredPrWatches, issues: registeredIssueWatches, commands: armedCommandWatches, ...(idlePrs ? { idlePrs } : {}) }
+  return { shells, agents, timers: armedTimerIds, prs: registeredPrWatches, issues: registeredIssueWatches, commands: armedCommandWatches, threads: liveChildThreads, ...(idlePrs ? { idlePrs } : {}) }
 }
 
 /** The items this fence names that frizz CANNOT account for — dead, unknown, or another thread's.
