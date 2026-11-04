@@ -1,16 +1,49 @@
 ---
 name: gh
-description: The gh-CLI playbook for a frizz worker signed into GitHub (invoke as frizz:gh). Load this whenever your effort touches GitHub — reading or triaging an issue or PR, reviewing a diff, checking CI/release status, or searching issues/PRs — to use `gh` eagerly and correctly: the read-vs-write boundary (never comment/label/close/merge unless the human asks), concrete read recipes, and active Monitor/background-Bash CI/PR watches. Only meaningful when you are signed in (`gh auth status --active` exit 0); the session-seed hook injects a pointer here when you are.
-version: 0.1.2
+description: The gh-CLI playbook for a frizz worker that can reach GitHub (invoke as frizz:gh). Load this whenever your effort touches GitHub — reading or triaging an issue or PR, reviewing a diff, checking CI/release status, or searching issues/PRs — to use `gh` eagerly and correctly, either signed in directly or through Keyward (`keyward --reason "…" -- gh …`): the read-vs-write boundary (never comment/label/close/merge unless the human asks), concrete read recipes, Keyward's failure lines and what to do on each, and waiting on CI and reviews with `frizzctl watch-pr add` / `watch-issue add`. The session-seed hook injects a pointer here when plain `gh` is signed in (`⟦gh available⟧`) or when it is signed out and `keyward` is on PATH (`⟦gh available through Keyward⟧`).
+version: 0.2.0
 metadata:
   internal: true
 ---
 
 # frizz:gh — the gh-CLI playbook
 
-You are a **frizz worker** and you are **signed into the `gh` CLI in a GitHub repo** (the session-seed hook confirmed `gh auth status --active` before pointing you here). `gh` is the fastest path to issue / PR / CI / release context — reach for it before guessing, and prefer it over scraping the web UI or reasoning from memory.
+You are a **frizz worker in a GitHub repo, and `gh` can reach GitHub** — the session-seed hook checked before pointing you here. `gh` is the fastest path to issue / PR / CI / release context — reach for it before guessing, and prefer it over scraping the web UI or reasoning from memory.
 
-This skill is the full playbook the injected `⟦gh available⟧` block summarizes: the **read-vs-write boundary**, concrete **read recipes**, and how to keep a **CI/PR watch** active until the next actionable event.
+This skill is the full playbook the injected block summarizes: **which of two modes you are in**, the **read-vs-write boundary**, concrete **read recipes**, and how to **wait on CI and reviews** until the next actionable event.
+
+## Two modes: signed in, or through Keyward
+
+The injected block names your mode.
+
+- **`⟦gh available⟧` — plain `gh` is signed in.** Run the recipes below as written.
+- **`⟦gh available through Keyward⟧` — plain `gh` is signed OUT, by design.** Keyward is the human's Secure Enclave vault. It hands `gh` their token in `GH_TOKEN` for one run, and only for that run. Run **every** recipe below with this prefix:
+
+  ```bash
+  keyward --reason "<what this command is for, in a sentence>" -- gh issue view 123 -R OWNER/REPO --comments
+  ```
+
+  `gh` comes first after `--`, or right after a package runner (`npx`, `pnpm exec`, `nub exec`, `nubx`, `bunx`, `yarn dlx`, `npm exec`). The reason is shown on the human's Touch ID sheet, so write what they need to recognise the job; a run without `--reason` is refused before anything is asked. Otherwise the exit code is gh's own.
+
+### Working under Keyward
+
+- **One Touch ID covers this repository's gh runs for 10 minutes**, ending early when the screen locks or the Mac sleeps. Batch your gh reads into one burst (the issue, its comments, the linked PR, its checks) rather than spreading them across the task, so each burst costs the human one touch.
+- **Nothing is released while the screen is locked.** That includes the first run of a burst.
+- **Don't check sign-in with `gh auth status` or `gh auth token`.** Plain `gh` is signed out here, so `gh auth status` reports no account even when Keyward would release, and `gh auth token` / `gh auth login` outside Keyward are refused. The injected block already tells you which mode you are in; to find out whether a release works, run the read you need.
+- **Only `gh` itself is signed in.** `keyward -- node script.mjs` hands the script NOTHING, so a script that runs `gh` itself will not authenticate under Keyward. That includes the bundled `ci-watch.mjs` / `review-watch.mjs`. A form that hands a script the token, `keyward --reason "…" --token gh -- node <script>`, is PROVISIONAL and may change, and it asks for Touch ID on every run; use it only to run a repo script that has to call gh itself, never as a way to keep a monitor running.
+
+### What a refusal looks like
+
+Each of these is printed on stderr and exits 1:
+
+| stderr | What it means | What to do |
+| --- | --- | --- |
+| `keyward: not released: screen locked` (also `not at the console`, `screen state unreadable`) | Nobody is at the Mac to approve. | **Stop and report it to the human.** |
+| `keyward: not released: declined or authentication failed` | The human said no, or Touch ID failed. | **Stop and report it to the human.** |
+| `keyward: no gh sign-in for <repo> or globally: …` | Keyward holds no GitHub token for this repo. | Stop and report it; the human has to store one. |
+| a refusal naming the missing `--reason` | Nothing was asked; a reason is required. | Add `--reason "…"` and run it again. |
+
+**On any stderr line starting `keyward: not released:`, stop and report it to the human. Never retry.** A locked screen does not clear because you asked again, and a decline was the human's answer. Say which command you were trying to run and why, then carry on with whatever does not need GitHub, or come to rest saying what is blocked on it.
 
 ## The one hard rule — READ freely, WRITE only when asked
 
@@ -25,7 +58,7 @@ There is no server-side enforcement of this; the boundary is yours to hold.
 
 ## Read recipes
 
-Always scope with `-R OWNER/REPO` so a command is dir-independent, and prefer `--json <fields>` (+ `-q <jq>`) so you pull exactly what you need.
+Always scope with `-R OWNER/REPO` so a command is dir-independent, and prefer `--json <fields>` (+ `-q <jq>`) so you pull exactly what you need. The recipes are written as plain `gh`; under Keyward, prefix each with `keyward --reason "…" -- `, and run related ones back to back so one Touch ID covers them.
 
 **Issues**
 ```bash
@@ -89,10 +122,38 @@ gh api "repos/OWNER/REPO/issues?state=open&labels=bug&per_page=50" --jq '.[] | {
 ## Keep GitHub automation active
 
 CI, automated review, releases, merge queues, and already-authorized merge progression are work you
-can observe with `gh`; they do not earn an `awaiting` fence. Keep a live operation attached to the
-thread and continue when it reports.
+can observe; they do not earn a blind `awaiting` fence. Keep a live wait attached to the thread and
+continue when it reports.
 
-### Select monitor tooling explicitly
+### Wait on a PR or an issue with `frizzctl watch-pr` / `watch-issue`
+
+This is the way to wait on CI and reviews, in both modes:
+
+```bash
+frizzctl watch-pr add OWNER/REPO#NUMBER --for 6h       # your own PR; MONTHS (180d) for someone else's
+frizzctl watch-issue add OWNER/REPO#NUMBER --for 30d
+```
+
+Frizz's SERVER runs these watches on its own read-only GitHub credential. They need no `gh` sign-in
+from you, keep running while the screen is locked and across restarts, and cost no Touch ID. Register
+the PR, then rest with it in the fence's `prs:` list (`prs: [OWNER/REPO#NUMBER]`) and the same long
+`for:`: Frizz baselines current reviews/comments and wakes you on CI turning green or red and on ANY
+new review or comment after registration — bot or human. The registration creates the wait; the fence
+only declares it. A GitHub ISSUE — a reporter you asked for a reproduction, a maintainer you asked to
+triage — is `frizzctl watch-issue add`, named in the fence's `issues:` list: it wakes you on every later
+comment, on a label or assignee change, and when the issue closes. `frizzctl watch-pr --help` has the rest.
+
+If a specific external human reviewer/approver is the only remaining gate, that is a question for the
+human (a ` ```question ` fence) — waiting on a person is never a park. The dashboard operator's own
+go/no-go remains a registered question. If the next check deliberately belongs at a named wall-clock
+instant, set a durable timer with `frizzctl timer set` and park with its id in your fence's `timers:` list.
+
+### Watching inside a turn — only where plain `gh` is signed in
+
+Sometimes you want the verdict inside the turn you are in, not as a wake after a rest: a CI run you
+are about to read the logs of. That takes a session-bound monitor, and it needs a signed-in plain `gh`.
+**Under Keyward, don't: the monitors and a `gh run watch` loop cannot authenticate there.** Register
+`frizzctl watch-pr add` and rest instead.
 
 Before launching any CI/review monitor, inspect project-local `AGENTS.md`, active skills, repository
 docs, `package.json` scripts, and declared monitor tooling. Prefer an explicit project-local monitor
@@ -103,7 +164,7 @@ never execute a monitor merely because its filename looks plausible.
 
 When no project monitor is declared, the bundled fallback scripts are
 `<this-skill-dir>/scripts/ci-watch.mjs` and `review-watch.mjs`. They are generated byte-for-byte from
-Frizz's canonical `monitors/` source and require only Node plus logged-in `gh`. Their stdout is
+Frizz's canonical `monitors/` source and require only Node plus a signed-in plain `gh`. Their stdout is
 `frizz.github-monitor/v1` NDJSON: `status` means keep waiting; `terminal` is a verdict. They join
 exact-head workflow runs with PR checks, keeping `ACTION_REQUIRED` pending, and baseline every review
 and comment so any new one wakes — bot or human, with no actor
@@ -124,16 +185,8 @@ such as `push` and `pull_request` both contribute to the aggregate verdict.
 - A background Bash launch exposes an output-file path. Use `Read` on that path only for diagnostics;
   `TaskOutput` is deprecated. Do not fake waiting with `echo waiting` or sleep-only Bash calls.
 
-Both mechanisms are session-bound. If the next check deliberately belongs at a named wall-clock
-instant, set a durable timer with `frizzctl timer set` and park with its id in your fence's `timers:`
-list. If a specific external human reviewer/approver is the only remaining gate, that is a
-question for the human (a ` ```question ` fence) — waiting on a person is never a park. For a GitHub PR, register it with
-`frizzctl watch-pr add` and name it in the fence's `prs:` list (`prs: [OWNER/REPO#NUMBER]`): frizz
-baselines current reviews/comments and wakes on ANY new activity after registration — bot or human —
-durably across restarts. The registration creates the wait; the fence only declares it. For a GitHub ISSUE — a
-reporter you asked for a reproduction, a maintainer you asked to triage — register it with `frizzctl watch-issue add` and
-name it in the fence's `issues:` list (`issues: [OWNER/REPO#NUMBER]`): frizz wakes you on every later comment, on a label
-or assignee change, and when the issue closes. The dashboard operator's own go/no-go remains a registered question.
+Both mechanisms are session-bound: they die with the session, and a rest does not wait on them. A wait
+you rest on is `frizzctl watch-pr` / `watch-issue`.
 
 ## Fitting gh work into your thread type
 
