@@ -17,6 +17,7 @@ import { isRemoteSession } from "../api/signOut.ts"
 import { QuotaMeters } from "./QuotaBar.tsx"
 import { RestartFailureNotice, useUpdateRestart } from "./RestartFrizzButton.tsx"
 import { SignOutThisDeviceRow } from "./SignOutThisDeviceRow.tsx"
+import { GithubAccountField } from "./GithubAccountField.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { Select } from "./ui/Select.tsx"
 import { SettingsField } from "./SettingsField.tsx"
@@ -147,6 +148,12 @@ export function SettingsDrawer({ offerUpdate = false }: {
             <SettingsField label="Desktop notifications" help={SETTINGS_HELP.notifications}>
               <OnOffToggle value={draft.notifications} onChange={toggleNotifications} />
               {draft.notifications && <PermHint perm={perm} />}
+            </SettingsField>
+
+            {/* Frizz's OWN GitHub sign-in (machine-wide, read-only) — not a server Settings value, so it
+                reads and writes through its own RPCs rather than the draft. */}
+            <SettingsField label="GitHub" help={SETTINGS_HELP.github}>
+              <GithubAccountField />
             </SettingsField>
 
             {/* LAST, on purpose: which editor a vetted local path opens in is the one power-user

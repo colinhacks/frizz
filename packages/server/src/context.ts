@@ -197,7 +197,7 @@ export interface AppContext {
   // Durable timer scheduler (plus legacy pr/ci compatibility): resumes a rested `awaiting` session
   // on a witnessed transition. Human gates are descriptive. Started alongside the tailer; boot-safe.
   scheduler: Scheduler
-  // Can the server's own `gh` read this PR? Asked by addOwnPrWatch before it arms a watcher, so a PR
+  // Can Frizz's own GitHub credential read this PR? Asked by addOwnPrWatch before it arms a watcher, so a PR
   // the poll could never read is refused with the reason instead of armed in silence. Production wires
   // `probePrReadable` (one `gh pr view`); a test context injects its own answer.
   probePr: (ref: PrRef) => Promise<PrProbe>
@@ -296,7 +296,7 @@ export interface AppContext {
   audit?: AuditLog
   // GitHub detection (installed/inRepo/nameWithOwner) resolved ONCE at boot via initGithub() — stable
   // for the process lifetime. `authed` is NOT cached here; the githubStatus query re-checks it live so
-  // a mid-session `gh auth login` reflects immediately. Undefined until initGithub() resolves (the
+  // a mid-session sign-in from Settings reflects immediately. Undefined until initGithub() resolves (the
   // githubStatus handler falls back to a live detect during that ~30ms window). Kept OUT of the board
   // snapshot deliberately — no gh shell-out on every board delta.
   github?: GithubDetection

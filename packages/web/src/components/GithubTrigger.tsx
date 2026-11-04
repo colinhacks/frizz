@@ -16,9 +16,10 @@ export const GITHUB_PICKER_TITLE = "Start threads from issues and PRs"
 // picker) so their options can't drift apart.
 //
 // It deliberately overrides the app-wide `refetchOnWindowFocus: false` (main.tsx). This is the one
-// query whose answer changes OUTSIDE the app: the user leaves for a terminal, runs `gh auth login`,
-// and comes back. Nothing else re-asks — App's observer stays mounted for the life of the page, so
-// the cache entry never goes inactive — and with focus-refetch off the Prompt Box kept the page-load
+// query whose answer changes OUTSIDE this page: Frizz is signed in to GitHub from Settings in another
+// tab or device, and the user comes back (Settings in THIS tab invalidates it directly). Nothing else
+// re-asks — App's observer stays mounted for the life of the page, so the cache entry never goes
+// inactive — and with focus-refetch off the Prompt Box kept the page-load
 // answer FOREVER. Measured 2026-08-04 against a live stack: server flipped to authed:true, the icon
 // stayed absent for 15s and through focus/visibility events, and only a reload brought it back.
 // `staleTime` throttles the refetch so a burst of tab switches can't spawn a `gh` per switch.
@@ -35,7 +36,7 @@ export function useGithubStatus() {
     refetchOnWindowFocus: true,
     // A NO IS NEVER FINAL — re-ask on a slow interval until it turns yes, then stop.
     //
-    // Focus-refetch above covers "the user left, ran `gh auth login`, came back". It does NOT cover the
+    // Focus-refetch above covers "the user signed Frizz in elsewhere and came back". It does NOT cover the
     // answer going wrong on its own while the tab sits open, and every probe behind this query can do
     // exactly that: they are subprocesses, and `gh repo view` is a live call to api.github.com. On
     // 2026-08-11 the network to GitHub dropped for nine minutes, the answer flipped to inRepo:false, and
@@ -69,7 +70,7 @@ export function useGithubTriggerVisible(): boolean {
 // composer's send button (maintainer 2026-07-10: not a full-width pill). Renders ONLY when gh is authed
 // AND the project is a gh-resolvable GitHub repo — otherwise NOTHING (a hidden feature, not a disabled
 // control). `githubStatus` is shared with App's not-signed-in hint via the query cache (one fetch);
-// detection is cached server-side, `authed` re-checked live, so a later `gh auth login` surfaces it.
+// detection is cached server-side, `authed` re-checked live, so a later sign-in from Settings surfaces it.
 // No profile gating: the picker carries its own model/effort selector, so an unloaded or unavailable
 // saved pair is something to FIX in there, not a reason to refuse to open.
 //

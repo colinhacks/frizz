@@ -122,7 +122,7 @@ export interface GithubDetection {
 // it is safe to call at boot without wedging startup on a broken/absent gh. NOTE: `gh repo view`
 // needs auth, so a boot done while signed out caches inRepo:false — the router does NOT trust a
 // cached-negative inRepo and re-resolves live (see resolveRepo in router.ts) so a post-boot
-// `gh auth login` lights up the feature without a restart. A POSITIVE result is stable.
+// sign-in from Settings lights up the feature without a restart. A POSITIVE result is stable.
 export async function detectGithub(dir: string): Promise<GithubDetection> {
   const installed = await ghInstalled()
   if (!installed) return { installed: false, inRepo: false, nameWithOwner: null }

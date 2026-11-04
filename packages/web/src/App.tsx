@@ -33,7 +33,7 @@ let signInHintShown = false
 function maybeShowSignInHint() {
   if (signInHintShown) return
   signInHintShown = true
-  showToast("Sign in to the GitHub CLI (`gh auth login`) to dispatch from issues/PRs.", { duration: 6000 })
+  showToast("Sign Frizz in to GitHub in Settings to start threads from issues and PRs.", { duration: 6000 })
 }
 
 export function App() {
@@ -91,7 +91,7 @@ export function App() {
 
   // GitHub availability drives two things: the picker TRIGGER (in the sidebar / brand-new view, gated
   // in GithubTrigger off this same cached query) and — when the repo IS a GitHub repo but gh is NOT
-  // signed in — ONE subtle, self-fading hint on app open nudging the user to `gh auth login`. The hint
+  // signed in — ONE subtle, self-fading hint on app open pointing at Settings → GitHub (Frizz's own sign-in). The hint
   // fires at most once per page load (a module flag survives re-renders / StrictMode double-invoke),
   // stays a beat longer than a normal toast so it's readable, and never nags again.
   const github = useGithubStatus()

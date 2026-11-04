@@ -234,7 +234,7 @@ test("addOwnPrWatch: a PR the server's gh cannot read is refused with the reason
     h.storage.upsertSession(row("t"))
     await assert.rejects(
       () => h.router.addOwnPrWatch.handler({ input: { slug: "t", target: "acme/app#391", for: "2h" } }),
-      (err: Error) => /`acme\/app#391` cannot be watched/.test(err.message) && /Could not resolve to a Repository/.test(err.message) && /gh auth status/.test(err.message),
+      (err: Error) => /`acme\/app#391` cannot be watched/.test(err.message) && /Could not resolve to a Repository/.test(err.message) && /Settings → GitHub/.test(err.message),
     )
     assert.equal(h.storage.listPrWatches("t", { armedOnly: true }).length, 0)
   } finally { h.close() }
@@ -346,7 +346,7 @@ test("issue add: a probe failure refuses the watcher and says it was read as an 
     h.storage.upsertSession(row("t"))
     await assert.rejects(
       h.router.addOwnPrWatch.handler({ input: { slug: "t", target: "acme/app#7", for: "1d", kind: "issue" } }),
-      /cannot be watched as an issue — the server's `gh` could not read it: GraphQL: Could not resolve/,
+      /cannot be watched as an issue — Frizz could not read it: GraphQL: Could not resolve/,
     )
     assert.equal(h.storage.listPrWatches("t").length, 0)
   } finally {

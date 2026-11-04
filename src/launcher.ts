@@ -442,7 +442,8 @@ Options:
   --port <port>          request a fixed port for a new workspace server
   --sandbox              a disposable Frizz to try things in: throwaway home and project, its
                          own port, deleted when this terminal closes; credentials (Frizz's
-                         GitHub sign-in, cloudflared, Claude, Codex, the machine's frizz.sh key) are shared
+                         GitHub sign-in, cloudflared, Claude, Codex, the machine's frizz.sh
+                         key) are shared
   --link                 print a fresh single-use access link for the already-running board
   --sessions             list the devices holding a session on the already-running board
   --sign-out <id|all>    revoke one device's session, or every one of them

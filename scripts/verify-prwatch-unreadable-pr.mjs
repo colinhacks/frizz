@@ -9,7 +9,7 @@
 //   3. a watcher on it that somehow exists anyway (armed before this change) is now SAID: one status
 //      failure line on the first poll, the repeat suppressed on the next, and nothing armed or woken.
 //
-// Needs a signed-in `gh` (the control reads a public PR). Usage: nub scripts/verify-prwatch-unreadable-pr.mjs
+// Needs Frizz signed in to GitHub — a stored credential or FRIZZ_GITHUB_TOKEN (the control reads a public PR). Usage: nub scripts/verify-prwatch-unreadable-pr.mjs
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -23,7 +23,7 @@ const results = []
 const check = (name, ok, detail) => { results.push(ok); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`) }
 
 const root = mkdtempSync(join(tmpdir(), "verify-prwatch-unreadable-"))
-const storage = createStorage(join(root, "ui.db"))
+const storage = createStorage(join(root, "ui.db"), "p")
 const logs = []
 const telemetry = new Map()
 const tailer = { get: (slug) => telemetry.get(slug), subAgent: () => undefined, forget: () => {}, start: () => {}, stop: () => {}, tick: () => {} }
@@ -63,7 +63,7 @@ try {
   let refusal
   try { await router.addOwnPrWatch.handler({ input: { slug: "t", target: UNREADABLE, for: "1h" } }) } catch (err) { refusal = err }
   check("registration is REFUSED", !!refusal, refusal?.message?.slice(0, 160))
-  check("…naming the PR, the reason, and what to check", !!refusal && refusal.message.includes(UNREADABLE) && /gh auth status/.test(refusal.message) && /definitely-not-a-repo-xyz|Could not resolve/i.test(refusal.message))
+  check("…naming the PR, the reason, and what to check", !!refusal && refusal.message.includes(UNREADABLE) && /Settings → GitHub/.test(refusal.message) && /definitely-not-a-repo-xyz|Could not resolve/i.test(refusal.message))
   check("…and nothing was armed for it", storage.listPrWatches("t", { armedOnly: true }).every((w) => `${w.owner}/${w.repo}` !== "acme/definitely-not-a-repo-xyz"))
 
   // ---- 3. A PRE-EXISTING WATCHER ON IT IS SAID -------------------------------------------------------

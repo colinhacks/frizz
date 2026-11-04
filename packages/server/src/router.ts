@@ -2260,7 +2260,7 @@ export function createRouter(ctx: AppContext) {
   // Resolve the repo owner/name for a GitHub call. A POSITIVE boot cache short-circuits (stable, no
   // gh call — the common path). A null/absent cache is NOT trusted: it can be the boot race (cache not
   // resolved yet) OR an unauthed-at-boot detection (`gh repo view` needs auth), so fall back to a live
-  // ghRepo and WARM the cache on success — this makes a post-boot `gh auth login` light up the feature
+  // ghRepo and WARM the cache on success — this makes a post-boot sign-in from Settings light up the feature
   // without a server restart. Never throws (ghRepo swallows failures → null).
   // `installed` is boot-cached like the repo — and, like the repo, a cached NEGATIVE is not trusted.
   // A `gh --version` that timed out at boot (busy machine, cold keyring), or a gh installed after
@@ -3791,16 +3791,17 @@ export function createRouter(ctx: AppContext) {
         const forMs = Math.min(asked, PR_WATCH_FOR_MAX_MS)
         const clampedFrom = input.for !== undefined && asked > PR_WATCH_FOR_MAX_MS ? { clampedFrom: input.for } : {}
         // REFUSED IF THE SERVER CANNOT READ IT — the same rule as an unparseable ref, for the same
-        // reason: the poll runs the server's own `gh`, and a PR it cannot see (signed out, an SSO-gated
+        // reason: the poll runs on Frizz's own GitHub credential, and a PR it cannot see (signed out, an SSO-gated
         // org, no such repo, no `gh` on its PATH) is a watcher that fails every minute in silence while
         // the worker rests believing it is covered (a user's board, 2026-08-25: 12h+). Checked after the
         // idempotent short-circuit above, so a re-registration during a GitHub blip still answers.
         const probe = kind === "issue" ? await ctx.probeIssue(ref) : await ctx.probePr(ref)
         if (!probe.ok) {
           throw new Error(
-            `\`${target}\` cannot be watched as ${kind === "issue" ? "an issue" : "a pull request"} — the server's \`gh\` could not read it: ${probe.reason}. ` +
-            "Frizz polls with the `gh` of the process it runs as, not yours: check `gh auth status` there and that the repo is " +
-            "reachable, then register again. If GitHub itself was briefly down, registering again in a minute is enough.",
+            `\`${target}\` cannot be watched as ${kind === "issue" ? "an issue" : "a pull request"} — Frizz could not read it: ${probe.reason}. ` +
+            "Frizz polls with its OWN read-only GitHub sign-in (Settings → GitHub), not yours or the `gh` CLI's, so a private " +
+            "repo is readable only where that sign-in can see it. Check that, and that the repo exists, then register again. " +
+            "If GitHub itself was briefly down, registering again in a minute is enough.",
           )
         }
         const now = Date.now()

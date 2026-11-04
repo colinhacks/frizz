@@ -2,7 +2,7 @@
 // REAL-SUBSYSTEM VERIFICATION of the pr-watch wake steer.
 //
 // No stubbed GitHub. This drives the REAL scheduler with the REAL GraphQL fetcher (the maintainer's
-// own `gh` token, real HTTPS to api.github.com) and a REAL SQLite storage + wake outbox, against a
+// Frizz's own GitHub credential, real HTTPS to api.github.com) and a REAL SQLite storage + wake outbox, against a
 // REAL public PR — nubjs/nub#587, the exact thread whose wake started this. Its comment history is
 // the perfect fixture: TWO comments from the SAME author eight hours apart, which the old
 // actor-only steer ("New GitHub comment … from @colinhacks") could not tell apart, so the woken
@@ -10,7 +10,7 @@
 //
 //   node scripts/verify-pr-watch-steer.mjs
 //
-// Requires `gh auth status` to be green. Exits nonzero on any failed assertion.
+// Requires Frizz signed in to GitHub (a stored credential or FRIZZ_GITHUB_TOKEN). Exits nonzero on any failed assertion.
 
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -46,7 +46,7 @@ const asOf = (instant) => async (ref) => {
 async function run(label, { fenceAt, fetchGithubReview, ticks = [] }) {
   const home = mkdtempSync(join(tmpdir(), "frizz-prwatch-"))
   try {
-    const storage = createStorage(join(home, "ui.db"))
+    const storage = createStorage(join(home, "ui.db"), "p")
     const resumes = []
     const logs = []
     storage.upsertSession({
