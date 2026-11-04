@@ -6,12 +6,17 @@
 // included, because asking does not end the turn. A router call that must see the worker's newest fence
 // (`done`, `unask`) catches the tailer up and calls here first.
 //
-// ONE ROW PER ID, FOR THE LIFE OF THE THREAD. A new id registers; the same fence seen again (a refold
-// after a restart, a worker restating its question) finds its row and is a no-op; a DIFFERENT question on
-// a spent id, or the same one asked again after it settled, is refused. So replaying any amount of
-// transcript can never mint a second row, and a worker can never silently re-open a question the human
-// already answered. The check is a lookup rather than a constraint: Node is single-threaded and the
-// storage calls are synchronous, so nothing can interleave between the lookup and the insert.
+// AN ID NAMES ONE OPEN QUESTION AT A TIME. A new id registers; the same fence seen again (a refold after
+// a restart, a worker restating its question) finds its row and is a no-op; a DIFFERENT question on the id
+// of one still open is refused. Once a question is answered, withdrawn or dismissed its id is free again
+// (QUESTION_IDS_REUSABLE_FROM): a later message asking under it registers a NEW row, and the old row keeps
+// its own history. So the same id can name several rows over a thread's life, and every message resolves
+// its fences against the rows as they stood when it was WRITTEN (handleIndex's `upTo`) — the message that
+// asked the first question still names the first question, whatever has been asked under its id since.
+// Replaying any amount of transcript therefore never mints a second row for one message, and an answer the
+// human gave is never re-opened: a re-ask is a new question with a new card. The check is a lookup rather
+// than a constraint: Node is single-threaded and the storage calls are synchronous, so nothing can
+// interleave between the lookup and the insert.
 //
 // NOTHING IS INFERRED FROM PROSE. The id is explicit, the row is the lifecycle, and the row outlives the
 // message — which is the line between this and the two designs declined before it (plans/
@@ -46,6 +51,15 @@ import type { Storage, ThreadQuestionRow } from "./storage.ts"
 export const QUESTION_FENCES_REGISTER_FROM = "2026-10-13T20:00:00Z"
 const REGISTER_FROM_MS = Date.parse(QUESTION_FENCES_REGISTER_FROM)
 
+/** From this instant on, a settled question's id is free: a fence asking under the id of a question that
+ *  was answered, withdrawn or dismissed before it was written registers a new question. Before it an id was
+ *  spent for good — the contract said so, and a fence reusing one was refused and its worker corrected,
+ *  after which it typically asked again under a new id (`byo-store-next`, refused 2026-11-03, re-asked
+ *  4s later as `byo-store-after-d1`). Without this cutover a refold of such a transcript would register the
+ *  refused fence now, and put a second copy of an already re-asked question on the human's board. */
+export const QUESTION_IDS_REUSABLE_FROM = "2026-11-04T21:30:00Z"
+const IDS_REUSABLE_FROM_MS = Date.parse(QUESTION_IDS_REUSABLE_FROM)
+
 /** A refused fence written from this instant on is owed its correction until one reaches the worker,
  *  however much the human has typed since (scheduler SOURCE 14). One written before it keeps the old
  *  boundary, under which the human's next typed message dropped it untold: without this cutover the first
@@ -71,9 +85,9 @@ export interface QuestionFenceFault {
  *
  * WHY THE BOARD CARRIES IT. A refused fence registers no row, and the web draws a fence with no row as the
  * question it will become (a read-only card, for the second before the registrar reaches it). Without this
- * the two were indistinguishable: a fence reusing a spent id, a follow-up written after its parent was
- * answered, an `id:` naming nothing — each sat on the page as a card that looked askable for good, and a
- * reused id's fence moved the OLD question's card under the new prose (reported 2026-10-13).
+ * the two were indistinguishable: a fence reusing an open question's id, a follow-up written after its
+ * parent was answered, an `id:` naming nothing — each sat on the page as a card that looked askable for
+ * good, and a reused id's fence moved the OLD question's card under the new prose (reported 2026-10-13).
  *
  * In memory on purpose: a restart refolds the transcript and the first sync rebuilds it.
  */
@@ -108,15 +122,30 @@ export interface QuestionFenceSync {
   refs: { at: string; rowId: string }[]
 }
 
-/** Every handle a thread has spent, each pointing at the ROOT row that spent it, plus every row by its
- *  minted id so a `qst_…` reference resolves too. */
-function handleIndex(rows: readonly ThreadQuestionRow[]): Map<string, ThreadQuestionRow> {
+/** Every name a row answers to, lowercased: its minted id (so a `qst_…` reference resolves), its root
+ *  handle and every handle in its tree. Read through `cache`, keyed by the stored spec, so a pass that
+ *  indexes the same rows once per message parses each spec once (and a tree that grew is read afresh). */
+function rowNames(row: ThreadQuestionRow, cache: Map<string, string[]>): string[] {
+  let handles = cache.get(row.spec)
+  if (!handles) {
+    const spec = parseSpec(row.spec)
+    handles = spec ? questionHandles(spec).map((h) => h.toLowerCase()) : []
+    cache.set(row.spec, handles)
+  }
+  return [row.id.toLowerCase(), ...(row.handle ? [row.handle.toLowerCase()] : []), ...handles]
+}
+
+/** Every name the thread's rows answer to, each pointing at the ROOT row carrying it — as of `upTo`: only
+ *  rows asked at or before that instant, and where several carry one name (an id asked again once its
+ *  question settled), the one asked LAST. */
+function handleIndex(rows: readonly ThreadQuestionRow[], upTo = Number.POSITIVE_INFINITY, cache = new Map<string, string[]>()): Map<string, ThreadQuestionRow> {
   const index = new Map<string, ThreadQuestionRow>()
   for (const row of rows) {
-    index.set(row.id.toLowerCase(), row)
-    if (row.handle) index.set(row.handle.toLowerCase(), row)
-    const spec = parseSpec(row.spec)
-    for (const h of spec ? questionHandles(spec) : []) index.set(h.toLowerCase(), row)
+    if (row.asked_at > upTo) continue
+    for (const name of rowNames(row, cache)) {
+      const known = index.get(name)
+      if (!known || known.asked_at <= row.asked_at) index.set(name, row)
+    }
   }
   return index
 }
@@ -202,7 +231,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
   const out: QuestionFenceSync = { registered: [], cancelled: [], attached: [], faults: [], refs: [] }
   if (!input.sightings?.length || questionFencesLive(input.spawnedAt)) return out
   const rows = storage.listThreadQuestions(input.slug)
-  const index = handleIndex(rows)
+  const names = new Map<string, string[]>()
   // The newest instant each id was written as a question that HELD — registered, attached, or restated
   // as it stands. A fault on that id from an earlier message has been fixed by the worker itself.
   const heldAt = new Map<string, number>()
@@ -220,6 +249,11 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
     const atMs = Date.parse(sighting.at)
     if (!Number.isFinite(atMs) || atMs < REGISTER_FROM_MS) continue
     const at = sighting.at
+    // THE ROWS AS THIS MESSAGE SAW THEM: an id resolves to the newest question asked under it at or before
+    // this instant, never one asked under it since (see the header). Rebuilt per message from `rows`, which
+    // this pass extends as it registers, so a later message sees what an earlier one asked.
+    const index = handleIndex(rows, atMs, names)
+    const reusable = atMs >= IDS_REUSABLE_FROM_MS
     const assembled = assembleQuestionFences(questionFenceBlocks(sighting.text).map((b) => b.read))
     const fault = (id: string, text: string) => out.faults.push({ at, id, faults: [text] })
     /** Refuse a fence and name every fence riding under it, so none is missing from the correction. */
@@ -230,12 +264,23 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
     const held = (spec: AskedQuestion) => {
       for (const h of questionHandles(spec)) heldAt.set(h, Math.max(heldAt.get(h) ?? 0, atMs))
     }
-    const usedFault = (handle: string) => `\`id: ${handle}\` is already used by a different question on this thread — choose a new id (an id is never reused, even once its question is settled)`
     // Was the row settled BEFORE this message was written? A message from while it was still open is a
     // restatement of an open question whatever has happened since — a refold after the human answered
     // must not turn it into a re-ask and correct the worker for it.
     // (Never the message that ASKED it: nothing is settled before it exists, whatever two clocks say.)
     const settledBefore = (row: ThreadQuestionRow) => row.state !== "open" && row.asked_at !== atMs && (row.settled_at ?? 0) < atMs
+    /** Is this id taken at this message: by a question still open when it was written — or, in a message
+     *  from before settled ids were reusable, by any question at all? */
+    const taken = (handle: string): boolean => {
+      const row = index.get(handle.toLowerCase())
+      return row !== undefined && (!reusable || !settledBefore(row))
+    }
+    const usedFault = (handle: string) => {
+      const row = index.get(handle.toLowerCase())
+      return row && settledBefore(row)
+        ? `\`id: ${handle}\` was already used by a different question on this thread — this fence was written before a settled question's id could be asked again; ask it again in a new message if you still need an answer`
+        : `\`id: ${handle}\` is already used by a different question on this thread that is still open — choose a new id, or reference that one with \`id: ${handle}\` alone (an id is free again once its question is answered, withdrawn or dismissed)`
+    }
     const ref = (row: ThreadQuestionRow) => out.refs.push({ at, rowId: row.id })
 
     // THE MESSAGE THAT REGISTERED A QUESTION IS NEVER JUDGED AGAINST IT AGAIN. A row's `asked_at` is its
@@ -275,7 +320,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
       ...(node.options ? {
         options: node.options.map((o): AskedOption => {
           const kept = (o.followUps ?? []).filter((child) => {
-            if (!child.handle || !index.has(child.handle.toLowerCase())) return true
+            if (!child.handle || !taken(child.handle)) return true
             refuse(child, child.handle, usedFault(child.handle))
             return false
           }).map(pruned)
@@ -299,7 +344,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
         }
         return
       }
-      if (index.has(id.toLowerCase())) return void refuse(child, id, usedFault(id))
+      if (taken(id)) return void refuse(child, id, usedFault(id))
       const subtree = pruned(child)
       if (level + askedQuestionDepth(subtree) > ASK_MAX_DEPTH) {
         return void refuse(child, id, `it would reach level ${level + askedQuestionDepth(subtree)} under \`${entry.row.handle ?? entry.row.id}\`, and follow-ups go ${ASK_MAX_DEPTH} levels deep at most — past that you are asking the human to fill in a form; ask it as its own question, without the \`when:\` line, or decide it yourself`)
@@ -311,15 +356,20 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
     }
 
     for (const ask of assembled.asks) {
-      const spent = questionHandles(ask.spec).map((h) => [h, index.get(h.toLowerCase())] as const).find(([, row]) => row)
-      const rootRow = index.get(ask.id)
+      const spent = questionHandles(ask.spec).some((h) => h !== ask.id && taken(h))
+      // A SETTLED QUESTION'S ID IS FREE AGAIN. Answered, withdrawn or dismissed before this message was
+      // written, the old row keeps its history — its own fence still draws it, answered or closed — and
+      // this fence asks a NEW question under the id, whether it words the old one again or asks another.
+      const named = index.get(ask.id)
+      const rootRow = named && reusable && settledBefore(named) ? undefined : named
       if (rootRow) {
         const entry = treeOf(rootRow)
         const same = rootRow.handle === ask.id && entry !== undefined && (sameNode(entry.root, ask.spec) || rootRow.asked_at === atMs)
         if (!same) {
           refuse(ask.spec, ask.id, usedFault(ask.id))
         } else if (settledBefore(rootRow)) {
-          fault(ask.id, `\`${ask.id}\` was already asked and ${SETTLED_WORD[rootRow.state]} — an id is never reused; ask again under a new id if you still need an answer`)
+          // (Only a message from before QUESTION_IDS_REUSABLE_FROM gets here: from then on a settled id is free.)
+          fault(ask.id, `\`${ask.id}\` was already asked and ${SETTLED_WORD[rootRow.state]} — this fence was written before a settled question's id could be asked again; ask it again in a new message if you still need an answer`)
           // …and a branch written under it has nothing to hang from, which is its own news.
           for (const o of ask.spec.options ?? []) {
             for (const child of o.followUps ?? []) {
@@ -415,7 +465,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
       }
       const row = index.get(f.parent)
       if (!row) {
-        refuse(f.spec, f.id, index.has(f.id) ? usedFault(f.id) : `\`when: ${f.parent} = ${f.option}\` names \`${f.parent}\`, which is neither a question in this message nor an open question of this thread — a follow-up hangs off a question that is still waiting for its answer; to ask this on its own, drop the \`when:\` line`)
+        refuse(f.spec, f.id, taken(f.id) ? usedFault(f.id) : `\`when: ${f.parent} = ${f.option}\` names \`${f.parent}\`, which is neither a question in this message nor an open question of this thread — a follow-up hangs off a question that is still waiting for its answer; to ask this on its own, drop the \`when:\` line`)
         continue
       }
       const entry = treeOf(row)
@@ -427,7 +477,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
         // itself written again; anything else is a second question on a spent id.
         const inPlace = option?.followUps?.some((x) => x === already.node) && sameNode(already.node, f.spec)
         if (!inPlace) refuse(f.spec, f.id, usedFault(f.id))
-        else if (settledBefore(row)) refuse(f.spec, f.id, `\`${f.id}\` was already asked and ${SETTLED_WORD[row.state]} with the question it follows — an id is never reused; ask again under a new id, without the \`when:\` line, if you still need an answer`)
+        else if (settledBefore(row)) refuse(f.spec, f.id, `\`${f.id}\` was already asked and ${SETTLED_WORD[row.state]} with the question it follows, so there is no open question to hang it from — ask it as its own question, without the \`when:\` line, if you still need an answer`)
         else {
           ref(row)
           if (row.state === "open" && entry && option && target) grow(entry, option, target.level, f.spec)
@@ -435,7 +485,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
         }
         continue
       }
-      if (index.has(f.id)) {
+      if (taken(f.id)) {
         refuse(f.spec, f.id, usedFault(f.id))
         continue
       }
@@ -504,9 +554,9 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
       // One the worker WITHDREW, or the human DISMISSED, is different: the worker is still waiting on an
       // answer nobody is going to give, and has to be told.
       else if (row.state === "withdrawn") {
-        fault(id, `\`${id}\` is a question you withdrew, so there is nothing left to reference and the human is not being asked — if you still need it answered, ask it again under a new id`)
+        fault(id, `\`${id}\` is a question you withdrew, so there is nothing left to reference and the human is not being asked — if you still need it answered, ask it again: write the whole fence, under this id or a new one`)
       } else {
-        fault(id, `\`${id}\` was dismissed by the human without an answer, so there is nothing left to reference and no answer is coming — decide it yourself, or ask it again under a new id if the work cannot go on without one`)
+        fault(id, `\`${id}\` was dismissed by the human without an answer, so there is nothing left to reference and no answer is coming — decide it yourself, or ask it again with the whole fence if the work cannot go on without one`)
       }
     }
   }
@@ -561,10 +611,13 @@ export function standingQuestions(
   const from = tele?.restFromAt ?? tele?.lastUserAt
   const restFrom = from ? Date.parse(from) : Number.NEGATIVE_INFINITY
   const named = new Set<string>()
-  const index = handleIndex(rows)
+  const cache = new Map<string, string[]>()
   const refused = new Set((faults ?? []).flatMap((f) => (f.id ? [`${f.at}\n${f.id.toLowerCase()}`] : [])))
   for (const sighting of tele?.questionSightings ?? []) {
-    if (!(Date.parse(sighting.at) > restFrom)) continue
+    const atMs = Date.parse(sighting.at)
+    if (!(atMs > restFrom)) continue
+    // A fence names the question its id meant WHEN IT WAS WRITTEN — an id asked again since names a newer one.
+    const index = handleIndex(rows, atMs, cache)
     for (const b of questionFenceBlocks(sighting.text)) {
       if (b.read.form === "invalid") continue
       if (refused.has(`${sighting.at}\n${b.read.id.toLowerCase()}`)) continue
@@ -573,6 +626,8 @@ export function standingQuestions(
     }
   }
   if (tele?.lastFence?.kind === "awaiting") {
+    // The newest rest's own fence: each name it lists means the newest question under it.
+    const index = handleIndex(rows, Number.POSITIVE_INFINITY, cache)
     for (const id of awaitingQuestions(tele.lastFence.hints)) {
       const row = index.get(id)
       if (row) named.add(row.id)

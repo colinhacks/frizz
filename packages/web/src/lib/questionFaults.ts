@@ -34,7 +34,7 @@
 // turned into a code block for those frames and its card jumped out of the prose and back.
 import type { AskedQuestion, QuestionFenceFaultView } from "@frizz/shared"
 import { mayHoldQuestionFence, questionFenceBlocks } from "@frizz/shared"
-import { resolveQuestionName } from "./questionShadow.ts"
+import { questionNames } from "./questionShadow.ts"
 
 export interface FaultMessage {
   role: string
@@ -108,8 +108,8 @@ export function refusalsByMessage(
     const id = fault.id.toLowerCase()
     const at = messageIndexAt(messages, Date.parse(fault.at))
     if (at < 0 || !fenceIdsOf(at).has(id)) continue
-    const row = resolveQuestionName(id, rows)
-    if (row && messageIndexAt(messages, Date.parse(row.askedAt)) === at) continue
+    // (Any row carrying the name: an id asked again once its question settled has one row per asking.)
+    if (rows.some((row) => questionNames(row).includes(id) && messageIndexAt(messages, Date.parse(row.askedAt)) === at)) continue
     let reasons = out.get(at)
     if (!reasons) out.set(at, (reasons = new Map()))
     reasons.set(id, [...(reasons.get(id) ?? []), ...fault.faults])

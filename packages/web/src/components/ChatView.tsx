@@ -3698,7 +3698,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         }
         // …except a refused `id:`-only REFERENCE, which says what it pointed at instead.
         if (seg.kind === "refusedRef") {
-          const closed = resolveQuestionName(seg.id, fenceQuestions ?? [])?.closed
+          const closed = resolveQuestionName(seg.id, fenceQuestions ?? [], m.questionOwners)?.closed
           push(<RefusedQuestionReference key={`${keyBase}-${fi}-r${si}`} id={seg.id} closed={closed} />)
           continue
         }
@@ -3731,7 +3731,9 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
           // the row carries the new branch, the parent's card simply draws here without it.
           const followsUp = seg.fence.form === "ask" ? seg.fence.when : undefined
           if (followsUp && !followUpParents().has(followsUp.parent.toLowerCase())) continue
-          const row = resolveQuestionName(followsUp ? followsUp.parent : seg.fence.id, fenceQuestions ?? [])
+          // By the row the name meant IN THIS MESSAGE: an id asked again once its question settled names a
+          // newer row, and this message's fence still draws the one it asked (lib/questionOwners).
+          const row = resolveQuestionName(followsUp ? followsUp.parent : seg.fence.id, fenceQuestions ?? [], m.questionOwners)
           if (row?.closed) {
             // CLOSED WITHOUT AN ANSWER — dismissed or withdrawn. The fence that asked it draws the question
             // closed, saying which (ClosedQuestionCard); a follow-up or a reference to it draws nothing.

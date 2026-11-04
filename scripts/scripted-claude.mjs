@@ -228,7 +228,8 @@ const FENCES = {
 }
 // `ending=question` / `reply=question`. Until 2026-10-13 these ran the `ask` command mid-turn; that command
 // is retired (it exits 2 and registers nothing), and a worker asks by writing the fence. The id carries
-// the turn's number because an id is never reused on a thread, and `reply=question` asks at every turn.
+// the turn's number because an id names one open question at a time, and `reply=question` asks at every
+// turn, whether or not the last turn's question has been answered.
 const questionFence = (turn) => [
   "```question",
   `id: publish-release-${turn}`,

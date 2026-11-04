@@ -11,7 +11,7 @@
 //   3. `done` in the same breath as a new fence is refused and names that fence's id — the gate catches
 //      the registrar up rather than judging a transcript a second stale.
 //   4. `unask` takes the worker's own id; the card's `answerQuestions` settles the row by its `qst_…`.
-//   5. A settled id asked again with a different question is refused — ids are never reused.
+//   5. A settled id asked again registers a NEW question, and the answered one under it keeps its answer.
 //   6. A thread dispatched before 2026-09-11 keeps the legacy grammar: the same fence registers nothing.
 //   7. A follow-up whose `when:` named the wrong label is refused without taking its parent down, and the
 //      corrected follow-up — written ALONE in a later message — attaches under the open parent's option,
@@ -208,15 +208,19 @@ const afterAnswer = await until("the board to drop the answered card", async () 
 })
 check("no open question left on the board", afterAnswer.questions.length === 0)
 
-// ---- 5: a settled id is never reused ------------------------------------------------------------------
+// ---- 5: a settled id is free again ---------------------------------------------------------------------
 
 live.user("thanks")
-live.say(["Switching to the JSON file.", "", "```question", "id: settings-store", "kind: text", "question: Which directory should the JSON file live in?", "```"].join("\n"))
-await sleep(2500)
-const reuse = await threadOf("qf-live")
-check("asking a settled id again registers nothing", reuse.questions.length === 0, `${reuse.questions.length} open`)
-const rows = execFileSync("sqlite3", [db, `SELECT count(*) FROM thread_question WHERE thread_slug = 'qf-live'`]).toString().trim()
-check("…and writes no row (settings-store + npm-scope only)", rows === "2", `${rows} rows`)
+const reaskedAt = live.say(["Switching to the JSON file.", "", "```question", "id: settings-store", "kind: text", "question: Which directory should the JSON file live in?", "```"].join("\n"))
+const reuse = await until("the re-asked settings-store on the board", async () => {
+  const t = await threadOf("qf-live")
+  return t?.questions?.length === 1 ? t : undefined
+})
+const reasked = reuse.questions[0]
+check("asking a settled id again registers a NEW question", reasked.id !== q.id && reasked.spec.handle === "settings-store" && reasked.spec.question === "Which directory should the JSON file live in?", reasked.id)
+check("…asked at its own message's instant", reasked.askedAt === reaskedAt, `${reasked.askedAt} vs ${reaskedAt}`)
+const rows = execFileSync("sqlite3", [db, `SELECT state FROM thread_question WHERE thread_slug = 'qf-live' AND handle = 'settings-store' ORDER BY asked_at`]).toString().trim()
+check("…beside the answered one, which keeps its answer", rows === "answered\nopen", rows.replace(/\n/g, ", "))
 
 // ---- 6: a legacy thread keeps its grammar -------------------------------------------------------------
 

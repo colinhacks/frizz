@@ -175,8 +175,10 @@ export type BrokerLivenessSnapshot = ((sessionId: string) => boolean) & {
  *                       has to start under a new process. See the bridge's retireDaemon.
  *   - `fresh-process` — a usage-limit resume; the latched `claude` would refuse the message.
  *   - `hibernate`     — the thread has rested past the idle threshold and its memory was reclaimed.
- *                       See thread-hibernation.ts. */
-export type BrokerRetirementReason = "retire" | "fresh-process" | "hibernate"
+ *                       See thread-hibernation.ts.
+ *   - `relocate`      — Frizz renamed the project's folder; the daemon was started in the old one and
+ *                       is retired at rest so it resumes in the new one. See project-relocation.ts. */
+export type BrokerRetirementReason = "retire" | "fresh-process" | "hibernate" | "relocate"
 
 /** The breadcrumb one intentional teardown leaves for the cold resume that follows it. */
 export interface BrokerRetirementMark {

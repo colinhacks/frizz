@@ -49,6 +49,9 @@ export interface AnchorMessage {
   /** The ids of this message's question fences the server REFUSED (lib/questionFaults): they name no
    *  question, so they neither claim a card nor place one. */
   refusedFences?: ReadonlySet<string>
+  /** For a name several rows carry (a settled id asked again), the row it meant in this message
+   *  (lib/questionOwners): the claim is that row's alone. */
+  questionOwners?: ReadonlyMap<string, string>
 }
 
 /** A real human turn — a typed reply or one of frizz's own deliveries, which land as user records and
@@ -109,23 +112,32 @@ export function questionClaims(messages: readonly AnchorMessage[]): Map<string, 
   const claims = new Map<string, number>()
   messages.forEach((m, i) => {
     if (m.role !== "assistant" || !m.text) return
+    // A name this message records as meaning one row of several is that row's claim alone (ownedClaim).
+    const claim = (name: string) => {
+      const owner = m.questionOwners?.get(name)
+      claims.set(owner === undefined ? name : ownedClaim(name, owner), i)
+    }
     if (m.text.includes("```awaiting")) {
       for (const seg of splitFenceBlocks(m.text)) {
         if (seg.kind !== "fence" || seg.fenceKind !== "awaiting") continue
-        for (const id of awaitingQuestions(seg.hints)) claims.set(id.toLowerCase(), i)
+        for (const id of awaitingQuestions(seg.hints)) claim(id.toLowerCase())
       }
     }
-    for (const id of questionFenceIdsIn(m.text, m.refusedFences)) claims.set(id, i)
+    for (const id of questionFenceIdsIn(m.text, m.refusedFences)) claim(id)
   })
   return claims
 }
+
+const ownedClaim = (name: string, rowId: string) => `${name}\u0000${rowId}`
 
 /** The newest claim on this question under any of its names — its row id or a handle in its tree. */
 function claimOf(claims: ReadonlyMap<string, number>, q: { id?: string; spec?: AskedQuestion }): number | undefined {
   let newest: number | undefined
   const take = (name: string) => {
-    const at = claims.get(name.toLowerCase())
-    if (at !== undefined && (newest === undefined || at > newest)) newest = at
+    for (const key of q.id ? [name.toLowerCase(), ownedClaim(name.toLowerCase(), q.id)] : [name.toLowerCase()]) {
+      const at = claims.get(key)
+      if (at !== undefined && (newest === undefined || at > newest)) newest = at
+    }
   }
   if (q.id) take(q.id)
   if (q.spec) for (const h of questionHandles(q.spec)) take(h)

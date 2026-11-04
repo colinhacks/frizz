@@ -188,8 +188,10 @@ export function fenceStandsFor<Q extends Pick<RegisteredQuestionView, "id" | "sp
 // A row answers to its minted id (`qst_…`, what a legacy marker and an `id: qst_…` reference write) and,
 // when a ```question fence registered it, to every HANDLE in its tree — the worker's own id on the root and
 // on each follow-up (shared questionHandles). A follow-up's handle names the ROOT: the follow-up has no
-// card of its own, it opens inside its parent's. Handles are unique in a thread for good (the server
-// refuses a reuse), so a name resolves to one row however many are open or settled.
+// card of its own, it opens inside its parent's. A handle names one OPEN row at a time, but a settled
+// question's id may be asked again (server question-fences.ts), so a name can belong to several rows over a
+// thread's life. A message that mentions such a name carries which row it meant there (`questionOwners`,
+// lib/questionOwners), and every reader below resolves through it.
 
 /** Every name this row answers to, lowercased. (`handle` alone, for a row known only by it — a question
  *  that closed without an answer, which the board lists without its tree.) */
@@ -200,10 +202,23 @@ export function questionNames(q: { id: string; spec?: AskedQuestion; handle?: st
   return names
 }
 
-/** The row a fence's id names — by minted id or by any handle in its tree — or undefined. */
-export function resolveQuestionName<Q extends { id: string; spec?: AskedQuestion; handle?: string }>(name: string, rows: readonly Q[]): Q | undefined {
+/** The row a fence's id names — by minted id or by any handle in its tree — or undefined. `owners` is the
+ *  message's own reading of a name several rows carry (lib/questionOwners); without one, the first match. */
+export function resolveQuestionName<Q extends { id: string; spec?: AskedQuestion; handle?: string }>(name: string, rows: readonly Q[], owners?: ReadonlyMap<string, string>): Q | undefined {
   const n = name.toLowerCase()
+  const owner = owners?.get(n)
+  if (owner !== undefined) {
+    const row = rows.find((q) => q.id === owner)
+    if (row) return row
+  }
   return rows.find((q) => questionNames(q).includes(n))
+}
+
+/** Does `name`, written in this message, mean question `id`? Always, unless the message records that the
+ *  name meant another row there (a settled id asked again — lib/questionOwners). */
+export function nameMeans(m: { questionOwners?: ReadonlyMap<string, string> }, name: string, id: string): boolean {
+  const owner = m.questionOwners?.get(name)
+  return owner === undefined || owner === id
 }
 
 /** Every name a message PLACES, lowercased, in order: its legacy empty markers' `qst_…` ids, and the ids
@@ -260,7 +275,7 @@ export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { 
       let placedAt = -1
       for (let i = restStart(messages, anchor); i < messages.length; i++) {
         if (isTurn(messages[i])) continue
-        if (markersOf(i).some((n) => names.includes(n))) placedAt = i
+        if (markersOf(i).some((n) => names.includes(n) && nameMeans(messages[i], n, q.id))) placedAt = i
       }
       if (placedAt < 0) continue
       const at = placed.get(placedAt)

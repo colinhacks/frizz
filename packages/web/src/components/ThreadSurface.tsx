@@ -19,7 +19,7 @@ import { stepsDoneReplies } from "../lib/stepsAnswer.ts"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
-import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useRefusedFences, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 
 // THE THREAD SURFACE — the one shell around a thread, wherever it is drawn. A thread is drawn in three
 // places: its queue card (TodosView's QueueCard), its drawer and its full-screen page (both ChatView).
@@ -79,7 +79,8 @@ export interface ThreadSurfaceSource {
  *      read off first, as `transcriptShells` (lib/transcriptShells);
  *   3. the registered questions it draws: an open one once the message that asked it has arrived
  *      (useArrivedQuestions), an answered one where its card stood (useSettledQuestions);
- *   4. with every question fence the server refused marked on its message (useRefusedFences).
+ *   4. with every question fence the server refused marked on its message (useRefusedFences), and every
+ *      id the thread asked more than once resolved to the row it meant in each message (useQuestionOwners).
  *
  *  What a surface does on top of this is its own: the queue card freezes the list it loaded while it
  *  leaves (before this), and the thread view draws a send that ends a rest where it will land (after). */
@@ -97,7 +98,8 @@ export function useThreadMessages(thread: ThreadView | undefined, loaded: ChatMe
   const transcriptShells = useMemo(() => transcriptBackgroundShells(held), [held])
   const shown = useMemo(() => withoutLiveTranscriptBackgroundTools(held), [held])
   const openQuestions = useArrivedQuestions(boardQuestions, held)
-  const messages = useRefusedFences(shown, thread, openQuestions, settledQuestions)
+  const refused = useRefusedFences(shown, thread, openQuestions, settledQuestions)
+  const messages = useQuestionOwners(refused, thread, openQuestions, settledQuestions)
   return { messages, openQuestions, settledQuestions, transcriptShells }
 }
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { slugify } from "@frizz/shared"
@@ -713,6 +713,19 @@ export function renameProject(
   return entry
 }
 
+function isSymlink(path: string): boolean {
+  try { return lstatSync(path).isSymbolicLink() } catch { return false }
+}
+
+/** Whether `link` is a symlink that leads to `dir`. Anything else at that path is not Frizz's to touch. */
+export function isLinkTo(link: string, dir: string): boolean {
+  try {
+    return isSymlink(link) && realpathSync(link) === realpathSync(dir)
+  } catch {
+    return false
+  }
+}
+
 /**
  * Rename a project's DIRECTORY to a sibling basename, and re-register it there.
  *
@@ -735,7 +748,10 @@ export function moveProjectDirectory(id: string, newBasename: string, home = hom
   if (!existsSync(entry.path)) throw new Error(`The folder is missing: ${entry.path}`)
   const target = join(dirname(entry.path), name)
   if (target === entry.path) return entry
-  if (existsSync(target)) throw new Error(`Something already exists at ${target}`)
+  // A symlink that leads to this very folder is the one an earlier rename left for its workers
+  // (project-relocation.ts), so renaming back takes its place rather than being refused by it.
+  if (isLinkTo(target, entry.path)) unlinkSync(target)
+  if (existsSync(target) || isSymlink(target)) throw new Error(`Something already exists at ${target}`)
   renameSync(entry.path, target)
   const moved = registerProject({ dir: target, id }, home)
   // The old path is gone, so this can only be "moved"; anything else means the registry changed under

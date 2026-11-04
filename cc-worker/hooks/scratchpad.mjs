@@ -54,7 +54,7 @@
 // tried and REMOVED on 2026-07-02 (maintainer's call): the block-until-file-edited nag forced even
 // trivial workers into Read/Edit dances that render as noise in the chat UI. This nudges; it never
 // blocks.
-import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { currentSessionId } from '../scripts/frizz/config.mjs';
 
@@ -159,6 +159,13 @@ if (mode === 'subagent-start') {
   }));
   process.exit(0);
 }
+
+// Claude Code fixes CLAUDE_PROJECT_DIR when the session starts, so it still names the old path after
+// the project's folder is renamed. Writing there would `mkdir -p` an empty stub of the old folder, and
+// Claude Code then moves the session's working directory into that stub. A folder that has gone gets
+// nothing: Frizz leaves a link at the old path while a worker from before the rename runs, and retires
+// the worker into the new folder at its next rest (packages/server/src/project-relocation.ts).
+if (!existsSync(projectDir)) process.exit(0);
 
 // Ensure the directory exists so a first Write lands. frizz's dispatcher already provisions this for
 // a real thread; this only covers a session that started outside a dispatch.

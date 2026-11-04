@@ -4,11 +4,11 @@ The one-page site at [frizz.sh](https://frizz.sh). Static: no framework, no buil
 
 | Path | What it is |
 | --- | --- |
-| `index.html` | The page. The cursive `fff` mark is inlined from `assets/logo-concepts/final/fff.svg` so the stroke can draw itself on load. |
-| `site.css` | The board's own tokens from `packages/web/src/styles.css`, JetBrains Mono for display and code, the system sans for body text. |
-| `img/` | Screenshots captured from a sandboxed `scripts/adhoc-stack.mjs` instance (seeded threads, no real data), downscaled to ~2x. The picker shot lists `colinhacks/zod` because this repo had one open issue at capture time. |
+| `index.html` | The page. The cursive `fff` mark is inlined twice (the hero tile and the closing slab) as a simplified copy of `assets/logo-concepts/final/fff.svg`'s path, so the stroke can draw itself. Image URLs carry `?v=<first 8 hex of the file's sha1>`; change the file, change the hash. |
+| `site.css` | Warm paper, near-black ink and the brand gold. Inter for all prose, Geist Mono only where something is literally code. The homepage (`body.home`) and the guides (`.doc`) share its tokens, nav and footer. |
+| `img/` | Screenshots captured from a sandboxed `scripts/adhoc-stack.mjs` instance (seeded threads, no real data), downscaled to ~2x and served as WebP (`cwebp -q 86 -m 6`). The picker shot lists `colinhacks/zod` because this repo had one open issue at capture time. |
 | `og.html` | Source for `img/og.png`, the 1200×630 social card. Not deployed (`.vercelignore`). |
-| `fonts/` | JetBrains Mono 2.304 woff2, under the OFL in `fonts/OFL.txt`. |
+| `fonts/` | Inter and Geist Mono, Latin-subset variable woff2 from Google Fonts, under the OFL in `fonts/OFL.txt`. |
 | `docs/` | The remote-access guides, at `/docs`. They mirror [`docs/remote-access.md`](../docs/remote-access.md), which `src/cloud.ts` names in its error messages — change one and change the other. One file per route, sharing `site.css` and the same `.doc` column as the homepage. |
 
 ## Why `/docs` and not `docs.frizz.sh`

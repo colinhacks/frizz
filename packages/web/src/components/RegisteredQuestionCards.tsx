@@ -31,6 +31,7 @@ import { SendScopeContext, usePromptBoxSends } from "../lib/sendScope.tsx"
 import type { BlockAnswer } from "../lib/questionBlocks.ts"
 import { arrivedQuestions, type ArrivalMessage } from "../lib/questionArrival.ts"
 import { questionFaultsKey, refusalSummary, withRefusedFences, type FaultMessage } from "../lib/questionFaults.ts"
+import { withQuestionOwners, type OwnerMessage } from "../lib/questionOwners.ts"
 import { useInlineMarkdownHtml } from "../lib/useMarkdown.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import type { PairedAnswer } from "../lib/answersMessage.ts"
@@ -459,6 +460,21 @@ export function useRefusedFences<M extends FaultMessage>(
   const closed = thread?.closedQuestions
   const rows = useMemo(() => (faults?.length ? [...open, ...settled, ...(closed ?? [])] : []), [faults, open, settled, closed])
   return useMemo(() => (faults?.length ? withRefusedFences(messages, faults, rows) : messages) as M[], [messages, faults, rows])
+}
+
+/** The surface's messages with each id the thread asked more than once — a settled question's id asked
+ *  again — resolved to the row it meant in each message that mentions it (lib/questionOwners). The same
+ *  array comes back on every thread that never reused an id. */
+export function useQuestionOwners<M extends OwnerMessage>(
+  messages: readonly M[],
+  thread: Pick<ThreadView, "closedQuestions"> | undefined,
+  open: readonly RegisteredQuestionView[],
+  settled: readonly SettledQuestion[],
+): M[] {
+  const closed = thread?.closedQuestions
+  const closedKey = closed?.length ? closed.map((q) => q.id).join(" ") : ""
+  const rows = useMemo(() => [...open, ...settled, ...(closed ?? [])], [open, settled, closedKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => withQuestionOwners(messages, rows) as M[], [messages, rows])
 }
 
 /** A ```question fence's ask before its row exists: the same card, READ-ONLY, from the fence's own spec.

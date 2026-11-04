@@ -43,6 +43,7 @@ import { codexProviderError } from "./codex-error.ts"
 import { CodexExecutionHealth } from "./codex-execution-health.ts"
 import { codexContextWindowConfig, type FrizzCli, type FrizzMcp } from "./types.ts"
 import { log as frizzLog } from "../logging.ts"
+import { isLinkTo } from "../project-registry.ts"
 
 // Foundation-only bridge. It is deliberately not an AgentBackend: no current/default Codex TUI
 // session can accidentally cross this boundary. Context now wires it unconditionally
@@ -3634,7 +3635,10 @@ export class CodexAppServerBridge {
    * external rollout may legitimately live somewhere else.
    */
   private resumeCwdOverride(row: Pick<BindingRow, "cwd">): { cwd?: string } {
-    if (existsSync(row.cwd)) return {}
+    // A cwd that is only the link a folder rename left behind (project-relocation.ts) counts as gone:
+    // the link comes down once the Claude workers on it are retired, and a thread still pointed at it
+    // then would lose its shell mid-turn.
+    if (existsSync(row.cwd) && (row.cwd === this.options.projectDir || !isLinkTo(row.cwd, this.options.projectDir))) return {}
     return { cwd: this.options.projectDir }
   }
 

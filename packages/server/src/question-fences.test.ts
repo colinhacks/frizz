@@ -1,6 +1,6 @@
 // THE QUESTION REGISTRAR against real SQLite: a ```question fence a worker writes becomes a
-// `thread_question` row once, for the life of its thread, and every way that could go wrong is refused by
-// name rather than minting a second row or silently dropping the ask.
+// `thread_question` row once, however often its message is read again, and every way that could go wrong
+// is refused by name rather than minting a second row or silently dropping the ask.
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync, rmSync } from "node:fs"
@@ -64,19 +64,82 @@ test("a new id registers ONE row, at the message's own instant, and replaying th
   } finally { h.close() }
 })
 
-test("a spent id is refused for a different question, and for the same question asked again after it settled", () => {
+test("an open question's id is refused for a different question; once it settles, the id asks a NEW question", () => {
   const h = storageHarness()
   try {
     h.storage.upsertSession(row("t"))
-    sync(h.storage, [{ at: at(0), text: choice("settings-store") }])
-    const clash = sync(h.storage, [{ at: at(0), text: choice("settings-store") }, { at: at(1), text: choice("settings-store", "Postgres?") }])
-    assert.match(clash.faults[0].faults[0], /already used by a different question/)
+    const asked = { at: at(0), text: choice("settings-store") }
+    sync(h.storage, [asked])
+    const clash = sync(h.storage, [asked, { at: at(1), text: choice("settings-store", "Postgres?") }])
+    assert.deepEqual(clash.registered, [])
+    assert.match(clash.faults[0].faults[0], /already used by a different question on this thread that is still open/)
+    const [first] = h.storage.listThreadQuestions("t")
+    h.storage.answerThreadQuestion(first.id, JSON.stringify({ questionId: first.id, question: "SQLite or a JSON file?", chosen: ["SQLite"] }), Date.parse(at(2)))
+    // ANSWERED, ITS ID IS FREE: the same question asked again is a new question, not the old one re-opened.
+    const reasked = { at: at(3), text: choice("settings-store") }
+    const reask = sync(h.storage, [asked, reasked])
+    assert.deepEqual(reask.faults, [])
+    assert.equal(reask.registered.length, 1)
+    assert.equal(reask.registered[0].asked_at, Date.parse(at(3)))
+    const [old, second] = h.storage.listThreadQuestions("t")
+    assert.equal(old.id, first.id)
+    assert.equal(old.state, "answered", "the answered question keeps its answer")
+    assert.equal(second.state, "open")
+    assert.deepEqual(reask.refs.map((r) => [r.at, r.rowId]), [[at(0), first.id]], "the first fence still names its answered row")
+    // Withdrawn, the id is free again — for a different question this time.
+    h.storage.withdrawThreadQuestion("t", second.id, Date.parse(at(4)))
+    const other = { at: at(5), text: choice("settings-store", "Postgres?") }
+    const third = sync(h.storage, [asked, reasked, other])
+    assert.deepEqual(third.faults, [])
+    assert.equal(third.registered.length, 1)
+    // EACH MESSAGE NAMES THE QUESTION ITS ID MEANT WHEN IT WAS WRITTEN — a reference included.
+    const ref = { at: at(6), text: fence("id: settings-store") }
+    const replay = sync(h.storage, [asked, reasked, other, ref])
+    assert.deepEqual([replay.registered, replay.faults], [[], []], "replaying every message mints nothing")
+    assert.deepEqual(replay.refs.map((r) => r.rowId), [first.id, second.id, third.registered[0].id, third.registered[0].id])
+    assert.equal(h.storage.listThreadQuestions("t").length, 3)
+  } finally { h.close() }
+})
+
+test("a follow-up's id is free once its tree settles: a later question may hang a branch under it", () => {
+  const h = storageHarness()
+  try {
+    h.storage.upsertSession(row("t"))
+    const child = (when: string) => fence(`id: sqlite-path\nkind: text\nwhen: ${when}\nquestion: Where should it live?`)
+    const first = { at: at(0), text: `${choice("settings-store")}\n\n${child("settings-store = SQLite")}` }
+    sync(h.storage, [first])
+    const [answered] = h.storage.listThreadQuestions("t")
+    // While its tree is open the follow-up's id is taken, by any other question.
+    const early = sync(h.storage, [first, { at: at(1), text: `${choice("cache-store", "Redis or memory?")}\n\n${child("cache-store = SQLite")}` }])
+    assert.deepEqual(early.faults.map((f) => f.id), ["sqlite-path"])
+    h.storage.answerThreadQuestion(answered.id, "{}", Date.parse(at(2)))
+    const open = h.storage.listThreadQuestions("t").find((q) => q.handle === "cache-store")!
+    const late = { at: at(3), text: child("cache-store = SQLite") }
+    const out = sync(h.storage, [late])
+    assert.deepEqual(out.faults, [])
+    assert.deepEqual(out.attached, [{ at: at(3), rowId: open.id, handles: ["sqlite-path"] }])
+  } finally { h.close() }
+})
+
+test("a fence that reused a settled id BEFORE ids were reusable stays refused, whatever is folded since", () => {
+  const h = storageHarness()
+  try {
+    h.storage.upsertSession(row("t"))
+    // The reported case, 2026-11-03: asked, withdrawn, asked again under the same id, refused, and asked
+    // once more under a new id seconds later. A refold under the new rule must not register the refused
+    // fence: its question is already on the board under the new id.
+    const before = (iso: string) => ({ at: iso, text: choice("byo-store-next") })
+    const transcript = [before("2026-11-02T12:00:00.000Z"), before("2026-11-03T20:49:00.000Z"), { at: "2026-11-03T20:49:04.000Z", text: choice("byo-store-after-d1") }]
+    sync(h.storage, transcript.slice(0, 1))
     const [q] = h.storage.listThreadQuestions("t")
-    h.storage.answerThreadQuestion(q.id, JSON.stringify({ questionId: q.id, question: "SQLite or a JSON file?", chosen: ["SQLite"] }), Date.parse(at(2)))
-    const reask = sync(h.storage, [{ at: at(0), text: choice("settings-store") }, { at: at(3), text: choice("settings-store") }])
-    assert.equal(reask.faults.length, 1)
-    assert.match(reask.faults[0].faults[0], /already asked and answered — an id is never reused/)
-    assert.equal(h.storage.listThreadQuestions("t").length, 1, "nothing re-opened the answered question")
+    h.storage.withdrawThreadQuestion("t", q.id, Date.parse("2026-11-02T13:00:00.000Z"))
+    const out = sync(h.storage, transcript)
+    assert.deepEqual(out.registered.map((r) => r.handle), ["byo-store-after-d1"])
+    assert.deepEqual(out.faults.map((f) => [f.at, f.id]), [["2026-11-03T20:49:00.000Z", "byo-store-next"]])
+    assert.match(out.faults[0].faults[0], /was written before a settled question's id could be asked again/)
+    // Control: the same reuse written now registers.
+    const now = sync(h.storage, [...transcript, { at: at(0), text: choice("byo-store-next") }])
+    assert.deepEqual(now.registered.map((r) => r.handle), ["byo-store-next"])
   } finally { h.close() }
 })
 
@@ -136,9 +199,12 @@ test("an autonomous thread's question is recorded and cancelled at once; a secre
       assert.deepEqual(replay.faults, [])
     }
     assert.deepEqual(h.storage.listThreadQuestions("t", { openOnly: true }).map((q) => q.handle), ["otp"])
-    // Asked again under the same id once the thread takes questions: the id is spent, and it says so.
+    // Asked again under the same id once the thread takes questions: the cancelled question freed its id,
+    // so this is a new question, put to the human.
     const again = sync(h.storage, [...sightings, { at: at(5), text: choice("pick") }])
-    assert.match(again.faults[0].faults[0], /`pick` was already asked and dismissed.*an id is never reused/)
+    assert.deepEqual(again.faults, [])
+    assert.deepEqual(again.registered.map((q) => q.handle), ["pick"])
+    assert.equal(again.registered[0].state, "open")
   } finally { h.close() }
 })
 
@@ -315,6 +381,11 @@ test("unask takes the worker's own id — never a follow-up's, which names its r
     const out = await h.router.unask.handler({ input: { slug: "t", id: "settings-store" } })
     assert.equal(out.withdrawn, true)
     assert.equal(h.storage.listThreadQuestions("t")[0].state, "withdrawn")
+    // Asked again under its freed id, the id withdraws the NEW question — not the withdrawn one it found first.
+    sightings.current = [...sightings.current, { at: at(1), text: choice("settings-store", "Postgres?") }]
+    const reasked = await h.router.unask.handler({ input: { slug: "t", id: "settings-store" } })
+    assert.equal(reasked.withdrawn, true)
+    assert.deepEqual(h.storage.listThreadQuestions("t").map((q) => [q.handle, q.state]), [["settings-store", "withdrawn"], ["settings-store", "withdrawn"]])
     const legacy = h.storage.askThreadQuestion({ id: "qst_aaaaaaaaaaaa", slug: "t", spec: JSON.stringify({ question: "Q?", kind: "question" }), askedAtMs: 1 })
     assert.equal((await h.router.unask.handler({ input: { slug: "t", id: legacy.id } })).withdrawn, true)
     assert.equal((await h.router.unask.handler({ input: { slug: "t", id: "no-such-id" } })).withdrawn, false)
@@ -631,8 +702,8 @@ test("a late follow-up's id is spent like any other, its depth is counted agains
     const out = sync(h.storage, [t0, t1, t2, t3, t4, t5])
     assert.deepEqual(Object.fromEntries(out.faults.map((f) => [f.id, f.faults[0]])), {
       "level-4": "it would reach level 4 under `root`, and follow-ups go 3 levels deep at most — past that you are asking the human to fill in a form; ask it as its own question, without the `when:` line, or decide it yourself",
-      "level-3": "`id: level-3` is already used by a different question on this thread — choose a new id (an id is never reused, even once its question is settled)",
-      "root": "`id: root` is already used by a different question on this thread — choose a new id (an id is never reused, even once its question is settled)",
+      "level-3": "`id: level-3` is already used by a different question on this thread that is still open — choose a new id, or reference that one with `id: level-3` alone (an id is free again once its question is answered, withdrawn or dismissed)",
+      "root": "`id: root` is already used by a different question on this thread that is still open — choose a new id, or reference that one with `id: root` alone (an id is free again once its question is answered, withdrawn or dismissed)",
     })
     assert.deepEqual(out.attached, [{ at: at(3), rowId: q.id, handles: ["level-3b"] }], "the sound branch beside the refused ones still attaches")
     assert.deepEqual(unaccounted(h.storage, out, t3), [])
@@ -682,9 +753,10 @@ test("a question restated while it was open is not a re-ask once the human has a
     // The restatement at minute 5 was written while the question was OPEN. Every later tick reads it again.
     const after = sync(h.storage, sightings)
     assert.deepEqual(after.faults, [], "a message from before the answer is not corrected because of the answer")
-    // Written AFTER the answer it is a re-ask, as before.
+    // Written AFTER the answer it is a re-ask: a new question under the freed id.
     const reask = sync(h.storage, [...sightings, { at: at(9), text: choice("settings-store") }])
-    assert.deepEqual(reask.faults.map((f) => f.at), [at(9)])
+    assert.deepEqual(reask.faults, [])
+    assert.deepEqual(reask.registered.map((r) => r.asked_at), [Date.parse(at(9))])
   } finally { h.close() }
   // …and so answering a restated question sends the worker its answer and NO correction beside it.
   const c = await correctionHarness([{ at: at(0), text: choice("settings-store") }, { at: at(5), text: choice("settings-store") }])
@@ -782,8 +854,8 @@ test("a reference to an ANSWERED question is a no-op; one to a withdrawn or dism
     h.storage.dismissThreadQuestion(byHandle.get("dismissed")!.id, Date.parse(at(1)))
     const out = sync(h.storage, [{ at: at(5), text: [fence("id: answered"), fence("id: withdrawn"), fence("id: dismissed"), fence("id: never-asked")].join("\n\n") }])
     assert.deepEqual(Object.fromEntries(out.faults.map((f) => [f.id, f.faults[0]])), {
-      "withdrawn": "`withdrawn` is a question you withdrew, so there is nothing left to reference and the human is not being asked — if you still need it answered, ask it again under a new id",
-      "dismissed": "`dismissed` was dismissed by the human without an answer, so there is nothing left to reference and no answer is coming — decide it yourself, or ask it again under a new id if the work cannot go on without one",
+      "withdrawn": "`withdrawn` is a question you withdrew, so there is nothing left to reference and the human is not being asked — if you still need it answered, ask it again: write the whole fence, under this id or a new one",
+      "dismissed": "`dismissed` was dismissed by the human without an answer, so there is nothing left to reference and no answer is coming — decide it yourself, or ask it again with the whole fence if the work cannot go on without one",
       "never-asked": "`id: never-asked` alone references a question, and no question of yours uses that id, so the human was never asked it and no answer is coming — `frizzctl activity` lists the questions you have open; to ask this one, write the whole fence, with a `kind:` and a `question:`",
     })
     assert.deepEqual(out.refs, [], "and a settled question is not placed as standing")

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events"
-import { rmSync, mkdirSync, mkdtempSync } from "node:fs"
+import { rmSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
@@ -1612,6 +1612,27 @@ test("a resume whose recorded cwd no longer exists retargets the thread at the p
   const untouched = h.processes[2]!.clientRequests.find((message) => message.method === "thread/resume")!
   assert.equal((untouched.params as Message).cwd, undefined)
   h.close()
+})
+
+// A Frizz rename leaves a link at the old path while Claude workers from before it still run
+// (project-relocation.ts), so a thread recorded there still "exists" — until the link comes down, when
+// it would lose its shell mid-turn. A resume through that link moves the thread to the real folder.
+test("a resume whose recorded cwd is only a link to the project follows it to the real folder", async () => {
+  const h = harness()
+  const link = `${h.dir}-old-name`
+  symlinkSync(h.dir, link)
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "linked", sessionId: "linked-session", cwd: link, ephemeral: false })
+    h.processes[0]!.disconnect()
+    await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.state === "detached", "detached on disconnect")
+    await h.bridge.resumeOwnedSession(binding.threadSlug, binding.sessionId)
+    const resume = h.processes[1]!.clientRequests.find((message) => message.method === "thread/resume")!
+    assert.equal((resume.params as Message).cwd, h.dir)
+    assert.equal(h.bridge.binding(binding.threadSlug, binding.sessionId)?.cwd, h.dir)
+  } finally {
+    rmSync(link, { force: true })
+    h.close()
+  }
 })
 
 test("startDisposableSession forwards worker-contract/title/config instruction surfaces to thread/start", async () => {
