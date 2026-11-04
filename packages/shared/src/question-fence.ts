@@ -514,11 +514,14 @@ export function readQuestionFence(body: string, fence: "`" | "~" = "`"): Questio
     options.push({ label, ...(text ? { description: text } : {}), ...(recommended ? { recommended: true } : {}) })
   }
 
+  // EXACT, not case-folded: an answer names the label it picked byte for byte, so `JsonValue` and
+  // `JSONValue` are two answers. Folding refused real choices between spellings (two of the 25 refusals
+  // logged 2026-10-01..11-04 were `set: Array` / `set: array` and `JsonValue` / `JSONValue`). A `when:`
+  // still matches case-insensitively when that finds one option (followUpOption).
   const labels = new Set<string>()
   for (const o of options) {
-    const key = o.label.toLowerCase()
-    if (labels.has(key)) faults.push(`two options are labelled \`${o.label}\` — labels must differ, the answer names the one picked`)
-    labels.add(key)
+    if (labels.has(o.label)) faults.push(`two options are labelled \`${o.label}\` — labels must differ, the answer names the one picked`)
+    labels.add(o.label)
   }
   if (kind === "choice" || kind === "multi") {
     if (options.length < 2) faults.push(`\`kind: ${kind}\` needs two or more options under \`options:\``)
@@ -527,7 +530,7 @@ export function readQuestionFence(body: string, fence: "`" | "~" = "`"): Questio
     }
   }
   if ((kind === "text" || kind === "secret") && fm.options) faults.push(`\`kind: ${kind}\` takes no options — it is ${kind === "secret" ? "one masked box" : "a free-text answer"}`)
-  if (kind === "secret" && when) faults.push("a `secret` cannot be a follow-up — its answer would ride inside its parent's, unmasked")
+  if (kind === "secret" && when) faults.push("a `secret` cannot be a follow-up — its answer would ride inside its parent's, unmasked; ask the parent now, and the secret on its own, without `when:`, once the answer that needs it arrives")
 
   if (faults.length > 0 || !kind) return { form: "invalid", ...(idOk ? { id } : {}), faults }
   const spec: AskedQuestion = {
@@ -589,9 +592,15 @@ export function followUpMultiFault(parent: string): string {
   return `\`${parent}\` is a \`multi\`, and a multi's options cannot open follow-ups — several picks would open several at once`
 }
 
-/** The option of `parent` a `when:` names, matched the way a label is compared everywhere here. */
+/** The option of `parent` a `when:` names: the label exactly, else the one label equal to it ignoring
+ *  case. Two labels that differ only in case (`set: Array`, `set: array`) leave a case-folded `when:`
+ *  naming neither, and the fault then lists both so the worker writes the one it means. */
 export function followUpOption(parent: AskedQuestion, label: string): AskedOption | undefined {
-  return parent.options?.find((o) => o.label.toLowerCase() === label.toLowerCase())
+  const options = parent.options ?? []
+  const exact = options.find((o) => o.label === label)
+  if (exact) return exact
+  const folded = options.filter((o) => o.label.toLowerCase() === label.toLowerCase())
+  return folded.length === 1 ? folded[0] : undefined
 }
 
 /** A fence that was never judged on its own, because the question it hangs off could not register. Named,

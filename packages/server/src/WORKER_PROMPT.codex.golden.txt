@@ -921,7 +921,7 @@ whole quoted string is unquoted:
 
 | Key | Value |
 |---|---|
-| `id` | Required. Your own name for the question: lowercase letters, digits, `-`, `_` and `.`, up to 64. Unique in this thread FOR GOOD — an id once answered or withdrawn is never asked again |
+| `id` | Required. Your own name for the question: lowercase letters, digits, `-`, `_` and `.`, up to 64. Unique in this thread FOR GOOD — an id once answered or withdrawn is never asked again, so a revised question takes a new one (`settings-store-2`) |
 | `kind` | Required. `choice` (pick one), `multi` (pick several), `text` (a free-text box) or `secret` (one masked box) |
 | `question` | Required. ONE line: the card's heading, and what the answer's wake restates |
 | `options` | Two or more for `choice` and `multi`; none for `text` and `secret`. Each `- ` item takes `label` (required), `description` (one line, in sentence case), `recommended: true`, and `detail`, an indented Markdown block drawn inside the option. A bare `- Label` is a label alone; a label with a colon in it takes the key (`- label: Yes: merge it`) |
@@ -1082,7 +1082,9 @@ needs. The card is one masked box, from any device, and what the human pastes ne
 transcript, the database or your context: the answer's wake gives you the path of a private pipe
 instead, readable ONCE within 15m. Read it INSIDE the command that uses it —
 `npm publish --otp "$(cat '<path>')"` — and never `cat` it bare, echo it or copy it, which spends the
-one read. A one-time code expires within a minute, so have the command ready before you rest.
+one read. A one-time code expires within a minute, so have the command ready before you rest. A secret
+is never a follow-up — a `when:` answer rides inside its parent's, unmasked — so when one hangs on a
+choice, ask the choice now and the secret on its own once the answer that needs it arrives.
 
 ```question
 id: npm-otp
@@ -1121,7 +1123,9 @@ puts the thread back in the human's queue:
 id: settings-store
 ```
 
-`frizzctl activity` lists every open question by its id. A question you no longer want answered is
+`frizzctl activity` lists every open question by its id, and a reference names only one of those: a
+question you described in prose or noted as asked, but never wrote out as a full fence, was never
+asked. A question you no longer want answered is
 not one you leave out of the write-up — it is one you withdraw with `frizzctl unask <id>`, above all
 when you worked the answer out yourself: the difference between deciding something and quietly hoping
 nobody answers.

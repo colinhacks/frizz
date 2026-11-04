@@ -126,7 +126,7 @@ test("every mistake is refused by name", () => {
   assert.match(faultsOf("id: x\nkind: choice\nquestion: Q?\noptions:\n  - label: a\n    recomended: true\n  - b"), /option 1: unknown key `recomended:`/)
   assert.match(faultsOf("id: x\nkind: text\nquestion: Q?\nSome context without a delimiter"), /context for the human goes below a `---` line/)
   assert.match(faultsOf("id: qst_mine\nkind: text\nquestion: Q?"), /reserved/)
-  assert.match(faultsOf("id: x\nkind: choice\nquestion: Q?\noptions:\n  - same\n  - Same"), /two options are labelled/)
+  assert.match(faultsOf("id: x\nkind: choice\nquestion: Q?\noptions:\n  - same\n  - same"), /two options are labelled/)
   assert.match(faultsOf("id: x\nkind: secret\nquestion: Code?\nwhen: parent = Yes"), /cannot be a follow-up/)
   assert.match(faultsOf("id: x\nkind: text\nquestion: Q?\nwhen: parent"), /write the parent's id/)
   // A fault still names the id it could read, so a correction can point at the fence.
@@ -173,6 +173,23 @@ test("a follow-up whose option is missing is refused with its parent's real labe
   const underText = questionFencesIn(`${fence("id: t\nkind: text\nquestion: T?")}\n${fence("id: c\nkind: text\nwhen: t = anything\nquestion: C?")}`)
   assert.deepEqual(underText.asks.map((a) => a.id), ["t"])
   assert.match(underText.faults[0].faults[0], /`t` is a free-text question with no options to follow — ask this as its own question, without the `when:` line/)
+})
+
+test("labels that differ only in case are two options, and a `when:` names one of them exactly", () => {
+  // Refused as duplicates until 2026-11-04: a choice between spellings is a real question.
+  const body = 'id: key\nkind: choice\nquestion: Spell it?\noptions:\n  - label: "set: Array"\n  - label: "set: array"'
+  assert.equal(readQuestionFence(body).form, "ask")
+  const spellings = fence(body)
+  const exact = questionFencesIn(`${spellings}\n${fence("id: why\nkind: text\nwhen: key = set: array\nquestion: Why lowercase?")}`)
+  assert.deepEqual(exact.faults, [])
+  assert.equal(exact.asks[0].spec.options?.[1].followUps?.[0].handle, "why")
+  assert.equal(exact.asks[0].spec.options?.[0].followUps, undefined)
+  // Folded, it names neither — the fault lists both, so the worker picks.
+  const folded = questionFencesIn(`${spellings}\n${fence("id: why\nkind: text\nwhen: key = SET: ARRAY\nquestion: Why?")}`)
+  assert.match(folded.faults[0].faults[0], /has only `set: Array`, `set: array`/)
+  // With one label of that spelling, case still does not matter.
+  const one = questionFencesIn(`${fence("id: p\nkind: choice\nquestion: P?\noptions:\n  - Yes\n  - No")}\n${fence("id: c\nkind: text\nwhen: p = yes\nquestion: C?")}`)
+  assert.deepEqual(one.faults, [])
 })
 
 test("a follow-up whose parent is not asked in its message is handed over unattached, for the server to place", () => {
