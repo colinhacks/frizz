@@ -2,7 +2,7 @@
 // one off as an answerable card WITHIN the message's narrative flow (prose stays in place). Pure
 // string logic, no DOM — unit-testable.
 
-import { insideFence, mayHoldQuestionFence, QUESTION_FENCE_KEYS, questionFenceBlocks, type QuestionFenceRead } from "@frizz/shared"
+import { insideFence, mayHoldQuestionFence, QUESTION_FENCE_KEYS, questionFenceBlocks, type AskedQuestion, type QuestionFenceRead } from "@frizz/shared"
 
 // The two answer MODES a ```question block can carry (the info-string picks one):
 //   question — single-select (radio feel) OR freetext; the default.
@@ -52,6 +52,11 @@ export type MessageSegment =
   // An `id:`-only fence the server REFUSED: it names a question that was never asked, or one already
   // withdrawn or dismissed (splitMessageQuestions). Drawn as a note saying so, never as a card.
   | { kind: "refusedRef"; id: string }
+  // A readable ask the server REFUSED (its id spent, its parent settled, …): drawn greyed, headed "Question
+  // not asked" over the server's reason, never answerable and never a claim on another row's card.
+  | { kind: "refusedAsk"; id: string; spec: AskedQuestion }
+  // A fence that tried the grammar and failed to read: the reader's own faults over the worker's bytes.
+  | { kind: "invalidFence"; text: string; faults: string[] }
 
 // Opening fence begins a line: ```question, an OPTIONAL info-string of one or more space-separated
 // tokens (e.g. ```question multi, ```question danger), then a newline;
@@ -156,7 +161,8 @@ export function splitQuestionBlocks(text: string): MessageSegment[] {
 // backticks at the margin became the legacy card, headed "Question" over the worker's YAML as prose, while
 // the same fence with four backticks or an indent was a code block (the legacy reader knows one opener).
 // A card that cannot be answered and shows front matter is the worst of the three, so all of them are now
-// the code block: the worker's own bytes, plainly not a card, until its corrected fence lands.
+// the code block: the worker's own bytes, plainly not a card, until its corrected fence lands. Since
+// 2026-11-04 the reader's faults ride with it (`invalidFence`), so the block says why it is not a card.
 
 /** A message's segments under the grammar its thread speaks. `fenceGrammar` false (a legacy thread, or a
  *  surface that has no registered rows to resolve against) is splitQuestionBlocks unchanged. */
@@ -171,14 +177,22 @@ export function splitMessageQuestions(text: string, fenceGrammar: boolean, refus
     at = b.end
     // A REFUSED REFERENCE says so (2026-10-21). Its code block was two words — `id: clerk-local-dev-key` —
     // sitting where the worker's prose promised a card, and the human could not tell a reference to
-    // nothing from a stray snippet. A refused ASK stays a code block: its question is still worth reading.
+    // nothing from a stray snippet.
     if (b.read.form === "ref" && isRefused(b.read, refused)) {
       out.push({ kind: "refusedRef", id: b.read.id })
       continue
     }
-    if (b.read.form === "invalid" || isRefused(b.read, refused)) {
-      // Its own prose run, so the legacy reader never sees it and markdown draws the fence as code.
-      out.push({ kind: "prose", text: text.slice(b.start, b.end) })
+    // …and so does a refused ASK (2026-11-04). It was the worker's YAML as a code block, with nothing
+    // saying why: the maintainer met a well-formed question drawn that way — refused only because its id
+    // was spent the day before — and read it as a fence the parser could not read. Its question is still
+    // worth reading, so it draws as the card it would have been, greyed and headed with what happened.
+    if (b.read.form === "ask" && isRefused(b.read, refused)) {
+      out.push({ kind: "refusedAsk", id: b.read.id, spec: b.read.spec })
+      continue
+    }
+    if (b.read.form === "invalid") {
+      // The worker's bytes, which markdown draws as code, under the faults that kept it from reading.
+      out.push({ kind: "invalidFence", text: text.slice(b.start, b.end), faults: b.read.faults })
       continue
     }
     const read = b.read
@@ -194,14 +208,14 @@ export function splitMessageQuestions(text: string, fenceGrammar: boolean, refus
   return out
 }
 
-// A FENCE THE SERVER REFUSED IS THE SAME CODE BLOCK. It read, so it has an id, and the server would not
+// A FENCE THE SERVER REFUSED NAMES NO QUESTION. It read, so it has an id, and the server would not
 // register it under that id: the id is spent on a different question, its parent is settled, it references
 // nothing (lib/questionFaults, which works out the refused ids of each message from the board's
 // `questionFaults` and hands them in here as `refused`). It is not a question the human is being asked, so
-// it draws no card — neither a card of its own nor, the worse reading, the card of the row its id happens
-// to name — and every reader below that asks "which questions does this message name" leaves it out.
-// (A refused `id:`-only REFERENCE is the one exception to the code block: it is a `refusedRef` segment,
-// drawn as a note, because its bytes say nothing a reader can use.)
+// it draws no live card — neither a card of its own nor, the worse reading, the card of the row its id
+// happens to name — and every reader below that asks "which questions does this message name" leaves it
+// out. It draws as what it is instead: a refused ask as its question greyed under "Question not asked"
+// (`refusedAsk`), a refused `id:`-only reference as a note naming what it pointed at (`refusedRef`).
 
 /** Is this readable fence one the server refused (by its lowercased id)? */
 function isRefused(read: Exclude<QuestionFenceRead, { form: "invalid" }>, refused: ReadonlySet<string> | undefined): boolean {

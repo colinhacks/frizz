@@ -423,7 +423,7 @@ test("a tilde fence and a capitalised info string: the server registers it, and 
   // A fence the server refused is matched to its message by id, whatever its opener.
   const refused = refusedFencesByMessage(message(inputs["tilde fence"]), [{ at: "2026-10-20T10:00:00.000Z", id: "x", faults: ["`id: x` is already used"] }])
   assert.deepEqual([...refused].map(([i, set]) => [i, [...set]]), [[0, ["x"]]])
-  assert.deepEqual(splitMessageQuestions(inputs["tilde fence"], true, refused.get(0)).map((s) => s.kind), ["prose"], "…and is then the code block it is")
+  assert.deepEqual(splitMessageQuestions(inputs["tilde fence"], true, refused.get(0)).map((s) => s.kind), ["refusedAsk"], "…and is then a question not asked")
 })
 
 test("a new-form fence that does not read is a code block, and one that is quoted stays quoted", () => {
@@ -431,7 +431,7 @@ test("a new-form fence that does not read is a code block, and one that is quote
   for (const name of ["tilde fence, an invalid kind", "info string capitalised, an invalid kind"]) {
     const v = view(inputs[name])
     assert.deepEqual([v.server, v.web, v.faults, v.legacyCards, v.marked], [[], [], 1, 0, ["code"]], name)
-    assert.deepEqual(splitMessageQuestions(inputs[name], true).map((s) => s.kind), ["prose"], name)
+    assert.deepEqual(splitMessageQuestions(inputs[name], true).map((s) => s.kind), ["invalidFence"], name)
   }
   // Free-form under a new opener: the legacy card knows one opener and this is not it, so it is a code
   // block too — and now the server says so, where it used to say nothing.
@@ -503,7 +503,7 @@ test("a fence that tried the grammar and failed is a code block, whatever its ba
   for (const text of [inputs["an invalid kind"], inputs["an invalid four-backtick fence"], indented(inputs["an invalid kind"], "  ")]) {
     assert.equal(view(text).legacyCards, 0)
     assert.deepEqual(view(text).marked, ["code"])
-    assert.deepEqual(splitMessageQuestions(text, true).map((s) => s.kind), ["prose"])
+    assert.deepEqual(splitMessageQuestions(text, true).map((s) => s.kind), ["invalidFence"])
   }
   // Negative control: a free-form fence (no key opens its body) is still the legacy card on such a thread.
   assert.equal(view("```question\nShip tonight?\n\nA. Yes\nB. No\n```").legacyCards, 1)

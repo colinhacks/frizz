@@ -86,7 +86,7 @@ import { ChildOpRow } from "./ChildOpRow.tsx"
 import { ThreadLinks } from "./ThreadLinks.tsx"
 import { TRANSCRIPT_META_LABEL_CLASS, transcriptMetaChevronClass } from "../lib/transcriptMetaLabels.ts"
 import { InteractionStack } from "./InteractionCards.tsx"
-import { ClosedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { ClosedQuestionCard, InvalidQuestionFence, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 // The shared card chrome and THE question card both live in their own modules now, so every
 // surface can render them without importing the thread view. QuestionBlockCard in particular is
 // shared with the native-AskUserQuestion path, which reaches it through InteractionCards.tsx —
@@ -3678,8 +3678,8 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         )
         continue
       }
-      // A fence the server REFUSED comes back as prose here (`m.refusedFences`, lib/questionFaults): the
-      // code block it is, never a card and never a claim on the card of the row its id happens to name.
+      // A fence the server REFUSED comes back as what it is (`m.refusedFences`, lib/questionFaults): never a
+      // live card and never a claim on the card of the row its id happens to name.
       for (const [si, seg] of splitMessageQuestions(fseg.text, fenceQuestions !== undefined, m.refusedFences).entries()) {
         if (seg.kind === "prose") {
           for (const [j, p] of splitProseAttachments(seg.text).entries()) {
@@ -3700,6 +3700,20 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         if (seg.kind === "refusedRef") {
           const closed = resolveQuestionName(seg.id, fenceQuestions ?? [])?.closed
           push(<RefusedQuestionReference key={`${keyBase}-${fi}-r${si}`} id={seg.id} closed={closed} />)
+          continue
+        }
+        // …and a refused ASK, which draws its question greyed over the server's reason…
+        if (seg.kind === "refusedAsk") {
+          push(<RefusedQuestionCard key={`${keyBase}-${fi}-x${si}`} spec={seg.spec} reasons={m.refusedReasons?.get(seg.id.toLowerCase())} wrap={dense} />)
+          continue
+        }
+        // …and a fence that did not read, which stays the worker's code block under the reader's reason.
+        if (seg.kind === "invalidFence") {
+          push(
+            <InvalidQuestionFence key={`${keyBase}-${fi}-i${si}`} faults={seg.faults}>
+              <ProseHtml md={seg.text} wrap={dense} />
+            </InvalidQuestionFence>,
+          )
           continue
         }
         qi.n += 1

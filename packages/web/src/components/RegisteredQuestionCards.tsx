@@ -30,7 +30,9 @@ import { clearSteered, markAnswered, markSteered } from "../lib/steering.ts"
 import { SendScopeContext, usePromptBoxSends } from "../lib/sendScope.tsx"
 import type { BlockAnswer } from "../lib/questionBlocks.ts"
 import { arrivedQuestions, type ArrivalMessage } from "../lib/questionArrival.ts"
-import { questionFaultsKey, withRefusedFences, type FaultMessage } from "../lib/questionFaults.ts"
+import { questionFaultsKey, refusalSummary, withRefusedFences, type FaultMessage } from "../lib/questionFaults.ts"
+import { useInlineMarkdownHtml } from "../lib/useMarkdown.ts"
+import { LinkedHtml } from "./LinkedHtml.tsx"
 import type { PairedAnswer } from "../lib/answersMessage.ts"
 import { ROOT_PATH, liveQuestionNodes, nodeAnswered, registeredAnswer, settledQuestionNodes, toParsedQuestion } from "../lib/registeredQuestion.ts"
 import { decodeQuestionPick, encodeQuestionPick, questionSpecAt } from "../lib/registeredPicks.ts"
@@ -489,6 +491,49 @@ export function ClosedQuestionCard({ spec, state, wrap }: { spec: AskedQuestion;
   )
 }
 const NOT_ANSWERED = { chosenIdxs: [] }
+
+/** A fence-written question the server REFUSED to register (lib/questionBlocks `refusedAsk`): its id was
+ *  spent, its parent settled, the thread runs autonomously. The server's reason in one line, over the
+ *  question drawn read-only and greyed. Until 2026-11-04 it drew as the worker's YAML in a code block,
+ *  and a well-formed question refused only for reusing an id read as a fence the parser could not read.
+ *  The reason sits OUTSIDE the greyed card: inside it, at the card's footnote size, it was the faintest
+ *  text on the card while being the one line the reader came for. */
+export function RefusedQuestionCard({ spec, reasons, wrap }: { spec: AskedQuestion; reasons?: readonly string[]; wrap?: boolean }) {
+  const question = useMemo(() => toParsedQuestion(spec).question, [spec])
+  return (
+    <QuestionNotAsked reasons={reasons} data-question-refused-ask={spec.handle}>
+      {/* No `data-question-fence`: that names the card a question's id draws, and this id's is elsewhere. */}
+      <div className="opacity-60">
+        <QuestionBlockCard question={question} wrap={wrap} />
+      </div>
+    </QuestionNotAsked>
+  )
+}
+
+/** A fence that tried the question grammar and did not read (lib/questionBlocks `invalidFence`): the
+ *  reader's reason in the same line, over the worker's own bytes as the code block they are. */
+export function InvalidQuestionFence({ faults, children }: { faults: readonly string[]; children: ReactNode }) {
+  return (
+    <QuestionNotAsked reasons={faults} data-question-invalid="">
+      {children}
+    </QuestionNotAsked>
+  )
+}
+
+/** "Question not asked: <the first reason>." over what the worker wrote — the one wording for a fence
+ *  Frizz refused and one it could not read, beside RefusedQuestionReference's line for a reference. */
+function QuestionNotAsked({ reasons, children, ...data }: { reasons?: readonly string[]; children: ReactNode } & Record<`data-${string}`, string>) {
+  const why = refusalSummary(reasons)
+  const html = useInlineMarkdownHtml(why ? `Question not asked: ${why}.` : "Question not asked.")
+  return (
+    <div {...data} className="flex min-w-0 flex-col gap-1.5">
+      <p data-question-not-asked className="text-[13px] leading-snug text-muted">
+        <LinkedHtml as="span" className="md-inline" html={html} />
+      </p>
+      {children}
+    </div>
+  )
+}
 
 /** An `id:`-only fence the server REFUSED (lib/questionBlocks `refusedRef`): the worker pointed at a card
  *  that is not there. One muted line in the fence's slot, naming the id and why no card is drawn — where

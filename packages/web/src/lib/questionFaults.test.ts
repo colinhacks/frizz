@@ -3,13 +3,13 @@ import test from "node:test"
 import type { QuestionFenceFaultView } from "@frizz/shared"
 import { questionClaims } from "./questionAnchor.ts"
 import { followUpParentsIn, hasQuestionBlock, questionFenceIdsIn, splitMessageQuestions } from "./questionBlocks.ts"
-import { messageIndexAt, questionFaultsKey, refusedFencesByMessage, withRefusedFences } from "./questionFaults.ts"
+import { messageIndexAt, questionFaultsKey, refusalSummary, refusedFencesByMessage, withRefusedFences } from "./questionFaults.ts"
 import { placeQuestions } from "./questionShadow.ts"
 import { settledQuestionPositions } from "./settledQuestions.ts"
 
 // A fence the server REFUSED has no row — and neither has one the registrar has not reached yet. The board
 // says which is which (ThreadView.questionFaults); this pins how each fault finds its fence, and what the
-// fence then is to every reader: a code block that names no question.
+// fence then is to every reader: a question not asked, drawn with why, that names no question.
 
 const at = (minute: number, second = 0) => new Date(Date.parse("2026-10-20T10:00:00.000Z") + minute * 60_000 + second * 1000).toISOString()
 const fence = (body: string) => `\`\`\`question\n${body}\n\`\`\``
@@ -82,12 +82,13 @@ test("the board lands before the transcript: a fault for a message not loaded ye
   assert.deepEqual([...refusedFencesByMessage(ghost, [fault(1, "ghost"), fault(3, "ghost")]).keys()], [0, 2])
 })
 
-test("a refused fence is prose to the splitter and names nothing to the placement readers; an unfaulted one is untouched", () => {
+test("a refused fence is a refused ask to the splitter and names nothing to the placement readers; an unfaulted one is untouched", () => {
   const text = `Two things:\n\n${choice("store", "Which region?")}\n\nand\n\n${choice("fresh", "Ship it?")}\n\nDone.`
   const refused = new Set(["store"])
   const segs = splitMessageQuestions(text, true, refused)
-  assert.deepEqual(segs.map((s) => s.kind), ["prose", "prose", "prose", "question", "prose"])
-  assert.equal(segs[1].kind === "prose" && segs[1].text.trimEnd(), choice("store", "Which region?"), "the worker's own bytes, fence and all — markdown draws the code block")
+  assert.deepEqual(segs.map((s) => s.kind), ["prose", "refusedAsk", "prose", "question", "prose"])
+  // Its question, read, so it draws greyed under the reason — not the worker's YAML as a code block.
+  assert.equal(segs[1].kind === "refusedAsk" && segs[1].spec.question, "Which region?")
   assert.equal(segs[3].kind === "question" && segs[3].fence?.id, "fresh")
   assert.deepEqual(questionFenceIdsIn(text, refused), ["fresh"])
   assert.equal(hasQuestionBlock(text, refused), true)
@@ -104,13 +105,13 @@ test("a refused fence is prose to the splitter and names nothing to the placemen
   assert.deepEqual(splitMessageQuestions(`See:\n\n${fence("id: ghost")}`, true).map((s) => s.kind), ["prose", "question"])
 })
 
-test("a refused late follow-up claims nothing: its parent's card does not move, and the fence is a code block", () => {
+test("a refused late follow-up claims nothing: its parent's card does not move, and the fence draws as not asked", () => {
   const followUp = fence("id: store-path\nkind: text\nquestion: Where does the file live?\nwhen: store = SQLite")
   const text = `One more thing hangs on SQLite:\n\n${followUp}`
   assert.deepEqual(followUpParentsIn(text), ["store"], "attached, it names its parent here")
   assert.deepEqual(followUpParentsIn(text, new Set(["store-path"])), [])
   assert.deepEqual(questionFenceIdsIn(text, new Set(["store-path"])), [])
-  assert.deepEqual(splitMessageQuestions(text, true, new Set(["store-path"])).map((s) => s.kind), ["prose", "prose"])
+  assert.deepEqual(splitMessageQuestions(text, true, new Set(["store-path"])).map((s) => s.kind), ["prose", "refusedAsk"])
   const messages = [
     { role: "assistant", at: at(5), text: `One call first:\n\n${choice("store")}` },
     { role: "user", at: at(8), text: "Answers: SQLite" },
@@ -135,6 +136,31 @@ test("marking is stable: the same message object for the same refusals, and one 
   assert.notEqual(questionFaultsKey(faults), questionFaultsKey([fault(13, "store")]))
   assert.equal(questionFaultsKey(undefined), "")
   assert.equal(questionFaultsKey([]), "")
+})
+
+test("the server's reasons ride on the refused message, and the human reads the first one up to its dash", () => {
+  const used = "`id: store` is already used by a different question on this thread — choose a new id (an id is never reused, even once its question is settled)"
+  const marked = withRefusedFences(REUSED, [{ at: at(12), id: "store", faults: [used] }], [ROW])
+  assert.deepEqual(marked[4].refusedReasons && [...marked[4].refusedReasons], [["store", [used]]])
+  assert.equal(marked[1].refusedReasons, undefined)
+  // A new reason for the same refusal is a new message object, so the card redraws with it.
+  assert.notEqual(withRefusedFences(REUSED, [{ at: at(12), id: "store", faults: ["other"] }], [ROW])[4], marked[4])
+  assert.notEqual(questionFaultsKey([{ at: at(12), id: "store", faults: [used] }]), questionFaultsKey([{ at: at(12), id: "store", faults: ["other"] }]))
+
+  assert.equal(refusalSummary([used]), "`id: store` is already used by a different question on this thread")
+  assert.equal(refusalSummary(["a `secret` cannot be a follow-up — its answer would ride inside its parent's, unmasked"]), "a `secret` cannot be a follow-up")
+  // A head that is only the offending line keeps the clause naming what is wrong with it.
+  assert.equal(refusalSummary(["`kind: question` — the kinds are `choice`, `multi`, `text`, `secret`"]), "`kind: question` — the kinds are `choice`, `multi`, `text`, `secret`")
+  assert.equal(refusalSummary([]), undefined)
+  assert.equal(refusalSummary(undefined), undefined)
+})
+
+test("a fence that did not read carries the reader's faults to the page, over its own bytes", () => {
+  const broken = fence("id: x\nkind: pick\nquestion: Q?")
+  const segs = splitMessageQuestions(`Before.\n\n${broken}`, true)
+  assert.deepEqual(segs.map((s) => s.kind), ["prose", "invalidFence"])
+  assert.equal(segs[1].kind === "invalidFence" && segs[1].text.trimEnd(), broken, "the worker's own bytes, fence and all — markdown draws the code block")
+  assert.match(segs[1].kind === "invalidFence" ? segs[1].faults.join("\n") : "", /`kind: pick` — the kinds are/)
 })
 
 test("a question that closed without an answer is still the row its message registered", () => {

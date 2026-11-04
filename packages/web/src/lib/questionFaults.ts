@@ -1,4 +1,4 @@
-// A REFUSED QUESTION FENCE IS THE CODE BLOCK IT IS — which message each refusal belongs to.
+// A REFUSED QUESTION FENCE ASKS NOTHING — which message each refusal belongs to, and why it was refused.
 //
 // The server registers a ```question fence as a row, or refuses it: its id is already spent on a different
 // question, it follows a question the human has finished with, it is an `id:` reference to nothing. A
@@ -13,9 +13,10 @@
 // The board now carries what the thread's latest sync refused (ThreadView.questionFaults: the instant of
 // the transcript record that held the fence, the fence's id, the server's reasons). This module turns that
 // list into "these ids, in this message" and hangs it on the message, where every reader of a message's
-// fences already looks: the splitter draws a refused fence as prose (lib/questionBlocks
-// splitMessageQuestions — the same code block an unreadable fence gets), and the placement readers no
-// longer count it as naming a question (questionFenceIdsIn), so it claims and moves nothing.
+// fences already looks: the splitter draws a refused fence as what it is (lib/questionBlocks
+// splitMessageQuestions — a refused ask greyed under the server's reason, which rides along as
+// `refusedReasons`), and the placement readers no longer count it as naming a question
+// (questionFenceIdsIn), so it claims and moves nothing.
 //
 // MATCHED BY ID AND BY THE MESSAGE WHOSE TIME SPAN HOLDS THE FAULT'S INSTANT — never by comparing the
 // instant with the bubble's own. A rendered message is one or more transcript records (Claude writes one
@@ -42,6 +43,8 @@ export interface FaultMessage {
   text?: string
   /** The ids of this message's question fences the server refused, lowercased (withRefusedFences). */
   refusedFences?: ReadonlySet<string>
+  /** Each of those ids' reasons, as the server gave them (withRefusedFences). */
+  refusedReasons?: ReadonlyMap<string, readonly string[]>
 }
 
 /** A row a fence's id can resolve to — open, answered, or closed without an answer (known by its one
@@ -75,7 +78,17 @@ export function refusedFencesByMessage(
   faults: readonly QuestionFenceFaultView[] | undefined,
   rows: readonly FaultRow[] = [],
 ): Map<number, Set<string>> {
-  const out = new Map<number, Set<string>>()
+  return new Map([...refusalsByMessage(messages, faults, rows)].map(([i, reasons]) => [i, new Set(reasons.keys())]))
+}
+
+/** refusedFencesByMessage with the server's reasons: each refused id mapped to every fault it was
+ *  refused for, in the order the server gave them. */
+export function refusalsByMessage(
+  messages: readonly FaultMessage[],
+  faults: readonly QuestionFenceFaultView[] | undefined,
+  rows: readonly FaultRow[] = [],
+): Map<number, Map<string, string[]>> {
+  const out = new Map<number, Map<string, string[]>>()
   if (!faults?.length || messages.length === 0) return out
   const idsAt = new Map<number, Set<string>>()
   const fenceIdsOf = (i: number): Set<string> => {
@@ -97,33 +110,34 @@ export function refusedFencesByMessage(
     if (at < 0 || !fenceIdsOf(at).has(id)) continue
     const row = resolveQuestionName(id, rows)
     if (row && messageIndexAt(messages, Date.parse(row.askedAt)) === at) continue
-    const ids = out.get(at)
-    if (ids) ids.add(id)
-    else out.set(at, new Set([id]))
+    let reasons = out.get(at)
+    if (!reasons) out.set(at, (reasons = new Map()))
+    reasons.set(id, [...(reasons.get(id) ?? []), ...fault.faults])
   }
   return out
 }
 
-// One annotated copy per (message, refused set), so a message's memo boundary moves only when what was
+// One annotated copy per (message, refusals), so a message's memo boundary moves only when what was
 // refused IN IT changes — not on every board push that carries the same faults again.
 const annotated = new WeakMap<object, { key: string; message: unknown }>()
 
-/** The same messages, each one that had a fence refused carrying the refused ids as `refusedFences`. The
- *  input array itself comes back when nothing in it was refused, which is nearly always. */
+/** The same messages, each one that had a fence refused carrying the refused ids as `refusedFences` and
+ *  the server's reasons for each as `refusedReasons`. The input array itself comes back when nothing in it
+ *  was refused, which is nearly always. */
 export function withRefusedFences<M extends FaultMessage>(
   messages: readonly M[],
   faults: readonly QuestionFenceFaultView[] | undefined,
   rows: readonly FaultRow[] = [],
 ): readonly M[] {
-  const refused = refusedFencesByMessage(messages, faults, rows)
+  const refused = refusalsByMessage(messages, faults, rows)
   if (refused.size === 0) return messages
   return messages.map((m, i) => {
-    const ids = refused.get(i)
-    if (!ids) return m
-    const key = [...ids].sort().join("\n")
+    const reasons = refused.get(i)
+    if (!reasons) return m
+    const key = [...reasons].map(([id, why]) => `${id}\u0000${why.join("\u0000")}`).sort().join("\n")
     const known = annotated.get(m)
     if (known?.key === key) return known.message as M
-    const message = { ...m, refusedFences: ids }
+    const message = { ...m, refusedFences: new Set(reasons.keys()), refusedReasons: reasons }
     annotated.set(m, { key, message })
     return message
   })
@@ -131,5 +145,21 @@ export function withRefusedFences<M extends FaultMessage>(
 
 /** A stable key for a fault list, so a memo over it survives a board push that re-sends the same faults. */
 export function questionFaultsKey(faults: readonly QuestionFenceFaultView[] | undefined): string {
-  return faults?.length ? faults.map((f) => `${f.at}|${f.id ?? ""}`).join("\n") : ""
+  return faults?.length ? faults.map((f) => `${f.at}|${f.id ?? ""}|${f.faults.join("\u0000")}`).join("\n") : ""
+}
+
+/** What the human reads for a refusal, after "Question not asked: ": the server's first reason, up to the
+ *  dash where it turns to telling the worker what to do instead ("`id: x` is already used by a different
+ *  question on this thread — choose a new id …"). Every fault the reader and the server write follows that
+ *  shape. Lowercase as written, since it follows a colon. */
+export function refusalSummary(reasons: readonly string[] | undefined): string | undefined {
+  const first = reasons?.find((r) => r.trim())
+  if (!first) return undefined
+  let cut = first.indexOf(" — ")
+  // A head that is only the offending line (`kind: question` — the kinds are …) keeps the clause naming it.
+  if (cut !== -1 && /^`[^`]*`$/.test(first.slice(0, cut).trim())) {
+    const next = first.indexOf(" — ", cut + 3)
+    cut = next
+  }
+  return (cut === -1 ? first : first.slice(0, cut)).trim().replace(/[.;:]+$/, "")
 }
