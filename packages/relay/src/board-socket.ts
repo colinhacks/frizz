@@ -89,6 +89,8 @@ export class BoardSocket {
   private readonly inbound = new WsMessageAssembler()
   private readonly timers = new Map<string, unknown>()
   private counter = 0
+  /** Set by `nextId`. See there. */
+  private idPrefix: string | null = null
   private readonly options: Required<Pick<BoardSocketOptions, "requestTimeoutMs" | "now">> &
     Pick<BoardSocketOptions, "setTimer" | "clearTimer">
 
@@ -103,6 +105,17 @@ export class BoardSocket {
 
   get connected(): boolean {
     return this.socket !== null
+  }
+
+  /**
+   * An id no earlier instance used. A Durable Object can lose its memory while the board's socket
+   * survives, and the board then keeps streaming under the old id, so a counter alone would hand that
+   * id, and that stream, to a stranger's new request. The prefix is made on first use because this
+   * class is constructed where a Worker may not be able to generate randomness yet.
+   */
+  private nextId(kind: "r" | "w"): string {
+    this.idPrefix ??= crypto.randomUUID().slice(0, 8)
+    return `${kind}${this.idPrefix}-${++this.counter}`
   }
 
   /** A board has dialled in. Any previous socket is replaced — a reconnect wins over a corpse. */
@@ -197,7 +210,7 @@ export class BoardSocket {
     stream?: { push: (chunk: Uint8Array) => void; end: () => void }
   ): Promise<RelayedResponse> {
     if (!this.socket) throw new Error("the board is not connected")
-    const id = `r${++this.counter}`
+    const id = this.nextId("r")
 
     return new Promise((resolve, reject) => {
       const entry: Pending = {
@@ -246,7 +259,7 @@ export class BoardSocket {
     visitor: SocketLike
   ): Promise<string | null> {
     if (!this.socket) return null
-    const id = `w${++this.counter}`
+    const id = this.nextId("w")
     return new Promise<string | null>((resolve) => {
       const done = (ok: boolean) => resolve(ok ? id : null)
       this.nested.set(id, { visitor, settle: done })

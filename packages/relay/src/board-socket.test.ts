@@ -90,6 +90,32 @@ test("a STREAMED body reaches the visitor while it is still being produced", asy
   assert.equal(ended, true)
 })
 
+test("a stream from before a reset cannot land in a stranger's request", async () => {
+  // A Durable Object can lose its memory while the board's socket survives, and the board then keeps
+  // streaming under the old id. A fresh instance must never hand that id to a new request.
+  const board = fakeSocket()
+  const before = new BoardSocket()
+  before.attach(board.socket)
+  void before.request({ method: "GET", url: "https://ada.frizz.sh/events", headers: [] }, { push: () => {}, end: () => {} })
+  const oldId = board.lastId()
+
+  const after = new BoardSocket()
+  after.attach(board.socket)
+  const chunks: string[] = []
+  const pending = after.request(
+    { method: "GET", url: "https://ada.frizz.sh/", headers: [] },
+    { push: (c) => chunks.push(new TextDecoder().decode(c)), end: () => {} }
+  )
+  const newId = board.lastId()
+  assert.notEqual(newId, oldId)
+
+  after.handleFrame(serializeFrame({ t: "res-chunk", id: oldId, data: encodeBody(text("data: the owner's board event\n")) }))
+  assert.deepEqual(chunks, [])
+
+  after.handleFrame(serializeFrame({ t: "res", id: newId, status: 401, headers: [], end: true }))
+  assert.equal((await pending).status, 401)
+})
+
 test("a request with no board connected fails immediately rather than hanging", async () => {
   const relay = new BoardSocket()
   await assert.rejects(
