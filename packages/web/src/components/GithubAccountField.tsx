@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, Copy } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { GithubAccount } from "@frizz/shared"
 import { useRpc } from "../lib/projectScope.tsx"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
@@ -12,12 +12,16 @@ import { copyTextToClipboard } from "../lib/clipboard.ts"
 // Signing in is GitHub's device flow: the server asks for a code, this row shows it, the person enters
 // it at github.com/login/device, and the server polls GitHub until they have. The row polls the server
 // meanwhile, and only then, so a signed-in Settings costs one read per open.
+//
+// `autoStart` is the GitHub picker's sign-in: someone who clicked the GitHub button asked for this, so the
+// code appears at once. Settings keeps its button, because opening Settings asks for nothing. Once per
+// mount, and never over a sign-in that failed, so Cancel stays cancelled and a failure stays readable.
 
 const BUTTON = "button-outline shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-[12px] text-fg outline-none transition-colors hover:bg-panel-2 disabled:opacity-45"
 
 export const GITHUB_ACCOUNT_KEY = ["githubAccount"] as const
 
-export function GithubAccountField() {
+export function GithubAccountField({ autoStart = false }: { autoStart?: boolean }) {
   const api = useRpc()
   const queryClient = useQueryClient()
   const account = useQuery({
@@ -35,6 +39,20 @@ export function GithubAccountField() {
   const signOut = useMutation({ mutationFn: () => api.githubSignOut({}), onSuccess: settle })
 
   const data = account.data
+  // A device-flow sign-in finishes on GitHub's side, with no mutation here to settle: this poll is how the
+  // page learns, and the prompt box's GitHub door and the picker's sign-in must hear it too.
+  const signedIn = data?.signedIn
+  useEffect(() => {
+    if (signedIn) void queryClient.invalidateQueries({ predicate: (q) => q.queryKey.includes("githubStatus") })
+  }, [signedIn, queryClient])
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (!autoStart || autoStarted.current || !data) return
+    // Decided once, on the first answer: reopened over a code already showing, Cancel must not start another.
+    autoStarted.current = true
+    if (!data.signedIn && data.appRegistered && data.signIn.phase === "idle") start.mutate()
+  }, [autoStart, data, start])
+
   if (!data) return <div className="text-[12.5px] text-muted">{account.isError ? "Couldn't read the GitHub sign-in." : "Loading…"}</div>
   const startError = start.error instanceof Error ? start.error.message : null
 
@@ -97,7 +115,7 @@ function DeviceCode({ code, url, onCancel }: { code: string; url: string; onCanc
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <a
           href={url}
           target="_blank"
@@ -108,7 +126,7 @@ function DeviceCode({ code, url, onCancel }: { code: string; url: string; onCanc
           Copy code and open GitHub
         </a>
         <button type="button" onClick={onCancel} className={`${BUTTON} text-muted`}>Cancel</button>
-        <span className="ml-auto text-[12px] text-muted">Waiting for GitHub…</span>
+        <span className="ml-auto whitespace-nowrap text-[12px] text-muted">Waiting for GitHub…</span>
       </div>
     </div>
   )

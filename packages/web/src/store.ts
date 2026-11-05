@@ -123,8 +123,8 @@ export const store = proxy({
   showPalette: false,
   // The anywhere-modal behind the "New thread" pill (Gmail-compose style).
   showNewThread: false,
-  // The GitHub picker modal (Issues/PRs tabs → multi-select → batch dispatch). Its trigger appears
-  // only when gh is authed AND the project is a GitHub repo; see GithubTrigger + openGithubPicker.
+  // The GitHub picker modal (Issues/PRs tabs → multi-select → batch dispatch), or the sign-in while
+  // Frizz is signed out. Its trigger appears in a GitHub repo; see GithubTrigger + openGithubPicker.
   // The modal reads the durable new-thread profile live and carries its own selector for it, so
   // nothing about the dispatch tuple is captured here.
   showGithubPicker: false,

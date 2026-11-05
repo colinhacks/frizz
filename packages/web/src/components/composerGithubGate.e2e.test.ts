@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import test, { after, before } from "node:test"
 
-// REGRESSION. GithubTrigger self-gates (renders null when gh is unauthed), but Composer reserves the
+// REGRESSION. GithubTrigger self-gates (renders null outside a GitHub repo), but Composer reserves the
 // leftAction rail slot whenever the PROP is truthy — and a `<GithubTrigger />` element is truthy even
 // when it renders nothing. Passing it unconditionally left an empty hole between the paperclip and
-// send. The fix hoists the gate to the caller via useGithubTriggerVisible(): unauthed → no leftAction
-// prop → the paperclip sits directly beside send. These tests pin both states off the
-// composer-icons fixture, whose `?unauthed` query stubs the signed-out githubStatus.
+// send. The fix hoists the gate to the caller via useGithubTriggerVisible(): no repo → no leftAction
+// prop → the paperclip sits directly beside send. These tests pin the states off the composer-icons
+// fixture, whose `?norepo` stubs a project that is no GitHub repo and `?unauthed` a signed-out Frizz,
+// which still shows the trigger because clicking it is how someone signs in.
 //
 // Skipped unless a Vite URL serving the fixtures is provided (same pattern as the other *.e2e.test.ts
 // here): start `vite` in packages/web and set FRIZZ_COMPOSER_ICONS_E2E_URL to its origin.
@@ -40,12 +41,12 @@ const rail = async (p: Page) =>
       const el = document.querySelector('button[aria-label^="' + label + '"]')
       return el ? el.getBoundingClientRect().toJSON() : null
     }
-    return { github: box("Investigate"), attach: box("Attach files"), send: box("Send") }
+    return { github: box("Start threads"), attach: box("Attach files"), send: box("Send") }
   })()`) as Promise<{ github: DOMRect | null; attach: DOMRect | null; send: DOMRect | null }>
 
 test("authed: GitHub trigger renders between attach and send", { skip: !baseUrl }, async () => {
   await page!.goto(`${baseUrl}/composer-icons-fixture.html`, { waitUntil: "networkidle0" })
-  await page!.waitForSelector('button[aria-label^="Investigate"]')
+  await page!.waitForSelector('button[aria-label^="Start threads"]')
   const r = await rail(page!)
   assert.ok(r.github && r.attach && r.send)
   assert.ok(r.attach!.right <= r.github!.left, "attach sits left of the GitHub trigger")
@@ -75,7 +76,7 @@ test("a NO heals itself: the trigger comes back with no reload once the answer t
   await page!.waitForSelector('button[aria-label="Attach files"]')
   // The outage answer is in: the trigger is genuinely absent, so what follows cannot be a false pass.
   assert.equal((await rail(page!)).github, null, "the first (outage) answer must hide the trigger")
-  await page!.waitForSelector('button[aria-label^="Investigate"]', { timeout: HEAL_CEILING_MS })
+  await page!.waitForSelector('button[aria-label^="Start threads"]', { timeout: HEAL_CEILING_MS })
   const r = await rail(page!)
   assert.ok(r.github, "the trigger must return on its own once the answer turns yes")
   assert.ok(r.attach!.right <= r.github!.left && r.github!.right <= r.send!.left, "and it returns to its own slot in the rail")
@@ -83,17 +84,25 @@ test("a NO heals itself: the trigger comes back with no reload once the answer t
 
 test("a genuine NO stays no — the poll re-asks, it does not invent an icon", { skip: !baseUrl, timeout: POLL_WINDOW_MS + 30_000 }, async () => {
   // The control for the test above. Same wall-clock window, same poll, an answer that never turns yes.
-  await page!.goto(`${baseUrl}/composer-icons-fixture.html?unauthed`, { waitUntil: "networkidle0" })
+  await page!.goto(`${baseUrl}/composer-icons-fixture.html?norepo`, { waitUntil: "networkidle0" })
   await page!.waitForSelector('button[aria-label="Attach files"]')
   await new Promise((resolve) => setTimeout(resolve, POLL_WINDOW_MS))
-  assert.equal((await rail(page!)).github, null, "an unauthed gh must stay hidden however many times it is re-asked")
+  assert.equal((await rail(page!)).github, null, "outside a GitHub repo it must stay hidden however many times it is re-asked")
 })
 
-test("unauthed: no GitHub slot is reserved — attach sits directly beside send", { skip: !baseUrl }, async () => {
+test("signed out in a GitHub repo: the trigger still renders, between attach and send", { skip: !baseUrl }, async () => {
   await page!.goto(`${baseUrl}/composer-icons-fixture.html?unauthed`, { waitUntil: "networkidle0" })
+  await page!.waitForSelector('button[aria-label^="Start threads"]')
+  const r = await rail(page!)
+  assert.ok(r.github && r.attach && r.send)
+  assert.ok(r.attach!.right <= r.github!.left && r.github!.right <= r.send!.left)
+})
+
+test("no GitHub repo: no slot is reserved — attach sits directly beside send", { skip: !baseUrl }, async () => {
+  await page!.goto(`${baseUrl}/composer-icons-fixture.html?norepo`, { waitUntil: "networkidle0" })
   await page!.waitForSelector('button[aria-label="Attach files"]')
   const r = await rail(page!)
-  assert.equal(r.github, null, "GitHub trigger must not render when unauthed")
+  assert.equal(r.github, null, "GitHub trigger must not render outside a GitHub repo")
   assert.ok(r.attach && r.send)
   const gap = r.send!.left - r.attach!.right
   assert.ok(gap >= 0 && gap <= 12, `attach must abut send (gap was ${gap}px — a reserved empty slot regressed)`)

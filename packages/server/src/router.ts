@@ -5223,16 +5223,17 @@ export function createRouter(ctx: AppContext) {
 
     // gh availability: installed (cache-warmed resolveInstalled) + inRepo/nameWithOwner (cache-warmed
     // resolveRepo) + a LIVE authed re-check — whether FRIZZ holds its own GitHub credential (local, no
-    // network), so a sign-in from Settings reflects on the next query. The repo is resolved only when authed (gh repo view needs auth), so a
+    // network), so a sign-in reflects on the next query. Signed in, the repo comes from `gh repo view`, so a
     // cached-negative inRepo from an unauthed/racy boot never sticks; neither does a cached-negative
-    // installed. Never throws (all probes degrade to false/null).
+    // installed. Signed out, it comes from the local git remote: the picker's button must still show in a
+    // GitHub repo, because clicking it is how someone signs in. Never throws (all probes degrade to false/null).
     githubStatus: query({
       output: GithubStatus,
       handler: async () => {
         const installed = await resolveInstalled()
         if (!installed) return { installed: false, inRepo: false, nameWithOwner: null, authed: false }
         const authed = await ghAuthed()
-        const nameWithOwner = authed ? await resolveRepo() : (ctx.github?.nameWithOwner ?? null)
+        const nameWithOwner = authed ? await resolveRepo() : (ctx.github?.nameWithOwner ?? await gitGithubRemote(ctx.project.dir))
         return { installed: true, inRepo: nameWithOwner !== null, nameWithOwner, authed }
       },
     }),

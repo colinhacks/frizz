@@ -62,15 +62,18 @@ export function useGithubStatus() {
 // passing it unconditionally reserves an empty hole where the icon would be.
 export function useGithubTriggerVisible(): boolean {
   const status = useGithubStatus()
+  // Signed-out counts: it opens the sign-in. Hidden while signed out until 2026-11-05, when Frizz
+  // stopped borrowing `gh`'s sign-in and every install started signed out, so the button would have
+  // vanished for everyone with nothing to say why.
   // Not on the Console: the picker it opens is one project's issues and PRs, mounted by the page.
-  return Boolean(status.data?.inRepo && status.data.authed) && !isConsolePath()
+  return Boolean(status.data?.inRepo) && !isConsolePath()
 }
 
-// The auth-gated door into the GitHub picker — a small GitHub icon that sits just LEFT of the dispatch
-// composer's send button (maintainer 2026-07-10: not a full-width pill). Renders ONLY when gh is authed
-// AND the project is a gh-resolvable GitHub repo — otherwise NOTHING (a hidden feature, not a disabled
-// control). `githubStatus` is shared with App's not-signed-in hint via the query cache (one fetch);
-// detection is cached server-side, `authed` re-checked live, so a later sign-in from Settings surfaces it.
+// The door into the GitHub picker — a small GitHub icon that sits just LEFT of the dispatch composer's
+// send button (maintainer 2026-07-10: not a full-width pill). Renders in a GitHub repo, signed in or not;
+// otherwise NOTHING. Signed out, the picker it opens is the sign-in (GithubPickerModal). `githubStatus` is
+// shared with App's not-signed-in hint via the query cache (one fetch); detection is cached server-side,
+// `authed` re-checked live, so a sign-in turns the sign-in into the picker where it stands.
 // No profile gating: the picker carries its own model/effort selector, so an unloaded or unavailable
 // saved pair is something to FIX in there, not a reason to refuse to open.
 //

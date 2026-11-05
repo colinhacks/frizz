@@ -14,6 +14,7 @@ import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
 import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z } from "../lib/overlaySurface.ts"
 import { buildGithubBatchInput, dispatchProfileError } from "../lib/githubDispatch.ts"
 import { GITHUB_PICKER_TITLE, useGithubStatus } from "./GithubTrigger.tsx"
+import { GithubAccountField } from "./GithubAccountField.tsx"
 import { applyRowSelection } from "../lib/rowRangeSelection.ts"
 import { githubLabelColors } from "../lib/githubLabelColors.ts"
 import { PRIMER } from "../lib/primer.ts"
@@ -34,7 +35,54 @@ const PAGE_SIZE = 30
 // rpc.githubDispatchBatch — the server hydrates + templates each fresh, reusing the normal dispatch
 // flow; the new sidebar rows paint via the board SSE. The trigger that opens this is auth-gated, so
 // the RPCs are guaranteed serviceable when it's mounted.
+const FRIZZ_APP_INSTALL_URL = "https://github.com/apps/frizz-agent-console/installations/new"
+
+// Signed out, the picker has nothing to list, so its button opens the sign-in instead, and the sign-in
+// becomes the picker in place: GithubAccountField invalidates `githubStatus` when it lands. On a phone
+// this is the only way in, since Settings there has no GitHub row.
 export function GithubPickerModal({ onClose }: { onClose: () => void }) {
+  const status = useGithubStatus()
+  if (status.data && !status.data.authed) return <GithubSignIn onClose={onClose} />
+  return <GithubPicker onClose={onClose} />
+}
+
+function GithubSignIn({ onClose }: { onClose: () => void }) {
+  // Focus in the panel, or Escape has nothing to land on: nothing here takes focus by itself.
+  const panel = useRef<HTMLDivElement>(null)
+  useEffect(() => panel.current?.focus(), [])
+  return (
+    <Overlay onClose={onClose}>
+      <div
+        ref={panel}
+        tabIndex={-1}
+        data-github-sign-in
+        className="flex w-[480px] max-w-[90vw] flex-col gap-3 outline-none rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50"
+        onKeyDownCapture={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation()
+            onClose()
+          }
+        }}
+      >
+        <h2 className="m-0 flex items-baseline gap-2 text-[14px] font-medium">
+          <Github size={15} aria-hidden="true" className="shrink-0 self-baseline translate-y-[calc(7.5px_-_0.5cap)] text-muted" />
+          <span className="min-w-0 truncate">Sign Frizz in to GitHub</span>
+        </h2>
+        <p className="m-0 text-[12.5px] text-muted">
+          Frizz needs this to list issues and PRs. The same sign-in runs the PR and issue watchers and the GitHub cards, on every project.
+        </p>
+        <GithubAccountField autoStart />
+        <p className="m-0 text-[12px] text-muted">
+          Private repos also need{" "}
+          <a href={FRIZZ_APP_INSTALL_URL} target="_blank" rel="noreferrer" className="text-fg underline underline-offset-2">the Frizz GitHub App installed</a>{" "}
+          on their account.
+        </p>
+      </div>
+    </Overlay>
+  )
+}
+
+function GithubPicker({ onClose }: { onClose: () => void }) {
   const status = useGithubStatus()
   // The batch dispatches with the SAME durable new-thread profile the prompt box uses — the selector
   // below writes it, so choosing here also becomes the composer's next default (one profile, not a

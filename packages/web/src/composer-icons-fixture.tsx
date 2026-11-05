@@ -8,7 +8,7 @@ import "./styles.css"
 
 // Browser QA for the dispatch composer's icon RAIL: paperclip (attach) + GitHub (investigate) + send.
 // The GitHub icon only renders when gh is authed in a repo, which the isolated adhoc stack can't satisfy
-// (it changes HOME), so stub githubStatus here — `?unauthed` stubs the signed-out answer instead.
+// (it changes HOME), so stub githubStatus here — `?unauthed` stubs the signed-out answer, `?norepo` a project that is no GitHub repo.
 // Verifies: (1) the paperclip brightness matches the GitHub icon (both text-muted), (2) the
 // paperclip↔GitHub gap reads even with the GitHub↔send gap, and (3) when unauthed the GitHub slot
 // disappears entirely and the paperclip sits directly beside send — no reserved empty hole.
@@ -18,6 +18,7 @@ import "./styles.css"
 // outage flipped the answer, the tab kept it, and nothing ever re-asked.
 const params = new URLSearchParams(location.search)
 const authed = !params.has("unauthed")
+const inRepo = !params.has("norepo")
 const heals = params.has("heals")
 let githubStatusCalls = 0
 const originalFetch = window.fetch
@@ -25,7 +26,7 @@ window.fetch = async (input, init) => {
   const url = new URL(typeof input === "string" ? input : (input as Request).url ?? input.toString(), location.origin)
   if (url.pathname === "/_frizz/rpc/githubStatus") {
     const outage = heals && githubStatusCalls++ === 0
-    const result = outage ? { inRepo: false, authed: true } : { inRepo: true, authed }
+    const result = outage ? { inRepo: false, authed: true } : { inRepo, authed }
     return new Response(JSON.stringify({ result }), { headers: { "content-type": "application/json" } })
   }
   if (url.pathname.startsWith("/_frizz/rpc/")) return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })
