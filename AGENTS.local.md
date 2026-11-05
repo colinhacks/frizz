@@ -22,6 +22,8 @@ workers, whose contract is frozen at session start. This file is the copy for ev
 in this checkout — a plain Codex or Claude session and the sub-agents it dispatches — which reach it
 through the link in `AGENTS.md` rather than loading it automatically.)
 
+**If `origin/main` holds commits nobody on this Mac merged, stop and read them before they reach this checkout.** `.claude/settings.json`, `.codex/`, `.mcp.json`, `cc-worker/hooks/` and `scripts/githooks/` run as code once they're in the working tree, so a commit there reaches this Mac with no publish and no approval. One made through GitHub's API or a workflow still reads as verified. A push refused as non-fast-forward is how this usually shows up. Merge a remote commit that touches those paths or `.github/` only after the maintainer has seen it.
+
 **Every worktree lives in `.frizz/worktrees/<slug>/`, inside this checkout, and nowhere else** — never
 `/tmp`, never a sibling folder, never `.claude/worktrees/`. `.frizz/` is ignored already, and the test
 runner's globs, `tsc -b`, the dev server's watcher and ripgrep all stay out of it (checked 2026-10-11).

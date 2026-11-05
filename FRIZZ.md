@@ -1,5 +1,9 @@
 # Worker norms for this repo
 
+## If `origin/main` holds commits nobody on this Mac merged, stop and read them
+
+`.claude/settings.json`, `.codex/`, `.mcp.json`, `cc-worker/hooks/` and `scripts/githooks/` run as code once they're in the working tree, so a commit there reaches this Mac with no publish and no approval. One made through GitHub's API or a workflow still reads as verified. A push refused as non-fast-forward is how this usually shows up. Merge a remote commit that touches those paths or `.github/` only after the maintainer has seen it.
+
 ## Work independently, see it through
 
 When you're given a task, own it end to end. Make the reasonable calls yourself and drive the work
