@@ -435,8 +435,8 @@ async function fetchLogin(token: string, deps: TokenDeps): Promise<string | null
 // Touch ID and through a locked screen, and anything that WRITES goes through Keyward
 // (`keyward --reason "…" -- gh …`). Nothing wraps `gh` to do that. The worker's GH_CONFIG_DIR names a
 // folder Frizz owns, whose hosts.yml holds the token, so plain `gh` simply reads and a write simply
-// fails with GitHub's own permission error. Keyward sets its own GH_CONFIG_DIR and drops the token
-// variables for its run, so the two cannot collide.
+// fails with GitHub's own permission error. Keyward sets GH_TOKEN for its run, and gh prefers that to
+// hosts.yml, so the write goes out on the operator's token.
 //
 // A FILE, NOT GH_TOKEN. gh reads it on every run, so a worker outliving an 8-hour token gets the fresh
 // one when the server renews it. And the token stays out of every child's environment, where one
