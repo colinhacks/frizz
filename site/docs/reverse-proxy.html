@@ -10,7 +10,7 @@
     <meta property="og:title" content="Any reverse proxy — Frizz" />
     <meta property="og:description" content="Caddy, nginx, ngrok or anything else in front of a Frizz board: terminate TLS, proxy to loopback, and name the public origin." />
     <meta property="og:url" content="https://frizz.sh/docs/reverse-proxy" />
-    <meta property="og:image" content="https://frizz.sh/img/og.png?v=86af37c3" />
+    <meta property="og:image" content="https://frizz.sh/img/og.png?v=ca426e2a" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -27,7 +27,7 @@
   <body>
     <header class="nav ruled">
       <div class="wrap nav-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="26" height="26" /><span>Frizz</span></a>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="30" height="30" /><span>Frizz</span></a>
         <nav class="nav-links" aria-label="Site">
           <a class="opt-link" href="/#features">Features</a>
           <a class="opt-link" href="/#remote-access">Remote access</a>
@@ -41,37 +41,36 @@
       <article class="doc">
         <nav class="crumb" aria-label="Breadcrumb"><a href="/#remote-access"><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4l-4 4 4 4"/></svg><span class="label">Remote access</span></a></nav>
         <h1>Any reverse proxy</h1>
-        <p class="lede">The rule is the same for Caddy, nginx, ngrok or anything else: terminate TLS wherever you like, proxy to the board&#8217;s loopback port, and pass the public origin to Frizz.</p>
+        <p class="lede">Caddy, nginx, ngrok, and other proxies all take the same setup. Terminate TLS wherever you like, proxy to the board&#8217;s loopback port, and tell Frizz the public origin.</p>
 
-        <pre class="term"><code>  press R, choose <span class="prompt">Something else</span>
+        <h2>Frizz settings</h2>
+        <p>Press <kbd>R</kbd> in the terminal running Frizz, choose <strong>Something else</strong>, and enter the exact origin a browser shows. It needs its scheme and no path or trailing slash.</p>
+        <pre class="term"><code>Origin     https://board.example.com</code></pre>
 
-  Origin  https://whatever-that-proxy-serves</code></pre>
-
-        <p>Frizz checks that a request&#8217;s <code>Host</code> matches the origin it was given, so the value has to be the exact origin a browser sees — scheme included, no trailing slash.</p>
-
-        <h2>Caddy</h2>
-        <p>A two-line Caddyfile, which gets its own certificate:</p>
-        <pre class="term"><code>board.example.com {
+        <h2>Caddy example</h2>
+        <p>This file also gets the hostname its own certificate:</p>
+        <pre class="term"><code><span class="c"># Caddyfile</span>
+board.example.com {
   reverse_proxy 127.0.0.1:9393
 }</code></pre>
 
-        <h2>What the proxy has to carry</h2>
+        <h2>Proxy requirements</h2>
         <ul>
-          <li><strong>WebSocket upgrades.</strong> The board&#8217;s live feed and its terminals are WebSockets. A proxy that does not forward <code>Upgrade</code> serves the page and then goes silent.</li>
-          <li><strong>Server-sent events, unbuffered.</strong> The event stream never ends, so a proxy that buffers responses shows a board that never updates. In nginx that is <code>proxy_buffering off</code>.</li>
-          <li><strong>The original <code>Host</code>.</strong> Frizz judges the origin from it. A proxy that rewrites it to <code>127.0.0.1</code> makes every request look local and skips the access gate.</li>
+          <li><strong>WebSocket upgrades.</strong> The board&#8217;s live feed is a WebSocket. A proxy that doesn&#8217;t forward <code>Upgrade</code> serves the page and then goes silent.</li>
+          <li><strong>No response buffering.</strong> The fallback event stream never ends, so a proxy that buffers it shows a board that never updates. In nginx, that means <code>proxy_buffering off</code>.</li>
+          <li><strong>The original <code>Host</code>.</strong> Frizz judges the origin from it. A proxy that rewrites it to <code>127.0.0.1</code> makes every request look local and skips the sign-in check.</li>
         </ul>
 
-        <blockquote class="callout"><p>That last one is the whole security boundary. If your proxy cannot preserve the <code>Host</code>, do not put the board on the internet behind it.</p></blockquote>
+        <blockquote class="callout"><p>If your proxy can&#8217;t preserve <code>Host</code>, don&#8217;t put the board on the internet behind it.</p></blockquote>
       </article>
     </main>
     <footer class="foot">
       <div class="wrap foot-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="22" height="22" /><span>Frizz</span></a>
-        <span>MIT</span>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="24" height="24" /><span>Frizz</span></a>
         <a href="https://github.com/colinhacks/frizz">GitHub</a>
         <a href="https://www.npmjs.com/package/frizz">npm</a>
         <a href="https://github.com/colinhacks/frizz#readme">README</a>
+        <a href="https://github.com/colinhacks/frizz/blob/main/LICENSE">MIT license</a>
         <span class="sp"></span>
         <span>by <a href="https://x.com/colinhacks">@colinhacks</a></span>
       </div>

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { CloudConfig } from "./cloud.ts";
 import { createRemotePane } from "./remote-pane.ts";
 
-// The menu lists "Custom name" only while custom names are offered. They are withdrawn for now, but the
+// The menu lists "Custom subdomain" only while custom names are offered. They are withdrawn for now, but the
 // form behind the row is kept, and several cases below drive it — so this file runs with the override
 // on, for the whole file because `nub --test` runs a file's tests concurrently. The withdrawn menu is
 // pinned in custom-names-paused.test.ts.
@@ -46,7 +46,7 @@ function build(overrides: Partial<Parameters<typeof createRemotePane>[0]> = {}) 
 test("R opens the chooser with every setup, and Off applies loopback-only", async () => {
   const { pane, out, applied } = build();
   assert.equal(pane.open(), true);
-  for (const title of ["Private name", "Custom name", "Cloudflare Tunnel", "Tailscale", "Something else", "Off"]) assert.match(out.text(), new RegExp(title));
+  for (const title of ["frizz.sh subdomain", "Custom subdomain", "Cloudflare Tunnel", "Tailscale", "Something else", "Off"]) assert.match(out.text(), new RegExp(title));
   assert.match(out.text(), /Off.*\(current\)/s);
   pane.key("6");
   assert.equal(pane.key("\r"), "keep");
@@ -185,8 +185,8 @@ test("a saved private name shows as the current setup on the private row", () =>
   const config: CloudConfig = { hostname: "abcdefghjkmnpqrstuvw.frizz.sh", claim: "abcdefghjkmnpqrstuvw", serve: "relay" };
   const { pane, out } = build({ current: () => config });
   pane.open();
-  assert.match(out.text(), /❯ Private name/, "the cursor starts on the current setup");
-  assert.match(out.text(), /Private name.*\(current\)/s);
+  assert.match(out.text(), /❯ frizz\.sh subdomain/, "the cursor starts on the current setup");
+  assert.match(out.text(), /frizz\.sh subdomain.*\(current\)/s);
 });
 
 test("a word claim shows GitHub's device code, and escape on that screen cancels it", async () => {

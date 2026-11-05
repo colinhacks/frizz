@@ -198,7 +198,7 @@ async function seedFeatures() {
     question: "Which layout should the billing page use?", kind: "question",
     options: [
       { label: "Two columns", recommended: true, description: ["Plan beside invoices, so both are visible without scrolling.", "", "```lightbox", `${pic("billing-two")}  Desktop`, `${pic("billing-phone")}  Phone`, "```"].join("\n") },
-      { label: "One column", description: ["A single scrolling page that matches the rest of settings.", "", "```lightbox", `${pic("billing-one")}  Desktop`, "```"].join("\n") },
+      { label: "One column", description: ["A single scrolling page that matches the rest of settings.", "", "```lightbox", `${pic("billing-one")}  Desktop`, `${pic("billing-phone")}  Phone`, "```"].join("\n") },
     ],
   }])
 
@@ -215,6 +215,11 @@ async function seedFeatures() {
   write(APP, "offline-sync", {
     title: "Fix the offline sync conflict", rested: 11,
     records: [user(70, "A phone that was offline for a week overwrote newer work when it reconnected. Fix the sync conflict."), say(11, "The conflict came from comparing local clocks. Sync now keys on the server's revision, and the regression test covers a phone that was offline for a week.\n\n```done\ntitle: Sync keys on the server revision\n---\n- Fixed the conflict in `src/sync/merge.ts`.\n- Added a regression test for a phone offline for a week.\n```")],
+  })
+
+  write(APP, "push-provider", {
+    title: "Add push notifications", rested: 2,
+    records: [user(40, "Add push notifications to the app."), say(2, ["The notification service is stubbed behind one interface, so either provider fits. This choice decides what I wire up next.", "", question("push-provider", "Which push provider should the app use?", [["APNs and FCM directly", "No vendor or per-message cost; two integrations to maintain", true], ["A push vendor", "One API and delivery reports; a monthly bill and a third party"]])].join("\n"))],
   })
 
   // A thread resting on its own work: one helper and one shell, still running.

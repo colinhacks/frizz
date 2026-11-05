@@ -10,16 +10,23 @@
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
 // the token that deploys lives only in a GitHub environment that waits for the maintainer's approval.
 //
-// THE CREDENTIAL is the maintainer's own Cloudflare token, which Keyward releases to one run (the
-// global `cloudflare` skill). This script only reads it: it stores nothing in Keyward, so no run of it
-// can overwrite that token.
+// THE CREDENTIALS, both released by Keyward and only read here, so no run can overwrite either:
+//
+// - CLOUDFLARE_FRIZZ_MINTER manages the account's API tokens: Account API Tokens Edit, Account Settings
+//   Read and Zone Read on the Frizz account, plus API Tokens Read on the user who made it. Only the
+//   dashboard can issue it, because Cloudflare refuses token-management permissions on a token made
+//   through its API, which is why the maintainer's everyday CLOUDFLARE_API_TOKEN cannot do this.
+// - CLOUDFLARE_API_TOKEN reads everything else for the `--out` snapshot.
+//
+// THE CI TOKENS ARE ACCOUNT-OWNED ON PURPOSE. `workers-drift` tells CI's uploads from a laptop's by their
+// author, and a user-owned CI token would share its author with the maintainer's own token.
 //
 // ROTATION is a re-run: each new token is in place before the older tokens of the same name are
 // revoked. Every run ends with an audit of the account's members and API tokens, flagging any token
 // this script does not manage.
 //
-//   keyward run --reason "mint the frizz.sh CI tokens" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
-//   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
+//   keyward run --reason "mint the frizz.sh CI tokens" CLOUDFLARE_FRIZZ_MINTER -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
+//   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_FRIZZ_MINTER CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
 //
 // `--out=<dir>` also saves the whole account as it stands, raw: every Worker's deployments, versions,
 // secret names, crons and deployed code, plus routes, domains, tunnels, DNS, user-owned tokens and the
@@ -195,7 +202,8 @@ export function accountEndpoints(accountId, since) {
   const account = `/accounts/${accountId}`
   return [
     { name: "audit-log", path: `${account}/audit_logs?since=${since}&direction=desc`, perPage: 1000 },
-    { name: "user-tokens", path: "/user/tokens", perPage: 50 },
+    { name: "account-tokens", path: `${account}/tokens`, perPage: 50, tokens: true },
+    { name: "user-tokens", path: "/user/tokens", perPage: 50, tokens: true },
     { name: "accounts", path: "/accounts", perPage: 50 },
     { name: "worker-domains", path: `${account}/workers/domains` },
     { name: "tunnels", path: `${account}/cfd_tunnel?is_deleted=false`, perPage: 100 },
@@ -252,16 +260,16 @@ async function readEndpoint(get, { path, perPage }) {
  * Saves the account as it stands to `outDir`, one raw JSON file per endpoint. A read Cloudflare refuses
  * is recorded and the run carries on, because a partial record beats none, and the caller says what it
  * could not see. `get` answers Cloudflare's whole envelope and throws on a refusal; `getBytes` answers
- * the raw body.
+ * the raw body; `tokensGet` is `get` for the endpoints that list API tokens, which need their own credential.
  */
-export async function snapshotAccount({ get, getBytes, outDir, accountId, zone, since, knownScripts }) {
+export async function snapshotAccount({ get, tokensGet = get, getBytes, outDir, accountId, zone, since, knownScripts }) {
   mkdirSync(outDir, { recursive: true, mode: 0o700 })
   const write = (file, data) => writeFileSync(join(outDir, file), data, { mode: 0o600 })
   const saved = []
   const refused = []
   const take = async (endpoint) => {
     try {
-      const result = await readEndpoint(get, endpoint)
+      const result = await readEndpoint(endpoint.tokens ? tokensGet : get, endpoint)
       write(`${endpoint.name}.json`, JSON.stringify(result, null, 2))
       saved.push({ name: endpoint.name, count: Array.isArray(result) ? result.length : null })
       return result
@@ -308,9 +316,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const args = process.argv.slice(2)
     const flag = (name) => args.includes(name)
     const only = args.find((a) => a.startsWith("--only="))?.slice("--only=".length).split(",")
-    const credential = (process.env.CLOUDFLARE_API_TOKEN ?? "").trim()
+    const everyday = (process.env.CLOUDFLARE_API_TOKEN ?? "").trim()
+    const credential = (process.env.CLOUDFLARE_FRIZZ_MINTER ?? "").trim() || everyday
     if (!credential) {
-      console.error("no credential: run under `keyward run --reason \"…\" CLOUDFLARE_API_TOKEN --`")
+      console.error("no credential: run under `keyward run --reason \"…\" CLOUDFLARE_FRIZZ_MINTER --`")
       process.exit(1)
     }
     const cf = client(credential)
@@ -321,7 +330,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       await audit(cf, me.id)
       const outDir = args.find((a) => a.startsWith("--out="))?.slice("--out=".length)
       if (outDir) {
-        const { saved, refused, scripts } = await snapshotAccount({ ...reader(credential), outDir, accountId: ACCOUNT_ID, zone: ZONE, since: SNAPSHOT_SINCE, knownScripts: KNOWN_SCRIPTS })
+        const { saved, refused, scripts } = await snapshotAccount({ ...reader(everyday || credential), tokensGet: reader(credential).get, outDir, accountId: ACCOUNT_ID, zone: ZONE, since: SNAPSHOT_SINCE, knownScripts: KNOWN_SCRIPTS })
         console.log(`\n== Snapshot in ${outDir}: Workers ${scripts.join(", ")}`)
         for (const { name, count } of saved) console.log(`  ${name}${count === null ? "" : `: ${count}`}`)
         for (const { name, why } of refused) console.log(`  COULD NOT READ ${name}: ${why}`)

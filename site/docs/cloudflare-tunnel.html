@@ -10,7 +10,7 @@
     <meta property="og:title" content="Cloudflare Tunnel — Frizz" />
     <meta property="og:description" content="Reach a Frizz board on your own domain through a Cloudflare Tunnel, with no inbound port open." />
     <meta property="og:url" content="https://frizz.sh/docs/cloudflare-tunnel" />
-    <meta property="og:image" content="https://frizz.sh/img/og.png?v=86af37c3" />
+    <meta property="og:image" content="https://frizz.sh/img/og.png?v=ca426e2a" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -27,7 +27,7 @@
   <body>
     <header class="nav ruled">
       <div class="wrap nav-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="26" height="26" /><span>Frizz</span></a>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="30" height="30" /><span>Frizz</span></a>
         <nav class="nav-links" aria-label="Site">
           <a class="opt-link" href="/#features">Features</a>
           <a class="opt-link" href="/#remote-access">Remote access</a>
@@ -41,17 +41,23 @@
       <article class="doc">
         <nav class="crumb" aria-label="Breadcrumb"><a href="/#remote-access"><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4l-4 4 4 4"/></svg><span class="label">Remote access</span></a></nav>
         <h1>Cloudflare Tunnel</h1>
-        <p class="lede">A tunnel reaches a board from anywhere without opening a port. It needs a domain you control on Cloudflare, and <a class="ext" href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/">cloudflared</a> on your PATH.</p>
+        <p class="lede">An address on a domain you control, with no port open. It needs that domain on Cloudflare and <a class="ext" href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/">cloudflared</a> on your PATH.</p>
 
-        <h2>Create the tunnel once</h2>
-        <pre class="term"><code><span class="prompt">$</span> cloudflared tunnel login
+        <h2>Tunnel setup</h2>
+        <p>Run these once, in another terminal:</p>
+        <pre class="term"><code><span class="c"># pick your zone in the browser</span>
+<span class="prompt">$</span> cloudflared tunnel login
+
+<span class="c"># writes a credentials file under ~/.cloudflared/</span>
 <span class="prompt">$</span> cloudflared tunnel create my-board
-<span class="prompt">$</span> cloudflared tunnel route dns my-board board.example.com</code></pre>
-        <p><code>login</code> opens a browser to pick your zone. <code>create</code> writes a credentials JSON under <code>~/.cloudflared/</code> and prints the tunnel id. <code>route dns</code> adds the CNAME that points your hostname at the tunnel.</p>
 
-        <h2>Point the tunnel at the board</h2>
-        <p>Write this to <code>~/.cloudflared/frizz.yml</code>, which Frizz looks for by name. Keep it out of <code>config.yml</code>, whose catch-all shadows other tunnels:</p>
-        <pre class="term"><code>tunnel: my-board
+<span class="c"># adds the DNS record for your hostname</span>
+<span class="prompt">$</span> cloudflared tunnel route dns my-board board.example.com</code></pre>
+
+        <h2>Tunnel config</h2>
+        <p>Frizz looks for this file by name. Keep these lines out of <code>config.yml</code>, whose catch-all shadows other tunnels.</p>
+        <pre class="term"><code><span class="c"># ~/.cloudflared/frizz.yml</span>
+tunnel: my-board
 credentials-file: /Users/you/.cloudflared/&lt;tunnel-id&gt;.json
 
 ingress:
@@ -59,23 +65,19 @@ ingress:
     service: http://127.0.0.1:9393
   - service: http_status:404</code></pre>
 
-        <h2>Let Frizz own the tunnel</h2>
-        <p>Run the two halves yourself, or hand the tunnel to Frizz as a child process:</p>
-        <pre class="term"><code>  press R, choose <span class="prompt">Cloudflare Tunnel</span>
-
-  Hostname  board.example.com
-  Tunnel    my-board</code></pre>
-        <p>Frizz asks which tunnel serves the hostname rather than guessing from its first label — a tunnel is rarely named after its host. Both answers are remembered, and it checks that <code>cloudflared</code> is on this machine before accepting them.</p>
-        <p>Running it under Frizz is worth preferring, because the two halves then share a lifetime. A tunnel that outlives its board serves Cloudflare error 1033 to anyone who visits; a board that outlives its tunnel is unreachable with nothing to say why.</p>
+        <h2>Frizz settings</h2>
+        <p>Press <kbd>R</kbd> in the terminal running Frizz, choose <strong>Cloudflare Tunnel</strong>, and name both. Frizz remembers them and runs the tunnel beside the board, so the two start and stop together.</p>
+        <pre class="term"><code>Hostname   board.example.com
+Tunnel     my-board</code></pre>
       </article>
     </main>
     <footer class="foot">
       <div class="wrap foot-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="22" height="22" /><span>Frizz</span></a>
-        <span>MIT</span>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="24" height="24" /><span>Frizz</span></a>
         <a href="https://github.com/colinhacks/frizz">GitHub</a>
         <a href="https://www.npmjs.com/package/frizz">npm</a>
         <a href="https://github.com/colinhacks/frizz#readme">README</a>
+        <a href="https://github.com/colinhacks/frizz/blob/main/LICENSE">MIT license</a>
         <span class="sp"></span>
         <span>by <a href="https://x.com/colinhacks">@colinhacks</a></span>
       </div>

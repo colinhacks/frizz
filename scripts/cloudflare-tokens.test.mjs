@@ -97,7 +97,12 @@ test("a snapshot saves every read it can, records each refusal, and covers a Wor
     return Buffer.from(`code of ${path}`)
   }
   try {
-    const { saved, refused, scripts } = await snapshotAccount({ get, getBytes, outDir, accountId: "acct", zone: "frizz.sh", since: "2026-08-01T00:00:00Z", knownScripts: ["frizz-relay", "frizz-registrar"] })
+    const tokensAsked = []
+    const tokensGet = async (path) => {
+      tokensAsked.push(path)
+      return { result: [{ id: "t1" }] }
+    }
+    const { saved, refused, scripts } = await snapshotAccount({ get, tokensGet, getBytes, outDir, accountId: "acct", zone: "frizz.sh", since: "2026-08-01T00:00:00Z", knownScripts: ["frizz-relay", "frizz-registrar"] })
     assert.deepEqual(scripts, ["frizz-relay", "surprise", "frizz-registrar"], "the listed Workers and the known ones, once each")
     assert.equal(JSON.parse(readFileSync(join(outDir, "audit-log.json"), "utf8")).length, 1002, "a paged read carries on until a short page")
     assert.deepEqual(JSON.parse(readFileSync(join(outDir, "surprise.versions.json"), "utf8")), [{ id: "v1" }], "versions nest their list in items")
@@ -106,6 +111,8 @@ test("a snapshot saves every read it can, records each refusal, and covers a Wor
     assert.ok(saved.some((s) => s.name === "routes"), "a zone's reads run under the zone Cloudflare named")
     assert.ok(asked.includes("/zones/zone1/workers/routes"))
     assert.equal(statSync(join(outDir, "audit-log.json")).mode & 0o077, 0, "evidence is readable by its owner alone")
+    assert.deepEqual(tokensAsked.map((path) => path.split("?")[0]), ["/accounts/acct/tokens", "/user/tokens"], "token lists use the credential that can read them")
+    assert.ok(!asked.some((path) => path.includes("/tokens")), "and the everyday token is never asked for them")
   } finally {
     rmSync(outDir, { recursive: true, force: true })
   }

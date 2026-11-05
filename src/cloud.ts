@@ -99,7 +99,7 @@ export const REGISTRAR_IS_LIVE = true;
  * No, as of 2026-10-08, until Frizz's GitHub OAuth app is registered: the client id in
  * github-device-flow.ts is still the placeholder, so a custom claim could only refuse with
  * "not-configured" after the person had already picked it. While this is false the R pane does not
- * list "Custom name", the prompt does not mention it, and a word answer refuses before any GitHub
+ * list "Custom subdomain", the prompt does not mention it, and a word answer refuses before any GitHub
  * sign-in or registrar call. Private names, and every bring-your-own setup, are unaffected.
  *
  * Flipping it to `true` (with a real client id) brings the whole path back — nothing behind it was
@@ -119,7 +119,7 @@ export function customNamesOffered(env: NodeJS.ProcessEnv = process.env): boolea
 
 /** Why a word answer is refused while custom names are withdrawn. */
 export const CUSTOM_NAMES_PAUSED =
-  "custom frizz.sh names are paused for now — press enter for a private name (no account needed), or answer with the hostname of a tunnel you run";
+  "custom frizz.sh subdomains are paused for now — press enter for a private subdomain (no account needed), or answer with the hostname of a tunnel you run";
 
 /** A claimed name runs a remotely-managed tunnel; a hand-made one runs by name from a config file. */
 export function isClaimedConfig(config: CloudConfig): boolean {
@@ -187,7 +187,7 @@ export async function reconcileCloudConfig(
   if (!label) return config;
   if (!isAnonymousClaimName(label) && !customNamesOffered()) {
     throw new Error(
-      `${config.hostname} needs moving onto the Frizz relay, which means claiming it again, and custom frizz.sh names are paused for now — press R to pick a private name or another setup`,
+      `${config.hostname} needs moving onto the Frizz relay, which means claiming it again, and custom frizz.sh subdomains are paused for now — press R to pick a private subdomain or another setup`,
     );
   }
   onNotice?.(
@@ -348,7 +348,7 @@ export async function establishCloudConfig(
 
   if (!REGISTRAR_IS_LIVE && !origin && !process.env.FRIZZ_REGISTRAR) {
     throw new Error(
-      "claiming a name on frizz.sh is not available yet.\n" +
+      "claiming a frizz.sh subdomain is not available yet.\n" +
         "       Reach this board through a tunnel of your own instead — see docs/remote-access.md — and\n" +
         "       answer with its hostname rather than a bare name.",
     );
@@ -377,7 +377,7 @@ export async function establishCloudConfig(
     token = authorization.token;
     if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
   } else {
-    console.log("  claiming a private name on frizz.sh — no account needed");
+    console.log("  claiming a private frizz.sh subdomain — no account needed");
   }
   let result;
   try {

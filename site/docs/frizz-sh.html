@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>A name on frizz.sh — Frizz</title>
-    <meta name="description" content="Claim <name>.frizz.sh and reach your board from anywhere. No domain, no port forwarding, and no tunnel binary: the board dials out." />
+    <title>Frizz subdomain — Frizz</title>
+    <meta name="description" content="Reach your Frizz board from anywhere at a private frizz.sh subdomain. It needs no account, no domain, and no tunnel." />
     <link rel="canonical" href="https://frizz.sh/docs/frizz-sh" />
     <meta property="og:type" content="article" />
-    <meta property="og:title" content="A name on frizz.sh — Frizz" />
-    <meta property="og:description" content="Claim <name>.frizz.sh and reach your board from anywhere. No domain, no port forwarding, and no tunnel binary: the board dials out." />
+    <meta property="og:title" content="Frizz subdomain — Frizz" />
+    <meta property="og:description" content="Reach your Frizz board from anywhere at a private frizz.sh subdomain. It needs no account, no domain, and no tunnel." />
     <meta property="og:url" content="https://frizz.sh/docs/frizz-sh" />
-    <meta property="og:image" content="https://frizz.sh/img/og.png?v=86af37c3" />
+    <meta property="og:image" content="https://frizz.sh/img/og.png?v=ca426e2a" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -27,7 +27,7 @@
   <body>
     <header class="nav ruled">
       <div class="wrap nav-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="26" height="26" /><span>Frizz</span></a>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="30" height="30" /><span>Frizz</span></a>
         <nav class="nav-links" aria-label="Site">
           <a class="opt-link" href="/#features">Features</a>
           <a class="opt-link" href="/#remote-access">Remote access</a>
@@ -40,43 +40,58 @@
     <main id="top">
       <article class="doc">
         <nav class="crumb" aria-label="Breadcrumb"><a href="/#remote-access"><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4l-4 4 4 4"/></svg><span class="label">Remote access</span></a></nav>
-        <h1>A name on frizz.sh</h1>
-        <p class="lede">The shortest path, and the only one that needs nothing of your own — no account, no domain, no port forwarding, and no extra binary to install.</p>
+        <h1>Frizz subdomain</h1>
+        <p class="lede">A private address on frizz.sh that reaches your board from another device. It needs no account, no domain, and nothing installed.</p>
 
-        <pre class="term"><code>  press R and choose <span class="prompt">Private name</span>
+        <h2>Setup</h2>
+        <ol>
+          <li>Press <kbd>R</kbd> in the terminal running Frizz.</li>
+          <li>Choose <strong>frizz.sh subdomain</strong>.</li>
+          <li>Scan the QR code with your phone.</li>
+        </ol>
+        <pre class="term"><code>Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).
 
-  Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).
+Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for another.</code></pre>
 
-  Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for another.</code></pre>
-
-        <p>Your board stays on loopback and <strong>dials out</strong> to frizz.sh. That single fact removes the inbound port, the tunnel binary and the DNS record all at once, so a laptop behind any NAT works with no configuration. The connection comes back by itself after a sleep or a network change, so a board is reachable again as soon as the machine is.</p>
-
-        <h2>Claiming a name</h2>
-        <p>Frizz mints an unguessable name — 20 random characters, so nobody finds it by guessing — and claims it with your machine&#8217;s key. There is no account and no sign-in. The name is the address, not the lock: the first visit still needs a single-use sign-in link.</p>
-        <p>Your machine holds an Ed25519 key at <code>~/.frizz/identity.key</code>, and that key alone proves ownership. Ownership moves between machines the way an SSH key does: copy the file.</p>
-        <p>Custom names, such as <code>ada.frizz.sh</code>, are paused: they are tied to a GitHub account, and that sign-in is not set up yet. A board that already holds one keeps it, because every renewal is signed by the key and involves no GitHub sign-in.</p>
-        <p>Every launch renews the lease. A name nobody has run for <strong>30 days</strong> is released and can be claimed by someone else.</p>
-
-        <h2>What you are agreeing to</h2>
+        <h2>Connection</h2>
+        <p>This option needs no Tailscale or Cloudflare Tunnel. Your board stays on <code>127.0.0.1</code> and opens one outbound connection to a relay Frizz runs, and visitors&#8217; requests travel down that connection.</p>
         <ul>
-          <li><strong>One name per machine key.</strong></li>
-          <li><strong>The name is a lease, not property.</strong> It lapses after 30 days unused, and Frizz can reclaim any name at any time — that is the only enforcement there is, so it has to exist.</li>
-          <li><strong>Your traffic passes through us.</strong> A name on frizz.sh is served by a relay we run: every request and every keystroke goes through it. Frizz&#8217;s own access gate still runs on your machine, so a visitor meets it whether or not the relay is honest — but if you would rather no third party carried the bytes, use a domain you control.</li>
-          <li><strong>No warranty.</strong> This is a free convenience on a domain someone else owns. Anything you cannot afford to lose access to belongs on <a href="/docs/cloudflare-tunnel">a domain you control</a>.</li>
+          <li><strong>No inbound port.</strong> The board dials out, so a laptop behind any NAT works with no configuration.</li>
+          <li><strong>No DNS record.</strong> The relay already answers for every frizz.sh subdomain.</li>
+          <li><strong>Reconnects.</strong> The connection comes back after a sleep or a network change.</li>
         </ul>
 
-        <h2>Opening it elsewhere</h2>
-        <p>The launch prints a single-use link as a QR code. Scan it and the code is spent — the phone holds a session cookie from then on. For another device, mint another:</p>
+        <h2>Your subdomain</h2>
+        <table class="facts">
+          <tbody>
+            <tr><th scope="row">Address</th><td>20 random characters, so nobody finds it by guessing. A first visit still needs a single-use sign-in link.</td></tr>
+            <tr><th scope="row">Ownership</th><td>A key on your machine proves ownership, with no account. Copy the key file to another machine to move the subdomain.</td></tr>
+            <tr><th scope="row">Key file</th><td>The file is <code>identity.key</code>, in <code>~/Library/Application Support/Frizz</code> on macOS and <code>~/.local/state/frizz</code> on Linux. An older install keeps it in <code>~/.frizz</code>.</td></tr>
+            <tr><th scope="row">Renewal</th><td>Every launch renews it. A subdomain nobody runs for 30 days is released, and someone else can claim it.</td></tr>
+            <tr><th scope="row">Custom names</th><td>Paused. A name you pick, like <code>ada.frizz.sh</code>, needs a GitHub sign-in that isn&#8217;t set up yet. A board that already has one keeps it, because renewals use only the key.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Terms</h2>
+        <ul>
+          <li><strong>One per machine.</strong> Each machine key holds one subdomain.</li>
+          <li><strong>Lease.</strong> Frizz can reclaim any subdomain at any time.</li>
+          <li><strong>Relay.</strong> Every request and keystroke passes through a relay Frizz runs, and the sign-in check runs on your machine. To keep a relay out of the path, use <a href="/docs/tailscale">Tailscale</a> or <a href="/docs/reverse-proxy">your own proxy</a>.</li>
+          <li><strong>No warranty.</strong> If you can&#8217;t afford to lose access, use <a href="/docs/cloudflare-tunnel">a domain you control</a>.</li>
+        </ul>
+
+        <h2>Other devices</h2>
+        <p>Each device signs in with its own single-use link, which gives it a session for 30 days. Press <kbd>L</kbd> in the terminal for a new link, or run this from another shell:</p>
         <pre class="term"><code><span class="prompt">$</span> npx frizz --link</code></pre>
       </article>
     </main>
     <footer class="foot">
       <div class="wrap foot-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="22" height="22" /><span>Frizz</span></a>
-        <span>MIT</span>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="24" height="24" /><span>Frizz</span></a>
         <a href="https://github.com/colinhacks/frizz">GitHub</a>
         <a href="https://www.npmjs.com/package/frizz">npm</a>
         <a href="https://github.com/colinhacks/frizz#readme">README</a>
+        <a href="https://github.com/colinhacks/frizz/blob/main/LICENSE">MIT license</a>
         <span class="sp"></span>
         <span>by <a href="https://x.com/colinhacks">@colinhacks</a></span>
       </div>
