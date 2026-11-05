@@ -10,7 +10,7 @@
     <meta property="og:title" content="SSH port forwarding — Frizz" />
     <meta property="og:description" content="The simplest way to reach a Frizz board from another machine: forward the port over SSH and open it on loopback." />
     <meta property="og:url" content="https://frizz.sh/docs/ssh" />
-    <meta property="og:image" content="https://frizz.sh/img/og.png?v=86af37c3" />
+    <meta property="og:image" content="https://frizz.sh/img/og.png?v=ca426e2a" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -27,7 +27,7 @@
   <body>
     <header class="nav ruled">
       <div class="wrap nav-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="26" height="26" /><span>Frizz</span></a>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="30" height="30" /><span>Frizz</span></a>
         <nav class="nav-links" aria-label="Site">
           <a class="opt-link" href="/#features">Features</a>
           <a class="opt-link" href="/#remote-access">Remote access</a>
@@ -41,25 +41,27 @@
       <article class="doc">
         <nav class="crumb" aria-label="Breadcrumb"><a href="/#remote-access"><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4l-4 4 4 4"/></svg><span class="label">Remote access</span></a></nav>
         <h1>SSH port forwarding</h1>
-        <p class="lede">The simplest option, and the only one that needs no flag at all.</p>
+        <p class="lede">Forward the port over SSH, then open <code>http://127.0.0.1:9393</code> on the client. There is nothing to set up in Frizz.</p>
 
         <pre class="term"><code><span class="prompt">$</span> ssh -L 9393:127.0.0.1:9393 you@your-machine</code></pre>
-        <p>Then open <code>http://127.0.0.1:9393</code> on the client. The forwarded port is loopback on both ends, so Frizz treats it as local: there is no public origin to declare and no access link to redeem.</p>
+        <ul>
+          <li><strong>No sign-in link.</strong> The port is loopback on both ends, so Frizz treats it as local.</li>
+          <li><strong>Nothing exposed.</strong> No port opens to the internet.</li>
+          <li><strong>One session.</strong> The forward ends with the SSH session, which makes it awkward from a phone. For a phone, use <a href="/docs/frizz-sh">a frizz.sh subdomain</a> or <a href="/docs/tailscale">Tailscale</a>.</li>
+        </ul>
 
-        <p>Nothing is exposed to the internet. The cost is that the forward lives only as long as the SSH session, which makes it awkward from a phone — for that, use <a href="/docs/frizz-sh">a name on frizz.sh</a> or <a href="/docs/tailscale">Tailscale</a>.</p>
-
-        <h2>Minting a link over the same connection</h2>
-        <p>If you would rather reach the board by a real hostname later, the same SSH session is how a headless machine hands you a single-use code:</p>
-        <pre class="term"><code><span class="prompt">$</span> ssh you@your-machine 'npx frizz --link'</code></pre>
+        <h2>Sign-in links over SSH</h2>
+        <p>A machine with a remote setup saved can print a single-use sign-in link over the same connection:</p>
+        <pre class="term"><code><span class="prompt">$</span> ssh you@your-machine npx frizz --link</code></pre>
       </article>
     </main>
     <footer class="foot">
       <div class="wrap foot-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="22" height="22" /><span>Frizz</span></a>
-        <span>MIT</span>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="24" height="24" /><span>Frizz</span></a>
         <a href="https://github.com/colinhacks/frizz">GitHub</a>
         <a href="https://www.npmjs.com/package/frizz">npm</a>
         <a href="https://github.com/colinhacks/frizz#readme">README</a>
+        <a href="https://github.com/colinhacks/frizz/blob/main/LICENSE">MIT license</a>
         <span class="sp"></span>
         <span>by <a href="https://x.com/colinhacks">@colinhacks</a></span>
       </div>

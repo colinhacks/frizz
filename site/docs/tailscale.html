@@ -10,7 +10,7 @@
     <meta property="og:title" content="Tailscale — Frizz" />
     <meta property="og:description" content="Serve a Frizz board over HTTPS on your tailnet, where only your own devices can reach it." />
     <meta property="og:url" content="https://frizz.sh/docs/tailscale" />
-    <meta property="og:image" content="https://frizz.sh/img/og.png?v=86af37c3" />
+    <meta property="og:image" content="https://frizz.sh/img/og.png?v=ca426e2a" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -27,7 +27,7 @@
   <body>
     <header class="nav ruled">
       <div class="wrap nav-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="26" height="26" /><span>Frizz</span></a>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="30" height="30" /><span>Frizz</span></a>
         <nav class="nav-links" aria-label="Site">
           <a class="opt-link" href="/#features">Features</a>
           <a class="opt-link" href="/#remote-access">Remote access</a>
@@ -41,33 +41,28 @@
       <article class="doc">
         <nav class="crumb" aria-label="Breadcrumb"><a href="/#remote-access"><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4l-4 4 4 4"/></svg><span class="label">Remote access</span></a></nav>
         <h1>Tailscale</h1>
-        <p class="lede">Tailscale gives the machine a stable HTTPS name on your tailnet and terminates TLS itself, so only your devices can reach the board. Authentication is the tailnet: a device that is not signed into it cannot reach the name at all.</p>
+        <p class="lede">An HTTPS name on your tailnet, with Tailscale handling TLS. Only devices signed into the tailnet can reach it.</p>
 
-        <h2>Serve the port</h2>
-        <pre class="term"><code><span class="prompt">$</span> tailscale serve --bg --https=443 localhost:9393
-<span class="prompt">$</span> tailscale serve status</code></pre>
-        <p><code>status</code> reports the URL it is serving, in the form <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>. Take the origin from there rather than composing it by hand — the MagicDNS name is not something you choose.</p>
+        <h2>Port setup</h2>
+        <p>Run <a class="ext" href="https://tailscale.com/kb/1242/tailscale-serve">Tailscale Serve</a> once, in another terminal. It serves Frizz&#8217;s default port in the background until you turn it off.</p>
+        <pre class="term"><code><span class="prompt">$</span> tailscale serve --bg 9393</code></pre>
 
-        <h2>Tell Frizz the origin</h2>
-        <pre class="term"><code>  press R, choose <span class="prompt">Tailscale</span>
+        <h2>Frizz settings</h2>
+        <p>Press <kbd>R</kbd> in the terminal running Frizz, choose <strong>Tailscale</strong>, and press Enter. Frizz reads this machine&#8217;s name from Tailscale and offers it as the origin.</p>
+        <pre class="term"><code>Origin     https://your-machine.your-tailnet.ts.net</code></pre>
 
-  Origin  https://your-machine.your-tailnet.ts.net</code></pre>
-        <p>Frizz reads your tailnet name while the pane is open, so the field is usually already filled in.</p>
-        <p>Frizz checks that a request&#8217;s <code>Host</code> matches the origin it was given, so the value has to be the exact origin a browser sees — scheme included, no trailing slash.</p>
-
-        <h2>Stop serving</h2>
-        <pre class="term"><code><span class="prompt">$</span> tailscale serve --https=443 localhost:9393 off</code></pre>
-
-        <p>See the <a class="ext" href="https://tailscale.com/kb/1242/tailscale-serve">Tailscale Serve documentation</a> for the current syntax, which moves faster than this page.</p>
+        <h2>Turning it off</h2>
+        <p>Press <kbd>R</kbd> and choose <strong>Off</strong> to put Frizz back on loopback only. This command clears everything the machine serves through Tailscale:</p>
+        <pre class="term"><code><span class="prompt">$</span> tailscale serve reset</code></pre>
       </article>
     </main>
     <footer class="foot">
       <div class="wrap foot-in">
-        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-tile.png?v=1b8b5734" alt="" width="22" height="22" /><span>Frizz</span></a>
-        <span>MIT</span>
+        <a class="brand" href="/" aria-label="Frizz home"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" width="24" height="24" /><span>Frizz</span></a>
         <a href="https://github.com/colinhacks/frizz">GitHub</a>
         <a href="https://www.npmjs.com/package/frizz">npm</a>
         <a href="https://github.com/colinhacks/frizz#readme">README</a>
+        <a href="https://github.com/colinhacks/frizz/blob/main/LICENSE">MIT license</a>
         <span class="sp"></span>
         <span>by <a href="https://x.com/colinhacks">@colinhacks</a></span>
       </div>
