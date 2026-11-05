@@ -37,7 +37,7 @@ believing a handshake older than five minutes.
 Only GitHub Actions deploys this Worker, never a laptop. Dispatch [`workers-deploy.yml`](../../.github/workflows/workers-deploy.yml) from `main`; it waits for a maintainer's approval on the `workers-deploy` environment, typechecks, runs the unit tests below and deploys:
 
 ```sh
-gh workflow run workers-deploy.yml --ref main -f target=both
+keyward --reason "deploy the frizz.sh Workers" -- gh workflow run workers-deploy.yml --ref main -f target=both
 ```
 
 `target` takes `relay`, `registrar` or `both`. Each deploy is stamped `ci:<sha> run:<run id>`, and [`workers-drift.yml`](../../.github/workflows/workers-drift.yml) checks every 30 minutes that everything this Worker runs carries a stamp from a real run of that workflow. Anything else fails the check, and GitHub emails the failure. A deploy from a laptop, the dashboard or `wrangler rollback` therefore raises the alarm by design: from 2026-09-21 to 2026-10-08 an attacker holding a Cloudflare token ran backdoored builds of this Worker, and those uploads looked exactly like a laptop deploy. To recover from a bad deploy, revert it on `main` and dispatch the workflow again. The rules the check applies are in [`scripts/workers-drift.mjs`](../../scripts/workers-drift.mjs).

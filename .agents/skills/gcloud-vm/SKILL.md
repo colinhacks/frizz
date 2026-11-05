@@ -5,11 +5,11 @@ description: >-
   cannot do. Above all: REAL WINDOWS, which is the only way to check that Frizz still runs there now
   that tmux is gone. Invoke whenever you think "I need a Windows box" or "I need a Linux box": you can
   START the standing `nub-linux`/`nub-win` instances or CREATE a fresh one on demand. Carries the
-  gotchas that each cost a cycle — IPs change on every restart, the SSH user is `nub` with key
-  `~/.ssh/nub-vm`, a RUNNING box can be a wedged box (read the serial console), and the whole
-  Windows-SSH bring-up sequence, which is NOT the documented one. AUTH IS NOT A BLOCKER: prefix any
-  command with CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE and never conclude the VMs are unavailable from
-  a "Reauthentication failed" error until you have tried it.
+  gotchas that each cost a cycle — IPs change on every restart, the SSH user is `nub` with a throwaway
+  key per box under `~/.cache/nub/vm-keys/<name>/`, a RUNNING box can be a wedged box (read the serial
+  console), and the whole Windows-SSH bring-up sequence, which is NOT the documented one. AUTH IS NOT A
+  BLOCKER: run each command as `keyward --reason "<what it is for>" -- gcloud …`, and never conclude the
+  VMs are unavailable from a "Reauthentication failed" error, which is the user login, not Keyward.
 metadata:
   internal: true
 ---
@@ -17,25 +17,37 @@ metadata:
 # Google Cloud VMs
 
 You have `gcloud` and can create/start/stop VMs yourself. Any time a task needs a real OS the Mac host
-and Docker cannot give you, spin one up. Project `pullfrog`, zone **`us-central1-a`** — gcloud's default
-zone is `us-west1-a`, so **always pass `--zone us-central1-a` explicitly**.
+and Docker cannot give you, spin one up. Project `pullfrog`, zone **`us-central1-a`**. gcloud runs
+through Keyward with no saved configuration, so **always pass `--project pullfrog` and
+`--zone us-central1-a` explicitly**. Every `gcloud` below runs as
+`keyward --reason "<what it is for>" -- gcloud …`; see [Auth](#auth-keyward-holds-the-service-account-key).
 
 **For Frizz specifically, the case that matters is Windows.** tmux is gone, so Windows is a supported
 platform on paper; the only way to keep that true is to actually run there. See the Windows section
 below — the bring-up is fiddly and the recipe here is the one that works.
 
-## Auth: use the service-account key, not `gcloud auth login`
+## Auth: Keyward holds the service-account key
 
-The user credential's refresh token gets revoked periodically by org session-control policy, so
-interactive login is not durable. A service-account key is exempt and works non-interactively:
+The user credential's refresh token gets revoked periodically by org session-control policy, so an
+interactive gcloud sign-in is not durable, and none is kept on this Mac. Keyward keeps a service-account
+key sealed and writes it out for one run at a time:
 
 ```sh
-export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=~/.config/pullfrog/vertex-service-account.json
-gcloud compute instances list --project=pullfrog
+keyward --reason "frizz: list the VMs" -- gcloud compute instances list --project pullfrog
 ```
 
-It has Owner on `pullfrog`, so `list`/`describe`/`start`/`stop`/`create`/`delete` all work. Only fall
-back to `! gcloud auth login` if this errors `Reauthentication failed`.
+- **One Touch ID covers ten minutes of this repository's gcloud runs**, and locking the screen ends that.
+  Tell the maintainer before you raise the sheet. On a locked screen it fails at once with
+  `keyward: not released: screen locked`: wait for the unlock (the `keyward` skill has how), then run it
+  again. If `keyward ls` shows no key, ask for one; never sign gcloud in.
+- **The command's first word must be `gcloud`.** A runner or `sh -c` is refused, so each gcloud call gets
+  its own `keyward`; the shell around it is fine (`IP=$(keyward … -- gcloud …)`).
+- **gcloud runs with an empty configuration**, and the key's own project is the wrong one. Pass
+  `--project pullfrog` on every command and `--zone` on everything that takes one. With no terminal
+  attached, pass `--quiet`, or gcloud's yes/no questions wait forever.
+- **The key manages compute instances and nothing else**, so `list`/`describe`/`start`/`stop`/`create`/
+  `delete` work, and a box must be created with `--no-service-account --no-scopes` (attaching the default
+  compute account needs a permission the key lacks).
 
 ## The standing instances, and when to make your own
 
@@ -46,34 +58,50 @@ back to `! gcloud auth login` if this errors `Reauthentication failed`.
 
 They belong to the `nub` project and may be stopped, wedged, or configured for someone else's key —
 **do not assume you can reach them.** (Measured 2026-08-03: `nub-win` timed out during banner exchange
-and `nub-win2` refused the `nub-vm` key with "Too many authentication failures".) When that happens,
+and `nub-win2` refused its key with "Too many authentication failures".) When that happens,
 **create your own throwaway box** rather than fighting theirs, and delete it when done.
 
 ```sh
+keyward --reason "frizz: create a Windows VM" -- \
 gcloud compute instances create frizz-win-tmp \
   --zone us-central1-a --project pullfrog \
   --machine-type e2-standard-4 \
   --image-family windows-2022 --image-project windows-cloud \
-  --boot-disk-size 50GB
+  --boot-disk-size 50GB \
+  --no-service-account --no-scopes
 
-gcloud compute instances delete frizz-win-tmp --zone us-central1-a --quiet   # a created VM bills its disk even when STOPPED
+keyward --reason "frizz: delete the Windows VM" -- \
+gcloud compute instances delete frizz-win-tmp --zone us-central1-a --project pullfrog --quiet   # a created VM bills its disk even when STOPPED
 ```
 
-## SSH — user `nub`, key `~/.ssh/nub-vm`, and the IP is DYNAMIC
+## SSH — user `nub`, a throwaway key per box, and the IP is DYNAMIC
+
+**Each box has its own key, at `~/.cache/nub/vm-keys/<name>/id_ed25519`.** There is no shared key. Make it
+if it is missing; on a Linux box, `add-metadata ssh-keys=…` then installs it (Windows is below). That
+replaces the box's whole `ssh-keys` value, so a second key would lock the first out: reuse the one there.
+
+```sh
+KEY=~/.cache/nub/vm-keys/$NAME/id_ed25519
+mkdir -p ~/.cache/nub/vm-keys && chmod 700 ~/.cache/nub/vm-keys
+mkdir -p -m 700 "$(dirname "$KEY")"
+[ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N "" -C "$NAME" -f "$KEY"
+```
 
 **Re-read the IP on every reconnect, not once per session.** A box can be stopped out from under you
 mid-run and come back on a different address, so a sudden timeout on a previously-working box usually
 means "it moved", not "it wedged".
 
 ```sh
-IP=$(gcloud compute instances describe "$NAME" --zone us-central1-a --project=pullfrog \
+IP=$(keyward --reason "frizz: look up the address of $NAME" -- \
+      gcloud compute instances describe "$NAME" --zone us-central1-a --project pullfrog \
       --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
-ssh -i ~/.ssh/nub-vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o IdentitiesOnly=yes -o ConnectTimeout=15 nub@"$IP" 'echo ok'
+ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o IdentitiesOnly=yes -o IdentityAgent=none -o ConnectTimeout=15 nub@"$IP" 'echo ok'
 ```
 
-`-o IdentitiesOnly=yes` matters: without it ssh offers every key in your agent and the server closes the
-connection with "Too many authentication failures" before it ever tries the right one.
+`-o IdentitiesOnly=yes -o IdentityAgent=none` matters: the maintainer's ssh config routes every connection
+through the Keyward agent, where each signature can raise a Touch ID sheet, and `IdentitiesOnly` alone
+still asks the agent. Pass both to every `ssh` and `scp`.
 
 Always reachability-guard a dispatch (`ConnectTimeout`, `timeout`) and retry with backoff after a fresh
 start — sshd is not up the instant STATUS flips RUNNING.
@@ -99,7 +127,7 @@ create so you only pay for one reset:
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue
 Set-Service -Name sshd -StartupType Automatic
 Start-Service sshd -ErrorAction SilentlyContinue
-$key = '<contents of ~/.ssh/nub-vm.pub>'
+$key = '<contents of the box's $KEY.pub>'
 New-Item -ItemType Directory -Force -Path "C:\Users\nub\.ssh" | Out-Null
 Set-Content -Path "C:\Users\nub\.ssh\authorized_keys" -Value $key -Encoding ascii
 $adm = "C:\ProgramData\ssh\administrators_authorized_keys"
@@ -109,11 +137,13 @@ Restart-Service sshd -ErrorAction SilentlyContinue
 ```
 
 ```sh
+keyward --reason "frizz: create a Windows VM that takes SSH" -- \
 gcloud compute instances create frizz-win-tmp --zone us-central1-a --project pullfrog \
   --machine-type e2-standard-4 --image-family windows-2022 --image-project windows-cloud \
-  --boot-disk-size 50GB \
-  --metadata enable-windows-ssh=TRUE,ssh-keys="nub:$(cat ~/.ssh/nub-vm.pub)" \
+  --boot-disk-size 50GB --no-service-account --no-scopes \
+  --metadata enable-windows-ssh=TRUE,ssh-keys="nub:$(cat "$KEY.pub")" \
   --metadata-from-file windows-startup-script-ps1=win-ssh-setup.ps1
+keyward --reason "frizz: reset the Windows VM so its startup script runs" -- \
 gcloud compute instances reset frizz-win-tmp --zone us-central1-a --project pullfrog
 ```
 
@@ -150,13 +180,15 @@ not listening; `Disconnected from … port 22` → sshd is up and your key is be
 
 - **A RUNNING instance can be a DEAD instance — read the serial console FIRST.**
   ```sh
-  gcloud compute instances get-serial-port-output "$NAME" --zone us-central1-a | tail -40
+  keyward --reason "frizz: read $NAME's serial console" -- \
+    gcloud compute instances get-serial-port-output "$NAME" --zone us-central1-a --project pullfrog | tail -40
   ```
   This diagnosed an 11-day SSH-dead box instantly (an OOM had wedged sshd). It beats guessing "network
   problem" every time, and on Windows it is the only way to see what the guest agent is doing.
 - **Judge results by behavioral/differential evidence** — EPERM vs success, a before/after delta, a
   control that must still fail — not wall-clock, since a shared VM may be contended.
-- **Delete your box.** `gcloud compute instances delete <name> --zone us-central1-a --quiet`. Verify
+- **Delete your box.** `keyward --reason "frizz: delete the VM <name>" -- gcloud compute instances delete
+  <name> --zone us-central1-a --project pullfrog --quiet`, and `rm -rf ~/.cache/nub/vm-keys/<name>`. Verify
   with `instances list` that only the pre-existing ones remain.
 
 ## Worked example: what this caught
