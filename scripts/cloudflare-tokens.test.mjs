@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { TOKENS, expiresOn, findGroup, planToken, snapshotAccount, staleTokens } from "./cloudflare-tokens.mjs"
+import { SNAPSHOT_TOKEN, TOKENS, expiresOn, findGroup, planToken, snapshotAccount, staleTokens } from "./cloudflare-tokens.mjs"
 
 // Shapes from GET /accounts/{account_id}/tokens/permission_groups, cut down to the fields the plan
 // reads. Not captured from the live account: the first real run resolves against the real list and
@@ -74,6 +74,11 @@ test("a rotation revokes the older tokens of that name, never the new one or the
     { id: "other", name: "github-actions workers-drift" },
   ]
   assert.deepEqual(staleTokens(existing, "github-actions workers-deploy", new Set(["new", "boot"])).map((t) => t.id), ["old1"])
+})
+
+test("the snapshot's token only reads, and can never see the relay's traffic", () => {
+  const names = [...SNAPSHOT_TOKEN.account, ...SNAPSHOT_TOKEN.zone]
+  assert.deepEqual(names.filter((name) => !/ Read\??$/.test(name) || /tail|log/i.test(name)), [])
 })
 
 test("expires_on is whole seconds, a year out", () => {

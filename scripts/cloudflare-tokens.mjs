@@ -10,13 +10,14 @@
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
 // the token that deploys lives only in a GitHub environment that waits for the maintainer's approval.
 //
-// THE CREDENTIALS, both released by Keyward and only read here, so no run can overwrite either:
-//
-// - CLOUDFLARE_FRIZZ_MINTER manages the account's API tokens: Account API Tokens Edit, Account Settings
-//   Read and Zone Read on the Frizz account, plus API Tokens Read on the user who made it. Only the
-//   dashboard can issue it, because Cloudflare refuses token-management permissions on a token made
-//   through its API, which is why the maintainer's everyday CLOUDFLARE_API_TOKEN cannot do this.
-// - CLOUDFLARE_API_TOKEN reads everything else for the `--out` snapshot.
+// THE CREDENTIAL is CLOUDFLARE_FRIZZ_MINTER, read from the environment and never stored by this script.
+// It manages the account's API tokens: Account API Tokens Edit, Account Settings Read and Zone Read on
+// the Frizz account, plus API Tokens Read on the user who made it. Only the dashboard can issue it,
+// because Cloudflare refuses token-management permissions on a token made through its API. It can mint
+// a token that deploys the relay, and whatever can deploy the relay has code execution on every board
+// behind it. So it is made for one sitting with a one-day expiry, handed over on a secret card, kept
+// nowhere, and deleted in the dashboard afterwards. The maintainer's everyday CLOUDFLARE_API_TOKEN cannot
+// reach this account, on purpose.
 //
 // THE CI TOKENS ARE ACCOUNT-OWNED ON PURPOSE. `workers-drift` tells CI's uploads from a laptop's by their
 // author, and a user-owned CI token would share its author with the maintainer's own token.
@@ -25,18 +26,22 @@
 // revoked. Every run ends with an audit of the account's members and API tokens, flagging any token
 // this script does not manage.
 //
-//   keyward run --reason "mint the frizz.sh CI tokens" CLOUDFLARE_FRIZZ_MINTER -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
-//   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_FRIZZ_MINTER CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
+//   T="$(cat '<secret pipe>')"
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
 //
 // `--out=<dir>` also saves the whole account as it stands, raw: every Worker's deployments, versions,
 // secret names, crons and deployed code, plus routes, domains, tunnels, DNS, user-owned tokens and the
 // audit log. Run it BEFORE a deploy, which replaces what is running and with it any trace of a
-// backdoor. The directory is evidence, so keep it out of the repository.
+// backdoor. The minter can't read most of that, so the run mints its own read token (SNAPSHOT_TOKEN),
+// holds it in memory and revokes it at the end. The directory is evidence, so keep it out of the
+// repository.
 
 import { spawnSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { ghCommand } from "./lib/gh-command.mjs"
 import { join } from "node:path"
+import { setTimeout } from "node:timers/promises"
 import { pathToFileURL } from "node:url"
 import { ACCOUNT_ID } from "./workers-drift.mjs"
 
@@ -66,6 +71,41 @@ export const TOKENS = [
     sink: { kind: "gh", secret: "CLOUDFLARE_READ_TOKEN" },
   },
 ]
+
+// What the `--out` snapshot's own token reads. "Read" does not mean harmless on this account: Workers
+// Tail Read streams every request's URL and headers, Logs Read gives Logpull and Instant Logs, and the
+// relay carries each board's session cookie and single-use access code in those. A test fails if either
+// joins this list. Logpush jobs stay unread because of it; the audit log still records one being made.
+export const SNAPSHOT_TOKEN = {
+  name: "frizz audit snapshot",
+  account: [
+    "Workers Scripts Read",
+    "Account Settings Read",
+    "Workers KV Storage Read?",
+    "Workers R2 Storage Read?",
+    "D1 Read?",
+    "Pages Read?",
+    "Queues Read?",
+    "Cloudflare Tunnel Read?",
+    "Access: Apps and Policies Read?",
+    "Access: Service Tokens Read?",
+    "Notifications Read?",
+  ],
+  zone: [
+    "Zone Read",
+    "DNS Read",
+    "Workers Routes Read",
+    "Page Rules Read?",
+    "Zone WAF Read?",
+    "Transform Rules Read?",
+    "Dynamic URL Redirects Read?",
+    "Config Settings Read?",
+    "Cache Settings Read?",
+    "Origin Read?",
+    "Email Routing Rules Read?",
+  ],
+}
+const SNAPSHOT_TOKEN_DAYS = 1 / 24
 
 /**
  * The permission group called `wanted` at `scope`, from the account's list. Cloudflare names a write
@@ -295,6 +335,35 @@ export async function snapshotAccount({ get, tokensGet = get, getBytes, outDir, 
   return { saved, refused, scripts }
 }
 
+/** Calls `use` with a token minted for this one run, in memory only, and revokes it however `use` ends. */
+async function withSnapshotToken(cf, use) {
+  const groups = await cf("GET", `/accounts/${ACCOUNT_ID}/tokens/permission_groups`)
+  const zones = await cf("GET", `/zones?name=${ZONE}&account.id=${ACCOUNT_ID}`)
+  if (zones.length !== 1) throw new Error(`expected one zone named ${ZONE} in account ${ACCOUNT_ID}, found ${zones.length}`)
+  const { policies, missing, skipped } = planToken(SNAPSHOT_TOKEN, { groups, accountId: ACCOUNT_ID, zoneId: zones[0].id })
+  if (missing.length) throw new Error(`permission groups not found, nothing minted: ${missing.join(", ")}`)
+  if (skipped.length) console.log(`\nsnapshot token: not offered, so skipped: ${skipped.join(", ")}`)
+  const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: SNAPSHOT_TOKEN.name, policies, expires_on: expiresOn(Date.now(), SNAPSHOT_TOKEN_DAYS) })
+  console.log(`\nminted ${SNAPSHOT_TOKEN.name} (${created.id}), expires ${created.expires_on}`)
+  try {
+    // A new token can answer 401 for its first moments, and a snapshot would record that as a refusal.
+    const verify = client(created.value)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await verify("GET", `/accounts/${ACCOUNT_ID}/tokens/verify`)
+        break
+      } catch (error) {
+        if (attempt === 10) throw error
+        await setTimeout(1000)
+      }
+    }
+    return await use(created.value)
+  } finally {
+    await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${created.id}`)
+    console.log(`revoked ${SNAPSHOT_TOKEN.name} (${created.id})`)
+  }
+}
+
 function reader(token) {
   const request = async (path) => {
     const response = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${token}` } })
@@ -316,10 +385,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const args = process.argv.slice(2)
     const flag = (name) => args.includes(name)
     const only = args.find((a) => a.startsWith("--only="))?.slice("--only=".length).split(",")
-    const everyday = (process.env.CLOUDFLARE_API_TOKEN ?? "").trim()
-    const credential = (process.env.CLOUDFLARE_FRIZZ_MINTER ?? "").trim() || everyday
+    const credential = (process.env.CLOUDFLARE_FRIZZ_MINTER ?? "").trim()
     if (!credential) {
-      console.error("no credential: run under `keyward run --reason \"…\" CLOUDFLARE_FRIZZ_MINTER --`")
+      console.error("no credential: set CLOUDFLARE_FRIZZ_MINTER, see this file's header")
       process.exit(1)
     }
     const cf = client(credential)
@@ -330,7 +398,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       await audit(cf, me.id)
       const outDir = args.find((a) => a.startsWith("--out="))?.slice("--out=".length)
       if (outDir) {
-        const { saved, refused, scripts } = await snapshotAccount({ ...reader(everyday || credential), tokensGet: reader(credential).get, outDir, accountId: ACCOUNT_ID, zone: ZONE, since: SNAPSHOT_SINCE, knownScripts: KNOWN_SCRIPTS })
+        const { saved, refused, scripts } = await withSnapshotToken(cf, (token) =>
+          snapshotAccount({ ...reader(token), tokensGet: reader(credential).get, outDir, accountId: ACCOUNT_ID, zone: ZONE, since: SNAPSHOT_SINCE, knownScripts: KNOWN_SCRIPTS }),
+        )
         console.log(`\n== Snapshot in ${outDir}: Workers ${scripts.join(", ")}`)
         for (const { name, count } of saved) console.log(`  ${name}${count === null ? "" : `: ${count}`}`)
         for (const { name, why } of refused) console.log(`  COULD NOT READ ${name}: ${why}`)

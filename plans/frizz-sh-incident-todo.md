@@ -9,6 +9,7 @@ What is still owed after the 2026-09-21..10-08 compromise of the frizz.sh Worker
 - The implant's kill-switch file `$TMPDIR/log_de-0.log` exists.
 - The maintainer's own board rotated its `session-key` at 2026-10-08 17:01, and it serves a private name (`kpfhl7cbp5qf4olyh2t7.frizz.sh`), not a custom one.
 - Custom frizz.sh names (the GitHub-backed claim) are withdrawn from every menu and doc behind `CUSTOM_NAMES_OFFERED` in [`src/cloud.ts`](../src/cloud.ts). A name already claimed keeps renewing, because a renewal is signed by the board's keypair and never touches GitHub.
+- The live Workers were read and compared with source on 2026-11-05: both active versions rebuild from `2c8820df`'s tree, apart from compiler output. Routes, domains, crons, DNS and members match the baseline, neither Worker holds a secret, and the token stolen in September no longer exists. `scripts/cloudflare-tokens.mjs --audit --out=<dir>` takes that snapshot.
 
 ## 1. Deploy the Workers from CI — set it up once
 
