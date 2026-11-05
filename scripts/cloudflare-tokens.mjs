@@ -33,11 +33,17 @@
 //   env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --stash-bootstrap < '<secret pipe>'
 //   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs
 //   keyward run --reason "rotate the Frizz account's Cloudflare tokens" CLOUDFLARE_ADMIN_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift,read,admin] [--dry-run]
-//   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit
+//   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
+//
+// `--out=<dir>` also saves the whole account as it stands, raw: every Worker's deployments, versions,
+// secret names, crons and deployed code, plus routes, domains, tunnels, DNS and the audit log. Run it
+// BEFORE a deploy, which replaces what is running and with it any trace of a backdoor. The directory
+// is evidence, so keep it out of the repository.
 
 import { spawnSync } from "node:child_process"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { ghCommand } from "./lib/gh-command.mjs"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { ACCOUNT_ID } from "./workers-drift.mjs"
 
@@ -229,6 +235,121 @@ async function audit(cf, selfId) {
   }
 }
 
+// The audit log reaches back to before the backdoored builds of 2026-09-21.
+const SNAPSHOT_SINCE = "2026-08-01T00:00:00Z"
+const KNOWN_SCRIPTS = ["frizz-relay", "frizz-registrar"]
+
+/** Everything a token holder could leave behind besides a Worker build. A surprise in any of it is a finding. */
+export function accountEndpoints(accountId, since) {
+  const account = `/accounts/${accountId}`
+  return [
+    { name: "audit-log", path: `${account}/audit_logs?since=${since}&direction=desc`, perPage: 1000 },
+    { name: "worker-domains", path: `${account}/workers/domains` },
+    { name: "tunnels", path: `${account}/cfd_tunnel?is_deleted=false`, perPage: 100 },
+    { name: "kv-namespaces", path: `${account}/storage/kv/namespaces`, perPage: 100 },
+    { name: "r2-buckets", path: `${account}/r2/buckets` },
+    { name: "d1-databases", path: `${account}/d1/database`, perPage: 100 },
+    { name: "pages-projects", path: `${account}/pages/projects` },
+    { name: "queues", path: `${account}/queues` },
+    { name: "logpush-account", path: `${account}/logpush/jobs` },
+    { name: "access-apps", path: `${account}/access/apps` },
+    { name: "access-service-tokens", path: `${account}/access/service_tokens` },
+    { name: "notification-policies", path: `${account}/alerting/v3/policies` },
+  ]
+}
+
+export function zoneEndpoints(zoneId) {
+  const zone = `/zones/${zoneId}`
+  return [
+    { name: "routes", path: `${zone}/workers/routes` },
+    { name: "dns", path: `${zone}/dns_records`, perPage: 100 },
+    { name: "rulesets", path: `${zone}/rulesets` },
+    { name: "page-rules", path: `${zone}/pagerules` },
+    { name: "email-routing", path: `${zone}/email/routing/rules`, perPage: 50 },
+    { name: "logpush-zone", path: `${zone}/logpush/jobs` },
+  ]
+}
+
+export function scriptEndpoints(accountId, script) {
+  const base = `/accounts/${accountId}/workers/scripts/${script}`
+  return [
+    { name: `${script}.deployments`, path: `${base}/deployments` },
+    { name: `${script}.versions`, path: `${base}/versions`, perPage: 50 },
+    { name: `${script}.secret-names`, path: `${base}/secrets` },
+    { name: `${script}.crons`, path: `${base}/schedules` },
+    { name: `${script}.settings`, path: `${base}/settings` },
+    { name: `${script}.subdomain`, path: `${base}/subdomain` },
+  ]
+}
+
+/** One endpoint's whole answer. A paged one is read until a short page; the versions API nests its list in `items`. */
+async function readEndpoint(get, { path, perPage }) {
+  if (!perPage) return (await get(path)).result
+  const all = []
+  for (let page = 1; page <= 50; page++) {
+    const { result } = await get(`${path}${path.includes("?") ? "&" : "?"}per_page=${perPage}&page=${page}`)
+    const items = Array.isArray(result) ? result : (result?.items ?? [])
+    all.push(...items)
+    if (items.length < perPage) break
+  }
+  return all
+}
+
+/**
+ * Saves the account as it stands to `outDir`, one raw JSON file per endpoint. A read Cloudflare refuses
+ * is recorded and the run carries on, because a partial record beats none, and the caller says what it
+ * could not see. `get` answers Cloudflare's whole envelope and throws on a refusal; `getBytes` answers
+ * the raw body.
+ */
+export async function snapshotAccount({ get, getBytes, outDir, accountId, zone, since, knownScripts }) {
+  mkdirSync(outDir, { recursive: true, mode: 0o700 })
+  const write = (file, data) => writeFileSync(join(outDir, file), data, { mode: 0o600 })
+  const saved = []
+  const refused = []
+  const take = async (endpoint) => {
+    try {
+      const result = await readEndpoint(get, endpoint)
+      write(`${endpoint.name}.json`, JSON.stringify(result, null, 2))
+      saved.push({ name: endpoint.name, count: Array.isArray(result) ? result.length : null })
+      return result
+    } catch (error) {
+      refused.push({ name: endpoint.name, why: error.message })
+      return null
+    }
+  }
+  for (const endpoint of accountEndpoints(accountId, since)) await take(endpoint)
+  const listed = await take({ name: "workers", path: `/accounts/${accountId}/workers/scripts` })
+  const zones = await take({ name: "zones", path: `/zones?name=${zone}&account.id=${accountId}` })
+  for (const { id } of zones ?? []) for (const endpoint of zoneEndpoints(id)) await take(endpoint)
+  const scripts = [...new Set([...(listed ?? []).map((w) => w.id), ...knownScripts])]
+  for (const script of scripts) {
+    for (const endpoint of scriptEndpoints(accountId, script)) await take(endpoint)
+    try {
+      write(`${script}.deployed-code.multipart`, await getBytes(`/accounts/${accountId}/workers/scripts/${script}`))
+      saved.push({ name: `${script}.deployed-code`, count: null })
+    } catch (error) {
+      refused.push({ name: `${script}.deployed-code`, why: error.message })
+    }
+  }
+  return { saved, refused, scripts }
+}
+
+function reader(token) {
+  const request = async (path) => {
+    const response = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${token}` } })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response
+  }
+  return {
+    get: async (path) => {
+      const parsed = await (await request(path)).json()
+      if (!parsed?.success) throw new Error((parsed?.errors ?? []).map((e) => `${e.code}: ${e.message}`).join("; ") || "not successful")
+      return parsed
+    },
+    getBytes: async (path) => Buffer.from(await (await request(path)).arrayBuffer()),
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const args = process.argv.slice(2)
@@ -258,6 +379,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
     if (flag("--audit")) {
       await audit(cf, me.id)
+      const outDir = args.find((a) => a.startsWith("--out="))?.slice("--out=".length)
+      if (outDir) {
+        const { saved, refused, scripts } = await snapshotAccount({ ...reader(credential), outDir, accountId: ACCOUNT_ID, zone: ZONE, since: SNAPSHOT_SINCE, knownScripts: KNOWN_SCRIPTS })
+        console.log(`\n== Snapshot in ${outDir}: Workers ${scripts.join(", ")}`)
+        for (const { name, count } of saved) console.log(`  ${name}${count === null ? "" : `: ${count}`}`)
+        for (const { name, why } of refused) console.log(`  COULD NOT READ ${name}: ${why}`)
+      }
       process.exit(0)
     }
 
