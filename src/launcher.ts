@@ -175,7 +175,7 @@ export function durableReexecArgs(options: { entry: string; port: number }): str
 const RETIRED_NETWORK_FLAGS = ["--host", "--allowed-host", "--public-origin", "--cloud"];
 
 function retiredFlagMessage(flag: string): string {
-  return `${flag} was retired — how a board is reached is set up from the running board now: press R in its terminal to pick a private frizz.sh name, a Cloudflare Tunnel, Tailscale or a proxy of your own. The choice is remembered, so a plain launch serves it.`;
+  return `${flag} was retired — how a board is reached is set up from the running board now: press R in its terminal to pick a private frizz.sh subdomain, a Cloudflare Tunnel, Tailscale or a proxy of your own. The choice is remembered, so a plain launch serves it.`;
 }
 
 export function parseCliArgs(argv: string[]): CliOptions {
@@ -358,8 +358,8 @@ export function prepareSandbox(env: NodeJS.ProcessEnv = process.env, realHome: s
  * be "taken" against the real board for the length of a lease. Linking the real key makes a sandbox
  * claim the machine's claim, which the real board then renews as its own.
  *
- * cloudflared's files are linked one by one into a real directory, not as the directory itself: Frizz
- * writes frizz.yml there, and that write must land in the sandbox, not over the real one. Everything
+ * cloudflared's files are linked one by one into a real directory, not as the directory itself: a
+ * frizz.yml written there must land in the sandbox, not over the real one. Everything
  * here is best-effort — a missing file is simply not linked, and a platform that refuses symlinks gets
  * a sandbox without shared credentials rather than no sandbox.
  */
@@ -463,10 +463,9 @@ Commands:
   restart                restart the currently promoted artifact without building
 
 To reach the board from a phone or another machine, press R in the terminal running it: a short
-walkthrough sets up a private frizz.sh name (no account needed), a Cloudflare
-Tunnel, Tailscale, or a proxy of your own, and
-remembers the choice, so a plain launch serves it from then on. The board stays on loopback and
-shows a single-use sign-in link as a QR; press L for a fresh one, or run --link from another shell.
+walkthrough sets up a private frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
+Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
+on. The board stays on loopback and shows a single-use sign-in link as a QR; press L for a fresh one, or run --link from another shell.
 
 An immutable artifact is the default. --dev is the only explicit unsafe source watcher/HMR mode.
 `;

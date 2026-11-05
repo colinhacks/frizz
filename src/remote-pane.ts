@@ -64,8 +64,8 @@ interface Choice {
 
 /** Every setup, in menu order. The menu shows the subset `choicesFor` picks, never this list directly. */
 const CHOICES: Choice[] = [
-  { kind: "private", title: "Private name", blurb: "an unguessable name on frizz.sh — no account, nothing to install" },
-  { kind: "frizz", title: "Custom name", blurb: "<name>.frizz.sh of your choosing; needs a GitHub account" },
+  { kind: "private", title: "frizz.sh subdomain", blurb: "a private, unguessable address; no account, nothing to install" },
+  { kind: "frizz", title: "Custom subdomain", blurb: "<name>.frizz.sh of your choosing; needs a GitHub account" },
   { kind: "cloudflare", title: "Cloudflare Tunnel", blurb: "a domain you own on Cloudflare; cloudflared on this machine" },
   { kind: "tailscale", title: "Tailscale", blurb: "your tailnet; tailscale serve does the TLS" },
   { kind: "other", title: "Something else", blurb: "any proxy or tunnel you run — tell Frizz its address" },
@@ -75,7 +75,7 @@ const CHOICES: Choice[] = [
 /**
  * The rows the menu lists for a board whose setup is `current`.
  *
- * "Custom name" is withdrawn while custom names are paused (CUSTOM_NAMES_OFFERED in cloud.ts) — except
+ * "Custom subdomain" is withdrawn while custom names are paused (CUSTOM_NAMES_OFFERED in cloud.ts) — except
  * on a board ALREADY served by a custom claim, which keeps the row so the menu still marks what is
  * current. Choosing that row then serves the saved name again, renewed by the keypair alone; it never
  * opens the claim form, because a new custom claim is exactly what is paused.
@@ -84,7 +84,7 @@ function choicesFor(current: CloudConfig | null): Choice[] {
   if (customNamesOffered()) return CHOICES;
   if (kindOf(current) === "frizz") {
     return CHOICES.map((choice) =>
-      choice.kind === "frizz" ? { ...choice, blurb: `${current!.hostname} — kept and renewed; new custom names are paused` } : choice,
+      choice.kind === "frizz" ? { ...choice, blurb: `${current!.hostname} — kept and renewed; new custom subdomains are paused` } : choice,
     );
   }
   return CHOICES.filter((choice) => choice.kind !== "frizz");
@@ -175,7 +175,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         "",
         ...choices().map((choice, index) => {
           const marker = index === s.index ? "❯" : " ";
-          const title = choice.title.padEnd(18);
+          const title = choice.title.padEnd(20);
           const now = choice.kind === current ? `  ${DIM}(current)${RESET}` : "";
           return `${marker} ${title}${DIM}${choice.blurb}${RESET}${now}`;
         }),
@@ -235,10 +235,10 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   const formHead = (kind: FormKind): string[] => {
     if (kind === "frizz") {
       return [
-        "Custom frizz.sh name",
+        "Custom frizz.sh subdomain",
         "",
         ...wrap(
-          "Claims <name>.frizz.sh of your choosing, tied to your GitHub account so names cannot be squatted. The board dials out to frizz.sh — no port, no DNS record, no tunnel binary. One name per account; a name nobody runs for 30 days is released. (A private name needs none of this.)",
+          "Claims <name>.frizz.sh of your choosing, tied to your GitHub account so names cannot be squatted. The board dials out to frizz.sh — no port, no DNS record, no tunnel binary. One name per account; a name nobody runs for 30 days is released. (A private subdomain needs none of this.)",
         ),
         ...(options.sandbox
           ? ["", ...wrap("This is a sandbox, but a claim is real: it binds this machine's one name to your account, and your real board keeps it. Only the setup saved here is thrown away.")]
@@ -268,7 +268,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         "  cloudflared tunnel route dns my-board board.example.com",
         "",
         ...wrap(
-          `Then name them here. Frizz writes ~/.cloudflared/frizz.yml (ingress to http://127.0.0.1:${options.port}) and runs the tunnel beside the board, so the two share a lifetime.`,
+          `Point it at this board in ~/.cloudflared/frizz.yml (ingress to http://127.0.0.1:${options.port}; https://frizz.sh/docs/cloudflare-tunnel has the file), then name them here. Frizz runs the tunnel beside the board, so the two share a lifetime.`,
         ),
       ];
     }
@@ -389,10 +389,10 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   // No form and nothing to ask: the name is minted, so choosing this IS the claim.
   const claimPrivate = async () => {
     const back: Screen = { name: "menu", index: 0 };
-    screen = { name: "busy", message: "claiming a private name on frizz.sh…" };
+    screen = { name: "busy", message: "claiming a private frizz.sh subdomain…" };
     paint();
     try {
-      // A private name has no GitHub step, so nothing is ever shown and nothing can be cancelled.
+      // A private subdomain has no GitHub step, so nothing is ever shown and nothing can be cancelled.
       const next = await options.claim("", { signal: new AbortController().signal, onDeviceCode: () => {} });
       screen = { name: "busy", message: `serving ${next.hostname}…` };
       paint();

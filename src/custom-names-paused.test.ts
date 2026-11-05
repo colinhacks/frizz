@@ -78,7 +78,7 @@ test("while custom names are paused, a word is refused before GitHub or the regi
         return true;
       });
     }
-    assert.match(CUSTOM_NAMES_PAUSED, /custom frizz\.sh names are paused[\s\S]*private name[\s\S]*hostname of a tunnel/);
+    assert.match(CUSTOM_NAMES_PAUSED, /custom frizz\.sh subdomains are paused[\s\S]*private subdomain[\s\S]*hostname of a tunnel/);
     assert.equal(server.claims.length, 0, "the registrar was never called");
     // The same registrar and the same untouchable GitHub serve the paths the gate leaves alone, which
     // proves the refusals above were the gate's and not a broken harness.
@@ -126,7 +126,7 @@ test("while custom names are paused, a saved custom name that needs re-claiming 
     ]) {
       await assert.rejects(
         reconcileCloudConfig(stale, 9393, home, (m) => notices.push(m), server.origin, untouchableGithub),
-        /colin\.frizz\.sh needs moving onto the Frizz relay[\s\S]*custom frizz\.sh names are paused[\s\S]*press R/,
+        /colin\.frizz\.sh needs moving onto the Frizz relay[\s\S]*custom frizz\.sh subdomains are paused[\s\S]*press R/,
       );
     }
     assert.deepEqual(notices, [], "no notice promises a claim that is not going to happen");
@@ -177,12 +177,12 @@ function menuRows(text: string): string[] {
 test("while custom names are paused, the R menu does not offer one, and every number still lands", async () => {
   const { pane, out, applied } = buildPane(null);
   pane.open();
-  assert.doesNotMatch(out.text(), /Custom name/);
+  assert.doesNotMatch(out.text(), /Custom subdomain/);
   assert.doesNotMatch(out.text(), /GitHub/, "no row mentions a GitHub account");
   const rows = menuRows(out.text());
   assert.deepEqual(
-    rows.map((row) => row.slice(4, 22).trim()),
-    ["Private name", "Cloudflare Tunnel", "Tailscale", "Something else", "Off"],
+    rows.map((row) => row.slice(4, 24).trim()),
+    ["frizz.sh subdomain", "Cloudflare Tunnel", "Tailscale", "Something else", "Off"],
   );
   assert.match(rows[4]!, /\(current\)/, "Off is current, and the cursor is on it");
   assert.match(rows[4]!, /^ {2}❯/);
@@ -203,12 +203,12 @@ test("while custom names are paused, a board already on a custom name shows it, 
   pane.open();
   const rows = menuRows(out.text());
   assert.equal(rows.length, 6, "the custom row stays while it is the current setup");
-  assert.match(rows[1]!, /^ {2}❯ Custom name\s+colin\.frizz\.sh — kept and renewed; new custom names are paused.*\(current\)/);
+  assert.match(rows[1]!, /^ {2}❯ Custom subdomain\s+colin\.frizz\.sh — kept and renewed; new custom subdomains are paused.*\(current\)/);
   assert.doesNotMatch(out.text(), /needs a GitHub account/);
   pane.key("\r");
   await settle();
   assert.deepEqual(applied, [saved], "the saved claim is applied as it is");
-  assert.doesNotMatch(out.text(), /Custom frizz\.sh name|github\.com\/login\/device/, "no claim form, no sign-in");
+  assert.doesNotMatch(out.text(), /Custom frizz\.sh subdomain|github\.com\/login\/device/, "no claim form, no sign-in");
   assert.match(out.text(), /Serving https:\/\/colin\.frizz\.sh \(frizz\.sh\)/);
   assert.match(out.text(), /frizz_code=c0de/);
 });

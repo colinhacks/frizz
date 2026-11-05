@@ -7,7 +7,7 @@ Press **R** in the terminal running Frizz. A walkthrough offers four ways to rea
 ```
   Reach this board from anywhere
 
-  ❯ Private name        an unguessable name on frizz.sh — no account, nothing to install
+  ❯ frizz.sh subdomain  a private, unguessable address; no account, nothing to install
     Cloudflare Tunnel   a domain you own on Cloudflare; cloudflared on this machine
     Tailscale           your tailnet; tailscale serve does the TLS
     Something else      any proxy or tunnel you run — tell Frizz its address
@@ -34,9 +34,9 @@ npx frizz --sandbox
 
 Press **R** in it and walk through any setup. Credentials come along (`gh`, cloudflared's certificate and tunnel files, the agent CLIs, and on macOS the login keychain), so every screen sees what the real board sees; the saved setup, the registry and the session key are throwaway copies.
 
-## A private name on frizz.sh
+## A frizz.sh subdomain
 
-The default, and the shortest path there is: pick it and you are done. Frizz mints an unguessable name — 20 random characters, so nobody can find it by guessing — claims it with this machine's own key, and serves the board at it. No account, no sign-in, no domain, no port forwarding, no extra binary.
+Pick it and you are done. It needs no account, no domain, no Tailscale, and no tunnel.
 
 ```
   Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).
@@ -44,26 +44,25 @@ The default, and the shortest path there is: pick it and you are done. Frizz min
   Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for another.
 ```
 
-The done screen shows that link as a QR code. The name is the address, not the lock: the first visit still needs the single-use sign-in link, so someone who somehow learns the name still meets a closed door.
+Your board stays on loopback and opens one outbound connection to a relay Frizz runs, and visitors' requests travel down that connection.
 
-## A custom name on frizz.sh
+- **No inbound port.** The board dials out, so a laptop behind any NAT works with no configuration.
+- **No DNS record.** The relay already answers for every frizz.sh subdomain.
+- **Reconnects.** The connection comes back after a sleep or a network change.
 
-Paused. A name you choose, such as `ada.frizz.sh`, is tied to a GitHub account, and the GitHub sign-in it needs is not set up yet. Until it is, the **R** menu does not offer a custom name; use a private name, or a domain of your own below.
+| | |
+| --- | --- |
+| **Address** | 20 random characters, so nobody finds it by guessing. A first visit still needs a single-use sign-in link. |
+| **Ownership** | This machine's key proves ownership, with no account. |
+| **Renewal** | Every launch renews it. A subdomain nobody runs for **30 days** is released, and someone else can claim it. |
+| **Custom names** | Paused. A name you pick, such as `ada.frizz.sh`, needs a GitHub sign-in that is not set up yet, so the **R** menu does not offer one. A board that already has one keeps it, because renewals use only the key, and the menu lists it as the current setup. |
 
-A board that already holds a custom name keeps it. Every launch renews the name with this machine's key alone, so no GitHub sign-in is involved, and the menu still lists the name as the current setup.
+### Terms
 
-## How a frizz.sh name behaves
-
-Every launch renews the lease. A name nobody has run for **30 days** is released.
-
-Your board stays on loopback and **dials out** to `frizz.sh`, which is what removes the inbound port, the tunnel binary and the DNS record all at once — a laptop behind any NAT works with no configuration. The connection comes back by itself after a sleep or a network change, so a board is reachable again when the machine is.
-
-### What you are agreeing to
-
-- **One name per machine key.**
-- **The name is a lease, not property.** It lapses after 30 days unused, and Frizz can reclaim any name at any time — that is the only enforcement there is, so it has to exist.
-- **No warranty.** This is a free convenience on a domain someone else owns. Anything you cannot afford to lose access to belongs on a domain you control; every other section here shows how.
-- **Your traffic is not ours.** It goes from your machine to the relay to whoever is visiting. The registrar runs at signup and never again, and Frizz has no way to see what passes over your board.
+- **One per machine.** Each machine key holds one subdomain.
+- **Lease.** Frizz can reclaim any subdomain at any time.
+- **Relay.** Every request and keystroke passes through a relay Frizz runs, and the sign-in check runs on your machine. To keep a relay out of the path, use Tailscale or your own proxy.
+- **No warranty.** If you cannot afford to lose access, use a domain you control.
 
 ## Cloudflare Tunnel
 
@@ -75,14 +74,25 @@ cloudflared tunnel create my-board
 cloudflared tunnel route dns my-board board.example.com
 ```
 
-Then pick **Cloudflare Tunnel** and name them:
+Point the tunnel at the board. Frizz looks for this file by name:
+
+```yaml
+# ~/.cloudflared/frizz.yml
+tunnel: my-board
+credentials-file: /Users/you/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: board.example.com
+    service: http://127.0.0.1:9393
+  - service: http_status:404
+```
+
+Then pick **Cloudflare Tunnel** and name them. Frizz runs the tunnel beside the board, so the two start and stop together.
 
 ```
   Hostname   board.example.com
   Tunnel     my-board
 ```
-
-Frizz writes `~/.cloudflared/frizz.yml` (an ingress from the hostname to the board's loopback port) and runs the tunnel beside the board, so the two share a lifetime: a tunnel that outlives its board serves Cloudflare error 1033, and a board that outlives its tunnel is unreachable with nothing to say why.
 
 ## Tailscale
 

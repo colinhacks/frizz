@@ -153,10 +153,9 @@ Options:
 
 
 To reach the board from a phone or another machine, press R in the terminal running it: a short
-walkthrough sets up a private frizz.sh name (no account needed), a Cloudflare
-Tunnel, Tailscale, or a proxy of your own, and
-remembers the choice, so a plain launch serves it from then on. The board stays on loopback and
-shows a single-use sign-in link as a QR; press L for a fresh one, or run --link from another shell.`,
+walkthrough sets up a private frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
+Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
+on. The board stays on loopback and shows a single-use sign-in link as a QR; press L for a fresh one, or run --link from another shell.`,
   );
   process.exit(0);
 }
