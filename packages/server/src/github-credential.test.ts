@@ -23,6 +23,7 @@ import {
   writeGithubCredential,
   type StoredGithubCredential,
 } from "./github-credential.ts"
+import { githubCredentialKeyFilePath, resetGithubCredentialSeal, sealGithubCredential, setGithubCredentialSecurityForTest, type SecurityRunner } from "./github-credential-seal.ts"
 
 const HOUR = 3600_000
 
@@ -152,7 +153,7 @@ test("another process sharing the folder renewed first: its token is adopted, no
     // Load the old copy into memory, then let "the other process" rewrite the file underneath.
     assert.equal(githubCredentialStatus().signedIn, true)
     const theirs = JSON.stringify(app({ accessToken: "ghu_theirs", refreshToken: "ghr_theirs", accessExpiresAt: 8 * HOUR }))
-    writeFileSync(githubCredentialPath(), theirs, { mode: 0o600 })
+    writeFileSync(githubCredentialPath(), sealGithubCredential(theirs), { mode: 0o600 })
     const token = await frizzGithubToken({ now: () => 0, request: async () => { throw new Error("no refresh expected") } })
     assert.equal(token, "ghu_theirs")
   })
@@ -273,5 +274,148 @@ test("a worker's GH_CONFIG_DIR moves only when Frizz is signed in AND Keyward ca
       clearGithubCredential()
       assert.deepEqual(frizzGithubWorkerEnv(env), {})
     })
+  })
+})
+
+// ── At rest ─────────────────────────────────────────────────────────────────────────────────────
+
+/** A stand-in for `security` over one real file, so these can't touch the real keychain. */
+function fakeKeychain(home: string, behaviour: { read?: "unavailable" | "ok"; save?: "fails" | "ok" } = {}) {
+  const keychain = join(home, "login.keychain-db")
+  writeFileSync(keychain, "")
+  process.env.FRIZZ_GITHUB_KEYCHAIN = keychain
+  let stored: string | undefined
+  const calls: { args: string[]; stdin?: string }[] = []
+  const run: SecurityRunner = (args, stdin) => {
+    calls.push({ args, stdin })
+    if (args[0] === "find-generic-password") {
+      assert.equal(args.at(-1), keychain, "always names the keychain by path")
+      if (behaviour.read === "unavailable") return { status: 36, stdout: "" }
+      return stored ? { status: 0, stdout: `${stored}\n` } : { status: 44, stdout: "" }
+    }
+    assert.deepEqual(args, ["-i"])
+    if (behaviour.save === "fails") return { status: 1, stdout: "" }
+    stored = /-w ([0-9a-f]{64}) /.exec(stdin ?? "")?.[1]
+    return { status: 0, stdout: "" }
+  }
+  setGithubCredentialSecurityForTest(run)
+  return { calls, keychain, set: (value: string | undefined) => { stored = value }, get: () => stored, behaviour }
+}
+
+async function withKeychain(behaviour: Parameters<typeof fakeKeychain>[1], run: (k: ReturnType<typeof fakeKeychain>, home: string) => Promise<void> | void) {
+  await withHome(async () => {
+    const home = process.env.HOME!
+    const k = fakeKeychain(home, behaviour)
+    try {
+      await run(k, home)
+    } finally {
+      delete process.env.FRIZZ_GITHUB_KEYCHAIN
+      setGithubCredentialSecurityForTest()
+    }
+  })
+}
+
+const macOnly = { skip: process.platform !== "darwin" }
+
+test("the file on disk holds neither token, and reads back through the key", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app())
+    const text = readFileSync(githubCredentialPath(), "utf8")
+    assert.doesNotMatch(text, /ghu_|ghr_|colinhacks/)
+    assert.equal(statSync(githubCredentialPath()).mode & 0o777, 0o600)
+    resetGithubCredentialMemo()
+    assert.equal(readGithubCredential()?.kind, "app")
+    assert.deepEqual(githubCredentialStatus(), { signedIn: true, source: "app", login: "colinhacks" })
+  })
+})
+
+test("with no keychain the key is a 0600 file away from the credential's folder", { skip: process.platform === "win32" }, async () => {
+  await withHome(async () => {
+    writeGithubCredential(app())
+    const keyFile = githubCredentialKeyFilePath()
+    assert.equal(statSync(keyFile).mode & 0o777, 0o600)
+    assert.notEqual(join(keyFile, ".."), join(githubCredentialPath(), ".."))
+  })
+})
+
+test("a lost key reads as a problem, and a read never makes a new key", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app())
+    const before = readFileSync(githubCredentialPath(), "utf8")
+    rmSync(githubCredentialKeyFilePath())
+    resetGithubCredentialMemo()
+    const status = githubCredentialStatus()
+    assert.equal(status.signedIn, false)
+    assert.match(status.problem ?? "", /key is missing/)
+    assert.equal(existsSync(githubCredentialKeyFilePath()), false)
+    assert.equal(readFileSync(githubCredentialPath(), "utf8"), before)
+    await assert.rejects(frizzGithubToken(), /can't be read/)
+  })
+})
+
+test("a file from another machine can't be opened, and says so", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app())
+    writeFileSync(githubCredentialKeyFilePath(), "ab".repeat(32))
+    resetGithubCredentialMemo()
+    const status = githubCredentialStatus()
+    assert.equal(status.signedIn, false)
+    assert.match(status.problem ?? "", /can't be decrypted/)
+  })
+})
+
+test("signed out with no file, nothing asks the keychain", macOnly, async () => {
+  await withKeychain({}, (k) => {
+    assert.deepEqual(githubCredentialStatus(), { signedIn: false, login: null })
+    assert.equal(k.calls.length, 0)
+  })
+})
+
+test("keychain: the key is made once, over stdin, and held in memory after that", macOnly, async () => {
+  await withKeychain({}, async (k) => {
+    writeGithubCredential(app())
+    const save = k.calls.filter((call) => call.args[0] === "-i")
+    assert.equal(save.length, 1)
+    assert.equal(k.calls.some((call) => call.args.some((arg) => arg === k.get())), false, "the key is on no command line")
+    assert.match(save[0].stdin ?? "", new RegExp(`"${k.keychain}"`))
+    const calls = k.calls.length
+    // A renewal rewrites the file every 8 hours and must not go back to the keychain.
+    writeGithubCredential(app({ accessToken: "ghu_next" }))
+    assert.equal(await frizzGithubToken({ now: () => 0 }), "ghu_next")
+    assert.equal(k.calls.length, calls)
+    // A restart reads the same key and creates nothing.
+    resetGithubCredentialSeal()
+    resetGithubCredentialMemo()
+    assert.equal(readGithubCredential()?.kind, "app")
+    assert.equal(k.calls.filter((call) => call.args[0] === "-i").length, 1)
+  })
+})
+
+test("keychain: a read that fails is not a missing key, leaves the file, and is retried sparingly", macOnly, async () => {
+  await withKeychain({}, (k) => {
+    writeGithubCredential(app())
+    const before = readFileSync(githubCredentialPath(), "utf8")
+    k.behaviour.read = "unavailable"
+    resetGithubCredentialSeal()
+    resetGithubCredentialMemo()
+    const calls = k.calls.length
+    assert.match(githubCredentialStatus().problem ?? "", /could not read its key/)
+    githubCredentialStatus()
+    githubCredentialStatus()
+    assert.equal(k.calls.length, calls + 1, "one read a minute, not one per status check")
+    assert.throws(() => writeGithubCredential(app({ accessToken: "ghu_next" })), /could not read its key/)
+    assert.equal(readFileSync(githubCredentialPath(), "utf8"), before)
+    k.behaviour.read = "ok"
+    resetGithubCredentialSeal()
+    resetGithubCredentialMemo()
+    assert.equal(readGithubCredential()?.kind, "app")
+  })
+})
+
+test("keychain: a key that can't be saved fails the sign-in and stores nothing", macOnly, async () => {
+  await withKeychain({ save: "fails" }, (k) => {
+    assert.throws(() => writeGithubCredential(app()), /could not save its key/)
+    assert.equal(existsSync(githubCredentialPath()), false)
+    assert.equal(k.get(), undefined)
   })
 })

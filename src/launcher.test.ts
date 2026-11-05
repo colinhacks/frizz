@@ -2684,6 +2684,8 @@ test("--sandbox shares credentials with the real home, but no state", () => {
   // Frizz's own GitHub credential (github-credential.ts) — the legacy root, since `.frizz` exists here.
   mkdirSync(join(real, ".frizz", "github"), { recursive: true });
   writeFileSync(join(real, ".frizz", "github", "credential.json"), '{"kind":"token","token":"t"}');
+  mkdirSync(join(real, "Library", "Keychains"), { recursive: true });
+  writeFileSync(join(real, "Library", "Keychains", "login.keychain-db"), "");
 
   const cwd = process.cwd();
   const env: NodeJS.ProcessEnv = {};
@@ -2692,6 +2694,8 @@ test("--sandbox shares credentials with the real home, but no state", () => {
     // Credentials come through, live.
     assert.equal(existsSync(join(sandbox.home, ".config", "gh")), false, "the operator's gh sign-in stays out");
     const sandboxGithub = join(frizzPaths({ home: sandbox.home, env }).data, "github");
+    // The credential's key is in the real keychain, named by path: a sandbox HOME has none of its own.
+    if (process.platform === "darwin") assert.equal(env.FRIZZ_GITHUB_KEYCHAIN, join(real, "Library", "Keychains", "login.keychain-db"));
     assert.equal(readFileSync(join(sandboxGithub, "credential.json"), "utf8"), '{"kind":"token","token":"t"}');
     // A renewal writes a sibling and renames it over the file; through the linked DIRECTORY it lands
     // in the real home, so the real board never holds a spent refresh token.

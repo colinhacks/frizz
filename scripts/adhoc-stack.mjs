@@ -115,6 +115,9 @@ if (creds) {
   if (existsSync(realGithubCredentials) && home !== realHome) {
     const stackGithub = join(frizzPaths({ home }).data, "github")
     try { mkdirSync(dirname(stackGithub), { recursive: true }); symlinkSync(realGithubCredentials, stackGithub) } catch {}
+    // Its key is in the real login keychain, which the sandbox HOME can't find on its own (github-credential-seal.ts).
+    const keychain = join(realHome, "Library", "Keychains", "login.keychain-db")
+    if (existsSync(keychain)) process.env.FRIZZ_GITHUB_KEYCHAIN = keychain
   }
 }
 if (!flag("wakers")) process.env.FRIZZ_WAKERS_OFF = "1"

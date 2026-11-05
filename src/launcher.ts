@@ -392,6 +392,10 @@ function shareCredentials(realHome: string, home: string, realEnv: NodeJS.Proces
     const sandboxGithub = join(frizzPaths({ home, env: sandboxEnv }).data, "github");
     mkdirSync(dirname(sandboxGithub), { recursive: true });
     link(realGithub, sandboxGithub);
+    // The credential is encrypted with a key in the real login keychain, which a sandbox HOME can't find
+    // on its own. Named by path, so nothing ever looks for a keychain under the sandbox HOME.
+    const keychain = join(realHome, "Library", "Keychains", "login.keychain-db");
+    if (process.platform === "darwin" && existsSync(keychain)) sandboxEnv.FRIZZ_GITHUB_KEYCHAIN = keychain;
   }
   const cloudflared = join(realHome, ".cloudflared");
   if (existsSync(cloudflared)) {

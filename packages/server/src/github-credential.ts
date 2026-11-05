@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import { findOnPath } from "./backend/acp-agents.ts"
 import { frizzRoots } from "./frizz-paths.ts"
+import { GithubCredentialSealError, openGithubCredential, resetGithubCredentialSeal, sealGithubCredential } from "./github-credential-seal.ts"
 
 // FRIZZ'S OWN GITHUB CREDENTIAL — the one thing every server-side GitHub read authenticates with.
 //
@@ -25,10 +26,12 @@ import { frizzRoots } from "./frizz-paths.ts"
 //     server that injects its own. The FRIZZ_ prefix keeps it out of every worker's environment
 //     (worker-env.ts), which a GITHUB_TOKEN would not.
 //
-// AT REST it is a 0600 file in Frizz's data root. The keychain would add nothing: Node reaches it only
-// through `/usr/bin/security`, which any process may run — exactly how `gh auth token` leaks today.
-// Keyward cannot release while the screen is locked and cannot take the 8-hourly rewrite. What protects
-// this credential is what it cannot do: no write of any kind, anywhere.
+// AT REST it is an encrypted 0600 file in Frizz's data root, whose key is random per machine and lives in
+// the keychain (github-credential-seal.ts says what that does and does not stop). Keyward cannot release
+// while the screen is locked and cannot take the 8-hourly rewrite. The rest of what protects this
+// credential is what it cannot do: its one write is a commit comment, which GitHub allows with Contents.
+// A worker's folder below is the exception: `gh` reads `hosts.yml` in the clear, so the 8-hour access
+// token is plain there. The refresh token is never written outside the encrypted file.
 //
 // THERE IS NO FALLBACK TO `gh`'S OWN SIGN-IN, and that is the point. Signed out here means GitHub is
 // signed out for the server. `runFrizzGh` gives every `gh` child this token in GH_TOKEN and an empty
@@ -79,7 +82,7 @@ export function githubCredentialDir(): string {
 }
 
 export function githubCredentialPath(): string {
-  return join(githubCredentialDir(), "credential.json")
+  return join(githubCredentialDir(), "credential.enc")
 }
 
 /** The GH_CONFIG_DIR every server-run `gh` gets: Frizz's own, holding no account. */
@@ -121,12 +124,23 @@ export function parseStoredCredential(raw: unknown): StoredGithubCredential | nu
   return null
 }
 
-export function readGithubCredential(): StoredGithubCredential | null {
+/** What the file holds, or why it can't be read. No file at all is plainly signed out, and runs nothing. */
+function readStored(): { credential: StoredGithubCredential | null; problem: string | undefined } {
+  let text: string
   try {
-    return parseStoredCredential(JSON.parse(readFileSync(githubCredentialPath(), "utf8")))
+    text = readFileSync(githubCredentialPath(), "utf8")
   } catch {
-    return null
+    return { credential: null, problem: undefined }
   }
+  try {
+    return { credential: parseStoredCredential(JSON.parse(openGithubCredential(text))), problem: undefined }
+  } catch (error) {
+    return { credential: null, problem: error instanceof GithubCredentialSealError ? error.message : "The stored file is damaged." }
+  }
+}
+
+export function readGithubCredential(): StoredGithubCredential | null {
+  return readStored().credential
 }
 
 /** Atomic and private: written to a 0600 sibling, then renamed over the old file. */
@@ -134,7 +148,8 @@ export function writeGithubCredential(credential: StoredGithubCredential): void 
   ensureDir(githubCredentialDir())
   const path = githubCredentialPath()
   const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(credential), { mode: 0o600 })
+  // Sealed before anything touches the disk, so a key that can't be saved leaves the old file alone.
+  writeFileSync(tmp, sealGithubCredential(JSON.stringify(credential)), { mode: 0o600 })
   chmodSync(tmp, 0o600)
   renameSync(tmp, path)
   memo = { credential, problem: undefined }
@@ -155,12 +170,13 @@ let refreshing: Promise<string> | undefined
 export function resetGithubCredentialMemo(): void {
   memo = undefined
   refreshing = undefined
+  resetGithubCredentialSeal()
 }
 
 function current(): { credential: StoredGithubCredential | null; problem: string | undefined } {
   // Holding nothing, look again: a sign-in another process wrote into this folder (a sandbox stack and
   // the real board share it) is picked up on the next read rather than at the next restart.
-  if (!memo?.credential) memo = { credential: readGithubCredential(), problem: undefined }
+  if (!memo?.credential) memo = readStored()
   return memo
 }
 
@@ -172,7 +188,7 @@ function envToken(env: NodeJS.ProcessEnv = process.env): string | null {
 export function githubCredentialStatus(): GithubCredentialStatus {
   if (envToken()) return { signedIn: true, source: "env", login: null }
   const { credential, problem } = current()
-  if (!credential) return { signedIn: false, login: null }
+  if (!credential) return { signedIn: false, login: null, ...(problem ? { problem } : {}) }
   if (problem) return { signedIn: false, source: credential.kind, login: credential.login, problem }
   if (credential.kind === "app" && credential.refreshExpiresAt <= Date.now()) {
     return { signedIn: false, source: "app", login: credential.login, problem: "The GitHub sign-in expired after six months unused." }
@@ -197,7 +213,11 @@ export async function frizzGithubToken(deps: TokenDeps = {}): Promise<string> {
   if (fromEnv) return fromEnv
   const now = deps.now ?? Date.now
   const { credential, problem } = current()
-  if (!credential) throw new GithubCredentialError("Frizz is not signed in to GitHub. Sign in from Frizz's Settings.")
+  if (!credential) {
+    throw new GithubCredentialError(problem
+      ? `Frizz's GitHub sign-in can't be read: ${problem} Sign in again from Frizz's Settings.`
+      : "Frizz is not signed in to GitHub. Sign in from Frizz's Settings.")
+  }
   if (problem) throw new GithubCredentialError(`Frizz's GitHub sign-in stopped working: ${problem} Sign in again from Frizz's Settings.`)
   if (credential.kind === "token") return credential.token
   if (credential.accessExpiresAt - REFRESH_MARGIN_MS > now()) return credential.accessToken
@@ -391,7 +411,12 @@ export async function startGithubSignIn(deps: TokenDeps & { clientId?: string; s
         signIn = { phase: "failed", message: reason }
         return
       }
-      writeGithubCredential(credential)
+      try {
+        writeGithubCredential(credential)
+      } catch (error) {
+        signIn = { phase: "failed", message: error instanceof Error ? error.message : String(error) }
+        return
+      }
       signIn = { phase: "idle" }
       return
     }

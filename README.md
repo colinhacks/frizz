@@ -99,7 +99,7 @@ When the answer isn't one thing, the same card takes several: check any combinat
 
 Browse the repo's issues and pull requests from the composer, select any number of them, and each becomes its own thread.
 
-Sign Frizz in once from Settings → GitHub, with a device code. The sign-in is read-only with one exception GitHub builds in: it can read code, issues, pull requests and checks on the accounts where you install [the Frizz GitHub App](https://github.com/apps/frizz-agent-console), plus public repos, and the only thing it can do beyond reading is comment on a commit. It's what watches pull requests and issues for your workers, overnight included, and it's separate from any `gh` sign-in of your own.
+Sign Frizz in once from Settings → GitHub, with a device code. The sign-in is read-only with one exception GitHub builds in: it can read code, issues, pull requests and checks on the accounts where you install [the Frizz GitHub App](https://github.com/apps/frizz-agent-console), plus public repos, and the only thing it can do beyond reading is comment on a commit. It's what watches pull requests and issues for your workers, overnight included, and it's separate from any `gh` sign-in of your own. It's stored encrypted, with a key unique to your machine: in the keychain on a Mac, and in a separate private file elsewhere. That keeps it from token scanners and copied files, but not from a program running as you that goes after Frizz on purpose.
 
 <p align="center">
   <img src="assets/github.png" alt="The GitHub picker open over the composer, listing real open issues from colinhacks/zod with numbers, authors, and reaction counts; three are checked and a Start investigations button is enabled." width="100%">
