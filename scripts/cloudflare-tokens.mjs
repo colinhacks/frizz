@@ -6,9 +6,9 @@
 //   github-actions workers-drift    Workers Scripts Read
 //                                   -> the repository secret CLOUDFLARE_READ_TOKEN
 //   laptop read-only (Keyward)      every Read permission on the account and its zones
-//                                   -> Keyward's CLOUDFLARE_API_TOKEN for this repository
+//                                   -> Keyward's global CLOUDFLARE_API_TOKEN, released with no Touch ID
 //   laptop admin (Keyward)          every permission on the account and its zones
-//                                   -> Keyward's CLOUDFLARE_ADMIN_TOKEN for this repository
+//                                   -> Keyward's global CLOUDFLARE_ADMIN_TOKEN, one Touch ID per run
 //
 // WHY. From 2026-09-21 to 2026-10-08 an attacker deployed backdoored builds of both frizz.sh Workers
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
@@ -76,13 +76,13 @@ export const TOKENS = [
     key: "read",
     name: "laptop read-only (Keyward)",
     every: "read",
-    sink: { kind: "keyward", secret: "CLOUDFLARE_API_TOKEN", about: "Cloudflare, read-only on the Frizz account and its zones", noTouchId: true },
+    sink: { kind: "keyward", secret: "CLOUDFLARE_API_TOKEN", about: "Cloudflare, read-only on the Frizz account and its zones", global: true, noTouchId: true },
   },
   {
     key: "admin",
     name: "laptop admin (Keyward)",
     every: "permission",
-    sink: { kind: "keyward", secret: "CLOUDFLARE_ADMIN_TOKEN", about: "Cloudflare, every permission on the Frizz account and its zones" },
+    sink: { kind: "keyward", secret: "CLOUDFLARE_ADMIN_TOKEN", about: "Cloudflare, every permission on the Frizz account and its zones", global: true },
   },
 ]
 
@@ -160,14 +160,18 @@ function client(token) {
   }
 }
 
-/** The `keyward set` arguments for a Keyward sink. `noTouchId` is for a token that can only read. */
+/**
+ * The `keyward set` arguments for a Keyward sink. `global` is the whole Mac: a CLI's token has to work
+ * from every repository, and one on another Cloudflare account stores its own, which wins there.
+ * `noTouchId` is for a token that can only read.
+ */
 export function keywardSetArgs(sink) {
-  return ["set", ...(sink.noTouchId ? ["--no-touch-id"] : []), ...(sink.about ? ["--about", sink.about] : []), sink.secret]
+  return ["set", ...(sink.global ? ["--global"] : []), ...(sink.noTouchId ? ["--no-touch-id"] : []), ...(sink.about ? ["--about", sink.about] : []), sink.secret]
 }
 
 /** Hand `value` to its sink on stdin. Returns null on success, or what went wrong (never the value). */
 function deliver(sink, value, repoRoot) {
-  // `keyward set` stores for the repository the current directory belongs to, so it runs from here.
+  // Without `--global`, `keyward set` stores for the repository of the current directory, so it runs from here.
   const [command, args] =
     sink.kind === "gh"
       ? ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
@@ -179,7 +183,7 @@ function deliver(sink, value, repoRoot) {
 }
 
 function describeSink(sink) {
-  if (sink.kind === "keyward") return `Keyward ${sink.secret} (repository ${REPO})`
+  if (sink.kind === "keyward") return `Keyward ${sink.secret} (${sink.global ? "global" : `repository ${REPO}`})`
   return sink.env ? `GitHub environment ${sink.env} secret ${sink.secret}` : `GitHub repository secret ${sink.secret}`
 }
 

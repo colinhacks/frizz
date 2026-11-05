@@ -77,8 +77,9 @@ test("the admin token takes every group, writes included, on the account and all
 test("only the read-only token is stored without Touch ID, and the admin token never is", () => {
   assert.deepEqual(TOKENS.filter((t) => t.sink.noTouchId).map((t) => t.key), ["read"])
   assert.equal(spec("read").every, "read")
-  assert.deepEqual(keywardSetArgs({ secret: "CLOUDFLARE_API_TOKEN", about: "reads", noTouchId: true }), ["set", "--no-touch-id", "--about", "reads", "CLOUDFLARE_API_TOKEN"])
+  assert.deepEqual(keywardSetArgs({ secret: "CLOUDFLARE_API_TOKEN", about: "reads", global: true, noTouchId: true }), ["set", "--global", "--no-touch-id", "--about", "reads", "CLOUDFLARE_API_TOKEN"])
   assert.ok(!keywardSetArgs(spec("admin").sink).includes("--no-touch-id"))
+  for (const key of ["read", "admin"]) assert.ok(keywardSetArgs(spec(key).sink).includes("--global"), `${key} works from every repository`)
 })
 
 test("a group outside the account and its zones, such as a user-level one, is never granted", () => {
