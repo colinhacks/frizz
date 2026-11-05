@@ -4,10 +4,11 @@ import { delimiter, join } from "node:path"
 
 // HOW A REPO SCRIPT RUNS `gh`. One rule, so the release and token scripts cannot drift apart.
 //
-// On the maintainer's Mac a `gh` run by hand is signed out, and Keyward signs it in one run at a time:
-// `keyward --reason "<the task>" -- gh …`. Keyward reads only the first word of the command, so nothing
-// can wrap a whole script: `keyward -- node script.mjs` hands the script nothing, and each `gh` the
-// script runs has to go through Keyward itself. In a Frizz worker on that Mac, plain `gh` reads with
+// On the maintainer's Mac plain `gh` holds a read-only sign-in, and a write goes through Keyward, which
+// hands `gh` a token that can write for one run at a time: `keyward --reason "<the task>" -- gh …`.
+// Keyward reads only the first word of the command, so nothing can wrap a whole script:
+// `keyward -- node script.mjs` hands the script nothing, and each `gh` write the script makes has to go
+// through Keyward itself. In a Frizz worker on that Mac, plain `gh` reads with
 // Frizz's read-only credential, so a script reads plainly and only its writes go through Keyward.
 // Everywhere else — a contributor's signed-in `gh`, CI with a token in its environment — plain `gh` is
 // right for both.
@@ -36,7 +37,11 @@ export function ghIsFrizzReadOnly(env = process.env) {
 /** Whether this environment reaches GitHub through Keyward rather than a signed-in plain `gh`. */
 export function ghNeedsKeyward(env = process.env, { write = false } = {}) {
   if (env.GH_TOKEN || env.GITHUB_TOKEN) return false
-  if (ghIsFrizzReadOnly(env)) return write && onPath("keyward", env)
+  // Where Keyward is installed, plain `gh` only reads: its sign-in is a read-only token (the
+  // maintainer's own, or Frizz's in a worker), so a write on it would fail with a 403. Every write goes
+  // through Keyward there, whatever `gh auth status` says.
+  if (write) return onPath("keyward", env)
+  if (ghIsFrizzReadOnly(env)) return false
   const status = spawnSync("gh", ["auth", "status", "--active"], { env, stdio: "ignore", timeout: 8000 })
   if (status.status === 0) return false
   return onPath("keyward", env)

@@ -62,8 +62,15 @@ test("in a Frizz worker, plain gh reads and only a write goes through keyward", 
   })
 })
 
-test("a write on a plain signed-in gh stays plain, because that sign-in can write", posixOnly, () => {
+test("with keyward installed, a write goes through keyward even on a signed-in gh, whose sign-in only reads", posixOnly, () => {
   withBin({ gh: signedIn, keyward: "exit 0" }, (env) => {
+    assert.deepEqual(ghCommand("merge it", ["pr", "merge", "1"], { write: true, env }), ["keyward", ["--reason", "merge it", "--", "gh", "pr", "merge", "1"]])
+    assert.deepEqual(ghCommand("why", ["api", "user"], { env }), ["gh", ["api", "user"]])
+  })
+})
+
+test("with no keyward, a write on a signed-in gh stays plain: a contributor's sign-in can write", posixOnly, () => {
+  withBin({ gh: signedIn }, (env) => {
     assert.deepEqual(ghCommand("merge it", ["pr", "merge", "1"], { write: true, env }), ["gh", ["pr", "merge", "1"]])
   })
 })
