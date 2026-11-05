@@ -22,7 +22,7 @@
     "dataEpoch": 1
   },
   "dependencies": {
-    "@parcel/watcher": "^2.5"
+    "@parcel/watcher": "2.5.6"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

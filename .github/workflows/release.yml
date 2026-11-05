@@ -44,8 +44,14 @@ name: release
 # put a 2FA approval in front of EVERY release, and the job's approval wait gave up after 350
 # minutes anyway, so a late approval cost a re-run too. The maintainer dropped it on 2026-09-30 as
 # too onerous. Releases publish directly again, which needs the trusted publisher on npmjs.com to
-# allow `npm publish`. The dispatch-only trigger below STAYS: it is what still stops a stolen push
-# credential from starting a release.
+# allow `npm publish`. The dispatch-only trigger below STAYS.
+#
+# A REVIEWER GATES EVERY RUN (2026-11-05). `npm-publish` requires an approval from `colinhacks`, so a
+# run waits until the releaser approves it (AGENTS.md § Cutting a release). The dispatch alone didn't
+# stop a stolen push credential: GitHub's docs say a `workflow_dispatch` from a workflow's own
+# GITHUB_TOKEN creates a run, so a pushed branch workflow can dispatch this file. The reviewer closes
+# that route and a GitHub App's dispatch. It does not stop the classic GH_TOKEN, which can approve its
+# own run; only staged publishing, above, or an owner outside this Mac would stop that.
 #
 # ORDER IS THE WORKFLOW'S JOB AGAIN. A `frizz` shell fetches the `frizz-server` version pinned in
 # its own manifest from the registry on first boot, so a shell that goes live before that server
@@ -60,10 +66,10 @@ name: release
 # That also leaves this job with read-only access to the repository.
 
 on:
-  # DISPATCH ONLY (2026-09-23), and deliberately so. A `workflow_dispatch` needs a GitHub session or
-  # token carrying write access; a stolen git push credential carries neither, so moving `release`
-  # now starts nothing. That closes the last automatic path from a push to a package: the 2026-09-21
-  # compromise above needed only a push credential.
+  # DISPATCH ONLY (2026-09-23), and deliberately so. Moving `release` starts nothing. That closes the
+  # automatic path from a push to a package, which is all the 2026-09-21 compromise above needed. A
+  # credential that can push can still start a run through a branch workflow, so what stops it now is
+  # the reviewer on `npm-publish` (see the header).
   #
   # Releasing is therefore two deliberate acts — fast-forward `release` to the verified commit, then
   # `gh workflow run release.yml --ref release`. The branch still decides WHAT ships; the dispatch
@@ -117,24 +123,27 @@ jobs:
         run: |
           [ "$GITHUB_REF" = "refs/heads/release" ] || { echo "::error::release.yml runs from the release branch only, got $GITHUB_REF"; exit 1; }
 
-      - uses: actions/checkout@v4
+      # Pinned by SHA, because this job can publish to npm and a moved tag would run with that right.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
-          version: 10
+          version: 10.34.9
 
-      - uses: actions/setup-node@v4
+      # No dependency cache. A cache is shared with every other workflow on this repository, and a
+      # poisoned one would run inside the job that can publish. A cold install costs a minute.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "26.x"
           # Without an explicit registry-url npm has no registry to exchange the OIDC token against.
           registry-url: https://registry.npmjs.org
-          cache: pnpm
 
       # Trusted publishing needs npm >= 11.5.1. The npm bundled with a Node image can lag it, so pin
-      # the major and assert the floor rather than take whatever `npm@latest` resolves to.
+      # an exact version and assert the floor. This job can publish, so it doesn't take whatever
+      # version of npm happens to be newest.
       - name: Install an npm CLI that supports trusted publishing
         run: |
-          npm install -g npm@11
+          npm install -g npm@11.21.1
           v="$(npm --version)"
           # `sort -V | head -1` yields the smaller of the two; it must be the floor.
           [ "$(printf '%s\n11.5.1\n' "$v" | sort -V | head -1)" = "11.5.1" ] \

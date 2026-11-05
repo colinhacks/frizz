@@ -63,7 +63,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
-          version: 10
+          version: 10.34.9
 
       # No dependency cache. A cache is shared with every other workflow on this repository, and a
       # poisoned one would run inside the job that holds the deploy token. A cold install costs a

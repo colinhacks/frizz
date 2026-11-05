@@ -91,7 +91,7 @@ test("native server dependencies do not leak back into the stable shell", () => 
   // Sign-in runs over pipes: no pty, so no native addon that needs a build on any platform.
   assert.equal(serverManifest.dependencies?.["node-pty"], undefined);
   assert.equal(sourceServerManifest.dependencies?.["node-pty"], undefined);
-  assert.equal(serverManifest.dependencies?.["@parcel/watcher"], "^2.5");
+  assert.equal(serverManifest.dependencies?.["@parcel/watcher"], "2.5.6");
 });
 
 test("server packages declare their actual runtime contracts", () => {
