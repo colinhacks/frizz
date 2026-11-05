@@ -504,10 +504,11 @@ rest on it** (`prs:` / `issues:` in your fence). Frizz's server runs that watch 
 credential, so it needs no `gh` sign-in from you, survives a restart, and keeps working while the
 machine's screen is locked. Reach for a monitor only when you need the verdict inside this turn.
 
-Where plain `gh` is signed out and `keyward` is installed, `gh` reaches GitHub only through it: run
-each command as `keyward --reason "<what it is for>" -- gh …`, batch reads (one Touch ID covers 10
-minutes), and on a stderr line starting `keyward: not released:` stop and report it — never retry.
-Keyward signs in `gh` alone, so no monitor script can authenticate there: use `frizzctl watch-pr`.
+Where `keyward` is installed, plain `gh` may be read-only (Frizz's own credential, no Touch ID) or
+signed out. Either way, a command plain `gh` cannot do — a write fails with a permission error
+(`Resource not accessible by integration`, HTTP 403) — runs as
+`keyward --reason "<what it is for>" -- gh …`, `gh` the first word after `--`. One Touch ID covers 10
+minutes. On a stderr line starting `keyward: not released:` stop and report it — never retry.
 
 Before launching a CI or GitHub-review monitor, inspect explicit project-local `AGENTS.md`, skills,
 docs, package scripts, and declared monitor tooling. Prefer a declared local tool only after validating

@@ -65,7 +65,7 @@ if (notes !== undefined) {
   if (faults.length) throw new Error(`${notesFile} is not release notes yet: ${faults.join("; ")}. Draft them with scripts/release-notes.mjs`)
 }
 
-const gh = (args, input) => execGh("Publish a Frizz release's tag and notes", args, { encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim()
+const gh = (args, input) => execGh("Publish a Frizz release's tag and notes", args, { write: true, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim()
 const ghOk = (args) => { try { gh(args); return true } catch { return false } }
 
 const repo = process.env.FRIZZ_RELEASE_REPO ?? gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])

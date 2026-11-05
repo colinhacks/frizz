@@ -1,7 +1,7 @@
 ---
 name: gh
-description: The gh-CLI playbook for a frizz worker that can reach GitHub (invoke as frizz:gh). Load this whenever your effort touches GitHub — reading or triaging an issue or PR, reviewing a diff, checking CI/release status, or searching issues/PRs — to use `gh` eagerly and correctly, either signed in directly or through Keyward (`keyward --reason "…" -- gh …`): the read-vs-write boundary (never comment/label/close/merge unless the human asks), concrete read recipes, Keyward's failure lines and what to do on each, and waiting on CI and reviews with `frizzctl watch-pr add` / `watch-issue add`. The session-seed hook injects a pointer here when plain `gh` is signed in (`⟦gh available⟧`) or when it is signed out and `keyward` is on PATH (`⟦gh available through Keyward⟧`).
-version: 0.2.1
+description: The gh-CLI playbook for a frizz worker that can reach GitHub (invoke as frizz:gh). Load this whenever your effort touches GitHub — reading or triaging an issue or PR, reviewing a diff, checking CI/release status, or searching issues/PRs — to use `gh` eagerly and correctly, whether plain `gh` is signed in, reads with Frizz's read-only credential while writes go through Keyward (`keyward --reason "…" -- gh …`), or is signed out behind Keyward: the read-vs-write boundary (never comment/label/close/merge unless the human asks), concrete read recipes, Keyward's failure lines and what to do on each, and waiting on CI and reviews with `frizzctl watch-pr add` / `watch-issue add`. The session-seed hook injects a pointer here naming the mode: `⟦gh available, read-only⟧`, `⟦gh available⟧` or `⟦gh available through Keyward⟧`.
+version: 0.3.0
 metadata:
   internal: true
 ---
@@ -10,12 +10,13 @@ metadata:
 
 You are a **frizz worker in a GitHub repo, and `gh` can reach GitHub** — the session-seed hook checked before pointing you here. `gh` is the fastest path to issue / PR / CI / release context — reach for it before guessing, and prefer it over scraping the web UI or reasoning from memory.
 
-This skill is the full playbook the injected block summarizes: **which of two modes you are in**, the **read-vs-write boundary**, concrete **read recipes**, and how to **wait on CI and reviews** until the next actionable event.
+This skill is the full playbook the injected block summarizes: **which of three modes you are in**, the **read-vs-write boundary**, concrete **read recipes**, and how to **wait on CI and reviews** until the next actionable event.
 
-## Two modes: signed in, or through Keyward
+## Three modes: read-only, signed in, or through Keyward
 
 The injected block names your mode.
 
+- **`⟦gh available, read-only⟧` — plain `gh` reads with Frizz's own credential.** No Touch ID, and it works while the screen is locked. Run the read recipes below as written. A write, or a read past what the credential holds, fails; that one command then runs as `keyward --reason "…" -- gh …` (see **Reads and writes in read-only mode**).
 - **`⟦gh available⟧` — plain `gh` is signed in.** Run the recipes below as written.
 - **`⟦gh available through Keyward⟧` — plain `gh` is signed OUT, by design.** Keyward is the human's Secure Enclave vault. It hands `gh` their token in `GH_TOKEN` for one run, and only for that run. Run **every** recipe below with this prefix:
 
@@ -25,13 +26,24 @@ The injected block names your mode.
 
   `gh` must be the first word after `--`: Keyward reads only that word, so `keyward -- npx gh …` is not recognised. The reason is shown on the human's Touch ID sheet, so write what they need to recognise the job; a run without `--reason` is refused before anything is asked. Otherwise the exit code is gh's own.
 
+### Reads and writes in read-only mode
+
+The credential is a user token from Frizz's GitHub App, whose permissions are all read-only: issues, pull requests, checks, commit statuses, workflow runs and repo metadata. It can never exceed them, whatever the human can do.
+
+- **A write fails with GitHub's own error**: `Resource not accessible by integration`, HTTP 403. That is this credential doing its job. Once the human has asked for the write, rerun that one command through Keyward.
+- **A read can fail the same way, so try Keyward before you conclude anything.** Source through the API (`gh api repos/…/contents/…`) is not covered; read the checkout where you can. A private repo on an account where Frizz's App is not installed reads as `Could not resolve to a Repository` or HTTP 404, exactly as if it did not exist.
+- **Don't route reads through Keyward by default.** Each burst costs the human a touch that a plain read does not.
+- **Scripts need nothing.** The bundled monitors and any script you run read with plain `gh`. One that writes calls `keyward --reason "…" -- gh …` itself, as this repo's do through `scripts/lib/gh-command.mjs`.
+
 ### Working under Keyward
+
+Everything here applies to any command you run through Keyward, in read-only mode too.
 
 - **One Touch ID covers this repository's gh runs for 10 minutes**, ending early when the screen locks or the Mac sleeps. Batch your gh reads into one burst (the issue, its comments, the linked PR, its checks) rather than spreading them across the task, so each burst costs the human one touch.
 - **Nothing is released while the screen is locked.** That includes the first run of a burst.
-- **Don't check sign-in with `gh auth status`.** Plain `gh` is signed out here, so it reports no account even when Keyward would release. The injected block already tells you which mode you are in; to find out whether a release works, run the read you need.
+- **Don't check sign-in with `gh auth status`.** It describes plain `gh`, not what Keyward would release. The injected block already tells you which mode you are in; to find out whether a release works, run the command you need.
 - **Never run `gh auth token`, with or without Keyward.** Keyward does not read the arguments, so nothing refuses it, and it prints the human's token into your transcript for good.
-- **Only `gh` itself is signed in.** `keyward -- node script.mjs` hands the script NOTHING, and there is no form that does. A script that needs GitHub runs `keyward --reason "…" -- gh …` itself each time it calls gh; this repo's own scripts do, through `scripts/lib/gh-command.mjs`, so run those plainly. The bundled `ci-watch.mjs` / `review-watch.mjs` do not, because a poll cannot wait on a Touch ID: use `frizzctl watch-pr` for those waits.
+- **Only `gh` itself is signed in.** `keyward -- node script.mjs` hands the script NOTHING, and there is no form that does. A script that needs GitHub runs `keyward --reason "…" -- gh …` itself each time it calls gh; this repo's own scripts do, through `scripts/lib/gh-command.mjs`, so run those plainly. The bundled `ci-watch.mjs` / `review-watch.mjs` do not, because a poll cannot wait on a Touch ID: where plain `gh` is signed out, use `frizzctl watch-pr` for those waits.
 
 ### What a refusal looks like
 
@@ -59,7 +71,7 @@ There is no server-side enforcement of this; the boundary is yours to hold.
 
 ## Read recipes
 
-Always scope with `-R OWNER/REPO` so a command is dir-independent, and prefer `--json <fields>` (+ `-q <jq>`) so you pull exactly what you need. The recipes are written as plain `gh`; under Keyward, prefix each with `keyward --reason "…" -- `, and run related ones back to back so one Touch ID covers them.
+Always scope with `-R OWNER/REPO` so a command is dir-independent, and prefer `--json <fields>` (+ `-q <jq>`) so you pull exactly what you need. The recipes are written as plain `gh`. In `⟦gh available through Keyward⟧` mode, prefix each with `keyward --reason "…" -- `, and run related ones back to back so one Touch ID covers them.
 
 **Issues**
 ```bash
@@ -149,12 +161,12 @@ human (a ` ```question ` fence) — waiting on a person is never a park. The das
 go/no-go remains a registered question. If the next check deliberately belongs at a named wall-clock
 instant, set a durable timer with `frizzctl timer set` and park with its id in your fence's `timers:` list.
 
-### Watching inside a turn — only where plain `gh` is signed in
+### Watching inside a turn — only where plain `gh` can read
 
 Sometimes you want the verdict inside the turn you are in, not as a wake after a rest: a CI run you
-are about to read the logs of. That takes a session-bound monitor, and it needs a signed-in plain `gh`.
-**Under Keyward, don't: the monitors and a `gh run watch` loop cannot authenticate there.** Register
-`frizzctl watch-pr add` and rest instead.
+are about to read the logs of. That takes a session-bound monitor, and it needs a plain `gh` that can
+read, which read-only mode has. **In `⟦gh available through Keyward⟧` mode, don't: the monitors and a
+`gh run watch` loop cannot authenticate there.** Register `frizzctl watch-pr add` and rest instead.
 
 Before launching any CI/review monitor, inspect project-local `AGENTS.md`, active skills, repository
 docs, `package.json` scripts, and declared monitor tooling. Prefer an explicit project-local monitor

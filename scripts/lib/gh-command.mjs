@@ -1,14 +1,16 @@
 import { execFileSync, spawnSync } from "node:child_process"
-import { accessSync, constants } from "node:fs"
+import { accessSync, constants, existsSync } from "node:fs"
 import { delimiter, join } from "node:path"
 
 // HOW A REPO SCRIPT RUNS `gh`. One rule, so the release and token scripts cannot drift apart.
 //
-// On the maintainer's Mac plain `gh` is signed out, and Keyward signs it in one run at a time:
+// On the maintainer's Mac a `gh` run by hand is signed out, and Keyward signs it in one run at a time:
 // `keyward --reason "<the task>" -- gh …`. Keyward reads only the first word of the command, so nothing
 // can wrap a whole script: `keyward -- node script.mjs` hands the script nothing, and each `gh` the
-// script runs has to go through Keyward itself. Everywhere else — a contributor's signed-in `gh`, CI
-// with a token in its environment — plain `gh` is right, so that is tried first.
+// script runs has to go through Keyward itself. In a Frizz worker on that Mac, plain `gh` reads with
+// Frizz's read-only credential, so a script reads plainly and only its writes go through Keyward.
+// Everywhere else — a contributor's signed-in `gh`, CI with a token in its environment — plain `gh` is
+// right for both.
 //
 // This is for scripts a person or a worker runs by hand. Frizz's server never comes here: it reads
 // GitHub with its own credential (packages/server/src/github-credential.ts).
@@ -26,9 +28,15 @@ function onPath(name, env) {
   return false
 }
 
+/** Whether plain `gh` here is Frizz's read-only credential (see frizzGithubWorkerEnv on the server). */
+export function ghIsFrizzReadOnly(env = process.env) {
+  return Boolean(env.GH_CONFIG_DIR) && existsSync(join(env.GH_CONFIG_DIR, "frizz-read-only"))
+}
+
 /** Whether this environment reaches GitHub through Keyward rather than a signed-in plain `gh`. */
-export function ghNeedsKeyward(env = process.env) {
+export function ghNeedsKeyward(env = process.env, { write = false } = {}) {
   if (env.GH_TOKEN || env.GITHUB_TOKEN) return false
+  if (ghIsFrizzReadOnly(env)) return write && onPath("keyward", env)
   const status = spawnSync("gh", ["auth", "status", "--active"], { env, stdio: "ignore", timeout: 8000 })
   if (status.status === 0) return false
   return onPath("keyward", env)
@@ -36,21 +44,22 @@ export function ghNeedsKeyward(env = process.env) {
 
 /**
  * `[command, args]` for one `gh` run. `reason` is shown on the Touch ID sheet, so it says what the
- * script is doing in words the maintainer recognises. The answer is worked out once per process.
+ * script is doing in words the maintainer recognises. `write` marks a run that changes something on
+ * GitHub. The answer is worked out once per process for each of the two.
  */
-let useKeyward
-export function ghCommand(reason, args, env = process.env) {
-  useKeyward ??= ghNeedsKeyward(env)
-  return useKeyward ? ["keyward", ["--reason", reason, "--", "gh", ...args]] : ["gh", args]
+const answers = new Map()
+export function ghCommand(reason, args, { write = false, env = process.env } = {}) {
+  if (!answers.has(write)) answers.set(write, ghNeedsKeyward(env, { write }))
+  return answers.get(write) ? ["keyward", ["--reason", reason, "--", "gh", ...args]] : ["gh", args]
 }
 
 /** `execFileSync` for `gh`, through Keyward where that is how this machine reaches GitHub. */
-export function execGh(reason, args, options) {
-  const [command, argv] = ghCommand(reason, args)
+export function execGh(reason, args, { write = false, ...options } = {}) {
+  const [command, argv] = ghCommand(reason, args, { write })
   return execFileSync(command, argv, options)
 }
 
 /** Test-only: forget the per-process answer. */
 export function resetGhCommand() {
-  useKeyward = undefined
+  answers.clear()
 }

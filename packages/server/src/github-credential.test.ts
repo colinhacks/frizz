@@ -1,12 +1,15 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { resetFrizzRoots } from "./frizz-paths.ts"
 import {
+  clearGithubCredential,
   frizzGhConfigDir,
   frizzGhEnv,
+  frizzGithubWorkerEnv,
+  frizzWorkerGhConfigDir,
   frizzGithubToken,
   githubCredentialPath,
   githubCredentialStatus,
@@ -15,6 +18,8 @@ import {
   rejectFrizzGithubToken,
   resetGithubCredentialMemo,
   startGithubSignIn,
+  syncWorkerGhConfig,
+  WORKER_GH_READ_ONLY_MARKER,
   writeGithubCredential,
   type StoredGithubCredential,
 } from "./github-credential.ts"
@@ -147,7 +152,6 @@ test("another process sharing the folder renewed first: its token is adopted, no
     // Load the old copy into memory, then let "the other process" rewrite the file underneath.
     assert.equal(githubCredentialStatus().signedIn, true)
     const theirs = JSON.stringify(app({ accessToken: "ghu_theirs", refreshToken: "ghr_theirs", accessExpiresAt: 8 * HOUR }))
-    const { writeFileSync } = await import("node:fs")
     writeFileSync(githubCredentialPath(), theirs, { mode: 0o600 })
     const token = await frizzGithubToken({ now: () => 0, request: async () => { throw new Error("no refresh expected") } })
     assert.equal(token, "ghu_theirs")
@@ -220,5 +224,54 @@ test("frizzGhEnv: the operator's tokens are stripped, gh gets Frizz's token and 
     const signedOut = frizzGhEnv(null, base)
     assert.equal(signedOut.GH_TOKEN, undefined)
     assert.equal(signedOut.GH_CONFIG_DIR, frizzGhConfigDir())
+  })
+})
+
+function withKeywardOnPath<T>(run: (env: NodeJS.ProcessEnv) => T): T {
+  const bin = mkdtempSync(join(tmpdir(), "frizz-keyward-bin-"))
+  try {
+    writeFileSync(join(bin, "keyward"), "#!/bin/sh\nexit 1\n", { mode: 0o755 })
+    return run({ PATH: bin })
+  } finally {
+    rmSync(bin, { recursive: true, force: true })
+  }
+}
+
+test("a worker's gh folder holds the token privately, is rewritten on renewal, and empties on sign-out", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app({ accessExpiresAt: 0 }))
+    const hosts = join(frizzWorkerGhConfigDir(), "hosts.yml")
+    assert.match(readFileSync(hosts, "utf8"), /oauth_token: "ghu_old"/)
+    assert.match(readFileSync(hosts, "utf8"), /user: "colinhacks"/)
+    assert.equal(statSync(hosts).mode & 0o777, 0o600)
+    assert.equal(statSync(frizzWorkerGhConfigDir()).mode & 0o777, 0o700)
+    assert.equal(existsSync(join(frizzWorkerGhConfigDir(), WORKER_GH_READ_ONLY_MARKER)), true)
+    await frizzGithubToken({ now: () => 0, request: async () => json({ access_token: "ghu_new", expires_in: 28800, refresh_token: "ghr_new" }) })
+    assert.match(readFileSync(hosts, "utf8"), /oauth_token: "ghu_new"/)
+    assert.doesNotMatch(readFileSync(hosts, "utf8"), /ghu_old/)
+    clearGithubCredential()
+    assert.equal(existsSync(hosts), false)
+  })
+})
+
+test("a refused renewal takes the dead token out of the worker's folder", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app({ accessExpiresAt: 0 }))
+    await assert.rejects(frizzGithubToken({ now: () => 0, request: async () => json({ error: "bad_refresh_token" }) }))
+    syncWorkerGhConfig()
+    assert.equal(existsSync(join(frizzWorkerGhConfigDir(), "hosts.yml")), false)
+  })
+})
+
+test("a worker's GH_CONFIG_DIR moves only when Frizz is signed in AND Keyward can take the writes", async () => {
+  await withHome(async () => {
+    // Without Keyward a worker's `gh` stays its operator's own, which may be able to write.
+    writeGithubCredential(app())
+    assert.deepEqual(frizzGithubWorkerEnv({ PATH: "/nonexistent" }), {})
+    withKeywardOnPath((env) => {
+      assert.deepEqual(frizzGithubWorkerEnv(env), { GH_CONFIG_DIR: frizzWorkerGhConfigDir() })
+      clearGithubCredential()
+      assert.deepEqual(frizzGithubWorkerEnv(env), {})
+    })
   })
 })

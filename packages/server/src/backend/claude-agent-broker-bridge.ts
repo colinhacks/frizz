@@ -4,6 +4,7 @@
 // thread, connects a typed client, routes tool-permission requests to a decision hook (default:
 // auto-allow, honoring the thread's permission mode — matching the retired argv path's
 // `--permission-mode auto`), and sends follow-up turns.
+import { frizzGithubWorkerEnv } from "../github-credential.ts"
 import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { adoptOrForkBroker, brokerLivenessSnapshot, killBroker, lastKnownBrokerDaemon, liveBrokerRecord, liveBrokerRecords, claudeBrokerRecordPath, resolveClaudeExecutableAbsolute, takeBrokerRetirement, type BrokerRetirementMark, type BrokerRetirementReason } from "./claude-broker-host.ts"
@@ -574,6 +575,8 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
       // caller's identity is FRIZZ_THREAD below, which every worker shell has had all along.
       ...(we?.cli ? frizzCliEnv(we.cli) : {}),
       FRIZZ_THREAD: slug,
+      // Plain `gh` reads with Frizz's read-only credential where Keyward takes the writes.
+      ...frizzGithubWorkerEnv(),
       // Every Claude worker's environment — the token budget, the bash timeout ceiling, and the lifted
       // web-search / sub-agent caps — as ONE record, so a cap added there cannot miss this path. It
       // used to spread CLAUDE_WORKER_ENV, which carried the first two and not the caps, and since the

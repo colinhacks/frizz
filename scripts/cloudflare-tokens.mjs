@@ -131,7 +131,7 @@ function deliver(sink, value, repoRoot) {
   // `keyward set` stores for the repository the current directory belongs to, so it runs from here.
   const [command, args] =
     sink.kind === "gh"
-      ? ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])])
+      ? ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
       : ["keyward", ["set", ...(sink.about ? ["--about", sink.about] : []), sink.secret]]
   const result = spawnSync(command, args, { input: value, cwd: repoRoot, encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`

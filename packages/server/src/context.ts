@@ -48,6 +48,7 @@ import { needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { onClaudeModelsResolved, peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { claudeModelUpgradeDue, claudeUpgradeCandidate, SERVER_STARTED_AT_MS } from "./backend/claude-model-upgrade.ts"
 import { detectGithub, type GithubDetection } from "./github.ts"
+import { startGithubCredentialKeeper } from "./github-credential.ts"
 import type { InteractionStore } from "./interaction-store.ts"
 import {
   codexAppServerEnvironment,
@@ -387,6 +388,9 @@ export function reconcileSessions(storage: Storage) {
 // absent gh just leaves the feature off. Called from startServer without blocking the listen — the
 // githubStatus handler live-detects during the brief pre-cache window.
 export async function initGithub(ctx: AppContext): Promise<void> {
+  // Here rather than in startServer because a test's runtime injects its own initGithub, so no suite
+  // run ever starts this against a real credential. Once per process, however many tenants boot.
+  startGithubCredentialKeeper()
   ctx.github = await detectGithub(ctx.project.dir)
 }
 

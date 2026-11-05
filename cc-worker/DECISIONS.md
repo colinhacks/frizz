@@ -1228,3 +1228,12 @@ GitHub CLI access on the maintainer's Mac moved behind Keyward: `keyward --reaso
 - **Keyward is found by walking PATH for the file, never by running it.** Any `keyward` invocation that releases raises a Touch ID sheet, and a SessionStart hook fires on every start, resume, clear and compact.
 - **Waits moved to the server in both modes.** `frizzctl watch-pr add` / `watch-issue add` run on Frizz's own read-only GitHub credential, unattended and while the screen is locked, so both blocks, the `frizz:gh` skill and the Codex contract name them first. The bundled `ci-watch.mjs` / `review-watch.mjs` stay as the in-turn fallback where plain `gh` is signed in: Keyward releases to `gh` alone, so a script that runs `gh` itself gets no token under it.
 - **Rejected: running `keyward` to learn whether a release would work.** It is the one check that is accurate, and the one that puts a sheet on the screen at every session start.
+
+## 2026-11-04, later the same day: a worker's plain `gh` reads with Frizz's credential
+
+Colin's decision (question `gh-reads` on the Keyward thread): an agent's GitHub reads use Frizz's read-only credential, with no Touch ID and through a locked screen, and anything that writes goes through `keyward --reason "…" -- gh …`. That replaces the routing above, which sent every read through a Touch ID.
+
+- **No shim. The worker's environment does it.** `frizzGithubWorkerEnv` points `GH_CONFIG_DIR` at a folder Frizz owns, whose `hosts.yml` holds the token and is rewritten on every renewal. A file rather than `GH_TOKEN`, so a worker outliving an 8-hour token gets the fresh one and an `env` in a transcript cannot print it. `keyward -- gh` sets its own `GH_CONFIG_DIR` and drops the token variables for its run, so the two do not collide.
+- **Only with Keyward installed and Frizz signed in.** Elsewhere a worker's `gh` is its operator's own sign-in, which may be able to write, and a read-only override would leave no path for a write. So the two tiers above still stand for those machines, and the read-only block is a third, checked first.
+- **The hook and the scripts read a marker file, `frizz-read-only`, beside `hosts.yml`.** A `FRIZZ_` variable would not do: Codex's environment drops that whole prefix.
+- **The bundled monitors keep working in read-only mode.** They run plain `gh`, which can read.

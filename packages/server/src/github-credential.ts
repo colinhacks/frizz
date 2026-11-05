@@ -2,6 +2,7 @@ import { execFile } from "node:child_process"
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { promisify } from "node:util"
+import { findOnPath } from "./backend/acp-agents.ts"
 import { frizzRoots } from "./frizz-paths.ts"
 
 // FRIZZ'S OWN GITHUB CREDENTIAL — the one thing every server-side GitHub read authenticates with.
@@ -137,11 +138,13 @@ export function writeGithubCredential(credential: StoredGithubCredential): void 
   chmodSync(tmp, 0o600)
   renameSync(tmp, path)
   memo = { credential, problem: undefined }
+  syncWorkerGhConfig()
 }
 
 export function clearGithubCredential(): void {
   rmSync(githubCredentialPath(), { force: true })
   memo = { credential: null, problem: undefined }
+  syncWorkerGhConfig()
 }
 
 // The credential as this process last read or wrote it, plus why it stopped working, if it did.
@@ -423,6 +426,107 @@ async function fetchLogin(token: string, deps: TokenDeps): Promise<string | null
     return isString(body.login) ? body.login : null
   } catch {
     return null
+  }
+}
+
+// ── `gh`, in a worker's shell ──────────────────────────────────────────────────────────────────
+//
+// Colin's decision of 2026-11-04: a worker's GitHub READS use this same read-only credential, with no
+// Touch ID and through a locked screen, and anything that WRITES goes through Keyward
+// (`keyward --reason "…" -- gh …`). Nothing wraps `gh` to do that. The worker's GH_CONFIG_DIR names a
+// folder Frizz owns, whose hosts.yml holds the token, so plain `gh` simply reads and a write simply
+// fails with GitHub's own permission error. Keyward sets its own GH_CONFIG_DIR and drops the token
+// variables for its run, so the two cannot collide.
+//
+// A FILE, NOT GH_TOKEN. gh reads it on every run, so a worker outliving an 8-hour token gets the fresh
+// one when the server renews it. And the token stays out of every child's environment, where one
+// `env` in a transcript would print it.
+//
+// ONLY WHERE KEYWARD IS INSTALLED. Elsewhere a worker's `gh` is its operator's own sign-in, which may
+// well be able to write, and there would be no path left for a write at all. So a machine without
+// Keyward keeps exactly the environment it had.
+
+/** A worker's GH_CONFIG_DIR: Frizz-owned, holding hosts.yml with the read-only token. */
+export function frizzWorkerGhConfigDir(): string {
+  return join(githubCredentialDir(), "worker-gh")
+}
+
+/** Beside hosts.yml: how the session-seed hook and the repo scripts tell that this `gh` cannot write.
+ *  A file rather than a variable, because Codex's environment drops every FRIZZ_ name. */
+export const WORKER_GH_READ_ONLY_MARKER = "frizz-read-only"
+
+/** The hosts.yml for one token. JSON strings are valid YAML, so nothing here needs escaping. */
+export function workerHostsYaml(token: string, login: string | null): string {
+  return `github.com:\n    oauth_token: ${JSON.stringify(token)}\n    git_protocol: ssh\n${login ? `    user: ${JSON.stringify(login)}\n` : ""}`
+}
+
+function workerGhToken(): { token: string; login: string | null } | null {
+  const fromEnv = envToken()
+  if (fromEnv) return { token: fromEnv, login: null }
+  const { credential, problem } = current()
+  if (!credential || problem) return null
+  return { token: credential.kind === "app" ? credential.accessToken : credential.token, login: credential.login }
+}
+
+/** Make the worker folder match the credential: written atomically, so a `gh` starting at this moment
+ *  reads a whole file, and removed while signed out. Best-effort, because a failure here must not fail
+ *  the sign-in or the renewal that called it; the keeper's next tick writes it again. */
+export function syncWorkerGhConfig(): void {
+  const dir = frizzWorkerGhConfigDir()
+  const hosts = join(dir, "hosts.yml")
+  try {
+    const held = workerGhToken()
+    if (!held) {
+      rmSync(hosts, { force: true })
+      return
+    }
+    ensureDir(dir)
+    writeFileSync(join(dir, WORKER_GH_READ_ONLY_MARKER), "", { mode: 0o600 })
+    const next = workerHostsYaml(held.token, held.login)
+    let existing: string | null = null
+    try {
+      existing = readFileSync(hosts, "utf8")
+    } catch {
+      // Not written yet.
+    }
+    if (existing === next) return
+    const tmp = `${hosts}.${process.pid}.tmp`
+    writeFileSync(tmp, next, { mode: 0o600 })
+    chmodSync(tmp, 0o600)
+    renameSync(tmp, hosts)
+  } catch {
+    // See above.
+  }
+}
+
+/** What a worker's environment adds so its `gh` reads with Frizz's credential. Empty unless Frizz is
+ *  signed in and this machine has a Keyward to send writes through. Read when a worker's process
+ *  starts, so one started before the sign-in keeps its own `gh` until it next resumes. */
+export function frizzGithubWorkerEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  if (!githubSignedIn() || !findOnPath("keyward", env)) return {}
+  syncWorkerGhConfig()
+  return { GH_CONFIG_DIR: frizzWorkerGhConfigDir() }
+}
+
+const KEEPER_TICK_MS = 60_000
+let keeper: NodeJS.Timeout | undefined
+
+/** Renew the App token ahead of its expiry whether or not anything on the server is reading GitHub,
+ *  because a worker's `gh` reads the file and never asks. Once per process, and idle while signed out.
+ *  A failed renewal is already recorded by frizzGithubToken; nothing here adds to it. */
+export function startGithubCredentialKeeper(deps: TokenDeps = {}): () => void {
+  const tick = () => {
+    if (githubSignedIn()) void frizzGithubToken(deps).catch(() => {})
+    syncWorkerGhConfig()
+  }
+  if (!keeper) {
+    tick()
+    keeper = setInterval(tick, KEEPER_TICK_MS)
+    keeper.unref?.()
+  }
+  return () => {
+    if (keeper) clearInterval(keeper)
+    keeper = undefined
   }
 }
 

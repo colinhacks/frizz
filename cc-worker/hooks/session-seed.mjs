@@ -100,6 +100,14 @@ const ghBlock =
   ghReadOnly +
   'To wait on CI or reviews, register `frizzctl watch-pr add` / `frizzctl watch-issue add` rather than polling. Load the `frizz:gh` skill for the full playbook (recipes, waits, and the bundled monitors as a fallback).';
 
+const ghFrizzReadOnlyBlock =
+  '⟦gh available, read-only⟧ Plain `gh` is signed in here with Frizz\'s own READ-ONLY GitHub credential: no Touch ID, and it works while the screen is locked. Use it EAGERLY and well — it is the fastest path to issue/PR/CI/release context, and you should reach for it before guessing:\n' +
+  '• READ freely: `gh issue view N -R OWNER/REPO --comments`, `gh pr view N`, `gh pr diff N`, `gh pr checks N`, `gh run list`/`gh run view`, `gh api repos/OWNER/REPO/…`. Prefer `--json <fields>` over scraping human text. Repo source is not readable through it; read the checkout.\n' +
+  '• A WRITE fails with a permission error (`Resource not accessible by integration`, HTTP 403), and so does a read that needs more than it holds, such as a private repo on an account where Frizz\'s GitHub App is not installed (it reads as not found). That is this credential, not a fault: rerun that one command as `keyward --reason "<what this command is for>" -- gh …`, `gh` the first word after `--`. One Touch ID covers this repository for 10 minutes.\n' +
+  '• On any stderr line starting `keyward: not released:` (screen locked, declined), STOP and report it to the human; NEVER retry. A locked screen does not clear by retrying, and a decline was their answer.\n' +
+  ghReadOnly +
+  'To wait on CI or reviews, register `frizzctl watch-pr add` / `frizzctl watch-issue add` rather than polling. Load the `frizz:gh` skill for the full playbook.';
+
 const ghKeywardBlock =
   '⟦gh available through Keyward⟧ Plain `gh` is signed OUT here; Keyward, the human\'s vault, signs it in for one run at a time. Run EVERY gh command as `keyward --reason "<what this command is for>" -- gh …` (`gh` must be the first word after `--`). It is still the fastest path to issue/PR/CI/release context — reach for it before guessing:\n' +
   '• One Touch ID covers this repository\'s gh runs for 10 minutes (less if the screen locks), so BATCH your gh reads together rather than spreading them out. Prefer `--json <fields>`.\n' +
@@ -128,13 +136,27 @@ function onPath(name) {
   return false;
 }
 
-/** @type {'plain' | 'keyward' | null} */
-let ghMode = null;
-try {
-  execFileSync('gh', ['auth', 'status', '--active'], { stdio: 'ignore', timeout: 4000 });
-  ghMode = 'plain';
-} catch {
-  /* no gh / not authed / stalled → fall through to the Keyward tier */
+/** Frizz points a worker's GH_CONFIG_DIR at its own read-only credential where Keyward takes the writes.
+ *  It marks that folder with a file: a FRIZZ_ variable would not reach every transport. Stats, no network. */
+function frizzReadOnlyGh() {
+  const dir = process.env.GH_CONFIG_DIR;
+  if (!dir) return false;
+  try {
+    return statSync(join(dir, 'frizz-read-only')).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** @type {'read-only' | 'plain' | 'keyward' | null} */
+let ghMode = frizzReadOnlyGh() ? 'read-only' : null;
+if (!ghMode) {
+  try {
+    execFileSync('gh', ['auth', 'status', '--active'], { stdio: 'ignore', timeout: 4000 });
+    ghMode = 'plain';
+  } catch {
+    /* no gh / not authed / stalled → fall through to the Keyward tier */
+  }
 }
 if (!ghMode) {
   try {
@@ -146,7 +168,8 @@ if (!ghMode) {
 
 const parts = [core];
 if (input.source === 'compact') parts.push(grounding);
-if (ghMode === 'plain') parts.push(ghBlock);
+if (ghMode === 'read-only') parts.push(ghFrizzReadOnlyBlock);
+else if (ghMode === 'plain') parts.push(ghBlock);
 else if (ghMode === 'keyward') parts.push(ghKeywardBlock);
 
 process.stdout.write(

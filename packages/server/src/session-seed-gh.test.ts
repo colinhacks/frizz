@@ -6,9 +6,10 @@ import { tmpdir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-// The session-seed hook's gh gate has two tiers (2026-11-04, cc-worker/DECISIONS.md): a plain `gh`
+// The session-seed hook's gh gate has three tiers (2026-11-04, cc-worker/DECISIONS.md): a GH_CONFIG_DIR
+// Frizz marked read-only gets the read-only block, with writes through Keyward; otherwise a plain `gh`
 // that is signed in gets the plain block; otherwise a `keyward` on PATH gets the Keyward block, which
-// routes every gh command through `keyward --reason "…" -- gh …`; neither gets nothing. These run the
+// routes every gh command through `keyward --reason "…" -- gh …`; none gets nothing. These run the
 // real hook as Claude Code does, on a PATH and gh config built per case, so the answer never depends
 // on whether the machine running the suite is signed in.
 
@@ -23,6 +24,8 @@ interface Case {
   gh?: "signed-in" | "signed-out"
   /** A stub `keyward` on PATH: executable, or present but not executable. */
   keyward?: "executable" | "not-executable"
+  /** The GH_CONFIG_DIR carries Frizz's read-only marker, as a worker's does (frizzGithubWorkerEnv). */
+  frizzReadOnly?: boolean
 }
 
 function runSeed(c: Case) {
@@ -32,6 +35,7 @@ function runSeed(c: Case) {
     const project = join(root, "project")
     const ghConfig = join(root, "gh-config")
     for (const d of [bin, project, ghConfig]) mkdirSync(d)
+    if (c.frizzReadOnly) writeFileSync(join(ghConfig, "frizz-read-only"), "")
     const keywardRan = join(root, "keyward-ran")
     if (c.gh) {
       writeFileSync(join(bin, "gh"), `#!/bin/sh\nexit ${c.gh === "signed-in" ? 0 : 1}\n`)
@@ -115,4 +119,24 @@ test("signed-out gh and no keyward inject no gh guidance at all", () => {
 test("a keyward file that is not executable does not count", { skip: process.platform === "win32" }, () => {
   const { context } = runSeed({ gh: "signed-out", keyward: "not-executable" })
   assert.doesNotMatch(context, /⟦gh available/)
+})
+
+test("Frizz's read-only config gets the read-only block: plain gh reads, a write reruns through keyward", () => {
+  // Signed in or not, this tier asks nothing of gh: it is decided from the marker alone, with no network.
+  const { context, keywardRan } = runSeed({ gh: "signed-out", keyward: "executable", frizzReadOnly: true })
+  assert.equal(keywardRan, false, "finding keyward must not execute it")
+  assert.match(context, /⟦gh available, read-only⟧/)
+  assert.doesNotMatch(context, /⟦gh available⟧/)
+  assert.doesNotMatch(context, /⟦gh available through Keyward⟧/)
+  assert.match(context, /READ freely: `gh issue view N/)
+  assert.match(context, /Resource not accessible by integration/)
+  assert.match(context, /`keyward --reason "<what this command is for>" -- gh …`/)
+  assert.match(context, /`keyward: not released:`.*STOP and report it to the human; NEVER retry/)
+  assert.match(context, /READ-ONLY BOUNDARY/)
+  assert.match(context, /frizzctl watch-pr add/)
+})
+
+test("the read-only marker wins over a signed-in gh, whose answer it never asks for", () => {
+  const { context } = runSeed({ gh: "signed-in", frizzReadOnly: true })
+  assert.match(context, /⟦gh available, read-only⟧/)
 })

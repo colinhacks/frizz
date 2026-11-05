@@ -14,6 +14,7 @@ import {
 } from "./acp-types.ts"
 import { FRIZZ_MCP, frizzCliEnv, frizzMcpEnv, withFrizzCliOnPath, type FrizzCli, type FrizzMcp } from "./types.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
+import { frizzGithubWorkerEnv } from "../github-credential.ts"
 import type { AcpAgentModels } from "@frizz/shared"
 
 // The ACP backend's bridge: one live agent child per thread, driven over acp-rpc.ts, writing the
@@ -335,7 +336,8 @@ export class AcpBridge {
     // calling — which is all `frizzctl`, run from the agent's own shell, needs. Applied when the daemon
     // is forked; one that survived a Frizz restart keeps the environment it was born with.
     const cli = this.options.frizzCli
-    const inherited = inheritWorkerEnvironment(this.options.env ?? process.env)
+    // Plain `gh` reads with Frizz's read-only credential where Keyward takes the writes.
+    const inherited = { ...inheritWorkerEnvironment(this.options.env ?? process.env), ...frizzGithubWorkerEnv(this.options.env ?? process.env) }
     const env = cli ? withFrizzCliOnPath({ ...inherited, ...frizzCliEnv(cli, slug) }, cli) : inherited
     const attachment = await this.host()({ stateDir: this.options.stateDir, threadSlug: slug, sessionId, command: agent.bin!, args: agent.args, cwd, env })
     const proc = attachment.process

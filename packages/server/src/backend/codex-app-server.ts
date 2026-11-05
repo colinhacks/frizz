@@ -5,6 +5,7 @@ import type { Readable, Writable } from "node:stream"
 import type Database from "../sqlite.ts"
 import { scopeDatabase, type ProjectScope } from "../project-scope.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
+import { frizzGithubWorkerEnv } from "../github-credential.ts"
 import { z } from "zod"
 import {
   INTERACTION_PROTOCOL_VERSION,
@@ -3082,7 +3083,8 @@ export class CodexAppServerBridge {
       codexBin: this.codexBin,
       // Preserve only the audited Codex runtime/auth surface. Values stay in the app-server's
       // environment; no value is copied into argv, SQLite, diagnostics, or logs.
-      env: codexAppServerEnvironment(),
+      // Plain `gh` reads with Frizz's read-only credential where Keyward takes the writes.
+      env: { ...codexAppServerEnvironment(), ...frizzGithubWorkerEnv() },
       clientInfo: CLIENT_INFO,
       capabilities: CLIENT_CAPABILITIES,
       // NO process-wide MCP mount on the app-server's argv any more (2026-10-11). It gave every thread
