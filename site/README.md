@@ -20,11 +20,19 @@ work only with its own more-specific route, the way the registrar has one.
 
 ## Deploying
 
-The Vercel project is `frizz` under the `colinhacks-projects` scope, deployed from this directory with the CLI:
+The Vercel project is `frizz` under the `colinhacks-projects` scope, deployed from this directory with the CLI. On the maintainer's Mac the CLI stays signed out and takes its token from Keyward, at one Touch ID per run:
 
 ```sh
-vercel --cwd site --prod
+keyward run --reason "Deploy frizz.sh" VERCEL_TOKEN -- vercel deploy --prod --yes --cwd site --scope colinhacks-projects
 ```
+
+A checkout with no `site/.vercel/` has to link first, the same way:
+
+```sh
+keyward run --reason "Link site/ to the frizz Vercel project" VERCEL_TOKEN -- vercel link --yes --cwd site --project frizz --scope colinhacks-projects
+```
+
+Linking also writes `site/.env.local`, which holds a Vercel token. Delete it afterward. Git ignores it, and on the deploy that created it Vercel left it out of the published site.
 
 ## Regenerating the screenshots
 
