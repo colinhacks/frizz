@@ -73,12 +73,14 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   await page.goto(url, { waitUntil: 'networkidle2' })
   check(`${name} command palette, new-thread modal, stacked thread reader and status list`)
 
-  // A fresh dispatch has no AI title yet; exercise that real row without dispatching a provider.
+  // A fresh dispatch has no AI title yet; exercise that real row without dispatching a provider. A write
+  // into a thread on the board reaches no subscriber (store.ts plainThreads), so each step replaces its slot.
   const previousTitle = await page.evaluate(async () => {
-    const { store } = await import('/src/store.ts')
+    const { store, setBoard } = await import('/src/store.ts')
     const thread = store.board.threads.find(t => t.id === 'theme-running')
     const saved = { titleAuto: thread.titleAuto, aiTitle: thread.aiTitle, spawnedAt: thread.spawnedAt }
-    Object.assign(thread, { titleAuto: true, aiTitle: '', spawnedAt: new Date().toISOString() })
+    const fresh = { titleAuto: true, aiTitle: '', spawnedAt: new Date().toISOString() }
+    setBoard({ ...store.board, threads: store.board.threads.map(t => t.id === 'theme-running' ? { ...t, ...fresh } : t) })
     return saved
   })
   const provisional = '[data-sidebar-item="theme-running"]'
@@ -87,8 +89,8 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   assert.ok(result[`${name}-provisional-title-contrast`].some(row => row.text.includes('Spinning up')), 'The provisional title was actually sampled')
   await shot('provisional-title')
   await page.evaluate(async saved => {
-    const { store } = await import('/src/store.ts')
-    Object.assign(store.board.threads.find(t => t.id === 'theme-running'), saved)
+    const { store, setBoard } = await import('/src/store.ts')
+    setBoard({ ...store.board, threads: store.board.threads.map(t => t.id === 'theme-running' ? { ...t, ...saved } : t) })
   }, previousTitle)
   check(`${name} provisional sidebar title`)
 
