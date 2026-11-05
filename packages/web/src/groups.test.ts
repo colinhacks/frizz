@@ -569,7 +569,37 @@ test("orderQueue: high-frequency agent activity on a RUNNING row cannot oscillat
   assert.deepEqual(orderQueue(rows("2026-07-14T12:09:00.000Z")).map((item) => item.id), ["alpha", "bravo"])
 })
 
+test("orderQueue: a queued row with LIVE WORK is at rest, so it keys on its rest time and not the last user message", () => {
+  // Reylo's Kyber thread on 2026-11-05: its handoff still stood, it woke, messaged a sub-agent and rested
+  // again. Its row read 35m and sorted from its last user message, 15 hours older, so it led a queue of
+  // threads that really had been waiting for hours.
+  const liveWork = {
+    child: { subAgents: [{ id: "a1", label: "c", startedAt: "2026-11-05T15:41:52.000Z", state: "running" as const }] },
+    shell: { awaitingBackground: true },
+  }
+  for (const live of Object.values(liveWork)) {
+    const rows = [
+      thread({ id: "kyber", kind: "session", state: "open", needsYou: true, ...live, lastUserAt: "2026-11-05T00:48:24.798Z", lastAssistantAt: "2026-11-05T15:41:58.958Z" }),
+      thread({ id: "waiting", kind: "session", state: "open", needsYou: true, lastUserAt: "2026-11-05T07:14:05.139Z", lastAssistantAt: "2026-11-05T07:14:14.540Z" }),
+    ]
+    assert.deepEqual(orderQueue(rows).map((item) => item.id), ["waiting", "kyber"])
+    assert.deepEqual(orderQueue(rows, "lifo").map((item) => item.id), ["kyber", "waiting"])
+  }
+})
+
 test("lastActiveLabelAt: at-rest shows REST time, running shows live activity, sub-agent bump ignored at rest", () => {
+  // At rest with a sub-agent still out → still the rest time, the same instant the row is ordered by.
+  assert.equal(
+    lastActiveLabelAt(
+      thread({
+        runtime: "turn-idle",
+        subAgents: [{ id: "a1", label: "c", startedAt: "2026-07-14T11:00:00.000Z", state: "running" }],
+        lastAssistantAt: "2026-07-14T12:00:00.000Z",
+        lastActivityAt: "2026-07-14T13:00:00.000Z",
+      }),
+    ),
+    "2026-07-14T12:00:00.000Z",
+  )
   // At rest → the agent's own rest time (lastAssistantAt), NOT the later lastActivityAt a completed
   // sub-agent bumped. So the label reads "when the agent rested", never a spurious "just now".
   assert.equal(

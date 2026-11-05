@@ -48,23 +48,32 @@ function interactionAt(t: ThreadView): number {
 // sub-agent's completion notification (a promptSource:system record) and by tool_results, so keying on
 // it let a CHILD finishing reshuffle the parent (maintainer 2026-07-16: "it should just be based on
 // when the agent rested … user turns don't actually factor in"). User turns don't factor in either:
-// a steer flips the thread to running, and only its next REST re-times it. A RUNNING row is not in the
-// queue/rested band — the Running band orders by its own entry instant (orderRunning), and falls back to
-// this — so it keeps `interactionAt` (max lastUserAt/spawnedAt), which also guards against mid-turn churn. Missing rest
-// time (never produced output yet) → `interactionAt` (spawn/last-user). `isActivelyRunning` is hoisted.
+// a steer flips the thread to running, and only its next REST re-times it. A TURN IN FLIGHT keeps
+// `interactionAt` (max lastUserAt/spawnedAt), because its `lastAssistantAt` moves with every message it
+// writes and would churn the row. Missing rest time (never produced output yet) → `interactionAt`.
+//
+// A THREAD RESTING WITH LIVE WORK IS AT REST, so this asks `turnInFlight` and not `isActivelyRunning`,
+// which also answers true for it. Such a thread can sit in the queue — its handoff still stands, or its
+// live work is a shell — and it sorted from its last user message while its row printed its rest time
+// (2026-11-05: Reylo's Kyber thread read 35m and sorted from 15 hours earlier, ahead of threads that
+// had really been waiting for hours).
 function lastActiveAt(t: ThreadView): number {
-  if (isActivelyRunning(t)) return interactionAt(t)
+  if (turnInFlight(t)) return interactionAt(t)
   const rest = Date.parse(t.lastAssistantAt ?? "")
   return Number.isFinite(rest) ? rest : interactionAt(t)
 }
 
+function turnInFlight(t: Pick<ThreadView, "runtime">): boolean {
+  return t.runtime === "running" || t.runtime === "spawning"
+}
+
 // The timestamp the "Last active" label should DISPLAY, kept in lockstep with the order key so the
-// queue's labels read monotonically and never lie. A RUNNING row shows its live activity
+// queue's labels read monotonically and never lie. A TURN IN FLIGHT shows its live activity
 // (`lastActivityAt` — "just now" while it works); an AT-REST row shows its rest time (`lastAssistantAt`),
 // so a background sub-agent completing can never flip a rested row's label to "just now". Falls back to
 // lastActivityAt then spawn when a backend never recorded the rest instant (legacy/foreign rows).
-export function lastActiveLabelAt(t: Pick<ThreadView, "runtime" | "lastActivityAt" | "lastAssistantAt" | "spawnedAt" | "subAgents" | "bgShells">): string | undefined {
-  if (isActivelyRunning(t as ThreadView)) return t.lastActivityAt ?? t.spawnedAt
+export function lastActiveLabelAt(t: Pick<ThreadView, "runtime" | "lastActivityAt" | "lastAssistantAt" | "spawnedAt">): string | undefined {
+  if (turnInFlight(t)) return t.lastActivityAt ?? t.spawnedAt
   return t.lastAssistantAt ?? t.lastActivityAt ?? t.spawnedAt
 }
 
