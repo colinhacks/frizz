@@ -35,6 +35,12 @@
 // ruleset, a new member. Changing any of those on purpose means changing BASELINE in the same commit.
 // API tokens are not on the list, so each sitting's `cloudflare-tokens.mjs --audit` reads those.
 //
+// THE MAINTAINER'S OWN TOKEN is what this most has to catch. Keyward holds a Cloudflare token that can
+// deploy these Workers and tail them, behind one Touch ID and no reviewer, so an upload by it must fail
+// however it is stamped: CI's token belongs to the account, and a version authored by a member's address
+// did not come from CI, whatever WORKERS_CI_AUTHOR says. A tail leaves no version, so it, and every other
+// change CI would not make, is read from the audit log.
+//
 // WHAT IT READS. The ACTIVE deployment always (the newest; it serves 100% of traffic unless a split
 // names two versions, and then both are checked), plus every deployment and every version created in
 // the last LOOKBACK. The lookback is what catches an attacker who deploys and rolls back between two
@@ -67,6 +73,8 @@ const SKEW_MS = 2 * 60 * 1000
 const CI_MESSAGE = /^ci:([0-9a-f]{40}) run:(\d+)$/
 
 const hashEmail = (email) => createHash("sha256").update(String(email).trim().toLowerCase()).digest("hex")
+// This repository's Actions logs are public, and a member's address is the login to this account.
+const maskEmail = (email) => (email ? String(email).replace(/^(.).*@/, "$1***@") : "-")
 
 // What the account should hold, read from it on 2026-11-05. Member addresses are hashed because this
 // repository and its run logs are public.
@@ -127,7 +135,7 @@ export function githubClient(token, { base = "https://api.github.com" } = {}) {
  * Every problem with one Worker, as sentences; an empty list means everything it runs came from CI.
  * `cf` and `gh` take an API path and return the parsed body (see the two clients above).
  */
-export async function checkWorker(script, { cf, gh, repo, expectedAuthor, now = Date.now(), lookbackMs = LOOKBACK_MS, log = () => {} }) {
+export async function checkWorker(script, { cf, gh, repo, expectedAuthor, members = BASELINE.members, now = Date.now(), lookbackMs = LOOKBACK_MS, log = () => {} }) {
   const problems = []
   const answers = new Map()
   const since = now - lookbackMs
@@ -168,6 +176,9 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthor, now = 
     return null
   }
 
+  // Independent of WORKERS_CI_AUTHOR on purpose, so that a variable set to the wrong author passes nothing.
+  const byMember = (email) => Boolean(email) && members.includes(hashEmail(email))
+
   const checkedVersions = new Set()
   const checkVersion = async (id, why) => {
     if (checkedVersions.has(id)) return
@@ -175,16 +186,17 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthor, now = 
     const version = await cf(`${base}/versions/${id}`)
     const meta = version.metadata ?? {}
     const message = version.annotations?.["workers/message"]
-    log(`  version ${id} (${why}): created ${meta.created_on}, source ${meta.source}, author_id ${meta.author_id ?? "-"}, author_email ${meta.author_email ?? "-"}, message ${JSON.stringify(message ?? "")}`)
+    log(`  version ${id} (${why}): created ${meta.created_on}, source ${meta.source}, author_id ${meta.author_id ?? "-"}, author_email ${maskEmail(meta.author_email)}, message ${JSON.stringify(message ?? "")}`)
     const label = `${script} version ${id} (${why}, created ${meta.created_on})`
     const reason = await notFromCi(message, meta.created_on)
     if (reason) problems.push(`${label}: ${reason}`)
     if (meta.source !== "wrangler") problems.push(`${label}: uploaded from ${meta.source ?? "an unknown source"}, not wrangler`)
     if (!expectedAuthor) {
-      problems.push(`${label}: WORKERS_CI_AUTHOR is not set, so its author (author_id ${meta.author_id ?? "-"}, author_email ${meta.author_email ?? "-"}) cannot be checked`)
+      problems.push(`${label}: WORKERS_CI_AUTHOR is not set, so its author (author_id ${meta.author_id ?? "-"}, author_email ${maskEmail(meta.author_email)}) cannot be checked`)
     } else if (meta.author_id !== expectedAuthor && meta.author_email !== expectedAuthor) {
-      problems.push(`${label}: uploaded by author_id ${meta.author_id ?? "-"} / author_email ${meta.author_email ?? "-"}, not the CI token's ${expectedAuthor}`)
+      problems.push(`${label}: uploaded by author_id ${meta.author_id ?? "-"} / author_email ${maskEmail(meta.author_email)}, not the CI token's ${expectedAuthor}`)
     }
+    if (byMember(meta.author_email)) problems.push(`${label}: uploaded by an account member's own sign-in or token, and CI's token belongs to the account`)
   }
 
   const { deployments = [] } = await cf(`${base}/deployments`)
@@ -195,9 +207,10 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthor, now = 
     if (!active && Date.parse(deployment.created_on) < since) continue
     const why = active ? "active" : "recent"
     const message = deployment.annotations?.["workers/message"]
-    log(`${script} deployment ${deployment.id} (${why}): created ${deployment.created_on}, author ${deployment.author_email ?? "-"}, message ${JSON.stringify(message ?? "")}`)
+    log(`${script} deployment ${deployment.id} (${why}): created ${deployment.created_on}, author ${maskEmail(deployment.author_email)}, message ${JSON.stringify(message ?? "")}`)
     const reason = await notFromCi(message, deployment.created_on)
     if (reason) problems.push(`${script} deployment ${deployment.id} (${why}, created ${deployment.created_on}): ${reason}`)
+    if (byMember(deployment.author_email)) problems.push(`${script} deployment ${deployment.id} (${why}, created ${deployment.created_on}): made by an account member's own sign-in or token, and CI's token belongs to the account`)
     for (const { version_id: id } of deployment.versions ?? []) await checkVersion(id, `in the ${why} deployment`)
   }
 
@@ -214,6 +227,30 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthor, now = 
   return problems
 }
 
+const AUDIT_PAGE = 1000
+// checkWorker judges these by the version or deployment each one made, so the log has nothing to add.
+const JUDGED_BY_VERSION = new Set(["script_update", "script_deploy"])
+
+/**
+ * Every change in the audit log that nothing else here judges, as sentences. Nobody but CI changes this
+ * account in the ordinary run of things, so anything else is an alarm for as long as it is in the lookback,
+ * whoever did it. A tail above all: it changes no version and no setting, and it streams each request's URL
+ * and headers, which are the relay's cookies and access codes, so this log is its only record. Cloudflare's
+ * own events (certificate renewals) read `system`. Nothing about the actor is printed: these logs are public.
+ */
+export function auditLogProblems(events) {
+  const problems = []
+  if (events.length >= AUDIT_PAGE) problems.push(`the audit log's page is full at ${AUDIT_PAGE} events, so a change could be past the end of it`)
+  for (const event of events) {
+    const type = event.action?.type
+    if (event.actor?.type === "system" || JUDGED_BY_VERSION.has(type)) continue
+    const on = `${event.resource?.type ?? "unknown"} ${event.resource?.id ?? "-"}`
+    if (type === "tail_logs_start") problems.push(`a tail was started on ${on} at ${event.when}, and a tail reads every request's cookies`)
+    else problems.push(`the audit log shows ${type} on ${on} at ${event.when}, which CI does not do`)
+  }
+  return problems
+}
+
 // A Durable Object binding is named by its class, because its namespace id belongs to Cloudflare.
 const bindingKey = (b) => [b.type, b.name, b.class_name ?? b.namespace_id ?? b.text].filter(Boolean).join(" ")
 
@@ -221,9 +258,13 @@ const bindingKey = (b) => [b.type, b.name, b.class_name ?? b.namespace_id ?? b.t
  * Every way the account differs from `baseline`, as sentences; an empty list means it matches. A read
  * Cloudflare refuses throws, so a token that cannot see something fails the run instead of passing it.
  */
-export async function checkAccount({ cf, baseline = BASELINE, accountId = ACCOUNT_ID }) {
+export async function checkAccount({ cf, baseline = BASELINE, accountId = ACCOUNT_ID, now = Date.now(), lookbackMs = LOOKBACK_MS }) {
   const problems = []
   const account = `/accounts/${accountId}`
+
+  const since = new Date(now - lookbackMs).toISOString().replace(/\.\d{3}Z$/, "Z")
+  problems.push(...auditLogProblems(await cf(`${account}/audit_logs?since=${since}&direction=desc&per_page=${AUDIT_PAGE}`)))
+
   const sameSet = (what, actual, expected) => {
     for (const item of actual) if (!expected.includes(item)) problems.push(`${what}: unexpected ${item}`)
     for (const item of expected) if (!actual.includes(item)) problems.push(`${what}: missing ${item}`)
@@ -236,7 +277,7 @@ export async function checkAccount({ cf, baseline = BASELINE, accountId = ACCOUN
 
   const members = await cf(`${account}/members?per_page=50`)
   const unexpected = members.map((m) => m.user?.email ?? m.email ?? "").filter((email) => !baseline.members.includes(hashEmail(email)))
-  for (const email of unexpected) problems.push(`members: unexpected ${email.replace(/^(.).*@/, "$1***@")}`)
+  for (const email of unexpected) problems.push(`members: unexpected ${maskEmail(email)}`)
   if (members.length - unexpected.length !== baseline.members.length) problems.push(`members: ${members.length - unexpected.length} of the ${baseline.members.length} expected`)
 
   const zones = await cf(`/zones?name=${baseline.zone}&account.id=${accountId}`)

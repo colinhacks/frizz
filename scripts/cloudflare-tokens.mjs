@@ -25,7 +25,7 @@
 // a token that deploys the relay, and whatever can deploy the relay has code execution on every board
 // behind it. So it is made for one sitting with a one-day expiry, handed over on a secret card, kept
 // nowhere, and deleted in the dashboard afterwards. The maintainer's everyday CLOUDFLARE_API_TOKEN cannot
-// reach this account, on purpose.
+// manage tokens, so it plays no part here.
 //
 // THE CI TOKENS ARE ACCOUNT-OWNED ON PURPOSE. `workers-drift` tells CI's uploads from a laptop's by their
 // author, and a user-owned CI token would share its author with the maintainer's own token.

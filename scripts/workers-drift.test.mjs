@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { createServer } from "node:http"
 import { test } from "node:test"
-import { ACCOUNT_ID, BASELINE, checkAccount, checkWorker, cloudflareClient, githubClient, parseCiMessage } from "./workers-drift.mjs"
+import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkWorker, cloudflareClient, githubClient, parseCiMessage } from "./workers-drift.mjs"
 
 // The bodies below follow the shapes Cloudflare documents for
 //   GET /accounts/{account_id}/workers/scripts/{script}/deployments
@@ -120,7 +121,8 @@ test("a deploy from a laptop fails on its message and on its author", async () =
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z"), laptop],
   })
   assert.ok(problems.some((p) => p.includes(`deployment ${d2} (active`) && p.includes("is not a CI deploy's")), problems.join("\n"))
-  assert.ok(problems.some((p) => p.includes(`version ${v2}`) && p.includes("someone@example.com") && p.includes(CI_AUTHOR)), problems.join("\n"))
+  assert.ok(problems.some((p) => p.includes(`version ${v2}`) && p.includes("s***@example.com") && p.includes(CI_AUTHOR)), problems.join("\n"))
+  assert.ok(!problems.join("\n").includes("someone@"), "a public log must not carry a member's address")
 })
 
 test("a forged CI message is caught by the run: replayed outside its window, wrong workflow, wrong sha, no such run", async () => {
@@ -235,6 +237,28 @@ test("an author email matches as well as an author id", async () => {
   assert.deepEqual(problems, [])
 })
 
+test("an upload by a member's own token fails however it is stamped, even with WORKERS_CI_AUTHOR set to that member", async () => {
+  const member = "owner@example.com"
+  const members = [createHash("sha256").update(member).digest("hex")]
+  const mine = { author_id: "user1234", author_email: member, created_on: "2026-10-09T09:03:05Z", source: "wrangler" }
+  // A forged stamp of a real, approved run, inside its Deploy step: the only thing left to go on is who uploaded.
+  const fixture = {
+    deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1], `ci:${SHA} run:${RUN}`, member)],
+    versions: [ciVersion(v1, "2026-10-09T09:03:05Z", { metadata: mine })],
+  }
+  const lines = []
+  const wrongVariable = await check(fixture, { expectedAuthor: "user1234", members, log: (line) => lines.push(line) })
+  assert.ok(![...wrongVariable, ...lines].join("\n").includes(member), "these logs are public, and that address is the account's login")
+  assert.ok(wrongVariable.some((p) => p.includes(`version ${v1}`) && p.includes("account member's own")), wrongVariable.join("\n"))
+  assert.ok(wrongVariable.some((p) => p.includes(`deployment ${d1}`) && p.includes("account member's own")), wrongVariable.join("\n"))
+
+  const rightVariable = await check(fixture, { members })
+  assert.ok(rightVariable.some((p) => p.includes("user1234") && p.includes(CI_AUTHOR)), rightVariable.join("\n"))
+
+  // The control: the same upload by an address that is no member, with the variable naming it, passes.
+  assert.deepEqual(await check(fixture, { expectedAuthor: "user1234", members: [] }), [])
+})
+
 test("a Worker with no deployments at all is a finding", async () => {
   const problems = await check({ deployments: [], versions: [] })
   assert.deepEqual(problems, ["frizz-relay: Cloudflare lists no deployments at all"])
@@ -271,6 +295,7 @@ function account(overrides = {}) {
     ...overrides,
   }
   return async (path) => {
+    if (path.startsWith(`${a}/audit_logs?`)) return answers.audit ?? []
     if (!(path in answers)) throw new Error(`unrecorded Cloudflare path ${path}`)
     const answer = answers[path]
     if (answer instanceof Error) throw answer
@@ -305,6 +330,33 @@ test("anything that re-points a board's name or copies its traffic without an up
   await flagged({ [`${relay}/secrets`]: [{ name: "STOLEN" }] }, "frizz-relay secrets: unexpected STOLEN")
   await flagged({ [`${relay}/schedules`]: { schedules: [{ cron: "* * * * *" }] } }, "frizz-relay crons: unexpected * * * * *")
   await flagged({ [`${relay}/subdomain`]: { enabled: true } }, "it also answers on workers.dev")
+})
+
+test("a tail in the lookback is an alarm, because it changes nothing else the check can see", async () => {
+  const asked = []
+  const script = { type: "script", id: "frizz-relay" }
+  const inner = account({ audit: [
+    { when: "2026-10-09T11:30:00Z", actor: { type: "user" }, action: { type: "tail_logs_start" }, resource: script },
+    { when: "2026-10-09T11:31:00Z", actor: { type: "user" }, action: { type: "logpush_create" }, resource: { type: "logpush", id: "7" } },
+    { when: "2026-10-09T11:32:00Z", actor: { type: "user" }, action: { type: "script_update" }, resource: script },
+    { when: "2026-10-09T11:33:00Z", actor: { type: "user" }, action: { type: "script_deploy" }, resource: script },
+    { when: "2026-10-09T11:34:00Z", actor: { type: "system" }, action: { type: "create" }, resource: { type: "dns.record", id: "9" } },
+    // An actor nobody has seen is not excused: only Cloudflare's own events are.
+    { when: "2026-10-09T11:35:00Z", action: { type: "add_member" }, resource: { type: "account", id: "a" } },
+  ] })
+  const problems = await checkAccount({ cf: (path) => { asked.push(path); return inner(path) }, now: NOW })
+  assert.deepEqual(problems, [
+    "a tail was started on script frizz-relay at 2026-10-09T11:30:00Z, and a tail reads every request's cookies",
+    "the audit log shows logpush_create on logpush 7 at 2026-10-09T11:31:00Z, which CI does not do",
+    "the audit log shows add_member on account a at 2026-10-09T11:35:00Z, which CI does not do",
+  ])
+  assert.ok(asked.some((p) => p.includes("/audit_logs?since=2026-10-09T10:00:00Z&")), asked.join("\n"))
+})
+
+test("a full page of the audit log is an alarm, or a burst of noise would push a tail off it", () => {
+  const noise = Array.from({ length: 1000 }, () => ({ actor: { type: "system" }, action: { type: "create" } }))
+  assert.deepEqual(auditLogProblems(noise), ["the audit log's page is full at 1000 events, so a change could be past the end of it"])
+  assert.deepEqual(auditLogProblems(noise.slice(1)), [])
 })
 
 test("a read the token is refused fails the run rather than passing it", async () => {
