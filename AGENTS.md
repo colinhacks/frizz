@@ -223,9 +223,8 @@ tooling scripts follow the same rule: one copy in an agent-neutral location (e.g
 referenced from skills — never duplicated into agent-specific config trees.
 
 **A GLOBAL skill takes the identical shape one level up**: canonical in `~/.agents/skills/<name>/`,
-with relative symlinks at `~/.claude/skills/<name>` and `~/.codex/skills/<name>` (both `../../.agents/…`
-— `~/.codex/skills` is two levels deep, not one, and getting that wrong yields a dangling link that
-still `ls`es fine). A global skill must BUNDLE any script it needs beside its `SKILL.md`; it cannot
+which Codex reads directly, with a relative symlink at `~/.claude/skills/<name>` (`../../.agents/…`)
+that a SessionStart hook keeps current. `~/.codex/skills` needs no link. A global skill must BUNDLE any script it needs beside its `SKILL.md`; it cannot
 reach into a repo's `scripts/`. And a skill belongs in exactly one scope — never a project copy AND a
 global copy of the same name, or they drift and the agent lists it twice.
 
