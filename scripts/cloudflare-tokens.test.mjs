@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { TOKENS, expiresOn, findGroup, keywardSetArgs, planToken, staleTokens } from "./cloudflare-tokens.mjs"
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { TOKENS, expiresOn, findGroup, keywardSetArgs, planToken, snapshotAccount, staleTokens } from "./cloudflare-tokens.mjs"
 
 // Shapes from GET /accounts/{account_id}/tokens/permission_groups, cut down to the fields the plan
 // reads. Not captured from the live account: the first real run resolves against the real list and
@@ -110,4 +113,35 @@ test("a rotation revokes the older tokens of that name, never the new one or the
 
 test("expires_on is whole seconds, a year out", () => {
   assert.equal(expiresOn(Date.parse("2026-11-01T10:20:30.456Z")), "2027-11-01T10:20:30Z")
+})
+
+test("a snapshot saves every read it can, records each refusal, and covers a Worker nobody expected", async () => {
+  const outDir = mkdtempSync(join(tmpdir(), "cf-snapshot-"))
+  const asked = []
+  const get = async (path) => {
+    asked.push(path)
+    if (path.includes("/logpush/")) throw new Error("HTTP 403")
+    if (path.includes("/audit_logs")) return { result: Array.from({ length: path.endsWith("page=1") ? 1000 : 2 }, (_, i) => ({ i })) }
+    if (path.endsWith("/workers/scripts")) return { result: [{ id: "frizz-relay" }, { id: "surprise" }] }
+    if (path.startsWith("/zones?")) return { result: [{ id: "zone1" }] }
+    if (path.includes("/versions")) return { result: { items: [{ id: "v1" }] } }
+    return { result: [] }
+  }
+  const getBytes = async (path) => {
+    if (path.endsWith("/frizz-registrar")) throw new Error("HTTP 404")
+    return Buffer.from(`code of ${path}`)
+  }
+  try {
+    const { saved, refused, scripts } = await snapshotAccount({ get, getBytes, outDir, accountId: "acct", zone: "frizz.sh", since: "2026-08-01T00:00:00Z", knownScripts: ["frizz-relay", "frizz-registrar"] })
+    assert.deepEqual(scripts, ["frizz-relay", "surprise", "frizz-registrar"], "the listed Workers and the known ones, once each")
+    assert.equal(JSON.parse(readFileSync(join(outDir, "audit-log.json"), "utf8")).length, 1002, "a paged read carries on until a short page")
+    assert.deepEqual(JSON.parse(readFileSync(join(outDir, "surprise.versions.json"), "utf8")), [{ id: "v1" }], "versions nest their list in items")
+    assert.equal(readFileSync(join(outDir, "surprise.deployed-code.multipart"), "utf8"), "code of /accounts/acct/workers/scripts/surprise")
+    assert.deepEqual(refused.map((r) => r.name).sort(), ["frizz-registrar.deployed-code", "logpush-account", "logpush-zone"])
+    assert.ok(saved.some((s) => s.name === "routes"), "a zone's reads run under the zone Cloudflare named")
+    assert.ok(asked.includes("/zones/zone1/workers/routes"))
+    assert.equal(statSync(join(outDir, "audit-log.json")).mode & 0o077, 0, "evidence is readable by its owner alone")
+  } finally {
+    rmSync(outDir, { recursive: true, force: true })
+  }
 })
