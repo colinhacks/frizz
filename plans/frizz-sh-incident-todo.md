@@ -11,17 +11,19 @@ What is still owed after the 2026-09-21..10-08 compromise of the frizz.sh Worker
 - Custom frizz.sh names (the GitHub-backed claim) are withdrawn from every menu and doc behind `CUSTOM_NAMES_OFFERED` in [`src/cloud.ts`](../src/cloud.ts). A name already claimed keeps renewing, because a renewal is signed by the board's keypair and never touches GitHub.
 - The live Workers were read and compared with source on 2026-11-05: both active versions rebuild from `2c8820df`'s tree, apart from compiler output. Routes, domains, crons, DNS and members match the baseline, neither Worker holds a secret, and the token stolen in September no longer exists. `scripts/cloudflare-tokens.mjs --audit --out=<dir>` takes that snapshot.
 
-## 1. Deploy the Workers from CI — set it up once
+## 1. Deploy the Workers from CI — one sitting per deploy
 
-The workflows exist ([`workers-deploy.yml`](../.github/workflows/workers-deploy.yml), [`workers-drift.yml`](../.github/workflows/workers-drift.yml)) but have no credentials, so nothing deploys and the drift alarm cannot run. Until the first CI deploy it is NOT verified that the live registrar runs `main`'s code — in particular the refusal of any GitHub token that carries a scope (`6acda883`), which matters because Frizz before 0.13.8 still sends `gh auth token` on a custom-name claim.
+The workflows exist ([`workers-deploy.yml`](../.github/workflows/workers-deploy.yml), [`workers-drift.yml`](../.github/workflows/workers-drift.yml)), and the `workers-deploy` environment waits for a maintainer's approval. It holds no token, on purpose: a deploy token exists only for the hour around a deploy ([`scripts/cloudflare-tokens.mjs`](../scripts/cloudflare-tokens.mjs) says why). `workers-drift` is disabled until its read token exists. The live registrar is older than `main` and lacks the refusal of any GitHub token that carries a scope (`6acda883`), which matters because Frizz before 0.13.8 still sends `gh auth token` on a custom-name claim.
 
-1. On [Frizz account API tokens](https://dash.cloudflare.com/dde3ec1f6b1f0a397ea82a9ed322f5ce/api-tokens), click **Create Token** → **Create Custom Token**. Name it `github-actions workers-deploy`. Permissions: Account → **Workers Scripts** → **Edit**; Zone → **Workers Routes** → **Edit**. Account resources: Include → **Frizz**. Zone resources: Include → Specific zone → **frizz.sh**. Set a TTL end date. Copy the token.
-2. On the same page, create `github-actions workers-drift`: Account → **Workers Scripts** → **Read**, account **Frizz**, with an end date. Copy the token.
-3. At [new environment](https://github.com/colinhacks/frizz/settings/environments/new), create `workers-deploy`. Tick **Required reviewers** and add `colinhacks`. Under **Deployment branches and tags** choose **Selected branches and tags** and add `main`. Under **Environment secrets** add `CLOUDFLARE_API_TOKEN` = the deploy token.
-4. At [new repository secret](https://github.com/colinhacks/frizz/settings/secrets/actions/new), add `CLOUDFLARE_READ_TOKEN` = the read token.
-5. At [notification settings](https://github.com/settings/notifications), under **System → Actions**, tick **Email** and **Only notify for failed workflows**.
-6. Push `main`, then run the deploy at [Workers deploy → Run workflow](https://github.com/colinhacks/frizz/actions/workflows/workers-deploy.yml) with target `both`, and approve it. Once it is green, `nub scripts/verify-relay-live.mjs` checks the relay that is now serving.
-7. Open the first [Workers drift run](https://github.com/colinhacks/frizz/actions/workflows/workers-drift.yml). It fails with `WORKERS_CI_AUTHOR is not set` and prints the CI author. Add that value as a [repository variable](https://github.com/colinhacks/frizz/settings/variables/actions/new) named `WORKERS_CI_AUTHOR`, then re-run it until it is green.
+The commands are in that script's header. In order:
+
+1. The maintainer makes a token on [`colin@pullfrog.com`'s API tokens page](https://dash.cloudflare.com/profile/api-tokens) from the **Create Additional Tokens** template, scoped to the Frizz account with a one-day expiry, and hands it over on a `kind: secret` card. It goes into the environment only.
+2. `--audit --out=<dir>`: read what it saved, including the `CLAIMS` keys, against the previous snapshot. A finding stops here. `--dry-run` lists the account's Workers permission groups, in case the deploy token can be narrowed to the two scripts.
+3. `--only=drift`, then `gh workflow enable workers-drift.yml`, push `main`, and dispatch it. This first run must fail, naming the 2026-10-08 versions, which is the proof it can.
+4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both`. The maintainer approves it within the hour.
+5. `--revoke-deploy`, then `nub scripts/verify-relay-live.mjs`.
+6. Dispatch drift again. It fails with `WORKERS_CI_AUTHOR is not set` and prints the deploy token's author. Set that repository variable and dispatch until it is green. Compare the author across deploys, because if each token uploads as itself, this variable changes per deploy.
+7. The maintainer deletes the token from step 1.
 
 ## 2. Bring custom names back (optional)
 
@@ -30,15 +32,9 @@ Only when custom names are wanted again.
 1. Open [new GitHub OAuth app](https://github.com/settings/applications/new). Application name `Frizz`, Homepage URL `https://frizz.sh`, description `Confirms which GitHub account claims a frizz.sh name. Requests no permissions.`, Authorization callback URL `https://frizz.sh`. Tick **Enable Device Flow**, click **Register application**, copy the **Client ID**. Do not generate a client secret.
 2. Set `FRIZZ_GITHUB_CLIENT_ID` in [`src/github-device-flow.ts`](../src/github-device-flow.ts) to that id, and `CUSTOM_NAMES_OFFERED = true` in [`src/cloud.ts`](../src/cloud.ts). Run [`scripts/verify-claim-e2e.mjs`](../scripts/verify-claim-e2e.mjs) (its header gives the invocation) and claim one real name by hand from the R pane, then cut a shell release ([CLAUDE.md § Cutting a release](../CLAUDE.md)).
 
-## 3. Confirm or rule out a relayed terminal past the access gate
+## 3. How the SSH key and the Cloudflare token left the Mac
 
-The way the SSH key and the Cloudflare token left the Mac before 2026-09-21 is still unknown. One lead is in Frizz itself: from 2026-09-19 the maintainer's board was public as `colin.frizz.sh`, and until 2026-09-24 the relay also carried a full terminal (`/term`). A relay commit is titled "a relayed terminal forwards the visitor's identity, so the access gate stands in front of it", which suggests a window where a relayed terminal did not meet the gate. Paste this into a fresh session in this repo:
-
-```text
-Read-only investigation in /Users/colinmcd94/Documents/projects/frizz. Between the first relay commit and 2026-09-24, did a request or terminal (/term) relayed through *.frizz.sh ever reach a board without passing the access gate? Use `git log --date=iso --follow` on packages/relay/src/worker.ts, src/relay-agent.ts and packages/server/src/restart-supervisor.ts; read commits c9b5557c and e48047e9 and their neighbours; find every published frizz / frizz-server version that contained a gap (`npm view frizz time --json`, `npm view frizz-server time --json`, the version tags); and find which version ran the board at colin.frizz.sh from 2026-09-19 (~/.frizz/server-releases, logs under ~/.frizz/projects/*/logs). Report the exact window, the versions, and a proof by test or reproduction against an old build if feasible. Write the report to plans/frizz-sh-relay-terminal-gate.md. Do not open a pull request.
-```
-
-If the gap is real, every board that was public through the relay in that window is in the same position, and a security advisory for the affected versions is the next decision.
+Still unknown. The relay is not supported as the route: [`frizz-sh-relay-terminal-gate.md`](frizz-sh-relay-terminal-gate.md) (2026-11-05) found that a stranger holding only the subdomain could not get code execution in any published relay version. It also found that a hostile relay needs no visitor and no cookie: a frame carrying both `host` and `Host` makes a board judge the request as loopback.
 
 ## 4. Make the relay unable to read traffic
 

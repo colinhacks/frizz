@@ -33,11 +33,11 @@ keyward --reason "deploy the frizz.sh Workers" -- gh workflow run workers-deploy
 
 `target` takes `relay`, `registrar` or `both`. [`workers-drift.yml`](../../.github/workflows/workers-drift.yml) checks every 30 minutes that everything this Worker runs came from a real run of that workflow, and a failed check is the alarm, emailed by GitHub. From 2026-09-21 to 2026-10-08 an attacker holding a Cloudflare token ran a build of this Worker that copied the GitHub token every named claim sends, and those uploads looked exactly like a laptop deploy. See the [relay README](../relay/README.md#deploying) for how the check works.
 
-**A secret change raises the alarm too.** `wrangler secret put` and `wrangler secret delete` each create a version and a deployment that CI did not make, and the check cannot tell the maintainer's from an attacker's. After changing a secret, dispatch the deploy workflow; the alarm clears once the CI deployment is active and the secret change is more than two hours old. Relay mode, the default, reads no secrets: the ones in `wrangler.toml` are read only when `CLOUD_MODE=tunnel` puts the old per-name tunnel path back.
+**A secret change raises the alarm too.** `wrangler secret put` and `wrangler secret delete` each create a version and a deployment that CI did not make, and the check cannot tell the maintainer's from an attacker's. After changing a secret, dispatch the deploy workflow; the alarm clears once the CI deployment is active and the secret change is more than two hours old. Relay mode, the default, reads no secrets, so the check's `BASELINE` expects none and a secret left in place keeps it red: the ones in `wrangler.toml` are read only when `CLOUD_MODE=tunnel` puts the old per-name tunnel path back.
 
 The registry is one KV namespace, created once and already in `wrangler.toml`. To recreate it, run `wrangler kv namespace create CLAIMS`, paste the new id into both this package's and the relay's `wrangler.toml`, and deploy through the workflow.
 
-On the maintainer's Mac wrangler is never signed in: a `wrangler` that changes something, like this one or the `secret` commands, runs under the Cloudflare admin token from Keyward (the `cloudflare` skill has the command), and one that only reads runs as `keyward --reason "<the task>" -- wrangler …`.
+On the maintainer's Mac wrangler is never signed in, and no stored token can change this account. A change other than a deploy, like this one or the `secret` commands, takes a short-lived token made in the dashboard; the `cloudflare` skill says how.
 
 Three things that will waste your time otherwise:
 
@@ -45,9 +45,11 @@ Three things that will waste your time otherwise:
   `registrar.frizz.sh` the day it shipped and took signup down — the wildcard answered "No Frizz board
   has claimed this name." to every claim. `wrangler.toml` therefore declares BOTH the custom domain and
   a more specific `registrar.frizz.sh/*` route; the route is what wins. Do not remove either.
-- **The deploy exits 1 unless the token can read Workers Routes.** Wrangler reconciles routes *after*
-  uploading, so the Worker really is deployed and the failure is cosmetic — but any script treats it as
-  a failed deploy. Add **Zone → Workers Routes → Edit** to the token for a clean exit.
+- **Routes and crons do not ship with a deploy.** The workflow uses `wrangler versions`, which leaves
+  them alone, so its token needs no route permission. A plain `wrangler deploy` deletes and recreates each
+  route on every run, and exits 1 after uploading if the token cannot read them. Changing a route or cron
+  in `wrangler.toml` is a deliberate `wrangler triggers deploy`, plus the same change to `BASELINE` in
+  [`scripts/workers-drift.mjs`](../../scripts/workers-drift.mjs).
 - **Deleting a secret needs `--name`.** Plain `wrangler secret delete X --force` prints usage and
   silently does nothing, so a temporary override outlives the test that set it. Use
   `wrangler secret delete X --name frizz-registrar`, then `wrangler secret list --name frizz-registrar`

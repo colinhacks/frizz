@@ -6,6 +6,11 @@ name: workers-drift
 #
 # It needs no install: the check is one zero-dependency script on Node's own fetch.
 #
+# Disabled on 2026-11-05 (`gh workflow disable`) until CLOUDFLARE_READ_TOKEN exists: with no token it failed
+# every run, about 48 emails a day, so a real alarm would have looked the same. Minting that token and
+# running `gh workflow enable workers-drift.yml` go together. Its first run must fail, naming the Workers'
+# 2026-10-08 versions, which is the proof that it can.
+#
 # Two GitHub behaviours to know. Notifications for a scheduled run go to whoever last changed this
 # file's cron line, so whoever edits it inherits the alarm. And GitHub turns a schedule off after 60
 # days without repository activity on a public repo; a run that never happens fails nothing, so if
@@ -18,7 +23,7 @@ on:
 
 permissions:
   contents: read
-  actions: read # read the deploy run a Worker's version names
+  actions: read # read the deploy run a Worker's version names, with its approvals and steps
 
 jobs:
   check:

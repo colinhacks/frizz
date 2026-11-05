@@ -16,10 +16,15 @@ name: workers-deploy
 # sha, and have been live when the upload happened. Keep the format in step with
 # scripts/workers-drift.mjs.
 #
-# THE TOKEN lives in the `workers-deploy` environment, which only main may use and which waits for a
-# maintainer's approval. It is an account-owned Cloudflare token with Editor on these two Workers and
-# Workers Routes Edit on the frizz.sh zone, nothing more; the registrar README says why routes need
-# Edit. It is never in a file and never on a laptop.
+# THE TOKEN is minted for ONE deploy by scripts/cloudflare-tokens.mjs, expires within the hour, and is
+# revoked straight after, so the `workers-deploy` environment holds nothing between deploys. That file's
+# header says why. Dispatching with the secret empty fails at Deploy, having changed nothing. It is an
+# account-owned Cloudflare token with Workers Scripts Edit and no route permission.
+#
+# `wrangler versions` rather than `wrangler deploy`, which deletes and recreates each Worker's routes on
+# every run and so would need a token that can point any board's name at any Worker. This leaves routes
+# and crons alone, so changing either in wrangler.toml is not deployed by this workflow: that is a
+# separate, deliberate act, along with BASELINE in scripts/workers-drift.mjs.
 
 on:
   # DISPATCH ONLY, as release.yml and for the same reason: a `workflow_dispatch` needs a GitHub
@@ -89,7 +94,9 @@ jobs:
 
       # The registrar first: it is off the data plane, so if a deploy is going to break something, the
       # first one breaks signup rather than every running board. A failure stops the run there.
+      # scripts/workers-drift.mjs holds each upload to this step's time window, by this name.
       - name: Deploy
+        shell: bash
         env:
           TARGET: ${{ inputs.target }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -101,8 +108,13 @@ jobs:
             relay|registrar) packages="$TARGET" ;;
             *) echo "::error::unknown target $TARGET"; exit 1 ;;
           esac
+          stamp="ci:$GITHUB_SHA run:$GITHUB_RUN_ID"
           for package in $packages; do
             echo "::group::deploy packages/$package"
-            pnpm --dir "packages/$package" exec wrangler deploy --message "ci:$GITHUB_SHA run:$GITHUB_RUN_ID"
+            uploaded=$(pnpm --dir "packages/$package" exec wrangler versions upload --message "$stamp")
+            echo "$uploaded"
+            version=$(printf '%s\n' "$uploaded" | sed -n 's/^Worker Version ID: //p')
+            [ -n "$version" ] || { echo "::error::wrangler printed no version id for $package"; exit 1; }
+            pnpm --dir "packages/$package" exec wrangler versions deploy "$version@100%" --message "$stamp" --yes
             echo "::endgroup::"
           done

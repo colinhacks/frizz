@@ -33,18 +33,22 @@ test("a write group is found under the API's Write spelling and the dashboard's 
   assert.equal(findGroup(groups, "Workers Routes Write", ACCOUNT), null)
 })
 
-test("the deploy token edits Workers on the account and routes on the one zone, nothing else", () => {
+test("the deploy token edits Workers on the account, nothing else, and lasts one hour", () => {
   const plan = planToken(spec("deploy"), { groups, accountId: "acct", zoneId: "zone1" })
   assert.deepEqual(plan.missing, [])
-  assert.deepEqual(ids(plan), [
-    { resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-w"] },
-    { resources: [`${ZONE}.zone1`], groups: ["g-routes-w"] },
-  ])
+  assert.deepEqual(ids(plan), [{ resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-w"] }])
+  assert.equal(expiresOn(Date.parse("2026-11-01T10:20:30.456Z"), spec("deploy").expiresDays), "2026-11-01T11:20:30Z")
 })
 
-test("the drift token only reads Workers, and has no zone policy at all", () => {
+test("the drift token holds the reads its check needs, and can never write or see the relay's traffic", () => {
   const plan = planToken(spec("drift"), { groups, accountId: "acct", zoneId: "zone1" })
-  assert.deepEqual(ids(plan), [{ resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-r"] }])
+  assert.deepEqual(plan.missing, [])
+  assert.deepEqual(ids(plan), [
+    { resources: [`${ACCOUNT}.acct`], groups: ["g-scripts-r", "g-settings-r"] },
+    { resources: [`${ZONE}.zone1`], groups: ["g-zone-r", "g-dns-r", "g-routes-r"] },
+  ])
+  const names = [...spec("drift").account, ...spec("drift").zone]
+  assert.deepEqual(names.filter((name) => !/ Read\??$/.test(name) || /tail|log/i.test(name)), [])
 })
 
 test("only the two CI tokens are minted, both into GitHub, so no run can touch a token in Keyward", () => {
@@ -62,8 +66,8 @@ test("an optional group the account lacks is skipped rather than failing the pla
 })
 
 test("a required group the account does not offer is reported, so nothing gets minted", () => {
-  const plan = planToken(spec("deploy"), { groups: groups.filter((g) => g.id !== "g-routes-w"), accountId: "acct", zoneId: "zone1" })
-  assert.deepEqual(plan.missing, ["Workers Routes Write"])
+  const plan = planToken(spec("deploy"), { groups: groups.filter((g) => g.id !== "g-scripts-w"), accountId: "acct", zoneId: "zone1" })
+  assert.deepEqual(plan.missing, ["Workers Scripts Write"])
 })
 
 test("a rotation revokes the older tokens of that name, never the new one or the bootstrap", () => {
@@ -92,7 +96,7 @@ test("a snapshot saves every read it can, records each refusal, and covers a Wor
     asked.push(path)
     if (path.includes("/logpush/")) throw new Error("HTTP 403")
     if (path.includes("/audit_logs")) return { result: Array.from({ length: path.endsWith("page=1") ? 1000 : 2 }, (_, i) => ({ i })) }
-    if (path.endsWith("/workers/scripts")) return { result: [{ id: "frizz-relay" }, { id: "surprise" }] }
+    if (path.endsWith("/workers/scripts")) return { result: [{ id: "frizz-relay", tag: "tag1" }, { id: "surprise" }] }
     if (path.startsWith("/zones?")) return { result: [{ id: "zone1" }] }
     if (path.includes("/versions")) return { result: { items: [{ id: "v1" }] } }
     return { result: [] }
@@ -115,6 +119,8 @@ test("a snapshot saves every read it can, records each refusal, and covers a Wor
     assert.deepEqual(refused.map((r) => r.name).sort(), ["frizz-registrar.deployed-code", "logpush-account", "logpush-zone"])
     assert.ok(saved.some((s) => s.name === "routes"), "a zone's reads run under the zone Cloudflare named")
     assert.ok(asked.includes("/zones/zone1/workers/routes"))
+    assert.ok(asked.includes("/accounts/acct/builds/workers/tag1/triggers"), "a Workers Builds connection is read through the Worker's tag")
+    assert.equal(readFileSync(join(outDir, "claim-colin.value"), "utf8"), "code of /accounts/acct/storage/kv/namespaces/aa4a9c11473d4511a556e3e3a6857058/values/claim:colin")
     assert.equal(statSync(join(outDir, "audit-log.json")).mode & 0o077, 0, "evidence is readable by its owner alone")
     assert.deepEqual(tokensAsked.map((path) => path.split("?")[0]), ["/accounts/acct/tokens", "/user/tokens"], "token lists use the credential that can read them")
     assert.ok(!asked.some((path) => path.includes("/tokens")), "and the everyday token is never asked for them")

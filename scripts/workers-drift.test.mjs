@@ -2,12 +2,12 @@ import assert from "node:assert/strict"
 import { once } from "node:events"
 import { createServer } from "node:http"
 import { test } from "node:test"
-import { ACCOUNT_ID, checkWorker, cloudflareClient, githubClient, parseCiMessage } from "./workers-drift.mjs"
+import { ACCOUNT_ID, BASELINE, checkAccount, checkWorker, cloudflareClient, githubClient, parseCiMessage } from "./workers-drift.mjs"
 
 // The bodies below follow the shapes Cloudflare documents for
 //   GET /accounts/{account_id}/workers/scripts/{script}/deployments
 //   GET /accounts/{account_id}/workers/scripts/{script}/versions[/{version_id}]
-// and GitHub's GET /repos/{owner}/{repo}/actions/runs/{run_id}, cut down to the fields the check
+// and GitHub's GET /repos/{owner}/{repo}/actions/runs/{run_id}[/approvals|/jobs], cut down to the fields the check
 // reads. They are NOT captured from the live account: nothing that wrote this held a read token. The
 // first scheduled run is the one that meets the real API, and it fails loudly on any shape it
 // cannot read rather than passing.
@@ -43,13 +43,25 @@ const run = (overrides = {}) => ({
   head_sha: SHA,
   status: "completed",
   conclusion: "success",
+  run_attempt: 1,
   created_at: "2026-10-09T09:00:00Z",
   updated_at: "2026-10-09T09:04:00Z",
   ...overrides,
 })
 
 /** Fake `cf` and `gh` over fixed bodies; a path nobody recorded is a test bug, so it throws. */
-function apis({ deployments, versions, runs = { [RUN]: run() } }) {
+const approved = [{ state: "approved", environments: [{ name: "workers-deploy" }], user: { login: "colinhacks" }, comment: "" }]
+const deployJobs = (overrides = {}) => ({
+  jobs: [{
+    name: "deploy",
+    steps: [
+      { name: "Test the Workers", conclusion: "success", started_at: "2026-10-09T09:02:00Z", completed_at: "2026-10-09T09:03:00Z" },
+      { name: "Deploy", conclusion: "success", started_at: "2026-10-09T09:03:00Z", completed_at: "2026-10-09T09:03:50Z", ...overrides },
+    ],
+  }],
+})
+
+function apis({ deployments, versions, runs = { [RUN]: run() }, approvals = approved, jobs = deployJobs() }) {
   const requested = []
   const cf = async (path) => {
     requested.push(path)
@@ -64,8 +76,10 @@ function apis({ deployments, versions, runs = { [RUN]: run() } }) {
     throw new Error(`unrecorded Cloudflare path ${path}`)
   }
   const gh = async (path) => {
-    const match = new RegExp(`^/repos/${REPO}/actions/runs/(\\d+)$`).exec(path)
+    const match = new RegExp(`^/repos/${REPO}/actions/runs/(\\d+)(/approvals|/jobs)?$`).exec(path)
     if (!match) throw new Error(`unrecorded GitHub path ${path}`)
+    if (match[2] === "/approvals") return approvals
+    if (match[2] === "/jobs") return jobs
     return runs[match[1]] ?? null
   }
   return { cf, gh, requested }
@@ -135,13 +149,31 @@ test("a forged CI message is caught by the run: replayed outside its window, wro
   assert.ok(missing.some((p) => p.includes(`run ${RUN}, which does not exist in ${REPO}`)), missing.join("\n"))
 })
 
-test("a run still in progress counts up to now, and a workflow path carrying a ref still matches", async () => {
-  const problems = await check({
-    deployments: [deployment(d1, "2026-10-09T11:58:00Z", [v1])],
-    versions: [ciVersion(v1, "2026-10-09T11:57:50Z")],
-    runs: { [RUN]: run({ status: "in_progress", conclusion: null, created_at: "2026-10-09T11:55:00Z", updated_at: "2026-10-09T11:55:30Z", path: ".github/workflows/workers-deploy.yml@refs/heads/main" }) },
+test("a run only vouches for an upload once it has finished well, was approved, and the upload is inside its Deploy step", async () => {
+  const stamped = (fixture) => check({
+    deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1])],
+    versions: [ciVersion(v1, "2026-10-09T09:03:05Z")],
+    ...fixture,
   })
-  assert.deepEqual(problems, [])
+  const refusedFor = async (fixture, reason) => {
+    const problems = await stamped(fixture)
+    assert.ok(problems.length > 0 && problems.every((p) => p.includes(reason)), `${reason}\n${problems.join("\n")}`)
+  }
+  await refusedFor({ runs: { [RUN]: run({ status: "waiting", conclusion: null }) } }, "waiting, not a finished")
+  await refusedFor({ runs: { [RUN]: run({ status: "in_progress", conclusion: null }) } }, "in_progress, not a finished")
+  await refusedFor({ runs: { [RUN]: run({ conclusion: "cancelled" }) } }, "completed/cancelled, not a finished")
+  await refusedFor({ runs: { [RUN]: run({ conclusion: "failure" }) } }, "completed/failure, not a finished")
+  await refusedFor({ runs: { [RUN]: run({ run_attempt: 2 }) } }, "on attempt 2")
+  await refusedFor({ approvals: [] }, "nobody approved")
+  await refusedFor({ approvals: [{ state: "rejected", environments: [{ name: "workers-deploy" }] }] }, "nobody approved")
+  await refusedFor({ approvals: [{ state: "approved", environments: [{ name: "npm-publish" }] }] }, "nobody approved")
+  await refusedFor({ jobs: deployJobs({ conclusion: "skipped" }) }, "Deploy step did not succeed")
+  await refusedFor({ jobs: { jobs: [] } }, "Deploy step did not succeed")
+  // Inside the run, but long before the step that uploads.
+  await refusedFor({ jobs: deployJobs({ started_at: "2026-10-09T09:30:00Z", completed_at: "2026-10-09T09:31:00Z" }) }, "a replayed message")
+  // A path carrying a ref still names the workflow, and two minutes of clock skew either way is allowed.
+  assert.deepEqual(await stamped({ runs: { [RUN]: run({ path: ".github/workflows/workers-deploy.yml@refs/heads/main" }) } }), [])
+  assert.deepEqual(await stamped({ jobs: deployJobs({ started_at: "2026-10-09T09:04:30Z", completed_at: "2026-10-09T09:05:00Z" }) }), [])
 })
 
 test("a stray deploy that was rolled back still fails while it is inside the lookback, and stops once it is not", async () => {
@@ -206,6 +238,82 @@ test("an author email matches as well as an author id", async () => {
 test("a Worker with no deployments at all is a finding", async () => {
   const problems = await check({ deployments: [], versions: [] })
   assert.deepEqual(problems, ["frizz-relay: Cloudflare lists no deployments at all"])
+})
+
+/** A fake `cf` over an account that matches BASELINE, with `overrides` replacing an answer by path. */
+function account(overrides = {}) {
+  const a = `/accounts/${ACCOUNT_ID}`
+  const z = "/zones/zone1"
+  const script = (name, bindings, crons) => ({
+    [`${a}/workers/scripts/${name}/settings`]: { bindings, tail_consumers: [], logpush: false },
+    [`${a}/workers/scripts/${name}/secrets`]: [],
+    [`${a}/workers/scripts/${name}/schedules`]: { schedules: crons.map((cron) => ({ cron })) },
+    [`${a}/workers/scripts/${name}/subdomain`]: { enabled: false, previews_enabled: false },
+  })
+  const kv = { type: "kv_namespace", name: "CLAIMS", namespace_id: "aa4a9c11473d4511a556e3e3a6857058" }
+  const zone = { type: "plain_text", name: "FRIZZ_ZONE", text: "frizz.sh" }
+  const answers = {
+    [`${a}/workers/scripts`]: [{ id: "frizz-relay" }, { id: "frizz-registrar" }],
+    [`${a}/workers/domains`]: [{ hostname: "registrar.frizz.sh", service: "frizz-registrar" }],
+    [`${a}/members?per_page=50`]: [{ user: { email: "Colin@pullfrog.com" } }],
+    [`/zones?name=frizz.sh&account.id=${ACCOUNT_ID}`]: [{ id: "zone1", plan: { name: "Free Website" } }],
+    [`${z}/workers/routes`]: [{ pattern: "*.frizz.sh/*", script: "frizz-relay" }, { pattern: "registrar.frizz.sh/*", script: "frizz-registrar" }],
+    [`${z}/dns_records?per_page=100`]: [
+      { type: "A", name: "frizz.sh", content: "76.76.21.21" },
+      { type: "A", name: "www.frizz.sh", content: "76.76.21.21" },
+      { type: "AAAA", name: "*.frizz.sh", content: "100::" },
+      { type: "AAAA", name: "registrar.frizz.sh", content: "100::" },
+      { type: "TXT", name: "_acme-challenge.frizz.sh", content: "renewal" },
+    ],
+    [`${z}/rulesets`]: [{ kind: "managed", name: "Cloudflare Managed Free Ruleset", phase: "http_request_firewall_managed" }],
+    ...script("frizz-relay", [{ type: "durable_object_namespace", name: "BOARD", class_name: "Board", namespace_id: "f56284c028544a1582161e1e2b6f3c52" }, kv, zone], []),
+    ...script("frizz-registrar", [kv, zone], ["17 4 * * *"]),
+    ...overrides,
+  }
+  return async (path) => {
+    if (!(path in answers)) throw new Error(`unrecorded Cloudflare path ${path}`)
+    const answer = answers[path]
+    if (answer instanceof Error) throw answer
+    return answer
+  }
+}
+
+test("an account that matches its baseline has no problems", async () => {
+  assert.deepEqual(await checkAccount({ cf: account() }), [])
+})
+
+test("anything that re-points a board's name or copies its traffic without an upload is an alarm", async () => {
+  const a = `/accounts/${ACCOUNT_ID}`
+  const relay = `${a}/workers/scripts/frizz-relay`
+  const flagged = async (overrides, expected) => {
+    const problems = await checkAccount({ cf: account(overrides) })
+    assert.ok(problems.some((p) => p.includes(expected)), `${expected}\n${problems.join("\n")}`)
+  }
+  await flagged({ [`${a}/workers/scripts`]: [{ id: "frizz-relay" }, { id: "frizz-registrar" }, { id: "evil" }] }, "Workers: unexpected evil")
+  await flagged({ "/zones/zone1/workers/routes": [{ pattern: "*.frizz.sh/*", script: "frizz-relay" }, { pattern: "registrar.frizz.sh/*", script: "frizz-registrar" }, { pattern: "colin.frizz.sh/*", script: "evil" }] }, "routes: unexpected colin.frizz.sh/* -> evil")
+  await flagged({ "/zones/zone1/workers/routes": [{ pattern: "registrar.frizz.sh/*", script: "frizz-registrar" }] }, "routes: missing *.frizz.sh/* -> frizz-relay")
+  await flagged({ [`${a}/workers/domains`]: [{ hostname: "registrar.frizz.sh", service: "frizz-registrar" }, { hostname: "colin.frizz.sh", service: "evil" }] }, "custom domains: unexpected colin.frizz.sh -> evil")
+  await flagged({ "/zones/zone1/dns_records?per_page=100": [{ type: "CNAME", name: "colin.frizz.sh", content: "evil.example" }] }, "DNS: unexpected CNAME colin.frizz.sh evil.example")
+  await flagged({ "/zones/zone1/rulesets": [{ kind: "zone", name: "default", phase: "http_custom_errors" }] }, "unexpected zone ruleset")
+  await flagged({ [`/zones?name=frizz.sh&account.id=${ACCOUNT_ID}`]: [{ id: "zone1", plan: { name: "Pro Website" } }] }, "on plan Pro Website")
+  await flagged({ [`${a}/members?per_page=50`]: [{ user: { email: "colin@pullfrog.com" } }, { user: { email: "attacker@example.com" } }] }, "members: unexpected a***@example.com")
+  await flagged({ [`${a}/members?per_page=50`]: [] }, "members: 0 of the 1 expected")
+  await flagged({ [`${relay}/settings`]: { bindings: [], tail_consumers: [{ service: "evil" }] } }, "a tail consumer is attached")
+  await flagged({ [`${relay}/settings`]: { bindings: [], logpush: true } }, "Logpush is on")
+  await flagged({ [`${relay}/settings`]: { bindings: [], observability: { enabled: true } } }, "observability is on")
+  await flagged({ [`${relay}/settings`]: { bindings: [{ type: "service", name: "EVIL" }] } }, "frizz-relay bindings: unexpected service EVIL")
+  await flagged({ [`${relay}/secrets`]: [{ name: "STOLEN" }] }, "frizz-relay secrets: unexpected STOLEN")
+  await flagged({ [`${relay}/schedules`]: { schedules: [{ cron: "* * * * *" }] } }, "frizz-relay crons: unexpected * * * * *")
+  await flagged({ [`${relay}/subdomain`]: { enabled: true } }, "it also answers on workers.dev")
+})
+
+test("a read the token is refused fails the run rather than passing it", async () => {
+  const cf = account({ "/zones/zone1/workers/routes": new Error("Cloudflare /zones/zone1/workers/routes: HTTP 403") })
+  await assert.rejects(checkAccount({ cf }), /HTTP 403/)
+})
+
+test("the baseline names both Workers the deploy workflow ships", () => {
+  assert.deepEqual(Object.keys(BASELINE.workers).sort(), ["frizz-registrar", "frizz-relay"])
 })
 
 async function server(t, handler) {

@@ -1,14 +1,22 @@
 // Mints the Cloudflare API tokens the frizz.sh CI uses, and hands each one straight to the GitHub
 // secret that holds it, so none is ever in a file, an argv, a terminal or a transcript:
 //
-//   github-actions workers-deploy   Workers Scripts Edit, Workers Routes Edit on frizz.sh
+//   github-actions workers-deploy   Workers Scripts Edit, for ONE HOUR, minted for one deploy
 //                                   -> CLOUDFLARE_API_TOKEN in the `workers-deploy` environment
-//   github-actions workers-drift    Workers Scripts Read
+//   github-actions workers-drift    the reads scripts/workers-drift.mjs needs, for a year
 //                                   -> the repository secret CLOUDFLARE_READ_TOKEN
 //
 // WHY. From 2026-09-21 to 2026-10-08 an attacker deployed backdoored builds of both frizz.sh Workers
-// with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
-// the token that deploys lives only in a GitHub environment that waits for the maintainer's approval.
+// with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file).
+//
+// NO STANDING DEPLOY TOKEN. A token parked in the `workers-deploy` environment is not safe either: the
+// repository owner's GitHub token, in one `keyward -- gh` window, can remove the environment's reviewers
+// and read the secret from a branch workflow, with nothing on main, and a Cloudflare token works from
+// anywhere until it expires. So one exists only for the hour around a deploy, and between deploys there
+// is nothing to steal. The last Worker upload before this rule was five weeks old, so it rarely costs
+// anything. It has no route permission because the workflow uses `wrangler versions`, which leaves routes
+// alone. Whether Cloudflare can narrow it to the two scripts is checked by `--dry-run`, which lists the
+// account's Workers permission groups.
 //
 // THE CREDENTIAL is CLOUDFLARE_FRIZZ_MINTER, read from the environment and never stored by this script.
 // It manages the account's API tokens: Account API Tokens Edit, Account Settings Read and Zone Read on
@@ -28,7 +36,11 @@
 //
 //   T="$(cat '<secret pipe>')"
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
-//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=drift          once, then yearly
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=deploy         then dispatch and approve within the hour
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --revoke-deploy       right after the deploy
+//
+// Add `--dry-run` to a mint to see the plan and mint nothing.
 //
 // `--out=<dir>` also saves the whole account as it stands, raw: every Worker's deployments, versions,
 // secret names, crons and deployed code, plus routes, domains, tunnels, DNS, user-owned tokens and the
@@ -60,14 +72,28 @@ export const TOKENS = [
     key: "deploy",
     name: "github-actions workers-deploy",
     account: ["Workers Scripts Write"],
-    zone: ["Workers Routes Write"],
+    zone: [],
+    expiresDays: 1 / 24,
     sink: { kind: "gh", secret: "CLOUDFLARE_API_TOKEN", env: "workers-deploy" },
   },
   {
+    // What checkAccount and checkWorker read. Never Workers Tail or Logs: see SNAPSHOT_TOKEN. The optional
+    // ones are every group that can list a zone's rulesets, because a list shows only what its token may see.
     key: "drift",
     name: "github-actions workers-drift",
-    account: ["Workers Scripts Read"],
-    zone: [],
+    account: ["Workers Scripts Read", "Account Settings Read"],
+    zone: [
+      "Zone Read",
+      "DNS Read",
+      "Workers Routes Read",
+      "Zone WAF Read?",
+      "Transform Rules Read?",
+      "Dynamic URL Redirects Read?",
+      "Config Settings Read?",
+      "Cache Settings Read?",
+      "Origin Read?",
+    ],
+    expiresDays: EXPIRES_DAYS,
     sink: { kind: "gh", secret: "CLOUDFLARE_READ_TOKEN" },
   },
 ]
@@ -90,6 +116,11 @@ export const SNAPSHOT_TOKEN = {
     "Access: Apps and Policies Read?",
     "Access: Service Tokens Read?",
     "Notifications Read?",
+    "Workers CI Read?",
+    "Workers for Platforms Read?",
+    "Account Rulesets Read?",
+    "Account Custom Pages Read?",
+    "Account Analytics Read?",
   ],
   zone: [
     "Zone Read",
@@ -103,6 +134,13 @@ export const SNAPSHOT_TOKEN = {
     "Cache Settings Read?",
     "Origin Read?",
     "Email Routing Rules Read?",
+    "Custom Pages Read?",
+    "Zaraz Read?",
+    "Waiting Room Read?",
+    "Page Shield Read?",
+    "SSL and Certificates Read?",
+    "Load Balancers Read?",
+    "Snippets Read?",
   ],
 }
 const SNAPSHOT_TOKEN_DAYS = 1 / 24
@@ -184,6 +222,15 @@ function deliver(sink, value) {
   return null
 }
 
+/** Empties a GitHub secret. Returns null on success, or what went wrong. */
+function removeFromSink(sink) {
+  const [command, args] = ghCommand(`Remove the expired ${sink.secret} secret from ${REPO}`, ["secret", "delete", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
+  const result = spawnSync(command, args, { encoding: "utf8" })
+  if (result.error) return `${command} did not start: ${result.error.message}`
+  if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
+  return null
+}
+
 function describeSink(sink) {
   return sink.env ? `GitHub environment ${sink.env} secret ${sink.secret}` : `GitHub repository secret ${sink.secret}`
 }
@@ -236,6 +283,9 @@ async function audit(cf, selfId) {
 // The audit log reaches back to before the backdoored builds of 2026-09-21.
 const SNAPSHOT_SINCE = "2026-08-01T00:00:00Z"
 const KNOWN_SCRIPTS = ["frizz-relay", "frizz-registrar"]
+// The registry the relay trusts for name-to-key. A write here re-points a board's name with no upload.
+const CLAIMS_NAMESPACE = "aa4a9c11473d4511a556e3e3a6857058"
+const WATCHED_CLAIM = "claim:colin"
 
 /** Everything a token holder could leave behind besides a Worker build. A surprise in any of it is a finding. */
 export function accountEndpoints(accountId, since) {
@@ -256,6 +306,12 @@ export function accountEndpoints(accountId, since) {
     { name: "access-apps", path: `${account}/access/apps` },
     { name: "access-service-tokens", path: `${account}/access/service_tokens` },
     { name: "notification-policies", path: `${account}/alerting/v3/policies` },
+    { name: "members", path: `${account}/members`, perPage: 50 },
+    { name: "kv-claims-keys", path: `${account}/storage/kv/namespaces/${CLAIMS_NAMESPACE}/keys?limit=1000` },
+    { name: "dispatch-namespaces", path: `${account}/workers/dispatch/namespaces` },
+    { name: "account-rulesets", path: `${account}/rulesets` },
+    { name: "account-custom-pages", path: `${account}/custom_pages` },
+    { name: "web-analytics-sites", path: `${account}/rum/site_info/list` },
   ]
 }
 
@@ -268,6 +324,16 @@ export function zoneEndpoints(zoneId) {
     { name: "page-rules", path: `${zone}/pagerules` },
     { name: "email-routing", path: `${zone}/email/routing/rules`, perPage: 50 },
     { name: "logpush-zone", path: `${zone}/logpush/jobs` },
+    { name: "dnssec", path: `${zone}/dnssec` },
+    { name: "custom-pages", path: `${zone}/custom_pages` },
+    { name: "zaraz", path: `${zone}/settings/zaraz/config` },
+    { name: "waiting-rooms", path: `${zone}/waiting_rooms` },
+    { name: "page-shield", path: `${zone}/page_shield` },
+    { name: "custom-hostnames", path: `${zone}/custom_hostnames` },
+    { name: "load-balancers", path: `${zone}/load_balancers` },
+    { name: "custom-certificates", path: `${zone}/custom_certificates` },
+    { name: "spectrum-apps", path: `${zone}/spectrum/apps` },
+    { name: "snippets", path: `${zone}/snippets` },
   ]
 }
 
@@ -280,6 +346,10 @@ export function scriptEndpoints(accountId, script) {
     { name: `${script}.crons`, path: `${base}/schedules` },
     { name: `${script}.settings`, path: `${base}/settings` },
     { name: `${script}.subdomain`, path: `${base}/subdomain` },
+    { name: `${script}.script-settings`, path: `${base}/script-settings` },
+    // Listing live tails needs Workers Tail Read, which this token must never hold, so this read is
+    // expected to be refused. It stays so that every snapshot says so.
+    { name: `${script}.tails`, path: `${base}/tails` },
   ]
 }
 
@@ -322,6 +392,16 @@ export async function snapshotAccount({ get, tokensGet = get, getBytes, outDir, 
   const listed = await take({ name: "workers", path: `/accounts/${accountId}/workers/scripts` })
   const zones = await take({ name: "zones", path: `/zones?name=${zone}&account.id=${accountId}` })
   for (const { id } of zones ?? []) for (const endpoint of zoneEndpoints(id)) await take(endpoint)
+  // A Workers Builds connection deploys on a push and skips the deploy environment entirely.
+  for (const { id, tag } of listed ?? []) {
+    if (tag) await take({ name: `${id}.builds-triggers`, path: `/accounts/${accountId}/builds/workers/${tag}/triggers` })
+  }
+  try {
+    write("claim-colin.value", await getBytes(`/accounts/${accountId}/storage/kv/namespaces/${CLAIMS_NAMESPACE}/values/${WATCHED_CLAIM}`))
+    saved.push({ name: WATCHED_CLAIM, count: null })
+  } catch (error) {
+    refused.push({ name: WATCHED_CLAIM, why: error.message })
+  }
   const scripts = [...new Set([...(listed ?? []).map((w) => w.id), ...knownScripts])]
   for (const script of scripts) {
     for (const endpoint of scriptEndpoints(accountId, script)) await take(endpoint)
@@ -408,6 +488,20 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.exit(0)
     }
 
+    if (flag("--revoke-deploy")) {
+      const deploy = TOKENS.find((t) => t.key === "deploy")
+      for (const token of await listTokens(cf)) {
+        if (token.name !== deploy.name) continue
+        await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${token.id}`)
+        console.log(`revoked ${token.name} (${token.id})`)
+      }
+      const failure = removeFromSink(deploy.sink)
+      if (failure) throw new Error(`the token is revoked, but ${describeSink(deploy.sink)} is still set: ${failure}`)
+      console.log(`emptied ${describeSink(deploy.sink)}`)
+      await audit(cf, me.id)
+      process.exit(0)
+    }
+
     const groups = await cf("GET", `/accounts/${ACCOUNT_ID}/tokens/permission_groups`)
     const zones = await cf("GET", `/zones?name=${ZONE}&account.id=${ACCOUNT_ID}`)
     if (zones.length !== 1) throw new Error(`expected one zone named ${ZONE} in account ${ACCOUNT_ID}, found ${zones.length}`)
@@ -424,6 +518,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.log(`\n${p.spec.name} -> ${describeSink(p.spec.sink)}\n  ${shown}${p.skipped.length ? `  (skipped, not offered: ${p.skipped.join(", ")})` : ""}`)
     }
     if (flag("--dry-run")) {
+      // What a narrower deploy token could be built from, which only the real list can say.
+      console.log("\nWorkers permission groups this account offers:")
+      for (const g of groups.filter((g) => /Worker/.test(g.name))) console.log(`  ${g.name}  [${(g.scopes ?? []).join(", ")}]`)
       console.log("\n--dry-run: nothing minted")
       process.exit(0)
     }
@@ -433,7 +530,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       return []
     })
     for (const p of plans) {
-      const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: p.spec.name, policies: p.policies, expires_on: expiresOn(Date.now()) })
+      const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: p.spec.name, policies: p.policies, expires_on: expiresOn(Date.now(), p.spec.expiresDays) })
       const failure = deliver(p.spec.sink, created.value)
       if (failure) {
         await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${created.id}`).catch(() => {})
