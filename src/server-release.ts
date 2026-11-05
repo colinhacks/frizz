@@ -208,8 +208,11 @@ export function npmServerPackageInstaller(
       // Never execute dependency lifecycle scripts, read the user's project manifest, or mutate a
       // global installation. Nothing in the server needs one: its only native addon, @parcel/watcher,
       // ships every platform's binary as an optional package.
+      //
+      // `--min-release-age=0`: the version comes from `latestVersion`, whose `npm view` ignores a user's
+      // `min-release-age` window, so under one a fresh release would fail `notarget` until it aged.
       await run([
-        "install", "--prefix", prefix, "--global=false", "--ignore-scripts", "--no-audit", "--no-fund",
+        "install", "--prefix", prefix, "--global=false", "--ignore-scripts", "--min-release-age=0", "--no-audit", "--no-fund",
         "--engine-strict", "--install-strategy=hoisted", "--include=optional", "--omit=dev", "--save-exact", `${spec.package}@${spec.version}`,
       ], prefix);
     },

@@ -296,6 +296,15 @@ test("npm view and npm exec are bounded, and the failure names the timeout", asy
   );
 });
 
+// `npm view` names the newest release whatever a user's `min-release-age` says, so the exec of that
+// exact version has to lift the window for itself or it fails `notarget` until the release ages.
+test("npm exec of the planned release lifts a user's release-age window for that command only", async () => {
+  const echo = () => ({ command: process.execPath, prefixArgs: ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))"] });
+  const result = await createNpmRegistryReleaseAdapter({ npm: echo }).npmExec({ packageSpec: "frizz@1.3.0", bin: "frizz", args: ["--version"], cwd: process.cwd(), env: process.env });
+  assert.equal(result.code, 0);
+  assert.deepEqual(JSON.parse(result.stdout), ["exec", "--yes", "--min-release-age=0", "--package=frizz@1.3.0", "--", "frizz", "--version"]);
+});
+
 // npm sets `npm_execpath` for every bin it runs (npx, npm exec, and the package managers set it to
 // their own entry), so its absence plus a real `node_modules` path is a global bin — the one shape
 // whose self-update does not survive the next launch (audit 2026-09-11, finding 9).

@@ -494,8 +494,14 @@ export function createNpmRegistryReleaseAdapter(options: NpmAdapterOptions = {})
         // The explicit package spec forces npm to resolve/install a new cache entry before running it.
         // Runs to completion with its output captured, so on Windows the console window `cmd.exe` would
         // open for the bin shim is hidden and nothing of it is left behind.
+        //
+        // `--min-release-age=0`: the version came from `npm view`, which ignores a user's
+        // `min-release-age` window, so under one the exact release just published fails `notarget`
+        // and every update in the window would too. `npm exec` ignores `min-release-age-exclude`, so the
+        // user cannot exempt Frizz from their own .npmrc; a flag on this one command is the only way.
+        // npm does not export the setting to the child, so the successor's own npm calls keep the window.
         const started = Date.now();
-        const child = spawn(npm.command, [...npm.prefixArgs, "exec", "--yes", `--package=${packageSpec}`, "--", bin, ...args], {
+        const child = spawn(npm.command, [...npm.prefixArgs, "exec", "--yes", "--min-release-age=0", `--package=${packageSpec}`, "--", bin, ...args], {
           cwd,
           env,
           stdio: ["ignore", "pipe", "pipe"],

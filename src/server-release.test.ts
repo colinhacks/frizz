@@ -283,6 +283,8 @@ test("the npm adapter executes a real JS child with isolated prefix and scripts 
   assert.equal(cwd, realpathSync(prefix));
   assert.deepEqual(argv.slice(0, 4), ["install", "--prefix", prefix, "--global=false"]);
   assert.equal(argv.includes("--ignore-scripts"), true);
+  // The version npm view names must install under a user's min-release-age window.
+  assert.equal(argv.includes("--min-release-age=0"), true);
   assert.equal(argv.at(-1), "frizz-server@1.0.0");
   assert.equal(await installer.latestVersion("frizz-server"), "1.1.0");
 });
