@@ -1,50 +1,36 @@
-// Mints every Cloudflare API token the Frizz account is worked with, and hands each one straight to
-// the one place that uses it, so none is ever in a file, an argv, a terminal or a transcript:
+// Mints the Cloudflare API tokens the frizz.sh CI uses, and hands each one straight to the GitHub
+// secret that holds it, so none is ever in a file, an argv, a terminal or a transcript:
 //
 //   github-actions workers-deploy   Workers Scripts Edit, Workers Routes Edit on frizz.sh
 //                                   -> CLOUDFLARE_API_TOKEN in the `workers-deploy` environment
 //   github-actions workers-drift    Workers Scripts Read
 //                                   -> the repository secret CLOUDFLARE_READ_TOKEN
-//   laptop read-only (Keyward)      every Read permission on the account and its zones
-//                                   -> Keyward's global CLOUDFLARE_API_TOKEN, released with no Touch ID
-//   laptop admin (Keyward)          every permission on the account and its zones
-//                                   -> Keyward's global CLOUDFLARE_ADMIN_TOKEN, one Touch ID per run
 //
 // WHY. From 2026-09-21 to 2026-10-08 an attacker deployed backdoored builds of both frizz.sh Workers
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
-// the token that can deploy lives only in a GitHub environment that waits for the maintainer's
-// approval, and the laptop's two tokens are sealed in Keyward (the global `cloudflare` skill). The
-// read-only one is stored with `--no-touch-id`, so reading asks nothing (maintainer, 2026-11-04: "these
-// read-only tokens can be given out without Touch ID"); the admin one costs one Touch ID per run:
+// the token that deploys lives only in a GitHub environment that waits for the maintainer's approval.
 //
-//   keyward --reason "<the task>" -- wrangler deployments list --name frizz-relay
-//   keyward run --reason "<the task>" CLOUDFLARE_ADMIN_TOKEN -- sh -c 'CLOUDFLARE_API_TOKEN="$CLOUDFLARE_ADMIN_TOKEN" exec cf …'
-//
-// THE CREDENTIAL. The first run takes a short-lived dashboard token with Account API Tokens Edit,
-// Account Settings Read and Zone Read, on stdin (a Frizz `kind: secret` pipe). `--stash-bootstrap`
-// seals it in Keyward as CLOUDFLARE_BOOTSTRAP_TOKEN first, so a failed run is retried under
-// `keyward run` rather than with a new token. Once every token is in place the bootstrap revokes
-// itself and leaves Keyward. A later rotation runs on the admin token, which is revoked last.
+// THE CREDENTIAL is the maintainer's own Cloudflare token, which Keyward releases to one run (the
+// global `cloudflare` skill). This script only reads it: it stores nothing in Keyward, so no run of it
+// can overwrite that token.
 //
 // ROTATION is a re-run: each new token is in place before the older tokens of the same name are
 // revoked. Every run ends with an audit of the account's members and API tokens, flagging any token
-// this script does not manage. `--audit` alone also runs on the read-only token.
+// this script does not manage.
 //
-//   env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --stash-bootstrap < '<secret pipe>'
-//   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs
-//   keyward run --reason "rotate the Frizz account's Cloudflare tokens" CLOUDFLARE_ADMIN_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift,read,admin] [--dry-run]
+//   keyward run --reason "mint the frizz.sh CI tokens" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift] [--dry-run]
 //   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
 //
 // `--out=<dir>` also saves the whole account as it stands, raw: every Worker's deployments, versions,
-// secret names, crons and deployed code, plus routes, domains, tunnels, DNS and the audit log. Run it
-// BEFORE a deploy, which replaces what is running and with it any trace of a backdoor. The directory
-// is evidence, so keep it out of the repository.
+// secret names, crons and deployed code, plus routes, domains, tunnels, DNS, user-owned tokens and the
+// audit log. Run it BEFORE a deploy, which replaces what is running and with it any trace of a
+// backdoor. The directory is evidence, so keep it out of the repository.
 
 import { spawnSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { ghCommand } from "./lib/gh-command.mjs"
-import { dirname, join } from "node:path"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { ACCOUNT_ID } from "./workers-drift.mjs"
 
 export const REPO = "colinhacks/frizz"
@@ -54,9 +40,9 @@ const API = "https://api.cloudflare.com/client/v4"
 const ACCOUNT_SCOPE = "com.cloudflare.api.account"
 const ZONE_SCOPE = "com.cloudflare.api.account.zone"
 
-// A spec names its permission groups, scoped to the one frizz.sh zone, or takes `every` group of a
-// kind on the account and all of its zones. A trailing `?` marks a named permission the token is still
-// useful without: missing from the account's groups, it is skipped with a warning rather than failing.
+// A spec names its permission groups: `account` ones on the Frizz account, `zone` ones on frizz.sh alone.
+// A trailing `?` marks a permission the token is still useful without: missing from the account's
+// groups, it is skipped with a warning rather than failing.
 export const TOKENS = [
   {
     key: "deploy",
@@ -71,18 +57,6 @@ export const TOKENS = [
     account: ["Workers Scripts Read"],
     zone: [],
     sink: { kind: "gh", secret: "CLOUDFLARE_READ_TOKEN" },
-  },
-  {
-    key: "read",
-    name: "laptop read-only (Keyward)",
-    every: "read",
-    sink: { kind: "keyward", secret: "CLOUDFLARE_API_TOKEN", about: "Cloudflare, read-only on the Frizz account and its zones", global: true, noTouchId: true },
-  },
-  {
-    key: "admin",
-    name: "laptop admin (Keyward)",
-    every: "permission",
-    sink: { kind: "keyward", secret: "CLOUDFLARE_ADMIN_TOKEN", about: "Cloudflare, every permission on the Frizz account and its zones", global: true },
   },
 ]
 
@@ -101,8 +75,8 @@ export function findGroup(groups, wanted, scope) {
 }
 
 /**
- * The policies for one token spec, plus the required groups the account does not have. Named groups
- * apply to this account and the one zone; an `every` spec covers the account and all of its zones.
+ * The policies for one token spec, plus the required groups the account does not have. Account groups
+ * apply to this account, zone groups to the one zone.
  */
 export function planToken(spec, { groups, accountId, zoneId }) {
   const missing = []
@@ -111,12 +85,6 @@ export function planToken(spec, { groups, accountId, zoneId }) {
   const policies = []
   const push = (resources, picked) => {
     if (picked.length) policies.push({ effect: "allow", resources, permission_groups: picked.map((g) => ({ id: g.id, name: g.name })) })
-  }
-  if (spec.every) {
-    const kind = (g) => spec.every !== "read" || / Read$/.test(g.name)
-    push({ [account]: "*" }, groups.filter((g) => kind(g) && (g.scopes ?? []).includes(ACCOUNT_SCOPE)))
-    push({ [account]: { [`${ZONE_SCOPE}.*`]: "*" } }, groups.filter((g) => kind(g) && (g.scopes ?? []).includes(ZONE_SCOPE)))
-    return { policies, missing, skipped }
   }
   const resolve = (names, scope) =>
     names.flatMap((raw) => {
@@ -160,38 +128,17 @@ function client(token) {
   }
 }
 
-/**
- * The `keyward set` arguments for a Keyward sink. `global` is the whole Mac: a CLI's token has to work
- * from every repository, and one on another Cloudflare account stores its own, which wins there.
- * `noTouchId` is for a token that can only read.
- */
-export function keywardSetArgs(sink) {
-  return ["set", ...(sink.global ? ["--global"] : []), ...(sink.noTouchId ? ["--no-touch-id"] : []), ...(sink.about ? ["--about", sink.about] : []), sink.secret]
-}
-
-/** Hand `value` to its sink on stdin. Returns null on success, or what went wrong (never the value). */
-function deliver(sink, value, repoRoot) {
-  // Without `--global`, `keyward set` stores for the repository of the current directory, so it runs from here.
-  const [command, args] =
-    sink.kind === "gh"
-      ? ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
-      : ["keyward", keywardSetArgs(sink)]
-  const result = spawnSync(command, args, { input: value, cwd: repoRoot, encoding: "utf8" })
+/** Hand `value` to its GitHub secret on stdin. Returns null on success, or what went wrong (never the value). */
+function deliver(sink, value) {
+  const [command, args] = ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
+  const result = spawnSync(command, args, { input: value, encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`
   if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
   return null
 }
 
 function describeSink(sink) {
-  if (sink.kind === "keyward") return `Keyward ${sink.secret} (${sink.global ? "global" : `repository ${REPO}`})`
   return sink.env ? `GitHub environment ${sink.env} secret ${sink.secret}` : `GitHub repository secret ${sink.secret}`
-}
-
-async function readStdin() {
-  if (process.stdin.isTTY) return ""
-  let data = ""
-  for await (const chunk of process.stdin) data += chunk
-  return data
 }
 
 async function whoAmI(cf) {
@@ -248,6 +195,8 @@ export function accountEndpoints(accountId, since) {
   const account = `/accounts/${accountId}`
   return [
     { name: "audit-log", path: `${account}/audit_logs?since=${since}&direction=desc`, perPage: 1000 },
+    { name: "user-tokens", path: "/user/tokens", perPage: 50 },
+    { name: "accounts", path: "/accounts", perPage: 50 },
     { name: "worker-domains", path: `${account}/workers/domains` },
     { name: "tunnels", path: `${account}/cfd_tunnel?is_deleted=false`, perPage: 100 },
     { name: "kv-namespaces", path: `${account}/storage/kv/namespaces`, perPage: 100 },
@@ -359,27 +308,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const args = process.argv.slice(2)
     const flag = (name) => args.includes(name)
     const only = args.find((a) => a.startsWith("--only="))?.slice("--only=".length).split(",")
-    const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-
-    const env = process.env
-    const fromStdin = !env.CLOUDFLARE_BOOTSTRAP_TOKEN && !env.CLOUDFLARE_ADMIN_TOKEN && !env.CLOUDFLARE_API_TOKEN
-    const credential = (env.CLOUDFLARE_BOOTSTRAP_TOKEN || env.CLOUDFLARE_ADMIN_TOKEN || env.CLOUDFLARE_API_TOKEN || (await readStdin())).trim()
+    const credential = (process.env.CLOUDFLARE_API_TOKEN ?? "").trim()
     if (!credential) {
-      console.error("no credential: pipe a bootstrap token on stdin, or run under `keyward run … CLOUDFLARE_ADMIN_TOKEN --`")
+      console.error("no credential: run under `keyward run --reason \"…\" CLOUDFLARE_API_TOKEN --`")
       process.exit(1)
     }
-    const isBootstrap = fromStdin || Boolean(env.CLOUDFLARE_BOOTSTRAP_TOKEN)
     const cf = client(credential)
     const me = await whoAmI(cf)
-    console.log(`credential: ${isBootstrap ? "bootstrap " : ""}${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`)
-
-    if (flag("--stash-bootstrap")) {
-      if (!fromStdin) throw new Error("--stash-bootstrap seals a token read from stdin; this one is already in the environment")
-      const bootstrap = { kind: "keyward", secret: "CLOUDFLARE_BOOTSTRAP_TOKEN", about: "Cloudflare, one-day token that mints the Frizz account's tokens" }
-      const failure = deliver(bootstrap, credential, repoRoot)
-      if (failure) throw new Error(`could not stash the bootstrap token: ${failure}`)
-      console.log("bootstrap sealed in Keyward as CLOUDFLARE_BOOTSTRAP_TOKEN, so a retry needs no new token")
-    }
+    console.log(`credential: ${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`)
 
     if (flag("--audit")) {
       await audit(cf, me.id)
@@ -417,38 +353,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.error(`could not list the account's tokens (${error.message}); older tokens of these names are not revoked, see the audit`)
       return []
     })
-    let selfSuperseded = false
     for (const p of plans) {
       const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: p.spec.name, policies: p.policies, expires_on: expiresOn(Date.now()) })
-      const failure = deliver(p.spec.sink, created.value, repoRoot)
+      const failure = deliver(p.spec.sink, created.value)
       if (failure) {
         await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${created.id}`).catch(() => {})
         throw new Error(`${p.spec.name}: ${failure} — the new token ${created.id} was revoked again`)
       }
       console.log(`\nminted ${p.spec.name} (${created.id}), expires ${created.expires_on}, into ${describeSink(p.spec.sink)}`)
-      for (const old of staleTokens(existing, p.spec.name, new Set([created.id]))) {
-        // The token this run is using goes last, after the audit, or everything after it would fail.
-        if (old.id === me.id) {
-          selfSuperseded = true
-          continue
-        }
+      for (const old of staleTokens(existing, p.spec.name, new Set([created.id, me.id]))) {
         await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${old.id}`)
         console.log(`  revoked the older ${old.name} (${old.id})`)
       }
     }
 
     await audit(cf, me.id)
-
-    if ((isBootstrap || selfSuperseded) && !flag("--keep-credential")) {
-      await cf("DELETE", me.kind === "account" ? `/accounts/${ACCOUNT_ID}/tokens/${me.id}` : `/user/tokens/${me.id}`).then(
-        () => console.log(`\nrevoked the credential this run used (${me.id})`),
-        (error) => console.error(`\ncould not revoke the credential this run used (${me.id}): ${error.message}; delete it in the dashboard`),
-      )
-      if (isBootstrap) {
-        const rm = spawnSync("keyward", ["rm", "CLOUDFLARE_BOOTSTRAP_TOKEN"], { cwd: repoRoot, encoding: "utf8" })
-        if (rm.status === 0) console.log("removed CLOUDFLARE_BOOTSTRAP_TOKEN from Keyward")
-      }
-    }
   } catch (error) {
     console.error(error.message)
     process.exit(1)
