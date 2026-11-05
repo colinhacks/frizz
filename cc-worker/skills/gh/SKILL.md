@@ -30,7 +30,7 @@ The injected block names your mode.
 
 The credential is a user token from Frizz's GitHub App, whose permissions are all read-only: issues, pull requests, checks, commit statuses, workflow runs and repo metadata. It can never exceed them, whatever the human can do.
 
-- **A write fails with GitHub's own error**: `Resource not accessible by integration`, HTTP 403. That is this credential doing its job. Once the human has asked for the write, rerun that one command through Keyward.
+- **A write fails with GitHub's own error**: `Resource not accessible by integration`, HTTP 403. That is this credential doing its job. Once the human has asked for the write, rerun that one command through Keyward. The one write that does not fail is a commit comment, which GitHub allows with read access to code, so never treat a successful command as proof it was read-only.
 - **A read can fail the same way, so try Keyward before you conclude anything.** Source through the API (`gh api repos/…/contents/…`) is not covered; read the checkout where you can. A private repo on an account where Frizz's App is not installed reads as `Could not resolve to a Repository` or HTTP 404, exactly as if it did not exist.
 - **Don't route reads through Keyward by default.** Each burst costs the human a touch that a plain read does not.
 - **Scripts need nothing.** The bundled monitors and any script you run read with plain `gh`. One that writes calls `keyward --reason "…" -- gh …` itself, as this repo's do through `scripts/lib/gh-command.mjs`.
