@@ -219,7 +219,7 @@ test("while the client id is the placeholder, a sign-in refuses before touching 
       }) as typeof fetch,
     }),
     (error: unknown) =>
-      error instanceof GithubSignInError && error.code === "not-configured" && /private frizz\.sh name needs no account/.test(error.message),
+      error instanceof GithubSignInError && error.code === "not-configured" && /private frizz\.sh subdomain needs no account/.test(error.message),
   );
   assert.equal(called, false);
   assert.equal(githubClientId({ FRIZZ_GITHUB_CLIENT_ID: GITHUB_CLIENT_ID_PLACEHOLDER }), null);
