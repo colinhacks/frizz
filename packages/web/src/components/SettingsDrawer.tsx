@@ -197,9 +197,9 @@ export function SettingsDrawer({ offerUpdate = false }: {
 //   · IT LEADS WITH THE READINGS. The board's ⋯ sheet used to carry the connection dot and the quota
 //     chips; that sheet is gone and its gear opens this page, so the readings arrive here first — they
 //     are what a phone opens Settings to check.
-//   · IT HOLDS ONLY WHAT MEANS SOMETHING ON A PHONE. The project sidebar and local file
-//     links are desktop-only rows and do not render here; the SERVER values behind them are untouched,
-//     so the desktop reads exactly what it did. Snooze length is here instead: it sets the preset the
+//   · IT HOLDS ONLY WHAT MEANS SOMETHING ON A PHONE. The project sidebar, local file links and GitHub
+//     sign-in (a once-per-machine setup) are desktop-only rows and do not render here; the SERVER values
+//     behind them are untouched, so the desktop reads exactly what it did. Snooze length is here instead: it sets the preset the
 //     board's swipe and the ⋯ sheet use, and the phone has no other place to choose it.
 //
 // Plain full-width rows under section labels — no grouped-inset cards, no iOS chrome.
