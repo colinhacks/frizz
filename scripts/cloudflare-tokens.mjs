@@ -30,8 +30,10 @@
 // revoked. Every run ends with an audit of the account's members and API tokens, flagging any token
 // this script does not manage. `--audit` alone also runs on the read-only token.
 //
+//   # The whole first mint in one run: seals the dashboard token, mints, audits, revokes the dashboard token.
 //   env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --stash-bootstrap < '<secret pipe>'
-//   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs
+//   # Only if that run failed: the same mint again, on the sealed token. On success nothing is left to retry with.
+//   keyward run --reason "…" CLOUDFLARE_BOOTSTRAP_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=read,admin]
 //   keyward run --reason "rotate the Frizz account's Cloudflare tokens" CLOUDFLARE_ADMIN_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs [--only=deploy,drift,read,admin] [--dry-run]
 //   keyward run --reason "audit the Frizz Cloudflare account" CLOUDFLARE_API_TOKEN -- env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
 //
