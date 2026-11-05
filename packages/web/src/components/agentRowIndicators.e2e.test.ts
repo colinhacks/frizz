@@ -10,11 +10,11 @@ const baseUrl = process.env.FRIZZ_AGENT_ROW_INDICATORS_E2E_URL
 // a resolved child owns the row's status alone, and a dispatch with NO child record must still surface
 // its terminal status/duration through the meta slot (the suppression must never eat that).
 //
-// Since 2026-07-29 this also pins the row's SHAPE, which now mirrors the sub-agent lines under the
-// prompt box: the liveness MARK first, then the petite-caps "Agent", then the title, then the READING
-// right-justified at the far edge, then the chevron. The four facts that shape asserts — order, no RAW
-// `frizz:` slug or bracketed tag, one flush right-hand column, and no EMPTY mark slot once the child
-// has resolved — are each a thing the header used to get wrong.
+// Since 2026-07-29 this also pins the row's SHAPE, which mirrors the sub-agent lines under the prompt box:
+// the liveness MARK first (in the rail's node since 2026-11-05), then "Agent", then the title, then the
+// READING right-justified at the far edge, then the chevron. The facts that shape asserts — order, no RAW
+// `frizz:` slug or bracketed tag, one flush right-hand column, and "Agent" on one edge whichever state the
+// child is in — are each a thing the header used to get wrong.
 test("an agent row mirrors the child-line shape and shows exactly one running indicator", {
   skip: !baseUrl,
   timeout: 60_000,
@@ -39,14 +39,13 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
         const header = card.querySelector<HTMLElement>(".frizz-bash-header")!
         const [left, right] = Array.from(header.children) as HTMLElement[]
         const marks = card.querySelectorAll("[title='stale — no recent output'], [title^='rested —']")
-        // THE STATE READING is the LAST span before the chevron, not the first thing in the group: since
+        // THE STATE READING is the element naming itself, not the first thing in the group: since
         // 2026-08-27 the group leads with the resolved profile (`sonnet › medium`), which is neutral by
         // design on every row. Sampling "whatever is first" therefore read the profile's gray and would
         // have reported the failure red as missing while it was sitting one span over, untouched.
         // The untracked row reports nothing at all, so its group is the chevron alone — sample that, as
         // the old probe did, and let `hasReading` keep it out of the typography and tone assertions.
-        const spans = (Array.from(right.children) as HTMLElement[]).filter((el) => !el.matches("[data-tool-disclosure]"))
-        const stateEl = spans.at(-1) ?? (right.firstElementChild as HTMLElement)
+        const stateEl = right.querySelector<HTMLElement>("[aria-label]:not([data-tool-disclosure])") ?? (right.firstElementChild as HTMLElement)
         return {
           text: header.innerText.replace(/\s+/g, " ").trim(),
           indicators: card.querySelectorAll("[data-running-indicator]").length,
@@ -58,17 +57,16 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
           // exists in the DOM — which is REQUIRED of a resolved child and a failure for a live one.
           markSlotIndex: Array.from(left.children).findIndex((child) => child.classList.contains("frizz-tool-mark")),
           labelIndex: Array.from(left.children).findIndex((child) => child.classList.contains("frizz-bash-label")),
-          // How far "Agent" sits from the header's own left edge. This is the number the reader SEES as
-          // the gap: an empty reserved slot pushed it out ~13px on a card whose child had finished, which
-          // is the whole defect. A marked row is allowed that offset (a dot is standing in it); a
-          // resolved row must be flush at 0.
+          // How far "Agent" sits from the header's own left edge. An empty reserved slot once pushed it out
+          // ~13px on a card whose child had finished. The mark sits in the rail's node now, outside the
+          // header's flow, so every row is flush at 0 whatever its mark.
           labelOffset: Math.round(left.querySelector(".frizz-bash-label")!.getBoundingClientRect().left - left.getBoundingClientRect().left),
           quietMark: marks.length > 0 ? marks[0].getAttribute("title") : null,
           // The right-hand group holds the reading AND the chevron, in that order, flush to one edge —
           // except on a row with NOTHING honest to report, where the chevron stands alone. The typography
           // and tone samples below therefore read the reading's own element, not "whatever is first".
           rightText: right.innerText.replace(/\s+/g, " ").trim(),
-          hasReading: right.firstElementChild!.matches(".petite-caps") && !right.firstElementChild!.matches("[data-tool-disclosure]"),
+          hasReading: !right.firstElementChild!.matches("[data-tool-disclosure]"),
           // The reading's TYPOGRAPHY, resolved. Every row must report the same three values: the slot
           // shipped with two competing treatments (lowercase sans vs petite-caps, one of them 1px off
           // the row's optical line) and a text assertion cannot see that.
@@ -100,9 +98,9 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
     assert.equal(rows.length, 9, "the fixture must cover live/stale/rested/finished/stopped/failed agent rows, plus the three with no child record")
 
     // THE SHAPE. A child with a LIVE record leads with its mark, then "Agent"; every other row — resolved,
-    // or pending with no record frizz can point at — has no mark and NO SLOT for one, so "Agent" leads and
-    // sits flush at the header's left edge. The empty reservation was a real, reported defect ("a weird
-    // gap … to the left of the word Agent"), so the absence is pinned as hard as the presence.
+    // or pending with no record frizz can point at — has no mark, so "Agent" leads. Either way "Agent" sits
+    // flush at the header's left edge: an empty reservation was a real, reported defect ("a weird gap … to
+    // the left of the word Agent"), so the absence is pinned as hard as the presence.
     //
     // A static "finished" glyph filled that slot for exactly one commit and was removed (maintainer
     // 2026-08-01: "remove the status indicator entirely for a sub-agent or background shell that has
@@ -115,7 +113,7 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
       const marked = index < MARKED
       assert.equal(row.markSlotIndex, marked ? 0 : -1, `row ${index}: ${marked ? "the liveness mark must lead the header" : "a row with no live child record renders no mark slot at all"}`)
       assert.equal(row.labelIndex, marked ? 1 : 0, `row ${index}: "Agent" must ${marked ? "follow the mark" : "lead the header"}`)
-      assert.equal(marked ? row.labelOffset > 0 : row.labelOffset === 0, true, `row ${index}: "Agent" sits ${row.labelOffset}px from the left edge`)
+      assert.equal(row.labelOffset, 0, `row ${index}: "Agent" sits ${row.labelOffset}px from the left edge`)
       assert.ok(row.chevronIsLast, `row ${index}: the chevron must be the last thing on the row`)
     }
     // Right-justified means ONE column: every row's right-hand group ends at the same x, so a stack of
@@ -140,15 +138,14 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
     assert.equal(readingRows.length, rows.length - 1, "exactly one row (the untracked pending dispatch) reports nothing")
     assert.equal(new Set(readingRows.map((row) => row.readingType)).size, 1, `one typography for the slot, found: ${[...new Set(readingRows.map((r) => r.readingType))].join(" | ")}`)
     assert.equal(new Set(readingRows.map((row) => row.readingRgb.join(","))).size, 2, `two tones for the slot, found: ${[...new Set(readingRows.map((r) => r.readingRgb.join(",")))].join(" | ")}`)
-    // Petite-caps, not lowercase sans: durationLabels.ts states the house rule that a small-caps status
-    // row spells its units out, and the row's own kind label on the left is petite-caps too.
-    assert.match(rows[0].readingType, /^11\.5px\/all-petite-caps\//)
+    // Plain sentence-case type, like the row's own kind label on the left.
+    assert.match(rows[0].readingType, /^11\.5px\/normal\//)
 
     // A LIVE child: exactly one dot, and the runtime is a BARE duration — no "running" verb, never
     // doubled by the meta badge.
     assert.equal(rows[0].indicators, 1)
     assert.doesNotMatch(rows[0].text, /running/)
-    assert.match(rows[0].rightText, /^opus › high · (\d+m|<1m|\d+h( \d+m)?)$/)
+    assert.match(rows[0].rightText, /^opus › high (\d+m|<1m|\d+h( \d+m)?)$/)
 
     // A quiet child: the flat stale mark carries the state (its tooltip says so), with no dot and no
     // "running" badge to contradict it.
@@ -160,13 +157,13 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
     // stale one, and still reads its runtime.
     assert.equal(rows[2].indicators, 0)
     assert.match(String(rows[2].quietMark), /^rested — /)
-    assert.match(rows[2].rightText, /^opus › high · (\d+m|<1m|\d+h( \d+m)?)$/)
+    assert.match(rows[2].rightText, /^opus › high (\d+m|<1m|\d+h( \d+m)?)$/)
 
     // A completed child: no mark, no slot, just the bare runtime. A card that reports a runtime and shows
     // no liveness mark already says "it ran and stopped", so the verb is deliberately absent.
     assert.equal(rows[3].indicators, 0)
     assert.equal(rows[3].doneMarks, 0)
-    assert.equal(rows[3].rightText, "opus › high · 3m")
+    assert.equal(rows[3].rightText, "opus › high 3m")
     assert.doesNotMatch(rows[3].text, /finished/)
 
     // A NON-nominal outcome keeps its verb — no mark can say it — but the WORD is the shared vocabulary,
@@ -176,10 +173,10 @@ test("an agent row mirrors the child-line shape and shows exactly one running in
     //     "done · 9ms" (maintainer: "this is way too scary looking") — hence both halves are pinned;
     //   • a FAILED child keeps the red the tool cards use for a real failure.
     assert.equal(rows[4].indicators, 0)
-    assert.equal(rows[4].rightText, "sonnet › medium · stopped · 41m")
+    assert.equal(rows[4].rightText, "sonnet › medium stopped · 41m")
     assert.doesNotMatch(rows[4].text, /killed/)
     assert.equal(rows[5].indicators, 0)
-    assert.equal(rows[5].rightText, "sonnet › medium · failed · 12m")
+    assert.equal(rows[5].rightText, "sonnet › medium failed · 12m")
     // The tones, sampled: the stop must be a NEUTRAL gray (r≈g≈b), the failure the red the tool cards own.
     const spread = (rgb: number[]) => Math.max(...rgb) - Math.min(...rgb)
     assert.ok(spread(rows[4].readingRgb) <= 24, `a stopped child must read neutral, not rgb(${rows[4].readingRgb})`)
@@ -310,17 +307,17 @@ test("a background shell card marks its liveness in the same slot as a dispatch 
       const marked = index < MARKED
       assert.equal(row.markSlotIndex, marked ? 0 : -1, `shell row ${index}: ${marked ? "the mark must lead the header" : "a row with nothing live behind it renders no mark slot"}`)
       assert.equal(row.labelIndex, marked ? 1 : 0, `shell row ${index}: the tool label must ${marked ? "follow the mark" : "lead the header"}`)
-      assert.equal(marked ? row.labelOffset > 0 : row.labelOffset === 0, true, `shell row ${index}: the label sits ${row.labelOffset}px from the left edge`)
+      assert.equal(row.labelOffset, 0, `shell row ${index}: the label sits ${row.labelOffset}px from the left edge`)
       // Exactly one glyph per row, and it is ALWAYS the leading mark: this family draws nothing in the
       // right-hand reading any more. A `tool-pending` spinner reappearing here is the regression.
       assert.equal(row.indicators, marked && index !== GONE ? 1 : 0, `shell row ${index}: one running indicator at most, and only in the mark slot`)
       assert.equal(row.doneMarks, 0, `shell row ${index}: no finished glyph may exist`)
     }
 
-    // A RESOLVED BACKGROUND task is the row that most invites a finished glyph — its card is permanent in
-    // the transcript, so it is tempting to keep marking it. It states its outcome in words instead.
+    // A RESOLVED BACKGROUND task is the row that most invites a finished glyph — its row is permanent in
+    // the transcript, so it is tempting to keep marking it. It reads its runtime like any finished call.
     assert.equal(shells[RESOLVED_BACKGROUND].markClass, null, "a finished background task draws no mark")
-    assert.equal(shells[RESOLVED_BACKGROUND].rightText, "done · 1m 36s")
+    assert.equal(shells[RESOLVED_BACKGROUND].rightText, "1m 36s")
     // The spinner is gone from this card family entirely — it now belongs only to a dispatch with no
     // child record, which elapsed time cannot speak for.
     assert.equal(await page.$$eval("[data-shell-rows] [data-running-indicator]", (n) => n.map((e) => e.getAttribute("data-running-indicator"))).then((k) => k.filter((v) => v === "tool-pending").length), 0, "no shell row may spin")
@@ -342,7 +339,7 @@ test("a background shell card marks its liveness in the same slot as a dispatch 
     // agents[0] is the live child, shells[0] the live shell.
     assert.equal(shells[0].markLeft, agents[0].markLeft, "the shell mark must start where the dispatch mark starts")
     assert.equal(shells[0].markMidY, agents[0].markMidY, "the two marks must sit on one optical line")
-    assert.equal(shells[0].labelOffset, agents[0].labelOffset, "both labels must clear the slot by the same gap")
+    assert.equal(shells[0].labelOffset, agents[0].labelOffset, "both labels must sit on one edge")
 
     // …and differ on exactly ONE axis: the hue. Blue is the shell's, and it is not the dispatch accent.
     assert.match(String(shells[0].markClass), /frizz-live-dot--shell/)

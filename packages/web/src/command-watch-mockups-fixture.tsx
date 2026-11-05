@@ -145,7 +145,7 @@ function CheckStrip({ runs, passedLast = false, broken = false }: { runs: number
   )
 }
 
-const VIOLET_DOT = <span aria-hidden className="frizz-tool-mark -mr-1 flex w-[9px] shrink-0 justify-center"><span className="frizz-live-dot frizz-live-dot--github" /></span>
+const VIOLET_DOT = <span aria-hidden className="frizz-tool-mark"><span className="frizz-live-dot frizz-live-dot--github" /></span>
 
 // OPTION A: the registering call keeps a card of its own while its watch is armed — the background-shell
 // rule (toolActivity.ts) applied to the one other call that launches something outliving it.
@@ -167,11 +167,11 @@ function WatchCard({ initiallyOpen = false, settled }: { initiallyOpen?: boolean
         meta={meta}
       >
         {!settled && VIOLET_DOT}
-        <span className="petite-caps frizz-bash-label shrink-0">Watch</span>
-        <span className="min-w-0 truncate text-[11.5px] text-muted">{commandWatchName(COMMAND)}</span>
+        <span className="frizz-bash-label shrink-0">Watch</span>
+        <span className="frizz-tool-detail">{commandWatchName(COMMAND)}</span>
       </ToolDisclosureHeader>
       {open && (
-        <div id="watch-card-body" className="flex flex-col gap-3 border-t border-border px-3 py-3 [font-family:var(--font-sans)]">
+        <div id="watch-card-body" className="frizz-tool-body flex flex-col gap-3 px-3 py-3 [font-family:var(--font-sans)]">
           <div className="flex items-baseline justify-between gap-3 text-[11.5px] text-muted-70">
             <span>Re-runs every 2m until it exits 0 · armed 50m ago · gives up in 11h 10m</span>
           </div>

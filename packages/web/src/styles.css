@@ -264,12 +264,12 @@ body {
 .title-refresh-offset {
   translate: 0 var(--title-refresh-offset);
 }
-/* Markdown prose rendered INSIDE a .frizz-bash card (the SendMessage peer-message body) is PROSE, not
-   code — so it must read in the app's sans-serif prose font,
-   matching the surrounding assistant messages. Re-assert the body-font rule here so the mono that
-   .frizz-bash forces onto its code/command bodies doesn't bleed into this one prose body. */
+/* Markdown prose rendered INSIDE a tool row (the SendMessage peer-message body) is PROSE, not code — so it
+   must read in the app's sans-serif prose font, at the row's own size. Re-assert the body-font rule here so
+   the mono that .frizz-tool-body sets for its code and command bodies doesn't bleed into this one. */
 .frizz-bash .md-body {
   font-family: var(--font-sans);
+  font-size: 13px;
 }
 
 /* The expanded body of a codex model-reasoning block. The summary is a QUIET secondary aside, so it

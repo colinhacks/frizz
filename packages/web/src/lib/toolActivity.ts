@@ -131,9 +131,9 @@ export function isSettledAsk(tool: Pick<TranscriptToolCall, "ask" | "status">): 
  * tool that only RETURNED a picture folds into the digest (see isToolActivityException), so it is never
  * a card edge for the spacing below to see.
  *
- * Every other exception above renders as a compact band a couple of rows tall, which is what lets the
- * transcript's tight run (ChatView.META_CARD_STEP) sit them 6px apart: two faint borders with 6px of
- * clear space between them still read as two objects. A picture breaks that premise on both counts —
+ * Every other exception above renders as a single compact row, which is what lets the transcript sit
+ * them on one rail (ChatView.ToolRailRows), and two rails at its tight run (ChatView.META_CARD_STEP). A
+ * picture breaks that premise on both counts —
  * it is a tall block of arbitrary content, usually a dark screenshot whose own edges land near the
  * frame's, so at the run pitch the next row reads as glued to the bottom of the image rather than as
  * the next statement (maintainer 2026-08-11, on an image `Read` under the live shimmer: "we need better

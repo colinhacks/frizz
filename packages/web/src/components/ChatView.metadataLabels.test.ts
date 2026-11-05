@@ -68,7 +68,7 @@ test("the live shimmer is the same disclosure as the settled digest, one moment 
   // turn runs, rendered through the SAME router the settled digest uses, so the reader sees mid-flight
   // exactly what the digest will show afterwards.
   assert.match(live, /aria-expanded=\{expanded\}/, "the live row is a real disclosure control")
-  assert.match(live, /ToolCardRouter/, "and opens onto the run's individual tool cards")
+  assert.match(live, /ToolRailRows/, "and opens onto the run's individual tool rows")
   assert.match(live, /data-working-chevron/, "with a chevron marking it as openable")
   // Only when there IS a run: at the opening of a turn nothing has been called yet, and a chevron over
   // an empty panel is a control that does nothing.

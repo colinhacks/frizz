@@ -1,8 +1,10 @@
 import { useId, useState, type ReactNode } from "react"
-import { ChevronRight, Square, SquareCheckBig, SquareDot } from "lucide-react"
+import { Square, SquareCheckBig, SquareDot } from "lucide-react"
 import type { TranscriptTodo } from "@frizz/shared"
+import { TOOL_ROW_LEAD, TOOL_ROW_TAIL, type ToolRailNode } from "../lib/toolRow.ts"
+import { ToolRowChevron } from "./ToolRow.tsx"
 
-// THE TO-DO LIST CARD — for the calls that actually list the whole thing out.
+// THE TO-DO LIST ROW — for the calls that actually list the whole thing out.
 //
 // Claude Code's `TaskList` (its result enumerates every task), codex's `update_plan` and the legacy
 // `TodoWrite` (both pass the entire list on every call). Their siblings TaskCreate/TaskUpdate are
@@ -12,7 +14,7 @@ import type { TranscriptTodo } from "@frizz/shared"
 //
 // COLLAPSED by default, like every other card in this family: the header carries the reading —
 //
-//   TODOS  ⊙ Inspect the PR context and the full diff        1/3   done · 11ms  ▸
+//   Todos  ⊙ Inspect the PR context and the full diff        1/3   11ms  ▸
 //
 // the step IN PROGRESS plus the progress counter, since that is what a reader wants from a list at a
 // glance. Expanding reveals the whole checklist, and the model's own explanation below it.
@@ -38,13 +40,11 @@ const TODO_ROW_TEXT = {
   completed: "text-muted-70",
 } as const
 
-// Sized in `1em`, NOT in px, and that is what makes the vertical corrections in diff.css legitimate.
-// An SVG's ink lands wherever its path falls in the viewBox, so each context's correction has to be
-// measured — and it is written in `em` so it tracks the font size. A px-pinned glyph breaks that promise
-// silently: with `size={12}` the glyph stayed 12px while doubling the card's type doubled everything
-// around it, so the geometry the correction was derived from no longer held (caught by this change's own
-// scale gate, which read a 6px residual at 2x). At 1em the glyph and its text scale together and the
-// rows' residual stays 0px at 12px, 24px and 48px.
+// Sized in `1em`, NOT in px, and that is what makes the vertical correction in diff.css legitimate: it
+// is written in terms of the text's own font. A px-pinned glyph breaks that promise silently: with
+// `size={12}` the glyph stayed 12px while doubling the row's type doubled everything around it (caught by
+// the scale gate in scripts/verify-todo-render.mjs, which read a 6px residual at 2x). At 1em the glyph and
+// its text scale together.
 function TodoMark({ status }: { status: TranscriptTodo["status"] }) {
   const { Icon, className } = TODO_GLYPH[status]
   return <Icon aria-hidden="true" size="1em" strokeWidth={2} className={`frizz-todo-mark shrink-0 ${className}`} />
@@ -56,11 +56,13 @@ export function TodoBlock({
   todos,
   note,
   meta,
+  node,
 }: {
   todos: readonly TranscriptTodo[]
   // The model's own commentary on the call — a codex plan `explanation`.
   note?: string
   meta?: ReactNode
+  node?: ToolRailNode
 }) {
   const [open, setOpen] = useState(false)
   const bodyId = useId()
@@ -73,7 +75,7 @@ export function TodoBlock({
   const counter = todos.length > 0 ? `${done}/${todos.length}` : undefined
   const summary = current ? current.text : todos.length === 0 ? "empty" : undefined
   return (
-    <div className="frizz-bash" data-todo-card>
+    <div className="frizz-bash" data-todo-card data-tool-node={node}>
       <button
         type="button"
         onClick={() => expandable && setOpen((v) => !v)}
@@ -83,31 +85,27 @@ export function TodoBlock({
         aria-label={`${expandable ? `${open ? "Collapse" : "Expand"} ` : ""}${TODO_LABEL}${summary ? `: ${summary}` : ""}${counter ? ` — ${done} of ${todos.length} done` : ""}`}
         className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="petite-caps frizz-bash-label shrink-0">{TODO_LABEL}</span>
-          {/* The 11.5px lives on the WRAPPER, not on the text span, so the 1em glyph and the text it sits
-              beside derive from ONE font size. With it on the span the glyph silently inherited the card's
-              12.5px instead — a 1px size mismatch, and an alignment correction tied to that accident
-              rather than to the pair. */}
+        <span className={TOOL_ROW_LEAD}>
+          <span className="frizz-bash-label shrink-0">{TODO_LABEL}</span>
           {summary && (
-            <span className="flex min-w-0 items-center gap-1.5 text-[11.5px]" title={summary} data-todo-headline>
+            <span className="flex min-w-0 items-baseline gap-1.5" title={summary} data-todo-headline>
               {current && <TodoMark status="in_progress" />}
-              <span className="min-w-0 truncate text-muted">{summary}</span>
+              <span className="frizz-tool-detail">{summary}</span>
             </span>
           )}
         </span>
-        <span className="flex shrink-0 items-center gap-2">
+        <span className={TOOL_ROW_TAIL}>
           {counter && (
-            <span className="frizz-tool-header-caps tabular-nums text-[11px] text-muted-55" title={`${done} of ${todos.length} done`}>
+            <span className="tabular-nums text-[11.5px] leading-none text-faint" title={`${done} of ${todos.length} done`}>
               {counter}
             </span>
           )}
           {meta}
-          {expandable && <ChevronRight aria-hidden="true" size={12} className={`shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />}
+          <ToolRowChevron shown={expandable} open={open} />
         </span>
       </button>
       {expandable && (
-        <div id={bodyId} hidden={!open}>
+        <div id={bodyId} className="frizz-tool-body" hidden={!open}>
           {open && todos.length > 0 && (
             <ul className="frizz-todo-list">
               {todos.map((todo, i) => (
@@ -121,7 +119,7 @@ export function TodoBlock({
           )}
           {open && note && (
             <>
-              <div className="frizz-bash-output-label petite-caps">note</div>
+              <div className="frizz-bash-output-label">Note</div>
               <pre className="frizz-bash-body frizz-bash-output-body">{note}</pre>
             </>
           )}

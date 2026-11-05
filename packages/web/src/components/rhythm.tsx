@@ -10,9 +10,10 @@
 // or double the way adjacent margins silently do. Padding INSIDE a block (its own chrome) is fine;
 // the space BETWEEN sibling blocks is always a VSpace. STEP is the single between-block unit.
 export const STEP = 14
-// The tight run, and the ONE thing it is for: erasing the seam between two adjacent CARDS. A card is a
-// bordered block with its own inset, so 6px of clear space between two borders already reads as a
-// separation — which is why a burst of tool calls can sit this close without turning to mush.
+// The tight run, and the ONE thing it is for: erasing the seam between two adjacent CARDS. A tool row carries
+// its own 2px of padding and a node that marks where it starts, so 6px of clear space beside one already
+// reads as a separation — which is why two bursts of tool calls can sit this close without turning to mush.
+// Rows of ONE burst sit closer still, at no gap at all: they share a rail (ChatView ToolRailRows).
 //
 // It was never for two bare LABEL rows — `Ran N tool calls`, a collapsed `Reasoning` row, the live
 // shimmer. A label has no border and no inset, so the gap is the ONLY separation there is,
@@ -28,9 +29,9 @@ export const STEP = 14
 // What makes these rows recede is their tone and size, never their spacing.
 export const META_CARD_STEP = 6
 // The gap a PICTURE takes, on whichever side it has a neighbour. A rendered screenshot is the one tool
-// card that is not a compact band, and the tight run's premise ("two borders 6px apart already read as
-// two objects") fails twice over on it: the frame is tall enough to be its own region, and the picture
-// inside is usually dark UI whose own edges sit within a few px of the frame's faint one. At 6px the
+// row that is not a compact band, and the tight run's premise ("6px apart already reads as two objects")
+// fails twice over on it: the frame is tall enough to be its own region, and the picture inside is usually
+// dark UI whose own edges sit within a few px of the frame's faint one. At 6px the
 // next row lands on the image — measured 6.19px from the frame's bottom border to the shimmer's box
 // (maintainer 2026-08-11: "we need better spacing under the screenshots … it's too close").
 //

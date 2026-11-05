@@ -87,10 +87,10 @@ function DisclosureFixture({ running }: { running: boolean }) {
         onToggle={() => setExpanded((value) => !value)}
         meta={<ToolStatusMeta status={running ? "pending" : "completed"} backgroundState={running ? "background" : undefined} />}
       >
-        <span className="petite-caps frizz-bash-label shrink-0">Bash</span>
-        <span className="min-w-0 truncate text-[11.5px] text-muted">{running ? "Watch CI until checks finish" : "Completed CI checks"}</span>
+        <span className="frizz-bash-label shrink-0">Bash</span>
+        <span className="frizz-tool-detail">{running ? "Watch CI until checks finish" : "Completed CI checks"}</span>
       </ToolDisclosureHeader>
-      <div id={bodyId} hidden={!expanded} className="border-t border-border px-2.5 py-2 text-[11.5px] text-muted">Operation details remain available without changing the header alignment.</div>
+      <div id={bodyId} hidden={!expanded} className="frizz-tool-body px-2.5 py-2 text-[11.5px] text-muted">Operation details remain available without changing the header alignment.</div>
     </div>
   )
 }
@@ -151,23 +151,21 @@ createRoot(document.getElementById("root")!).render(
           <AgentBlock detail="Prior investigation" prompt="Investigate the earlier failure." subagentType="frizz:sonnet-high" agentId="agent-stale" status="pending" />
           {/* Rested child: the hollow mark — it stopped, its own fan-out has not. */}
           <AgentBlock detail="Fan out the migration sweep" prompt="Fan out the sweep across every package." subagentType="frizz:opus-high" agentId="agent-rested" status="pending" />
-          {/* Completed child: NO mark and no slot for one — the header starts flush at "Agent", and the
-              bare runtime is what says it ran and stopped. Read this row against the three above it: the
-              marked rows step in by the slot, these do not, and that is the point. A static "finished"
-              dot filled the slot here for one commit and was removed (maintainer 2026-08-01: "remove the
-              status indicator entirely for a sub-agent or background shell that has completed") — this
-              column means "something is alive behind this row", and a finished child is not. */}
+          {/* Completed child: NO mark, only the ordinary node, and the bare runtime is what says it ran and
+              stopped. A static "finished" dot filled the mark's place here for one commit and was removed
+              (maintainer 2026-08-01: "remove the status indicator entirely for a sub-agent or background
+              shell that has completed") — the mark means "something is alive behind this row", and a
+              finished child is not. */}
           <AgentBlock detail="Diagnose remotion model routing anomaly" prompt="Diagnose the routing anomaly." subagentType="frizz:opus-high" agentId="agent-done" agentStatus="completed" agentElapsedMs={183_000} status="completed" durationMs={183_000} />
           {/* A NON-nominal outcome keeps its verb — no mark can say it — but the two are TONED APART, and
               this pair is the coverage for that. A STOPPED child is not an error (interrupted, or timed
-              out), so it reads at the same quiet weight as the "done · 32 sec" meta above; only a real
-              FAILURE takes the red. Read the two rows together — if the stop is as loud as the failure,
-              the regression is back.
+              out), so it reads at the same quiet weight as the bare runtime above; only a real FAILURE
+              takes the red. Read the two rows together — if the stop is as loud as the failure, the
+              regression is back.
               READ ALL EIGHT ROWS AS A COLUMN. Every reading is ONE treatment (ChatView's ToolMetaReading,
-              worded by lib/agentReading.ts): one size, one petite-caps casing, one `·` separator, one
-              duration formatter, and a palette of exactly two tones. The column shipped with two of each
-              — the four rows below reading lowercase sans at three alphas while these last two read
-              petite-caps in amber and red — so a second treatment appearing here is the regression. */}
+              worded by lib/agentReading.ts): one size, one casing, one `·` separator, one duration
+              formatter, and a palette of exactly two tones. The column shipped with two of each, so a
+              second treatment appearing here is the regression. */}
           <AgentBlock detail="Interrupted long-running audit" prompt="Audit every call site." subagentType="frizz:sonnet-medium" agentId="agent-killed" agentStatus="killed" agentElapsedMs={2_460_000} status="completed" durationMs={2_460_000} />
           <AgentBlock detail="Crashed dependency sweep" prompt="Sweep every dependency." subagentType="frizz:sonnet-medium" agentId="agent-failed" agentStatus="failed" agentElapsedMs={738_000} status="failed" durationMs={738_000} />
           {/* No child record at all — the meta slot is the ONLY status surface, so a terminal status
@@ -184,7 +182,7 @@ createRoot(document.getElementById("root")!).render(
         </ThreadSlugContext.Provider>
       </div>
     </section>
-    {/* SHELL cards, read against the agent rows above: the SAME header shape, the same mark slot, in the
+    {/* SHELL rows, read against the agent rows above: the SAME header shape, the same mark, in the
         shell's blue instead of the accent. The dot used to render in the RIGHT-hand reading, so a live
         background shell and a live sub-agent marked themselves at opposite edges of an otherwise
         identical card (maintainer 2026-07-30). `desc` is what correlates a card to a tracked op, so the

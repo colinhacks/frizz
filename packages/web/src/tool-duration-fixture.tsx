@@ -15,10 +15,10 @@ function Card({ expanded, status, name = "Bash", summary = "Re-run pnpm probe sy
         onToggle={() => {}}
         meta={<ToolStatusMeta status={status} durationMs={128 * 60_000} />}
       >
-        <span className="petite-caps frizz-bash-label shrink-0">{name}</span>
-        <span className="min-w-0 truncate text-[11.5px] text-muted">{summary}</span>
+        <span className="frizz-bash-label shrink-0">{name}</span>
+        <span className="frizz-tool-detail">{summary}</span>
       </ToolDisclosureHeader>
-      {expanded && <pre id={`body-${status}-${expanded}`} className="frizz-bash-body">{input}</pre>}
+      {expanded && <div id={`body-${status}-${expanded}`} className="frizz-tool-body"><pre className="frizz-bash-body">{input}</pre></div>}
     </div>
   )
 }

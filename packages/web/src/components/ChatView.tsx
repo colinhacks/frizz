@@ -72,6 +72,8 @@ import { ThreadHeaderFacts } from "./ThreadHeaderFacts.tsx"
 import { ThreadTitle } from "./ThreadTitle.tsx"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
 import { ToolDisclosureHeader } from "./ToolDisclosureHeader.ts"
+import { shortenTarget, ToolPathText, ToolRowChevron } from "./ToolRow.tsx"
+import { TOOL_ROW_LEAD, TOOL_ROW_TAIL, toolRailNode } from "../lib/toolRow.ts"
 import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
 import { FOREGROUND_MARK_AFTER_MS, foregroundToolIsRunning, hasRunningToolIndicator, isPendingForegroundTool, liveBackgroundOperationState } from "../lib/operationIndicators.ts"
 import { formatRuntimeElapsed, formatToolDuration } from "../lib/durationLabels.ts"
@@ -1948,12 +1950,14 @@ export function normalizeParts(parts: readonly TranscriptPart[]): TranscriptPart
 // `h` may be a FUNCTION of the seam — it receives the index of the block BELOW it — for the one rhythm
 // a single number cannot express: a picture takes PICTURE_STEP against whatever it neighbours while its
 // neighbours keep their own pitch with each other. A caller passing the function form is therefore
-// keying on positions the filter above must not shift, so it must pass real nodes only.
+// keying on positions the filter above must not shift, so it must pass real nodes only. A seam of 0 draws
+// no spacer at all, so the two blocks are true DOM neighbours, which is how two tool rows share a rail.
 function withSpacers(blocks: ReactNode[], h: number | ((index: number) => number) = STEP): ReactNode[] {
   const real = blocks.filter((b) => b !== null && b !== undefined && b !== false)
   const out: ReactNode[] = []
   real.forEach((b, i) => {
-    if (i > 0) out.push(<VSpace key={`vs${i}`} h={typeof h === "number" ? h : h(i)} />)
+    const gap = i === 0 ? 0 : typeof h === "number" ? h : h(i)
+    if (gap > 0) out.push(<VSpace key={`vs${i}`} h={gap} />)
     out.push(b)
   })
   return out
@@ -2111,17 +2115,6 @@ function prettyToolName(name: string): string {
   return seg
 }
 
-// Shorten a target for the one-liner: absolute paths collapse to their last two segments (full path
-// stays in the title tooltip); commands / patterns / queries pass through (already ≤80 chars from the
-// server). Keeps the line scannable without dumping a 60-char absolute path inline.
-// Repo-relative display: strip the project prefix (pure noise — every path shares it) but keep the
-// REST intact; the line has the card's full width and CSS-ellipsizes only when genuinely too long.
-function shortenTarget(detail: string): string {
-  const root = store.board?.projectDir
-  if (root && detail.startsWith(root + "/")) return detail.slice(root.length + 1)
-  return detail
-}
-
 // `at` is the emitting assistant message's ISO timestamp — the moment the model issued this batch of
 // calls, and therefore the clock a pending FOREGROUND card times itself against. Optional: a pre-restart
 // server projects messages without it, and a card with no clock marks itself immediately.
@@ -2158,11 +2151,29 @@ function MinimalToolActivity({ tools, at }: { tools: CollapsedTool[]; at?: strin
       </button>
       {expanded && (
         <div id={cardsId} className="mt-1.5 flex flex-col">
-          {withSpacers(tools.map((tool, i) => <ToolCardRouter key={i} t={tool} startedAt={at} />), 6)}
+          <ToolRailRows tools={tools} at={at} />
         </div>
       )}
       {!expanded && <div id={cardsId} hidden />}
     </div>
+  )
+}
+
+// A run of tool rows on one rail: consecutive rows are true DOM neighbours with no gap, so the line in
+// lib/diff/diff.css runs unbroken from the first node to the last. Two things end the rail. A picture keeps
+// its own air on both sides (see PICTURE_STEP). And a row that is not a row at all, a settled question or a
+// thread chat's steer divider, stands apart from the rail at the tight run. A steer draws its divider only
+// in a thread's own chat (SendMessageBlock), so in the sub-agent drawer it is an ordinary row on the rail.
+function ToolRailRows({ tools, at }: { tools: readonly CollapsedTool[]; at?: string }) {
+  const inThreadChat = useContext(ThreadSlugContext) !== null
+  const drawsRow = (t: CollapsedTool) => !isSettledAsk(t) && !(inThreadChat && (t.sendTo !== undefined || t.sendBody !== undefined))
+  return (
+    <>
+      {withSpacers(tools.map((tool, i) => <ToolCardRouter key={i} t={tool} startedAt={at} />), (i) => {
+        if (isPictureTool(tools[i - 1]) || isPictureTool(tools[i])) return PICTURE_STEP
+        return drawsRow(tools[i - 1]) && drawsRow(tools[i]) ? 0 : META_CARD_STEP
+      })}
+    </>
   )
 }
 
@@ -2179,19 +2190,15 @@ function ToolCalls({ tools, at }: { tools: CollapsedTool[]; dense?: boolean; at?
     else runs.push({ exceptional, tools: [tool] })
   }
 
-  // A PICTURE card sets its own gap against both its neighbours here — the cards batched beside it and
-  // the digest below the batch alike — while the compact cards around it keep the tight run between
-  // themselves. See PICTURE_STEP.
+  // A PICTURE sets its own gap against both its neighbours here — the rows batched beside it and the digest
+  // below the batch alike. See PICTURE_STEP.
   return (
     <div className="flex flex-col">
       {withSpacers(runs.map((run, runIndex) => (
         run.exceptional
           ? (
               <div key={`exceptions-${runIndex}`} className="flex flex-col">
-                {withSpacers(
-                  run.tools.map((tool, i) => <ToolCardRouter key={i} t={tool} startedAt={at} />),
-                  pictureAwareGap(run.tools.map((tool) => toolBandEdges([tool])), META_CARD_STEP),
-                )}
+                <ToolRailRows tools={run.tools} at={at} />
               </div>
             )
           : <MinimalToolActivity key={`activity-${runIndex}`} tools={run.tools} at={at} />
@@ -2200,9 +2207,9 @@ function ToolCalls({ tools, at }: { tools: CollapsedTool[]; dense?: boolean; at?
   )
 }
 
-// Route a collapsed tool entry to its card. Edit/Bash/Read/Agent get expandable bodies (chevron);
+// Route a collapsed tool entry to its row. Edit/Bash/Read/Agent get expandable bodies (chevron);
 // everything else (Grep, Glob, Read-without-excerpt, MCP, Monitor, a pre-restart Bash with no command)
-// is a header-only card. All share the same bordered card family so no call ever reads as bare text.
+// is a header-only row. All of them draw on the rail (lib/diff/diff.css).
 export function ToolCardRouter({ t, startedAt }: { t: CollapsedTool; startedAt?: string }) {
   const slug = useContext(ThreadSlugContext)
   const thread = useThreadSnapshot(slug)
@@ -2211,7 +2218,7 @@ export function ToolCardRouter({ t, startedAt }: { t: CollapsedTool; startedAt?:
     return <DiffBlock edits={t.edits} meta={<ToolStatusMeta status={t.status} backgroundState={t.backgroundState} liveBackgroundState={liveBackgroundState} exitCode={t.exitCode} durationMs={t.durationMs} />} />
   }
   if (t.command) {
-    return <BashBlock command={t.command} desc={t.desc ?? t.detail} output={t.output} status={t.status} backgroundState={t.backgroundState} liveBackgroundState={liveBackgroundState} exitCode={t.exitCode} sessionId={t.sessionId} durationMs={t.durationMs} startedAt={startedAt} />
+    return <BashBlock command={t.command} desc={t.desc ?? t.detail} literalDesc={t.desc === undefined} output={t.output} status={t.status} backgroundState={t.backgroundState} liveBackgroundState={liveBackgroundState} exitCode={t.exitCode} sessionId={t.sessionId} durationMs={t.durationMs} startedAt={startedAt} />
   }
   // The picture comes BEFORE the excerpt: a Read of a `.png` is an image first (see collapseTools).
   if (t.outputImage) return <ToolImageCard name={t.name} detail={t.detail} outputImage={t.outputImage} output={t.output} status={t.status} durationMs={t.durationMs} />
@@ -2224,11 +2231,11 @@ export function ToolCardRouter({ t, startedAt }: { t: CollapsedTool; startedAt?:
   if (t.sentImages || t.sentFiles) return <SentFilesCard images={t.sentImages ?? []} files={t.sentFiles ?? []} caption={t.caption} status={t.status} durationMs={t.durationMs} />
   // The built-in to-do list, ahead of the generic input/output card (a codex plan's `explanation` rides
   // `input`, which that branch would claim first).
-  if (t.todos) return <TodoBlock todos={t.todos} note={t.input} meta={<ToolStatusMeta status={t.status} durationMs={t.durationMs} />} />
+  if (t.todos) return <TodoBlock todos={t.todos} note={t.input} node={toolRailNode(t.status)} meta={<ToolStatusMeta status={t.status} durationMs={t.durationMs} />} />
   // A settled native ask: the read-only question card(s), answered or not — see SettledAskBlock.
   if (isSettledAsk(t)) return <SettledAskBlock ask={t.ask ?? []} askAnswers={t.askAnswers} />
   if (t.input || t.output) {
-    return <BashBlock name={t.name} command={t.input ?? ""} desc={t.detail} output={t.output} status={t.status} backgroundState={t.backgroundState} liveBackgroundState={liveBackgroundState} exitCode={t.exitCode} sessionId={t.sessionId} durationMs={t.durationMs} inputLabel="input" startedAt={startedAt} />
+    return <BashBlock name={t.name} command={t.input ?? ""} desc={t.detail} literalDesc output={t.output} status={t.status} backgroundState={t.backgroundState} liveBackgroundState={liveBackgroundState} exitCode={t.exitCode} sessionId={t.sessionId} durationMs={t.durationMs} inputLabel="Input" startedAt={startedAt} />
   }
   return <ToolCard name={t.name} detail={t.detail} count={t.count} status={t.status} backgroundState={t.backgroundState} liveBackgroundState={liveBackgroundState} exitCode={t.exitCode} cwd={t.cwd} sessionId={t.sessionId} durationMs={t.durationMs} startedAt={startedAt} />
 }
@@ -2259,19 +2266,18 @@ function SettledAskBlock({ ask, askAnswers }: { ask: AskQuestion[]; askAnswers?:
 
 type ToolStatus = NonNullable<TranscriptToolCall["status"]>
 
-// THE TRANSCRIPT'S RIGHT-HAND READING — one renderer for every card's meta slot.
+// THE TRANSCRIPT'S RIGHT-HAND READING — one renderer for every row's meta slot.
 //
 // It exists because the slot had TWO of them and they diverged on every axis at once. A column of
 // dispatch cards read "3m", "stopped 41m", "failed 12m" in lowercase sans at three alphas, directly
 // above "CANCELLED" in amber petite-caps and "FAILED · 12 SEC" in red petite-caps — two typographic
 // systems, four saturations, two duration formatters and two separators, for eight readings of the same
 // kind (maintainer 2026-07-29: "a bizarre mix of font sizes, color saturations, and capitalization").
-// Worse, the lowercase half also sat 1.0px BELOW the title's cap band, because only the petite-caps half
-// carried `frizz-tool-header-caps`'s optical lift.
 //
-// So the typography, the `·` separator and the optical correction now live HERE, once, and a caller may
-// only choose its WORDS and its TONE. Consistency by construction: a new reading cannot invent a second
-// treatment without editing this function.
+// So the typography and the `·` separator now live HERE, once, and a caller may only choose its WORDS and
+// its TONE. Consistency by construction: a new reading cannot invent a second treatment without editing
+// this function. `leading-none` keeps the smaller type's box inside the row's line, so a reading cannot
+// grow the row it sits on.
 function ToolMetaReading({ tone, indicator, label, duration, title }: {
   tone: string
   indicator?: ReactNode
@@ -2280,7 +2286,7 @@ function ToolMetaReading({ tone, indicator, label, duration, title }: {
   title: string
 }) {
   return (
-    <span className={`petite-caps frizz-tool-header-caps flex shrink-0 items-center gap-1 whitespace-nowrap text-[11.5px] leading-none ${tone}`} title={title} aria-label={title}>
+    <span className={`flex shrink-0 items-baseline gap-1 whitespace-nowrap text-[11.5px] leading-none tabular-nums ${tone}`} title={title} aria-label={title}>
       {indicator}
       <span>{[label, duration].filter(Boolean).join(" · ")}</span>
     </span>
@@ -2308,28 +2314,27 @@ function useForegroundRunning(status: ToolStatus | undefined, backgroundState: T
   return running
 }
 
-// THE LIVENESS MARK, LEADING THE ROW — the same slot, the same width, the same ink correction the
-// dispatch card uses (AgentBlock, below), because it is the same statement: something is alive behind
-// this card. It sat in the RIGHT-hand reading instead, which put a shell card's blue dot at the
+// THE LIVENESS MARK, IN THE ROW'S NODE — the same box the dispatch row uses (AgentBlock, below), because it
+// is the same statement: something is alive behind this row. It sat in the RIGHT-hand reading instead,
+// which put a shell card's blue dot at the
 // opposite edge from a sub-agent card's accent one for no reason a reader could name (maintainer
 // 2026-07-30: "the blue indicator for a background bash tool is still on the right instead of on the
 // left … its rendering should align with the agent tool call component").
 //
 // The glyphs are the shared child-op vocabulary (lib/childOps.ts + BackgroundOpsStrip), so a detached
 // shell is marked the SAME way on its transcript card, in the drawer's ops strip and on the queue card:
-// pulsing blue = running, breathing muted blue = alive but quiet. A card with nothing live behind it
-// renders NO SLOT at all — an empty reservation reads as a layout bug, which is exactly what the
-// dispatch card had to unlearn (see AgentBlock's `mark`).
+// pulsing blue = running, breathing muted blue = alive but quiet. A row with nothing live behind it keeps
+// its ordinary node.
 //
 // A pending FOREGROUND command marks itself here too, on elapsed time (lib/operationIndicators.ts) —
 // the spinner it used to get at the far right is gone. Detached or not, a shell that is running right
 // now is the same fact to a reader, and splitting it across two glyphs at two edges meant the LONGEST
 // commands — the ones you actually wait on — were the least visible thing on screen.
 //
-// A FINISHED op — detached or not — draws NOTHING here, and no slot for it either (maintainer
-// 2026-08-01: "remove the status indicator entirely for a sub-agent or background shell that has
-// completed"). This column states ONE fact, "something is alive behind this row", so a finished op has
-// nothing to say in it; the right-hand reading already carries the outcome and the runtime. A briefly
+// A FINISHED op — detached or not — draws no mark (maintainer 2026-08-01: "remove the status indicator
+// entirely for a sub-agent or background shell that has completed"). The mark states ONE fact, "something
+// is alive behind this row", so a finished op has nothing to say with it; the node and the right-hand
+// reading already carry the outcome and the runtime. A briefly
 // shipped static "done" dot is what that ruling overturned: marking every settled card meant the column
 // was occupied on nearly every row in a scrolled transcript, which is noise wearing the costume of
 // information — and a still frame cannot show a pulse, so the finished mark had to be muted to avoid
@@ -2351,10 +2356,7 @@ function ToolLiveMark({ status, backgroundState, liveBackgroundState, startedAt 
       <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="tool-disclosure" />
     ) : null
   if (!mark) return null
-  // `-mr-1` pulls the label back to roughly the dot↔label gap the child lines use: the header's own
-  // gap-2 is tuned for a petite-caps label beside a path, and at full width a 6px dot floated away from
-  // the word it qualifies.
-  return <span className="frizz-tool-mark -mr-1 flex w-[9px] shrink-0 justify-center">{mark}</span>
+  return <span className="frizz-tool-mark">{mark}</span>
 }
 
 export function ToolStatusMeta({ status, backgroundState, liveBackgroundState, exitCode, durationMs }: { status?: ToolStatus; backgroundState?: TranscriptToolCall["backgroundState"]; liveBackgroundState?: "running" | "stale"; exitCode?: number; durationMs?: number }) {
@@ -2364,6 +2366,9 @@ export function ToolStatusMeta({ status, backgroundState, liveBackgroundState, e
   // it annotates into truncation for a fact it was stating twice (maintainer 2026-07-29: "it is way too
   // long of a label to put into that card"). The drawn label is the short form; `longLabel` keeps the
   // explicit phrasing for the tooltip and the accessible name, where length costs nothing.
+  //
+  // A call that finished normally draws no word at all, only its time: a column of "done" said what every
+  // settled node already says, and a word only marks an outcome worth stopping on.
   const [label, longLabel] =
     liveBackgroundState === "running"
       ? ["running", "background running"]
@@ -2380,11 +2385,12 @@ export function ToolStatusMeta({ status, backgroundState, liveBackgroundState, e
         : status === "cancelled"
           ? ["cancelled", "cancelled"]
           : status === "completed"
-            ? ["done", "done"]
+            ? [undefined, "done"]
             : [undefined, undefined]
   const duration = durationMs !== undefined ? formatToolDuration(durationMs) : undefined
+  if (!label && !duration) return null
   const title = [longLabel, duration].filter(Boolean).join(" · ")
-  const tone = status === "failed" ? "frizz-tool-failed" : status === "cancelled" ? "text-attention" : "text-muted-55"
+  const tone = status === "failed" ? "frizz-tool-failed" : status === "cancelled" ? "text-attention" : "text-faint"
   return (
     <ToolMetaReading
       tone={tone}
@@ -2440,38 +2446,41 @@ function isFilePath(detail: string): boolean {
   return detail.startsWith("/") && !detail.includes(" ") && !detail.includes("…")
 }
 
-// A header-only tool card: the IDENTICAL bordered card chrome as Bash/Read/Edit/Agent (same .frizz-bash
-// container + .frizz-bash-header — border, bg, radius, padding, the label↔detail gap, 12.5px mono) but
-// with NO expandable body, so it drops only the chevron. This is the fallback for every call without a
-// payload — Grep, Glob, a pre-restart command-less Bash / excerpt-less Read, MCP tools, Monitor — the
-// COMMON case pre-restart, so it must be indistinguishable from a real card header. petite-caps label
-// left, repo-relative detail middle (an editor deep-link for a plain absolute path), ×N fold right. No
-// call ever reads as bare `Name(detail)` text again.
+// What a row is about when that is a target rather than a sentence: a plain absolute path opens in the
+// editor and draws repo-relative, anything else (a pattern, a query, an MCP argument) is literal mono text.
+function ToolTarget({ detail, shown = detail }: { detail?: string; shown?: string }) {
+  if (!shown) return null
+  if (detail && isFilePath(detail)) {
+    return (
+      <span className="min-w-0">
+        <PathLink path={detail}>
+          <ToolPathText path={shortenTarget(detail)} />
+        </PathLink>
+      </span>
+    )
+  }
+  return <span className="frizz-tool-detail frizz-tool-detail--mono" title={shown}>{shortenTarget(shown)}</span>
+}
+
+// A header-only tool row: the IDENTICAL row as Bash/Read/Edit/Agent (same .frizz-bash container and
+// .frizz-bash-header) but with NO expandable body, so its chevron is only the reserved column. This is the
+// fallback for every call without a payload — Grep, Glob, a pre-restart command-less Bash / excerpt-less
+// Read, MCP tools, Monitor — the COMMON case pre-restart, so it must be indistinguishable from a real row.
+// Label left, detail middle, ×N fold right. No call ever reads as bare `Name(detail)` text again.
 function ToolCard({ name, detail, count, status, backgroundState, liveBackgroundState, exitCode, cwd, sessionId, durationMs, startedAt }: { name: string; detail?: string; count: number; status?: ToolStatus; backgroundState?: TranscriptToolCall["backgroundState"]; liveBackgroundState?: "running" | "stale"; exitCode?: number; cwd?: string; sessionId?: string | number; durationMs?: number; startedAt?: string }) {
   const shownDetail = contextualDetail(detail, cwd, sessionId)
-  const short = shownDetail ? shortenTarget(shownDetail) : undefined
-  const linkPath = detail && isFilePath(detail) ? detail : undefined
   return (
-    <div className="frizz-bash" title={shownDetail}>
+    <div className="frizz-bash" title={shownDetail} data-tool-node={toolRailNode(status)}>
       <div className="frizz-bash-header">
-        <span className="flex min-w-0 items-center gap-2">
+        <span className={TOOL_ROW_LEAD}>
           <ToolLiveMark status={status} backgroundState={backgroundState} liveBackgroundState={liveBackgroundState} startedAt={startedAt} />
-          <span className="petite-caps frizz-bash-label shrink-0">{prettyToolName(name)}</span>
-          {short &&
-            (linkPath ? (
-              // The path link swallows its own click so opening the file doesn't select the card.
-              <span className="min-w-0 truncate" onClick={(e) => e.stopPropagation()}>
-                <PathLink path={linkPath} className="text-[11.5px] text-muted">
-                  {short}
-                </PathLink>
-              </span>
-            ) : (
-              <span className="min-w-0 truncate text-[11.5px] text-muted">{short}</span>
-            ))}
+          <span className="frizz-bash-label shrink-0">{prettyToolName(name)}</span>
+          <ToolTarget detail={detail} shown={shownDetail} />
         </span>
-        <span className="flex shrink-0 items-center gap-2">
+        <span className={TOOL_ROW_TAIL}>
           <ToolStatusMeta status={status} backgroundState={backgroundState} liveBackgroundState={liveBackgroundState} exitCode={exitCode} durationMs={durationMs} />
-          {count > 1 && <span className="tabular-nums text-[11px] text-muted-45">×{count}</span>}
+          {count > 1 && <span className="tabular-nums text-[11.5px] leading-none text-faint">×{count}</span>}
+          <ToolRowChevron shown={false} />
         </span>
       </div>
     </div>
@@ -2479,7 +2488,7 @@ function ToolCard({ name, detail, count, status, backgroundState, liveBackground
 }
 
 // A tool whose result carried an image (chrome-devtools `take_screenshot`, a Read of a `.png`, codex's
-// `view_image`): a card like ReadBlock, COLLAPSED by default, whose body is the picture. A worker takes
+// `view_image`): a row like ReadBlock, COLLAPSED by default, whose body is the picture. A worker takes
 // these to check its own work, and the human sees a picture only where the worker chose to SHOW one, in
 // a ```lightbox fence (maintainer 2026-10-03: "we should stop having special rendering where we display
 // screenshots in the read tool … No images or screenshots are visible unless you make them visible to
@@ -2498,7 +2507,7 @@ function ToolImageCard({ name, detail, outputImage, output, status, durationMs }
   const label = prettyToolName(name)
   const short = detail ? shortenTarget(detail) : undefined
   return (
-    <div data-tool-image className="frizz-bash">
+    <div data-tool-image className="frizz-bash" data-tool-node={toolRailNode(status)}>
       <ToolDisclosureHeader
         className="frizz-bash-header"
         controls={bodyId}
@@ -2507,10 +2516,10 @@ function ToolImageCard({ name, detail, outputImage, output, status, durationMs }
         onToggle={() => setOpen((v) => !v)}
         meta={<ToolStatusMeta status={status} durationMs={durationMs} />}
       >
-        <span className="petite-caps frizz-bash-label shrink-0">{label}</span>
-        {short && <span className="min-w-0 truncate text-[11.5px] text-muted" title={detail}>{short}</span>}
+        <span className="frizz-bash-label shrink-0">{label}</span>
+        <ToolTarget detail={detail} />
       </ToolDisclosureHeader>
-      <div id={bodyId} hidden={!open}>
+      <div id={bodyId} className="frizz-tool-body" hidden={!open}>
         {open && (
           <>
             {broken ? (
@@ -2538,12 +2547,12 @@ function ToolImageCard({ name, detail, outputImage, output, status, durationMs }
   )
 }
 
-// A SendUserFile delivery — the worker surfacing files to the human. Same card family (`frizz-bash`) and
-// header as ToolImageCard so it reads as one of the tool cards, but OPEN by default: seeing the delivered
+// A SendUserFile delivery — the worker surfacing files to the human. Same row (`frizz-bash`) and header as
+// ToolImageCard so it reads as one of the tool rows, but OPEN by default: seeing the delivered
 // images IS the point. Body: the images as ONE lightbox gallery — the same object a ```lightbox fence
 // draws, because a delivery is the other way a worker SHOWS a picture (via the gated /local-image route)
 // — non-image files as openable chips (BlockFile → the gated opener), and the `caption` below in muted
-// prose (capped ~65% wide so long captions stay readable against the wide card, not one edge-to-edge line).
+// prose (capped ~65% wide so long captions stay readable against the wide body, not one edge-to-edge line).
 function SentFilesCard({ images, files, caption, status, durationMs }: { images: string[]; files: string[]; caption?: string; status?: ToolStatus; durationMs?: number }) {
   const [open, setOpen] = useState(true)
   const bodyId = useId()
@@ -2555,7 +2564,7 @@ function SentFilesCard({ images, files, caption, status, durationMs }: { images:
     files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : "",
   ].filter(Boolean).join(" · ")
   return (
-    <div className="frizz-bash">
+    <div className="frizz-bash" data-tool-node={toolRailNode(status)}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -2565,20 +2574,20 @@ function SentFilesCard({ images, files, caption, status, durationMs }: { images:
         aria-label={`${open ? "Collapse" : "Expand"} files sent to you${summary ? `: ${summary}` : ""}`}
         className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="petite-caps frizz-bash-label shrink-0">Sent to you</span>
-          {summary && <span className="min-w-0 truncate text-[11.5px] text-muted">{summary}</span>}
+        <span className={TOOL_ROW_LEAD}>
+          <span className="frizz-bash-label shrink-0">Sent to you</span>
+          {summary && <span className="frizz-tool-detail">{summary}</span>}
         </span>
-        <span className="flex shrink-0 items-center gap-2">
+        <span className={TOOL_ROW_TAIL}>
           <ToolStatusMeta status={status} durationMs={durationMs} />
-          <ChevronRight aria-hidden="true" size={12} className={`shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />
+          <ToolRowChevron open={open} />
         </span>
       </button>
-      <div id={bodyId} hidden={!open}>
+      <div id={bodyId} className="frizz-tool-body" hidden={!open}>
         {open && (
           <>
-            {/* The card's border is the gallery's frame, as ToolImageCard's is its picture's: a framed
-                gallery in here drew a bordered box 10px inside the card's own. */}
+            {/* The body's border is the gallery's frame, as ToolImageCard's is its picture's: a framed
+                gallery in here drew a bordered box 10px inside the body's own. */}
             {images.length > 0 && <LightboxGallery entries={galleryEntries} framed={false} />}
             {(files.length > 0 || caption) && (
               <div className="flex flex-col gap-1.5 px-2.5 pb-2.5 pt-1.5">
@@ -2587,7 +2596,7 @@ function SentFilesCard({ images, files, caption, status, durationMs }: { images:
                     {files.map((f, i) => <BlockFile key={`f${i}`} path={f} />)}
                   </div>
                 )}
-                {caption && <div className="max-w-[65%] text-[12px] leading-snug text-muted">{caption}</div>}
+                {caption && <div className="max-w-[65%] font-sans text-[12px] leading-snug text-muted">{caption}</div>}
               </div>
             )}
           </>
@@ -2605,6 +2614,7 @@ const BASH_MAX_LINES = 16
 function BashBlock({
   command,
   desc,
+  literalDesc,
   output,
   name = "Bash",
   status,
@@ -2618,6 +2628,8 @@ function BashBlock({
 }: {
   command: string
   desc?: string
+  // The detail is not a sentence the model wrote but a literal: a command's first line, a tool's argument.
+  literalDesc?: boolean
   output?: string
   name?: string
   status?: ToolStatus
@@ -2636,7 +2648,7 @@ function BashBlock({
   const shownDurationMs = useBashDuration(status, startedAt, durationMs)
   const lineCount = useMemo(() => command.split("\n").length, [command])
   const long = lineCount > BASH_MAX_LINES
-  // Codex ships the command's stdout/stderr in the same rollout (Claude doesn't), so a codex Bash card
+  // Codex ships the command's stdout/stderr in the same rollout (Claude doesn't), so a codex Bash row
   // carries an `output` pane below the command — clamped + independently expandable like the command.
   const outLineCount = useMemo(() => (output ? output.split("\n").length : 0), [output])
   const outLong = outLineCount > BASH_MAX_LINES
@@ -2645,7 +2657,7 @@ function BashBlock({
   const shownDesc = contextualDetail(desc, undefined, sessionId)
   const expandable = Boolean(command || output)
   return (
-    <div className="frizz-bash">
+    <div className="frizz-bash" data-tool-node={toolRailNode(status)}>
       <button
         type="button"
         onClick={() => expandable && setOpen((v) => !v)}
@@ -2655,35 +2667,35 @@ function BashBlock({
         aria-label={`${expandable ? `${open ? "Collapse" : "Expand"} ` : ""}${prettyToolName(name)}${shownDesc ? `: ${shownDesc}` : ""}`}
         className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className={TOOL_ROW_LEAD}>
           <ToolLiveMark status={status} backgroundState={backgroundState} liveBackgroundState={liveBackgroundState} startedAt={startedAt} />
-          <span className="petite-caps frizz-bash-label shrink-0">{prettyToolName(name)}</span>
-          <span className="min-w-0 truncate text-[11.5px] text-muted" title={shownDesc}>{shownDesc ?? ""}</span>
+          <span className="frizz-bash-label shrink-0">{prettyToolName(name)}</span>
+          <span className={`frizz-tool-detail${literalDesc ? " frizz-tool-detail--mono" : ""}`} title={shownDesc}>{shownDesc ?? ""}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-2">
+        <span className={TOOL_ROW_TAIL}>
           <ToolStatusMeta status={status} backgroundState={backgroundState} liveBackgroundState={liveBackgroundState} exitCode={exitCode} durationMs={shownDurationMs} />
-          {expandable && <ChevronRight aria-hidden="true" size={12} className={`shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />}
+          <ToolRowChevron shown={expandable} open={open} />
         </span>
       </button>
       {expandable && (
-        <div id={bodyId} hidden={!open}>
+        <div id={bodyId} className="frizz-tool-body" hidden={!open}>
           {open && command && (
             <>
-              {inputLabel && <div className="frizz-bash-output-label petite-caps">{inputLabel}</div>}
-              {/* A Bash card's body is a shell command, so it highlights as one. A card carrying an
-                  `inputLabel` is NOT shell — that is codex's structured tool input reusing this card
-                  family — and stays plaintext rather than being painted in a grammar it isn't. */}
+              {inputLabel && <div className="frizz-bash-output-label">{inputLabel}</div>}
+              {/* A Bash row's body is a shell command, so it highlights as one and leads with a prompt. A
+                  row carrying an `inputLabel` is NOT shell — that is codex's structured tool input reusing
+                  this row — and stays plaintext rather than being painted in a grammar it isn't. */}
               <CodeBody
                 text={command}
                 language={inputLabel ? "plaintext" : "bash"}
-                className={`frizz-bash-body${inputLabel ? " frizz-bash-output-body" : ""}${long && !expanded ? " frizz-bash-clamp" : ""}`}
+                className={`frizz-bash-body${inputLabel ? "" : " frizz-bash-command"}${long && !expanded ? " frizz-bash-clamp" : ""}`}
               />
               {long && (
                 <button
                   type="button"
                   onClick={() => setExpanded((v) => !v)}
                   onMouseDown={(e) => e.preventDefault()}
-                  className="frizz-bash-expand petite-caps px-2.5 pb-1.5"
+                  className="frizz-bash-expand px-2.5 pb-1.5"
                 >
                   {expanded ? "Collapse" : `Show all ${lineCount} lines`}
                 </button>
@@ -2692,14 +2704,14 @@ function BashBlock({
           )}
           {open && output && (
             <>
-              <div className="frizz-bash-output-label petite-caps">output</div>
+              {inputLabel && <div className="frizz-bash-output-label">Output</div>}
               <pre className={`frizz-bash-body frizz-bash-output-body${outLong && !outExpanded ? " frizz-bash-clamp" : ""}`}>{output}</pre>
               {outLong && (
                 <button
                   type="button"
                   onClick={() => setOutExpanded((v) => !v)}
                   onMouseDown={(e) => e.preventDefault()}
-                  className="frizz-bash-expand petite-caps px-2.5 pb-1.5"
+                  className="frizz-bash-expand px-2.5 pb-1.5"
                 >
                   {outExpanded ? "Collapse" : `Show all ${outLineCount} lines`}
                 </button>
@@ -2712,11 +2724,11 @@ function BashBlock({
   )
 }
 
-// A Read call rendered as a sibling of BashBlock/DiffBlock: a bordered card, COLLAPSED by default,
-// whose header is the petite-caps "Read" label + the repo-relative path (an editor deep-link when the
-// detail is a plain absolute path). Expanding reveals WHAT was read — the (server-capped) file excerpt
-// in mono, with the same clamp + "Show all N lines" affordance as a long Bash body. Reuses the
-// frizz-bash card classes so Bash / Edit / Read read as one system.
+// A Read call rendered as a sibling of BashBlock/DiffBlock: a row, COLLAPSED by default, whose header is
+// the "Read" label + the repo-relative path (an editor deep-link when the detail is a plain absolute
+// path). Expanding reveals WHAT was read — the (server-capped) file excerpt in mono, with the same clamp +
+// "Show all N lines" affordance as a long Bash body. Reuses the frizz-bash classes so Bash / Edit / Read
+// read as one system.
 const READ_MAX_LINES = 16
 function ReadBlock({ detail, read, status, durationMs }: { detail?: string; read: string; status?: ToolStatus; durationMs?: number }) {
   const [open, setOpen] = useState(false)
@@ -2724,10 +2736,8 @@ function ReadBlock({ detail, read, status, durationMs }: { detail?: string; read
   const bodyId = useId()
   const lineCount = useMemo(() => read.split("\n").length, [read])
   const long = lineCount > READ_MAX_LINES
-  const short = detail ? shortenTarget(detail) : undefined
-  const linkPath = detail && isFilePath(detail) ? detail : undefined
   return (
-    <div className="frizz-bash">
+    <div className="frizz-bash" data-tool-node={toolRailNode(status)}>
       <ToolDisclosureHeader
         className="frizz-bash-header"
         controls={bodyId}
@@ -2736,19 +2746,10 @@ function ReadBlock({ detail, read, status, durationMs }: { detail?: string; read
         onToggle={() => setOpen((v) => !v)}
         meta={<ToolStatusMeta status={status} durationMs={durationMs} />}
       >
-        <span className="petite-caps frizz-bash-label shrink-0">Read</span>
-        {short &&
-          (linkPath ? (
-            <span className="min-w-0 truncate">
-              <PathLink path={linkPath} className="text-[11.5px] text-muted">
-                {short}
-              </PathLink>
-            </span>
-          ) : (
-            <span className="min-w-0 truncate text-[11.5px] text-muted">{short}</span>
-          ))}
+        <span className="frizz-bash-label shrink-0">Read</span>
+        <ToolTarget detail={detail} />
       </ToolDisclosureHeader>
-      <div id={bodyId} hidden={!open}>
+      <div id={bodyId} className="frizz-tool-body" hidden={!open}>
         {open && (
           <>
             {/* The excerpt highlights in the grammar of the file that was READ — the same path the
@@ -2764,7 +2765,7 @@ function ReadBlock({ detail, read, status, durationMs }: { detail?: string; read
                 type="button"
                 onClick={() => setExpanded((v) => !v)}
                 onMouseDown={(e) => e.preventDefault()}
-                className="frizz-bash-expand petite-caps px-2.5 pb-1.5"
+                className="frizz-bash-expand px-2.5 pb-1.5"
               >
                 {expanded ? "Collapse" : `Show all ${lineCount} lines`}
               </button>
@@ -2776,7 +2777,7 @@ function ReadBlock({ detail, read, status, durationMs }: { detail?: string; read
   )
 }
 
-// An Agent dispatch rendered as a sibling of BashBlock/ReadBlock: a bordered card COLLAPSED by default;
+// An Agent dispatch rendered as a sibling of BashBlock/ReadBlock: a row COLLAPSED by default;
 // the chevron expands the dispatch PROMPT. TWO affordances, kept distinct: the chevron toggles the
 // prompt body, while the DESCRIPTION itself is an underlined link (PathLink treatment) that drills INTO
 // that sub-agent's own transcript in a new drawer — for LIVE and COMPLETED children alike (the drawer
@@ -2796,14 +2797,14 @@ function ReadBlock({ detail, read, status, durationMs }: { detail?: string; read
 //     card's child line all read the same pair;
 //   • the state VERB is gone for the two nominal outcomes. A pulsing dot already says "running" and NO
 //     mark at all already says "not running any more", so "running 3 min" / "finished 35m" became a
-//     bare runtime. A NON-nominal outcome keeps its verb ("STOPPED · 4 MIN", "FAILED · 12 MIN"): a mark
+//     bare runtime. A NON-nominal outcome keeps its verb ("stopped · 4m", "failed · 12m"): a mark
 //     cannot say that, and losing it would delete the one fact the reader most needs.
 //
-// The reading itself is `ToolMetaReading` — the transcript's shared right-hand slot — so this card's
-// petite-caps reading, and the one on the Bash card under it, are the same treatment by construction.
-// The MIRROR with the child lines is about order and content, not typography: those lines live in the
-// rail, the queue card and the ops strip, where the compact "41m" form earns its horizontal budget;
-// this card sits in a column of tool cards and speaks their language. See lib/agentReading.ts.
+// The reading itself is `ToolMetaReading` — the transcript's shared right-hand slot — so this row's
+// reading, and the one on the Bash row under it, are the same treatment by construction. The MIRROR with
+// the child lines is about order and content, not typography: those lines live in the sidebar, the queue
+// card and the ops strip, where the compact "41m" form earns its horizontal budget; this row sits in a
+// column of tool rows and speaks their language. See lib/agentReading.ts.
 // Exported for operation-indicators-fixture.tsx: the agent row is the one card family with TWO
 // independent status sources (its own state reading + the shared meta slot), so it needs live fixture
 // coverage — the double-indicator bug shipped precisely because the fixture skipped it.
@@ -2877,22 +2878,13 @@ export function AgentBlock({
 
   // The liveness MARK. Every glyph is the shared child-op vocabulary (lib/childOps.ts), so this card and
   // the line under the prompt box mark the same child the same way: pulsing accent = running, flat gray =
-  // stale, hollow = rested (its run over, its own fan-out still going). A background SHELL card leads
-  // with the same slot in the same position (ToolLiveMark), in shell blue — one liveness column for the
-  // whole transcript, whichever kind of thing is alive behind the card.
+  // stale, hollow = rested (its run over, its own fan-out still going). A background SHELL row draws the
+  // same way in the same place (ToolLiveMark), in shell blue — one liveness column for the whole
+  // transcript, whichever kind of thing is alive behind the row.
   //
-  // A RESOLVED child gets no mark AND NO SLOT (maintainer 2026-07-29: "there's a weird gap now to the
-  // left of the word 'Agent'"; re-affirmed 2026-08-01: "remove the status indicator entirely for a
-  // sub-agent or background shell that has completed"). The slot used to be reserved whether or not it
-  // drew anything, so a run of cards would align its labels down one edge — but a finished card is the
-  // COMMON case in a scrolled transcript, and an empty 13px reservation there reads as a layout bug, not
-  // as "not running any more".
-  //
-  // A static "finished" glyph was tried for exactly one commit and removed: filling the slot on every
-  // settled card put a mark on nearly every row, and because a still frame cannot show a pulse it had to
-  // be muted to avoid reading as live — which is the tell that it was carrying no information. With the
-  // slot gone a resolved dispatch card leads with its petite-caps label exactly like every other tool
-  // card in the transcript, and the runtime in the right-hand column is what says it ran and stopped.
+  // A RESOLVED child gets no mark (maintainer 2026-08-01: "remove the status indicator entirely for a
+  // sub-agent or background shell that has completed"). It keeps the ordinary node like every other tool
+  // row in the transcript, and the runtime in the right-hand column is what says it ran and stopped.
   const mark =
     running ? (
       <span aria-hidden className="frizz-live-dot frizz-live-dot--agent" data-running-indicator="subagent-disclosure" />
@@ -2908,7 +2900,7 @@ export function AgentBlock({
   }
 
   return (
-    <div className="frizz-bash">
+    <div className="frizz-bash" data-tool-node={reading?.tone === "failed" ? "failed" : undefined}>
       <ToolDisclosureHeader
         className="frizz-bash-header"
         controls={bodyId}
@@ -2916,57 +2908,47 @@ export function AgentBlock({
         label={`${open ? "Collapse" : "Expand"} Agent dispatch: ${title}`}
         onToggle={() => setOpen((v) => !v)}
         meta={
-          // THE READOUT: the child's PROFILE, then its RUNTIME — the order and the separator the resting
-          // card's own child line already uses ("opus-high · 23m", AwaitingBackgroundCard). Two spans and
-          // not one string, because only the runtime half changes tone: a failed child turns that half
-          // red, and the model it ran at did not fail.
+          // THE READOUT: the child's PROFILE, then its RUNTIME — the order the resting card's own child
+          // line already uses ("opus-high · 23m", AwaitingBackgroundCard), parted here by space rather than
+          // a dot. Two spans and not one string, because only the runtime half changes tone: a failed child
+          // turns that half red, and the model it ran at did not fail.
           //
           // The profile sits HERE rather than beside the "Agent" label, where it was first put. Every
-          // tool card in the transcript — Bash, Read, Edit — starts its detail immediately after the kind
-          // label, so a variable-width cell in that position made the Agent card the one row whose title
+          // tool row in the transcript — Bash, Read, Edit — starts its detail immediately after the kind
+          // label, so a variable-width cell in that position made the Agent row the one row whose title
           // began somewhere else: `opus › high`, `sonnet › medium` and a legacy card with no cell at all
           // each pushed it to a different x, and a column of them read with a ragged left edge. The
-          // right-hand slot already varies card to card, so it absorbs a second reading without moving
+          // right-hand slot already varies row to row, so it absorbs a second reading without moving
           // anything the eye scans down.
           (profile || reading) && (
-            <>
+            <span className="flex shrink-0 items-baseline gap-2.5">
               {profile && (
                 <span
                   data-subagent-profile
-                  className="petite-caps frizz-tool-header-caps shrink-0 whitespace-nowrap text-[11.5px] leading-none text-muted-55"
+                  className="shrink-0 whitespace-nowrap text-[11.5px] leading-none text-faint"
                   title={`Sub-agent profile: ${profile}`}
                 >
                   {profile}
                 </span>
               )}
-              {/* The separator sits at the PROFILE's tone, not a dimmer one of its own: it closes that
-                  segment, and drawn fainter than the reading's own "·" it read as the weaker break when
-                  it is the stronger one. `-mx-[2px]` is the OPTICAL trim: this dot is spaced by the
-                  row's flex gap while the reading's identical dot ("stopped · 41 min") is spaced by two
-                  text spaces, and the two rhythms did not agree — measured 8.91/8.26px of ink against
-                  the text one's 6.51/7.01. Trimmed, they read as one chain (6.9/6.3). */}
-              {profile && reading && <span aria-hidden className="petite-caps frizz-tool-header-caps -mx-[2px] shrink-0 text-[11.5px] leading-none text-muted-55">·</span>}
               {reading && (
                 <ToolMetaReading
-                  tone={reading.tone === "failed" ? "frizz-tool-failed" : "text-muted-55"}
+                  tone={reading.tone === "failed" ? "frizz-tool-failed" : "text-faint"}
                   title={reading.title}
                   label={reading.label}
                   duration={reading.duration}
-                  // No indicator, ever. This slot is words only: the liveness mark leads the row and is
-                  // the one place the card may claim a child is alive.
+                  // No indicator, ever. This slot is words only: the liveness mark in the node is the one
+                  // place the row may claim a child is alive.
                 />
               )}
-            </>
+            </span>
           )
         }
       >
-        {/* The mark leads the row, as it does on the prompt-box lines — and only when there IS one, so a
-            resolved card starts flush at its label instead of behind an empty reservation. `-mr-1` pulls
-            the label back to roughly the dot↔label gap those lines use: the header's own gap-2 is tuned
-            for a petite-caps label beside a path, and at full width a 6px dot floated away from the word
-            it qualifies. Same slot, same class, same numbers as a background shell card's mark. */}
-        {mark && <span className="frizz-tool-mark -mr-1 flex w-[9px] shrink-0 justify-center">{mark}</span>}
-        <span className="petite-caps frizz-bash-label shrink-0">Agent</span>
+        {/* The mark sits in the row's node, so the label stays on one edge whichever state the child is
+            in. Same box and same class as a background shell row's mark. */}
+        {mark && <span className="frizz-tool-mark">{mark}</span>}
+        <span className="frizz-bash-label shrink-0">Agent</span>
         {canDrill ? (
           <button
             type="button"
@@ -2974,24 +2956,24 @@ export function AgentBlock({
             // The profile renders in the header now, so this tooltip is back to naming its own action.
             title="Open sub-agent transcript"
             onClick={openDrawer}
-            className="min-w-[4rem] flex-1 truncate text-left text-[11.5px] text-muted outline-none hover:underline hover:text-fg/80 focus-visible:underline focus-visible:text-fg/80"
+            className="frizz-tool-detail frizz-tool-drill min-w-[4rem] flex-1 text-left outline-none"
           >
             {title}
           </button>
         ) : (
-          <span className="min-w-[4rem] flex-1 truncate text-[11.5px] text-muted" title={title}>{title}</span>
+          <span className="frizz-tool-detail min-w-[4rem] flex-1" title={title}>{title}</span>
         )}
       </ToolDisclosureHeader>
-      <div id={bodyId} hidden={!open}>
+      <div id={bodyId} className="frizz-tool-body" hidden={!open}>
         {open && (
           <>
-            {body && <pre className={`frizz-bash-body${long && !expanded ? " frizz-bash-clamp" : ""}`}>{body}</pre>}
+            {body && <pre className={`frizz-bash-body frizz-tool-prose${long && !expanded ? " frizz-bash-clamp" : ""}`}>{body}</pre>}
             {long && (
               <button
                 type="button"
                 onClick={() => setExpanded((v) => !v)}
                 onMouseDown={(e) => e.preventDefault()}
-                className="frizz-bash-expand petite-caps px-2.5 pb-1.5"
+                className="frizz-bash-expand px-2.5 pb-1.5"
               >
                 {expanded ? "Collapse" : `Show all ${lineCount} lines`}
               </button>
@@ -3045,10 +3027,9 @@ function SendMessageBlock({ to, summary, body, type, dispatchId, targetLabel, st
 }
 
 // A SendMessage (peer / agent-to-agent messaging) rendered as a sibling of AgentBlock/BashBlock: the
-// SAME quiet bordered card family, but purpose-built to read as "this agent steered that one" rather
-// than a generic SendMessage(...) tool line. The header leads with the petite-caps kind label
-// ("Steered", or "Shutdown" for a shutdown_request), then the model's one-line `summary` (muted,
-// truncated). The
+// SAME row, but purpose-built to read as "this agent steered that one" rather than a generic
+// SendMessage(...) tool line. The header leads with the kind label ("Steered", or "Shutdown" for a
+// shutdown_request), then the model's one-line `summary` (truncated). The
 // chevron expands the MESSAGE BODY, rendered as markdown in a quiet indented block (long bodies clamp
 // with a "Show all N lines" affordance, exactly like the Bash/Read/Agent bodies). Default state mirrors
 // AgentBlock: COLLAPSED when a summary already conveys the gist, OPEN when there's no summary so a
@@ -3067,7 +3048,7 @@ function SendMessageCard({ to, summary, body, type, status, durationMs }: { to?:
   const hasBody = !!body.trim()
   const label = sendMessageVerb(to, type)
   return (
-    <div className="frizz-bash">
+    <div className="frizz-bash" data-tool-node={toolRailNode(status)}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -3078,24 +3059,24 @@ function SendMessageCard({ to, summary, body, type, status, durationMs }: { to?:
         className="frizz-bash-header w-full text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-focus-ink-60"
         disabled={!hasBody}
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="petite-caps frizz-bash-label shrink-0">{label}</span>
-          {summary && <span className="min-w-0 truncate text-[11.5px] text-muted">{summary}</span>}
+        <span className={TOOL_ROW_LEAD}>
+          <span className="frizz-bash-label shrink-0">{label}</span>
+          {summary && <span className="frizz-tool-detail">{summary}</span>}
         </span>
-        <span className="flex shrink-0 items-center gap-2">
+        <span className={TOOL_ROW_TAIL}>
           <ToolStatusMeta status={status} durationMs={durationMs} />
-          {hasBody && <ChevronRight aria-hidden="true" size={12} className={`shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />}
+          <ToolRowChevron shown={hasBody} open={open} />
         </span>
       </button>
       {hasBody && (
-        <div id={bodyId} hidden={!open}>
+        <div id={bodyId} className="frizz-tool-body" hidden={!open}>
           {open && (
             <>
-              {/* Quiet indented body: the border-top + 10px/8px padding mirror .frizz-bash-body, but the
-                  content is MARKDOWN (md-body — sans, 14px) so a peer message reads like prose, not a code
-                  dump — through LinkedHtml, so a gallery or a diagram in it is drawn as one. The clamp caps
-                  a long body at ~320px until "Show all" expands it. */}
-              <div className={`border-t border-border px-2.5 py-2${long && !expanded ? " frizz-bash-clamp" : ""}`}>
+              {/* The 10px/8px padding mirrors .frizz-bash-body, but the content is MARKDOWN (md-body — sans,
+                  13px) so a peer message reads like prose, not a code dump — through LinkedHtml, so a gallery
+                  or a diagram in it is drawn as one. The clamp caps a long body at ~320px until "Show all"
+                  expands it. */}
+              <div className={`px-2.5 py-2${long && !expanded ? " frizz-bash-clamp" : ""}`}>
                 <LinkedHtml className="md-body" html={html} />
               </div>
               {long && (
@@ -3103,7 +3084,7 @@ function SendMessageCard({ to, summary, body, type, status, durationMs }: { to?:
                   type="button"
                   onClick={() => setExpanded((v) => !v)}
                   onMouseDown={(e) => e.preventDefault()}
-                  className="frizz-bash-expand petite-caps px-2.5 pb-1.5"
+                  className="frizz-bash-expand px-2.5 pb-1.5"
                 >
                   {expanded ? "Collapse" : `Show all ${lineCount} lines`}
                 </button>
@@ -5027,7 +5008,7 @@ export function WorkingIndicator({ since, startedAt, activityLabel, run }: { sin
         <div id={cardsId} className="mt-1.5 flex flex-col">
           {/* `at` is the emitting batch's timestamp — the clock a pending card times itself against, and
               every card in a LIVE run is pending, so it matters more here than in the settled digest. */}
-          {withSpacers(collapsed.map((tool, i) => <ToolCardRouter key={i} t={tool} startedAt={run?.at} />), 6)}
+          <ToolRailRows tools={collapsed} at={run?.at} />
         </div>
       )}
       {/* `aria-controls` must resolve even while collapsed — see MinimalToolActivity. */}

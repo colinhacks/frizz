@@ -98,7 +98,7 @@ const failures = []
 const pageErrors = []
 const check = (ok, label, detail) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures.push(`${label}${detail ? ` — ${detail}` : ""}`) }
 
-// Locate a card by its petite-caps label ("Read" / "Edit" / "Bash" / "Agent"), and report the geometry
+// Locate a row by its label ("Read" / "Edit" / "Bash" / "Agent"), and report the geometry
 // of its header, of the link inside it, and of the dead space between the two halves. Every subsequent
 // click is aimed with these numbers rather than at a selector, so the assertion is about PIXELS the
 // human can actually hit.
@@ -114,7 +114,7 @@ const CARD_GEOMETRY = (label) => {
   const left = header.children[0]
   const right = header.children[1]
   const disclosure = header.querySelector("[data-tool-disclosure]") ?? header
-  const link = header.querySelector('a[href^="cursor://"], button[aria-label^="Open sub-agent transcript"]')
+  const link = header.querySelector('button[title^="/"], button[aria-label^="Open sub-agent transcript"]')
   const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, right: r.right, cx: r.x + r.width / 2, cy: r.y + r.height / 2 } }
   return {
     header: box(header),
@@ -147,11 +147,14 @@ try {
       page = await browser.newPage()
       page.on("pageerror", (e) => pageErrors.push(String(e)))
       // A cursor:// navigation has no handler in headless Chrome — expected, not a page defect.
-      page.on("console", (m) => { if (m.type() === "error" && !/cursor:\/\/|ERR_UNKNOWN_URL_SCHEME|Not allowed to launch/i.test(m.text())) pageErrors.push(m.text()) })
+      // Nor is a 404: the sandbox serves no favicon and no control endpoint, and its text names no URL.
+      page.on("console", (m) => { if (m.type() === "error" && !/cursor:\/\/|ERR_UNKNOWN_URL_SCHEME|Not allowed to launch|404/i.test(m.text())) pageErrors.push(m.text()) })
       await page.setViewport({ width: 1400, height: 1100, deviceScaleFactor: 2 })
       if (stale) await stale.close()
     }
-    await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}`, { waitUntil: "networkidle0" })
+    // The full-screen page: this thread is resting, so its plain link opens its queue card, whose middle
+    // rounds are folded away.
+    await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}/full`, { waitUntil: "networkidle0" })
     await page.waitForSelector(".frizz-bash", { timeout: 20_000 })
     // Ordinary calls fold behind an "N tool calls" band; open every one so all four cards mount.
     for (const toggle of await page.$$('button[aria-label*="tool call"]')) {
@@ -270,13 +273,13 @@ try {
   }
 
   // ── 7. clicking a FILE PATH does NOT toggle ──────────────────────────────────────────────────────
-  // Half the point of the exception: Read and Edit each carry an <a href="cursor://…"> in the header.
+  // Half the point of the exception: Read and Edit each carry a PathLink button in the header.
   // Quarantined down here, one card per page load, because of the external-protocol trap documented at
   // the top of this block — the click itself is real, so it poisons the page's input for good.
   for (const label of ["Read", "Edit"]) {
     await openThread({ fresh: true })
     const before = await geom(label)
-    check(before.link?.tag === "A", `${label}: its header carries a file-path link`, JSON.stringify(before.link))
+    check(before.link?.tag === "BUTTON", `${label}: its header carries a file-path link`, JSON.stringify(before.link))
     check(before.expanded === false, `${label}: starts collapsed for the file-path check`, String(before.expanded))
     await clickAt(before.link.cx, before.link.cy)
     const after = await geom(label)
@@ -297,11 +300,8 @@ try {
     const after = await geom("Agent")
     check(after.expanded === before.expanded, "Agent: clicking the sub-agent name does NOT toggle the card",
       `expanded ${before.expanded} → ${after.expanded}`)
-    const drawer = await page.evaluate(() => ({
-      dialog: !!document.querySelector('[role="dialog"]'),
-      columns: document.querySelectorAll("[data-transcript-column]").length,
-    }))
-    check(drawer.dialog || drawer.columns > 1, "Agent: and the sub-agent name still opens its drawer", JSON.stringify(drawer))
+    const drawer = await page.waitForSelector(".frizz-sheet-panel", { timeout: 5_000 }).catch(() => null)
+    check(drawer !== null, "Agent: and the sub-agent name still opens its drawer")
     if (shots) await page.screenshot({ path: join(shots, "tool-pill-click-drilled.png") })
   }
 

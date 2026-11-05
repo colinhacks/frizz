@@ -89,8 +89,8 @@ test("renders a running indicator only when the individual tool disclosure suppl
 
   assert.match(running, /data-running-indicator="tool-disclosure"/)
   assert.match(running, /frizz-live-dot/)
-  assert.match(running, /flex shrink-0 items-center gap-1\.5/, "the status cluster and disclosure control use the compact shared rhythm")
-  assert.match(running, /relative -top-px shrink-0 transition-transform/, "the disclosure glyph receives its optical vertical correction")
+  assert.match(running, /flex shrink-0 items-baseline gap-2/, "the status cluster and disclosure control share the row's baseline and rhythm")
+  assert.match(running, /frizz-tool-chevron/, "the disclosure glyph places itself on the row's cap band")
   assert.doesNotMatch(terminal, /data-running-indicator/)
   assert.doesNotMatch(terminal, /frizz-live-dot/)
 })

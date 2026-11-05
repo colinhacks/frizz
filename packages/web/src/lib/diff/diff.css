@@ -1,47 +1,186 @@
-/* Styles for the rendered diff (packages/web/src/lib/diff). Self-contained: token colours are the
-   selected Frizz palette (see theme.css). Import this where the diff
-   is rendered. Class names are namespaced `frizz-diff-*` / `ftk-*` (frizz token kind). */
+/* Styles for the rendered diff (packages/web/src/lib/diff) and for the tool rows around it. Self-contained:
+   token colours are the selected Frizz palette (see theme.css). Import this where the diff is rendered.
+   Class names are namespaced `frizz-diff-*` / `ftk-*` (frizz token kind). */
 
-/* `--block-radius` (styles.css) is the corner EVERY block-level element in the app wears — a signal
-   card, a code fence, a table, an image, and these tool cards. It used to be 6px here, which put a
-   tool card and the ```done card directly above it in two visibly different design languages
-   (maintainer 2026-07-31). `overflow: hidden` is what makes it hold: the header carries a panel-2
-   fill edge to edge, and without the clip that fill paints square right through the arc. */
+/* THE TIMELINE RAIL — how every tool call in the transcript draws (maintainer 2026-11-05, choosing it out
+   of fifteen redesigns: "Definitely timeline rail"). No capsule: a run of calls is one vertical line with a
+   node per call, and each row is plain text beside its node. Until then each call was a bordered, filled,
+   12px-radius pill; a run of them read as a stack of buttons rather than as what happened in order.
+
+   The classes keep their old names because they name a ROW now rather than a box: `.frizz-bash` and
+   `.frizz-diff` are the two root classes, one per family of header, and everything below treats them alike.
+
+   THE LINE IS TWO SEGMENTS, split around the node, rather than one line with the node painted over it.
+   Masking would need the node filled with whatever is behind it, and a transcript sits on three different
+   surfaces (the page, the queue card, the drawer), so a hollow node filled with the wrong one shows as a
+   disc. Which segments draw is a question about the row's NEIGHBOURS, not its position in its parent: a
+   spacer or a divider between two rows ends the rail there, which is also why a row's seam with its
+   neighbour is 0 rather than a gap (ChatView ToolRailRows). */
+.frizz-bash,
 .frizz-diff {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-  border: 1px solid var(--color-border);
-  border-radius: var(--block-radius);
-  overflow: hidden;
-  background: var(--color-bg);
+  /* The node's box, measured against the row's cap band in the app's sans at this size and line height
+     (residual under 0.1px, SF on macOS). `display: flow-root` holds a body's bottom margin inside the row,
+     so the line runs through that air to the next row instead of stopping short of it. */
+  --rail-node-top: 9.5px;
+  --rail-node-bottom: 17.5px;
+  --rail-color: var(--color-border-strong);
+  display: flow-root;
+  position: relative;
+  min-width: 0;
+  padding-left: 18px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 22px;
+}
+.frizz-bash::before,
+.frizz-diff::before {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background:
+    linear-gradient(var(--rail-above, transparent), var(--rail-above, transparent)) top / 100% var(--rail-node-top) no-repeat,
+    linear-gradient(var(--rail-below, transparent), var(--rail-below, transparent)) bottom / 100% calc(100% - var(--rail-node-bottom)) no-repeat;
+}
+:is(.frizz-bash, .frizz-diff) + :is(.frizz-bash, .frizz-diff)::before { --rail-above: var(--rail-color); }
+:is(.frizz-bash, .frizz-diff):has(+ :is(.frizz-bash, .frizz-diff))::before { --rail-below: var(--rail-color); }
+
+/* The node says what the call did: hollow read, filled edit, red failure, amber cancellation. A call with
+   something alive behind it draws its liveness mark in this box instead (`.frizz-tool-mark`). */
+.frizz-bash::after,
+.frizz-diff::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--rail-node-top);
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-faint);
+}
+[data-tool-node="edit"]::after { background: var(--color-muted); border-color: var(--color-muted); }
+[data-tool-node="failed"]::after { background: var(--code-del-sign); border-color: var(--code-del-sign); }
+[data-tool-node="cancelled"]::after { border-color: var(--color-attention); }
+:is(.frizz-bash, .frizz-diff):has(.frizz-tool-mark)::after { display: none; }
+
+/* The liveness mark, in the node's box: the row itself is the positioned ancestor, so the header must never
+   become one. Every glyph here is the shared child-op vocabulary (lib/childOps.ts). */
+.frizz-tool-mark {
+  position: absolute;
+  left: 0;
+  top: var(--rail-node-top);
+  display: flex;
+  width: 8px;
+  height: 8px;
+  align-items: center;
+  justify-content: center;
 }
 
-/* Mirrors .frizz-bash-header (space-between) so Edit / Bash / Read headers read as one system: a
-   petite-caps tool label on the left, detail beside it, the chevron pushed to the far right. */
+/* One row of text. BASELINE, because a row mixes 13px sans, 12px mono and an 11.5px reading, and only the
+   baseline puts those on one line. */
+.frizz-bash-header,
 .frizz-diff-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 12px;
-  background: var(--color-panel-2);
-  font-size: 11.5px;
+  padding: 2px 0;
+  border-radius: 3px;
+}
+.frizz-bash-label { color: var(--color-muted); }
+
+/* What the call was about: prose in sans (a Bash description, a sub-agent's title), anything literal in
+   mono. A smaller font on the row's own 22px line box lands its baseline lower than the label's and grows
+   the row by a fraction of a pixel, so the mono takes a line box that stays inside it. */
+.frizz-tool-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(from var(--color-fg) r g b / 0.85);
+}
+.frizz-tool-detail--mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+/* A path keeps its filename. The folder is the half that truncates, so a narrow column loses the part every
+   neighbouring row repeats rather than the one part that tells them apart. */
+.frizz-tool-path {
+  display: flex;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.frizz-tool-path-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-faint);
+}
+.frizz-tool-path-base {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(from var(--color-fg) r g b / 0.85);
+}
+/* A row that opens says so when the pointer is on it. */
+:is(.frizz-bash-header, .frizz-diff-header):is(button:not(:disabled), [data-expanded]):hover :is(.frizz-tool-detail, .frizz-tool-path-base) {
+  color: var(--color-fg);
+}
+/* The sub-agent title opens that child's own transcript, which is a different act from opening the row. */
+.frizz-tool-drill {
+  text-decoration: underline;
+  text-decoration-color: var(--color-muted-45);
+  text-underline-offset: 2px;
+}
+.frizz-tool-drill:is(:hover, :focus-visible) { text-decoration-color: currentColor; color: var(--color-fg); }
+
+/* A chevron that places itself off the text baseline: its bottom edge sits on the baseline, the negative
+   top margin keeps its box from growing the line, and the translate lifts its centre onto the cap band. Its
+   own `translate` property, because the open state is Tailwind's `rotate-90`, the individual `rotate`
+   property: the two compose, where a `transform` offset would turn with the glyph. */
+.frizz-tool-chevron {
+  flex-shrink: 0;
+  align-self: baseline;
+  margin-top: calc(1cap - 12px);
+  translate: 0 calc(6px - 0.5cap);
   color: var(--color-muted);
+  transition: rotate 0.12s ease-out;
 }
-/* The body stays mounted (hidden when collapsed) so aria-controls always resolves; key the divider
-   to disclosure state instead of DOM adjacency so a collapsed card keeps its single bottom border. */
-.frizz-diff-header[data-expanded="true"] {
-  border-bottom: 1px solid var(--color-border);
+
+.frizz-tool-failed { color: var(--code-del-sign); }
+
+/* What opens under a row: one inset block on the rail's right. The bottom margin is the row's own chrome,
+   air between a body and the row after it, and the row's flow-root holds it inside. */
+.frizz-tool-body {
+  margin: 0 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-inset);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-fg);
 }
-/* Lighter than assistant prose — bright white is reserved for actual agent messages. */
-.frizz-diff-header .frizz-diff-file { color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.frizz-diff-header .frizz-diff-add { color: var(--code-add-sign); }
-.frizz-diff-header .frizz-diff-del { color: var(--code-del-sign); }
 
 /* With Wrap code off (`.frizz-diff-line` below) a wide diff scrolls here, inside the body, never the
-   page. With it on nothing overflows, and this is the same backstop the Bash body keeps. */
+   page. With it on nothing overflows, and this is the same backstop the Bash body keeps. Below
+   `.frizz-tool-body` on purpose: this element is both, and the scroll has to win its clip. */
 .frizz-diff-body { overflow-x: auto; }
+
+.frizz-diff-file { min-width: 0; }
+.frizz-diff-stat { flex-shrink: 0; font-size: 0.96em; line-height: 18px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.frizz-diff-add { color: var(--code-add-sign); }
+.frizz-diff-del { color: var(--code-del-sign); }
 
 /* Divider between successive edit groups merged into one block (same-file consecutive edits). A
    hairline is enough to read them as distinct edits without a heavy separator. */
@@ -90,9 +229,107 @@
   user-select: none;
 }
 
-/* Bordered card family shared by the Bash command block AND the Read excerpt block (ReadBlock reuses
-   these .frizz-bash-* classes) — same visual language as the diff, for a collapsed expandable card. */
-.frizz-bash {
+/* The body of a Bash, Read or Agent row. pre-wrap: long lines wrap; a wide unbreakable token scrolls INSIDE
+   the block (overflow-x auto), never the page. margin:0 keeps the block on the message's explicit-spacer
+   rhythm. */
+.frizz-bash-body {
+  margin: 0;
+  padding: 8px 10px;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  color: var(--color-fg);
+}
+/* A shell command says so, faintly, and the prompt stays out of what a reader copies. */
+.frizz-bash-command::before {
+  content: "$ ";
+  color: var(--color-faint);
+  user-select: none;
+}
+/* A dispatch prompt is what one agent wrote to another: prose, and it reads as prose. */
+.frizz-tool-prose {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgb(from var(--color-fg) r g b / 0.85);
+}
+/* Past ~16 lines the body clamps; the header's expand affordance reveals the rest. */
+.frizz-bash-clamp {
+  max-height: 320px;
+  overflow-y: hidden;
+}
+.frizz-bash-expand {
+  display: block;
+  padding-top: 4px;
+  color: var(--color-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  outline: none;
+  transition: color 0.12s;
+}
+.frizz-bash-expand:hover { color: var(--color-fg); }
+
+/* The to-do checklist body (TodoBlock). A LIST, not a code body: it drops .frizz-bash-body's pre-wrap
+   and gets per-row padding instead, so a long item wraps under its own text rather than under its
+   checkbox. */
+.frizz-todo-list {
+  margin: 0;
+  padding: 5px 10px 6px;
+  list-style: none;
+}
+.frizz-todo-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 1.5px 4px;
+  margin: 0 -4px;
+  border-radius: 3px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* The row IN PROGRESS — the one the header headlines. A tint (not a colour on the text) so it reads as
+   "this line" without competing with the status glyphs, which are the row's own signal. */
+.frizz-todo-row[data-current="true"] { background: var(--color-panel-2); }
+/* Icon-beside-text is an INK problem, so the checkbox places itself (scripts/verify-todo-render.mjs runs
+   the measurement as a gate). The reference is the text's CAP BAND (baseline → cap height), not the string's
+   own ink box: a row whose text has a descender measured 3.06px against its own ink while a row without one
+   measured 1.88px — for the same glyph at the same size — and a per-row nudge is meaningless. In a header
+   and in a list alike the glyph sits on the text's baseline and the browser's own `cap` unit lifts its centre
+   onto the band, the same three lines as `.frizz-tool-chevron`, so there is nothing to re-measure when the
+   font or the size moves. The glyph is sized `1em` (TodoBlock.tsx) to match. */
+.frizz-todo-mark {
+  align-self: baseline;
+  margin-top: calc(1cap - 1em);
+  translate: 0 calc(0.5em - 0.5cap);
+}
+
+/* A second pane in a body: the shell result codex records in the rollout (Claude Bash calls have none), or a
+   screenshot's text. The hairline is what parts it from the pane above. Output is what the command said
+   rather than what it was, so it reads a step down. */
+.frizz-bash-output-body {
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+}
+.frizz-bash-output-body:first-child { border-top: 0; }
+/* The label only where two panes would otherwise be ambiguous: structured tool input over its output, a
+   to-do list's note. A Bash command's `$` already says which pane is which. */
+.frizz-bash-output-label {
+  padding: 4px 10px 0;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  color: var(--color-faint);
+  border-top: 1px solid var(--color-border);
+}
+.frizz-bash-output-label:first-child { border-top: 0; }
+.frizz-bash-output-label + .frizz-bash-body { padding-top: 2px; border-top: 0; }
+
+/* The frame around a rendered picture (components/ImageFrame): a block of its own, the one thing here that
+   keeps a border, because a screenshot is overwhelmingly dark UI whose own edges vanish on the page. The
+   corner is `--block-radius` (styles.css), the one every block-level element in the app wears, and the
+   clip is what makes it hold against the mat's fill. The type is for the caption under the picture. */
+.frizz-image-frame {
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.55;
@@ -100,120 +337,6 @@
   border-radius: var(--block-radius);
   overflow: hidden;
   background: var(--color-bg);
-}
-.frizz-bash-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 12px;
-  background: var(--color-panel-2);
-}
-/* The "Bash" label sits in the same near-white the tool NAMES use (not the dimmer detail gray). */
-.frizz-bash-label { color: rgb(from var(--color-fg) r g b / 0.85); font-size: 11.5px; }
-/* The tool-name label (READ / EDIT / AGENT …) is petite-caps at the SAME 11.5px as the detail path
-   beside it. Its small-caps ride optically LOW in the line-box, so lift the label a pixel and drop
-   the detail beside it a pixel — the two then meet on a shared optical baseline instead of the raw
-   flex center. Covers both the Bash/Read/Agent header and the Edit diff header (sibling metrics). */
-.frizz-bash-header .frizz-bash-label,
-.frizz-diff-header .frizz-bash-label { position: relative; top: 0.8px; }
-.frizz-bash-header > span:first-child > :not(.frizz-bash-label, .frizz-tool-mark),
-.frizz-diff-header > span:first-child > :not(.frizz-bash-label, .frizz-tool-mark) { position: relative; top: 1px; }
-/* A card that has something live behind it — a dispatched sub-agent, a detached background shell —
-   leads its header with a liveness DOT instead of text (both mirror the child lines under the prompt
-   box). The 1px drop above is a TEXT correction — small-caps and a path meeting on one optical
-   baseline — and a filled 6px circle shares none of those metrics: with that drop applied its ink
-   measured 0.65px BELOW the "Agent" ink centre. So the mark is excluded from the text rule and
-   carries its own ink correction, in em so it tracks the header's font size rather than pinning to
-   today's 12.5px (re-measured residual: 0.02px, and 0.03px at double the size). */
-.frizz-tool-mark { position: relative; transform: translateY(0.028em); }
-/* The status meta (done · 2m) shares the header's 11.5px so it doesn't read as an afterthought; its
-   small-caps sit low in that box, so drop it a pixel onto the row's optical baseline. */
-.frizz-tool-header-caps { position: relative; top: 1px; }
-.frizz-tool-failed { color: var(--code-del-sign); }
-.frizz-bash-expand {
-  color: var(--color-muted);
-  font-size: 11px;
-  cursor: pointer;
-  outline: none;
-  transition: color 0.12s;
-}
-.frizz-bash-expand:hover { color: var(--color-fg); }
-/* pre-wrap: long lines wrap; a wide unbreakable token scrolls INSIDE the block (overflow-x auto),
-   never the page. margin:0 keeps the block on the message's explicit-spacer rhythm. */
-.frizz-bash-body {
-  margin: 0;
-  padding: 8px 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-x: auto;
-  color: var(--color-fg);
-  border-top: 1px solid var(--color-border);
-}
-/* Past ~16 lines the body clamps; the header's expand affordance reveals the rest. */
-.frizz-bash-clamp {
-  max-height: 320px;
-  overflow-y: hidden;
-}
-
-/* The to-do checklist body (TodoBlock). A LIST, not a code body: it drops .frizz-bash-body's pre-wrap
-   and gets per-row padding instead, so a long item wraps under its own text rather than under its
-   checkbox. Same top border as every other card body so the header keeps its divider. */
-.frizz-todo-list {
-  margin: 0;
-  padding: 5px 12px 6px;
-  list-style: none;
-  border-top: 1px solid var(--color-border);
-}
-.frizz-todo-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 1.5px 4px;
-  margin: 0 -4px;
-  border-radius: 3px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-/* The row IN PROGRESS — the one the header headlines. A tint (not a colour on the text) so it reads as
-   "this line" without competing with the status glyphs, which are the row's own signal. */
-.frizz-todo-row[data-current="true"] { background: var(--color-panel-2); }
-/* Icon-beside-text is an INK problem, so the checkbox is EXCLUDED from the header's blanket 1px text
-   nudge above (that correction is for small-caps meeting a path; an SVG shares none of those metrics)
-   and carries its own correction, measured in a real browser (scripts/verify-todo-render.mjs runs the
-   measurement as a gate). The reference is the text's CAP BAND (baseline → cap height), not the
-   string's own ink box: a row whose text has a descender measured 3.06px against its own ink while a
-   row without one measured 1.88px — for the same glyph at the same size — and a per-row nudge is
-   meaningless. Both are in `em`, and the glyph is sized in `1em` too (TodoBlock.tsx) so it scales with
-   the text the correction is measured against.
-
-   The two contexts need OPPOSITE nudges, which is why one shared value could never have worked:
-     row    — align-items:flex-start parks the glyph box at the row's top, ABOVE the cap band's centre
-              by 2.17px at 12px text, so it moves DOWN. Exactly proportional: residual 0px at 12px,
-              0px at 24px, 0px at 48px.
-     header — align-items:center centres the box on the LINE BOX, whose centre sits BELOW the cap
-              band's (the line box carries descender space), by 1.58px at 11.5px text, so it moves UP.
-              NOT proportional below ~23px, and that is the geometry, not the correction: measured raw,
-              11.5px needs -1.576px (-0.137em) but 23px needs -2.152px (-0.0935em) and 46px -4.319px
-              (-0.0939em) — proportional from 23px up, half a pixel adrift at 11.5px, because an 11.5px
-              box centred on a flex line lands on a sub-pixel Chrome resolves differently than at 23px.
-              No single em value zeroes both, so this is the value measured AT THE SIZE THAT SHIPS
-              (residual 0px at 11.5px, the only size the header renders at). */
-.frizz-bash-header .frizz-todo-mark { position: relative; transform: translateY(-0.137em); }
-.frizz-todo-row .frizz-todo-mark { position: relative; transform: translateY(0.181em); }
-
-/* Codex exec output: a second pane below the command in a BashBlock (the shell result codex records
-   in the rollout — Claude Bash calls have none). The label bar is the divider (border-top); the output
-   body drops its own top border so the two don't stack a double line. */
-.frizz-bash-output-label {
-  padding: 3px 12px;
-  font-size: 10.5px;
-  color: var(--color-muted);
-  background: var(--color-panel-2);
-  border-top: 1px solid var(--color-border);
-}
-.frizz-bash-output-body {
-  border-top: none;
 }
 
 /* Token colours — the coarse kinds highlight.ts emits, drawn from the app's shared --code-* palette

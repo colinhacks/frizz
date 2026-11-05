@@ -10,7 +10,7 @@ import test from "node:test"
 // so every spacing predicate used to see "a card" and charge the tight 6px run that binds a batch of
 // compact bands together. A picture is not a compact band — measured 6.19px from the frame's bottom
 // border to the shimmer's box — so it takes PICTURE_STEP against whatever it neighbours, on both sides,
-// while the compact exceptions around it keep the run.
+// while the compact exceptions around it keep their rail.
 //
 // The picture card is a SendUserFile delivery now. The image `Read` that prompted the rule folds into
 // the collapsed digest since 2026-10-03 (maintainer: "No images or screenshots are visible unless you
@@ -27,6 +27,8 @@ import test from "node:test"
 const baseUrl = process.env.FRIZZ_PICTURE_SPACING_E2E_URL
 
 const TIGHT = 6
+// Two compact rows share one rail, with no gap between them (ChatView ToolRailRows).
+const RAIL = 0
 const STEP = 14
 const PICTURE = 22
 // The virtualizer positions rows at fractional offsets, so a measured gap lands within a sub-pixel of
@@ -85,7 +87,7 @@ async function cardGaps(page: import("puppeteer").Page) {
   })
 }
 
-test("a picture takes its own gap on both sides, and the compact exceptions around it keep the tight run", {
+test("a picture takes its own gap on both sides, and the compact exceptions around it keep their rail", {
   skip: !baseUrl,
   timeout: 60_000,
 }, async () => {
@@ -110,16 +112,16 @@ test("a picture takes its own gap on both sides, and the compact exceptions arou
     assert.equal(await page.$("[data-tool-image]"), null, "the image Read's card sits inside the collapsed digest")
     assert.equal(await page.$$eval("[data-virtualized-transcript] img", (imgs) => imgs.length), 0, "no picture is drawn")
 
-    // 2. CONTROL: two compact background-op cards in the same shapes. Both the seam between them and
-    //    the shimmer below them stay at the tight run — the picture gap is charged to pictures, not to
-    //    every card that escapes the digest.
+    // 2. CONTROL: two compact background-op rows in the same shapes. The seam between them stays on one
+    //    rail and the shimmer below them at the tight run — the picture gap is charged to pictures, not
+    //    to every row that escapes the digest.
     await page.goto(fixtureUrl("?case=control"), { waitUntil: "domcontentloaded" })
     await page.waitForSelector("[data-working-indicator]")
     await settled(page)
     const control = await cardGaps(page)
     // Two cards, one seam: the lead-in Bash is inside the collapsed digest and draws no card of its own.
     assert.equal(control.length, 1, `the control must draw two op cards, got ${control.length + 1}`)
-    for (const gap of control) near(gap, TIGHT, "a compact exception seam")
+    for (const gap of control) near(gap, RAIL, "a compact exception seam")
     near((await tailGap(page)).aboveWorking!, TIGHT, "the shimmer under a compact card")
 
     // 3. Two picture cards batched in ONE message, then an ordinary tool band in the next: the seam

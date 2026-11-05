@@ -3,8 +3,8 @@ import type { TranscriptEdit } from "@frizz/shared"
 import { renderDiff, type DiffHunk } from "../lib/diff/index.ts"
 import "../lib/diff/diff.css"
 import { openLocalPath } from "../lib/local-file-links.ts"
-import { basename } from "../lib/paths.ts"
 import { ToolDisclosureHeader } from "./ToolDisclosureHeader.ts"
+import { shortenTarget, ToolPathText } from "./ToolRow.tsx"
 
 // A file path rendered as an openable link. Plain (inherits the surrounding gray); brightens +
 // underlines on hover. Used by the tool-call one-liners and the diff header.
@@ -33,11 +33,10 @@ export function PathLink({ path, className = "", children }: { path: string; cla
   )
 }
 
-// The header shows the basename (lib/paths.ts — either separator); the full path stays in the link title.
-
 // A gent-style rendered diff for a group of Edit/Write/MultiEdit calls that all touch ONE file
-// (consecutive same-file edits merge upstream in collapseTools): a bordered block with a header row
-// (clickable file path + summed +N/−N counts) and a syntax-highlighted, line-numbered body. Multiple
+// (consecutive same-file edits merge upstream in collapseTools): a tool row whose node is filled, because
+// an edit is the one call that changed something (clickable repo-relative path + summed +N/−N counts,
+// with the full path in the link title), over a syntax-highlighted, line-numbered body. Multiple
 // edits stack as sequential hunk groups under the one header, divided by a hairline. A long line
 // wraps under its own code, or with the Wrap code setting off the body scrolls sideways, never the
 // page (lib/diff/diff.css). The body starts hidden — the header alone shows — and its explicit
@@ -56,7 +55,7 @@ export function DiffBlock({ edits, meta }: { edits: TranscriptEdit[]; meta?: Rea
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="frizz-diff">
+    <div className="frizz-diff" data-tool-node="edit">
       <ToolDisclosureHeader
         className="frizz-diff-header"
         controls={bodyId}
@@ -64,20 +63,24 @@ export function DiffBlock({ edits, meta }: { edits: TranscriptEdit[]; meta?: Rea
         label={`${open ? "Collapse" : "Expand"} Edit diff: ${file}`}
         onToggle={() => setOpen(!open)}
         meta={meta}
-        chevronSize={11}
       >
-        {/* Left group: petite-caps "Edit" label (sibling of Bash/Read), file path, +N −M summary. The
-            chevron is pushed to the far right by the header's space-between (aligns the three families). */}
-        <span className="petite-caps frizz-bash-label shrink-0">Edit</span>
+        {/* The counts belong to the path, so they ride beside it as one group rather than at the far edge
+            with the reading. */}
+        <span className="frizz-bash-label shrink-0">Edit</span>
         <span className="frizz-diff-file">
-          <PathLink path={file} className="text-inherit no-underline">
-            {basename(file)}
+          <PathLink path={file}>
+            <ToolPathText path={shortenTarget(file)} />
           </PathLink>
         </span>
-        {additions > 0 && <span className="frizz-diff-add tabular-nums shrink-0">+{additions}</span>}
-        {deletions > 0 && <span className="frizz-diff-del tabular-nums shrink-0">−{deletions}</span>}
+        {(additions > 0 || deletions > 0) && (
+          <span className="frizz-diff-stat">
+            {additions > 0 && <span className="frizz-diff-add">+{additions}</span>}
+            {additions > 0 && deletions > 0 && " "}
+            {deletions > 0 && <span className="frizz-diff-del">−{deletions}</span>}
+          </span>
+        )}
       </ToolDisclosureHeader>
-      <div id={bodyId} className="frizz-diff-body" hidden={!open}>
+      <div id={bodyId} className="frizz-tool-body frizz-diff-body" hidden={!open}>
         {open && diffs.map((d, i) => (
           <div key={i} className={i > 0 ? "frizz-diff-editsep" : undefined}>
             <DiffBody hunks={d.hunks} collapsedAfter={d.collapsedAfter} />

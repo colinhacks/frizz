@@ -141,12 +141,13 @@ const check = (ok, label, detail) => { console.log(`${ok ? "PASS" : "FAIL"}  ${l
 try {
   const page = await browser.newPage()
   page.on("pageerror", (e) => pageErrors.push(String(e)))
-  page.on("console", (m) => { if (m.type() === "error") pageErrors.push(m.text()) })
+  // A 404's text names no URL, and the sandbox serves no favicon and no control endpoint.
+  page.on("console", (m) => { if (m.type() === "error" && !/404/.test(m.text())) pageErrors.push(m.text()) })
   await page.setViewport({ width: 1400, height: 1100, deviceScaleFactor: 2 })
-  await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}`, { waitUntil: "networkidle0" })
-  await page.waitForSelector("[data-todo-card]", { timeout: 20_000 })
-  // Tool bands past 4 calls collapse behind an "N tool calls" toggle; open every one so all the cards mount.
-  for (const toggle of await page.$$('button[aria-label*="tool calls"]')) {
+  await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}/full`, { waitUntil: "networkidle0" })
+  // Ordinary calls fold behind a "Ran N tool calls" toggle; open every one so all the rows mount.
+  await page.waitForSelector('button[aria-label*="tool call"]', { timeout: 20_000 })
+  for (const toggle of await page.$$('button[aria-label*="tool call"]')) {
     if ((await toggle.evaluate((el) => el.getAttribute("aria-expanded"))) === "false") await toggle.click()
   }
   await page.waitForFunction(() => document.querySelectorAll("[data-todo-card]").length >= 1, { timeout: 10_000 })
@@ -159,7 +160,6 @@ try {
   // ONE checklist card in this thread: the TaskList. The four creates and three updates carry no list, so
   // they must NOT be promoted into to-do cards — inventing a list for them is exactly what this doesn't do.
   check(cardsSeen.length === 1, "only the enumerating call becomes a checklist card", `saw ${cardsSeen.length}: ${JSON.stringify(cardsSeen.map((c) => c.text))}`)
-  // "Todos", not "TODOS": the caps are CSS (petite-caps), so textContent carries the authored case.
   check(cardsSeen[0].text.startsWith("Todos"), "and it carries the Todos label", cardsSeen[0].text)
   check(cardsSeen[0].text.includes("2/4"), "its header counts the list it returned", cardsSeen[0].text)
   check(cardsSeen[0].text.includes("Fix the coarse network grant"), "and headlines the step IN PROGRESS", cardsSeen[0].text)
@@ -201,7 +201,7 @@ try {
   const noteCard = await page.evaluateHandle(() =>
     [...document.querySelectorAll(".frizz-bash")].find((c) => c.querySelector(".frizz-bash-label")?.textContent === "TaskCreate"))
   await noteCard.asElement().$eval(".frizz-bash-header", (el) => el.click())
-  await page.waitForFunction(() => [...document.querySelectorAll(".frizz-bash-output-body")].some((p) => p.textContent.includes("MAINTAINER RULING")), { timeout: 10_000 })
+  await page.waitForFunction(() => [...document.querySelectorAll(".frizz-bash-body")].some((p) => p.textContent.includes("MAINTAINER RULING")), { timeout: 10_000 })
   check(true, "the description IS reachable, in the delta card's expandable body")
 
   // A row longer than the card WRAPS, and wraps under its own text — the checkbox keeps its column and the
@@ -288,8 +288,7 @@ try {
     const card = document.querySelector("[data-todo-card]")
     const rows = [...card.querySelectorAll(".frizz-todo-list .frizz-todo-row")]
     const byStatus = (word) => rows.find((r) => r.textContent.trim().endsWith(word))
-    // The header glyph aligns to the HEADLINE beside it, not to the petite-caps label (which carries its
-    // own separate optical correction) — so measure inside the headline group specifically.
+    // The header glyph aligns to the HEADLINE beside it — so measure inside the headline group specifically.
     return [
       analyze(byStatus("to do"), "row · pending"),
       analyze(byStatus("in progress"), "row · in progress"),
@@ -352,8 +351,8 @@ try {
   // first, which read as a 42px error on the first run.
   await page.reload({ waitUntil: "networkidle0" })
   await page.addStyleTag({ content: "[data-todo-card]{font-size:25px !important}.frizz-todo-row{font-size:24px !important;white-space:nowrap}.frizz-bash-header .frizz-bash-label,.frizz-bash-header [data-todo-headline]{font-size:23px !important}" })
-  await page.waitForSelector("[data-todo-card]", { timeout: 20_000 })
-  for (const toggle of await page.$$('button[aria-label*="tool calls"]')) {
+  await page.waitForSelector('button[aria-label*="tool call"]', { timeout: 20_000 })
+  for (const toggle of await page.$$('button[aria-label*="tool call"]')) {
     if ((await toggle.evaluate((el) => el.getAttribute("aria-expanded"))) === "false") await toggle.click()
   }
   await page.waitForFunction(() => document.querySelectorAll("[data-todo-card]").length >= 1, { timeout: 10_000 })
@@ -365,23 +364,16 @@ try {
   const worstRow = scaled.filter((a) => a.glyph.startsWith("row")).reduce((w, a) => (Math.abs(a.nudgeDownPx) > Math.abs(w.nudgeDownPx) ? a : w))
   check(Math.abs(worstRow.nudgeDownPx) <= 0.3, "the rows' em correction holds exactly at DOUBLE the font size",
     `worst: ${worstRow.glyph} off by ${worstRow.nudgeDownPx}px`)
-  // The HEADER is not, and that is a property of the geometry rather than of the correction. Measured raw
-  // (correction neutralized, one pass per page load, cap height and glyph ink both scaling EXACTLY):
-  // 11.5px needs -1.576px (-0.137em), 23px needs -2.152px (-0.0935em), 46px needs -4.319px (-0.0939em).
-  // Proportional from 23px up, but half a pixel adrift at 11.5px — an 11.5px box centred on a flex line
-  // lands on a sub-pixel Chrome resolves differently than it does at 23px. No single em value can zero
-  // both, so the shipped value is the one measured AT THE SIZE THAT SHIPS (11.5px, residual 0px); the
-  // header renders at no other size. This bound just pins the drift so a future change to the header's
-  // metrics can't quietly grow it.
+  // So is the HEADER: its glyph sits on the baseline and the browser's own `cap` unit centres it.
   const hdr = scaled.find((a) => a.glyph.startsWith("header"))
-  check(Math.abs(hdr.nudgeDownPx) <= 1.05, "the header's correction stays bounded at DOUBLE the font size (see comment)",
+  check(Math.abs(hdr.nudgeDownPx) <= 0.3, "the header's correction holds at DOUBLE the font size",
     `off by ${hdr.nudgeDownPx}px`)
 
   // ---- CODEX: a different to-do protocol, the SAME card ----
   const codex = page
-  await codex.goto(`http://127.0.0.1:${port}/thread/${CODEX_SLUG}`, { waitUntil: "networkidle0" })
-  await codex.waitForSelector("[data-todo-card]", { timeout: 20_000 })
-  for (const toggle of await codex.$$('button[aria-label*="tool calls"]')) {
+  await codex.goto(`http://127.0.0.1:${port}/thread/${CODEX_SLUG}/full`, { waitUntil: "networkidle0" })
+  await codex.waitForSelector('button[aria-label*="tool call"]', { timeout: 20_000 })
+  for (const toggle of await codex.$$('button[aria-label*="tool call"]')) {
     if ((await toggle.evaluate((el) => el.getAttribute("aria-expanded"))) === "false") await toggle.click()
   }
   const codexCards = await codex.$$("[data-todo-card]")

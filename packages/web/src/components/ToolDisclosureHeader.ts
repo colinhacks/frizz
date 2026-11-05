@@ -1,5 +1,6 @@
 import { createElement, type MouseEvent, type ReactNode } from "react"
 import { ChevronRight } from "lucide-react"
+import { TOOL_ROW_LEAD, TOOL_ROW_TAIL } from "../lib/toolRow.ts"
 
 type ToolDisclosureHeaderProps = {
   children: ReactNode
@@ -9,7 +10,6 @@ type ToolDisclosureHeaderProps = {
   label: string
   meta?: ReactNode
   onToggle: () => void
-  chevronSize?: number
 }
 
 // Anything in the header that owns its OWN click — a file deep-link, the sub-agent drill-in, the
@@ -49,7 +49,6 @@ export function ToolDisclosureHeader({
   label,
   meta,
   onToggle,
-  chevronSize = 12,
 }: ToolDisclosureHeaderProps) {
   function onHeaderClick(event: MouseEvent<HTMLDivElement>) {
     // The link / drill-in / chevron each handle themselves. Standing down here also keeps the
@@ -64,10 +63,10 @@ export function ToolDisclosureHeader({
   return createElement(
     "div",
     { className: `${className} w-full cursor-pointer text-left`, "data-expanded": expanded, onClick: onHeaderClick },
-    createElement("span", { className: "flex min-w-0 items-center gap-2" }, children),
+    createElement("span", { className: TOOL_ROW_LEAD }, children),
     createElement(
       "span",
-      { className: "flex shrink-0 items-center gap-1.5" },
+      { className: TOOL_ROW_TAIL },
       meta,
       createElement(
         "button",
@@ -79,15 +78,15 @@ export function ToolDisclosureHeader({
           "aria-label": label,
           title: label,
           onClick: onToggle,
+          // A bigger target on three sides. Not the fourth: the row has no inset of its own any more, so a
+          // negative margin on the right would push this past the column's edge.
           className:
-            "-m-1 inline-flex shrink-0 items-center justify-center rounded p-1 text-muted outline-none transition-colors hover:text-fg/80 focus-visible:ring-1 focus-visible:ring-focus-ink-60",
+            "-my-1 -ml-1 inline-flex shrink-0 items-center justify-center rounded py-1 pl-1 text-muted outline-none transition-colors hover:text-fg/80 focus-visible:ring-1 focus-visible:ring-focus-ink-60",
         },
         createElement(ChevronRight, {
           "aria-hidden": true,
-          size: chevronSize,
-          // Lucide's right-chevron sits a fraction low in its viewbox. A tiny optical lift makes
-          // its visual center agree with the petite-caps running state beside it.
-          className: `relative -top-px shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`,
+          size: 12,
+          className: `frizz-tool-chevron${expanded ? " rotate-90" : ""}`,
         }),
       ),
     ),

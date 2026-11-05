@@ -36,8 +36,8 @@ test("every rendered image sits in the one frame: border, inset mat, centered pi
   // renders those constants rather than a second copy that could drift from the one Markdown uses.
   assert.match(imageFrame, /className=\{IMAGE_FRAME\}/)
   assert.match(imageFrame, /className=\{IMAGE_FRAME_MAT\}/)
-  // The outer border + the tool-card typography, so a framed picture belongs to the tool-card family.
-  assert.match(frame, /IMAGE_FRAME\s*=\s*"frizz-bash\b/)
+  // The frame's own class: the tool rows it used to share one with draw no box any more.
+  assert.match(frame, /IMAGE_FRAME\s*=\s*"frizz-image-frame\b/)
   // The mat: a little inset padding, a step lighter than the card so a dark screenshot keeps an edge,
   // and the picture centered in it however narrow the picture is.
   assert.match(frame, /IMAGE_FRAME_MAT\s*=\s*"[^"]*\bjustify-center\b[^"]*\bbg-panel-2\b[^"]*\bp-1\.5\b/)

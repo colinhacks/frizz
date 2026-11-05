@@ -6,11 +6,14 @@ import test from "node:test"
 // FRIZZ_TOOL_BATCH_SPACING_E2E_URL to its origin.
 //
 // The invariant after the minimal renderer: provider batching is invisible while collapsed, and after
-// explicit expansion the detailed cards still use one 6px pitch. Measured in the browser rather than
-// asserted on the tree because both disclosure grouping and card spacing are layout behavior.
+// explicit expansion the detailed rows share one rail with no gap, whichever batch each came from. Measured
+// in the browser rather than asserted on the tree because both disclosure grouping and row spacing are
+// layout behavior.
 const baseUrl = process.env.FRIZZ_TOOL_BATCH_SPACING_E2E_URL
 
 const TIGHT = 6
+// Two rows on one rail are true DOM neighbours with no gap between them (ChatView ToolRailRows).
+const RAIL = 0
 // Prose controls: boundaries on either side of a prose-bearing message must NOT be tight. Their exact
 // heights are font-dependent, so assert only that they are comfortably wider than the tool run.
 const PROSE_MIN = 30
@@ -49,7 +52,7 @@ async function gaps(page: import("puppeteer").Page, nth: number) {
         const r = n.getBoundingClientRect()
         return r.height > 0 && r.top >= top - 0.5 && r.bottom <= bottom + 0.5
       })
-    const out: { gap: number; spans: "nothing" | "digest" | "prose"; from: string; to: string }[] = []
+    const out: { gap: number; spans: "nothing" | "digest" | "prose"; sameRail: boolean; from: string; to: string }[] = []
     for (let i = 1; i < cards.length; i++) {
       const prev = cards[i - 1]
       const cur = cards[i]
@@ -66,6 +69,7 @@ async function gaps(page: import("puppeteer").Page, nth: number) {
       out.push({
         gap: Math.round((bottom - top) * 10) / 10,
         spans: hasProse ? "prose" : hasDigest ? "digest" : "nothing",
+        sameRail: prev.nextElementSibling === cur,
         from: (prev.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 30),
         to: (cur.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 30),
       })
@@ -74,8 +78,8 @@ async function gaps(page: import("puppeteer").Page, nth: number) {
   }, nth)
 }
 
-// A seam with NOTHING painted in it must sit at the tight run pitch — including the two either side of
-// an ejected background card, which is the arrangement the ejection introduced.
+// A seam with NOTHING painted in it is either two rows on one rail, or two rails at the tight run pitch —
+// including the seam into an ejected background card, which is the arrangement the ejection introduced.
 const isProseBoundary = (g: { spans: string }) => g.spans === "prose"
 
 for (const [surface, query, column] of [
@@ -220,10 +224,13 @@ for (const [surface, query, column] of [
 
       const tool = measured.filter((g) => g.spans === "nothing")
       for (const g of tool) {
-        assert.equal(g.gap, TIGHT, `${g.from} → ${g.to} must sit at the tight run`)
+        // Within a sub-pixel: the virtualizer positions the rows either side of a message seam at fractional
+        // offsets, so assert the pitch, not the rounding.
+        const expected = g.sameRail ? RAIL : TIGHT
+        assert.ok(Math.abs(g.gap - expected) < 0.5, `${g.from} → ${g.to} must sit ${g.sameRail ? "on one rail" : "at the tight run"}, got ${g.gap}px`)
       }
-      // The expanded detail actually contains adjacent cards — otherwise the assertion above is vacuous.
-      assert.ok(tool.length >= 4, `fixture must contain intra-batch pairs, got ${tool.length}`)
+      // The expanded detail actually contains adjacent rows — otherwise the assertion above is vacuous.
+      assert.ok(tool.filter((g) => g.sameRail).length >= 4, `fixture must contain intra-batch pairs, got ${JSON.stringify(tool)}`)
       // …including the seam INTO the ejected background card. It is a display message of its own, so it
       // is exactly the card that could have opened a paragraph break above itself, and it must not. (Its
       // seam BELOW is not a bare gap — the next run's digest header sits in it — so it is covered by the
