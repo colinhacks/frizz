@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { TOKENS, expiresOn, findGroup, planToken, staleTokens } from "./cloudflare-tokens.mjs"
+import { TOKENS, expiresOn, findGroup, keywardSetArgs, planToken, staleTokens } from "./cloudflare-tokens.mjs"
 
 // Shapes from GET /accounts/{account_id}/tokens/permission_groups, cut down to the fields the plan
 // reads. Not captured from the live account: the first real run resolves against the real list and
@@ -69,6 +69,13 @@ test("the admin token takes every group, writes included, on the account and all
   const granted = plan.policies.flatMap((p) => p.permission_groups.map((g) => g.id)).sort()
   assert.deepEqual(granted, groups.map((g) => g.id).sort())
   assert.deepEqual(plan.policies[1].resources, { [`${ACCOUNT}.acct`]: { [`${ZONE}.*`]: "*" } })
+})
+
+test("only the read-only token is stored without Touch ID, and the admin token never is", () => {
+  assert.deepEqual(TOKENS.filter((t) => t.sink.noTouchId).map((t) => t.key), ["read"])
+  assert.equal(spec("read").every, "read")
+  assert.deepEqual(keywardSetArgs({ secret: "CLOUDFLARE_API_TOKEN", about: "reads", noTouchId: true }), ["set", "--no-touch-id", "--about", "reads", "CLOUDFLARE_API_TOKEN"])
+  assert.ok(!keywardSetArgs(spec("admin").sink).includes("--no-touch-id"))
 })
 
 test("a group outside the account and its zones, such as a user-level one, is never granted", () => {

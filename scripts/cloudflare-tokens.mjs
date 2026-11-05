@@ -13,10 +13,11 @@
 // WHY. From 2026-09-21 to 2026-10-08 an attacker deployed backdoored builds of both frizz.sh Workers
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file). Now
 // the token that can deploy lives only in a GitHub environment that waits for the maintainer's
-// approval, and the laptop's two tokens are sealed in Keyward and reach a command only through
-// `keyward run`, one Touch ID per run (the global `cloudflare` skill):
+// approval, and the laptop's two tokens are sealed in Keyward (the global `cloudflare` skill). The
+// read-only one is stored with `--no-touch-id`, so reading asks nothing (maintainer, 2026-11-04: "these
+// read-only tokens can be given out without Touch ID"); the admin one costs one Touch ID per run:
 //
-//   keyward run --reason "<the task>" CLOUDFLARE_API_TOKEN -- wrangler deployments list --name frizz-relay
+//   keyward --reason "<the task>" -- wrangler deployments list --name frizz-relay
 //   keyward run --reason "<the task>" CLOUDFLARE_ADMIN_TOKEN -- sh -c 'CLOUDFLARE_API_TOKEN="$CLOUDFLARE_ADMIN_TOKEN" exec cf …'
 //
 // THE CREDENTIAL. The first run takes a short-lived dashboard token with Account API Tokens Edit,
@@ -69,7 +70,7 @@ export const TOKENS = [
     key: "read",
     name: "laptop read-only (Keyward)",
     every: "read",
-    sink: { kind: "keyward", secret: "CLOUDFLARE_API_TOKEN", about: "Cloudflare, read-only on the Frizz account and its zones" },
+    sink: { kind: "keyward", secret: "CLOUDFLARE_API_TOKEN", about: "Cloudflare, read-only on the Frizz account and its zones", noTouchId: true },
   },
   {
     key: "admin",
@@ -153,13 +154,18 @@ function client(token) {
   }
 }
 
+/** The `keyward set` arguments for a Keyward sink. `noTouchId` is for a token that can only read. */
+export function keywardSetArgs(sink) {
+  return ["set", ...(sink.noTouchId ? ["--no-touch-id"] : []), ...(sink.about ? ["--about", sink.about] : []), sink.secret]
+}
+
 /** Hand `value` to its sink on stdin. Returns null on success, or what went wrong (never the value). */
 function deliver(sink, value, repoRoot) {
   // `keyward set` stores for the repository the current directory belongs to, so it runs from here.
   const [command, args] =
     sink.kind === "gh"
       ? ghCommand(`Store the ${sink.secret} secret on ${REPO}`, ["secret", "set", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
-      : ["keyward", ["set", ...(sink.about ? ["--about", sink.about] : []), sink.secret]]
+      : ["keyward", keywardSetArgs(sink)]
   const result = spawnSync(command, args, { input: value, cwd: repoRoot, encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`
   if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
