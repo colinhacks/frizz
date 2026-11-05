@@ -88,6 +88,13 @@ if (frizzRoot === "isolated") {
   }
 }
 process.env.HOME = home
+// A real-HOME stack keeps its state in the temp root, where Frizz would read as signed out to GitHub, and
+// a PR-watcher e2e on one needs a real PR. The DIRECTORY, for the reason given under `--creds` below.
+if (frizzRoot === "isolated" && existsSync(realGithubCredentials)) {
+  const stackGithub = join(frizzPaths({ home }).data, "github")
+  mkdirSync(dirname(stackGithub), { recursive: true })
+  symlinkSync(realGithubCredentials, stackGithub)
+}
 if (!process.env.FRIZZ_RUNTIMES && !process.env.FRIZZ_RUNTIMES_DIR) process.env.FRIZZ_RUNTIMES_DIR = realRuntimes
 // See `--creds` above: on macOS a sandbox HOME never gets Claude's login.
 const claudeLogin = creds && !(process.platform === "darwin" && home !== realHome)
