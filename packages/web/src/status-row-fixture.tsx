@@ -119,6 +119,10 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/_frizz/rpc/settingsGet") return json({ result: {} })
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json({ result: preferences })
   if (url.pathname === "/_frizz/rpc/projectsList") return json({ result: projects })
+  // The prompt box's two doors in the row: the GitHub mark (`?norepo` hides it), and the plug.
+  if (url.pathname === "/_frizz/rpc/githubStatus") return json({ result: { inRepo: !params.has("norepo"), authed: true } })
+  if (url.pathname === "/_frizz/rpc/codexModels" || url.pathname === "/_frizz/rpc/claudeModels" || url.pathname === "/_frizz/rpc/acpAgents") return json({ result: [] })
+  if (url.pathname === "/_frizz/rpc/mcpStatus") return json({ result: { backend: preferences.backend, servers: [{ name: "linear", state: params.has("plugattention") ? "needs-auth" : "connected" }, { name: "sentry", state: "connected" }] } })
   return nativeFetch(input, init)
 }
 

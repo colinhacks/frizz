@@ -13,15 +13,16 @@ import { copyTextToClipboard } from "../lib/clipboard.ts"
 // it at github.com/login/device, and the server polls GitHub until they have. The row polls the server
 // meanwhile, and only then, so a signed-in Settings costs one read per open.
 //
-// `autoStart` is the GitHub picker's sign-in: someone who clicked the GitHub button asked for this, so the
-// code appears at once. Settings keeps its button, because opening Settings asks for nothing. Once per
-// mount, and never over a sign-in that failed, so Cancel stays cancelled and a failure stays readable.
+// `autoStart` is the GitHub picker's sign-in (GithubSignInSheet.tsx): someone who clicked the GitHub button
+// asked for this, so the code appears at once. Settings keeps its button, because opening Settings asks for
+// nothing. Once per mount, and never over a sign-in that failed, so a failure stays readable.
 
 const BUTTON = "button-outline shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-[12px] text-fg outline-none transition-colors hover:bg-panel-2 disabled:opacity-45"
 
 export const GITHUB_ACCOUNT_KEY = ["githubAccount"] as const
 
-export function GithubAccountField({ autoStart = false }: { autoStart?: boolean }) {
+/** The sign-in's state and its three moves, for this row and the picker's sheet (GithubSignInSheet.tsx). */
+export function useGithubSignIn({ autoStart = false }: { autoStart?: boolean } = {}) {
   const api = useRpc()
   const queryClient = useQueryClient()
   const account = useQuery({
@@ -52,9 +53,27 @@ export function GithubAccountField({ autoStart = false }: { autoStart?: boolean 
     autoStarted.current = true
     if (!data.signedIn && data.appRegistered && data.signIn.phase === "idle") start.mutate()
   }, [autoStart, data, start])
-
-  if (!data) return <div className="text-[12.5px] text-muted">{account.isError ? "Couldn't read the GitHub sign-in." : "Loading…"}</div>
   const startError = start.error instanceof Error ? start.error.message : null
+  return { account, start, cancel, signOut, startError, autoStarted: autoStarted.current }
+}
+
+export function useCopyCode(code: string) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await copyTextToClipboard(code)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return { copied, copy }
+}
+
+export function GithubAccountField() {
+  const { account, start, cancel, signOut, startError } = useGithubSignIn()
+  const data = account.data
+  if (!data) return <div className="text-[12.5px] text-muted">{account.isError ? "Couldn't read the GitHub sign-in." : "Loading…"}</div>
 
   if (data.signIn.phase === "pending") {
     return <DeviceCode code={data.signIn.userCode} url={data.signIn.verificationUri} onCancel={() => cancel.mutate()} />
@@ -97,15 +116,7 @@ export function GithubAccountField({ autoStart = false }: { autoStart?: boolean 
 }
 
 function DeviceCode({ code, url, onCancel }: { code: string; url: string; onCancel: () => void }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await copyTextToClipboard(code)
-      setCopied(true)
-    } catch {
-      setCopied(false)
-    }
-  }
+  const { copied, copy } = useCopyCode(code)
   return (
     <div data-github-device-code className="flex flex-col gap-2.5 rounded-md border border-border p-3">
       <span className="text-[12.5px] text-muted">Enter this code on GitHub to sign Frizz in:</span>

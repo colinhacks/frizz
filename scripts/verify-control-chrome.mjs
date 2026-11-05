@@ -52,7 +52,7 @@ try {
     if (!baseline) {
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/icon-rhythm-fixture.html`, { waitUntil: 'networkidle2' })
       await page.evaluate(async theme => (await import('/src/lib/theme.ts')).setThemePreference(theme), theme)
-      const selectors = ['[data-header-shell] .icon-focus-outline', 'button[title^="Attach"]', '[aria-label="Start threads from issues and PRs"]', '[aria-label="Send"]']
+      const selectors = ['[data-header-shell] .icon-focus-outline', 'button[title^="Attach"]', '[aria-label="Send"]']
       const edge = selector => page.$eval(selector, el => getComputedStyle(el).getPropertyValue('--tw-inset-ring-shadow'))
       // The PAINTED edge two frames into the focus, not the variable: `--tw-inset-ring-shadow` flips at
       // once even when a box-shadow transition holds the drawn edge transparent until its last frame —

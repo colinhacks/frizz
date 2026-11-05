@@ -2,16 +2,13 @@ import { useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import { Composer } from "./components/Composer.tsx"
-import { GithubTrigger, useGithubTriggerVisible } from "./components/GithubTrigger.tsx"
+import { GithubTrigger } from "./components/GithubTrigger.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import "./styles.css"
 
-// Browser QA for the dispatch composer's icon RAIL: paperclip (attach) + GitHub (investigate) + send.
-// The GitHub icon only renders when gh is authed in a repo, which the isolated adhoc stack can't satisfy
-// (it changes HOME), so stub githubStatus here — `?unauthed` stubs the signed-out answer, `?norepo` a project that is no GitHub repo.
-// Verifies: (1) the paperclip brightness matches the GitHub icon (both text-muted), (2) the
-// paperclip↔GitHub gap reads even with the GitHub↔send gap, and (3) when unauthed the GitHub slot
-// disappears entirely and the paperclip sits directly beside send — no reserved empty hole.
+// Browser QA for the GitHub door and the new-thread box's rail: the door sits in the line above the box,
+// and the rail is the paperclip and send. Stubs githubStatus — `?unauthed` the signed-out answer, `?norepo`
+// a project that is no GitHub repo.
 // `?heals` is the OUTAGE replay: the first answer is the one a dead network to api.github.com produces
 // (inRepo:false — `gh repo view` is a live API call), every answer after it is healthy. It exists to pin
 // that the trigger comes back on its own, with no reload, because on 2026-08-11 it did not: a nine-minute
@@ -35,11 +32,10 @@ window.fetch = async (input, init) => {
 
 function Fixture() {
   const [value, setValue] = useState("A short task prompt to enable the send button.")
-  // Same conditional slot pattern as DispatchForm: no trigger → no leftAction prop at all.
-  const githubTriggerVisible = useGithubTriggerVisible()
   return (
     <div className="min-h-screen bg-bg text-fg flex items-center justify-center p-10">
       <div className="w-[520px]">
+        <div className="mb-2.5 flex min-h-6 items-center justify-end gap-3"><GithubTrigger /></div>
         <Composer
           surface="newComposer"
           value={value}
@@ -49,7 +45,6 @@ function Fixture() {
           minHeight={96}
           maxHeight={340}
           footer={<span className="text-[11px] text-muted">gpt-5.6 · default</span>}
-          leftAction={githubTriggerVisible ? <GithubTrigger /> : undefined}
         />
       </div>
     </div>

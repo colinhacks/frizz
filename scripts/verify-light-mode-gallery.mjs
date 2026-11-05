@@ -77,15 +77,15 @@ try {
     await page.waitForSelector('[data-quota-account]')
     await shot('quota')
     await load('icon-rhythm')
-    await page.waitForSelector('[aria-label="Start threads from issues and PRs"]')
+    await page.waitForSelector('button[title^="Attach"]')
     await shot('controls')
     if (width === 1100) {
-      const scope = '.group:has(textarea[data-surface="iconRhythmFixture"])'
-      const selectors = `${scope} [title^="Attach"],${scope} [aria-label="Start threads from issues and PRs"],${scope} button[title^="Send"]`
+      const scope = '.group:has(textarea[data-surface="iconRhythmFixturePlain"])'
+      const selectors = `${scope} [title^="Attach"],${scope} button[title^="Send"]`
       const ink = await promisify(execFile)('nub', [join(root, 'scripts/ink-gaps.mjs'), page.url(), selectors, `--browser=${browser.wsEndpoint()}`, '--dsf=8', '--w=1100', '--h=1000', '--pad=0', `--before=document.documentElement.dataset.theme='${theme}'`], { cwd: root })
       writeFileSync(join(out, `${theme}-composer-ink.txt`), ink.stdout)
       const gaps = JSON.parse(ink.stdout).gaps.map(row => row.inkGap)
-      assert.ok(gaps.every(gap => gap >= 13.5 && gap <= 15.5) && Math.abs(gaps[0] - gaps[1]) < 1, `Bare composer icons keep even ink gaps: ${gaps}`)
+      assert.ok(gaps.length === 1 && gaps[0] >= 13.5 && gaps[0] <= 15.5, `The paperclip keeps its ink distance from send: ${gaps}`)
       await page.bringToFront()
       const viewport = page.viewport()
       await page.setViewport({ ...viewport, deviceScaleFactor: 8 })

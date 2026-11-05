@@ -25,8 +25,14 @@
 //   nub scripts/ink-gaps.mjs http://localhost:<vite>/status-row-fixture.html \
 //     '[data-status-row] button[aria-label="Settings"],[data-status-row] button[aria-label="Update Frizz"]' \
 //     --dsf=4 --pad=0
-export const STATUS_ROW_ACTION =
-  "-mx-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg/75 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong disabled:opacity-55"
+const ACTION_SQUARE =
+  "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg/75 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong disabled:opacity-55"
+export const STATUS_ROW_ACTION = `-mx-1.5 ${ACTION_SQUARE}`
+export const STATUS_ROW_PLUG_ACTION = `-mx-[7.5px] ${ACTION_SQUARE}`
 
 /** Icon size for every glyph in the row. Matched to the 24px target so no button reads heavier. */
 export const STATUS_ROW_ICON = 14
+/** The plug alone is a size up and trimmed further: lucide's paints 14 of its 24 units across where the gear
+ *  paints 20, so at 14px it read small beside the gear, and it wears more dead space in the square. Reload →
+ *  GitHub → plug → gear measured 11.50, 12.25 and 12.50px of ink (`scripts/ink-gaps.mjs`, dsf 4, 2026-11-05). */
+export const STATUS_ROW_PLUG_ICON = 15

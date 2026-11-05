@@ -735,8 +735,6 @@ export function TodosView() {
               reload and no quota reading at all. It sits below the heading rather than above it: the
               heading is this screen's title, the row belongs to the composer under it. */}
           <StatusRow />
-          {/* The GitHub picker's door rides inside DispatchForm's composer now (a small icon left of
-              the send button), so no separate trigger here. */}
           {/* The "Starting thread…" card FLOATS under the form. This column is centred in the window, so a
               card in flow lifted the heading, the status row and the box 36-37px for the length of the
               dispatch call (recorded 2026-10-13, three runs). There is no rail here to draw the pending

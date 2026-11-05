@@ -1,12 +1,12 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useIsMutating, useMutation, useQuery } from "@tanstack/react-query"
-import { acpModelSlug, type AccountBackend, type DispatchInput, type McpTarget } from "@frizz/shared"
+import { acpModelSlug, type AccountBackend, type DispatchInput } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { showToast, store } from "../store.ts"
 import { Composer } from "./Composer.tsx"
-import { McpPlug } from "./McpPlug.tsx"
-import { GithubTrigger, useGithubTriggerVisible } from "./GithubTrigger.tsx"
+import { GithubTrigger } from "./GithubTrigger.tsx"
+import { PromptBoxActions } from "./PromptBoxActions.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { SETTINGS_WRITE_KEY, settingsQuery } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
@@ -40,9 +40,6 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
-  // Gate the leftAction slot itself, not just the icon: Composer reserves rail space whenever the
-  // prop is set, so a hidden GithubTrigger must mean NO prop — not a null-rendering element.
-  const githubTriggerVisible = useGithubTriggerVisible()
   // On the Console the prompt box is pointed at a project by its chip (ConsoleSidebar.tsx), and the
   // dispatch goes to that project. Its draft is the Console's own: the words stay put while the chip moves.
   const project = useProjectScope()
@@ -247,20 +244,12 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
     </>
   )
 
-  // What the MCP plug asks about: the agent the model chip picks, since there is no thread yet. Undefined
-  // while the profile is still loading, so the plug never reads one agent's servers under another's chip.
-  const mcpTarget: McpTarget | undefined = resolved
-    ? { backend: resolved.backend, ...(resolved.backend === "acp" ? { model: resolved.model } : {}) }
-    : undefined
-
   return {
     prompt,
     setPrompt,
     submit,
     busy: dispatch.isPending || savingSettings,
     footer,
-    githubTriggerVisible,
-    mcpTarget,
     error: dispatch.isError ? (dispatch.error as Error).message : null,
     pendingDispatch,
     accountModals,
@@ -297,8 +286,6 @@ export function DispatchForm({
         maxHeight={340}
         busy={form.busy}
         footer={form.footer}
-        leftAction={form.githubTriggerVisible ? <GithubTrigger /> : undefined}
-        railMcp={form.mcpTarget ? <McpPlug target={form.mcpTarget} /> : undefined}
       />
       {form.error && (
         <span className="px-0.5 text-[11px] text-danger truncate">{form.error}</span>
@@ -387,7 +374,7 @@ function PhoneNewThreadPage({ onDispatched, projectPicker, project }: { onDispat
           tools: (
             <div className="flex min-w-0 items-center gap-2 [&>*]:flex-initial">
               {form.footer}
-              {form.githubTriggerVisible && <GithubTrigger variant="phoneChip" />}
+              <GithubTrigger variant="phoneChip" />
             </div>
           ),
         }}
@@ -418,7 +405,11 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
     <PhoneNewThreadPage onDispatched={onClose} projectPicker={target.chip} project={target.project?.name} />
   ) : (
     <>
-      <RadixDialog.Title className="mb-1 text-[14px] font-medium">New thread</RadixDialog.Title>
+      {/* No status row here, so the prompt box's two doors take the title's line (PromptBoxActions.tsx). */}
+      <div className="mb-1 flex min-h-6 items-center justify-between gap-3">
+        <RadixDialog.Title className="text-[14px] font-medium">New thread</RadixDialog.Title>
+        <div className="flex shrink-0 items-center gap-3"><PromptBoxActions /></div>
+      </div>
       {/* No "Starting thread…" card: the dialog is centred, so the card arriving in flow grew it by 74px
           and lifted its title and prompt box 37px for the length of the dispatch call, and then the
           dialog closed (2026-10-13, the call answering at +461ms). Floated, it would hang off the

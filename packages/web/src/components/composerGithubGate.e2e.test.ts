@@ -1,13 +1,10 @@
 import assert from "node:assert/strict"
 import test, { after, before } from "node:test"
 
-// REGRESSION. GithubTrigger self-gates (renders null outside a GitHub repo), but Composer reserves the
-// leftAction rail slot whenever the PROP is truthy — and a `<GithubTrigger />` element is truthy even
-// when it renders nothing. Passing it unconditionally left an empty hole between the paperclip and
-// send. The fix hoists the gate to the caller via useGithubTriggerVisible(): no repo → no leftAction
-// prop → the paperclip sits directly beside send. These tests pin the states off the composer-icons
-// fixture, whose `?norepo` stubs a project that is no GitHub repo and `?unauthed` a signed-out Frizz,
-// which still shows the trigger because clicking it is how someone signs in.
+// The GitHub door sits in the line above the new-thread box and renders only in a GitHub repo, signed in
+// or not, because clicking it is how someone signs in. These tests pin those states off the composer-icons
+// fixture, whose `?norepo` stubs a project that is no GitHub repo and `?unauthed` a signed-out Frizz. The
+// rail below it stays the paperclip and send whichever way the door goes.
 //
 // Skipped unless a Vite URL serving the fixtures is provided (same pattern as the other *.e2e.test.ts
 // here): start `vite` in packages/web and set FRIZZ_COMPOSER_ICONS_E2E_URL to its origin.
@@ -44,13 +41,18 @@ const rail = async (p: Page) =>
     return { github: box("Start threads"), attach: box("Attach files"), send: box("Send") }
   })()`) as Promise<{ github: DOMRect | null; attach: DOMRect | null; send: DOMRect | null }>
 
-test("authed: GitHub trigger renders between attach and send", { skip: !baseUrl }, async () => {
+const assertAboveTheBox = (r: Awaited<ReturnType<typeof rail>>) => {
+  assert.ok(r.github && r.attach && r.send)
+  assert.ok(r.github!.bottom <= r.attach!.top, "the trigger sits above the box, not in its rail")
+  const gap = r.send!.left - r.attach!.right
+  assert.ok(gap >= 0 && gap <= 12, `attach abuts send (gap was ${gap}px)`)
+}
+
+test("authed: GitHub trigger renders above the box", { skip: !baseUrl }, async () => {
   await page!.goto(`${baseUrl}/composer-icons-fixture.html`, { waitUntil: "networkidle0" })
   await page!.waitForSelector('button[aria-label^="Start threads"]')
   const r = await rail(page!)
-  assert.ok(r.github && r.attach && r.send)
-  assert.ok(r.attach!.right <= r.github!.left, "attach sits left of the GitHub trigger")
-  assert.ok(r.github!.right <= r.send!.left, "GitHub trigger sits left of send")
+  assertAboveTheBox(r)
 })
 
 // REGRESSION (2026-08-11). The network to api.github.com dropped for nine minutes. `gh repo view` is a
@@ -79,7 +81,7 @@ test("a NO heals itself: the trigger comes back with no reload once the answer t
   await page!.waitForSelector('button[aria-label^="Start threads"]', { timeout: HEAL_CEILING_MS })
   const r = await rail(page!)
   assert.ok(r.github, "the trigger must return on its own once the answer turns yes")
-  assert.ok(r.attach!.right <= r.github!.left && r.github!.right <= r.send!.left, "and it returns to its own slot in the rail")
+  assertAboveTheBox(r)
 })
 
 test("a genuine NO stays no — the poll re-asks, it does not invent an icon", { skip: !baseUrl, timeout: POLL_WINDOW_MS + 30_000 }, async () => {
@@ -90,20 +92,19 @@ test("a genuine NO stays no — the poll re-asks, it does not invent an icon", {
   assert.equal((await rail(page!)).github, null, "outside a GitHub repo it must stay hidden however many times it is re-asked")
 })
 
-test("signed out in a GitHub repo: the trigger still renders, between attach and send", { skip: !baseUrl }, async () => {
+test("signed out in a GitHub repo: the trigger still renders", { skip: !baseUrl }, async () => {
   await page!.goto(`${baseUrl}/composer-icons-fixture.html?unauthed`, { waitUntil: "networkidle0" })
   await page!.waitForSelector('button[aria-label^="Start threads"]')
   const r = await rail(page!)
-  assert.ok(r.github && r.attach && r.send)
-  assert.ok(r.attach!.right <= r.github!.left && r.github!.right <= r.send!.left)
+  assertAboveTheBox(r)
 })
 
-test("no GitHub repo: no slot is reserved — attach sits directly beside send", { skip: !baseUrl }, async () => {
+test("no GitHub repo: no trigger, and attach sits directly beside send", { skip: !baseUrl }, async () => {
   await page!.goto(`${baseUrl}/composer-icons-fixture.html?norepo`, { waitUntil: "networkidle0" })
   await page!.waitForSelector('button[aria-label="Attach files"]')
   const r = await rail(page!)
   assert.equal(r.github, null, "GitHub trigger must not render outside a GitHub repo")
   assert.ok(r.attach && r.send)
   const gap = r.send!.left - r.attach!.right
-  assert.ok(gap >= 0 && gap <= 12, `attach must abut send (gap was ${gap}px — a reserved empty slot regressed)`)
+  assert.ok(gap >= 0 && gap <= 12, `attach must abut send (gap was ${gap}px)`)
 })

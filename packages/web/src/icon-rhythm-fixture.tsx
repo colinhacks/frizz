@@ -37,12 +37,6 @@ window.fetch = async (input, init) => {
       headers: { "content-type": "application/json" },
     })
   }
-  // GithubTrigger renders only for an authed gh in a GitHub repo.
-  if (url.pathname === "/_frizz/rpc/githubStatus") {
-    return new Response(JSON.stringify({ result: { inRepo: true, authed: true } }), {
-      headers: { "content-type": "application/json" },
-    })
-  }
   return nativeFetch(input, init)
 }
 
@@ -51,7 +45,6 @@ const { RecurringPromptControl } = await import("./components/RecurringPromptCon
 const { HeaderActions } = await import("./components/HeaderActions.tsx")
 const { AiRenameButton } = await import("./components/AiRenameButton.tsx")
 const { Composer } = await import("./components/Composer.tsx")
-const { GithubTrigger } = await import("./components/GithubTrigger.tsx")
 const { TooltipProvider } = await import("./components/Tooltip.tsx")
 
 // Every field the header strip's availability checks and the rail's goal read. A BROKER-backed, live,
@@ -101,7 +94,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 
 function Fixture() {
   // Non-empty so the send button paints its ACTIVE fill — the brightest mark in the rail, and the one
-  // the GitHub icon is read against.
+  // the paperclip is read against.
   const [value, setValue] = useState("Measure the rail.")
   return (
     <QueryClientProvider client={queryClient}>
@@ -151,23 +144,8 @@ function Fixture() {
                 railLead={<RecurringPromptControl thread={thread} />}
               />
             </section>
-            <section className="flex flex-col gap-2">
-              <h2 className="text-[11px] uppercase tracking-wide text-muted">Composer rail · with a rail action</h2>
-              <Composer
-                value={value}
-                onChange={setValue}
-                onSubmit={() => {}}
-                surface="iconRhythmFixture"
-                placeholder="Ask anything"
-                leftAction={<GithubTrigger />}
-              />
-            </section>
-            {/* The commoner shape: every reply and queue composer renders WITHOUT a rail action, and the
-                paperclip then takes the rail-action slot so its ink keeps the same distance off the send
-                button. Measured here rather than assumed — it is a different offset on a different code
-                path, and it is the one most users look at all day. */}
             <section data-plain-rail className="flex flex-col gap-2">
-              <h2 className="text-[11px] uppercase tracking-wide text-muted">Composer rail · no rail action</h2>
+              <h2 className="text-[11px] uppercase tracking-wide text-muted">Composer rail · plain</h2>
               <Composer
                 value={value}
                 onChange={setValue}

@@ -33,7 +33,7 @@ let signInHintShown = false
 function maybeShowSignInHint() {
   if (signInHintShown) return
   signInHintShown = true
-  showToast("Frizz isn't signed in to GitHub, so PR and issue watchers are off. Sign in from the GitHub button in the prompt box.", { duration: 6000 })
+  showToast("Frizz isn't signed in to GitHub, so PR and issue watchers are off. Sign in from the GitHub button by the prompt box.", { duration: 6000 })
 }
 
 export function App() {

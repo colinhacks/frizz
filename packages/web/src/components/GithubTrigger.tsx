@@ -3,6 +3,7 @@ import { Github } from "lucide-react"
 import { openGithubPicker } from "../store.ts"
 import { isConsolePath } from "../lib/base-path.ts"
 import { scopedKey, useProjectScope, useRpc } from "../lib/projectScope.tsx"
+import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
 
 /**
  * What the picker does, in one line: the tooltip on this door and the heading of the room it opens
@@ -56,11 +57,7 @@ export function useGithubStatus() {
   })
 }
 
-// Whether the GitHub trigger will render at all. Callers that RESERVE LAYOUT for the trigger (the
-// Composer's `leftAction` slot shifts the paperclip over to make room) must gate on this and pass
-// nothing when it's false — a `<GithubTrigger />` element is truthy even when it renders null, so
-// passing it unconditionally reserves an empty hole where the icon would be.
-export function useGithubTriggerVisible(): boolean {
+function useGithubTriggerVisible(): boolean {
   const status = useGithubStatus()
   // Signed-out counts: it opens the sign-in. Hidden while signed out until 2026-11-05, when Frizz
   // stopped borrowing `gh`'s sign-in and every install started signed out, so the button would have
@@ -69,9 +66,9 @@ export function useGithubTriggerVisible(): boolean {
   return Boolean(status.data?.inRepo) && !isConsolePath()
 }
 
-// The door into the GitHub picker — a small GitHub icon that sits just LEFT of the dispatch composer's
-// send button (maintainer 2026-07-10: not a full-width pill). Renders in a GitHub repo, signed in or not;
-// otherwise NOTHING. Signed out, the picker it opens is the sign-in (GithubPickerModal). `githubStatus` is
+// The door into the GitHub picker — a bare GitHub mark in the line above the new-thread box, beside the
+// gear (components/PromptBoxActions.tsx; maintainer 2026-07-10: not a full-width pill). Renders in a GitHub
+// repo, signed in or not; otherwise NOTHING. Signed out, the picker it opens is the sign-in (GithubPickerModal). `githubStatus` is
 // shared with App's not-signed-in hint via the query cache (one fetch); detection is cached server-side,
 // `authed` re-checked live, so a sign-in turns the sign-in into the picker where it stands.
 // No profile gating: the picker carries its own model/effort selector, so an unloaded or unavailable
@@ -79,7 +76,7 @@ export function useGithubTriggerVisible(): boolean {
 //
 // `phoneChip` is the phone's new-thread tool row: the same door as a labelled chip, "Issue or PR" — on a
 // phone the icon alone names nothing, and this is where you dispatch from an issue you just read.
-export function GithubTrigger({ className = "", variant = "icon" }: { className?: string; variant?: "icon" | "phoneChip" }) {
+export function GithubTrigger({ variant = "icon" }: { variant?: "icon" | "phoneChip" }) {
   if (!useGithubTriggerVisible()) return null
   if (variant === "phoneChip") {
     return (
@@ -90,7 +87,7 @@ export function GithubTrigger({ className = "", variant = "icon" }: { className?
         onMouseDown={(e) => e.preventDefault()}
         title={GITHUB_PICKER_TITLE}
         // 32px of chip, 44px of target — the model chip's own box, so the two read as one row.
-        className={`relative inline-flex h-[32px] shrink-0 items-center gap-[6px] rounded-full border border-border-strong bg-bg px-[11px] text-[13.5px] font-medium text-fg after:absolute after:inset-x-0 after:-inset-y-[6px] after:content-[''] active:bg-hover ${className}`}
+        className="relative inline-flex h-[32px] shrink-0 items-center gap-[6px] rounded-full border border-border-strong bg-bg px-[11px] text-[13.5px] font-medium text-fg after:absolute after:inset-x-0 after:-inset-y-[6px] after:content-[''] active:bg-hover"
       >
         <Github aria-hidden size={14} strokeWidth={1.9} className="shrink-0 text-muted" />
         Issue or PR
@@ -104,9 +101,9 @@ export function GithubTrigger({ className = "", variant = "icon" }: { className?
       onMouseDown={(e) => e.preventDefault()}
       title={GITHUB_PICKER_TITLE}
       aria-label={GITHUB_PICKER_TITLE}
-      className={`icon-focus-outline flex h-7 w-7 items-center justify-center rounded-lg text-muted outline-none transition-[color,background-color] enabled:hover:bg-hover-strong enabled:hover:text-fg enabled:focus-visible:bg-hover-strong enabled:focus-visible:text-muted enabled:focus-visible:ring-1 enabled:focus-visible:ring-muted/80 enabled:focus-visible:ring-offset-1 enabled:focus-visible:ring-offset-bg enabled:active:bg-elevated enabled:active:text-muted disabled:bg-transparent disabled:text-muted-35 ${className}`}
+      className={STATUS_ROW_ACTION}
     >
-      <Github size={15} strokeWidth={2} />
+      <Github size={STATUS_ROW_ICON} aria-hidden="true" />
     </button>
   )
 }

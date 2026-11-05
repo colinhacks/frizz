@@ -158,7 +158,6 @@ export function Composer({
   autoFocus,
   busy,
   footer,
-  leftAction,
   railLead,
   railMcp,
   contextTokens,
@@ -193,9 +192,6 @@ export function Composer({
   // cut (maintainer 2026-09-03: "we DONT NEED THE CHIPS AT THE BOTTOM … just the inline chip"), so
   // removing a reference is deleting its text. Order-irrelevant; empty/omitted disables both.
   contextTokens?: string[]
-  // A small action rendered just LEFT of the send button (the dispatch composer's GitHub-picker icon).
-  // Only surfaces that pass it get it; reply/queue composers omit it.
-  leftAction?: React.ReactNode
   // A control at the rail's LEFT end, beyond the paperclip — the thread composer's Goal
   // (ThreadComposerBox). It owns its own popover; this component only places it.
   railLead?: React.ReactNode
@@ -548,14 +544,8 @@ export function Composer({
   const hasContent = value.trim().length > 0
   // Something to send: words in the box, or — on a thread composer — an answer staged on a card.
   const armed = hasContent || (send?.staged ?? 0) > 0
-  // ONE rail slot. Reserving it must track what is actually rendered — the padding/offset classes below
-  // key off `railAction`, and a truthy element that renders null would carve out an empty hole (the bug
-  // GithubTrigger's `useGithubTriggerVisible` exists to prevent). Its only filler now is `leftAction`
-  // (the dispatch composer's GitHub picker); interrupt-and-send gave up its button here and kept only
-  // ⌘/Ctrl-Enter — see the `onInterruptSubmit` prop doc.
-  const railAction = leftAction ?? null
   // Where each rail mark sits, and the padding every text row keeps clear of the absolutely-placed rail.
-  const rail = composerRail({ action: Boolean(railAction), lead: Boolean(railLead), mcp: Boolean(railMcp), mic: micShown, sendWidth: send && !phone ? SEND_SPLIT_WIDTH : undefined })
+  const rail = composerRail({ lead: Boolean(railLead), mcp: Boolean(railMcp), mic: micShown, sendWidth: send && !phone ? SEND_SPLIT_WIDTH : undefined })
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     const el = e.currentTarget
@@ -1068,14 +1058,13 @@ export function Composer({
           inset (6), i.e. both arcs share a center. At the old px-2 (8px) the chip's corner sat 2px
           inside the box arc and read misaligned. */}
       {/* Reserve the right-side action rail. Without this, three shrinkable readouts can extend under
-          the absolutely positioned GitHub/send buttons on narrow composers. */}
+          the absolutely positioned paperclip/send buttons on narrow composers. */}
       {footer && <div className="flex min-w-0 flex-wrap items-center gap-1 pl-1.5 pb-1.5" style={{ paddingRight: rail.reserve }}>{footer}</div>}
       {/* Outlined controls keep 8px between edges; prose reserves the same clearance. */}
-      {railAction && <div className="absolute bottom-2 flex items-center" style={{ right: rail.right.action }}>{railAction}</div>}
       {railLead && <div className="absolute bottom-2 flex items-center" style={{ right: rail.right.lead }}>{railLead}</div>}
       {railMcp && <div className="absolute bottom-2 flex items-center" style={{ right: rail.right.mcp }}>{railMcp}</div>}
       {/* Attach: a hidden file input driven by the paperclip. Sits in the right rail LEFT of the send
-          button (and left of any railAction), so it never overlaps the mode/model footer or the send
+          button, so it never overlaps the mode/model footer or the send
           affordance. Accept is the shared extension allowlist; the /attach route re-validates. */}
       <input
         ref={fileRef}

@@ -9,11 +9,12 @@ import { QuotaGauge } from "./QuotaBar.tsx"
 import { RestartFrizzButton } from "./RestartFrizzButton.tsx"
 import { ProjectCrumb } from "./ProjectCrumb.tsx"
 import { PROJECTS_HREF } from "../lib/homeView.ts"
+import { ConsolePromptBoxActions, PromptBoxActions } from "./PromptBoxActions.tsx"
 
 // THE STATUS ROW — one loose line along the TOP OF THE PROMPT BOX: where you are at the left, the
 // readout and the controls at the right.
 //
-//   ⌂ / frizz ▾                                                          ◔  ↻  ⚙
+//   ⌂ / frizz ▾                                                    ◔  ↻  GitHub  plug  ⚙
 //
 // It rides the dispatch composer wherever that composer is: the sidebar's own top on a normal board,
 // the Console's sidebar, and the centered first-task box on a brand-new project (TodosView's
@@ -32,7 +33,8 @@ import { PROJECTS_HREF } from "../lib/homeView.ts"
 // a link to the repo, alone at the right. Now the left end says where you are — the way out, a slash,
 // and this project as a dropdown that switches to any other (ProjectCrumb.tsx, which also carries the
 // repo link the right end used to be) — and the right end is the row's controls: the fuel gauge for the
-// model the prompt box has selected (QuotaBar.tsx), reload, and settings last, in the corner.
+// model the prompt box has selected (QuotaBar.tsx), reload, the box's two doors (PromptBoxActions.tsx), and
+// settings last, in the corner.
 //
 // No dividers. The row had two while one run of icons held both the door out and the in-app buttons;
 // the slash is the breadcrumb's own separator, and the space between the two ends is the other.
@@ -84,6 +86,7 @@ export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
         {/* Greyed when there is no update to install; null only before a supervisor has answered, when
             the gap collapses and the row stays even. */}
         <RestartFrizzButton />
+        {onConsole ? <ConsolePromptBoxActions /> : <PromptBoxActions />}
         <button
           type="button"
           aria-label="Settings"
