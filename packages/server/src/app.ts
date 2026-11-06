@@ -1,13 +1,12 @@
 import { Hono, type Context } from "hono"
 import { cors } from "hono/cors"
 import { streamSSE } from "hono/streaming"
-import { createReadStream, mkdirSync, writeFileSync } from "node:fs"
+import { createReadStream } from "node:fs"
 import { Readable } from "node:stream"
-import { join } from "node:path"
-import { randomUUID } from "node:crypto"
 import { mountRouter } from "@frizz/rpc/server"
-import { DEFAULT_PORT, ATTACHMENT_MAX_BASE64_CHARS, FRIZZ_ROUTE_PREFIX, isAllowedAttachmentName, type ServerEvent, frizzRoute } from "@frizz/shared"
+import { DEFAULT_PORT, FRIZZ_ROUTE_PREFIX, type ServerEvent, frizzRoute } from "@frizz/shared"
 import { createRouter } from "./router.ts"
+import { ATTACHMENT_INVALID_JSON, storeAttachment } from "./attachment-intake.ts"
 import type { AppContext } from "./context.ts"
 import { allowedLocalCorsOrigin, isTrustedLocalHttpRequest } from "./local-origin.ts"
 import { compress, MIN_COMPRESS_BYTES, negotiateEncoding, shouldCompress } from "./compression.ts"
@@ -41,30 +40,6 @@ export interface AppOptions {
   requestOwnerStop?: () => void
   /** Test seam for the launch route: the project resolver, and the home whose registry it reads. */
   launchRouting?: { open?: (dir: string) => { id: string; dir: string; name: string }; home?: string }
-}
-
-// The name an attachment is stored under: the one it was uploaded with, so the prompt box's chip, the
-// transcript's bubble and the path a worker opens all read the same as the file that was dropped. Only
-// what a path, or the line the path rides on in the message, cannot carry is changed:
-// - every kind of whitespace becomes a plain space. The transcript's path grammar (web lib/imagePaths)
-//   takes a plain space and no other, and macOS puts a NARROW NO-BREAK space before "AM" in every
-//   screenshot it names, which would otherwise leave the path as dead text instead of a picture;
-// - a control character or a backtick becomes `-`: the first can break the line, and the grammar ends
-//   a path at the second;
-// - on Windows, the characters its filesystem refuses (`<>:"|?*`) become `-` too;
-// - only the last path segment is kept, so a hand-written request cannot name a file outside its folder;
-// - the name is cut to 255 bytes, the per-name limit of APFS and ext4, keeping its extension.
-function attachmentFileName(name: string): string {
-  let clean = (name.split(/[\\/]/).pop() ?? "")
-    .replace(/\s/g, " ")
-    .replace(/[\u0000-\u001f\u007f`]/g, "-")
-    .trim()
-  if (process.platform === "win32") clean = clean.replace(/[<>:"|?*]/g, "-")
-  const dot = clean.lastIndexOf(".")
-  const ext = clean.slice(dot) // the route allowlisted the extension, so there is always a dot
-  const stem = [...clean.slice(0, dot)]
-  while (stem.length > 0 && Buffer.byteLength(stem.join("") + ext) > 255) stem.pop()
-  return `${stem.join("") || "file"}${ext}`
 }
 
 export function createApp(ctx: AppContext, options: AppOptions = {}) {
@@ -307,35 +282,18 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
     })
   })
 
-  // Attachment intake for drag-and-dropped / pasted / picked files (images AND every document, office,
-  // data and archive format in @frizz/shared ATTACHMENT_EXTENSIONS): the file lands on DISK (outside
-  // the repo, under the project's state dir) and the client inserts the returned absolute path into
-  // the message text.
-  // Workers open it with their Read/file tool; the chat renders images via /local-image and non-image
-  // files as an openable chip (both roots include the attachments dir). JSON base64 keeps the route
-  // dependency-free. The extension allowlist + the char cap are the only trust gates; the file keeps
-  // the name it was uploaded under (attachmentFileName), in a folder of its own.
+  // Attachment intake (attachment-intake.ts). The launcher answers a browser's upload itself, so this route
+  // serves what the launcher passes on: a caller it would not answer for, a project it could not name, and every
+  // upload through a launcher older than that split.
   app.post(frizzRoute("/attach"), async (c) => {
-    let body: { name?: string; data?: string }
+    let body: unknown
     try {
       body = await c.req.json()
     } catch {
-      return c.json({ error: "invalid json" }, 400)
+      return c.json({ error: ATTACHMENT_INVALID_JSON }, 400)
     }
-    const name = body.name ?? ""
-    if (!isAllowedAttachmentName(name)) return c.json({ error: "unsupported file type" }, 400)
-    if (typeof body.data !== "string" || body.data.length > ATTACHMENT_MAX_BASE64_CHARS) return c.json({ error: "bad payload" }, 400)
-    const buf = Buffer.from(body.data, "base64")
-    // The FOLDER is unique, so the file inside it need not be: two same-named files dropped in the same
-    // millisecond still land at two paths (the second would otherwise overwrite the first, and the
-    // message would carry a duplicate path). The uniqueness used to be a `<ms>-<hex>-` prefix on the
-    // file itself, so the chip and the transcript showed a name nobody had uploaded (maintainer
-    // 2026-10-15: "I would like it if the file names remained consistent").
-    const dir = join(ctx.project.stateDir, "attachments", `${Date.now()}-${randomUUID().slice(0, 8)}`)
-    mkdirSync(dir, { recursive: true })
-    const path = join(dir, attachmentFileName(name))
-    writeFileSync(path, buf)
-    return c.json({ path })
+    const result = await storeAttachment(ctx.project.stateDir, body)
+    return result.status === 200 ? c.json({ path: result.path }) : c.json({ error: result.error }, 400)
   })
 
   // Delta SSE — the FALLBACK board transport, for a page whose server has no /ws (api/sse.ts). The /ws

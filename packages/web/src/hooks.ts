@@ -6,6 +6,7 @@ import { boardThreadsNow, store, threadBySlug, threadSnapshotBySlug } from "./st
 import { queued } from "./groups.ts"
 import { partitionBoard } from "./lib/boardPartition.ts"
 import { childThreadsOf } from "./lib/childThreads.ts"
+import { holdsCardHere, useConsoleGroup } from "./lib/consoleBoard.ts"
 import { rpc } from "./api/rpc.ts"
 import { retryTranscriptSocket, subscribeFile, subscribeTranscript, unsubscribeFile, unsubscribeTranscript } from "./api/socket.ts"
 import { mergeOptimistic, preserveMessageIdentity, isTranscriptStale, newestRenderedAt } from "./lib/transcript-sync.ts"
@@ -130,6 +131,14 @@ export function queuedThreadsNow(): readonly ThreadView[] {
 /** The threads waiting on the human (groups.queued), as plain snapshots, in board order. */
 export function useQueuedThreads(): readonly ThreadView[] {
   return useSyncExternalStore(onStoreChange, queuedThreadsNow)
+}
+
+/** The threads drawing a queue card on the page on screen: the queue, less the pinned reports a shelf on
+ *  this page shows instead (lib/consoleBoard holdsCardHere). Stable until the queue or the grouping moves. */
+export function useQueueCards(): readonly ThreadView[] {
+  const queuedThreads = useQueuedThreads()
+  const group = useConsoleGroup()
+  return useMemo(() => queuedThreads.filter((t) => holdsCardHere(t, group)), [queuedThreads, group])
 }
 
 // A THREAD'S CHILD THREADS (lib/childThreads), untracked like the queue above. The SAME array until one

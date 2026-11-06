@@ -99,3 +99,22 @@ test("counts asks with the board's own rule: waiting on an answer, at rest, in t
   assert.equal(counts.p?.asks, 4)
   assert.equal(counts.p?.queued, 5, "the queue is wider than the asks")
 })
+
+// A pinned thread's plain report has no card on its board, so the badge beside that board does not count one.
+test("a pinned thread's plain report leaves the queue's count, and its question does not", async () => {
+  const at = "2026-11-06T10:00:00.000Z"
+  const question = [{ id: "q1", askedAt: at, spec: { question: "SQLite or JSON?", kind: "question" } }]
+  const router = harness(() => [
+    {
+      project: project("p"),
+      board: board([
+        session(true, { status: "active", runtime: "turn-idle", pinnedAt: at, plainReport: true } as Partial<ThreadView>),
+        session(true, { status: "active", runtime: "turn-idle", pinnedAt: at, questions: question } as Partial<ThreadView>),
+        session(true, { status: "active", runtime: "turn-idle", plainReport: true } as Partial<ThreadView>),
+      ]),
+    },
+  ])
+  const counts = await router.projectsRailCounts.handler({ input: undefined })
+  assert.equal(counts.p?.queued, 2)
+  assert.equal(counts.p?.asks, 1)
+})

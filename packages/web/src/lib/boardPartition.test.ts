@@ -110,7 +110,7 @@ function checkAgainstReference(threads: readonly ThreadView[], label: string): v
   assert.deepEqual(ids(p.live.filter(queued)), ids(threads.filter(queued)), `${label}: queued`)
   // The Console's two bands (lib/consoleBoard.ts) ask the live threads only.
   for (const direction of ["fifo", "lifo"] as const) {
-    assert.deepEqual(ids(consoleQueue(threads, direction)), ids(orderQueue(threads.filter(queued), direction)), `${label}: Console queue, ${direction}`)
+    assert.deepEqual(ids(consoleQueue(threads, direction, "project")), ids(orderQueue(threads.filter(queued), direction)), `${label}: Console queue, ${direction}`)
   }
   assert.deepEqual(ids(consoleRunning(threads)), ids(orderRunning(threads.filter(activeBandThread))), `${label}: Console running`)
   // Its pinned band reads the settled threads too: a Console pin outranks Done.

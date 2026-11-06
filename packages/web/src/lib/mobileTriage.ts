@@ -1,4 +1,4 @@
-import type { CompletionHold, ThreadView } from "@frizz/shared"
+import { boardQueuedThread, type CompletionHold, type ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { closeDrawersById, openThread, showToast, store } from "../store.ts"
 import { appPushedCurrentEntry } from "./router.ts"
@@ -29,8 +29,9 @@ export function phoneQueue(threads: readonly ThreadView[], direction = prefs.que
 
 /**
  * The next thread that needs you after `fromSlug`: the first row of the phone queue holding a queue card
- * (`needsYou` — an ask, or a rested handoff waiting to be read), other than the one being filed. A
- * running row does not need you, so the loop never lands on one. A thread the operator marked done a
+ * (an ask, or a rested handoff waiting to be read), other than the one being filed. A running row does
+ * not need you, so the loop never lands on one, and neither is a pinned thread's plain report a turn in
+ * it: it waits on the row, on the phone as on the desktop. A thread the operator marked done a
  * moment ago whose archive the board has not echoed yet is folded through the same optimistic overlay
  * the board uses, so the loop cannot bounce back onto it.
  */
@@ -41,7 +42,7 @@ export function nextThreadNeedingYou(
   archivingAt: Readonly<Record<string, number>> = archivingAtNow(),
 ): ThreadView | undefined {
   const overlaid = threads.map((t) => optimisticallyArchived(t, archivingAt[t.id]))
-  return phoneQueue(overlaid, direction).find((t) => t.id !== fromSlug && t.needsYou === true)
+  return phoneQueue(overlaid, direction).find((t) => t.id !== fromSlug && boardQueuedThread(t))
 }
 
 // Leave the thread just filed: open the next one that needs you, or close back to the board.

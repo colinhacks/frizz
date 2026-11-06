@@ -8,7 +8,7 @@ import { pageScrollY } from "../lib/pageScrollLock.ts"
 import { queueLandingHoldActive } from "../lib/queueLandingHold.ts"
 import { captureReaderPin, listGainedOrReordered, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
 import { rpc } from "../api/rpc.ts"
-import { useBoard, useBoardIsEmpty, useQueuedThreads, useTranscript } from "../hooks.ts"
+import { useBoard, useBoardIsEmpty, useQueueCards, useTranscript } from "../hooks.ts"
 import { orderQueue } from "../groups.ts"
 import { tailAskIdx } from "../lib/answering.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
@@ -181,9 +181,10 @@ export function TodosView() {
   const onConsole = isConsolePath()
   const consoleGroup = useConsoleGroup()
   const consoleProjects = useConsoleProjectList(onConsole)
-  // The queued threads come UNTRACKED and identity-stable (hooks.ts useQueuedThreads): filtering the
+  // The queued threads come UNTRACKED and identity-stable (hooks.ts useQueueCards): filtering the
   // whole board through useBoard()'s tracking view read every Done thread on every render of this page.
-  const queuedThreads = useQueuedThreads()
+  // A pinned thread's plain report is no card here when this page's shelf shows its row instead.
+  const queuedThreads = useQueueCards()
   const boardIsEmpty = useBoardIsEmpty()
   const queueOrder = useSnapshot(prefs).queueOrder
   const queueItems = useMemo(() => orderQueue(queuedThreads, queueOrder), [queuedThreads, queueOrder])

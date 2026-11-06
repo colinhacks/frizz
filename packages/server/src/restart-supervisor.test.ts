@@ -3,9 +3,10 @@ import { createServer, request, type IncomingHttpHeaders, type RequestListener }
 import { connect as netConnect } from "node:net"
 import { once } from "node:events"
 import { test } from "node:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
+import { ATTACHMENT_MAX_BASE64_CHARS } from "@frizz/shared"
 import {
   RestartSupervisorProxy,
   SUPERVISOR_RESTART_PATH,
@@ -19,6 +20,9 @@ import {
 import { fileSessionDirectory, loadOrCreateSessionKey, readSessionEpoch, rotateSessionKey, SESSION_EPOCH } from "./access-codes.ts"
 import { signOutOlderSessionEpoch } from "./session-epoch-child.ts"
 import { CALLER_HEADER, decodeCallerStamp, encodeCallerStamp } from "./audit.ts"
+import { ATTACHMENT_MAX_BODY_BYTES } from "./attachment-intake.ts"
+import { projectStateDir } from "./frizz-paths.ts"
+import { registerProject } from "./project-registry.ts"
 
 async function listen(handler: RequestListener) {
   const server = createServer(handler)
@@ -1679,5 +1683,157 @@ test("a child that answers an upgrade as plain HTTP never sees the visitor's nex
     socket.destroy()
     await proxy.close()
     await child.close()
+  }
+})
+
+function attachableProject() {
+  const home = mkdtempSync(join(tmpdir(), "frizz-supervisor-attach-"))
+  const dir = join(home, "checkout")
+  mkdirSync(dir)
+  const id = "3f6d2a58-6f1e-4c0b-9a57-0d7f6d0c1e11"
+  const { entry } = registerProject({ dir, id }, home)
+  assert.ok(entry)
+  const stateDir = projectStateDir(id, home)
+  return {
+    home,
+    id,
+    slug: entry.slug,
+    attachments: join(stateDir, "attachments"),
+    stored: () => { try { return readdirSync(join(stateDir, "attachments")).length } catch { return 0 } },
+  }
+}
+
+async function posted(port: number, path: string, headers: Record<string, string>, body: string) {
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = request({ host: "127.0.0.1", port, path, method: "POST", headers: { "content-type": "application/json", ...headers } }, (res) => {
+      let text = ""
+      res.setEncoding("utf8")
+      res.on("data", (chunk) => { text += chunk })
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text }))
+    })
+    req.once("error", reject)
+    req.end(body)
+  })
+}
+
+const attachment = (name: string, text: string) => JSON.stringify({ name, data: Buffer.from(text).toString("base64") })
+
+test("the launcher takes an upload with the child frozen or gone, under the same gates as the child's own route", async () => {
+  const project = attachableProject()
+  // A child that accepts and never answers: what the browser's upload waited on while its thread was stalled.
+  let reached = 0
+  const frozen = await listen(() => { reached++ })
+  let childPort: number | undefined = frozen.port
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, registryHome: project.home, childPort: () => childPort, restart: async () => ({ state: "ready" }) })
+  const route = `/_frizz/${project.slug}/attach`
+  const browser = { origin: `http://127.0.0.1:${port}` }
+  try {
+    await proxy.listen()
+    const answer = await within(5_000, posted(port, route, browser, attachment("Screenshot 2026-11-06 at 9.41.23 AM.png", "picture")), "the upload") as { status: number; body: string }
+    assert.equal(answer.status, 200, answer.body)
+    const { path } = JSON.parse(answer.body) as { path: string }
+    assert.equal(basename(path), "Screenshot 2026-11-06 at 9.41.23 AM.png", "it keeps the name it was uploaded under, spaces plain")
+    assert.equal(dirname(dirname(path)), project.attachments)
+    assert.equal(readFileSync(path, "utf8"), "picture")
+    assert.equal(reached, 0, "the child was asked")
+
+    // A project is addressed by its id as well as its slug, and the browser's same-origin stamp stands in for
+    // an Origin it left off, as it does on the child.
+    const byId = await posted(port, `/_frizz/${project.id}/attach`, { "sec-fetch-site": "same-origin" }, attachment("notes.md", "# hi"))
+    assert.equal(byId.status, 200, byId.body)
+    assert.equal(project.stored(), 2)
+
+    // Nobody who could not reach the child's route gets a write out of this one.
+    assert.equal((await posted(port, route, {}, attachment("a.md", "x"))).status, 403, "no browser authority at all")
+    assert.equal((await posted(port, route, { origin: "http://attacker.invalid" }, attachment("a.md", "x"))).status, 403)
+    assert.equal((await posted(port, route, { origin: "http://attacker.invalid", "sec-fetch-site": "same-origin" }, attachment("a.md", "x"))).status, 403)
+    assert.equal((await posted(port, route, { "sec-fetch-site": "cross-site" }, attachment("a.md", "x"))).status, 403)
+    assert.equal((await posted(port, route, { ...browser, "x-forwarded-for": "198.51.100.7" }, attachment("a.md", "x"))).status, 403, "a forwarded claim")
+
+    // The refusals the prompt box can meet, each answered rather than cut off.
+    const refusal = async (body: string) => {
+      const res = await posted(port, route, browser, body)
+      assert.equal(res.status, 400, body.slice(0, 40))
+      return (JSON.parse(res.body) as { error: string }).error
+    }
+    assert.equal(await refusal(attachment("run.exe", "x")), "unsupported file type")
+    assert.equal(await refusal(JSON.stringify({ data: "eA==" })), "unsupported file type")
+    assert.equal(await refusal("null"), "unsupported file type")
+    assert.equal(await refusal("{not json"), "invalid json")
+    assert.equal(await refusal(JSON.stringify({ name: "a.md", data: 7 })), "bad payload")
+    assert.equal(await refusal(JSON.stringify({ name: "a.md", data: "x".repeat(ATTACHMENT_MAX_BASE64_CHARS + 1) })), "bad payload")
+    assert.equal(await refusal(`{"name":"a.md","data":"${"x".repeat(ATTACHMENT_MAX_BODY_BYTES)}"}`), "bad payload", "past the body cap")
+    assert.equal(project.stored(), 2, "a refusal wrote something")
+    assert.equal(reached, 0, "a refusal was passed on")
+
+    // What it cannot name stays the child's to answer: an unregistered project, and the unprefixed spelling,
+    // which means the launching project.
+    childPort = undefined
+    assert.equal((await posted(port, "/_frizz/no-such-project/attach", browser, attachment("a.md", "x"))).status, 503)
+    assert.equal((await posted(port, "/_frizz/attach", browser, attachment("a.md", "x"))).status, 503)
+    assert.equal((await posted(port, `/_frizz/${project.slug}/attach/more`, browser, attachment("a.md", "x"))).status, 503)
+
+    // And it needs no child at all, which is a restart's position.
+    assert.equal((await posted(port, `${route}?retry=1`, browser, attachment("during-restart.md", "x"))).status, 200)
+    assert.equal(project.stored(), 3)
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await frozen.close().catch(() => undefined)
+    rmSync(project.home, { recursive: true, force: true })
+  }
+})
+
+test("a remote upload follows what that session may do: full control is answered here, anything less goes to the child to refuse", async () => {
+  const project = attachableProject()
+  const current = await countingChild()
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, registryHome: project.home, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  const route = `/_frizz/${project.slug}/attach`
+  try {
+    await proxy.listen()
+    const relay = await proxy.relayListener()
+    assert.equal((await posted(relay, route, publicVisitor, attachment("a.md", "x"))).status, 401, "no session")
+    assert.equal(project.stored(), 0)
+
+    const visitor = { ...publicVisitor, cookie: await redeemed(port, proxy) }
+    proxy.setRelayAccess("full")
+    assert.equal((await posted(relay, route, visitor, attachment("phone.png", "x"))).status, 200)
+    assert.equal(project.stored(), 1)
+    assert.equal(current.reached, 0)
+
+    // The child is the one that refuses and writes the refusal down (remote-gate.ts).
+    proxy.setRelayAccess("read-and-answer")
+    assert.equal((await posted(relay, route, visitor, attachment("phone.png", "x"))).body, "child")
+    assert.equal(current.reached, 1)
+    assert.equal(current.stamps.at(-1)?.access, "read-and-answer")
+    assert.equal(project.stored(), 1, "a limited session wrote a file")
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+    rmSync(project.home, { recursive: true, force: true })
+  }
+})
+
+test("a request target the URL parser refuses is answered, not thrown out of the listener", async () => {
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, childPort: () => undefined, restart: async () => ({ state: "ready" }) })
+  const raw = (to: number, target: string) => new Promise<string>((resolve, reject) => {
+    const socket = netConnect(to, "127.0.0.1", () => socket.write(`GET ${target} HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\nconnection: close\r\n\r\n`))
+    let text = ""
+    socket.on("data", (chunk) => { text += chunk })
+    socket.once("close", () => resolve(text.split("\r\n")[0] ?? ""))
+    socket.once("error", reject)
+  })
+  try {
+    await proxy.listen()
+    const relay = await proxy.relayListener()
+    for (const to of [port, relay]) {
+      assert.match(await raw(to, "//"), /^HTTP\/1\.1 400 /)
+      assert.match(await raw(to, "//x:y"), /^HTTP\/1\.1 400 /)
+    }
+    assert.equal((await proxied(port, "/ordinary-route", { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })).status, 503, "still serving")
+  } finally {
+    await proxy.close().catch(() => undefined)
   }
 })

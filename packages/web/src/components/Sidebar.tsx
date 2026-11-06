@@ -9,7 +9,7 @@ import { rpc } from "../api/rpc.ts"
 import { useBoardThreads, useChildThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
 import type { PinShelf } from "../groups.ts"
-import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
+import { unreadReport, sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
@@ -228,6 +228,11 @@ export function Sidebar() {
   const starting = useMemo(() => (pending.length === 0 ? pending : unlandedDispatches(pending, new Set(all.map((t) => t.id)))), [pending, all])
   const runningCount = running.length + starting.length
   const openCount = activeThreads.length + starting.length
+  // A rule separates a band from the one above it, so the first band drawn has none: under the prompt
+  // box it would only be a line under nothing.
+  const ruleOverSnoozed = sections.pinned.length > 0 || openCount > 0
+  const ruleOverDone = ruleOverSnoozed || heldThreads.length > 0
+  const ruleOverExternal = ruleOverDone || inactiveThreads.length > 0
 
   return (
     // HEIGHT MODEL: a sticky, exactly viewport-height wrapper that holds the inner column at its top
@@ -282,8 +287,8 @@ export function Sidebar() {
             under it"). At rest nothing moves: the first row sits where it did. */}
         <div ref={railRef} data-sidebar-rail className="-mt-5 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden pt-5 max-[800px]:overflow-y-visible">
           {/* THE QUEUE'S ORDER, as a chip above every band (RailViewChips.tsx): a board has nothing to group,
-              so the Console's grouping chip is not drawn here. */}
-          <RailViewChips />
+              so the Console's grouping chip is not drawn here, and with no queue there is nothing to order. */}
+          <RailViewChips queued={rested.length > 0} />
           {/* PINNED — the human's shelf, at the very top, above the cue (maintainer 2026-09-02). Each row
               carries the same rest-time column as the cue, and the pin itself appears only on hover, as the
               unpin verb (colinhacks/frizz#66: "show the updated times first and only show the pin/unpin on hover?
@@ -295,7 +300,8 @@ export function Sidebar() {
               band claims them, so a pinned thread stays here spinning, resting, snoozed or Done alike — and
               the band is ordered by the pin instants, oldest first, never by activity: it is an arrangement
               the human made, and nothing the threads do may shuffle it. The human rearranges it by dragging a
-              row (PinnedBand).
+              row (PinnedBand). A row resting on a plain report has no card, and carries an unread dot in its
+              gutter until the thread is opened; a row with an ask or a failure keeps its card.
               LABELED since 2026-09-19, like every band below it, and NOT collapsible (maintainer: the Pinned,
               Queue and Running labels "should not be collapsible") — the header is the static form of
               SectionHeader, so it lines up with the collapsible Snoozed/Done headers. */}
@@ -322,8 +328,11 @@ export function Sidebar() {
               ask: they don't render in the queue), so it stays glanceable without pushing the cue down.
               Only the cue's rows carry the rest-time column: it dates a HANDOFF, and a row that is
               still spinning has not made one. An empty band draws no label, the same as Snoozed and
-              Done: a "Queue 0" header over nothing is a count nobody needs. */}
-          {openCount > 0 ? (
+              Done: a "Queue 0" header over nothing is a count nobody needs. With both empty the rail says
+              nothing at all and starts at whichever band is left: the workpane beside it already reads "No
+              threads awaiting human input", and a dim "No open threads" line between the prompt box and
+              Snoozed only looked like a row that had failed to load (maintainer 2026-11-06). */}
+          {openCount > 0 && (
             <>
               {rested.length > 0 && <SectionHeader label="Queue" count={rested.length} />}
               {rested.map((t) => (
@@ -347,24 +356,14 @@ export function Sidebar() {
                 </div>
               ))}
             </>
-          ) : sections.pinned.length === 0 ? (
-            // pl-5 matches ThreadRow's own content inset (its status-indicator column), so the
-            // placeholder starts exactly where the rows it stands in for would — and lands within a
-            // pixel of the Snoozed/Done labels, which clear the same width for their chevron. A
-            // bare px-1.5 left it hanging 14px out at the rail's raw edge, alone against everything.
-            // "open", not "active": this stands in for the Active AND Rested bands together, and it
-            // renders only when BOTH are empty. Saying "no active threads" over a hidden queue would be
-            // the same conflation the vocabulary above exists to stop. Suppressed under a pinned band —
-            // the pinned rows ARE open threads, so the claim would be visibly false one band up.
-            <div className="py-1 pl-5 pr-1.5 text-[11.5px] text-muted-50">No open threads</div>
-          ) : null}
+          )}
           {/* HELD — every deliberate clock/hourglass/timed wait, visibly de-emphasized and labeled so
               it cannot read as active work. COLLAPSIBLE, and collapsed by default (maintainer
               2026-08-04): nothing here is waiting on the rail's reader right now, so it opens as a
               labeled count and expands on demand — the count is the glance. */}
           {heldThreads.length > 0 && (
             <section aria-label="Snoozed">
-              <hr className="my-3 border-border/50" />
+              {ruleOverSnoozed && <hr className="my-3 border-border/50" />}
               {/* Same header component as Done so the bands can never visually drift. */}
               <SectionHeader
                 label="Snoozed"
@@ -392,7 +391,7 @@ export function Sidebar() {
               one — so virtualization is about the EXPANDED band alone. */}
           {inactiveThreads.length > 0 && (
             <div>
-              <hr className="my-3 border-border/50" />
+              {ruleOverDone && <hr className="my-3 border-border/50" />}
               <SectionHeader
                 label="Done"
                 count={inactiveThreads.length}
@@ -413,7 +412,7 @@ export function Sidebar() {
               terminal" line, and there is no queue card, no verb and no Snoozed/Done to fall into. */}
           {externalSessions.length > 0 && (
             <section aria-label="External">
-              <hr className="my-3 border-border/50" />
+              {ruleOverExternal && <hr className="my-3 border-border/50" />}
               <SectionHeader
                 label="External"
                 count={externalSessions.length}
@@ -645,7 +644,7 @@ export function PinnedBand({ threads, railRef, activeId, onQueueNavigate, shelf 
             {/* Undated only while it SPINS: actively running and holding no queue card. A queued row with
                 live work out (an open question beside a running sub-agent) wears the queue's glyph, not a
                 spinner, and the cue would date it — so it is dated here too. */}
-            <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={onQueueNavigate} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} />
+            <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={onQueueNavigate} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} unread={unreadReport(t)} />
             <SubAgentRows t={t} />
           </div>
         )
@@ -874,8 +873,11 @@ export const ThreadRow = memo(function ThreadRow({
   restedAge = false,
   leading,
   shelf = "board",
+  unread = false,
 }: {
   t: ThreadView
+  /** A pinned row whose report the human has not read: it has no card to be seen on (groups.ts unreadReport). */
+  unread?: boolean
   legacy?: boolean
   active?: boolean
   onQueueNavigate?: (id: string) => void
@@ -937,6 +939,7 @@ export const ThreadRow = memo(function ThreadRow({
           while the fixed rail keeps it from shifting content or relying on clipped overflow. */}
       <span aria-hidden="true" data-sidebar-marker-rail className="pointer-events-none absolute inset-y-0 left-0 w-5">
         {active && <span data-sidebar-scroll-marker className="absolute inset-y-0 left-1 w-[2px] rounded-full bg-accent" />}
+        {unread && <span data-sidebar-unread className="absolute left-[8px] top-[10.5px] size-1.5 rounded-full bg-accent" />}
       </span>
       <button
         onClick={() => {
@@ -955,6 +958,7 @@ export const ThreadRow = memo(function ThreadRow({
         aria-current={active ? "location" : undefined}
         className="min-w-0 flex-1 flex items-start gap-2 pb-1 pl-5 pr-1.5 pt-1 text-left"
       >
+        {unread && <span className="sr-only">Unread report. </span>}
         {leading}
         {/* h-[19px] so the indicator centers on the title's FIRST line, not the middle of a wrapped row. */}
         <span className="w-4 h-[19px] shrink-0 flex items-center justify-center">

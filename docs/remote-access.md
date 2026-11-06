@@ -81,8 +81,7 @@ Your board stays on loopback and opens one outbound connection to a relay Frizz 
 | --- | --- |
 | **Address** | 20 random characters, so nobody finds it by guessing. A first visit still needs a single-use sign-in link. |
 | **Ownership** | This machine's key proves ownership, with no account. |
-| **Renewal** | Every launch renews it. A subdomain nobody runs for **30 days** is released, and someone else can claim it. |
-| **Custom names** | Paused. A name you pick, such as `ada.frizz.sh`, needs a GitHub sign-in that is not set up yet, so the **R** menu does not offer one. A board that already has one keeps it, because renewals use only the key, and the menu lists it as the current setup. |
+| **Renewal** | A running board renews it. A subdomain nobody runs for **30 days** is released, and someone else can claim it. |
 
 ### Terms
 
