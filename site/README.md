@@ -36,7 +36,7 @@ Linking also writes `site/.env.local`, which holds a Vercel token. Delete it aft
 
 ## Regenerating the screenshots
 
-Every shot is the real app in a real browser, on a disposable stack with made-up projects and simulated workers. The GitHub picker's rows are stubbed, because a sandbox has no GitHub sign-in.
+Every shot is the real app in a real browser, on a disposable stack with made-up projects and simulated workers. The GitHub picker's rows, the hovercard's data, and the signed-in Settings row are stubbed, because a sandbox has no GitHub sign-in.
 
 ```sh
 # Boot, in its own background shell. --prime and the five projects under <home>/work are what the rail shows.

@@ -11,7 +11,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { formatThreadMessage, monitorEventWakeMessage, wakeDeliveryToken } from "../packages/shared/src/index.ts"
+import { formatGithubWakeSteer, formatThreadMessage, issueWatchWakeMessage, monitorEventWakeMessage, prWatchWakeMessage, wakeDeliveryToken } from "../packages/shared/src/index.ts"
 import { launchHeadless } from "./lib/headless-browser.mjs"
 import { createRpcClient } from "./lib/rpc-client.mjs"
 
@@ -313,18 +313,94 @@ async function seedFeatures() {
     ],
   })
 
-  // Pull requests a thread rests on, with checks in three states.
-  const watched = (number, id) => `INSERT OR REPLACE INTO pr_watch (project_id, id, thread_slug, owner, repo, number, state, created_at, settled_at, cursor) VALUES (${sql(projects[APP].id)}, ${sql(id)}, 'ship-sync', 'acme', 'mobile-app', ${number}, 'armed', ${Date.now() - 600_000}, NULL, NULL)`
+  // Pull requests a thread rests on, in each of the states a row can read.
+  const watched = (number, id, thread = "ship-sync", kind = "pull") => `INSERT OR REPLACE INTO pr_watch (project_id, id, thread_slug, owner, repo, number, state, created_at, settled_at, cursor, kind) VALUES (${sql(projects[APP].id)}, ${sql(id)}, ${sql(thread)}, 'acme', 'mobile-app', ${number}, 'armed', ${Date.now() - 600_000}, NULL, NULL, ${sql(kind)})`
   write(APP, "ship-sync", {
     title: "Ship the offline sync fixes", rested: 3,
-    records: [user(60, "Ship the offline sync fixes."), say(3, "All three pull requests are up. I am watching CI and reviews and will pick the failing one back up.\n\n```awaiting\nprs: [acme/mobile-app#391, acme/mobile-app#392, acme/mobile-app#393]\nstatus: needs_input\nfor: 2h\n---\nThe failing lint job on acme/mobile-app#393 is the next thing I will fix.\n```")],
+    records: [user(60, "Ship the offline sync fixes."), say(3, "All five pull requests are up. I am watching CI and reviews and will pick the failing one back up.\n\n```awaiting\nprs: [acme/mobile-app#391, acme/mobile-app#392, acme/mobile-app#393, acme/mobile-app#394, acme/mobile-app#395]\nstatus: needs_input\nfor: 2h\n---\nThe failing lint job on acme/mobile-app#393 is the next thing I will fix.\n```")],
   })
-  for (const [number, id] of [[391, "a"], [392, "b"], [393, "c"]]) execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, watched(number, `prw-${id}`)])
+  for (const [number, id] of [[391, "a"], [392, "b"], [393, "c"], [394, "d"], [395, "e"]]) execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, watched(number, `prw-${id}`)])
+
+  // One pull request from opened to merged, each wake in the words the watcher really sends. These scenes are
+  // archived, like the Markdown ones below, so the queue shot keeps its own threads.
+  const LIFE = "acme/app#412"
+  const wake = (id, message) => user(id[1], `${message}\n\n${wakeDeliveryToken(id[0])}`)
+  const parkOnLife = ["```awaiting", `prs: [${LIFE}]`, "status: watching", "for: 30d", "```"].join("\n")
+  write(APP, "pr-life", {
+    title: "Cap the sync retries", rested: 1, archived: true,
+    records: [
+      user(260, "Cap the sync retries and get it merged."),
+      say(256, `${LIFE} is up. Resting until GitHub has news.\n\n${parkOnLife}`),
+      wake(["life-1", 241], prWatchWakeMessage({ target: LIFE, checks: { verdict: "failing", passed: 14, failed: 1, failing: ["lint"], skipped: 0 } })),
+      say(239, `One unused import. Pushed the fix.\n\n${parkOnLife}`),
+      wake(["life-2", 224], prWatchWakeMessage({ target: LIFE, checks: { verdict: "passing", passed: 15, failed: 0, failing: [], skipped: 0 } })),
+      wake(["life-3", 120], formatGithubWakeSteer({ ref: LIFE, items: [{ label: "change request", actor: "dana-k", bot: false, at: ago(120) }], omitted: 0 })),
+      say(116, `dana-k wants the cap in config. Moved it and pushed.\n\n${parkOnLife}`),
+      wake(["life-4", 40], prWatchWakeMessage({ target: LIFE, changes: ["now CONFLICTS with the base branch"] })),
+      say(37, `Rebased on main and pushed.\n\n${parkOnLife}`),
+      wake(["life-5", 2], prWatchWakeMessage({ target: LIFE, merged: true })),
+      say(1, ["```done", "title: Sync retries capped", "---", `- Merged ${LIFE}, with the cap in config.`, "```"].join("\n")),
+    ],
+  })
+
+  // Issues a thread rests on, waiting on the people who reported them.
+  const ISSUE = "acme/mobile-app#388"
+  write(APP, "issue-wait", {
+    title: "Find out why sync stalls on Android 15", rested: 8, archived: true,
+    records: [
+      user(400, "Find out why sync stalls on Android 15. The reports are in the tracker."),
+      say(396, `It doesn't reproduce on the emulator, so I asked the reporters of ${ISSUE} and acme/mobile-app#402 for a log.`),
+      wake(["issue-1", 10], issueWatchWakeMessage({ target: ISSUE, review: formatGithubWakeSteer({ ref: ISSUE, items: [{ label: "comment", actor: "ravi-p", bot: false, at: ago(10) }], omitted: 0 }) })),
+      say(8, ["ravi-p's log shows the stall starts when the app is backgrounded. Waiting on the second report before I change anything.", "", "```awaiting", `issues: [${ISSUE}, acme/mobile-app#402, acme/mobile-app#371]`, "status: watching", "for: 30d", "title: Reports from the field", "```"].join("\n")),
+    ],
+  })
+  for (const [number, id] of [[388, "i"], [402, "j"], [371, "k"]]) execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, watched(number, `prw-${id}`, "issue-wait", "issue")])
+  execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO settings (project_id, key, value) VALUES (${sql(projects[APP].id)}, 'waker.github.issue.status.v1', ${sql(JSON.stringify({
+    [ISSUE]: { state: "open", title: "Sync stalls on Android 15", comments: 14, polledAt: ago(1) },
+    "acme/mobile-app#402": { state: "open", title: "Offline edits lost after an update", comments: 3, polledAt: ago(1) },
+    "acme/mobile-app#371": { state: "closed", stateReason: "completed", title: "Sync badge never clears", comments: 6, polledAt: ago(1) },
+  }))})`])
+
+  // References in prose, for the hovercard. shoot-site answers the card's data, since a sandbox has no GitHub sign-in.
+  write(APP, "hover-refs", {
+    title: "Find the cause of the sync crash", rested: 6, archived: true,
+    records: [
+      user(70, "Find the cause of the sync crash."),
+      say(6, ["The crash and the stall have one cause: a retry fires after the connection has already closed. acme/mobile-app#392 fixes both, so I pointed acme/mobile-app#388 at it and left the crash report open until that merges.", "", "```done", "title: Cause found", "---", "- Traced the crash and the stall to one retry.", "```"].join("\n")),
+    ],
+  })
+
+  // A thread's own edits, in a project git ignores part of: the rail lists the first set and not dist/.
+  const appDir = projects[APP].dir
+  for (const d of ["src/sync", "src/net", "test/sync", "dist"]) mkdirSync(join(appDir, d), { recursive: true })
+  const edited = {
+    "src/sync/retry.ts": ["const delay = 1000", "const limit = config.sync.retries\nconst delay = backoff(attempt)\nif (attempt > limit) throw new RetriesExhausted(attempt)\n"],
+    "src/sync/backoff.ts": ["", "export function backoff(attempt) {\n  const base = 2 ** attempt * 100\n  return Math.min(base, 30_000)\n}\n"],
+    "src/sync/queue.ts": ["queue.push(job)\nschedule()", "queue.push(job)"],
+    "src/net/client.ts": ["await send(body)", "if (socket.closed) throw new ConnectionClosed()\nawait send(body)\n"],
+    "test/sync/retry.test.ts": ["", "test('stops after the configured limit', async () => {\n  const job = failingJob()\n  await assert.rejects(run(job), RetriesExhausted)\n  assert.equal(job.attempts, 5)\n})\n"],
+    "dist/bundle.js": ["", "// built\n"],
+  }
+  writeFileSync(join(appDir, ".gitignore"), "dist/\n")
+  for (const f of Object.keys(edited)) writeFileSync(join(appDir, f), "export {}\n")
+  const editCalls = Object.entries(edited).map(([f, [old_string, new_string]], i) => [`toolu_ed${i}`, old_string ? "Edit" : "Write", old_string ? { file_path: join(appDir, f), old_string, new_string, description: `Editing ${f}` } : { file_path: join(appDir, f), content: new_string, description: `Writing ${f}` }])
+  write(APP, "edited-rail", {
+    title: "Cap the sync retries", rested: 2, archived: true,
+    records: [
+      user(30, "Cap the sync retries, and stop a retry firing after the connection has closed."),
+      calls(26, editCalls),
+      results(26, editCalls.map(([id]) => [id, "ok"])),
+      say(2, ["Retries now stop at the limit in config, with backoff between them, and a closed connection fails at once instead of retrying. The new test covers the limit.", "", "```done", "title: Sync retries capped", "---", "- Capped the retries in `src/sync/retry.ts`, with a test.", "```"].join("\n")),
+    ],
+  })
+
   const status = (over) => ({ checks: "running", running: 0, passed: 0, failed: 0, failing: [], merge: "unknown", state: "open", polledAt: ago(1), ...over })
   execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO settings (project_id, key, value) VALUES (${sql(projects[APP].id)}, 'waker.github.status.v1', ${sql(JSON.stringify({
     "acme/mobile-app#391": status({ checks: "running", running: 3, passed: 12, merge: "blocked" }),
     "acme/mobile-app#392": status({ checks: "passing", passed: 15, merge: "mergeable" }),
     "acme/mobile-app#393": status({ checks: "failing", running: 1, passed: 9, failed: 2, failing: ["lint", "e2e (ios)"], merge: "blocked" }),
+    "acme/mobile-app#394": status({ checks: "passing", passed: 15, merge: "conflicting" }),
+    "acme/mobile-app#395": status({ checks: "passing", passed: 15, merge: "blocked" }),
   }))})`])
 
   const goal = write(APP, "green-suite", {
