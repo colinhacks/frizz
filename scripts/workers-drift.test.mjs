@@ -437,20 +437,20 @@ test("a pinned name fails on another key, on no row, and before its lease lapses
   assert.match((await claimCheck({ pubkey: "good-key" }))[0], /lapses 30 days/, "a row with no date is not a fresh one")
 })
 
-test("the claim reader sends its token, parses a row, is null on 404 and throws on anything else", async (t) => {
+test("the claim reader asks the registrar, parses an owner, is null on 404 and throws on anything else", async (t) => {
   const seen = []
   const server = createServer((req, res) => {
     seen.push([req.url, req.headers.authorization])
-    if (req.url.endsWith("/claim%3Acolin")) return res.end(JSON.stringify({ pubkey: "k", renewedAt: 1 }))
-    res.statusCode = req.url.endsWith("/claim%3Afree") ? 404 : 401
+    if (req.url === "/claim/colin") return res.end(JSON.stringify({ pubkey: "k", renewedAt: 1 }))
+    res.statusCode = req.url === "/claim/free" ? 404 : 500
     res.end("{}")
   })
   server.listen(0, "127.0.0.1")
   await once(server, "listening")
   t.after(() => server.close())
-  const read = claimReader("claims-token", { base: `http://127.0.0.1:${server.address().port}` })
+  const read = claimReader({ base: `http://127.0.0.1:${server.address().port}` })
   assert.deepEqual(await read("colin"), { pubkey: "k", renewedAt: 1 })
   assert.equal(await read("free"), null)
-  await assert.rejects(read("refused"), /HTTP 401/)
-  assert.ok(seen[0][0].includes(`/storage/kv/namespaces/`) && seen[0][1] === "Bearer claims-token", String(seen[0]))
+  await assert.rejects(read("broken"), /HTTP 500/)
+  assert.equal(seen[0][1], undefined, "it sends no credential")
 })
