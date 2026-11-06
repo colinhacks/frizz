@@ -38,10 +38,16 @@ export interface AcpNote { kind: "acp-note"; at: string; text: string }
 export interface AcpContractRecord { kind: "acp-contract"; at: string; reason: AcpContractReason }
 export type AcpContractReason = "compaction" | "fresh-session"
 
+/** A tool call learned its input after the call was recorded: opencode's `tool_call` carries `{cwd}` and
+ *  the command arrives on an `in_progress` update. Only the drawer's projection reads it; the fold has no
+ *  use for a tool's input, and a second `tool-call` record would count as a second call. */
+export interface AcpToolInputRecord { kind: "acp-tool-input"; at: string; id: string; input: unknown; acp?: { title?: string; locations?: string[] } }
+
 export type AcpRecord =
   | AcpSessionHeader
   | AcpNote
   | AcpContractRecord
+  | AcpToolInputRecord
   | (NormalizedEvent & { messageId?: string; acp?: { kind?: string; title?: string; locations?: string[]; input?: unknown } })
 
 const EVENT_KINDS: ReadonlySet<string> = new Set([
@@ -60,14 +66,14 @@ export function parseAcpRecord(line: string): AcpRecord | undefined {
   try { raw = JSON.parse(line) } catch { return undefined }
   if (!raw || typeof raw !== "object" || typeof (raw as { kind?: unknown }).kind !== "string") return undefined
   const kind = (raw as { kind: string }).kind
-  if (kind === "acp-session" || kind === "acp-note" || kind === "acp-contract" || EVENT_KINDS.has(kind)) return raw as AcpRecord
+  if (kind === "acp-session" || kind === "acp-note" || kind === "acp-contract" || kind === "acp-tool-input" || EVENT_KINDS.has(kind)) return raw as AcpRecord
   return undefined
 }
 
 /** The tailer's view: only the events, with the transcript-only fields stripped. */
 export function parseAcpLine(line: string): NormalizedEvent[] {
   const rec = parseAcpRecord(line)
-  if (!rec || rec.kind === "acp-session" || rec.kind === "acp-note" || rec.kind === "acp-contract") return []
+  if (!rec || rec.kind === "acp-session" || rec.kind === "acp-note" || rec.kind === "acp-contract" || rec.kind === "acp-tool-input") return []
   const { messageId: _m, acp: _a, ...ev } = rec as NormalizedEvent & { messageId?: string; acp?: unknown }
   return [ev as NormalizedEvent]
 }
@@ -170,6 +176,16 @@ function upgradeToolTarget(call: TranscriptToolCall, acp: AcpToolMeta | undefine
   call.detail = clip(detail, 500)
   if (command) call.command = command
   else if (input && Object.keys(input).length && !call.input) call.input = clip(JSON.stringify(input, null, 2), TOOL_TEXT_MAX)
+}
+
+/** The input a later update carried replaces what the call was first recorded with: what it runs is now
+ *  known, so the row names that rather than the path or title it started on. */
+function applyToolInput(call: TranscriptToolCall, rawInput: unknown, acp: AcpToolMeta | undefined): void {
+  const { command, path, input } = toolTarget(rawInput, acp)
+  const detail = command ?? path
+  if (detail) call.detail = clip(detail, 500)
+  if (command) { call.command = command; delete call.input }
+  else if (input && Object.keys(input).length) call.input = clip(JSON.stringify(input, null, 2), TOOL_TEXT_MAX)
 }
 
 /**
@@ -282,6 +298,11 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         appendTool(msg, call)
         break
       }
+      case "acp-tool-input": {
+        const call = openTools.get(rec.id)
+        if (call) applyToolInput(call, rec.input, rec.acp)
+        break
+      }
       case "tool-result": {
         const call = openTools.get(rec.id)
         if (!call) break
@@ -292,10 +313,13 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         if (rec.text) call.output = clip(rec.text, TOOL_TEXT_MAX)
         break
       }
+      // Its own message, the shape the Codex projector gives one (transcript.ts). Hung on the open
+      // assistant message it replaced that message's text and tools when drawn, and on an empty one it
+      // drew nothing at all, so the card vanished as soon as the board's copy of the error cleared and
+      // the message that failed read as delivered (2026-11-06).
       case "provider-error": {
-        const msg = openAssistant(i, rec.at)
-        msg.providerError = rec.error
         close()
+        out.push({ sourceId: `${identityPrefix}:${i}`, role: "assistant", kind: "event", text: rec.error.message, providerError: rec.error, tools: [], parts: [], ...(rec.at ? { at: rec.at } : {}) })
         break
       }
     }

@@ -129,6 +129,9 @@ export const SEND_SPLIT_LABEL_WIDTH = 45.5
 export const SEND_SPLIT_SEAM_WIDTH = 1
 export const SEND_SPLIT_CARET_WIDTH = 23
 export const SEND_SPLIT_WIDTH = SEND_SPLIT_LABEL_WIDTH + SEND_SPLIT_SEAM_WIDTH + SEND_SPLIT_CARET_WIDTH
+/** The button alone, for a thread with only one way to send: no seam and no caret. The word sits 9.6px
+ *  from the left edge (SendSplitButton), so this leaves it about the same to the right. */
+export const SEND_SOLO_WIDTH = 47.5
 
 /** Where each present mark sits (its CSS `right`, px) and how much right padding the prose keeps.
  *  `sendWidth` is the Send control's own width when it is not the 28px square. A fractional one is

@@ -29,6 +29,8 @@ export type EagerFollowUpCallbacks = {
   onRollback?: (failure: SendFailure) => void
   // The deliveryId of a failed send this one re-sends (FollowUpInput.supersedes).
   supersedes?: string
+  // Names the send's own verb on a failure toast. The default says "Steer failed".
+  failureToast?: (message: string) => string
   // THE PROMPT BOX'S ONE SEND (ThreadComposerBox). Staged answers to registered questions travel in
   // this same message — the server settles them and composes them above the text — so the text may be
   // EMPTY when they ride. `displayText` is what the optimistic bubble shows meanwhile: the answers in

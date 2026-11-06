@@ -7,7 +7,7 @@ import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
 import { queueComposerHandlesOptionEnter } from "../lib/queueComposerKeyboard.ts"
-import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { useDictation } from "../lib/dictation.ts"
@@ -139,6 +139,8 @@ export interface ComposerSendControl {
    *  the menu's two rows differ. */
   running: boolean
   staged: number
+  /** The agent can read a message inside a running turn; absent means it can. */
+  steerable?: boolean
 }
 
 // Auto-grow: reset to auto, then snap to content height clamped at maxHeight.
@@ -542,7 +544,7 @@ export function Composer({
   // Something to send: words in the box, or — on a thread composer — an answer staged on a card.
   const armed = hasContent || (send?.staged ?? 0) > 0
   // Where each rail mark sits, and the padding every text row keeps clear of the absolutely-placed rail.
-  const rail = composerRail({ lead: Boolean(railLead), mic: micShown, sendWidth: send && !phone ? SEND_SPLIT_WIDTH : undefined })
+  const rail = composerRail({ lead: Boolean(railLead), mic: micShown, sendWidth: send && !phone ? (send.steerable === false ? SEND_SOLO_WIDTH : SEND_SPLIT_WIDTH) : undefined })
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     const el = e.currentTarget
@@ -1138,6 +1140,7 @@ export function Composer({
           busy={busy}
           mode={send.mode}
           running={send.running}
+          steerable={send.steerable !== false}
           right={rail.right.send}
           onMode={send.onMode}
           onSend={submit}

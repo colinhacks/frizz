@@ -1,12 +1,12 @@
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
 import { createPortal } from "react-dom"
-import { useSnapshot } from "valtio"
+import { subscribe, useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon } from "lucide-react"
 import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP } from "@frizz/shared"
-import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
-import { store, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
+import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, ProviderError, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
+import { store, threadBySlug, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
 import { useBackgroundShellLines, useProjectDir, useThreadSnapshot, useTranscript, type ChatMessage, type TranscriptData } from "../hooks.ts"
 import { rpc } from "../api/rpc.ts"
 import { stripFrontmatter } from "../lib/markdown.ts"
@@ -26,6 +26,7 @@ import { splitFenceBlocks, type FenceKind } from "../lib/fenceBlocks.ts"
 import { showsRegisteredDoneCard } from "../lib/registeredDone.ts"
 import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
+import { providerNameFor } from "./providerMark.ts"
 import { answersNote, isAnswersMessage, parseAnswersCard, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
 import { fenceStandsFor, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
@@ -49,7 +50,7 @@ import { limitResumeClock } from "../lib/activityTime.ts"
 import { dayAndTime, messageStamp, restGapAt } from "../lib/messageTime.ts"
 import { useUnqueueFollowUp, useUnqueueSupported } from "../lib/unqueueFollowUp.ts"
 import { useFailedDeliveryActions } from "../lib/failedDelivery.ts"
-import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending } from "../lib/deliverQueuedNow.ts"
+import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending, useThreadCanSteer } from "../lib/deliverQueuedNow.ts"
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
@@ -636,7 +637,7 @@ export function RuntimeStatusLadder({
     case "provider-fault":
       return <ProviderFaultCard slug={slug} sessionId={thread!.sessionId} fault={thread!.providerFault!} retryText={retryText} />
     case "provider-error":
-      return <ProviderErrorCard error={thread!.providerError!} />
+      return <ThreadProviderErrorCard error={thread!.providerError!} />
     case "limit-pause":
       return <LimitPauseCard slug={slug} sessionId={thread!.sessionId} pause={thread!.limitPause!} />
     case "pending-ask":
@@ -3242,10 +3243,21 @@ export function QueuedSendNow() {
   const slug = useContext(ThreadSlugContext)
   const run = useContext(QueuedRunContext)
   const interruptible = useDeliverQueuedNowSupported(slug)
+  const steerable = useThreadCanSteer(slug)
   const pending = useSendNowPending(slug)
   if (!slug || !run) return null
-  const step = sendNowStep(run, interruptible)
-  if (!step) return null
+  const step = sendNowStep(run, interruptible, steerable)
+  if (!step) {
+    // No Send now to offer, because this agent has no way to read a message early. Its place says what
+    // the gray bubble is waiting for, which on every other backend the control's own tooltip covers.
+    if (steerable || run.held + run.steered === 0) return null
+    return (
+      <>
+        <VSpace h={HUMAN_RUN_STEP} />
+        <div data-queued-waits-for-turn className="flex items-baseline justify-end text-[11.5px] leading-[16px] text-muted">Waits for this turn to end</div>
+      </>
+    )
+  }
   // A release hands over one held message, the next; with more held behind it the words say which.
   const releaseTitle = run.held > 1 ? "Send the next one now — the agent reads it at its next step" : "Send it now — the agent reads it at its next step"
   return (
@@ -3509,6 +3521,21 @@ export const Message = memo(function Message(props: MessageProps) {
     </div>
   )
 })
+// The error card under its thread's own provider, from whichever surface draws it. A scalar over the
+// store, as useDeliverQueuedNowSupported does: a board push must not re-render the transcript's cards.
+function ThreadProviderErrorCard({ error }: { error: ProviderError }) {
+  const slug = useContext(ThreadSlugContext)
+  const provider = useSyncExternalStore(
+    (onChange) => subscribe(store, onChange),
+    () => {
+      const thread = slug ? threadBySlug(store.board, slug) : undefined
+      return providerNameFor(thread?.backend, thread?.model)
+    },
+    () => "Agent",
+  )
+  return <ProviderErrorCard error={error} provider={provider} />
+}
+
 function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, thread, restingCardShown, stepsDone }: MessageProps) {
   // ANSWERING ON A PHONE happens in a sheet, one question at a time (MobileAnswerSheet) — the cards in
   // the transcript stay READ-ONLY there, so the questions are still visible in the context that
@@ -3520,7 +3547,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
   const promptBoxSends = usePromptBoxSends()
   // An event line (a sub-agent completion) is transcript PUNCTUATION — a quiet full-width line, not a
   // bubble or a tool band. Rendered before the role branches (its role field is nominal).
-  if (m.providerError) return <ProviderErrorCard error={m.providerError} />
+  if (m.providerError) return <ThreadProviderErrorCard error={m.providerError} />
   if (m.kind === "event") return <EventLine text={m.text} boundary={m.boundary} sourceId={m.sourceId} at={m.at} />
   // A model-reasoning summary (Codex) — quiet punctuation like an event line, but CLICKABLE to expand
   // the full reasoning. Rendered before the role branches (its role field is nominal, like an event).

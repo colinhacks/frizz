@@ -180,6 +180,7 @@ import {
   AcpAgent,
   acpAgentIdFromModel,
   acpModelIdFromModel,
+  backendFollowUps,
   AcpAgentModels,
   AcpAgentModelsInput,
 } from "@frizz/shared"
@@ -193,7 +194,7 @@ import { appServerTurnStalled, resolveLiveWatchTarget, resolveRecurringPrompt, r
 import { runThreadUpdate } from "./frizz.ts"
 import { repairThreadFile } from "./repair.ts"
 import { reopenArchivedThreadForFollowUp, resumeThread, wakeParkedThreadForFollowUp } from "./resume.ts"
-import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, forgetDelivery, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
+import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, failHeldDeliveries, forgetDelivery, holdStrandedDeliveries, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
 import {
   readEarlierThreadTranscriptPage,
@@ -363,10 +364,9 @@ export interface CodexTurnTerminator {
 // flight, and interruptTurn resolves once that prompt has returned (or the child was killed).
 export interface AcpTurnTerminator {
   turnLiveness(threadSlug: string, sessionId: string): { turnActive: boolean } | undefined
-  interruptTurn(threadSlug: string, sessionId: string): Promise<{ interrupted: boolean }>
-  /** End the agent itself — its daemon outlives frizz (acp-host.ts), so a stop that only cancelled
-   *  the turn would leave the agent running for nobody. */
-  releaseSession(threadSlug: string, sessionId: string, reason: "session-replaced" | "session-deleted"): void
+  /** Take the queue off, cancel the turn and end the agent itself — its daemon outlives frizz
+   *  (acp-host.ts), so a stop that only cancelled the turn would leave the agent running for nobody. */
+  endSession(threadSlug: string, sessionId: string): Promise<void>
   /** Whether an agent process exists for this session at all — attached or not, mid-turn or idle. The
    *  Claude broker's `isDaemonAlive` twin: an idle daemon is still a live worker to end. */
   isAgentAlive(threadSlug: string, sessionId: string): boolean
@@ -424,14 +424,12 @@ export async function stopThreadRuntime(
   acp?: AcpTurnTerminator,
 ): Promise<"absent" | "stopped"> {
   if (row.backend === "acp") {
-    // The bridge answers both questions: is a turn running, and stop it (session/cancel, then wait for
-    // the prompt to return). Then END the agent: it lives in a detached daemon that would otherwise sit
-    // idle for hours after the thread is put away. A resting thread with no daemon costs nothing here.
+    // The bridge stops the turn (session/cancel, then wait for the prompt to return) and then ENDS the
+    // agent: it lives in a detached daemon that would otherwise sit idle for hours after the thread is
+    // put away. A resting thread with no daemon costs nothing here.
     if (!acp) return "absent"
     const alive = acp.isAgentAlive(row.slug, row.session_id)
-    const turnActive = acp.turnLiveness(row.slug, row.session_id)?.turnActive === true
-    if (turnActive) await acp.interruptTurn(row.slug, row.session_id)
-    acp.releaseSession(row.slug, row.session_id, "session-deleted")
+    await acp.endSession(row.slug, row.session_id)
     return alive ? "stopped" : "absent"
   }
   if (isAppServerCodexRow(row)) {
@@ -1624,8 +1622,11 @@ export function createRouter(ctx: AppContext) {
       throw new Error("There is nothing to send")
     }
     const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, hold: undefined }
-    if (input.hold && !input.interrupt && !input.freshProcess && !replay) {
-      const row = ctx.storage.getSession(input.slug)
+    const row = ctx.storage.getSession(input.slug)
+    // A backend with no steer has nothing else to do with a message sent mid-turn, whoever is asking: a
+    // tab from before the composer knew, or `frizzctl steer`.
+    const hold = input.hold || !backendFollowUps(row?.backend).steer
+    if (hold && !input.interrupt && !input.freshProcess && !replay) {
       // Only something the server can SEE is worth waiting behind: a turn the tailer reads as running,
       // messages already held (the queue is FIFO, so a send must not overtake them on a rest), or a send
       // whose turn has not ended (the queue goes out one turn at a time). Unknown telemetry sends now: a
@@ -1666,6 +1667,19 @@ export function createRouter(ctx: AppContext) {
     if (!row) { heldSlugs.delete(slug); return 0 }
     const items = parseDeliveryLedger(row.delivery_ledger)
     if (!items.some((item) => item.state === "held")) { heldSlugs.delete(slug); return 0 }
+    if (row.backend === "acp") {
+      // The session is going down, so its stop decides what this message waits for. The sweep comes back.
+      if (ctx.acpBridge?.isEnding?.(row.session_id)) return 0
+      // Nobody is coming to read it: the operator ended this thread with the message still waiting.
+      // Sending it would reopen what they just closed, so it stays on screen as a failed send instead.
+      if (row.state === "archived" || row.archived === 1) {
+        failHeldDeliveries(ctx.storage, slug, "The session ended before this message was sent.")
+        heldSlugs.delete(slug)
+        ctx.transcriptChange.emit([slug])
+        ctx.board.refresh()
+        return 0
+      }
+    }
     if (!opts.force && ctx.tailer.get(slug)?.turn === "in-flight") return 0
     if (hasPendingPermissionChange(row)) return 0 // the sweep comes back for it
     const item = nextHeldRelease(items, { force: opts.force })
@@ -1711,6 +1725,18 @@ export function createRouter(ctx: AppContext) {
   ctx.bus?.subscribe((event) => {
     if (event.type !== "notify" || event.kind !== "turn-done" || !heldSlugs.has(event.slug)) return
     setTimeout(() => void releaseHeldFollowUps(event.slug), 0).unref?.()
+  })
+  // A message the ACP bridge was queueing on a session that stopped, or lost its agent, under it. The
+  // ledger holds it from here, durably: the release opens the session again and delivers it once the
+  // agent is back, or fails it visibly if the thread was put away.
+  ctx.acpBridge?.onFollowUpsStranded?.(({ threadSlug, sessionId, followUps }) => {
+    const row = ctx.storage.getSession(threadSlug)
+    if (!row || row.session_id !== sessionId) return
+    const sends = followUps.map((followUp) => ({ id: followUp.deliveryId ?? randomUUID(), text: followUp.text }))
+    if (holdStrandedDeliveries(ctx.storage, threadSlug, sends) === 0) return
+    watchHeld(threadSlug)
+    ctx.transcriptChange.emit([threadSlug])
+    ctx.board.refresh()
   })
 
   // The two checks both recurring-prompt writers owe, shared so the operator's path and the worker's
@@ -3054,6 +3080,9 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const row = currentOwnedSession(input.slug, input.sessionId)
         if (!row) throw new Error("This thread is no longer the session this tab is looking at")
+        // With no steer there is nothing "now" can mean: a released message would only wait in the
+        // bridge instead of the ledger. A tab from before the composer knew can still ask.
+        if (!backendFollowUps(row.backend).steer) return { interrupted: false, reason: "This agent reads a message when its turn ends, so it can't be sent sooner" }
         // The next message Frizz was HOLDING for the rest goes to the runtime first — the operator has just
         // said not to wait — and then the interrupt below pushes the runtime's queue through, it included.
         // One message, as a rest would hand over: the queue goes out one at a time (nextHeldRelease). On a
@@ -3460,7 +3489,11 @@ export function createRouter(ctx: AppContext) {
         const result = await completeRegisteredThread(
           ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge,
         )
-        if (!result.needsConfirmation) ctx.board.refresh()
+        if (!result.needsConfirmation) {
+          ctx.board.refresh()
+          // Whatever an ACP thread was still holding fails now, not at the next sweep.
+          if (row.backend === "acp") void releaseHeldFollowUps(input.slug)
+        }
         return result
       },
     }),
@@ -4756,6 +4789,8 @@ export function createRouter(ctx: AppContext) {
           throw new Error("This thread resumed or was replaced while it was being stopped; the new worker was preserved")
         }
         ctx.board.refresh() // storage-only change — overlay is enough
+        // An ACP turn stopped here may have had messages waiting behind it: they go out on a new agent.
+        if (stopped.row?.backend === "acp") void releaseHeldFollowUps(input.slug)
       },
     }),
 

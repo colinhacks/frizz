@@ -76,6 +76,18 @@ export function providerMarkFor(backend: string | null | undefined, model?: stri
   return isMarkKey(key) ? PROVIDER_MARKS[key] : PROVIDER_MARKS.acp
 }
 
+/** What a thread's own provider is called in a sentence ("Codex request failed"). The short word for the
+ *  two subscriptions; an ACP agent's own name, read off its `acp:<id>` slug when Frizz has no mark for it. */
+export function providerNameFor(backend: string | null | undefined, model?: string | null): string {
+  if (backend === "codex") return "Codex"
+  if (backend === "claude") return "Claude"
+  if (backend !== "acp") return "Agent"
+  const agent = acpAgentIdFromModel(model)
+  const key = agent ? `acp:${agent}` : "acp"
+  if (isMarkKey(key) && key !== "acp") return PROVIDER_MARKS[key].label
+  return agent ? agent[0]!.toUpperCase() + agent.slice(1) : "Agent"
+}
+
 /** The backend-level mark, for surfaces that have no thread (the quota chips). */
 export function providerMarkForBackend(backend: string | null | undefined): ProviderMarkDefinition | undefined {
   return providerMarkFor(backend)

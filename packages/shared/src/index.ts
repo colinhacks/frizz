@@ -108,6 +108,27 @@ export type RuntimeState = z.infer<typeof RuntimeState>
 export const Backend = z.enum(["claude", "codex", "acp"])
 export type Backend = z.infer<typeof Backend>
 
+// WHAT A BACKEND CAN DO WITH A MESSAGE SENT WHILE ITS TURN RUNS. One table, so a new backend states what
+// it supports here and every prompt box, key and server gate follows, rather than each carrying its own
+// list of backend names (2026-11-06: the composer offered an ACP thread a steer and a Send now that the
+// server then refused).
+//
+//   steer     — the agent can read a message at its next step, inside the running turn. Without it a
+//               message can only wait for the turn to end.
+//   interrupt — Frizz can preempt the running turn so the waiting messages are read now.
+export interface BackendFollowUps { steer: boolean; interrupt: boolean }
+export const BACKEND_FOLLOW_UPS: Record<Backend, BackendFollowUps> = {
+  claude: { steer: true, interrupt: true },
+  // The app-server owns steer-vs-start, and a child `spawn_agent` would die with an interrupted turn.
+  codex: { steer: true, interrupt: false },
+  // ACP has `session/prompt` and `session/cancel`, nothing between: a follow-up waits for the turn's end.
+  acp: { steer: false, interrupt: false },
+}
+/** A row or a board snapshot with no backend (legacy, or an older server) is a Claude thread. */
+export function backendFollowUps(backend: string | null | undefined): BackendFollowUps {
+  return backend === "codex" || backend === "acp" ? BACKEND_FOLLOW_UPS[backend] : BACKEND_FOLLOW_UPS.claude
+}
+
 // One selectable Codex model, derived server-side from the AUTHORITATIVE ~/.codex/models_cache.json
 // (the codexModels RPC) rather than a hand-maintained list — the source of two live breakages (a bare
 // `gpt-5.6` that codex 400s, and a single hardcoded effort set that's wrong per-model). `slug` is the

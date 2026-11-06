@@ -19,6 +19,9 @@ import { proxy, useSnapshot } from "valtio"
 // every project, every tab of this browser — and through a reload. It is remembered in this browser
 // (like lib/homeView.ts), and a tab follows another tab's pick live through the `storage` event.
 //
+// A backend with no steer (shared BACKEND_FOLLOW_UPS) has only the queue, so its box draws no menu and
+// sends as `queue` whichever row is ticked for the others. The tick itself is left alone.
+//
 // A queue tick left on cannot hold a message back for no reason: a send is only held while there is a
 // turn to queue behind (ThreadComposerBox), and the placeholder says "Queue a message…" whenever it
 // would be.
@@ -63,9 +66,10 @@ export function useSendMode(): SendMode {
  *  is then a note on the answers, whichever way they go. An open question with nothing staged makes
  *  the box the way AROUND it. Otherwise it names how the ticked row will send, which only differs from
  *  an ordinary reply while there is a turn to queue behind. */
-export function sendPlaceholder(input: { staged: number; openQuestions: boolean; running: boolean; mode: SendMode }): string {
+export function sendPlaceholder(input: { staged: number; openQuestions: boolean; running: boolean; mode: SendMode; steerable?: boolean }): string {
   if (input.staged > 0) return input.staged === 1 ? "Add a note to send with your answer…" : `Add a note to send with your ${input.staged} answers…`
   if (input.openQuestions) return "Or skip the questions and reply…"
+  if (input.running && input.steerable === false) return "Queue a message for when this turn ends…"
   if (input.running && input.mode === "queue") return "Queue a message for when the agent rests…"
   return "Reply to the agent…"
 }

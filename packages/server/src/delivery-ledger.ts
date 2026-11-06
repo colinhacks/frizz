@@ -452,6 +452,55 @@ export function holdDelivery(storage: Storage, slug: string, send: { id: string;
   return true
 }
 
+/**
+ * Sends a runtime's own in-memory queue can no longer deliver go back to Frizz's: `held`, in their place,
+ * so the ordinary release hands them over when the thread is at rest. Each was only ever waiting, so
+ * nothing about re-sending it can double a message. One with no entry (a scheduler wake, which keeps no
+ * bubble) gets a silent one. Returns how many are held now.
+ */
+export function holdStrandedDeliveries(storage: Storage, slug: string, sends: ReadonlyArray<{ id: string; text: string }>, now?: number): number {
+  const row = storage.getSession(slug)
+  if (!row) return 0
+  const items = parseDeliveryLedger(row.delivery_ledger)
+  const at = new Date(now ?? Date.now()).toISOString()
+  let moved = 0
+  for (const send of sends) {
+    const index = items.findIndex((item) => item.id === send.id)
+    if (index < 0) {
+      items.push({ id: send.id, text: send.text, state: "held", at, updatedAt: at, silent: true })
+      moved++
+    } else if (items[index].state === "sending" || items[index].state === "pending" || items[index].state === "enqueued") {
+      const { error: _error, retryable: _retryable, ...rest } = items[index]
+      items[index] = { ...rest, state: "held", updatedAt: at }
+      moved++
+    }
+  }
+  if (moved) storage.setDeliveryLedger(slug, serializeDeliveryLedger(trimLedger(items)))
+  return moved
+}
+
+/**
+ * The thread was put away with messages still waiting, so nothing is coming to read them. Each turns
+ * `failed` with its words kept: Retry reopens the thread and sends it, which is the operator's call to
+ * make, since they have just ended the session. Retryable because no runtime ever had it. A silent entry
+ * draws no bubble to fail, so it simply goes.
+ */
+export function failHeldDeliveries(storage: Storage, slug: string, error: string, now?: number): number {
+  const row = storage.getSession(slug)
+  if (!row) return 0
+  const items = parseDeliveryLedger(row.delivery_ledger)
+  const at = new Date(now ?? Date.now()).toISOString()
+  let moved = 0
+  const next: DeliveryLedgerItem[] = []
+  for (const item of items) {
+    if (item.state !== "held") { next.push(item); continue }
+    moved++
+    if (!item.silent) next.push({ ...item, state: "failed", error, retryable: true, updatedAt: at })
+  }
+  if (moved) storage.setDeliveryLedger(slug, serializeDeliveryLedger(next))
+  return moved
+}
+
 /** Every send Frizz is holding for this thread's next rest, oldest first — the order they release in. */
 export function heldDeliveries(storage: Storage, slug: string): DeliveryLedgerItem[] {
   const row = storage.getSession(slug)
