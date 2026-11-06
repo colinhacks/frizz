@@ -48,6 +48,7 @@ const root = path.dirname(here);
 // reclassifies a file when someone adds an unrelated fixture URL to it. Disagreement is an error, not
 // a guess — this script exists because a silently-not-run test is indistinguishable from a passing one.
 const NEEDS_REAL_STACK = [
+  "packages/web/src/components/consoleProjectChip.e2e.test.ts",
   "packages/web/src/components/registeredQuestionNavigation.e2e.test.ts",
   "packages/web/src/components/questionLetterStacking.e2e.test.ts",
   "packages/web/src/components/promptDraftTabs.e2e.test.ts",

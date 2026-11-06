@@ -91,32 +91,46 @@ test("the selector and the gear show each other's picks, and neither undoes the 
   }
 })
 
-test("the selector's label and chevron sit where the model pill's do", { skip: !baseUrl, timeout: 90_000 }, async () => {
+test("the model and the selector are one pill: one hairline, one baseline, no chevrons", { skip: !baseUrl, timeout: 90_000 }, async () => {
   const { browser, page } = await open("?backend=claude")
   try {
     await page.waitForSelector(SELECTOR)
     const read = (selector: string) => page.$eval(selector, (button) => {
       const range = document.createRange()
       range.selectNodeContents(button.querySelector("span")!)
-      const label = range.getBoundingClientRect()
-      const caret = button.querySelector("svg")!.getBoundingClientRect()
       const box = button.getBoundingClientRect()
-      return { labelBottom: label.bottom - box.top, toCaret: caret.left - label.right, height: box.height }
+      return {
+        group: button.parentElement!.getAttribute("data-prompt-control-group"),
+        labelBottom: range.getBoundingClientRect().bottom - box.top,
+        height: box.height,
+        left: box.left,
+        right: box.right,
+        ownBorder: getComputedStyle(button).borderTopWidth,
+        marks: button.querySelectorAll("svg").length,
+      }
     })
     const [pill, selector] = [await read(PROFILE), await read(SELECTOR)]
-    assert.equal(selector.height, pill.height)
-    assert.equal(selector.labelBottom, pill.labelBottom, "one baseline across the strip")
-    assert.ok(Math.abs(selector.toCaret - pill.toCaret) < 0.5, `chevron gap ${selector.toCaret} beside ${pill.toCaret}`)
+    for (const cell of [pill, selector]) {
+      assert.equal(cell.group, "", "a direct child of the group")
+      assert.equal(cell.height, 20, "20px inside the group's hairlines")
+      assert.equal(cell.ownBorder, "0px", "the group draws the outline")
+      assert.equal(cell.marks, 0, "no chevron")
+    }
+    assert.equal(selector.labelBottom, pill.labelBottom, "one baseline across the pill")
+    assert.equal(selector.left, pill.right, "the two touch")
+    const group = await page.$eval("[data-prompt-control-group]", (el) => ({ height: el.getBoundingClientRect().height, divider: getComputedStyle(el.lastElementChild!).borderLeftWidth }))
+    assert.deepEqual(group, { height: 22, divider: "1px" })
   } finally {
     await browser.close()
   }
 })
 
-test("a Codex model has no selector, and neither does a phone", { skip: !baseUrl, timeout: 90_000 }, async () => {
+test("a Codex model has no selector, and a phone has neither the selector nor the group", { skip: !baseUrl, timeout: 90_000 }, async () => {
   const codex = await open("")
   try {
     await codex.page.waitForSelector(PROFILE)
     assert.equal(await codex.page.$(SELECTOR), null)
+    assert.equal(await codex.page.$eval("[data-prompt-control-group]", (el) => el.children.length), 1, "the model alone keeps the group's outline")
   } finally {
     await codex.browser.close()
   }
@@ -124,6 +138,7 @@ test("a Codex model has no selector, and neither does a phone", { skip: !baseUrl
   try {
     await phone.page.waitForSelector("textarea")
     assert.equal(await phone.page.$(SELECTOR), null)
+    assert.equal(await phone.page.$("[data-prompt-control-group]"), null)
   } finally {
     await phone.browser.close()
   }

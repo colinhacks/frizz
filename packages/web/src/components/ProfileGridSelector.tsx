@@ -24,6 +24,7 @@ import { dismissOpenSelect, registerOpenSelect } from "../lib/selectOverlay.ts"
 import { OPAQUE_PORTAL_SURFACE_Z, OPAQUE_SURFACE_BASE } from "../lib/overlaySurface.ts"
 import { AgentSettingsPopover } from "./AgentSettingsPopover.tsx"
 import { PhoneProfileSelector } from "./MobileModelSheet.tsx"
+import { PROMPT_CONTROL_CELL, usePromptControlCell } from "./ui/PromptControlGroup.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
 
 const effortLabel = profileGridEffortLabel
@@ -120,6 +121,7 @@ function DesktopProfileGridSelector({
   runningModelLabel,
   upgrade,
 }: ProfileGridSelectorProps) {
+  const joined = usePromptControlCell()
   const [open, setOpen] = useState(false)
   const [settingsGroup, setSettingsGroup] = useState<string | null>(null)
   const settingsGroupRef = useRef(settingsGroup)
@@ -235,16 +237,17 @@ function DesktopProfileGridSelector({
           title={title}
           data-profile-known={known ? "true" : "false"}
           data-profile-pending={pendingLabel ? "true" : undefined}
-          className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] rounded-md border border-border/50 bg-transparent px-2 py-1 text-left text-muted outline-none data-[state=open]:bg-hover-strong ${triggerInteraction} ${className} ${typography}`}
+          className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] ${joined ? PROMPT_CONTROL_CELL : "rounded-md border border-border/50 px-2 py-1"} bg-transparent text-left text-muted outline-none data-[state=open]:bg-hover-strong ${triggerInteraction} ${className} ${typography}`}
         >
           {/* Lifted a pixel, as the permission picker's value is (`.select-trigger-readout`): petite caps sit on the
               baseline, so their ink rode 1.2px below the caret and the marks on this line. The cap band it was once
-              measured against is 8.7px tall where these letters are 7.5px. 3px box gap paints 6.69px of ink. */}
+              measured against is 8.7px tall where these letters are 7.5px. Standalone, its 3px box gap paints 6.69px
+              of ink to the chevron; in a PromptControlGroup there is no chevron, and the gap is the spinner's. */}
           <span className={`profile-grid-value relative -top-px min-w-0 flex-1 truncate text-left ${typography}`}>
             <TriggerLabel {...profileGridDisplayParts(groups, value, placeholder, runningModelLabel)} />
           </span>
           {pendingLabel && <Loader2 aria-hidden="true" size={compact ? 10 : 11} className="shrink-0 animate-spin text-muted-65" />}
-          <ChevronDown aria-hidden="true" size={compact ? 11 : 13} className="shrink-0 text-fg/65 transition-transform group-data-[state=open]:rotate-180" />
+          {!joined && <ChevronDown aria-hidden="true" size={compact ? 11 : 13} className="shrink-0 text-fg/65 transition-transform group-data-[state=open]:rotate-180" />}
         </button>
       </RadixMenu.Trigger>
       <RadixMenu.Portal>

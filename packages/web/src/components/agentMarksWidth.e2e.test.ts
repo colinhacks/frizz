@@ -10,7 +10,7 @@ import test from "node:test"
 //   FRIZZ_QUOTA_GAUGE_E2E_URL=http://127.0.0.1:5947 nub run test packages/web/src/components/agentMarksWidth.e2e.test.ts
 const baseUrl = process.env.FRIZZ_QUOTA_GAUGE_E2E_URL
 
-test("the permission selector sits between the model chip and the marks, on their line, at every width", { skip: !baseUrl, timeout: 90_000 }, async () => {
+test("the permission selector is joined to the model chip, with the marks after them on their line, at every width", { skip: !baseUrl, timeout: 90_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
   try {
@@ -25,7 +25,7 @@ test("the permission selector sits between the model chip and the marks, on thei
         const middle = (r: DOMRect) => r.top + r.height / 2
         return { order: chip!.right <= selector!.left && selector!.right <= marks!.left, gap: selector!.left - chip!.right, sameLine: middle(chip!) === middle(selector!) && middle(chip!) === middle(marks!), clear: marks!.right <= clip!.left }
       })
-      assert.deepEqual(layout, { order: true, gap: 6, sameLine: true, clear: true }, `at ${width}px`)
+      assert.deepEqual(layout, { order: true, gap: 0, sameLine: true, clear: true }, `at ${width}px`)
       await page.close()
     }
   } finally {
