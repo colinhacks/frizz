@@ -56,7 +56,7 @@ import { ghCommand } from "./lib/gh-command.mjs"
 import { join } from "node:path"
 import { setTimeout } from "node:timers/promises"
 import { pathToFileURL } from "node:url"
-import { ACCOUNT_ID } from "./workers-drift.mjs"
+import { ACCOUNT_ID, CLAIMS_NAMESPACE } from "./workers-drift.mjs"
 
 export const REPO = "colinhacks/frizz"
 export const ZONE = "frizz.sh"
@@ -334,7 +334,6 @@ async function audit(cf, selfId) {
 const SNAPSHOT_SINCE = "2026-08-01T00:00:00Z"
 const KNOWN_SCRIPTS = ["frizz-relay", "frizz-registrar"]
 // The registry the relay trusts for name-to-key. A write here re-points a board's name with no upload.
-const CLAIMS_NAMESPACE = "aa4a9c11473d4511a556e3e3a6857058"
 const WATCHED_CLAIM = "claim:colin"
 
 /** Everything a token holder could leave behind besides a Worker build. A surprise in any of it is a finding. */

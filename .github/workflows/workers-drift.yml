@@ -38,9 +38,11 @@ jobs:
       # WORKERS_CI_AUTHOR is a repository VARIABLE (not a secret): the ids of the deploy tokens CI has
       # uploaded with, which cloudflare-tokens.mjs adds to as it mints each one. Unset, every run fails
       # and prints the author it saw.
+      # CLOUDFLARE_CLAIMS_READ reads the name registry and nothing else: see the script's header.
       - name: Check that everything the Workers run came from CI
         env:
           CLOUDFLARE_READ_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_CLAIMS_READ: ${{ secrets.CLOUDFLARE_CLAIMS_READ }}
           GITHUB_TOKEN: ${{ github.token }}
           WORKERS_CI_AUTHOR: ${{ vars.WORKERS_CI_AUTHOR }}
         run: node scripts/workers-drift.mjs
