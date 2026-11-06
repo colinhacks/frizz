@@ -282,12 +282,13 @@ kbd {
 .md-grid figure { margin: 0; }
 .md-grid figcaption { margin-top: 12px; font-size: 16px; line-height: 1.45; color: var(--ink-2); letter-spacing: -0.006em; }
 .md-grid figcaption b { display: block; font-size: 17px; font-weight: 640; color: var(--ink); letter-spacing: -0.012em; }
-/* Two timelines: the session sleeps, the monitor does not, and each line it prints wakes the session. */
+/* Two timelines: the agent sleeps, the monitor or watcher does not, and each thing it sees wakes the agent. */
 .lanes { display: block; width: 100%; max-width: 420px; margin-top: 24px; overflow: visible; }
 .lanes text { font-size: 12.5px; font-weight: 520; letter-spacing: -0.004em; fill: var(--ink-3); }
 .lanes .awake rect { fill: var(--ink); }
 .lanes .asleep line { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 2 5; stroke-linecap: round; }
-.lanes .monitor { fill: var(--gold); }
+.lanes .lane { fill: var(--gold); }
+.lanes .labels text { text-anchor: middle; }
 .lanes .wake path { fill: none; stroke: var(--gold-deep); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .lanes .event { fill: var(--gold-ink); stroke: var(--paper, #fff); stroke-width: 2; }
 .phones { display: flex; justify-content: center; gap: clamp(16px, 4vw, 48px); margin-top: clamp(32px, 4vw, 48px); }
@@ -295,7 +296,7 @@ kbd {
 
 /* What it is not. */
 .not { padding: clamp(120px, 14vw, 200px) 0 0; }
-/* Three cards on one shared grid: each spans two rows, so a heading that wraps ("Not a worktree manager.")
+/* Three cards on one shared grid: each spans two rows, so a heading that wraps
    pushes every paragraph down together instead of leaving its own out of line with the others. */
 .not-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: auto auto; gap: 0 16px; margin-top: 56px; }
 .not-item {
