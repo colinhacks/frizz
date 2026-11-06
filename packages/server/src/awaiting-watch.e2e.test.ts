@@ -24,7 +24,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createStorage, type SessionRow } from "./storage.ts"
 import { createTailer } from "./tailer.ts"
-import { createScheduler } from "./scheduler.ts"
+import { createScheduler, NEW_HEAD_CI_WAIT_MS } from "./scheduler.ts"
 import { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
 import { GITHUB_STATUS_SETTING, readGithubStatusBook } from "./awaiting.ts"
@@ -490,6 +490,45 @@ test("a SECOND CI failure on a new commit is reported, and a re-poll of the same
     // …and the new commit's verdict is now the baseline, so it does not repeat either.
     await h.tick()
     assert.deepEqual(h.delivered, [], "the new commit's verdict settles as the baseline")
+  } finally { h.close() }
+})
+
+// A PUSH, READ OFF THE BOOK THE BOARD READS (2026-11-06). Right after a push the rollup for the new head is
+// empty, and until this the very next reading was `none`: "No checks" on a row that said "1 failed" a minute
+// before, and a settled PR to the queue rule. Over the real scheduler and the real setting, because the
+// previous reading is only there to compare where a reading replaces it.
+test("a push reads as waiting for CI until CI reports or the limit runs out, and wakes nobody", async () => {
+  const h = await prHarness()
+  const reading = () => readGithubStatusBook(h.storage.getSetting(GITHUB_STATUS_SETTING))["acme/app#391"]
+  try {
+    h.setChecks([{ status: "COMPLETED", conclusion: "FAILURE", name: "lint" }])
+    await h.tick()
+    assert.equal(reading()?.checks, "failing")
+    h.delivered.length = 0
+
+    h.push("sha-bbb")
+    h.setChecks([])
+    await h.tick()
+    assert.equal(reading()?.checks, "running", "not `none`: CI simply has not reported yet")
+    assert.deepEqual([reading()?.running, reading()?.passed, reading()?.failed], [0, 0, 0])
+    const since = reading()?.newHeadSince
+    assert.ok(since, "and the reading says so")
+    await h.tick()
+    assert.equal(reading()?.newHeadSince, since, "the wait is timed from the first sight of the commit")
+    assert.deepEqual(h.delivered, [], "a worker's own push is not news")
+
+    // A push path filters excused from CI: past the limit it is the `none` it always was.
+    h.jump(NEW_HEAD_CI_WAIT_MS)
+    await h.tick()
+    assert.equal(reading()?.checks, "none")
+    assert.equal(reading()?.newHeadSince, undefined)
+    assert.deepEqual(h.delivered, [], "and running out says nothing either")
+
+    // Checks turning up late still report, on the commit they belong to.
+    h.setChecks([{ status: "COMPLETED", conclusion: "SUCCESS", name: "lint" }])
+    await h.tick()
+    assert.equal(h.delivered.length, 1)
+    assert.match(h.delivered[0], /CI PASSED on acme\/app#391 at sha-bbb — 1 check green\./)
   } finally { h.close() }
 })
 
@@ -979,7 +1018,7 @@ test("workflows held for approval are reported as held, and never as a pass", as
     ])
     await h.tick()
     assert.equal(h.delivered.length, 1)
-    assert.match(h.delivered[0], /✅ CI PASSED on acme\/app#391 — 1 check green, 1 skipped\./)
+    assert.match(h.delivered[0], /✅ CI PASSED on acme\/app#391 at sha-aaa — 1 check green, 1 skipped\./)
   } finally { h.close() }
 })
 

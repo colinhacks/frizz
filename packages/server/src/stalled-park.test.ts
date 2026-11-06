@@ -28,7 +28,8 @@ const PR = "acme/app#412"
 const PR_PARK = "```awaiting\nprs: [acme/app#412]\nstatus: watching\nfor: 180d\n```"
 const READY: GithubWatchStatus = {
   checks: "passing", running: 0, passed: 85, failed: 0, skipped: 30, gated: 0, gating: [], failing: [],
-  merge: "mergeable", state: "open", polledAt: at(0), mergePath: "none", viewerAuthored: true, viewerCanMerge: true, reviewRequested: false,
+  // The board's own `now` (`world` below): a reading from before a rest cannot judge it (idlePrsOf).
+  merge: "mergeable", state: "open", polledAt: at(2), mergePath: "none", viewerAuthored: true, viewerCanMerge: true, reviewRequested: false,
 }
 const RED: GithubWatchStatus = { ...READY, checks: "failing", passed: 80, failed: 2, failing: ["lint"], merge: "blocked" }
 // Each of these is a PR that someone or something else will move, so a park on it is a real wait.
@@ -214,6 +215,32 @@ test("a park on our own red PR says the fix is left", async () => {
   try {
     await h.s.tick()
     assert.match(h.queued()[0]?.message ?? "", /CI FAILED, and nobody else will push the fix/)
+  } finally { h.close() }
+})
+
+// PUSH THE FIX AND PARK, the ordinary last move of a worker on a red PR (2026-11-06). The book still holds
+// the poll from before the push, and that reading said the fix was this side's to push. It was: that is
+// what the worker had just done.
+test("a red reading from BEFORE the rest refuses nothing — the next poll decides", async () => {
+  const before = new Date(Date.now() - 120_000).toISOString()
+  const h = schedulerWorld({ ...RED, polledAt: before })
+  try {
+    await h.s.tick()
+    assert.deepEqual(h.queued().map((r) => r.fence_id).filter((id) => id.startsWith("park:pr-idle:")), [], "no correction about the replaced commit")
+  } finally { h.close() }
+  // The same reading, a poll later and on the same head, is the refusal it always was.
+  const after = schedulerWorld({ ...RED, polledAt: new Date(Date.now() - 1_000).toISOString() })
+  try {
+    await after.s.tick()
+    assert.match(after.queued()[0]?.message ?? "", /CI FAILED, and nobody else will push the fix/)
+  } finally { after.close() }
+})
+
+test("a push that reads as waiting for CI on the new commit is not a PR nobody will move", async () => {
+  const h = schedulerWorld({ ...READY, checks: "running", running: 0, passed: 0, skipped: 0, newHeadSince: at(0) })
+  try {
+    await h.s.tick()
+    assert.deepEqual(h.queued().map((r) => r.fence_id).filter((id) => id.startsWith("park:pr-idle:")), [], "not 'only the merge is left' on an empty rollup")
   } finally { h.close() }
 })
 

@@ -327,9 +327,16 @@ export function prWaitsOnNoOne(status: GithubWatchStatus | undefined): boolean {
   return status.merge === "mergeable" && status.viewerCanMerge === true && status.reviewRequested === false
 }
 
-/** The book's PRs that wait on no one (prWaitsOnNoOne), as `LiveActivity.idlePrs`. */
-export function idlePrsOf(book: GithubStatusBook): ReadonlySet<string> {
-  return new Set(Object.keys(book).filter((key) => prWaitsOnNoOne(book[key])))
+/** The book's PRs that wait on no one (prWaitsOnNoOne), as `LiveActivity.idlePrs`.
+ *
+ *  ONLY A READING TAKEN AFTER THE REST CAN JUDGE IT (2026-11-06). A worker's ordinary last move is to push
+ *  the fix and park on the watcher, and the book then still holds the poll before the push: red CI, nobody
+ *  else to fix it. That refused the park with "CI FAILED, and nobody else will push the fix" about the
+ *  commit the worker had just replaced, and queued the thread for up to a poll. A reading older than the
+ *  rest cannot know what the worker did on the way to it, so it is left for the next poll, at most a minute
+ *  off, to decide. `restedAtMs` is NaN for a thread with no rest on record, which excludes nothing. */
+export function idlePrsOf(book: GithubStatusBook, restedAtMs: number): ReadonlySet<string> {
+  return new Set(Object.keys(book).filter((key) => prWaitsOnNoOne(book[key]) && !(Date.parse(book[key].polledAt) < restedAtMs)))
 }
 
 // ---- THE WATCHED-ISSUE STATUS BOOK ----------------------------------------------------------------

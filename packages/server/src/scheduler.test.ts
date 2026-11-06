@@ -2689,6 +2689,200 @@ test("pr-watch: a report minted BEFORE the re-mint existed is held the old way u
   assert.match(h.resumes[1].message, /bob/)
 })
 
+// ---- A VERDICT BELONGS TO ONE COMMIT (2026-11-06) ----
+//
+// The maintainer asked for "freshness checking on the CI watcher cards": a report waits up to
+// MID_TURN_HOLD_MAX_MS behind a busy thread, and in those minutes the worker is usually pushing the fix
+// for the very failure the report names. These drive the path a worker walks: red on one head, a push, and
+// a rest. Each asserts on what the worker is finally handed, because that is what used to be wrong.
+const RED = (head: string) => ({ state: "OPEN", mergedAt: null, rollup: [{ name: "lint", status: "COMPLETED", conclusion: "FAILURE" }], head })
+const GREEN = (head: string) => ({ state: "OPEN", mergedAt: null, rollup: [{ name: "lint", status: "COMPLETED", conclusion: "SUCCESS" }], head })
+const RUNNING = (head: string) => ({ state: "OPEN", mergedAt: null, rollup: [{ name: "lint", status: "IN_PROGRESS" }], head })
+const OLD_HEAD = "aaaaaaa1111111"
+const NEW_HEAD = "bbbbbbb2222222"
+const busy = (h: Harness, slug: string) => h.tele.set(slug, { ...tele(undefined, "in-flight"), lastAssistantAt: iso(h.clock.ms) })
+const rest = (h: Harness, slug: string) => h.tele.set(slug, { ...tele(awaiting([{ kind: "pr", value: "acme/app#7" }])), lastAssistantAt: iso(h.clock.ms) })
+const openReports = (h: Harness) => createWakeDeliveryStore(h.storage.scope).listOpen().filter((d) => d.fenceId.startsWith("prwatch:"))
+
+test("pr-watch: a red report still waiting is RETRACTED once a poll sees a newer head — the worker is not told its old commit failed", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  busy(h, "r")
+  h.review.result = []
+  h.pr.result = RED(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  assert.match(openReports(h)[0].message, /CI FAILED on acme\/app#7 at aaaaaaa: lint\./, "the verdict names its commit")
+
+  // The worker pushes the fix. The new head's checks are only running, so nothing is news.
+  h.clock.ms += 60_000
+  h.pr.result = RUNNING(NEW_HEAD)
+  await s.tick()
+  assert.equal(openReports(h).length, 0, "nothing is left to deliver")
+  assert.deepEqual(reportsOf(h, "r").map((r) => r.state), ["superseded"], "retracted, and nothing minted in its place")
+
+  rest(h, "r")
+  h.clock.ms += 15 * 60_000
+  await s.tick()
+  assert.equal(h.resumes.filter((r) => /CI FAILED/.test(r.message)).length, 0, "the old verdict never goes out")
+
+  // The new commit's verdict is reported when it settles, as ever.
+  h.pr.result = GREEN(NEW_HEAD)
+  h.clock.ms += 60_000
+  await s.tick()
+  h.clock.ms += 15 * 60_000
+  await s.tick()
+  assert.equal(h.resumes.length, 1)
+  assert.match(h.resumes[0].message, /CI PASSED on acme\/app#7 at bbbbbbb — 1 check green\./)
+})
+
+test("pr-watch: a report that also carries a review is RE-MINTED without the old verdict, and says the review once", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  busy(h, "r")
+  h.review.result = []
+  h.pr.result = GREEN(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  h.clock.ms += 60_000
+  h.pr.result = RED(OLD_HEAD)
+  h.review.result = [{ id: "c1", actor: "alice", at: iso(h.clock.ms), kind: "comment" }]
+  await s.tick()
+  assert.match(openReports(h)[0].message, /CI FAILED/)
+  assert.match(openReports(h)[0].message, /alice/)
+
+  // The push, with nothing else new: the review the waiting report carries is still owed.
+  h.clock.ms += 60_000
+  h.pr.result = RUNNING(NEW_HEAD)
+  await s.tick()
+  const open = openReports(h)
+  assert.equal(open.length, 1, "one report still waits")
+  assert.doesNotMatch(open[0].message, /CI FAILED/, "without the verdict about the replaced commit")
+  assert.match(open[0].message, /alice/, "and with the review")
+
+  // A comment arriving next folds forward what is left, and must not bring the verdict back with it.
+  h.clock.ms += 60_000
+  h.review.result = [
+    { id: "c1", actor: "alice", at: iso(h.clock.ms - 120_000), kind: "comment" },
+    { id: "c2", actor: "bob", at: iso(h.clock.ms), kind: "comment" },
+  ]
+  await s.tick()
+  assert.doesNotMatch(openReports(h)[0].message, /CI FAILED/)
+  assert.match(openReports(h)[0].message, /alice/)
+  assert.match(openReports(h)[0].message, /bob/)
+})
+
+test("pr-watch: a comment landing in the SAME poll as the push does not fold the old verdict forward", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  busy(h, "r")
+  h.review.result = []
+  h.pr.result = RED(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  h.clock.ms += 60_000
+  h.pr.result = RUNNING(NEW_HEAD)
+  h.review.result = [{ id: "c1", actor: "alice", at: iso(h.clock.ms), kind: "comment" }]
+  await s.tick()
+  const open = openReports(h)
+  assert.equal(open.length, 1)
+  assert.doesNotMatch(open[0].message, /CI FAILED/)
+  assert.match(open[0].message, /alice/)
+})
+
+test("pr-watch: a verdict retracted and never read speaks again if the head comes back to that commit", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  busy(h, "r")
+  h.review.result = []
+  h.pr.result = RED(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  h.clock.ms += 60_000
+  h.pr.result = RUNNING(NEW_HEAD)
+  await s.tick()
+  assert.equal(openReports(h).length, 0)
+  // A force-push back. The worker never read the red report, so the stamp must not count it as said.
+  h.clock.ms += 60_000
+  h.pr.result = RED(OLD_HEAD)
+  await s.tick()
+  assert.match(openReports(h)[0]?.message ?? "", /CI FAILED on acme\/app#7 at aaaaaaa/)
+})
+
+test("pr-watch: a GATED report survives the head moving — a gate is the same on any commit", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  busy(h, "r")
+  h.review.result = []
+  const gated = (head: string) => ({ state: "OPEN", mergedAt: null, rollup: [], head, workflowRuns: [{ workflowName: "Test Linux", conclusion: "ACTION_REQUIRED" }] })
+  h.pr.result = gated(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  assert.match(openReports(h)[0].message, /WAITING FOR APPROVAL/)
+  assert.doesNotMatch(openReports(h)[0].message, /aaaaaaa/, "a gate names no commit: it would be false after a force-push")
+  h.clock.ms += 60_000
+  h.pr.result = gated(NEW_HEAD)
+  await s.tick()
+  assert.equal(openReports(h).length, 1)
+  assert.match(openReports(h)[0].message, /WAITING FOR APPROVAL/, "still owed")
+  h.clock.ms += 60_000
+  h.pr.result = RUNNING(NEW_HEAD)
+  await s.tick()
+  assert.match(openReports(h)[0].message, /WAITING FOR APPROVAL/, "and a reading with no gate does not retract it either")
+})
+
+test("pr-watch: a report held across the upgrade, with no head in its stored form, still goes out", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  busy(h, "r")
+  h.review.result = []
+  h.pr.result = RED(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  // What the row looks like when an older Frizz wrote the cursor: same verdict, no head beside it.
+  const stored = h.storage.armedPrWatches()[0]
+  const cursor = JSON.parse(stored.cursor!)
+  delete cursor.held.checks.head
+  h.storage.setPrWatchCursor(stored.id, JSON.stringify(cursor))
+
+  h.clock.ms += 60_000
+  h.pr.result = RUNNING(NEW_HEAD)
+  await s.tick()
+  assert.equal(openReports(h).length, 1, "nothing to compare, so it is left alone")
+  rest(h, "r")
+  h.clock.ms += 15 * 60_000
+  await s.tick()
+  assert.equal(h.resumes.length, 1)
+  assert.match(h.resumes[0].message, /CI FAILED/)
+})
+
+test("pr-watch: a new commit is not a wake — a worker's own push never wakes it", async () => {
+  const h = harness()
+  h.watch("r", "acme/app#7")
+  h.storage.upsertSession(row("r"))
+  rest(h, "r")
+  h.review.result = []
+  h.pr.result = RED(OLD_HEAD)
+  const s = h.make()
+  await s.tick()
+  h.clock.ms += 15 * 60_000
+  await s.tick()
+  assert.equal(h.resumes.length, 1, "the red report went out")
+  h.clock.ms += 60_000
+  h.pr.result = { state: "OPEN", mergedAt: null, rollup: [], head: NEW_HEAD }
+  await s.tick()
+  h.clock.ms += 15 * 60_000
+  await s.tick()
+  assert.equal(h.resumes.length, 1, "the push alone says nothing")
+  assert.equal(openReports(h).length, 0)
+})
+
 test("pr-watch: a merge supersedes the report still waiting — the worker hears 'merged', not 'CI failed' then 'merged'", async () => {
   const h = harness()
   h.watch("r", "acme/app#7")

@@ -1520,6 +1520,11 @@ const LEGACY_ISSUE_WATCH_ARMED_TRAILER = "(Registered issue watcher — STILL AR
  *  - `auto-merge-off` — auto-merge was switched off; there may be no queue at all. */
 export type OffMergePath = "queue-failed" | "dequeued" | "auto-merge-off"
 
+/** ` at abc1234`, the clause a CI verdict's line names its commit with, or nothing when it has none. */
+function atCommit(head: string | undefined): string {
+  return head ? ` at ${shortCommit(head)}` : ""
+}
+
 /** What frizz delivers when a REGISTERED PR WATCHER has something to report.
  *
  *  Two things can move and the message names which: CI reaching a terminal verdict, and new review or
@@ -1539,6 +1544,11 @@ export function prWatchWakeMessage(input: {
     passed: number
     failed: number
     failing: string[]
+    /** The commit this verdict was reached on, so the line can name it and the agent can hold it against
+     *  what it just pushed: a red line with no commit reads as current whatever has landed since. Optional
+     *  because a report held across the 2026-11-06 upgrade carries none. A gate leaves it unprinted: it is
+     *  the same gate on any commit, and a held report naming one would be false after a force-push. */
+    head?: string
     /** Terminal but asserted nothing — printed beside a green tally so a rollup of skips can never again
      *  read as a build. Optional: a report held across the 2026-09-04 upgrade carries neither this nor
      *  the two below, and folding one forward must not invent them. */
@@ -1582,9 +1592,9 @@ export function prWatchWakeMessage(input: {
       // The skip count rides beside the green tally because leaving it out is how "15 checks green" got
       // said about 3 label bots and 12 skips (nodejs/node#65795, 2026-09-04).
       const skipped = c.skipped ?? 0
-      lines.push(`\u2705 CI PASSED on ${input.target} — ${c.passed} check${c.passed === 1 ? "" : "s"} green${skipped > 0 ? `, ${skipped} skipped` : ""}.`)
+      lines.push(`\u2705 CI PASSED on ${input.target}${atCommit(c.head)} — ${c.passed} check${c.passed === 1 ? "" : "s"} green${skipped > 0 ? `, ${skipped} skipped` : ""}.`)
     } else {
-      lines.push(`\u274c CI FAILED on ${input.target}${c.failing.length ? `: ${c.failing.join(", ")}` : ""}.`)
+      lines.push(`\u274c CI FAILED on ${input.target}${atCommit(c.head)}${c.failing.length ? `: ${c.failing.join(", ")}` : ""}.`)
     }
   }
   if (input.changes?.length) {
@@ -2395,8 +2405,38 @@ export const GithubWatchStatus = z.object({
   viewerAuthored: z.boolean().optional(),
   viewerCanMerge: z.boolean().optional(),
   reviewRequested: z.boolean().optional(),
+  /** THE HEAD MOVED AND CI HAS NOT REPORTED ON THE NEW COMMIT YET (2026-11-06): when the poll first saw it.
+   *  Such a reading says `checks: "running"` with nothing counted, the way `gated` folds into `running`:
+   *  the queue rule asks only whether CI has settled, and it has not. Read as "none", a push made the PR
+   *  say "No checks" and, on a green-looking merge box, "only the merge is left". Only the poller sets it
+   *  (scheduler.newHeadReading), which also drops it at the time limit, so absent means CI has either
+   *  reported or is not coming. */
+  newHeadSince: z.string().optional(),
 }).strict()
 export type GithubWatchStatus = z.infer<typeof GithubWatchStatus>
+
+/** PAST THIS, A READING IS HISTORY, NOT A VERDICT (2026-11-06): five missed polls of a 60s cadence.
+ *
+ *  A poll is legitimately late by one or two beats. The batched fetch times out and the next one is a
+ *  minute off (`prWatchPolledAt` is stamped before the request), and github-review's budget guard paces a
+ *  tight hour at a sustainable cadence, which is 100s with 30 points left and 50 minutes to the reset. So
+ *  two or three minutes is the ordinary bad case, and marking it would put gray metadata on a row that is
+ *  fine. Five means something has stopped: Frizz signed out of GitHub, the network gone, the budget spent
+ *  until the hour turns, a Mac asleep. Then "29 green" is a claim nobody is checking. */
+export const GITHUB_READING_STALE_MS = 5 * 60_000
+
+/** Has this PR reading gone stale? ONE rule for the row, the strip, the rail and the queue. Merged and
+ *  closed are never stale, because the watcher settles on them and no further poll is owed; an unreadable
+ *  `polledAt` is not called stale, since it says nothing about age. */
+export function githubReadingStale(status: { state: string; polledAt?: string }, nowMs: number): boolean {
+  if (status.state !== "open") return false
+  return nowMs - Date.parse(status.polledAt ?? "") > GITHUB_READING_STALE_MS
+}
+
+/** A head commit as a human compares it: the seven characters `git log --oneline` and GitHub both print. */
+export function shortCommit(head: string): string {
+  return head.slice(0, 7)
+}
 
 /** How a watched ISSUE stands right now — the issue twin of `GithubWatchStatus`, and deliberately a
  *  different shape rather than that one with its CI fields zeroed: an issue has no checks and no merge,
@@ -6661,8 +6701,9 @@ export type PrWatchWake =
   | { ref: string; kind: "merged" | "closed" }
   // `passed` is absent on a failure because the FORMATTER does not write it — a red line names the
   // failing jobs, not the tally. Never invent a field the text does not carry. `skipped` is absent on a
-  // green line that had none, for the same reason: the formatter omits the clause entirely.
-  | { ref: string; kind: "ci"; verdict: "passing" | "failing"; passed?: number; skipped?: number; failing: string[] }
+  // green line that had none, for the same reason: the formatter omits the clause entirely. So is `commit`
+  // on a line delivered before 2026-11-06.
+  | { ref: string; kind: "ci"; verdict: "passing" | "failing"; commit?: string; passed?: number; skipped?: number; failing: string[] }
   // CI HELD FOR AN APPROVAL, which is neither a pass nor a failure and must not be drawn as one.
   | { ref: string; kind: "ci"; verdict: "gated"; gated: number; gating: string[] }
 
@@ -6670,7 +6711,8 @@ const PR_WATCH_FINISHED = new RegExp(String.raw`^⏰ (${WAKE_REF}) was (MERGED|C
 // The skip clause is OPTIONAL because the formatter omits it when nothing was skipped — a green line
 // with no skips reads exactly as it did before 2026-09-04, so every delivery already in a transcript
 // still parses.
-const PR_WATCH_CI_PASSED = new RegExp(String.raw`^✅ CI PASSED on (${WAKE_REF}) — (\d+) checks? green(?:, (\d+) skipped)?\.$`)
+// The commit clause is optional for the same reason, since 2026-11-06.
+const PR_WATCH_CI_PASSED = new RegExp(String.raw`^✅ CI PASSED on (${WAKE_REF})(?: at ([0-9a-f]+))? — (\d+) checks? green(?:, (\d+) skipped)?\.$`)
 const PR_WATCH_CI_GATED = new RegExp(String.raw`^⏸️ CI on (${WAKE_REF}) is WAITING FOR APPROVAL — (\d+) workflows? held(?:: (.+?))?\.$`)
 const PR_WATCH_STATE = new RegExp(String.raw`^🔔 (${WAKE_REF}): (.+)\.$`)
 
@@ -6690,7 +6732,7 @@ export function parsePrWatchStateWake(text: string): PrWatchStateWake | null {
   }
   return null
 }
-const PR_WATCH_CI_FAILED = new RegExp(String.raw`^❌ CI FAILED on (${WAKE_REF})(?:: (.+?))?\.$`)
+const PR_WATCH_CI_FAILED = new RegExp(String.raw`^❌ CI FAILED on (${WAKE_REF})(?: at ([0-9a-f]+))?(?:: (.+?))?\.$`)
 
 /** The PR-watch status part of a delivered wake, or `null` when the text carries none.
  *
@@ -6706,8 +6748,9 @@ export function parsePrWatchWake(text: string): PrWatchWake | null {
     const passed = PR_WATCH_CI_PASSED.exec(line)
     if (passed) {
       return {
-        ref: passed[1], kind: "ci", verdict: "passing", passed: Number(passed[2]), failing: [],
-        ...(passed[3] ? { skipped: Number(passed[3]) } : {}),
+        ref: passed[1], kind: "ci", verdict: "passing", passed: Number(passed[3]), failing: [],
+        ...(passed[2] ? { commit: passed[2] } : {}),
+        ...(passed[4] ? { skipped: Number(passed[4]) } : {}),
       }
     }
     const gated = PR_WATCH_CI_GATED.exec(line)
@@ -6717,7 +6760,7 @@ export function parsePrWatchWake(text: string): PrWatchWake | null {
     const failed = PR_WATCH_CI_FAILED.exec(line)
     // The formatter joins the job names with ", ", so a job whose own name contains a comma-space splits
     // wrong here. It costs a label that lists one job as two — never the divider, and never the verdict.
-    if (failed) return { ref: failed[1], kind: "ci", verdict: "failing", failing: failed[2] ? failed[2].split(", ") : [] }
+    if (failed) return { ref: failed[1], kind: "ci", verdict: "failing", ...(failed[2] ? { commit: failed[2] } : {}), failing: failed[3] ? failed[3].split(", ") : [] }
   }
   return null
 }

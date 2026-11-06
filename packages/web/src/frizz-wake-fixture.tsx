@@ -83,6 +83,9 @@ const messages: ChatMessage[] = [
   wake("w5", prWatchWakeMessage({ target: "nubjs/nub#761", checks: { verdict: "passing", passed: 1, failed: 0, failing: [] } })),
   wake("w6", prWatchWakeMessage({ target: "nubjs/nub#761", checks: { verdict: "failing", passed: 4, failed: 2, failing: ["build (windows-latest)", "test (macos-14)"] } })),
   wake("w7", prWatchWakeMessage({ target: "nubjs/nub#761", checks: { verdict: "failing", passed: 0, failed: 1, failing: [] } })),
+  // The verdict naming its commit (2026-11-06), which every line above predates and still parses without.
+  wake("w7c", prWatchWakeMessage({ target: "nubjs/nub#761", checks: { verdict: "failing", passed: 4, failed: 1, failing: ["lint"], head: "abc1234def5678" } })),
+  wake("w7g", prWatchWakeMessage({ target: "nubjs/nub#761", checks: { verdict: "passing", passed: 29, failed: 0, failing: [], skipped: 3, head: "abc1234def5678" } })),
   // Both parts in one delivery — one poll that saw CI flip AND a comment land. Two hairlines, not one.
   wake("w8", prWatchWakeMessage({
     target: "nubjs/nub#587",

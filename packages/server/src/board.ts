@@ -9,7 +9,7 @@ import { dirname, join } from "node:path"
 import watcher from "@parcel/watcher"
 import type { BoardDelta, BoardSnapshot, ClaudeModel, ThreadView, RuntimeState, ThreadRecurringPrompt, ProviderError } from "@frizz/shared"
 import { standingQuestions, type QuestionFenceFault } from "./question-fences.ts"
-import { AskedQuestionSchema, BoardDiffer, activeBandThreadAt, PermissionMode, SnoozeUntil, ThreadSlug, awaitingNeedsInput, formatElapsed, awaitingStatus, awaitingSteps, isDirectSubAgent, splitDoneFrontmatter, needsInputRequired, nameQuestionAnswer, questionAnswerMessage, questionsCancelledWakeMessage, type AskedQuestion, type NamedQuestionAnswer, type PermissionMode as PermissionModeValue, type QuestionAnswer, type QuestionDismissal } from "@frizz/shared"
+import { AskedQuestionSchema, BoardDiffer, activeBandThreadAt, githubReadingStale, PermissionMode, SnoozeUntil, ThreadSlug, awaitingNeedsInput, formatElapsed, awaitingStatus, awaitingSteps, isDirectSubAgent, splitDoneFrontmatter, needsInputRequired, nameQuestionAnswer, questionAnswerMessage, questionsCancelledWakeMessage, type AskedQuestion, type NamedQuestionAnswer, type PermissionMode as PermissionModeValue, type QuestionAnswer, type QuestionDismissal } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
 import { isHeadlessRow, isBrokerClaudeRow, sessionTitleLocked, type ThreadQuestionRow } from "./storage.ts"
@@ -737,18 +737,22 @@ export function hasDeclaredWait(
 // can go and ask; holding the thread in the Running band meanwhile would hide, behind a spinner, the
 // one PR wait that never resolves on its own. `running === 0 && gated > 0` is the shape: at least one
 // live check run keeps the hold, because a run that is going will finish and requeue the thread.
-function heldByRunningChecks(github: GithubStatusBook, registered: ReadonlySet<string>): boolean {
+//
+// NOR DOES A STALE ONE (2026-11-06). "14 running" read an hour ago is not CI in motion, it is a reading
+// nobody is renewing, and the poll that would have renewed it is also what would have woken the worker. A
+// hold there hides, behind a spinner, a thread nothing will wake (githubReadingStale has the threshold).
+function heldByRunningChecks(github: GithubStatusBook, registered: ReadonlySet<string>, nowMs: number): boolean {
   if (registered.size === 0) return false
   // ALL of them: an issue watch (never in the PR book) or a settled PR beside a running one means the
   // human has something to look at, so the thread queues.
-  return [...registered].every((key) => ciInMotion(github[key]))
+  return [...registered].every((key) => ciInMotion(github[key], nowMs))
 }
 
 /** CI that will settle BY ITSELF: a live `running` reading on an open PR, not held at the approval gate.
  *  The one reading of "CI is moving" — heldByRunningChecks asks it of every watched PR, deriveWaitStatus
  *  of any. */
-function ciInMotion(status: GithubStatusBook[string] | undefined): boolean {
-  if (!status || status.checks !== "running" || status.state !== "open") return false
+function ciInMotion(status: GithubStatusBook[string] | undefined, nowMs: number): boolean {
+  if (!status || status.checks !== "running" || status.state !== "open" || githubReadingStale(status, nowMs)) return false
   return !(status.running === 0 && (status.gated ?? 0) > 0)
 }
 
@@ -1274,7 +1278,7 @@ export function deriveNeedsYou(
   // queue the same thread on the strength of the watcher being armed at all. Rides `excuseLiveOwnWork`
   // for the reason that flag exists: the CARD must still state the wait (deriveAwaitingBackground opts
   // out), or the drawer blanks at rest and reads as "the agent died".
-  if (excuseLiveOwnWork && runtime !== "exited" && heldByRunningChecks(github, registeredPrWatches)) return false
+  if (excuseLiveOwnWork && runtime !== "exited" && heldByRunningChecks(github, registeredPrWatches, nowMs)) return false
   // A TIMER PARK TAKES THE SAME SNOOZE (2026-08-25). It queues like a PR park — a visible handoff, never
   // an auto-park — and since 2026-08-24 it cards like one too, with the resting card's event-Snooze as
   // its one control. But it is not "live own work" (nothing of the thread's is running; the clock is),
@@ -1367,7 +1371,7 @@ function quietParkHolds(
         new Set([...armedTimerIds].filter((id) => !isCommandWatchId(id))),
         registeredPrWatches,
         new Set([...armedTimerIds].filter(isCommandWatchId)),
-        idlePrsOf(github),
+        idlePrsOf(github, Date.parse(tele?.lastAssistantAt ?? "")),
         liveChildren,
       ),
       Date.parse(tele?.lastAssistantAt ?? ""),
@@ -1532,7 +1536,7 @@ export function deriveWaitStatus(
   const declared = fence ? awaitingStatus(fence.hints) : null
   if (declared === "needs_input") return undefined
   if (declared === "watching") return "watching"
-  if (liveChild || [...registeredPrWatches].some((key) => ciInMotion(github[key]))) return "working"
+  if (liveChild || [...registeredPrWatches].some((key) => ciInMotion(github[key], nowMs))) return "working"
   if (declared !== "working") return "watching"
   // A SHELL MOVES ONLY WHEN THE WORKER SAYS SO: named in the fence, or registered with a watch. An
   // unnamed one is as likely a dev server nobody tore down as the job being waited on.

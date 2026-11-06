@@ -286,6 +286,15 @@ test("a pr-watch status line round-trips through its own parser", () => {
       { ref: "acme/app#12", kind: "ci", verdict: "passing", passed: 3, skipped: 12, failing: [] }],
     ["ci green, no skips — the pre-2026-09-04 wording, unchanged", { target: "acme/app#12", checks: { verdict: "passing", passed: 3, failed: 0, failing: [], skipped: 0 } },
       { ref: "acme/app#12", kind: "ci", verdict: "passing", passed: 3, failing: [] }],
+    // The commit since 2026-11-06, at the seven characters GitHub prints.
+    ["ci green, on a commit", { target: "acme/app#12", checks: { verdict: "passing", passed: 3, failed: 0, failing: [], skipped: 2, head: "abc1234def5678" } },
+      { ref: "acme/app#12", kind: "ci", verdict: "passing", commit: "abc1234", passed: 3, skipped: 2, failing: [] }],
+    ["ci red, on a commit", { target: "acme/app#12", checks: { verdict: "failing", passed: 1, failed: 2, failing: ["build"], head: "abc1234def5678" } },
+      { ref: "acme/app#12", kind: "ci", verdict: "failing", commit: "abc1234", failing: ["build"] }],
+    ["ci red, on a commit, no named jobs", { target: "acme/app#12", checks: { verdict: "failing", passed: 0, failed: 1, failing: [], head: "abc1234def5678" } },
+      { ref: "acme/app#12", kind: "ci", verdict: "failing", commit: "abc1234", failing: [] }],
+    ["ci gated, a head beside it stays unprinted", { target: "acme/app#12", checks: { verdict: "gated", passed: 0, failed: 0, failing: [], gated: 1, gating: [], head: "abc1234def5678" } },
+      { ref: "acme/app#12", kind: "ci", verdict: "gated", gated: 1, gating: [] }],
     ["ci gated", { target: "nodejs/node#65795", checks: { verdict: "gated", passed: 3, failed: 0, failing: [], gated: 8, gating: ["Test Linux", "Test macOS"] } },
       { ref: "nodejs/node#65795", kind: "ci", verdict: "gated", gated: 8, gating: ["Test Linux", "Test macOS"] }],
     ["ci gated, one workflow and no names", { target: "acme/app#12", checks: { verdict: "gated", passed: 0, failed: 0, failing: [], gated: 1, gating: [] } },
@@ -293,6 +302,16 @@ test("a pr-watch status line round-trips through its own parser", () => {
   ] as [string, Parameters<typeof prWatchWakeMessage>[0], unknown][]) {
     assert.deepEqual(parsePrWatchWake(prWatchWakeMessage(input)), want, name)
   }
+})
+
+test("a verdict line names its commit in the words the agent compares against what it pushed", () => {
+  const red = prWatchWakeMessage({ target: "acme/app#393", checks: { verdict: "failing", passed: 0, failed: 1, failing: ["lint"], head: "abc1234def5678" } })
+  assert.match(red, /^❌ CI FAILED on acme\/app#393 at abc1234: lint\.$/m)
+  const green = prWatchWakeMessage({ target: "acme/app#393", checks: { verdict: "passing", passed: 29, failed: 0, failing: [], head: "abc1234def5678" } })
+  assert.match(green, /^✅ CI PASSED on acme\/app#393 at abc1234 — 29 checks green\.$/m)
+  // A line already in a transcript, and one from a report held across the upgrade, read as they always did.
+  assert.deepEqual(parsePrWatchWake("❌ CI FAILED on acme/app#393: lint."), { ref: "acme/app#393", kind: "ci", verdict: "failing", failing: ["lint"] })
+  assert.deepEqual(parsePrWatchWake("✅ CI PASSED on acme/app#393 — 29 checks green."), { ref: "acme/app#393", kind: "ci", verdict: "passing", passed: 29, failing: [] })
 })
 
 // A delivery routinely carries BOTH parts — one poll saw CI flip and a comment land — and the chat draws

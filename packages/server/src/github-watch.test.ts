@@ -11,8 +11,9 @@
 // thread out of the queue. Not-knowing, no-CI, done, failed, merged and closed all queue.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { githubWatchStatus, type PrStatus } from "./scheduler.ts"
-import { readGithubStatusBook } from "./awaiting.ts"
+import { GITHUB_READING_STALE_MS, githubReadingStale } from "@frizz/shared"
+import { githubWatchStatus, NEW_HEAD_CI_WAIT_MS, newHeadReading, type PrStatus } from "./scheduler.ts"
+import { idlePrsOf, prWaitsOnNoOne, readGithubStatusBook } from "./awaiting.ts"
 import { parseGithubPrSnapshot } from "./github-review.ts"
 import { deriveNeedsYou, deriveAwaitingBackground, fenceWatchViews } from "./board.ts"
 import type { SessionTelemetry } from "./tailer.ts"
@@ -220,7 +221,7 @@ function watching(): SessionTelemetry {
   } as unknown as SessionTelemetry
 }
 const book = (over: Partial<ReturnType<typeof githubWatchStatus>>) =>
-  ({ [REF]: { ...githubWatchStatus(pr(), AT), ...over } })
+  ({ [REF]: { ...githubWatchStatus(pr(), LATER), ...over } })
 
 test("checks still running hold the thread OUT of the queue — the active rail, not a card", () => {
   const running = book({ checks: "running", running: 2, passed: 1 })
@@ -273,7 +274,7 @@ test("every terminal reading puts it back in the queue", () => {
 test("an unpolled PR does not hold, and neither does a reading for a different PR", () => {
   assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, NOW, undefined, true, false, {}, REGISTERED), true)
   assert.equal(
-    deriveNeedsYou(row(), watching(), "turn-idle", false, NOW, undefined, true, false, { "other/repo#1": { ...githubWatchStatus(pr(), AT), checks: "running" as const, running: 1 } }, REGISTERED),
+    deriveNeedsYou(row(), watching(), "turn-idle", false, NOW, undefined, true, false, { "other/repo#1": { ...githubWatchStatus(pr(), LATER), checks: "running" as const, running: 1 } }, REGISTERED),
     true,
   )
 })
@@ -290,7 +291,7 @@ test("one finished PR among several requeues the thread", () => {
       hints: [{ kind: "pr", value: REF }, { kind: "pr", value: "acme/app#392" }],
     },
   } as unknown as SessionTelemetry
-  const running = { ...githubWatchStatus(pr(), AT), checks: "running" as const, running: 1 }
+  const running = { ...githubWatchStatus(pr(), LATER), checks: "running" as const, running: 1 }
   const bothRunning = { [REF]: running, "acme/app#392": running }
   const onePassed = { [REF]: running, "acme/app#392": { ...running, checks: "passing" as const } }
   assert.equal(deriveNeedsYou(row(), two, "turn-idle", false, NOW, undefined, true, false, bothRunning, REGISTERED), false)
@@ -318,6 +319,93 @@ test("an unregistered pr-watch line neither cards nor leaves the queue", () => {
   const running = book({ checks: "running", running: 2 })
   assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, NOW, undefined, true, false, running, new Set()), true)
   assert.deepEqual(fenceWatchViews("t", watching(), LATER, running, []), [])
+})
+
+// ---- a reading goes stale (2026-11-06) ----
+//
+// When polling fails or is deferred the book just stops changing, so "14 running" would hold a thread in the
+// Running band for as long as the outage lasts, behind a spinner, with no poll left to wake it.
+test("a stale running reading stops holding the thread: nothing is renewing it, and nothing will wake it", () => {
+  const running = book({ checks: "running", running: 2, passed: 1 })
+  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, Date.parse(LATER) + GITHUB_READING_STALE_MS, undefined, true, false, running, REGISTERED), false, "at the threshold it still holds")
+  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, Date.parse(LATER) + GITHUB_READING_STALE_MS + 1, undefined, true, false, running, REGISTERED), true, "past it the thread queues")
+})
+
+test("a merged or closed reading never goes stale; an open one with an unreadable instant is not called stale", () => {
+  const long = Date.parse(LATER) + 86_400_000
+  assert.equal(githubReadingStale({ state: "open", polledAt: LATER }, long), true)
+  assert.equal(githubReadingStale({ state: "merged", polledAt: LATER }, long), false)
+  assert.equal(githubReadingStale({ state: "closed", polledAt: LATER }, long), false)
+  assert.equal(githubReadingStale({ state: "open", polledAt: "" }, long), false)
+  assert.equal(githubReadingStale({ state: "open" }, long), false)
+})
+
+// ---- a new commit CI has not reported on (2026-11-06) ----
+
+const HEAD_A = "aaaaaaa1111111"
+const HEAD_B = "bbbbbbb2222222"
+const T0 = Date.parse(LATER)
+const reading = (over: Partial<PrStatus>, ms: number) => githubWatchStatus(pr({ head: HEAD_B, ...over }), new Date(ms).toISOString())
+const PREV_RED = reading({ head: HEAD_A, rollup: [check({ status: "COMPLETED", conclusion: "FAILURE", name: "lint" })] as PrStatus["rollup"] }, T0 - 60_000)
+
+test("the head moves onto an empty rollup: waiting for CI on the new commit, not `none`", () => {
+  const next = newHeadReading(PREV_RED, reading({}, T0), T0)
+  assert.equal(next.checks, "running")
+  assert.deepEqual([next.running, next.passed, next.failed], [0, 0, 0], "nothing counted, because nothing has reported")
+  assert.equal(next.newHeadSince, new Date(T0).toISOString())
+  assert.deepEqual(readGithubStatusBook({ [REF]: next })[REF], next, "the stored book keeps it")
+})
+
+test("it stands from poll to poll on one commit, then falls back to `none` at the limit, and stays there", () => {
+  let last = newHeadReading(PREV_RED, reading({}, T0), T0)
+  const justBefore = T0 + NEW_HEAD_CI_WAIT_MS - 1
+  last = newHeadReading(last, reading({}, justBefore), justBefore)
+  assert.equal(last.checks, "running")
+  assert.equal(last.newHeadSince, new Date(T0).toISOString(), "the clock starts at the first sight, not at this poll")
+  const at = T0 + NEW_HEAD_CI_WAIT_MS
+  last = newHeadReading(last, reading({}, at), at)
+  assert.equal(last.checks, "none", "a push path filters excused from CI must not hold the thread forever")
+  assert.equal(last.newHeadSince, undefined)
+  assert.equal(newHeadReading(last, reading({}, at + 60_000), at + 60_000).checks, "none", "and it does not come back")
+})
+
+test("a second push restarts the wait; CI reporting ends it", () => {
+  const first = newHeadReading(PREV_RED, reading({}, T0), T0)
+  const second = newHeadReading(first, reading({ head: "ccccccc3333333" }, T0 + 60_000), T0 + 60_000)
+  assert.equal(second.newHeadSince, new Date(T0 + 60_000).toISOString())
+  const reported = newHeadReading(first, reading({ rollup: [check({ status: "IN_PROGRESS", name: "lint" })] as PrStatus["rollup"] }, T0 + 60_000), T0 + 60_000)
+  assert.equal(reported.newHeadSince, undefined)
+  assert.equal(reported.running, 1)
+})
+
+test("nothing to wait for: no previous reading, a previous head with no CI, a rollup of skips, a merge", () => {
+  assert.equal(newHeadReading(undefined, reading({}, T0), T0).checks, "none", "a first reading has nothing to compare")
+  const noCi = reading({ head: HEAD_A }, T0 - 60_000)
+  assert.equal(newHeadReading(noCi, reading({}, T0), T0).checks, "none", "a repo with no CI on the last commit")
+  const skips = reading({ rollup: [check({ status: "COMPLETED", conclusion: "SKIPPED", name: "lint" })] as PrStatus["rollup"] }, T0)
+  assert.equal(newHeadReading(PREV_RED, skips, T0).checks, "none", "skips are CI having reported")
+  const merged = reading({ state: "MERGED", mergedAt: LATER }, T0)
+  assert.equal(newHeadReading(PREV_RED, merged, T0).newHeadSince, undefined)
+  assert.equal(newHeadReading(PREV_RED, merged, T0).state, "merged")
+  const samePrev = reading({ head: HEAD_B, rollup: [check({ status: "COMPLETED", conclusion: "SUCCESS", name: "lint" })] as PrStatus["rollup"] }, T0 - 60_000)
+  assert.equal(newHeadReading(samePrev, reading({}, T0), T0).checks, "none", "the head did not move")
+})
+
+test("it holds the thread out of the queue and is nobody's idle PR, until the limit", () => {
+  const idleShape = { mergeable: "MERGEABLE", queued: null, autoMerge: false, viewerDidAuthor: true, viewerPermission: "WRITE", reviewRequestCount: 0 } as Partial<PrStatus>
+  const waiting = newHeadReading(PREV_RED, reading(idleShape, T0), T0)
+  assert.equal(prWaitsOnNoOne(waiting), false, "not 'only the merge is left' on a commit CI has not reported")
+  const nobody = newHeadReading(undefined, reading(idleShape, T0), T0)
+  assert.equal(prWaitsOnNoOne(nobody), true, "the control: the same empty rollup read as no CI")
+  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, T0 + 1000, undefined, true, false, { [REF]: waiting }, REGISTERED), false)
+  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, T0 + 1000, undefined, true, false, { [REF]: nobody }, REGISTERED), true)
+})
+
+test("idlePrsOf reads only what was polled since the rest", () => {
+  const red = { ...reading({ mergeable: "MERGEABLE", queued: null, autoMerge: false, viewerDidAuthor: true, viewerPermission: "WRITE", reviewRequestCount: 0 } as Partial<PrStatus>, T0), checks: "failing" as const, failed: 1 }
+  assert.deepEqual([...idlePrsOf({ [REF]: red }, T0 + 1)], [], "polled before the rest: it cannot know what the worker did")
+  assert.deepEqual([...idlePrsOf({ [REF]: red }, T0)], [REF], "polled at or after it")
+  assert.deepEqual([...idlePrsOf({ [REF]: red }, NaN)], [REF], "no rest on record excludes nothing")
 })
 
 // ---- who the PR waits on (board.prWaitsOnNoOne) ----

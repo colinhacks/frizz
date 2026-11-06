@@ -681,6 +681,9 @@ function PrWatchStatusDivider({ wake, sourceId, at }: { wake: PrWatchWake; sourc
     : wake.verdict === "failing" && wake.failing.length ? `: ${wake.failing.join(", ")}`
     : wake.verdict === "gated" && wake.gating.length ? `: ${wake.gating.join(", ")}`
     : ""
+  // WHICH COMMIT (2026-11-06), as the wake's own line says it: a hairline scrolled back to hours later is
+  // the one place a verdict is read long after it stopped being current. Absent on an older line.
+  const commit = wake.kind === "ci" && wake.verdict !== "gated" && wake.commit ? ` at ${wake.commit}` : ""
   const checks = wake.kind !== "ci" ? null
     : wake.verdict === "passing" && wake.passed !== undefined
       // The skips ride with the tally rather than replacing it. A green line that hides them is how "15
@@ -696,12 +699,13 @@ function PrWatchStatusDivider({ wake, sourceId, at }: { wake: PrWatchWake; sourc
       marker="github"
       at={at}
       // Only the inert form takes the separator role — a divider carrying a focusable link may not.
-      ariaLabel={href ? undefined : `${lead} on ${wake.ref}${jobs}${checks ? ` · ${checks}` : ""}`}
+      ariaLabel={href ? undefined : `${lead} on ${wake.ref}${commit}${jobs}${checks ? ` · ${checks}` : ""}`}
     >
       <span className="min-w-0 truncate">
         {lead}
         <On />{" "}
         {ref}
+        {commit}
         {jobs}
       </span>
       {checks && (

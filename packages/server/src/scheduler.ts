@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, type GithubWatchStatus, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
+import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, GithubWatchStatus, shortCommit, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { autonomousGoalOf, childOfRow, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
 import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, githubStatusKey, idlePrsOf, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, parkWaitsOnThisSide, readAwaitingPark, readGithubStatusBook, unaccountedItems, type AwaitingPark, type GithubStatusBook } from "./awaiting.ts"
 import type { CommandWatchRow, PrWatchRow, SessionRow, Storage, ThreadQuestionRow } from "./storage.ts"
@@ -415,6 +415,28 @@ export function githubWatchStatus(pr: PrStatus, polledAt: string): GithubWatchSt
     failureSig: failureSignature(entries),
     ...githubWaitingOn(pr),
   }
+}
+
+// HOW LONG A NEW COMMIT WITH NOTHING REPORTED STILL READS AS WAITING FOR CI (2026-11-06). Actions usually
+// files a workflow's checks as queued within seconds of a push, and a hosted CI posts its pending status
+// soon after, so most waits this covers should be over by the second poll (reasoned, not measured). The
+// limit is there for what never reports: a push whose path filters match no workflow. Ten minutes leaves
+// room for the slow reporters (a CI that polls the repository, a GitHub webhook backlog), and running past
+// it costs little: the row says "No checks" early, and the real checks still draw and wake when they come.
+// Too long costs more, because the thread sits in Running when the human could have had it.
+export const NEW_HEAD_CI_WAIT_MS = 10 * 60_000
+
+// THE HEAD MOVED, AND THE ROLLUP FOR THE NEW COMMIT IS STILL EMPTY (2026-11-06). `githubWatchStatus` reads
+// one poll and can only say `none`, which is right for a PR with no CI and wrong here: the row said "No
+// checks" one poll after "1 failed", and the queue rule took it as settled. The previous reading is what
+// tells the two apart, so this runs where a reading replaces the last one. A commit whose previous head
+// reported nothing stays `none`, as does a rollup of nothing but skips, which is CI having reported.
+export function newHeadReading(prev: GithubWatchStatus | undefined, next: GithubWatchStatus, nowMs: number): GithubWatchStatus {
+  if (next.checks !== "none" || next.skipped > 0 || next.state !== "open" || !next.head || !prev?.head) return next
+  const reported = prev.checks !== "none" || prev.skipped > 0
+  const since = prev.head === next.head ? prev.newHeadSince : reported ? new Date(nowMs).toISOString() : undefined
+  if (!since || nowMs - Date.parse(since) >= NEW_HEAD_CI_WAIT_MS) return next
+  return { ...next, checks: "running", newHeadSince: since }
 }
 
 // WHO A PR IS WAITING ON, in the facts awaiting.prWaitsOnNoOne reads. Each is left out unless the
@@ -1542,7 +1564,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   function publishGithubStatus(key: string, pr: PrStatus, nowMs: number): void {
     const raw = deps.storage.getSetting(GITHUB_STATUS_SETTING)
     const book = raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : {}
-    book[key] = githubWatchStatus(pr, new Date(nowMs).toISOString())
+    const prev = GithubWatchStatus.safeParse(book[key])
+    book[key] = newHeadReading(prev.success ? prev.data : undefined, githubWatchStatus(pr, new Date(nowMs).toISOString()), nowMs)
     const keys = Object.keys(book)
     // Newest-wins eviction on insertion order, which for this book is poll order — the entry evicted is
     // the one longest unpolled, i.e. the PR nobody is watching any more.
@@ -2718,9 +2741,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   }
 
   function evalParkIntegrity(nowMs: number): void {
-    // Read once per pass: which watched PRs wait on nothing but their own thread (parkWaitsOnThisSide).
+    // Read once per pass: what each watched PR last said. Which of them wait on nothing but their own
+    // thread (parkWaitsOnThisSide) is asked per rest, because only a reading newer than the rest can say.
     const github = readGithubStatusBook(deps.storage.getSetting(GITHUB_STATUS_SETTING))
-    const idlePrs = idlePrsOf(github)
     const rows = deps.storage.allSessions()
     // CHILD THREADS: every parent's children, for a park that names them under `threads:`.
     const children = childrenByParent(rows)
@@ -2758,7 +2781,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         // Only on a QUIET park (`working` or `watching`), which is the one place the board reads it
         // (needsInputParkHolds). A `needs_input` handoff naming its own green PR is exactly the rest this
         // asks for, and a fence with no answer is judged by rules that never see the PR readings.
-        awaitingNeedsInput(tele.lastFence.hints) === false ? idlePrs : undefined,
+        awaitingNeedsInput(tele.lastFence.hints) === false ? idlePrsOf(github, Date.parse(spokeAt)) : undefined,
         liveChildThreads(children.get(row.slug) ?? [], (slug) => deps.tailer.get(slug)),
       )
       // A command watch's settled rows, by id: one that PASSED has already woken the thread, the way a
@@ -3192,6 +3215,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         passed: Number(c.passed) || 0,
         failed: Number(c.failed) || 0,
         failing: Array.isArray(c.failing) ? c.failing.filter((x: unknown): x is string => typeof x === "string") : [],
+        // Absent on a report held across the 2026-11-06 upgrade: nothing to compare, so verdictOutrun
+        // leaves that report to go out as it was minted.
+        ...(typeof c.head === "string" ? { head: c.head } : {}),
         // Absent on a report held across the 2026-09-04 upgrade. Read as 0/[] rather than defaulted at
         // the formatter, so a folded-forward report says exactly what its own poll saw and no more.
         skipped: Number(c.skipped) || 0,
@@ -3282,6 +3308,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (!stamp) return undefined
     const parts = stamp.split(":")
     return parts.length >= 2 ? parts[1] : parts[0]
+  }
+
+  /** A VERDICT BELONGS TO ONE COMMIT (2026-11-06): has the PR moved past the commit this one was reached
+   *  on? A gate never has (see the 2026-09-11 note in evalPrWatches), and with either head unknown there is
+   *  nothing to compare: a report held across the upgrade, or a poll served without a head. */
+  function verdictOutrun(checks: PrWatchChecks | undefined, head: string | undefined): boolean {
+    return checks !== undefined && checks.verdict !== "gated" && !!checks.head && !!head && checks.head !== head
   }
 
   async function evalPrWatches(nowMs: number): Promise<void> {
@@ -3614,10 +3647,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // off in a repo with no queue has none, and saying "those failures" there points at nothing.
       const offMergePath = prMeta?.queued ? undefined : mostSpecificOffMergePath(freshExits.map(offMergePathOf))
 
+      // A WAITING VERDICT ON A COMMIT THE PR HAS LEFT (2026-11-06). A report sits undelivered for up to
+      // MID_TURN_HOLD_MAX_MS behind a busy thread, on purpose, and what a worker is usually busy with is
+      // pushing the fix for the failure it names. The next poll reads the new head with checks running, which
+      // is no news, so the red report went out afterwards, about a commit the worker had already replaced;
+      // and a comment re-minting it folded the same verdict forward. Nothing could compare them, because a
+      // held verdict did not say which commit it was on. So it comes off here, whatever else this poll
+      // found: the new commit's own verdict is reported when it settles, and that is the one worth a turn.
+      const outrun = waiting !== undefined && verdictOutrun(cursor.held?.checks, st?.head)
       const nextCursor: PrWatchCursor = {
         seen: acts ? [...new Set([...cursor.seen, ...acts.map((a) => a.id)])].slice(-REVIEW_SEEN_CAP) : cursor.seen,
-        // The STAMP, so the next poll compares against the commit as well as the colour.
-        checks: stamp ?? cursor.checks,
+        // The STAMP, so the next poll compares against the commit as well as the colour. A verdict taken
+        // back was never read, so it stops counting as said: a force-push back to that commit reports it.
+        checks: stamp ?? (outrun ? undefined : cursor.checks),
         report: cursor.report ?? 0,
         // Each of these advances only when this poll actually READ it. A `gh`-fallback poll knows the
         // merge verdict but not the labels, and overwriting a known baseline with "not known" would make
@@ -3630,7 +3672,23 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           ? { exits: [...new Set([...(prMeta?.mergeExits ?? []).map((e) => e.id), ...(cursor.exits ?? [])])].slice(0, 20) }
           : {}),
       }
-      if (!checksChanged && fresh.length === 0 && changes.length === 0) {
+      const news = checksChanged || fresh.length > 0 || changes.length > 0
+      // What the report waiting now still has to say, once a verdict the PR has moved past is off it.
+      const held: PrWatchHeld | undefined = (() => {
+        if (!waiting || !cursor.held) return undefined
+        if (!outrun) return cursor.held
+        const { checks: _outrun, ...rest } = cursor.held
+        return rest
+      })()
+      // THAT VERDICT WAS ALL IT SAID: taken back, not replaced. Nothing is owed until the new commit settles,
+      // and a report saying only "you pushed" is the wake `prStateChanges` refuses to spend.
+      if (outrun && !news && held!.items.length === 0 && !held!.changes?.length) {
+        outbox.supersede(waiting!.id, nowMs, `its CI verdict was on ${shortCommit(cursor.held!.checks!.head!)}, and the PR has moved to ${shortCommit(st!.head!)}`)
+        log(`waker: retracted ${row.slug} — pr-watch ${key} verdict on a replaced commit`)
+        deps.storage.setPrWatchCursor(w.id, JSON.stringify(nextCursor))
+        continue
+      }
+      if (!news && !outrun) {
         // Nothing to say, but the baseline moved: record what was seen so the FIRST poll's backlog is
         // never re-reported, and so a later comment is measured against today rather than against the
         // registration.
@@ -3642,11 +3700,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // "PR watcher armed": if the human parked this thread's card with a user snooze, news on the PR is
       // exactly the thing it was hiding UNTIL — so clear it here, the moment we enqueue, and the card
       // re-surfaces. A no-op when nothing was snoozed. (Ported from the fence poller this replaced.)
-      deps.storage.setSnoozedUntil(row.slug, null)
+      // A re-mint that only takes a verdict off is not news, and leaves a snooze standing.
+      if (news) deps.storage.setSnoozedUntil(row.slug, null)
       // WHAT THIS REPORT SAYS: the fresh news on top of whatever the waiting report it replaces was going
       // to say (nothing, when no report waits). The newest REVIEW_STEER_CAP items are named and the rest
       // counted, exactly as one poll's own burst is.
-      const held = waiting ? cursor.held : undefined
       const items = [...(held?.items ?? []), ...freshItems]
       const carried: PrWatchHeld = {
         items: items.slice(-REVIEW_STEER_CAP),
@@ -3661,6 +3719,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
               skipped: st!.skipped,
               gated: st!.gated,
               gating: st!.gating,
+              ...(st!.head ? { head: st!.head } : {}),
             },
           }
           : held?.checks ? { checks: held.checks } : {}),
@@ -3682,7 +3741,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ? formatGithubWakeSteer({ ref: key, items: carried.items, omitted: carried.omitted })
         : undefined
       const report = nextReport(cursor)
-      if (waiting) outbox.supersede(waiting.id, nowMs, `folded into report ${report}, which says this and everything since`)
+      if (waiting) outbox.supersede(waiting.id, nowMs, news ? `folded into report ${report}, which says this and everything since` : `report ${report} says the same without a CI verdict on a replaced commit`)
       enqueuePrWatchWake(row, w.id, report, prWatchWakeMessage({
         target: key,
         ...(carried.checks ? { checks: carried.checks } : {}),
