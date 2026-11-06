@@ -46,7 +46,7 @@ function render(
     createElement(
       QueryClientProvider,
       { client },
-      createElement(MemoryRouter, null, createElement(StatusRow, options.onConsole ? { onConsole: true } : null)),
+      createElement(MemoryRouter, null, createElement(StatusRow, options.onConsole ? { onConsole: true, projectChip: createElement("button", { "data-chip": "" }) } : null)),
     ),
   )
 }
@@ -134,16 +134,15 @@ test("a cold board still reserves the crumb's measure, and says it is loading", 
   assert.match(html, /aria-label="All projects"/)
 })
 
-test("the Console's row keeps the house and draws no crumb", () => {
-  // "If you're on the console page, you should not see the 'All Projects' thing" (maintainer 2026-10-29):
-  // the prompt box's project chip is the Console's one project menu. The house stays ("keep the home
-  // icon!", 2026-11-01), alone, with no slash after it.
+test("the Console's row leads with the project chip, and draws no house and no crumb", () => {
+  // "The project chip should show up to the upper left in the console … we drop the home icon from
+  // console" (maintainer 2026-11-06). The switcher above the row is the way to the grid.
   const html = render("colinhacks/frizz", { onConsole: true })
-  assert.match(houseOf(html), new RegExp(`href="${PROJECTS_HREF.replace(/[?]/g, "\\$&")}"`))
+  assert.doesNotMatch(html, /aria-label="All projects"/)
   assert.doesNotMatch(html, /aria-label="Breadcrumb"/)
   assert.doesNotMatch(html, /data-project-crumb/)
-  assert.doesNotMatch(html, />\/<\/span>/, "no slash: nothing follows the house")
-  assert.ok(html.indexOf('aria-label="All projects"') < html.indexOf('aria-label="Settings"'), "the house leads, the icons follow")
+  assert.doesNotMatch(html, />\/<\/span>/, "no slash: the chip stands alone")
+  assert.ok(html.indexOf("data-chip") >= 0 && html.indexOf("data-chip") < html.indexOf('aria-label="Settings"'), "the chip leads, the icons follow")
   assert.match(html, /ml-auto/, "the icons keep the right end")
 })
 

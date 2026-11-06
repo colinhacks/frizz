@@ -5,6 +5,7 @@ import { selectDisplayValue, selectRowPadding } from "../../lib/selectLayout.ts"
 import { registerOpenSelect } from "../../lib/selectOverlay.ts"
 import { OPAQUE_PORTAL_SURFACE_Z, OPAQUE_SURFACE_BASE } from "../../lib/overlaySurface.ts"
 import { PROMPT_CONTROL_TYPOGRAPHY_CLASS } from "../../lib/promptControlTypography.ts"
+import { PROMPT_CONTROL_CELL, usePromptControlCell } from "./PromptControlGroup.tsx"
 
 export interface SelectOption {
   value: string
@@ -46,7 +47,8 @@ const TRIGGER_VARIANT = {
   // A plain VALUE READOUT that must still read as INTERACTIVE: quiet muted text carrying a resting
   // hairline pill (border-border/50) + a stronger caret, so it registers as a dropdown at a glance
   // rather than a static label. The pill fills on hover/open; the caret sits at ~fg/65 so
-  // the chevron is legible, not a ghost.
+  // the chevron is legible, not a ghost. Inside a PromptControlGroup the group draws the hairline and
+  // there is no caret.
   readout:
     "text-muted hover:text-fg border-border/50 bg-transparent hover:bg-hover-strong data-[state=open]:bg-hover-strong [&_.select-caret]:text-fg/65 [&_.select-caret]:opacity-100",
 } as const
@@ -91,7 +93,6 @@ export function Select({
   indicatorPosition = "left",
   side = "bottom",
   menuZClass = OPAQUE_PORTAL_SURFACE_Z,
-  caretSize = 13,
   className = "",
 }: {
   value: string
@@ -111,10 +112,9 @@ export function Select({
   // element resolve by CSS source order, not class order). Override only to clear a higher surface
   // the trigger lives inside, e.g. OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z inside the z-[200] Overlay.
   menuZClass?: string
-  // 11 beside a compact profile pill, whose chevron is that size (ProfileGridSelector).
-  caretSize?: number
   className?: string
 }) {
+  const joined = usePromptControlCell() && variant === "readout"
   const display = selectDisplayValue(value, options, groups, placeholder)
   const triggerVariant = disabled ? DISABLED_TRIGGER_VARIANT[variant] : TRIGGER_VARIANT[variant]
   // Inline prompt readouts must stay on the same readable 12px/16px scale in both the trigger and
@@ -179,14 +179,14 @@ export function Select({
           type="button"
           aria-label={ariaLabel}
           title={title}
-          // A readout sits beside the profile pill and takes its 3px gap, so a label reads the same distance
-          // from its chevron in both (2026-11-06, sans: 5.71px of ink, where gap-1.5 drew 8.71px).
-          className={`group inline-flex min-w-0 max-w-full items-center ${variant === "readout" ? "gap-[3px]" : "gap-1.5"} rounded-md border px-2 py-1 text-left text-[12px] text-fg outline-none data-[placeholder]:text-muted ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer transition-colors"} ${triggerVariant} ${variant === "readout" ? "select-trigger-readout" : ""} ${promptReadoutTypography} ${className}`}
+          // A standalone readout takes the profile pill's 3px gap, so a label reads the same distance from
+          // its chevron in both (2026-11-06, sans: 5.71px of ink, where gap-1.5 drew 8.71px).
+          className={`group inline-flex min-w-0 max-w-full items-center ${joined ? PROMPT_CONTROL_CELL : `${variant === "readout" ? "gap-[3px]" : "gap-1.5"} rounded-md border px-2 py-1`} text-left text-[12px] text-fg outline-none data-[placeholder]:text-muted ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer transition-colors"} ${triggerVariant} ${variant === "readout" ? "select-trigger-readout" : ""} ${promptReadoutTypography} ${className}`}
         >
           <span className={`min-w-0 flex-1 truncate text-left ${display.placeholder ? "text-muted" : ""}`}>
             {display.text}
           </span>
-          <ChevronDown className={`select-caret shrink-0 text-muted ${disabled ? "" : "transition-transform group-data-[state=open]:rotate-180"}`} size={caretSize} />
+          {!joined && <ChevronDown className={`select-caret shrink-0 text-muted ${disabled ? "" : "transition-transform group-data-[state=open]:rotate-180"}`} size={13} />}
         </button>
       </RadixMenu.Trigger>
       <RadixMenu.Portal>

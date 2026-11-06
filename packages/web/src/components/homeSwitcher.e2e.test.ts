@@ -11,8 +11,9 @@ import test from "node:test"
 //     new tab as well as clicked, and the grid records the choice.
 //   · Only a bare `/` forwards to the kept Console: the launcher's `/?add=<dir>` offer reached the grid's
 //     dialog only while Projects was the kept home.
-//   · The houses — the status row's and the rail's — go to the grid even while the Console is the kept
-//     home. They followed the kept home until 2026-10-27, so on the Console the house went nowhere.
+//   · The houses — the rail's, and the status row's on a project page — go to the grid even while the
+//     Console is the kept home. They followed the kept home until 2026-10-27. The Console's own status row
+//     has had no house since 2026-11-06: this switcher is the way to the grid from there.
 //   · On the Console it sits at the top-left of the sidebar — its left edge on the prompt box's, above
 //     the status row — with the rail and without it, wide and stacked. It was centred over the page
 //     until 2026-10-26.
@@ -43,6 +44,8 @@ const onGrid = (page: Page) => page.waitForFunction(() => location.pathname === 
 
 test("the home switcher's tabs are links, and the lit tab is the page on screen", { skip: !baseUrl || !addDir, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+  const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
+  const [project] = (await createRpcClient(`${baseUrl}/`).query("projectsList")) as { slug: string }[]
   const browser = await launchHeadless()
   const errors: string[] = []
   const open = async () => {
@@ -61,8 +64,9 @@ test("the home switcher's tabs are links, and the lit tab is the page on screen"
       { tag: "A", tab: "projects", href: "/?home=projects", selected: "false" },
       { tag: "A", tab: "console", href: "/console", selected: "true" },
     ])
-    const house = '[data-status-row] a[aria-label]'
-    assert.equal(await here.$eval(house, (a) => a.getAttribute("href")), "/?home=projects", "the house goes to the grid, not the kept Console")
+    const house = '[data-status-row] a[aria-label="All projects"]'
+    await here.waitForSelector("[data-status-row]")
+    assert.equal(await here.$(house), null, "the Console's status row has no house: the switcher is the way out")
 
     // A bare `/` still forwards to the kept Console.
     const other = await open()
@@ -106,8 +110,11 @@ test("the home switcher's tabs are links, and the lit tab is the page on screen"
     assert.equal(await offer.evaluate(() => location.pathname), "/", "the offer is not forwarded to the Console")
     assert.equal(await kept(offer), "console", "an offer is not a choice of home")
 
-    // The house, clicked on the Console while the Console is the kept home, lands on the grid at a plain
-    // `/` (maintainer 2026-10-27). It went to `/console` — the page it was clicked on — until then.
+    // The house, clicked on a project page while the Console is the kept home, lands on the grid at a plain
+    // `/` (maintainer 2026-10-27), not on the Console by way of `/`.
+    await here.goto(`${baseUrl}/project/${project!.slug}`, { waitUntil: "domcontentloaded" })
+    await here.waitForSelector(house)
+    assert.equal(await here.$eval(house, (a) => a.getAttribute("href")), "/?home=projects", "the house goes to the grid, not the kept Console")
     await here.click(house)
     await onGrid(here)
     assert.equal(await at(here), "/")

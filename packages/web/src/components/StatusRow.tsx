@@ -1,4 +1,5 @@
 import { House, Settings as SettingsIcon } from "lucide-react"
+import type { ReactNode } from "react"
 import { Link } from "react-router"
 import { store } from "../store.ts"
 import { useBoard } from "../hooks.ts"
@@ -57,20 +58,20 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 // this spacing. UIs are conflicting here"). `gap-2.5` leaves 4px between the slash and either surface
 // when lit, and 10px of ink a side at rest: the slash stands centred between the house and the name.
 
-// THE CONSOLE KEEPS THE HOUSE AND DRAWS NO CRUMB (maintainer 2026-10-29: "if you're on the console page,
-// you should not see the 'All Projects' thing … it's just kind of confusing that that's there, and the
-// dropdown inside of the prompt box is there"). It read `⌂ / All projects ▾` until then: a second project
-// menu one row above the prompt box's own project chip, which is the one that matters there, since it
-// picks where the next thread runs. The house went with the crumb for three days and came back
-// (maintainer 2026-11-01: "keep the home icon!"), so the Console's row is `⌂` and the icons.
+// THE CONSOLE'S ROW LEADS WITH THE PROJECT CHIP, WITH NO HOUSE AND NO CRUMB (maintainer 2026-11-06: "the
+// project chip should show up to the upper left in the console … we drop the home icon from console"). The
+// chip picks where the prompt below it goes, and each row of its menu opens that project in a new tab
+// (ConsoleProjectChip.tsx). The switcher directly above this row is the way to the grid (HomeSwitcher.tsx).
+// The row read `⌂ / All projects ▾` until 2026-10-29, a second project menu over the chip that then rode inside
+// the prompt box, and then the house alone (maintainer 2026-11-01: "keep the home icon!").
 
 /**
- * Takes no props beyond the Console's flag, and reads its live values itself. Its call sites are
- * leaves of very different trees — the sidebar column and the fresh-project centered box — and the
+ * Takes nothing beyond the Console's flag and its chip, and reads its live values itself. Its call sites
+ * are leaves of very different trees — the sidebar column and the fresh-project centered box — and the
  * second one (TodosView) subscribes to no store state of its own. valtio's useSnapshot tracks the
  * properties actually READ, so this re-renders on a board change and on nothing else.
  */
-export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
+export function StatusRow({ onConsole = false, projectChip }: { onConsole?: boolean; projectChip?: ReactNode } = {}) {
   return (
     <div
       data-status-row
@@ -79,7 +80,7 @@ export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
       // block rather than a strip parked above a box.
       className="mb-2.5 flex min-w-0 items-center gap-3 text-[12px]"
     >
-      {onConsole ? <HomeLink /> : <Breadcrumb />}
+      {onConsole ? projectChip : <Breadcrumb />}
       {/* THE ICONS, right-justified, with settings in the corner. Each is shrink-0, so the crumb gives way
           before any of them does. */}
       <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -146,8 +147,7 @@ function Breadcrumb() {
 }
 
 /**
- * THE DOOR OUT, and the breadcrumb's root — on the Console, the whole of the row's left end. A 24px target
- * like the icons at the other end, trimmed onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the
+ * THE DOOR OUT, and the breadcrumb's root. A 24px target like the icons at the other end, trimmed onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the
  * house's ink then starts on the composer's outer border edge, as the gear's ends on it at the row's other
  * end (both measured 2026-10-26, 0px). It carried an extra `-ml-px` until then, which did not ADD to the
  * trim but REPLACED it — `margin-left` outranks `margin-inline` in the stylesheet — and left the house 5px

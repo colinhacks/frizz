@@ -7,6 +7,7 @@ import { showToast } from "../store.ts"
 import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
+import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
@@ -309,39 +310,39 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             UPWARD (side="top") — the footer sits on the modal's bottom edge. */}
         <div className="mt-4 flex items-end justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
-            <ProfileGridSelector
-              groups={profileGroups}
-              agentSettings
-              value={resolved ? { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort } : undefined}
-              onValueChange={(selection) => saveProfile({
-                field: "profile",
-                backend: selection.provider as DispatchProfileSnapshot["backend"],
-                model: selection.model,
-                effort: selection.effort as DispatchInput["effort"] & string,
-              })}
-              placeholder={loadError ? "Profile unavailable" : "Profile loading…"}
-              ariaLabel="Model and effort"
-              title={dispatchBlocked ?? "Model and reasoning effort for every thread this batch starts"}
-              disabled={!resolved}
-              side="top"
-              // The picker's Overlay is z-[200]; the default z-[110] portal would paint the menu
-              // beneath its frosted backdrop.
-              menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
-              className="max-w-[min(21rem,60vw)]"
-            />
-            {acpAgent && (
-              <AcpModelSelect
-                agentId={acpAgent.id}
-                agentLabel={acpAgent.label}
-                modelId={resolved?.acpModelId}
-                onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
+            <PromptControlGroup>
+              <ProfileGridSelector
+                groups={profileGroups}
+                agentSettings
+                value={resolved ? { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort } : undefined}
+                onValueChange={(selection) => saveProfile({
+                  field: "profile",
+                  backend: selection.provider as DispatchProfileSnapshot["backend"],
+                  model: selection.model,
+                  effort: selection.effort as DispatchInput["effort"] & string,
+                })}
+                placeholder={loadError ? "Profile unavailable" : "Profile loading…"}
+                ariaLabel="Model and effort"
+                title={dispatchBlocked ?? "Model and reasoning effort for every thread this batch starts"}
+                disabled={!resolved}
                 side="top"
+                // The picker's Overlay is z-[200]; the default z-[110] portal would paint the menu
+                // beneath its frosted backdrop.
                 menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
-                className="max-w-[min(14rem,30vw)] px-2 py-1"
+                className="max-w-[min(21rem,60vw)]"
               />
-            )}
-            </div>
+              {acpAgent && (
+                <AcpModelSelect
+                  agentId={acpAgent.id}
+                  agentLabel={acpAgent.label}
+                  modelId={resolved?.acpModelId}
+                  onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
+                  side="top"
+                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
+                  className="max-w-[min(14rem,30vw)]"
+                />
+              )}
+            </PromptControlGroup>
             {profileError && <p className="mt-1 max-w-[430px] text-[10.5px] text-danger">{profileError}</p>}
           </div>
           {/* The gear opens the prompt every thread this batch starts will run, so it sits beside the
