@@ -17,7 +17,7 @@ The workflows exist ([`workers-deploy.yml`](../.github/workflows/workers-deploy.
 
 The commands are in that script's header. In order:
 
-1. The maintainer makes a token on [`colin@pullfrog.com`'s API tokens page](https://dash.cloudflare.com/profile/api-tokens) from the **Create Additional Tokens** template, scoped to the Frizz account with a one-day expiry, and hands it over on a `kind: secret` card. It goes into the environment only.
+1. The maintainer makes a token on [`colin@pullfrog.com`'s API tokens page](https://dash.cloudflare.com/profile/api-tokens) with Account API Tokens Edit, Account Settings Read, Zone Read and the user's API Tokens Read, on the Frizz account only, with a one-day expiry, and hands it over on a `kind: secret` card. It goes into the environment only.
 2. `--audit --out=<dir>`: read what it saved, including the `CLAIMS` keys, against the previous snapshot. A finding stops here. `--dry-run` lists the account's Workers permission groups, in case the deploy token can be narrowed to the two scripts.
 3. `--only=drift`, then `gh workflow enable workers-drift.yml`, push `main`, and dispatch it. This first run must fail, naming the 2026-10-08 versions, which is the proof it can.
 4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both`. The maintainer approves it within the hour.
@@ -33,6 +33,14 @@ The commands are in that script's header. In order:
 ## 2. Bring custom names back (optional)
 
 Only when custom names are wanted again.
+
+Before any name returns, including one set up by hand for a single board:
+
+- **The remote gate has shipped.** npm serves a shell and a server carrying `54434c0d`, and the board runs them.
+- **Old sessions are gone.** `frizz --sign-out all` rotates the `session-key`.
+- **The browser is clean.** The maintainer clears `frizz.sh` site data right before the name returns, which removes any service worker an earlier relay build left.
+- **The name is free, and is claimed in the same sitting.** The registrar has no client binding, so any zero-scope GitHub token from an account over 30 days old can claim it.
+- **The gate holds through the live relay.** With a real session and from outside the Mac, `dispatch` and `addOwnCommandWatch` through the name answer 403 `remote_refused`. The local verifiers test the Worker and the gate separately, so this is the first run through both.
 
 1. Open [new GitHub OAuth app](https://github.com/settings/applications/new). Application name `Frizz`, Homepage URL `https://frizz.sh`, description `Confirms which GitHub account claims a frizz.sh name. Requests no permissions.`, Authorization callback URL `https://frizz.sh`. Tick **Enable Device Flow**, click **Register application**, copy the **Client ID**. Do not generate a client secret.
 2. Set `FRIZZ_GITHUB_CLIENT_ID` in [`src/github-device-flow.ts`](../src/github-device-flow.ts) to that id, and `CUSTOM_NAMES_OFFERED = true` in [`src/cloud.ts`](../src/cloud.ts). Run [`scripts/verify-claim-e2e.mjs`](../scripts/verify-claim-e2e.mjs) (its header gives the invocation) and claim one real name by hand from the R pane, then cut a shell release ([CLAUDE.md § Cutting a release](../CLAUDE.md)).

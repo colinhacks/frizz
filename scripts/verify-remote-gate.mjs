@@ -36,6 +36,12 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const flag = (name) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3)
 const shots = flag("shots")
 const keep = process.argv.includes("--keep")
+// The stack runs with --prod, which serves the built web app. Without one every page answers 503, and that
+// reads as 11 failures of the gate. A fresh worktree has none.
+if (!existsSync(join(repo, "packages/web/dist"))) {
+  console.error("No web build. Run `nub run build` in packages/web first.")
+  process.exit(2)
+}
 
 const CHILD = 47_961
 const VITE_CHILD = 47_962
