@@ -37,7 +37,7 @@ keyward --reason "deploy the frizz.sh Workers" -- gh workflow run workers-deploy
 
 The registry is one KV namespace, created once and already in `wrangler.toml`. To recreate it, run `wrangler kv namespace create CLAIMS`, paste the new id into both this package's and the relay's `wrangler.toml`, and deploy through the workflow.
 
-On the maintainer's Mac wrangler is never signed in: it runs as `keyward --reason "<the task>" -- wrangler …` with the token Keyward holds, and the `cloudflare` skill has the details. Whatever that token can do, this Worker deploys only through the workflow, and an upload from a laptop raises the alarm.
+On the maintainer's Mac wrangler is never signed in: it runs as `keyward --reason "<the task>" -- wrangler …` from a frizz checkout, with the token Keyward holds for this repository, and the `cloudflare` skill has the details. That token can read this Worker, but Cloudflare refuses it an upload, a secret change or a KV write, so the `wrangler secret` and `wrangler kv` commands above take the dashboard or a one-day token. This Worker deploys only through the workflow, and an upload from anywhere else raises the alarm.
 
 Three things that will waste your time otherwise:
 
