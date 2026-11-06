@@ -15,7 +15,7 @@ import { GITHUB_READING_STALE_MS, githubReadingStale } from "@frizz/shared"
 import { githubWatchStatus, NEW_HEAD_CI_WAIT_MS, newHeadReading, type PrStatus } from "./scheduler.ts"
 import { idlePrsOf, prWaitsOnNoOne, readGithubStatusBook } from "./awaiting.ts"
 import { parseGithubPrSnapshot } from "./github-review.ts"
-import { deriveNeedsYou, deriveAwaitingBackground, fenceWatchViews } from "./board.ts"
+import { deriveNeedsYou, deriveAwaitingBackground, deriveWaitStatus, fenceWatchViews } from "./board.ts"
 import type { SessionTelemetry } from "./tailer.ts"
 import type { SessionRow } from "./storage.ts"
 
@@ -323,12 +323,16 @@ test("an unregistered pr-watch line neither cards nor leaves the queue", () => {
 
 // ---- a reading goes stale (2026-11-06) ----
 //
-// When polling fails or is deferred the book just stops changing, so "14 running" would hold a thread in the
-// Running band for as long as the outage lasts, behind a spinner, with no poll left to wake it.
-test("a stale running reading stops holding the thread: nothing is renewing it, and nothing will wake it", () => {
+// Every poll misses while the Mac sleeps, so a queue rule on age would put each thread parked on running CI
+// into the queue at wake, with a desktop notification, and take it back out a poll later. The spinner is
+// what stops: it claims motion, and nobody has seen any.
+test("a stale running reading keeps the thread out of the queue, and stops claiming the work is moving", () => {
   const running = book({ checks: "running", running: 2, passed: 1 })
-  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, Date.parse(LATER) + GITHUB_READING_STALE_MS, undefined, true, false, running, REGISTERED), false, "at the threshold it still holds")
-  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, Date.parse(LATER) + GITHUB_READING_STALE_MS + 1, undefined, true, false, running, REGISTERED), true, "past it the thread queues")
+  const fresh = Date.parse(LATER) + GITHUB_READING_STALE_MS
+  const stale = fresh + 1
+  assert.equal(deriveNeedsYou(row(), watching(), "turn-idle", false, stale, undefined, true, false, running, REGISTERED), false, "a sleep does not bounce the queue")
+  assert.equal(deriveWaitStatus(watching(), "turn-idle", false, true, false, fresh, running, REGISTERED), "working", "at the threshold it still spins")
+  assert.equal(deriveWaitStatus(watching(), "turn-idle", false, true, false, stale, running, REGISTERED), "watching", "past it, it does not")
 })
 
 test("a merged or closed reading never goes stale; an open one with an unreadable instant is not called stale", () => {

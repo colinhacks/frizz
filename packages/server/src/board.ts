@@ -738,21 +738,22 @@ export function hasDeclaredWait(
 // one PR wait that never resolves on its own. `running === 0 && gated > 0` is the shape: at least one
 // live check run keeps the hold, because a run that is going will finish and requeue the thread.
 //
-// NOR DOES A STALE ONE (2026-11-06). "14 running" read an hour ago is not CI in motion, it is a reading
-// nobody is renewing, and the poll that would have renewed it is also what would have woken the worker. A
-// hold there hides, behind a spinner, a thread nothing will wake (githubReadingStale has the threshold).
-function heldByRunningChecks(github: GithubStatusBook, registered: ReadonlySet<string>, nowMs: number): boolean {
+// A STALE ONE STILL HOLDS (2026-11-06). The queue does not read a reading's age, though the row prints it
+// and the spinner stops (deriveWaitStatus). Every poll misses while the Mac sleeps, so queueing on age would
+// put each thread parked on running CI into the queue at wake, with a desktop notification (notifyNeedsYou
+// fires on that edge), and take it back out a poll later.
+function heldByRunningChecks(github: GithubStatusBook, registered: ReadonlySet<string>): boolean {
   if (registered.size === 0) return false
   // ALL of them: an issue watch (never in the PR book) or a settled PR beside a running one means the
   // human has something to look at, so the thread queues.
-  return [...registered].every((key) => ciInMotion(github[key], nowMs))
+  return [...registered].every((key) => ciInMotion(github[key]))
 }
 
 /** CI that will settle BY ITSELF: a live `running` reading on an open PR, not held at the approval gate.
  *  The one reading of "CI is moving" — heldByRunningChecks asks it of every watched PR, deriveWaitStatus
  *  of any. */
-function ciInMotion(status: GithubStatusBook[string] | undefined, nowMs: number): boolean {
-  if (!status || status.checks !== "running" || status.state !== "open" || githubReadingStale(status, nowMs)) return false
+function ciInMotion(status: GithubStatusBook[string] | undefined): boolean {
+  if (!status || status.checks !== "running" || status.state !== "open") return false
   return !(status.running === 0 && (status.gated ?? 0) > 0)
 }
 
@@ -1278,7 +1279,7 @@ export function deriveNeedsYou(
   // queue the same thread on the strength of the watcher being armed at all. Rides `excuseLiveOwnWork`
   // for the reason that flag exists: the CARD must still state the wait (deriveAwaitingBackground opts
   // out), or the drawer blanks at rest and reads as "the agent died".
-  if (excuseLiveOwnWork && runtime !== "exited" && heldByRunningChecks(github, registeredPrWatches, nowMs)) return false
+  if (excuseLiveOwnWork && runtime !== "exited" && heldByRunningChecks(github, registeredPrWatches)) return false
   // A TIMER PARK TAKES THE SAME SNOOZE (2026-08-25). It queues like a PR park — a visible handoff, never
   // an auto-park — and since 2026-08-24 it cards like one too, with the resting card's event-Snooze as
   // its one control. But it is not "live own work" (nothing of the thread's is running; the clock is),
@@ -1536,7 +1537,8 @@ export function deriveWaitStatus(
   const declared = fence ? awaitingStatus(fence.hints) : null
   if (declared === "needs_input") return undefined
   if (declared === "watching") return "watching"
-  if (liveChild || [...registeredPrWatches].some((key) => ciInMotion(github[key], nowMs))) return "working"
+  // A reading nobody has renewed says nothing about now, so it does not spin (githubReadingStale).
+  if (liveChild || [...registeredPrWatches].some((key) => ciInMotion(github[key]) && !githubReadingStale(github[key], nowMs))) return "working"
   if (declared !== "working") return "watching"
   // A SHELL MOVES ONLY WHEN THE WORKER SAYS SO: named in the fence, or registered with a watch. An
   // unnamed one is as likely a dev server nobody tore down as the job being waited on.
