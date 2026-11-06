@@ -54,6 +54,21 @@ test("a saved-reference row shares the child-op row's mark slot and tag column",
   assert.doesNotMatch(html, /w-\[33px\]|text-\[9px\]/)
 })
 
+test("in a panel a link or file is a menu's row, naming a file by its name", () => {
+  const html = renderToStaticMarkup(createElement(ThreadLinks, {
+    panel: true,
+    links: [
+      { id: "a", kind: "link", label: "Dev server", target: "http://localhost:5173/" },
+      { id: "b", kind: "file", label: "Report", target: "/Users/someone/project/out/report.md" },
+    ],
+  } as never))
+  assert.ok(!html.includes(CHILD_ARROW), "no arrow: it hangs off nothing")
+  assert.doesNotMatch(html, /border-t|petite-caps|>Link<|>File</, "no rule above it, and the count already named the kind")
+  assert.match(html, /px-2\.5 py-1\.5 text-left text-\[12px\]/)
+  assert.match(html, />report\.md</)
+  assert.match(html, /title="\/Users\/someone\/project\/out\/report\.md"/, "the tooltip keeps the whole path")
+})
+
 test("no registrations means no divider or empty heading", () => {
   assert.equal(renderToStaticMarkup(createElement(ThreadLinks, { links: [] })), "")
 })

@@ -4395,9 +4395,12 @@ export function BackgroundOpsStrip({
   only,
   transcriptShells = [],
   parentAgentId,
+  density = "sheet",
 }: {
   slug: string
   className?: string
+  // "panel" in a panel over the prompt box (QueueOpsSummary), where each row is a menu's (ChildOpRow).
+  density?: "sheet" | "panel"
   // Queue cards render live sub-agents as compact child lines directly under their composer. They
   // still use this strip for unrelated background shells/Monitors, so suppress agent duplication.
   includeAgents?: boolean
@@ -4468,14 +4471,14 @@ export function BackgroundOpsStrip({
   const shellLines = useBackgroundShellLines(slug, shells.flatMap((s) => (s.id && !s.outputUnavailable ? [s.id] : [])))
   if (total === 0 && links.length === 0) return null
   return (
-    <div className={`flex flex-col gap-0.5 ${className}`} data-background-ops>
+    <div className={`flex flex-col ${density === "panel" ? "" : "gap-0.5"} ${className}`} data-background-ops>
       {visibleChildOps(agents, "sheet").map((s, i) => (
         <ChildOpRow
           key={`a${i}`}
           kind="AGENT"
           label={s.label}
           state={s.state}
-          density="sheet"
+          density={density}
           // The INDENT reading (see childOpSubtree): inside a sub-agent drawer a row's distance is
           // measured from that sub-agent, while `s.depth` — the distance from the thread, which decides
           // whether the × is honest — stays untouched on the record childOpDismisser reads.
@@ -4493,7 +4496,7 @@ export function BackgroundOpsStrip({
           kind="SHELL"
           label={s.label}
           state={s.state}
-          density="sheet"
+          density={density}
           startedAt={s.startedAt}
           // Absent until the first poll answers, and permanently absent for a shell whose output frizz
           // cannot read — never a fabricated 0 for a number we do not have.
@@ -4523,7 +4526,7 @@ export function BackgroundOpsStrip({
           kind="GITHUB"
           label={w.target}
           state="running"
-          density="sheet"
+          density={density}
           startedAt={w.createdAt}
           // WHAT ITS CI SAYS, in the same column a shell's line count takes — because this strip is on
           // screen while the thread WORKS, and the card that rendered the full reading is only drawn at
@@ -4539,7 +4542,7 @@ export function BackgroundOpsStrip({
           onOpen={() => window.open(githubRefUrl(w.target, w.subject === "issue" ? "issue" : "pull") ?? `https://github.com/${w.target.replace("#", w.subject === "issue" ? "/issues/" : "/pull/")}`, "_blank", "noreferrer,noopener")}
         />
       ))}
-      <ThreadLinks links={links} />
+      <ThreadLinks links={links} panel={density === "panel"} />
     </div>
   )
 }

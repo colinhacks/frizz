@@ -102,6 +102,21 @@ test("the card keeps the pulsing queue indicator and carries the kind tag the sh
   assert.doesNotMatch(html, /<svg /, "the card must not borrow the rail's checkbox spinner")
 })
 
+// A panel holds one kind of row and its triangle points at the count naming that kind, so a row spends
+// nothing on saying what it is (maintainer 2026-11-06). It is a menu's row, and the whole of it is the target.
+test("the panel row is a menu's: no arrow, no tag, one line, and the whole row opens", () => {
+  const html = render({ density: "panel", onOpen: () => {}, onDismiss: () => {}, startedAt: TWELVE_MIN_AGO })
+  assert.ok(!html.includes(CHILD_ARROW), "no arrow: it hangs off nothing")
+  assert.doesNotMatch(html, /petite-caps/, "no kind tag: the count named the kind")
+  const wrapper = html.match(/^<div class="([^"]*)"/)![1]!
+  for (const token of ["px-2.5", "py-1.5", "text-[12px]", "cursor-pointer", "hover:bg-hover-strong"]) {
+    assert.ok(wrapper.split(" ").includes(token), `the wrapper carries ${token}, as ui/Menu.tsx's item does: ${wrapper}`)
+  }
+  assert.ok(html.indexOf("lucide-x") < html.indexOf("12m"), "the × stays directly after the label, ahead of the reading")
+  const plain = render({ density: "panel" }).match(/^<div class="([^"]*)"/)![1]!
+  assert.doesNotMatch(plain, /cursor-pointer|hover:/, "a row with nothing to open takes no hover")
+})
+
 test("the sheet is the operations row: kind tag, and NO second drill-in glyph beside the title", () => {
   const html = render({ density: "sheet", onOpen: () => {}, startedAt: TWELVE_MIN_AGO })
   assert.match(html, /data-running-indicator="operation"/)

@@ -21,6 +21,7 @@ import {
   CHILD_STALE_TITLE,
   CHILD_THREAD_RESTED_TITLE,
   CHILD_THREAD_STALE_TITLE,
+  PANEL_ROW_MARK_SLOT_CLASS,
 } from "../lib/childOps.ts"
 
 // GITHUB is a PR watcher the worker parked on. It is a child op in every way that matters to this row —
@@ -53,11 +54,17 @@ export type ChildOpKind = "AGENT" | "SHELL" | "GITHUB" | "COMMAND" | "TIMER" | "
 // child gained and lost its tag as the thread moved between the queue and the drawer. The two prompt-box
 // densities now differ only in the indicator hook and the press handling below.
 // The dismiss × is NOT one of those differences any more — see `onDismiss`.
-// All three carry the light-gray DURATION the child has been working — right-justified at the end of the
+//   panel — a panel over the prompt box (QueueOpsSummary), which holds one kind of row, and the triangle
+//           on it points at the count naming that kind. So no ⤷ and no kind tag: a mark, the label, the ×
+//           and the readings, on one line. It is THE MENU'S ROW (ui/Menu.tsx): 12px text in `py-1.5 px-2.5`,
+//           30px tall, and the whole row takes the fill and the press, so going straight up from a count
+//           lands on it. 36px rows read as "weirdly spacious. Nothing else in Frizz is that spacious"
+//           (maintainer 2026-11-06), and 17px ones gave the pointer nothing to hit.
+// All of them carry the light-gray DURATION the child has been working — right-justified at the end of the
 // row (maintainer 2026-07-27), so a column of rows reads its numbers down one edge instead of at
 // whatever ragged offset each label happens to end. It reads at the SAME size as the title and every
 // other reading on the row; the size lives on the container for exactly that reason.
-export type ChildOpDensity = "rail" | "card" | "sheet"
+export type ChildOpDensity = "rail" | "card" | "sheet" | "panel"
 
 // ONE row for "a thing running underneath this thread", rendered identically everywhere it appears.
 // Before this component existed the same row was written four times and the copies drifted — two arrow
@@ -155,6 +162,7 @@ export function ChildOpRow({
   const clickable = !!onOpen
   const rail = density === "rail"
   const sheet = density === "sheet"
+  const panel = density === "panel"
   // Live-ticking recency, on every density. useNowMs re-renders this row ~every 30s so the reading
   // keeps counting up even while the board sends nothing (a steadily-quiet child pushes no delta).
   const now = useNowMs()
@@ -163,7 +171,9 @@ export function ChildOpRow({
   // nested row's arrow lands under its parent's LABEL — the same relationship the rail's child rows
   // already have with their thread row. Clamped: a runaway depth must step the row, never push the label
   // out of a narrow rail entirely.
-  const nestIndent = Math.min(Math.max((depth ?? 1) - 1, 0), 4) * 13
+  // A panel's rows have no arrow, so its step is what puts a nested row's mark under its parent's label:
+  // the 12px mark slot and the 8px gap.
+  const nestIndent = Math.min(Math.max((depth ?? 1) - 1, 0), 4) * (panel ? 20 : 13)
   // Which of the ×'s two honest meanings this row's control carries. A running row only ever receives
   // an `onDismiss` when the server said it is stoppable (lib/dismissChildOp.ts), so "running" here is
   // always a real kill; everything else is retiring a finished op.
@@ -178,25 +188,30 @@ export function ChildOpRow({
   const quiet = state === "rested"
     ? <span className={CHILD_RESTED_DOT_CLASS} title={kind === "CHILD" ? CHILD_THREAD_RESTED_TITLE : CHILD_RESTED_TITLE} />
     : <span className={CHILD_STALE_DOT_CLASS} title={kind === "SHELL" ? CHILD_STALE_SHELL_TITLE : kind === "CHILD" ? CHILD_THREAD_STALE_TITLE : CHILD_STALE_TITLE} />
+  const liveDot = (
+    <span
+      aria-hidden
+      className={`frizz-live-dot ${LIVE_DOT_HUE[kind]}`}
+      data-running-indicator={density === "card" ? "queue-subagent" : "operation"}
+    />
+  )
   const indicator = rail ? (
     <span className="flex w-3.5 shrink-0 items-center justify-center">
       {running ? <BoxSpinner size={12} /> : quiet}
+    </span>
+  ) : panel ? (
+    // ON THE CAP BAND, computed by the browser: the count over the box draws its mark the same way, and
+    // QueueOpsSummary carries the reasoning. The slot's width is the file and link rows' icon column.
+    <span className={PANEL_ROW_MARK_SLOT_CLASS}>
+      <span className="absolute inset-0 flex items-center justify-center">{running ? liveDot : quiet}</span>
     </span>
   ) : (
     // THE DOT IS LIFTED OFF THE FLEX CENTRE — see `.frizz-op-dot-slot` in styles.css for the readings
     // and for why the correction is font-scoped. `items-center` centres the dot's BOX on the line; the
     // eye reads it against the CAP BAND of the label beside it, and the two are not the same place.
     <span className={`frizz-op-dot-slot ${CHILD_MARK_SLOT_CLASS}`}>
-      {running ? (
-        // A running SHELL pulses blue, a running sub-AGENT pulses the accent-yellow.
-        <span
-          aria-hidden
-          className={`frizz-live-dot ${LIVE_DOT_HUE[kind]}`}
-          data-running-indicator={density === "card" ? "queue-subagent" : "operation"}
-        />
-      ) : (
-        quiet
-      )}
+      {/* A running SHELL pulses blue, a running sub-AGENT pulses the accent-yellow. */}
+      {running ? liveDot : quiet}
     </span>
   )
 
@@ -205,7 +220,7 @@ export function ChildOpRow({
   // DURATION stays rightmost whatever else joins it — that column is what a stack of rows is read down
   // — and the counter falls in beside it, separated by the same `·` the progress label already uses.
   const reading: ReactNode = counter || elapsed ? (
-    <span className="ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-muted-40">
+    <span className={panel ? "ml-auto flex shrink-0 items-baseline gap-1 pl-1.5 text-[11px] text-muted-50" : "ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-muted-40"}>
       {counter && (
         // The tone rides a Primer colour rather than a Tailwind red, because the same fact is drawn in
         // the same colour on the awaiting card two surfaces away (ChecksGlyph → PRIMER.fgDanger).
@@ -216,7 +231,12 @@ export function ChildOpRow({
     </span>
   ) : null
 
-  const identity = (
+  const identity = panel ? (
+    <>
+      {indicator}
+      <span className={`min-w-0 truncate text-fg/85 ${clickable ? "group-hover:text-fg" : ""}`}>{label}</span>
+    </>
+  ) : (
     <>
       <span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span>
       {indicator}
@@ -231,7 +251,11 @@ export function ChildOpRow({
   // "current step" reading after it; the step left the row, the cap stayed, and a 440px panel cut
   // "Building the validate/is schema…" off with a third of the line empty (maintainer 2026-10-20:
   // "There's no reason for them to get truncated there").
-  const rowClass = rail
+  const rowClass = panel
+    // The row's press lands on the wrapper below; this button is what a keyboard reaches, and its label
+    // truncates inside it.
+    ? `flex min-w-0 items-baseline gap-2 overflow-hidden text-left outline-none ${clickable ? "cursor-pointer" : ""}`
+    : rail
     // The rail's 26px INDENT stays on the identity element, not on the row wrapper: it is the gutter
     // that clears the parent thread row's indicator column, and it has always been part of the click
     // target. Putting it on the wrapper renders identically (the duration is `ml-auto`, so the right
@@ -251,7 +275,7 @@ export function ChildOpRow({
     <button
       type="button"
       style={identityStyle}
-      onClick={onOpen}
+      onClick={panel ? undefined : onOpen}
       // Only the ops strip swallows the press: it can sit inside a card/drawer whose own mousedown
       // handler would otherwise act on it. The rail and card rows must let the pointer-down through —
       // ThreadSheet reads it (via data-subagent-parent) to decide to STACK rather than dismiss.
@@ -284,7 +308,9 @@ export function ChildOpRow({
   // The RAIL's row box — its padding and its full-width hover highlight — moved to this wrapper when
   // the × arrived, because the button no longer spans the row and a highlight on the button would stop
   // short of the × and the duration. The indent stayed on the button (see rowClass).
-  const wrapperClass = rail
+  const wrapperClass = panel
+    ? `flex min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${clickable ? "group cursor-pointer hover:bg-hover-strong has-[:focus-visible]:bg-hover-strong" : ""}`
+    : rail
     ? "flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-[11.5px] transition-colors hover:bg-hover"
     : "flex min-w-0 items-center gap-1.5 text-[11.5px]"
   const wrapperStyle = !rail && nestIndent > 0 ? { marginLeft: nestIndent } : undefined
@@ -308,16 +334,25 @@ export function ChildOpRow({
       data-op-row={onDismiss ? "" : undefined}
       data-subagent-depth={depth && depth > 1 ? depth : undefined}
       data-subagent-parent={parentSlug}
+      // THE WHOLE PANEL ROW IS THE TARGET, its readings included, so the press lands here rather than on
+      // the button. A keyboard's Enter on the button arrives here too, as a click that bubbles.
+      onClick={panel && clickable ? onOpen : undefined}
+      // As the ops strip's button does below: a panel is portaled, but a press in it still bubbles through
+      // React to the card or drawer it was opened from.
+      onMouseDown={panel ? (e) => e.stopPropagation() : undefined}
     >
       {row}
       {onDismiss && (
         <button
           type="button"
-          onClick={onDismiss}
+          onClick={(e) => {
+            if (panel) e.stopPropagation()
+            onDismiss()
+          }}
           onMouseDown={(e) => e.stopPropagation()}
           title={CHILD_DISMISS_TITLE[dismissTone]}
           aria-label={`${CHILD_DISMISS_VERB[dismissTone]} ${CHILD_DISMISS_NOUN[kind]}: ${label}`}
-          className="shrink-0 rounded-sm p-0.5 text-muted-45 outline-none transition-colors hover:text-fg focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+          className={`shrink-0 rounded-sm p-0.5 text-muted-45 outline-none transition-colors hover:text-fg focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${panel ? "-ml-1 self-center" : ""}`}
         >
           <X size={11} />
         </button>

@@ -1,6 +1,6 @@
 import { ExternalLink, FileText } from "lucide-react"
 import type { ThreadLinkView } from "@frizz/shared"
-import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_KIND_TAG_CLASS, CHILD_MARK_SLOT_CLASS } from "../lib/childOps.ts"
+import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_KIND_TAG_CLASS, CHILD_MARK_SLOT_CLASS, PANEL_ROW_MARK_SLOT_CLASS } from "../lib/childOps.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
 
 // The activity-row grammar, without a liveness marker or a trailing open icon — and the SAME grammar,
@@ -33,8 +33,37 @@ const ICON_SLOT = `${CHILD_MARK_SLOT_CLASS} -mt-[1em] self-baseline`
 // whichever font is resolved. Measured ink-to-cap residual: 0px in sans and mono, desktop and 390px.
 const ICON = "h-[1em] w-[1em] shrink-0 translate-y-[calc(0.5em_-_0.5cap)] text-muted-45"
 
-export function ThreadLinks({ links }: { links: readonly ThreadLinkView[] }) {
+// In a panel over the prompt box: the same row ChildOpRow's panel density draws, a menu's, with the
+// destination on the right. A file names its file rather than its folder, since a path cut off at the
+// right would show only the part every path here shares; the row's tooltip has the whole of it.
+const PANEL_ROW = "group flex min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] outline-none transition-colors hover:bg-hover-strong focus-visible:bg-hover-strong"
+
+function PanelLinks({ links }: { links: readonly ThreadLinkView[] }) {
+  return (
+    <div data-thread-links aria-label="Registered links" className="flex min-w-0 flex-col">
+      {links.map((link) => {
+        const isUrl = link.kind === "link"
+        const Icon = isUrl ? ExternalLink : FileText
+        const content = <>
+          <span className={PANEL_ROW_MARK_SLOT_CLASS}>
+            <span className="absolute inset-0 flex items-center justify-center"><Icon aria-hidden className="h-[1em] w-[1em] text-muted-60" /></span>
+          </span>
+          <span data-link-label className="min-w-0 shrink truncate text-fg/85 group-hover:text-fg">{link.label}</span>
+          <span data-link-destination className="font-mono-keep min-w-0 flex-1 truncate text-right text-[10.5px] text-muted-50">{isUrl ? link.target : link.target.split("/").pop()}</span>
+        </>
+        return isUrl ? (
+          <a key={link.id} data-thread-link={link.id} href={link.target} target="_blank" rel="noopener noreferrer" title={link.target} className={PANEL_ROW} onClick={(event) => event.stopPropagation()}>{content}</a>
+        ) : (
+          <button key={link.id} data-thread-link={link.id} type="button" title={link.target} className={`${PANEL_ROW} cursor-pointer`} onClick={(event) => { event.stopPropagation(); openLocalPath(link.target) }}>{content}</button>
+        )
+      })}
+    </div>
+  )
+}
+
+export function ThreadLinks({ links, panel = false }: { links: readonly ThreadLinkView[]; panel?: boolean }) {
   if (!links.length) return null
+  if (panel) return <PanelLinks links={links} />
   return (
     <div data-thread-links aria-label="Registered links" className="mt-2 flex min-w-0 flex-col gap-0.5 border-t border-border pt-1.5">
       {links.map((link) => {
