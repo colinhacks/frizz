@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { createServer } from "node:http"
 import { test } from "node:test"
-import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkWorker, cloudflareClient, githubClient, parseCiMessage } from "./workers-drift.mjs"
+import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkWorker, cloudflareClient, githubClient, parseAuthors, parseCiMessage } from "./workers-drift.mjs"
 
 // The bodies below follow the shapes Cloudflare documents for
 //   GET /accounts/{account_id}/workers/scripts/{script}/deployments
@@ -88,7 +88,7 @@ function apis({ deployments, versions, runs = { [RUN]: run() }, approvals = appr
 
 const check = (fixture, options = {}) => {
   const { cf, gh } = apis(fixture)
-  return checkWorker("frizz-relay", { cf, gh, repo: REPO, expectedAuthor: CI_AUTHOR, now: NOW, ...options })
+  return checkWorker("frizz-relay", { cf, gh, repo: REPO, expectedAuthors: [CI_AUTHOR], now: NOW, ...options })
 }
 
 const v1 = "11111111-1111-4111-8111-111111111111"
@@ -121,7 +121,7 @@ test("a deploy from a laptop fails on its message and on its author", async () =
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z"), laptop],
   })
   assert.ok(problems.some((p) => p.includes(`deployment ${d2} (active`) && p.includes("is not a CI deploy's")), problems.join("\n"))
-  assert.ok(problems.some((p) => p.includes(`version ${v2}`) && p.includes("s***@example.com") && p.includes(CI_AUTHOR)), problems.join("\n"))
+  assert.ok(problems.some((p) => p.includes(`version ${v2}`) && p.includes("s***@example.com") && p.includes("none of the CI tokens")), problems.join("\n"))
   assert.ok(!problems.join("\n").includes("someone@"), "a public log must not carry a member's address")
 })
 
@@ -223,17 +223,33 @@ test("with WORKERS_CI_AUTHOR unset it fails, and says which author it saw", asyn
   const problems = await check({
     deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1])],
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z")],
-  }, { expectedAuthor: undefined })
+  }, { expectedAuthors: [] })
   assert.equal(problems.length, 1)
   assert.match(problems[0], /WORKERS_CI_AUTHOR is not set/)
   assert.ok(problems[0].includes(CI_AUTHOR))
+})
+
+test("every deploy token in WORKERS_CI_AUTHOR counts, so the last deploy passes until the next one replaces it", async () => {
+  const fixture = {
+    deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1])],
+    versions: [ciVersion(v1, "2026-10-09T09:03:05Z")],
+  }
+  assert.deepEqual(await check(fixture, { expectedAuthors: parseAuthors(`${CI_AUTHOR},newer-token`) }), [])
+  assert.deepEqual(await check(fixture, { expectedAuthors: parseAuthors(`older-token, ${CI_AUTHOR}`) }), [])
+  const problems = await check(fixture, { expectedAuthors: parseAuthors("older-token,newer-token") })
+  assert.equal(problems.length, 1)
+  assert.ok(problems[0].includes(CI_AUTHOR), problems[0])
+})
+
+test("an empty WORKERS_CI_AUTHOR names no author", () => {
+  for (const value of [undefined, "", " , "]) assert.deepEqual(parseAuthors(value), [])
 })
 
 test("an author email matches as well as an author id", async () => {
   const problems = await check({
     deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1])],
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z", { metadata: { author_id: "x", author_email: "ci@example.com", created_on: "2026-10-09T09:03:05Z", source: "wrangler" } })],
-  }, { expectedAuthor: "ci@example.com" })
+  }, { expectedAuthors: ["ci@example.com"] })
   assert.deepEqual(problems, [])
 })
 
@@ -247,16 +263,16 @@ test("an upload by a member's own token fails however it is stamped, even with W
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z", { metadata: mine })],
   }
   const lines = []
-  const wrongVariable = await check(fixture, { expectedAuthor: "user1234", members, log: (line) => lines.push(line) })
+  const wrongVariable = await check(fixture, { expectedAuthors: ["user1234"], members, log: (line) => lines.push(line) })
   assert.ok(![...wrongVariable, ...lines].join("\n").includes(member), "these logs are public, and that address is the account's login")
   assert.ok(wrongVariable.some((p) => p.includes(`version ${v1}`) && p.includes("account member's own")), wrongVariable.join("\n"))
   assert.ok(wrongVariable.some((p) => p.includes(`deployment ${d1}`) && p.includes("account member's own")), wrongVariable.join("\n"))
 
   const rightVariable = await check(fixture, { members })
-  assert.ok(rightVariable.some((p) => p.includes("user1234") && p.includes(CI_AUTHOR)), rightVariable.join("\n"))
+  assert.ok(rightVariable.some((p) => p.includes("user1234") && p.includes("none of the CI tokens")), rightVariable.join("\n"))
 
   // The control: the same upload by an address that is no member, with the variable naming it, passes.
-  assert.deepEqual(await check(fixture, { expectedAuthor: "user1234", members: [] }), [])
+  assert.deepEqual(await check(fixture, { expectedAuthors: ["user1234"], members: [] }), [])
 })
 
 test("a Worker with no deployments at all is a finding", async () => {

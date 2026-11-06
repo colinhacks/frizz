@@ -6,11 +6,6 @@ name: workers-drift
 #
 # It needs no install: the check is one zero-dependency script on Node's own fetch.
 #
-# Disabled on 2026-11-05 (`gh workflow disable`) until CLOUDFLARE_READ_TOKEN exists: with no token it failed
-# every run, about 48 emails a day, so a real alarm would have looked the same. Minting that token and
-# running `gh workflow enable workers-drift.yml` go together. Its first run must fail, naming the Workers'
-# 2026-10-08 versions, which is the proof that it can.
-#
 # Two GitHub behaviours to know. Notifications for a scheduled run go to whoever last changed this
 # file's cron line, so whoever edits it inherits the alarm. And GitHub turns a schedule off after 60
 # days without repository activity on a public repo; a run that never happens fails nothing, so if
@@ -40,8 +35,9 @@ jobs:
 
       # CLOUDFLARE_READ_TOKEN can only read; a repository secret, not the deploy environment's, so
       # this job never waits for an approval and never holds anything that can deploy.
-      # WORKERS_CI_AUTHOR is a repository VARIABLE (not a secret): the author id the CI token uploads
-      # as. Unset, every run fails and prints the author it saw.
+      # WORKERS_CI_AUTHOR is a repository VARIABLE (not a secret): the ids of the deploy tokens CI has
+      # uploaded with, which cloudflare-tokens.mjs adds to as it mints each one. Unset, every run fails
+      # and prints the author it saw.
       - name: Check that everything the Workers run came from CI
         env:
           CLOUDFLARE_READ_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
