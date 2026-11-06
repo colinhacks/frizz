@@ -10,6 +10,7 @@ What is still owed after the 2026-09-21..10-08 compromise of the frizz.sh Worker
 - The maintainer's own board rotated its `session-key` at 2026-10-08 17:01, and it serves a private name (`kpfhl7cbp5qf4olyh2t7.frizz.sh`), not a custom one.
 - Custom frizz.sh names (the GitHub-backed claim) are withdrawn from every menu and doc behind `CUSTOM_NAMES_OFFERED` in [`src/cloud.ts`](../src/cloud.ts). A name already claimed keeps renewing, because a renewal is signed by the board's keypair and never touches GitHub.
 - The live Workers were read and compared with source on 2026-11-05: both active versions rebuild from `2c8820df`'s tree, apart from compiler output. Routes, domains, crons, DNS and members match the baseline, neither Worker holds a secret, and the token stolen in September no longer exists. `scripts/cloudflare-tokens.mjs --audit --out=<dir>` takes that snapshot.
+- **The first CI deploy ran on 2026-11-06** ([run 42276521274](https://github.com/colinhacks/frizz/actions/runs/42276521274), from `44fb6e56`). Rebuilding both Workers at that commit gives the deployed code exactly, apart from `// ../` path comments, and `scripts/verify-relay-live.mjs` passes 20/20. The deploy token is revoked, `workers-drift` runs every 30 minutes on its own token, and DNSSEC is on for `frizz.sh`.
 
 ## 1. Deploy the Workers from CI — one sitting per deploy
 
