@@ -11,6 +11,7 @@ import { ProfileGridSelector } from "../components/ProfileGridSelector.tsx"
 import { AcpModelSelect } from "../components/AcpModelSelect.tsx"
 import { AgentMarks } from "../components/AgentMarks.tsx"
 import { Select } from "../components/ui/Select.tsx"
+import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
 
@@ -171,7 +172,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           disabled={busy || !catalogLoaded || !modelSelectable || profiles.isError}
           compact
           side="top"
-          className="min-w-0 max-w-[min(72%,20rem)] px-1.5 py-0.5"
+          className="max-w-[20rem]"
           runningModelLabel={thread.runningModelLabel}
           upgrade={thread.modelUpgrade && thread.runningModelLabel
             ? {
@@ -198,7 +199,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           onValueChange={(nextModelId) => changeProfile({ model: acpModelSlug(acpAgentId, nextModelId), effort: "" })}
           disabled={busy}
           side="top"
-          className="min-w-0 max-w-[min(72%,20rem)] px-1.5 py-0.5"
+          className="max-w-[20rem]"
         />
       )}
     </>
@@ -209,46 +210,43 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
     footer: (
       <div
         data-thread-composer-controls
-        // gap-x-1.5, MEASURED. The row held one pill and a quiet text readout on `gap-x-1`; a SECOND
-        // bordered pill beside the first turned that 4px box gap into 3.69px of ink between two
-        // borders, and two pills that close read as one segmented control rather than as two
-        // independent choices. 6px of box is 5.7px of ink, which separates them without letting the
-        // pair drift apart from each other.
         className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5"
       >
-        {profileControl}
-        {backend === "claude" && (
-          <Select
-            variant="readout"
+        {/* The dropdowns and the marks hold one line, as they do in the new-thread box (NewThreadModal.tsx):
+            the model name truncates, and only the pending note below may wrap. */}
+        <div className="flex min-w-0 max-w-full items-center gap-x-1.5">
+          <PromptControlGroup>
+            {profileControl}
+            {backend === "claude" && (
+              <Select
+                variant="readout"
+                side="top"
+                value={shownPermission}
+                onValueChange={(v) => changePermission(v as PermissionMode)}
+                options={CLAUDE_DISPATCH_PERMISSION_OPTIONS}
+                ariaLabel="Thread permission mode"
+                // The title carries the COST, because this control's cost is the one thing the word in
+                // the trigger cannot say: a Claude permission mode is a launch flag, so changing it retires
+                // the worker process and the next turn resumes the same conversation in a new one. An
+                // operator who expected a live retune would otherwise discover the restart by watching it.
+                title={permissionBlocked
+                  ? `${permissionBlocked} — changing permissions restarts this thread's worker process`
+                  : shownPermission === "bypassPermissions"
+                    ? "Bypass: the worker never asks for approval. Changing this restarts the worker process; the conversation resumes from disk on the next turn."
+                    : "Auto: risky actions raise an approval card here. Changing this restarts the worker process; the conversation resumes from disk on the next turn."}
+                disabled={busy || permissionBlocked !== null}
+                // `shrink-0` keeps the word whole when the model beside it takes its 20rem.
+                className="shrink-0"
+              />
+            )}
+          </PromptControlGroup>
+          {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
+          <AgentMarks
+            gauge={backend === "acp" ? undefined : { backend, model }}
+            mcp={{ slug }}
             side="top"
-            value={shownPermission}
-            onValueChange={(v) => changePermission(v as PermissionMode)}
-            options={CLAUDE_DISPATCH_PERMISSION_OPTIONS}
-            ariaLabel="Thread permission mode"
-            // The title carries the COST, because this control's cost is the one thing the two words in
-            // the trigger cannot say: a Claude permission mode is a launch flag, so changing it retires
-            // the worker process and the next turn resumes the same conversation in a new one. An
-            // operator who expected a live retune would otherwise discover the restart by watching it.
-            title={permissionBlocked
-              ? `${permissionBlocked} — changing permissions restarts this thread's worker process`
-              : shownPermission === "bypassPermissions"
-                ? "Bypass: the worker never asks for approval. Changing this restarts the worker process; the conversation resumes from disk on the next turn."
-                : "Auto: risky actions raise an approval card here. Changing this restarts the worker process; the conversation resumes from disk on the next turn."}
-            disabled={busy || permissionBlocked !== null}
-            caretSize={11}
-            // NO padding override: the readout variant's own box (4px/8px, 12px type) already matches
-            // the profile pill beside it exactly — measured, both 26px tall — and passing one would only
-            // look like it was doing something. `shrink-0` keeps the two words whole when the profile
-            // pill beside it takes its 20rem.
-            className="shrink-0"
           />
-        )}
-        {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
-        <AgentMarks
-          gauge={backend === "acp" ? undefined : { backend, model }}
-          mcp={{ slug }}
-          side="top"
-        />
+        </div>
         {pendingModel && pendingEffort && (
           <span className="min-w-0 truncate text-[9px] text-muted-50">
             → {pendingModel} · {pendingEffort} pending

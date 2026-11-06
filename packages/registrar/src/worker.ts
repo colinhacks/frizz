@@ -263,6 +263,15 @@ export default {
 
   async fetch(request: Request, env: RegistrarEnv): Promise<Response> {
     const url = new URL(request.url)
+    // Who owns a name, for workers-drift, which holds nothing that can read KV. Public on purpose: a
+    // public key and a date give a visitor nothing to use, and asking takes knowing the name already.
+    const lookup = /^\/claim\/([a-z0-9-]+)$/.exec(url.pathname)
+    if (lookup) {
+      if (request.method !== "GET") return new Response(null, { status: 405, headers: { allow: "GET" } })
+      const record = await kvClaimStore(env.CLAIMS).read(lookup[1]!)
+      if (!record) return json(404, { error: "not-found" })
+      return json(200, { pubkey: record.pubkey, renewedAt: record.renewedAt })
+    }
     if (url.pathname !== "/claim") return json(404, { error: "not-found" })
     if (request.method !== "POST") {
       return new Response(null, { status: 405, headers: { allow: "POST" } })

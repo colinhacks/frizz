@@ -29,5 +29,13 @@ const ACTION_SQUARE =
   "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg/75 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong disabled:opacity-55"
 export const STATUS_ROW_ACTION = `-mx-1.5 ${ACTION_SQUARE}`
 
+// THE LEFT END'S DROPDOWN: a project page's breadcrumb (ProjectCrumb.tsx, which has the reasoning behind
+// each number) and the Console's project chip (ConsoleProjectChip.tsx) stand in the same corner of this
+// row, so they take one shape. The chevron wants an `items-baseline` parent holding the name.
+export const STATUS_ROW_CRUMB =
+  "group -ml-1.5 -mr-[3px] inline-flex h-6 min-w-0 items-center rounded-md pl-1.5 pr-[3px] font-semibold text-fg/90 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong data-[state=open]:bg-hover-strong data-[state=open]:text-fg"
+export const STATUS_ROW_CRUMB_CHEVRON =
+  "-ml-[0.25em] size-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)] text-muted-70 transition-[color,transform] group-hover:text-fg group-data-[state=open]:rotate-180 group-data-[state=open]:text-fg"
+
 /** Icon size for every glyph in the row. Matched to the 24px target so no button reads heavier. */
 export const STATUS_ROW_ICON = 14

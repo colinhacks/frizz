@@ -50,6 +50,24 @@ test("only POST /claim is routed", async () => {
   assert.equal(wrongMethod.headers.get("allow"), "POST")
 })
 
+test("GET /claim/<name> says who owns a name, and nothing else about it", async () => {
+  const row = { pubkey: "owner-key", tunnelId: "", port: 9393, claimedAt: 1, renewedAt: 2, githubId: 77 }
+  const kv = fakeKv({ "claim:colin": JSON.stringify(row) })
+  const owned = await worker.fetch(new Request("https://r.frizz.sh/claim/colin"), env(kv))
+  assert.equal(owned.status, 200)
+  assert.deepEqual(await owned.json(), { pubkey: "owner-key", renewedAt: 2 })
+
+  const free = await worker.fetch(new Request("https://r.frizz.sh/claim/free"), env(kv))
+  assert.equal(free.status, 404)
+
+  const writing = await worker.fetch(new Request("https://r.frizz.sh/claim/colin", { method: "POST" }), env(kv))
+  assert.equal(writing.status, 405)
+  assert.equal(writing.headers.get("allow"), "GET")
+
+  const otherKey = await worker.fetch(new Request("https://r.frizz.sh/claim/owner%3Akey"), env(kv))
+  assert.equal(otherKey.status, 404)
+})
+
 test("a body that is not JSON is a 400, not a crash", async () => {
   const kv = fakeKv()
   const response = await worker.fetch(
