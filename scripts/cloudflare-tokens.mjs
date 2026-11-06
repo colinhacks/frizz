@@ -245,6 +245,26 @@ async function whoAmI(cf) {
   }
 }
 
+/** What the credential reaches, so that a refusal on this account says what to fix on the token. */
+async function reachOf(cf, id) {
+  try {
+    const accounts = await cf("GET", "/accounts?per_page=50")
+    console.log(`  accounts it can see: ${accounts.map((a) => `${a.name} (${a.id})`).join(", ") || "none"}`)
+  } catch (error) {
+    console.log(`  accounts it can see: ${error.message}`)
+  }
+  try {
+    const { name, policies = [] } = await cf("GET", `/user/tokens/${id}`)
+    console.log(`  named ${JSON.stringify(name)}`)
+    for (const policy of policies) {
+      const on = Object.entries(policy.resources ?? {}).map(([resource, level]) => (typeof level === "string" ? resource : `${resource} ${JSON.stringify(level)}`))
+      console.log(`  ${policy.effect}: ${(policy.permission_groups ?? []).map((g) => g.name).join(", ")} on ${on.join(", ")}`)
+    }
+  } catch (error) {
+    console.log(`  its policies: ${error.message}`)
+  }
+}
+
 async function listTokens(cf) {
   const all = []
   for (let page = 1; page <= 20; page++) {
@@ -473,6 +493,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const cf = client(credential)
     const me = await whoAmI(cf)
     console.log(`credential: ${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`)
+    if (me.kind === "user") await reachOf(cf, me.id)
 
     if (flag("--audit")) {
       await audit(cf, me.id)
