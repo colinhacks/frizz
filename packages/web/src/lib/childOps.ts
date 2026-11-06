@@ -40,6 +40,11 @@ export const CHILD_KIND_TAG_CLASS = "frizz-kind-tag petite-caps shrink-0 text-[9
 // is part of where the label starts.
 export const CHILD_MARK_SLOT_CLASS = "flex w-[9px] shrink-0 justify-center"
 
+// The mark's column in a panel over the prompt box (ChildOpRow's panel density, ThreadLinks): the 12px of
+// a file or link icon, so every kind's labels start at one x. A 1em square lifted onto the cap band: its
+// baseline is its own bottom edge, because it is an empty block with the mark absolutely centred inside.
+export const PANEL_ROW_MARK_SLOT_CLASS = "relative block h-[1em] w-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]"
+
 // The flat dot for a child with no recent output. /30 (the rail's value); the ops strip's /25 was the
 // outlier and read as a smudge next to the same dot one surface over.
 export const CHILD_STALE_DOT_CLASS = "block h-1.5 w-1.5 rounded-full bg-muted/30"

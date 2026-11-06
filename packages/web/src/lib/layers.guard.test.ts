@@ -196,6 +196,9 @@ const ESCAPES_ALLOWED: Record<string, string> = {
   // The first-run screen's "Starting thread…" card, hung under the form so the centred column does not
   // jump. That screen draws nothing else: no sidebar, no cards, no sticky header to go under.
   "components/NewThreadModal.tsx": "absolute inset-x-0 top-full mt-3",
+  // The triangle on an op panel's edge is part of the panel: it hangs off a surface already portaled to
+  // the overlay layer, so there is no neighbour for it to go under, and it takes no pointer.
+  "components/QueueOpsSummary.tsx": "pointer-events-none absolute top-full",
 }
 
 test("no popup is placed past its trigger's box in the tree", () => {

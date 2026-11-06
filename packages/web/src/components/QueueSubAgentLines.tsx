@@ -31,22 +31,24 @@ export function QueueSubAgentLines({
   // BackgroundOpsStrip takes, for the same reason.
   // Default = the column's opening padding with no bottom air, i.e. what a lone fixture wants.
   className = "px-1 pt-1.5",
+  density = "card",
 }: {
   slug: string
   subAgents: readonly SubAgentView[]
   className?: string
+  density?: "card" | "panel"
 }) {
   const visible = visibleChildOps(subAgents, "card")
   if (visible.length === 0) return null
   return (
-    <div data-queue-subagents className={`flex min-w-0 flex-col gap-0.5 ${className}`}>
+    <div data-queue-subagents className={`flex min-w-0 flex-col ${density === "panel" ? "" : "gap-0.5"} ${className}`}>
       {visible.map((agent, index) => (
         <ChildOpRow
           key={agent.id ?? `${agent.startedAt}-${index}`}
           kind="AGENT"
           label={agent.label}
           state={agent.state}
-          density="card"
+          density={density}
           depth={agent.depth}
           startedAt={agent.startedAt}
           // What the child is DOING right now. The counters stay off a handoff card (see ChildOpRow).

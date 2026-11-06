@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react"
 import { ExternalLink, FileText } from "lucide-react"
 import type { BgShellView, ThreadView } from "@frizz/shared"
 import { CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, type TranscriptShellRecord } from "../lib/childOps.ts"
@@ -43,9 +43,13 @@ import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 // six counts walked it 322px sideways and the first count's panel hung 125px past the card's left edge.
 // The hovered count keeps its highlight, and that is what says which kind is open.
 //
+// A TRIANGLE ON ITS BOTTOM EDGE POINTS AT THE COUNT THAT OPENED IT, since the panel itself stays put, and
+// slides to the next count as the pointer moves along the line (maintainer 2026-11-06). The panel's bottom
+// edge sits on the rule over the line, so the two draw one line: 1px apart they read as a doubled rule.
+//
 // THE ROWS IN A PANEL ARE THE REAL ONES — QueueSubAgentLines and BackgroundOpsStrip, the components
-// that drew them under the box — so a row still opens its drawer, stops its child, and reads its CI the
-// way it did. The COUNTS are taken from the same lists those components render, by the same filters, so
+// that drew them under the box, at the menu-sized density they take here (ChildOpRow's "panel") — so a row
+// still opens its drawer, stops its child, and reads its CI the way it did. The COUNTS are taken from the same lists those components render, by the same filters, so
 // a count and its panel cannot disagree about how many there are (lib/queueOpsCounts.ts).
 //
 // THE DRAWER DRAWS THE SAME LINE, since 2026-10-09 (maintainer: "We should be using the condensed
@@ -78,8 +82,12 @@ const HOVER_CLOSE_DELAY_MS = 300
 // within REST_MS, so a deliberate hover on a neighbouring count wins in about that long.
 const AIM_RECHECK_MS = 50
 
-// The panel's width where the line is wide enough: the rows' column, which fits a sub-agent's whole label.
-const PANEL_WIDEST_PX = 440
+// The panel's width where the line is wide enough. A share of the box sets it on every 720px surface.
+const PANEL_WIDEST_PX = 480
+// What a triangle takes up on the panel's edge, across and down. Its tip stops just short of the count,
+// which stands about 5.4px under the rule the panel sits on.
+const CARET_WIDTH_PX = 12
+const CARET_HEIGHT_PX = 6
 
 // What a panel is called, since it holds one kind of row.
 const PANEL_LABEL: Record<QueueOpsKind, string> = {
@@ -114,8 +122,13 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
   // is portaled and the pointer's whole path runs between the two.
   const trail = useRef<PointerSample[]>([])
   const anyOpen = openKind !== null
+  // Where the open panel's triangle stands, so the next count's panel can start its own there and slide.
+  const caretAt = useRef<number | null>(null)
   useEffect(() => {
-    if (!anyOpen) return
+    if (!anyOpen) {
+      caretAt.current = null
+      return
+    }
     const follow = (event: PointerEvent) => {
       trail.current = extendTrail(trail.current, { x: event.clientX, y: event.clientY, at: performance.now() })
     }
@@ -199,21 +212,27 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
           line={line}
           open={openKind === group.key}
           onOpen={() => openNow(group.key)}
-          onHover={() => hoverCount(group.key)}
+          onHover={(event) => {
+            // Where it came in is the first thing the trail knows: the document's listener only starts once
+            // a panel is open, so a flick off a count that had just opened one had no direction to read.
+            trail.current = extendTrail(trail.current, { x: event.clientX, y: event.clientY, at: performance.now() })
+            hoverCount(group.key)
+          }}
           onHoverPanel={holdPanel}
           onCloseSoon={closeSoon}
           registerPanel={registerPanel}
+          caretAt={caretAt}
           // A change Radix sends for one panel (a press outside it, Escape, focus moving on) closes only
           // that panel: by then the pointer or the focus may already have opened the next count's.
           onOpenChange={(next) => (next ? openNow(group.key) : setOpenKind((current) => (current === group.key ? null : current)))}
         >
           {group.key === "agent"
-            ? <QueueSubAgentLines slug={thread.id} subAgents={thread.subAgents ?? []} className="" />
+            ? <QueueSubAgentLines slug={thread.id} subAgents={thread.subAgents ?? []} className="" density="panel" />
             : group.key === "child"
-            ? <div data-queue-child-threads className="flex min-w-0 flex-col gap-0.5"><ChildThreadRows parent={thread.id} childThreads={childThreads} density="card" /></div>
+            ? <div data-queue-child-threads className="flex min-w-0 flex-col"><ChildThreadRows parent={thread.id} childThreads={childThreads} density="panel" /></div>
             : group.key === "command" || group.key === "monitor" || group.key === "timer"
             ? <WaitPanelRows thread={thread} kind={group.key} />
-            : <BackgroundOpsStrip slug={thread.id} includeAgents={false} only={group.key} transcriptShells={transcriptShells} className="" />}
+            : <BackgroundOpsStrip slug={thread.id} includeAgents={false} only={group.key} transcriptShells={transcriptShells} className="" density="panel" />}
         </OpsCount>
       ))}
     </div>
@@ -221,31 +240,27 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
 }
 
 // One count and the panel it opens.
-function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoon, registerPanel, onOpenChange, children }: {
+function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoon, registerPanel, caretAt, onOpenChange, children }: {
   group: QueueOpsCount
   line: RefObject<HTMLDivElement | null>
   open: boolean
   onOpen: () => void
-  onHover: () => void
+  onHover: (event: ReactMouseEvent) => void
   onHoverPanel: () => void
   onCloseSoon: () => void
   registerPanel: (element: HTMLDivElement | null) => void
+  caretAt: RefObject<number | null>
   onOpenChange: (open: boolean) => void
   children: ReactNode
 }) {
   const button = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
-  // THE PANEL'S ANCHOR: the line's left and right, the count's top and bottom. So every count's panel
-  // takes the line's right edge, and still stands `sideOffset` over the count, as it did when the count
-  // was the anchor. `contextElement` is the line, which floating-ui watches for scroll, resize and moves
-  // in a virtual anchor's place.
+  // THE PANEL'S ANCHOR IS THE LINE, whose top is the rule the panel's bottom edge sits on. So every count's
+  // panel takes the same place. `contextElement` is the line, which floating-ui watches for scroll, resize
+  // and moves in a virtual anchor's place.
   const [anchor] = useState(() => ({
     current: {
-      getBoundingClientRect: () => {
-        const span = line.current?.getBoundingClientRect() ?? new DOMRect()
-        const count = button.current?.getBoundingClientRect() ?? span
-        return new DOMRect(span.left, count.top, span.width, count.height)
-      },
+      getBoundingClientRect: () => line.current?.getBoundingClientRect() ?? new DOMRect(),
       get contextElement() {
         return line.current ?? undefined
       },
@@ -307,7 +322,7 @@ function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoo
       <PopoverContent
         side="top"
         align="end"
-        sideOffset={4}
+        sideOffset={0}
         data-queue-ops-panel={group.key}
         aria-label={PANEL_LABEL[group.key]}
         onMouseEnter={onHoverPanel}
@@ -334,13 +349,55 @@ function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoo
         }}
         onClick={(event) => event.stopPropagation()}
         // THE GAP IS PART OF THE PANEL, to the pointer: `before:` hangs an invisible strip from its edge
-        // down to the count, so nothing it crosses on the way up counts as having left.
-        className="relative flex max-w-[calc(100vw-1.5rem)] flex-col px-3 py-2 before:absolute before:inset-x-0 before:top-full before:h-1 before:content-['']"
+        // down to the counts, so nothing it crosses on the way up counts as having left.
+        className="group/panel relative flex max-w-[calc(100vw-1.5rem)] flex-col p-1 before:absolute before:inset-x-0 before:top-full before:h-1.5 before:content-[''] data-[side=bottom]:before:top-auto data-[side=bottom]:before:bottom-full"
         style={open ? { width: panelWidthOn(line.current?.getBoundingClientRect().width ?? PANEL_WIDEST_PX, PANEL_WIDEST_PX) } : undefined}
       >
-        {children}
+        {/* The scroll is in here so it cannot clip the triangle, which hangs off the panel's edge. No
+            scrollbar: every other vertical scroller reserves one's 7px for good (styles.css), which set a
+            row's fill 12px from the panel's right edge against 5px from its left. A row cut off by the edge
+            is what says there is more, as it does in the prompt box. */}
+        <div className="max-h-[min(20rem,50vh)] overflow-y-auto scrollbar-none">{children}</div>
+        <PanelCaret count={button} line={line} caretAt={caretAt} />
       </PopoverContent>
     </Popover>
+  )
+}
+
+// THE TRIANGLE ON A PANEL'S EDGE, over the middle of the count that opened it. The fill covers the panel's
+// bottom border where the two meet, so the panel's outline runs on down the triangle's sides.
+//
+// A swap mounts a new panel, each count having its own, so the slide is this: start where the last
+// triangle stood, and move to this count's place on the next frame. A panel opened from nothing starts
+// in place.
+function PanelCaret({ count, line, caretAt }: { count: RefObject<HTMLButtonElement | null>; line: RefObject<HTMLDivElement | null>; caretAt: RefObject<number | null> }) {
+  const measure = () => {
+    const span = line.current?.getBoundingClientRect()
+    const chip = count.current?.getBoundingClientRect()
+    // From the panel's right edge, which is the line's. `right` counts from inside the panel's 1px border.
+    return span && chip ? span.right - (chip.left + chip.width / 2) - CARET_WIDTH_PX / 2 - 1 : 0
+  }
+  const [right, setRight] = useState(() => caretAt.current ?? measure())
+  // On every render, since a count's place on its line moves whenever the line's other counts change.
+  useEffect(() => {
+    const target = measure()
+    caretAt.current = target
+    const frame = requestAnimationFrame(() => setRight(target))
+    return () => cancelAnimationFrame(frame)
+  })
+  return (
+    <svg
+      aria-hidden
+      data-queue-ops-caret
+      width={CARET_WIDTH_PX}
+      height={CARET_HEIGHT_PX}
+      viewBox={`0 0 ${CARET_WIDTH_PX} ${CARET_HEIGHT_PX}`}
+      style={{ right }}
+      className="pointer-events-none absolute top-full transition-[right] duration-100 ease-out motion-reduce:transition-none group-data-[side=bottom]/panel:top-auto group-data-[side=bottom]/panel:bottom-full group-data-[side=bottom]/panel:rotate-180"
+    >
+      <path d="M1 0 L6 5 L11 0 Z" className="fill-elevated" />
+      <path d="M.5 .75 L5.5 5.1 Q6 5.5 6.5 5.1 L11.5 .75" fill="none" strokeLinejoin="round" className="stroke-border" />
+    </svg>
   )
 }
 
@@ -375,7 +432,7 @@ function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" |
   const now = useNowMs()
   const { commands, timers } = threadOps(thread)
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col">
       {kind !== "timer"
         ? commands.filter((watch) => isMonitorWatch(watch) === (kind === "monitor")).map((watch) => (
             <ChildOpRow
@@ -383,7 +440,7 @@ function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" |
               kind="COMMAND"
               label={commandWatchLabel(watch)}
               state="running"
-              density="sheet"
+              density="panel"
               startedAt={watch.createdAt}
               counter={commandWatchStatus(watch)}
               title={commandWatchTitle(watch, now)}
@@ -396,7 +453,7 @@ function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" |
               kind="TIMER"
               label={watch.timer?.prompt?.split("\n")[0] || watch.target}
               state="running"
-              density="sheet"
+              density="panel"
               counter={timerWatchStatus(watch, now)}
               title={timerWatchTitle(watch)}
             />

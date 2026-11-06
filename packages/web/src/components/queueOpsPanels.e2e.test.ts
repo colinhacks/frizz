@@ -56,24 +56,50 @@ test("each op count opens a panel of its own rows, one panel at a time", { skip:
     assert.deepEqual(await openPanels(), [], "nothing is open until a count is hovered")
 
     // 1. Hover: every count, left to right. Going straight from one to the next swaps the panel — and
-    // every panel opens in the same place, flush with the prompt box's right edge and 4px over the
-    // count (maintainer 2026-10-17: "those popovers should always show up in the same place").
+    // every panel opens in the same place, flush with the prompt box's right edge and sitting on the rule
+    // over the line (maintainer 2026-10-17: "those popovers should always show up in the same place").
+    // Its triangle stands over the middle of the count that opened it, its rows are a menu's, 30px and on
+    // one line, and a panel of one row is that row and the panel's own 4px and border.
     const boxRight = await page.$eval("[data-queue-ops-summary] + [data-composer-box]", (el) => el.getBoundingClientRect().right)
-    const placed: { kind: Kind; left: number; right: number; overCount: number }[] = []
+    const placed: { kind: Kind; left: number; right: number; overLine: number; caretOff: number; caretTip: number; rows: number[]; height: number }[] = []
     for (const kind of KINDS) {
       await page.hover(count(kind))
       await assertOnly(kind)
       assert.equal(await page.$eval(count(kind), (el) => el.getAttribute("aria-expanded")), "true")
       placed.push({ kind, ...await page.evaluate((countSel, panelSel) => {
         const c = document.querySelector(countSel)!.getBoundingClientRect()
-        const p = document.querySelector(panelSel)!.getBoundingClientRect()
-        return { left: p.left, right: p.right, overCount: c.top - p.bottom }
+        const panel = document.querySelector(panelSel)!
+        const p = panel.getBoundingClientRect()
+        const line = document.querySelector("[data-queue-ops-summary]")!.getBoundingClientRect()
+        const caret = panel.querySelector("[data-queue-ops-caret]")!.getBoundingClientRect()
+        const rows = [...panel.querySelectorAll("[data-thread-link], [data-queue-subagents] > *, [data-background-ops] > *:not([data-thread-links])")]
+        return {
+          left: p.left,
+          right: p.right,
+          overLine: line.top - p.bottom,
+          caretOff: caret.left + caret.width / 2 - (c.left + c.width / 2),
+          caretTip: c.top - caret.bottom,
+          rows: rows.map((row) => row.getBoundingClientRect().height),
+          height: p.height,
+        }
       }, count(kind), panel(kind)) })
+      // The triangle slides, so it is read once it has arrived.
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      placed[placed.length - 1]!.caretOff = await page.evaluate((countSel, panelSel) => {
+        const c = document.querySelector(countSel)!.getBoundingClientRect()
+        const caret = document.querySelector(`${panelSel} [data-queue-ops-caret]`)!.getBoundingClientRect()
+        return caret.left + caret.width / 2 - (c.left + c.width / 2)
+      }, count(kind), panel(kind))
     }
     for (const at of placed) {
       assert.ok(Math.abs(at.right - boxRight) < 0.5, `the ${at.kind} panel ends at the prompt box's right edge (${at.right} vs ${boxRight})`)
       assert.ok(Math.abs(at.left - placed[0]!.left) < 0.5, `the ${at.kind} panel starts where the ${placed[0]!.kind} panel does (${at.left} vs ${placed[0]!.left})`)
-      assert.ok(Math.abs(at.overCount - 4) < 0.5, `the ${at.kind} panel stands 4px over its count, got ${at.overCount}`)
+      assert.ok(Math.abs(at.overLine) < 0.5, `the ${at.kind} panel sits on the rule over the line, off by ${at.overLine}`)
+      assert.ok(Math.abs(at.caretOff) < 0.5, `the ${at.kind} panel's triangle stands over its count, off by ${at.caretOff}`)
+      assert.ok(at.caretTip >= 0, `the ${at.kind} panel's triangle stops short of its count, by ${at.caretTip}`)
+      assert.ok(at.rows.length > 0, `the ${at.kind} panel's rows were found`)
+      for (const row of at.rows) assert.equal(row, 30, `a ${at.kind} row is 30px, on one line`)
+      assert.equal(at.height, at.rows.reduce((sum, row) => sum + row, 0) + 10, `the ${at.kind} panel is its rows, 4px either side, and its border`)
     }
 
     // 2. The pointer can cross the gap into the panel and stay there: the rows are controls.
@@ -87,6 +113,20 @@ test("each op count opens a panel of its own rows, one panel at a time", { skip:
     assert.deepEqual(await openPanels(), ["shell"], "the panel survives the pointer moving into it")
     // …and a row in it is a real control: the stale shell still offers its ×.
     assert.ok(await page.$(`${panel("shell")} button[aria-label="Clear background shell: Poll panes for perm-prompt false positives"]`), "the shell rows keep their ×")
+
+    // …and the whole of a row is the target, out to its reading at the far right.
+    await page.evaluate(() => {
+      const opened: string[] = []
+      ;(window as unknown as { __opened: string[] }).__opened = opened
+      window.open = (url) => { opened.push(String(url)); return null }
+    })
+    await page.hover(count("pr"))
+    await assertOnly("pr")
+    const prRow = (await (await page.$(`${panel("pr")} [data-background-ops] > *`))!.boundingBox())!
+    await page.mouse.move(prRow.x + prRow.width - 16, prRow.y + prRow.height / 2, { steps: 12 })
+    await page.mouse.down()
+    await page.mouse.up()
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { __opened: string[] }).__opened), ["https://github.com/colinhacks/zod/pull/6559"], "a press on the row's reading opens the row")
 
     // 3. Leaving both closes it.
     await page.mouse.move(4, 4)
@@ -172,6 +212,18 @@ test("a count the pointer only crosses on its way to the panel does not take it"
     await page.mouse.move(4, 4, { steps: 4 })
     await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
 
+    // A FLICK, whose first event lands on the neighbour. The pointer has not moved since it opened the panel,
+    // so where it came in is all the trail has to read its direction from.
+    await page.mouse.move(from.x, from.y)
+    await page.waitForSelector('[data-queue-ops-panel="link"]')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await panelLog()
+    await page.mouse.move(aim.x, aim.y, { steps: 6 })
+    await settled()
+    assert.deepEqual(await panelLog(), [], "a flick to the same label swaps nothing either")
+    await page.mouse.move(4, 4, { steps: 4 })
+    await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
+
     // 3. SLIDING ALONG THE LINE IS CHOOSING, so it swaps on the way, the way a menu bar does: holding every
     // swap would pass step 1 and lose this.
     await page.mouse.move(from.x, from.y)
@@ -226,6 +278,14 @@ test("the Goal panel and the op panels take a share of the prompt box", { skip: 
       await page.waitForSelector('[data-queue-ops-panel="link"]')
       const share = await page.$eval('[data-queue-ops-panel="link"]', (el) => el.getBoundingClientRect().width / document.querySelector("[data-queue-ops-summary] + [data-composer-box]")!.getBoundingClientRect().width)
       assert.ok(share <= most, `the link panel takes ${share} of the box at ${width}px`)
+      // A narrow box moves the counts, not the triangle's job.
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      const caretOff = await page.evaluate(() => {
+        const c = document.querySelector('[data-queue-ops-summary] [data-ops-count="link"]')!.getBoundingClientRect()
+        const caret = document.querySelector("[data-queue-ops-caret]")!.getBoundingClientRect()
+        return caret.left + caret.width / 2 - (c.left + c.width / 2)
+      })
+      assert.ok(Math.abs(caretOff) < 0.5, `the triangle stands over its count at ${width}px, off by ${caretOff}`)
       await page.mouse.move(4, 4)
       await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
     }

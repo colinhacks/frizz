@@ -226,16 +226,6 @@ body {
   margin-left: 17.5px;
 }
 
-/* In an ops panel (QueueOpsSummary, on the queue card and in the drawer) the saved files or links are
-   the panel's only rows: each count opens a panel of its own kind. ThreadLinks rules itself off from
-   the rows above it, which is right under a strip's live rows and a stray line across the panel's top
-   edge, where nothing is above it. */
-[data-queue-ops-panel] > [data-background-ops]:first-child > [data-thread-links]:first-child {
-  margin-top: 0;
-  border-top-width: 0;
-  padding-top: 0;
-}
-
 /* System sans-serif already centres small label icons optically: measured nudge 0px. */
 :root {
   --icon-label-nudge: 0px;
