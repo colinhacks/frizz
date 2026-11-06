@@ -30,9 +30,8 @@ export type BackendKind = "claude" | "codex" | "acp"
 const COMMANDS_KEY_CLAUDE = `
   - \`commands:\` — command watches you REGISTERED with \`frizzctl watch-command add\`, by their \`cmw_…\`
     id: a shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
-    output. A monitor from \`frizzctl monitor add\` is named here too: a script the server keeps
-    running, waking you on every line it prints. Only in \`bypassPermissions\` mode with Claude Code's
-    sandbox off; Frizz refuses both otherwise.`
+    output, or with \`--persistent\` a script the server keeps running, waking you on every line it
+    prints. Only in \`bypassPermissions\` mode with Claude Code's sandbox off; Frizz refuses it otherwise.`
 const COMMANDS_FOR_CLAUDE = `, and one naming
     \`commands:\` with nothing but those, where it runs to a week`
 const COMMANDS_CI_CLAUDE = `;
@@ -51,22 +50,22 @@ const COMMAND_WATCH_WAITS = {
   wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
   Only when Frizz REFUSES it (this thread is not in \`bypassPermissions\`, or Claude Code's sandbox is
   on) does the loop go in a background shell.`,
-  "WAIT_EACH_OCCURRENCE": `\`frizzctl monitor add "<script
-  printing one line per occurrence>" --description "<what>" --for 1d\`, then rest on its id
+  "WAIT_EACH_OCCURRENCE": `\`frizzctl watch-command add "<script
+  printing one line per occurrence>" --persistent --description "<what>" --for 1d\`, then rest on its id
   (\`commands: [cmw_…]\`) with \`status: watching\`. The server keeps the script running across your
   rests, a hibernation and a restart, and each line it prints wakes you; lines printed within 5m of your
   last wake arrive together. A pull request or an issue needs none of this: \`watch-pr\` and
-  \`watch-issue\` already wake you on each comment, review and check. Where Frizz refuses a monitor (the
+  \`watch-issue\` already wake you on each comment, review and check. Where Frizz refuses it (the
   same gate as above), a background shell whose script exits on the first occurrence wakes you once:
   rest on it, then start it again.`,
-  "MONITOR_PARK": `end); it is not something to park a rest on — \`frizzctl monitor\` is.`,
+  "MONITOR_PARK": `end); it is not something to park a rest on — \`frizzctl watch-command add --persistent\` is.`,
 }
 const NO_COMMAND_WATCH_WAITS = {
   "WAIT_ANY_CONDITION": `a polling loop in a background shell that exits once it holds: its exit wakes you, so
   rest on it with \`status: watching\`, and give it an end. It keeps your process tree alive (~250 MB)
   for the whole wait, and a thread holding one can never be hibernated, so end it the moment it stops
-  mattering. \`frizzctl watch-command\` and \`frizzctl monitor\` are refused unless this thread is in
-  \`bypassPermissions\` mode, and it did not start in that mode: the server runs their command with no
+  mattering. \`frizzctl watch-command\` is refused unless this thread is in
+  \`bypassPermissions\` mode, and it did not start in that mode: the server runs its command with no
   permission check.`,
   "WAIT_EACH_OCCURRENCE": `a background shell whose script exits on the first occurrence, which wakes you once:
   rest on it, then start it again. A pull request or an issue needs none of this: \`watch-pr\` and

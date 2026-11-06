@@ -493,7 +493,7 @@ function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; s
 }
 
 // ---- THE MONITOR HAIRLINE --------------------------------------------------------------------------
-// A `frizzctl monitor` (2026-11-02): a script the server keeps running, every line it prints a wake. Its
+// A `frizzctl watch-command add --persistent` (2026-11-02): a script the server keeps running, every line it prints a wake. Its
 // EVENTS are the news, so an event's hairline names the monitor and how many lines it printed, and the
 // lines themselves are the disclosure — the reader opens it to see what the worker was woken with. Its
 // ENDINGS (the script exited, its time ran out, Frizz or the human stopped it) read like a command watch's, under the
@@ -522,11 +522,11 @@ function MonitorDivider({ wake, sourceId, at }: { wake: MonitorWake; sourceId?: 
         onClick={() => setOpen((v) => !v)}
         ariaExpanded={open}
         ariaControls={bodyId}
-        ariaLabel={`${open ? "Collapse" : "Expand"} ${wake.kind === "event" ? "what this monitor printed" : "how this monitor ended"}`}
+        ariaLabel={`${open ? "Collapse" : "Expand"} ${wake.kind === "event" ? "what this command watch printed" : "how this command watch ended"}`}
       >
         <span className={`min-w-0 truncate ${WAKE_DIVIDER_NARROW_ONLY}`}>{outcome}</span>
         <span className={`flex min-w-0 items-center gap-1 ${WAKE_DIVIDER_WIDE_ONLY}`}>
-          <DividerQuotedTitle lead="Monitor" title={wake.label ?? commandWatchName(wake.command ?? wake.id)} tail={tail} />
+          <DividerQuotedTitle lead="Watch" title={wake.label ?? commandWatchName(wake.command ?? wake.id)} tail={tail} />
         </span>
         <DividerHint open={open} />
       </WakeDivider>

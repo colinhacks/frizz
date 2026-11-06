@@ -481,7 +481,7 @@ export interface CommandWatchRow {
   last_outcome: "exit" | "timeout" | "signal" | "error" | null
   last_exit: number | null
   last_output: string | null
-  /** `check` is the one-shot command watch above; `monitor` (2026-11-02, `frizzctl monitor`) is a script
+  /** `check` is the one-shot command watch above; `monitor` (2026-11-02, `frizzctl watch-command add --persistent`) is a script
    *  the server keeps RUNNING, each stdout line an event that wakes the thread. A monitor's `every_ms` is
    *  0, its `runs` counts STARTS (one, plus one per server restart that respawned it), its `last_*` is how
    *  the script ended, and `passed` is its state once the script ended on its own — the state CHECK
@@ -867,7 +867,7 @@ export interface Storage {
   dropCommandWatch(slug: string, id: string, settledAtMs: number): boolean
   /** Terminal: the command passed, ran out of time, or Frizz may no longer run it. Guarded on `armed`. */
   settleCommandWatch(id: string, state: "passed" | "expired" | "cancelled", settledAtMs: number): boolean
-  // ---- MONITORS (`frizzctl monitor`, 2026-11-02) — command_watch rows of kind 'monitor' ------------
+  // ---- MONITORS (`frizzctl watch-command add --persistent`, 2026-11-02) — command_watch rows of kind 'monitor' ------------
   armMonitor(monitor: { id: string; slug: string; command: string; description?: string | null; createdAtMs: number; expiresAtMs: number }): CommandWatchRow
   /** A monitor's script was started (again): counts the start and records the group it leads. */
   noteMonitorStart(id: string, pid: number | null, startedAtMs: number): boolean
@@ -1523,7 +1523,7 @@ export function ensureStorageSchema(db: Database): void {
   // so a wake that then failed every attempt left the answer reading delivered and nothing re-offered
   // it. The column names the carrying wake, so `delivered` can wait for that wake to land.
   // `thread_question.handle` (2026-10-13): the id a worker chose in its ```question fence.
-  // `command_watch.kind` and the monitor columns (2026-11-02, `frizzctl monitor`): a monitor is a row in
+  // `command_watch.kind` and the monitor columns (2026-11-02, `frizzctl watch-command add --persistent`): a monitor is a row in
   // the command watch's table, and every live file predates them. See CommandWatchRow.
   for (const [table, column] of [
     ["pr_watch", "kind TEXT NOT NULL DEFAULT 'pull'"], ["thread_question", "delivery_id TEXT"], ["thread_question", "handle TEXT"],

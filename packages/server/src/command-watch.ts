@@ -372,7 +372,7 @@ export function commandWatchRefusal(
 }
 
 // ---- MONITORS: ONE SCRIPT, MANY WAKES (2026-11-02) --------------------------------------------------
-// `frizzctl monitor`. Where a check above is a question asked on a cadence, a monitor is a script the
+// `frizzctl watch-command add --persistent`. Where a check above is a question asked on a cadence, a monitor is a script the
 // server STARTS ONCE and keeps running for as long as it is armed; every line it prints on stdout is an
 // event the scheduler turns into a wake (SOURCE 13, scheduler.ts). Same shell, same gate, same group-kill
 // discipline as a check — and the same reason to exist: run here, the script holds nothing of the

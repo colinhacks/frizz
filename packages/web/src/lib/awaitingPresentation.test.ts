@@ -136,27 +136,27 @@ test("a runtime id never reaches the popover — it is counted, not listed", () 
 
 // A MONITOR is named by the worker's own description, the way a PR is named by its ref (2026-11-03): it
 // is the one thing on the row the reader would recognise. A `cmw_…` id alone cannot say whether it is a
-// monitor or a command watch, so the clause reads the thread's registered rows to tell them apart.
+// persistent command watch or a check, so the clause reads the thread's registered rows for its name.
 const monitorRow = (id: string, description?: string): ThreadWatchView => ({
   id: `command:t:${id}`, kind: "command", target: id, state: "armed", createdAt: "2026-11-03T00:00:00.000Z",
   command: { command: "tail -n0 -F app.log", every: "0s", expiresAt: "2026-11-04T00:00:00.000Z", runs: 0, monitor: { events: 0, ...(description ? { description } : {}) } },
 })
 
-test("a monitor in the fence is named by its description, and told apart from a command watch", () => {
+test("a lone persistent command watch in the fence is named by its description", () => {
   const watches = [monitorRow("cmw_mon", "Errors in app.log"), { ...monitorRow("cmw_chk"), command: { command: "curl -sf x", every: "5m", expiresAt: "2026-11-04T00:00:00.000Z", runs: 1 } }]
-  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }], watches), "waiting on the monitor “Errors in app.log”")
+  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }], watches), "waiting on the command watch “Errors in app.log”")
   assert.equal(
     awaitingWaitClause([{ kind: "command", value: "cmw_chk" }, { kind: "command", value: "cmw_mon" }, { kind: "pr", value: "acme/app#391" }], watches),
-    "waiting on acme/app#391, the monitor “Errors in app.log” and a command watch",
+    "waiting on acme/app#391 and 2 command watches",
   )
   // Several are counted, as several shells are; one registered before descriptions were required is unnamed.
-  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }, { kind: "command", value: "cmw_b" }], [...watches, monitorRow("cmw_b", "Failed jobs")]), "waiting on 2 monitors")
-  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_old" }], [monitorRow("cmw_old")]), "waiting on a monitor")
+  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }, { kind: "command", value: "cmw_b" }], [...watches, monitorRow("cmw_b", "Failed jobs")]), "waiting on 2 command watches")
+  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_old" }], [monitorRow("cmw_old")]), "waiting on a command watch")
   // Without the rows — or for an id the board no longer lists — it is the command watch it always read as.
   assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }]), "waiting on a command watch")
   assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }], [{ ...watches[0]!, state: "fired" }]), "waiting on a command watch")
   // The phone's one line names it too, after a PR or issue, which name the subject when there is one.
-  assert.equal(hintGloss([{ kind: "command", value: "cmw_mon" }, { kind: "for", value: "1d" }], watches), "Monitor: Errors in app.log")
+  assert.equal(hintGloss([{ kind: "command", value: "cmw_mon" }, { kind: "for", value: "1d" }], watches), "Watching: Errors in app.log")
   assert.equal(hintGloss([{ kind: "command", value: "cmw_mon" }, { kind: "pr", value: "acme/app#391" }], watches), "PR acme/app#391")
   assert.equal(hintGloss([{ kind: "command", value: "cmw_chk" }], watches), null, "a command watch has no name to show")
 })

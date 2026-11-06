@@ -855,7 +855,7 @@ function armedCommandWatchIdsOf(storage: Storage, slug: string): ReadonlySet<str
 /** The same set as the nudge and the corrections print it: the id, and the command as its label. */
 function commandWatchOps(storage: Storage, slug: string): { id: string; label: string }[] {
   return storage.listCommandWatches(slug, { armedOnly: true })
-    .map((w) => ({ id: w.id, label: w.kind === "monitor" ? `monitor: ${monitorLabel(w)}` : w.command.trim().replace(/\s+/g, " ").slice(0, 80) }))
+    .map((w) => ({ id: w.id, label: w.kind === "monitor" ? `persistent: ${monitorLabel(w)}` : w.command.trim().replace(/\s+/g, " ").slice(0, 80) }))
 }
 
 // A row's live ON SCHEDULE trigger, if it has one. A switched-off trigger deliberately reads as ABSENT
@@ -1074,7 +1074,7 @@ function isOwnWatchExpiredFenceId(fenceId: string): boolean {
 const COMMAND_WATCH_FENCE_PREFIX = "cmdwatch"
 const COMMAND_WATCH_EXPIRED_FENCE_PREFIX = "cmdwatch-expired"
 const COMMAND_WATCH_CANCELLED_FENCE_PREFIX = "cmdwatch-cancelled"
-/** A MONITOR's wakes (`frizzctl monitor`, 2026-11-02): one per EVENT, keyed by the event's number so
+/** A MONITOR's wakes (`frizzctl watch-command add --persistent`, 2026-11-02): one per EVENT, keyed by the event's number so
  *  each is its own piece of news, plus the three ways a monitor ends. The event prefix is not one of the
  *  wake store's quiet-window exemptions, so a burst of events merges into one turn; the three endings
  *  are, for the command watch's reason (wake-store.ts). */
@@ -1480,7 +1480,7 @@ export interface Scheduler {
    *  them without awaiting, so a two-minute check never holds up the tick). Tests await it between ticks. */
   commandRunsIdle?(): Promise<void>
   /** Start a MONITOR the router just armed, and watch it for MONITOR_REGISTRATION_WINDOW_MS: what it
-   *  printed in that window, and whether it already exited, go back in `frizzctl monitor add`'s reply
+   *  printed in that window, and whether it already exited, go back in `frizzctl watch-command add --persistent`'s reply
    *  instead of waking the thread. A monitor that exited is settled. */
   startMonitor?(id: string, windowMs?: number): Promise<MonitorStartResult>
   /** Stop a monitor's script now if its row is no longer armed (the worker dropped it), rather than at
@@ -2975,7 +2975,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
             ? "already ENDED — its script exited and that wake was delivered; there is nothing left to wait on"
             : "already PASSED — its wake was delivered; there is nothing left to wait on"
           : i.kind === "command" && settledCommands.has(i.value)
-          ? `no longer armed (${settledCommands.get(i.value)?.state}) — register it again with \`frizzctl ${settledCommands.get(i.value)?.kind === "monitor" ? "monitor" : "watch-command"} add\` if you still need the wait`
+          ? `no longer armed (${settledCommands.get(i.value)?.state}) — register it again with \`frizzctl watch-command add${settledCommands.get(i.value)?.kind === "monitor" ? " --persistent" : ""}\` if you still need the wait`
           : finishedItem(i)
           ? "FINISHED — its result is waiting for you"
           : i.kind === "shell" && staleShellHandles.has(i.value)
@@ -4212,7 +4212,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   }
 
   // ---- SOURCE 13, MONITORS: ONE SCRIPT, MANY WAKES (2026-11-02) ------------------------------------
-  // `frizzctl monitor add`: a command watch row of kind `monitor`, whose script this scheduler STARTS and
+  // `frizzctl watch-command add --persistent`: a command watch row of kind `monitor`, whose script this scheduler STARTS and
   // keeps running for as long as the row is armed. Every event the script prints (command-watch.ts
   // startMonitorProcess batches its lines) is recorded on the row and queued as its own wake, keyed by the
   // event's number; the outbox's quiet window merges a burst into one turn. A monitor ends three ways, each

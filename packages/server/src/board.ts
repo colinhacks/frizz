@@ -936,7 +936,7 @@ export function fenceWatchViews(
         ...(w.last_run_at !== null && w.last_outcome
           ? { lastRun: { at: new Date(w.last_run_at).toISOString(), outcome: w.last_outcome, exitCode: w.last_exit, output: w.last_output ?? "" } }
           : {}),
-        // A MONITOR (`frizzctl monitor`, 2026-11-02) is a running script, not a check on a cadence: its
+        // A MONITOR (`frizzctl watch-command add --persistent`, 2026-11-02) is a running script, not a check on a cadence: its
         // row reads its events instead. The same projection as the worker's read-back.
         ...(w.kind === "monitor" ? { monitor: monitorStatusOf(w) } : {}),
       },

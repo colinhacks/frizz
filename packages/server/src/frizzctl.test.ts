@@ -575,16 +575,17 @@ test("`watch-command` registers for the calling thread, reads a refusal as exit 
     const dropped = await run(["unwatch", "cmw_abc"], { env: worker(fake) })
     assert.equal(dropped.code, 0)
     assert.ok(fake.seen[0]?.url.endsWith("/rpc/dropOwnCommandWatch"), fake.seen[0]?.url)
-    assert.match(dropped.stdout, /^Command watch or monitor cmw_abc dropped\./)
+    assert.match(dropped.stdout, /^Command watch cmw_abc dropped\./)
   } finally {
     fake.close()
   }
 })
 
-// `monitor` (2026-11-02): a script the server keeps running. The command line owes the right body, the
-// lines the script printed in registration's window, a refusal as exit 2, a script that ended at once
-// read as "nothing running", and `drop` reaching the command watch's own RPC.
-test("`monitor` starts for the calling thread, hands back its first lines, reads a refusal as exit 2, and drops", async () => {
+// `watch-command add --persistent` (2026-11-06, `frizzctl monitor` until then): a script the server keeps
+// running. The command line owes the right body, the lines the script printed in registration's window, a
+// refusal as exit 2, a script that ended at once read as "nothing running", and neither shape quietly
+// taking the other's argument.
+test("`watch-command add --persistent` starts for the calling thread, hands back its first lines, reads a refusal as exit 2, and drops", async () => {
   let mode: "running" | "refused" | "exited" = "running"
   const view = (command: string) => ({
     id: "cmw_mon", command, every: "0s", state: "armed", createdAt: "2026-11-02T14:00:00.000Z", expiresAt: "2026-11-03T14:00:00.000Z", runs: 1,
@@ -594,7 +595,7 @@ test("`monitor` starts for the calling thread, hands back its first lines, reads
     if (procedure === "dropOwnCommandWatch") return { result: { dropped: true, watches: [] } }
     if (procedure !== "addOwnMonitor") return undefined
     if (mode === "refused") {
-      return { result: { refused: "Frizz will not run a monitor for this thread: this thread runs in `default` permission mode. Run the script with Claude Code's Monitor tool, or in a background shell, instead.", alreadyArmed: false, running: false, events: [], watches: [] } }
+      return { result: { refused: "Frizz will not run a persistent command watch for this thread: this thread runs in `default` permission mode. Run the script with Claude Code's Monitor tool, or in a background shell, instead.", alreadyArmed: false, running: false, events: [], watches: [] } }
     }
     if (mode === "exited") {
       return { result: { id: "cmw_mon", alreadyArmed: false, running: false, events: ["done"], exited: { at: "2026-11-02T14:00:00.000Z", outcome: "exit", exitCode: 0, output: "done\n" }, watches: [] } }
@@ -602,38 +603,69 @@ test("`monitor` starts for the calling thread, hands back its first lines, reads
     return { result: { id: "cmw_mon", alreadyArmed: false, running: true, events: ["ERROR boot"], expiresAt: "2026-11-03T14:00:00.000Z", watches: [view(body.command as string)] } }
   })
   try {
+    const add = (...rest: string[]) => run(["watch-command", "add", ...rest], { env: worker(fake) })
     const script = "tail -F app.log | grep --line-buffered ERROR"
-    const armed = await run(["monitor", "add", script, "--description", "errors in app.log", "--for", "1d"], { env: worker(fake) })
+    const armed = await add(script, "--persistent", "--description", "errors in app.log", "--for", "1d")
     assert.equal(armed.code, 0, armed.stderr)
     assert.deepEqual(fake.seen.at(-1)?.body, { slug: "the-caller", command: script, for: "1d", description: "errors in app.log" })
-    assert.match(armed.stdout, /^Monitoring as cmw_mon: Frizz keeps your script running until 2026-11-03T14:00:00.000Z/)
+    assert.match(armed.stdout, /^Watching as cmw_mon: Frizz keeps your script running until 2026-11-03T14:00:00.000Z/)
     assert.match(armed.stdout, /It printed in its first 2s \(handed to you here, not as a wake\):\n {2}ERROR boot/)
     assert.match(armed.stdout, /`commands: \[cmw_mon\]`, `status: watching`/)
-    assert.match(armed.stdout, /cmw_mon {2}monitor "errors in app\.log", running until 2026-11-03T14:00:00.000Z — 1 event so far, the latest at 2026-11-02T14:00:01.000Z: ERROR boot\n {4}\$ tail -F/)
+    assert.match(armed.stdout, /frizzctl watch-command drop cmw_mon/)
+    assert.match(armed.stdout, /cmw_mon {2}persistent "errors in app\.log", running until 2026-11-03T14:00:00.000Z — 1 event so far, the latest at 2026-11-02T14:00:01.000Z: ERROR boot\n {4}\$ tail -F/)
 
     mode = "refused"
-    const refused = await run(["monitor", "add", "true", "--description", "x", "--for", "1h"], { env: worker(fake) })
+    const refused = await add("true", "--persistent", "--description", "x", "--for", "1h")
     assert.equal(refused.code, 2)
-    assert.match(refused.stdout, /^NOT registered\. Frizz will not run a monitor for this thread/)
+    assert.match(refused.stdout, /^NOT registered\. Frizz will not run a persistent command watch for this thread/)
 
+    // The flag on a check is the likely mistake, so the reply names the shape it wanted.
     mode = "exited"
-    const exited = await run(["monitor", "add", "echo done", "--description", "x", "--for", "1h"], { env: worker(fake) })
+    const exited = await add("echo done", "--persistent", "--description", "x", "--for", "1h")
     assert.equal(exited.code, 0)
     assert.match(exited.stdout, /^NOTHING IS RUNNING: your script exited 0 within its first 2s/)
+    assert.match(exited.stdout, /A check that finishes takes `--every` instead/)
 
-    const missing = await run(["monitor", "add", "true"], { env: worker(fake) })
+    const posted = fake.seen.length
+    const missing = await add("true", "--persistent")
     assert.equal(missing.code, 1)
     assert.match(missing.stderr, /`for` is required/)
-    // A monitor is named by its description on every surface, so one without a name is refused.
-    const unnamed = await run(["monitor", "add", "true", "--for", "1h"], { env: worker(fake) })
+    // A persistent watch is named by its description on every surface, so one without a name is refused.
+    const unnamed = await add("true", "--persistent", "--for", "1h")
     assert.equal(unnamed.code, 1)
-    assert.match(unnamed.stderr, /`description` is required/)
+    assert.match(unnamed.stderr, /`description` is required with `persistent`/)
+    const cadence = await add("true", "--persistent", "--every", "5m", "--description", "x", "--for", "1h")
+    assert.equal(cadence.code, 1)
+    assert.match(cadence.stderr, /`every` does not go with `persistent`/)
+    const named = await add("true", "--every", "5m", "--description", "x", "--for", "1h")
+    assert.equal(named.code, 1)
+    assert.match(named.stderr, /`description` goes with `persistent`/)
+    assert.equal(fake.seen.length, posted, "none of those reached the server")
 
     fake.seen.length = 0
-    const dropped = await run(["monitor", "drop", "cmw_mon"], { env: worker(fake) })
+    const dropped = await run(["watch-command", "drop", "cmw_mon"], { env: worker(fake) })
     assert.equal(dropped.code, 0)
     assert.ok(fake.seen[0]?.url.endsWith("/rpc/dropOwnCommandWatch"), fake.seen[0]?.url)
-    assert.match(dropped.stdout, /^Monitor cmw_mon stopped\./)
+    assert.match(dropped.stdout, /^Command watch cmw_mon dropped\./)
+  } finally {
+    fake.close()
+  }
+})
+
+// A resumed worker keeps the contract it started with, so it may still call the old command.
+test("`monitor` is retired: it refuses with the command to run, and calls nothing", async () => {
+  const fake = await fakeFrizz(() => undefined)
+  try {
+    for (const argv of [["monitor", "add", "true", "--description", "x", "--for", "1h"], ["monitor", "list"], ["monitor", "drop", "cmw_mon"]]) {
+      const refused = await run(argv, { env: worker(fake) })
+      assert.equal(refused.code, 2, argv.join(" "))
+      assert.match(refused.stdout, /`frizzctl monitor` is retired/)
+      assert.match(refused.stdout, /frizzctl watch-command add "<script>" --persistent --description/)
+    }
+    assert.equal(fake.seen.length, 0)
+    const help = await run(["--help"], { env: worker(fake) })
+    assert.match(help.stdout, /watch-command/)
+    assert.doesNotMatch(help.stdout, /^\s*monitor\b/m, "it is out of the listing")
   } finally {
     fake.close()
   }

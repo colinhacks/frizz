@@ -221,7 +221,7 @@ test("the contract teaches steps: as the wait on a human's act, and routes to it
 // also say why a polling shell is the wrong wait, and where the loop goes when Frizz refuses.
 test("a Claude thread that starts in auto is told to use a background shell, in words a later switch cannot make false", () => {
   const claude = buildWorkerPrompt("claude")
-  assert.doesNotMatch(claude, /watch-command add|monitor add|commands:|cmw_/)
+  assert.doesNotMatch(claude, /watch-command add|--persistent|commands:|cmw_/)
   assert.match(claude, /a polling loop in a background shell that exits once it holds/)
   assert.match(claude, /refused unless this thread is in\s+`bypassPermissions` mode, and it did not start in that mode/)
   assert.doesNotMatch(claude, /\{\{FRIZZ_/)

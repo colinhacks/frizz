@@ -2478,7 +2478,7 @@ export const CommandWatchRun = z.object({
 }).strict()
 export type CommandWatchRun = z.infer<typeof CommandWatchRun>
 
-/** A MONITOR's reading (`frizzctl monitor`, 2026-11-02): a script the server keeps running, whose every
+/** A MONITOR's reading (`frizzctl watch-command add --persistent`, 2026-11-02): a script the server keeps running, whose every
  *  line on stdout is an event that wakes the thread. Carried on a command watch's read-back and on its
  *  board row in place of a cadence, which a monitor does not have. */
 export const MonitorStatus = z.object({
@@ -2524,7 +2524,7 @@ export const ThreadWatchView = z.object({
     expiresAt: z.string(),
     runs: z.number().int().nonnegative(),
     lastRun: CommandWatchRun.optional(),
-    /** A MONITOR's own reading (`frizzctl monitor`), and present on nothing else: the row is a running
+    /** A MONITOR's own reading (`frizzctl watch-command add --persistent`), and present on nothing else: the row is a running
      *  script, so its status is how many events it has printed, not a cadence. */
     monitor: MonitorStatus.optional(),
   }).strict().optional(),
@@ -2767,7 +2767,7 @@ export const CommandWatchView = z.object({
   /** How many checks have run since it was armed, the registration's own first check included. */
   runs: z.number().int().nonnegative(),
   lastRun: CommandWatchRun.optional(),
-  /** Present on a MONITOR (`frizzctl monitor`) and nothing else: a script the server keeps RUNNING, whose
+  /** Present on a MONITOR (`frizzctl watch-command add --persistent`) and nothing else: a script the server keeps RUNNING, whose
    *  every printed line is a wake. A monitor has no cadence and no checks, so `every` reads `0s` and
    *  `runs` 0 on one; read this instead. */
   monitor: MonitorStatus.optional(),
@@ -2959,7 +2959,7 @@ function unfence(text: string): string {
 }
 
 // ---- THE WORKER'S MONITORS (2026-11-02) ------------------------------------------------------------
-// `frizzctl monitor`. ONE registration, MANY wakes: a script the SERVER keeps running for the thread, and
+// `frizzctl watch-command add --persistent`. ONE registration, MANY wakes: a script the SERVER keeps running for the thread, and
 // every line it prints on stdout is an event that wakes the thread — a log tail filtered to its errors, a
 // loop that prints each new row a query returns, a listener on a socket (a PR or an issue needs none:
 // its watcher already wakes on each comment). The command watch above wakes ONCE, when a
@@ -2994,7 +2994,7 @@ export const MONITOR_EVENT_MAX_LINES = 40
 export const MONITOR_FLOOD_MAX_EVENTS = 30
 export const MONITOR_FLOOD_WINDOW_MS = 10 * 60_000
 /** How long registration watches the new script before answering. A typo, a binary missing from the
- *  server's PATH, or a script that prints its first event at once is reported in `frizzctl monitor add`'s
+ *  server's PATH, or a script that prints its first event at once is reported in `frizzctl watch-command add --persistent`'s
  *  own reply, while the worker is still there to read it, instead of as a wake after it rested. */
 export const MONITOR_REGISTRATION_WINDOW_MS = 2_000
 /** The longest description accepted. It is one line: the board row's name and every wake's label. */
@@ -3049,21 +3049,23 @@ export function monitorLabel(input: { command: string; description?: string | nu
   return command.length > 80 ? `${command.slice(0, 79)}…` : command
 }
 
-const MONITOR_EVENT_HEAD = /^📟 Your monitor `(cmw_[a-z0-9]+)` printed (\d+) lines? \(event (\d+)\) — (.+)$/m
-const MONITOR_EXITED_HEAD = /^⏹️ Your monitor `(cmw_[a-z0-9]+)` (exited \d+|was killed by a signal|could not be started) after (\d+) events? and is no longer armed — (.+)$/m
-const MONITOR_EXPIRED_HEAD = /^⏰ Your monitor `(cmw_[a-z0-9]+)` ran out its `for` after (\d+) events? and was stopped — (.+)$/m
-const MONITOR_CANCELLED_HEAD = /^(⚠️ Frizz|🛑 The human) stopped your monitor `(cmw_[a-z0-9]+)`(?: from the board)? after (\d+) events? — (.+)$/m
+// Every head says "command watch" since `frizzctl monitor` became `watch-command add --persistent` (2026-11-06).
+// A transcript keeps the wakes it was sent, so the older "monitor" heads are still read back.
+const MONITOR_EVENT_HEAD = /^📟 Your (?:command watch|monitor) `(cmw_[a-z0-9]+)` printed (\d+) lines? \(event (\d+)\) — (.+)$/m
+const MONITOR_EXITED_HEAD = /^⏹️ Your (?:command watch|monitor) `(cmw_[a-z0-9]+)` (exited \d+|was killed by a signal|could not be started) after (\d+) events? and is no longer armed — (.+)$/m
+const MONITOR_EXPIRED_HEAD = /^⏰ Your (?:command watch|monitor) `(cmw_[a-z0-9]+)` ran out its `for` after (\d+) events? and was stopped — (.+)$/m
+const MONITOR_CANCELLED_HEAD = /^(⚠️ Frizz|🛑 The human) stopped your (?:command watch|monitor) `(cmw_[a-z0-9]+)`(?: from the board)? after (\d+) events? — (.+)$/m
 // The head frizz-server 0.15.42 wrote: no label, the reason after a colon, and only Frizz could stop one.
 const MONITOR_CANCELLED_HEAD_0_15_42 = /^⚠️ Frizz stopped your monitor `(cmw_[a-z0-9]+)` after (\d+) events?: (.*)$/m
 
 // Each wake's closing paragraph is addressed to the worker about its own registration. Named once so the
 // chat's parser cuts exactly what the composer wrote.
 const MONITOR_EVENT_TRAILER =
-  "The monitor is still running and wakes you again on its next line. Drop it with `frizzctl monitor drop <id>` once you no longer need it."
+  "The watch is still running and wakes you again on its next line. Drop it with `frizzctl watch-command drop <id>` once you no longer need it."
 const MONITOR_EXITED_TRAILER =
-  "Its script ended, so nothing more will come from it. If you still need the watch, find out why it stopped and register it again with `frizzctl monitor add`."
+  "Its script ended, so nothing more will come from it. If you still need the watch, find out why it stopped and register it again with `frizzctl watch-command add --persistent`."
 const MONITOR_EXPIRED_TRAILER =
-  "If you still need the watch, register it again with `frizzctl monitor add` and a fresh `--for`. If it was the only thing you were waiting on, end in a proper terminal state instead of parking on it again."
+  "If you still need the watch, register it again with `frizzctl watch-command add --persistent` and a fresh `--for`. If it was the only thing you were waiting on, end in a proper terminal state instead of parking on it again."
 const MONITOR_CANCELLED_TRAILER = "Nothing about it will wake you now."
 
 /** The wake one event sends: the lines a monitor printed, in one batch. */
@@ -3072,7 +3074,7 @@ export function monitorEventWakeMessage(input: { id: string; label: string; line
   const more = input.more ?? 0
   const total = shown + more
   return [
-    `📟 Your monitor \`${input.id}\` printed ${total} line${total === 1 ? "" : "s"} (event ${input.event}) — ${input.label}`,
+    `📟 Your command watch \`${input.id}\` printed ${total} line${total === 1 ? "" : "s"} (event ${input.event}) — ${input.label}`,
     "",
     codeBlock(input.lines.join("\n")),
     ...(more > 0 ? ["", `…and ${more} more line${more === 1 ? "" : "s"} in the same burst, not shown.`] : []),
@@ -3090,7 +3092,7 @@ export function monitorExitedWakeMessage(input: {
     : input.run.outcome === "error" ? "could not be started" : "was killed by a signal"
   const output = input.run.output.trim()
   return [
-    `⏹️ Your monitor \`${input.id}\` ${how} after ${input.events} event${input.events === 1 ? "" : "s"} and is no longer armed — ${input.label}`,
+    `⏹️ Your command watch \`${input.id}\` ${how} after ${input.events} event${input.events === 1 ? "" : "s"} and is no longer armed — ${input.label}`,
     "",
     codeBlock(input.command, "sh"),
     "",
@@ -3103,7 +3105,7 @@ export function monitorExitedWakeMessage(input: {
 /** The wake a monitor sends when its `for` runs out: Frizz killed the script. */
 export function monitorExpiredWakeMessage(input: { id: string; label: string; command: string; events: number }): string {
   return [
-    `⏰ Your monitor \`${input.id}\` ran out its \`for\` after ${input.events} event${input.events === 1 ? "" : "s"} and was stopped — ${input.label}`,
+    `⏰ Your command watch \`${input.id}\` ran out its \`for\` after ${input.events} event${input.events === 1 ? "" : "s"} and was stopped — ${input.label}`,
     "",
     codeBlock(input.command, "sh"),
     "",
@@ -3121,8 +3123,8 @@ export function monitorCancelledWakeMessage(input: { id: string; label: string; 
   const reason = input.reason.trim()
   return [
     input.by === "human"
-      ? `🛑 The human stopped your monitor \`${input.id}\` from the board after ${events} — ${input.label}`
-      : `⚠️ Frizz stopped your monitor \`${input.id}\` after ${events} — ${input.label}`,
+      ? `🛑 The human stopped your command watch \`${input.id}\` from the board after ${events} — ${input.label}`
+      : `⚠️ Frizz stopped your command watch \`${input.id}\` after ${events} — ${input.label}`,
     "",
     reason.charAt(0).toUpperCase() + reason.slice(1),
     "",

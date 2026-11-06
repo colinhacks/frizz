@@ -308,10 +308,10 @@ test("loadWorkerPrompt(claude) in bypassPermissions is BYTE-IDENTICAL to its own
   assert.equal(loadWorkerPrompt("claude", claudeContractOptions("bypassPermissions", { childThreads: false })), CLAUDE_BYPASS_GOLDEN)
 })
 
-test("a Claude worker's contract offers command watches and monitors only in bypassPermissions", () => {
+test("a Claude worker's contract offers command watches only in bypassPermissions", () => {
   const prompt = (mode: "auto" | "bypassPermissions") => loadWorkerPrompt("claude", claudeContractOptions(mode, { childThreads: false }))
   assert.equal(prompt("auto"), CLAUDE_GOLDEN)
-  for (const offer of ["frizzctl watch-command add", "frizzctl monitor add", "cmw_"]) {
+  for (const offer of ["frizzctl watch-command add", "--persistent", "cmw_"]) {
     assert.ok(prompt("bypassPermissions").includes(offer), `bypass offers ${offer}`)
     assert.ok(!prompt("auto").includes(offer), `auto does not offer ${offer}`)
   }

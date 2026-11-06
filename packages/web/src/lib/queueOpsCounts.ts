@@ -3,7 +3,7 @@ import type { TranscriptShellRecord } from "./childOps.ts"
 import { threadOps } from "./threadOps.ts"
 import { childThreadState } from "./childThreads.ts"
 
-export type QueueOpsKind = "agent" | "child" | "shell" | "pr" | "issue" | "command" | "monitor" | "timer" | "file" | "link"
+export type QueueOpsKind = "agent" | "child" | "shell" | "pr" | "issue" | "command" | "timer" | "file" | "link"
 
 export interface QueueOpsCount {
   readonly key: QueueOpsKind
@@ -40,20 +40,13 @@ export function queueOpsCounts(
     { key: "shell", n: shells.length, one: "shell", many: "shells", states: shells.map((shell) => shell.state) },
     { key: "pr", n: prs.length, one: "PR", many: "PRs", states: ["running"] },
     { key: "issue", n: issues.length, one: "issue", many: "issues", states: ["running"] },
-    // Parked waits, live as a PR watch is, and drawn in its hue (ChildOpRow). A MONITOR is a command
-    // watch row on the board, and its own count here (2026-11-03): it read "1 command" over a thread
-    // whose card, rail and drawer all called it a monitor. Split rather than reworded, so a thread with
-    // both kinds names each, and each count opens a panel of its own rows (isMonitorWatch).
-    { key: "command", n: commands.filter((w) => !isMonitorWatch(w)).length, one: "command", many: "commands", states: ["running"] },
-    { key: "monitor", n: commands.filter(isMonitorWatch).length, one: "monitor", many: "monitors", states: ["running"] },
+    // Parked waits, live as a PR watch is, and drawn in its hue (ChildOpRow). A persistent command watch
+    // counts here too: it had a count of its own from 2026-11-03, when every surface called it a monitor,
+    // and rejoined this one when the two became one command (2026-11-06). Its row tells it apart.
+    { key: "command", n: commands.length, one: "command", many: "commands", states: ["running"] },
     { key: "timer", n: timers.length, one: "timer", many: "timers", states: ["running"] },
     { key: "file", n: files.length, one: "file", many: "files", states: [] },
     { key: "link", n: links.length, one: "link", many: "links", states: [] },
   ]
   return counts.filter((count) => count.n > 0)
-}
-
-/** A command watch row that is a MONITOR (`frizzctl monitor`): a running script, not a check on a cadence. */
-export function isMonitorWatch(watch: ThreadWatchView): boolean {
-  return Boolean(watch.command?.monitor)
 }

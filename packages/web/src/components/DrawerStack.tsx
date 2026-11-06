@@ -117,7 +117,7 @@ export function DrawerStack({ onEscapeAtRest }: { onEscapeAtRest?: () => void } 
             id={d.id}
             slug={d.slug}
             monitorId={d.subId ?? ""}
-            label={d.label ?? "Monitor"}
+            label={d.label ?? "Command watch"}
             depth={i}
             widthDepth={widthDepth}
           />

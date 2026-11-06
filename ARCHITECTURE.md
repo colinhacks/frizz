@@ -153,7 +153,7 @@ Invoking `nub --test` by hand is fine for one file, but it bypasses that check.
   and answer can read it but cannot answer it (`remote-gate.ts`). When auto mode is unavailable, Claude
   Code starts the session in `default` without saying so; Frizz does not fall back to bypass, and each card
   says why it appeared. The board row keeps the mode that was asked for. The worker contract has a variant
-  per starting mode: `watch-command` and `monitor` appear only in the bypass one, because only bypass may
+  per starting mode: `watch-command` appears only in the bypass one, because only bypass may
   register one (`command-watch.ts`). A thread keeps the variant it started with, because Claude Code sends a
   thread's first system prompt on every resume, so a mode switch changes the launch flag and the gate and
   not the contract.

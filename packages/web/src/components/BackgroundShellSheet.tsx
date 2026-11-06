@@ -135,11 +135,11 @@ export function MonitorSheet({
     setStopping(true)
     rpc.stopMonitor({ slug, id: monitorId })
       .then(({ stopped }) => {
-        showToast(stopped ? "Monitor stopped — the worker was told" : "This monitor had already ended")
+        showToast(stopped ? "Command watch stopped — the worker was told" : "This command watch had already ended")
         void qc.invalidateQueries({ queryKey: ["monitorOutput", slug, monitorId] })
       })
       .catch((error: unknown) => {
-        showToast(error instanceof Error ? error.message : "Could not stop this monitor")
+        showToast(error instanceof Error ? error.message : "Could not stop this command watch")
       })
       .finally(() => setStopping(false))
   }
@@ -159,10 +159,10 @@ export function MonitorSheet({
       running={data?.state === "running"}
       loading={query.isLoading}
       unavailable={unavailable}
-      unavailableText="This monitor is no longer available."
-      noCommandText="Script unavailable for this monitor."
+      unavailableText="This command watch is no longer available."
+      noCommandText="Script unavailable for this command watch."
       emptyText={data?.state === "ended" ? "It printed nothing." : "Nothing printed yet."}
-      stop={!unavailable && data?.stoppable ? { label: "Stop monitor", stopping, onStop: stop } : undefined}
+      stop={!unavailable && data?.stoppable ? { label: "Stop command watch", stopping, onStop: stop } : undefined}
     />
   )
 }
