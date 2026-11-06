@@ -171,7 +171,7 @@
               <div class="row-shot thread"><img src="/img/f-watch.webp?v=0a101a19" width="1500" height="920" loading="lazy" decoding="async" alt="A thread watching three pull requests: one running, one green, one with two failed checks." /></div>
             </article>
             <article class="feature row">
-              <div class="row-text"><h3>Monitors that outlive the session</h3><p>An agent can hand Frizz a script and stop. The Frizz server keeps it running while the session sleeps, and each line it prints wakes the agent.</p>
+              <div class="row-text"><h3>Monitors that outlive the session</h3><p>An agent can hand Frizz a script and stop. The Frizz server keeps it running while the session sleeps, and each line it prints wakes the agent. It runs unchecked, so it needs a thread in Bypass.</p>
                 <svg class="lanes" viewBox="0 0 420 96" role="img" aria-label="Two timelines. The agent's session runs, sleeps and wakes twice. The monitor runs the whole time, and each line it prints wakes the session.">
                   <text x="0" y="12">Agent session</text>
                   <g class="awake"><rect x="0" y="22" width="72" height="8" rx="4"/><rect x="186" y="22" width="56" height="8" rx="4"/><rect x="336" y="22" width="56" height="8" rx="4"/></g>
