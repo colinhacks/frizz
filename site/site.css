@@ -257,7 +257,7 @@ kbd {
 .fit-list svg { position: absolute; left: 2px; top: calc(26px + 0.62em - 13px); width: 26px; height: 26px; overflow: visible; }
 .fit-list svg path { stroke: var(--gold-deep); }
 
-/* Features: rows that swap sides, with a big centered section every few rows. Each image keeps its own height. */
+/* Features: four divisions under their own H2, in rows that swap sides. Each image keeps its own height. */
 .story { padding: clamp(120px, 14vw, 200px) 0 0; }
 .story .lead { max-width: none; font-size: clamp(20px, 1.8vw, 25px); line-height: 1.35; letter-spacing: -0.018em; }
 .features { display: grid; gap: clamp(96px, 10vw, 144px); margin-top: clamp(72px, 8vw, 112px); }
@@ -270,9 +270,9 @@ kbd {
 .row.flip { grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); }
 .row.flip .row-text { order: 2; }
 .row-shot.narrow { justify-self: center; width: 100%; max-width: 540px; }
-.center { text-align: center; }
-.center p { max-width: 34em; margin-inline: auto; }
-.big-shot { max-width: 1040px; margin: clamp(32px, 4vw, 48px) auto 0; }
+/* The drill-down: a row whose shot is bigger and a whole window, so each view can be told from the last. */
+.row.level { grid-template-columns: minmax(0, 3fr) minmax(0, 8fr); gap: clamp(32px, 3.6vw, 52px); }
+.row.level.flip { grid-template-columns: minmax(0, 8fr) minmax(0, 3fr); }
 .big-shot img { border-radius: 16px; }
 /* A big shot as a whole window: the hero's toolbar over the page it is showing. */
 .big-shot.browser { position: relative; overflow: hidden; border-radius: 16px; background: var(--app); box-shadow: var(--shadow-small); }
@@ -447,7 +447,7 @@ kbd {
   :root { --shadow-object: var(--shadow-small); }
   .nav-links .opt-link { display: none; }
   .fit-grid { grid-template-columns: 1fr; gap: 36px; }
-  .row, .row.flip { grid-template-columns: 1fr; gap: 28px; }
+  .row, .row.flip, .row.level, .row.level.flip { grid-template-columns: 1fr; gap: 28px; }
   .row.flip .row-text { order: 0; }
   .features { gap: 88px; }
   .not-grid { grid-template-columns: 1fr; grid-template-rows: none; gap: 14px; margin-top: 40px; }

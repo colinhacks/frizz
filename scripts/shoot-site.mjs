@@ -24,18 +24,19 @@ const THREAD_W = 880
 const thread = (project, slug, suffix = "") => `${base}/project/${project}/thread/${slug}${suffix}`
 const settle = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// An arrow pointer, original artwork, drawn at the real mouse position.
-const ARROW = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="26" viewBox="0 0 22 26"><path d="M2.2 1.6v19.2l4.9-4.6 3.1 7.3 3.5-1.5-3.1-7.2h6.8z" fill="#111" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>`
+// A pointing hand, original artwork, drawn with its fingertip on the real mouse position: everything a shot
+// points at is clickable, and the arrow read as a mouse resting on nothing.
+const HAND = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="28" viewBox="0 0 24 28"><path d="M7.6 3.2c0-1 .8-1.8 1.7-1.8s1.7.8 1.7 1.8v7.4c.35-.2.75-.3 1.15-.3.8 0 1.5.45 1.85 1.1.35-.2.75-.3 1.15-.3.95 0 1.75.6 2 1.45.3-.15.6-.2.95-.2 1.15 0 2.05.95 2.05 2.1v4.4c0 4.1-2.7 7.65-6.9 7.65h-1.6c-2.35 0-4-.95-5.4-2.7L1.9 18.4c-.7-.85-.6-2.05.2-2.75.8-.7 2-.6 2.7.2l2.8 3.1z" fill="#fff" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 13.4v4.4M14 13.8v4M17.1 14.6v3.2" fill="none" stroke="#111" stroke-width="1.1" stroke-linecap="round"/></svg>`
 async function pointAt(page, target, fx = 0.62, fy = 0.72) {
   const box = await target.boundingBox()
   const x = box.x + box.width * fx, y = box.y + box.height * fy
   await page.mouse.move(x, y, { steps: 6 })
   await page.evaluate((x, y, svg) => {
     const el = document.createElement("div")
-    el.style.cssText = `position:fixed;left:${x - 2}px;top:${y - 2}px;z-index:2147483647;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))`
+    el.style.cssText = `position:fixed;left:${x - 9.3}px;top:${y - 1.6}px;z-index:2147483647;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))`
     el.innerHTML = svg
     document.body.appendChild(el)
-  }, x, y, ARROW)
+  }, x, y, HAND)
 }
 const byText = async (page, selector, text) => {
   for (const h of await page.$$(selector)) if (((await h.evaluate((e) => e.textContent)) || "").includes(text)) return h
@@ -45,6 +46,8 @@ const need = async (page, selector, timeout = 15_000) => {
   await page.waitForSelector(selector, { timeout })
   return page.$(selector)
 }
+/** Narrows a clip from both sides: a box's padded clip otherwise takes in the border of the column around it. */
+const inset = (clip, by) => ({ ...clip, x: clip.x + by, width: clip.width - by * 2 })
 const hideLoadEarlier = (page) => page.evaluate(() => {
   for (const b of document.querySelectorAll("button")) if (/Load earlier messages/.test(b.textContent || "")) b.style.display = "none"
 })
@@ -113,14 +116,6 @@ const HERO = {
     await pointAt(page, await need(page, `${CARD("settings-store")} button[aria-label="Send"]`), 0.82, 0.78)
     await settle(1200)
   } },
-  "f-ops": { w: THREAD_W, h: 690, stage: async (page) => {
-    await page.goto(thread(API, "settings-store", "/full"), { waitUntil: "networkidle2" })
-    await need(page, "[data-queue-ops-summary]")
-    await settle(1800)
-    await hideLoadEarlier(page)
-    await pointAt(page, await need(page, '[data-ops-count="shell"]'), 0.7, 0.8)
-    await settle(700)
-  } },
   "f-full": { w: 1440, h: 860, stage: async (page) => {
     await page.goto(thread(API, "settings-store", "/full"), { waitUntil: "networkidle2" })
     await need(page, "[data-focus-rail]")
@@ -152,6 +147,11 @@ const HERO = {
       // The real menu scrolls inside 360px, which cuts its last row in half. Three Codex models fit it whole.
       const codex = [...menu.querySelectorAll("[data-profile-grid-row]")].filter((row) => /^gpt/i.test(row.dataset.profileGridRow))
       for (const row of codex.slice(3)) row.style.display = "none"
+      // ACP agents are whichever CLIs this Mac has on PATH, and this row is about Claude Code and Codex.
+      for (const group of menu.querySelectorAll('[role="group"]')) if (group.querySelector('[data-profile-grid-row^="acp:"]')) {
+        group.style.display = "none"
+        group.previousElementSibling?.querySelector('[role="separator"]')?.style.setProperty("display", "none")
+      }
       menu.style.maxHeight = "none"
       // The box and its menu alone: what sits under the box in the panel would otherwise show around the menu.
       const form = document.querySelector(".profile-grid-trigger").closest("form, [data-composer-box]")
@@ -161,8 +161,19 @@ const HERO = {
       return { x: left, y: top, width: Math.max(box.right, list.right) + 20 - left, height: Math.max(box.bottom, list.bottom) + 20 - top }
     })
   } },
-  // One project's page: its queue and threads, and the other projects only as counts on the rail.
+  // One project with no column of the others: the project sidebar off, which is the app's default. The scene
+  // turns it on for every other shot, so this one answers the setting's read from here.
   "f-workspace": { w: 1440, h: 860, stage: async (page) => {
+    await page.evaluateOnNewDocument(() => {
+      const real = window.fetch.bind(window)
+      window.fetch = async (input, init) => {
+        const res = await real(input, init)
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin)
+        if (!url.pathname.endsWith("/rpc/settingsGet")) return res
+        const { result } = await res.json()
+        return new Response(JSON.stringify({ result: { ...result, projectRail: false } }), { headers: { "content-type": "application/json" } })
+      }
+    })
     await stageAnswer(page)
     await page.mouse.move(4, 4)
     await settle(SIGN_IN_TOAST)
@@ -269,16 +280,15 @@ const FEATURES = {
     await open(page, "watch-production", "[data-awaiting-background]")
     await settle(600)
   } },
-  "f-lightbox": { w: 1440, h: 860, stage: async (page) => {
+  // An agent's reply with its row of images, the pointer on one: what a gallery looks like in the chat.
+  "f-gallery": { w: THREAD_W, h: 640, stage: async (page) => {
     await open(page, "billing-gallery", "[data-lightbox-gallery]")
-    await (await need(page, "[data-lightbox-tile]")).click()
-    await need(page, "[data-lightbox]")
-    await page.mouse.move(10, 10)
-    await settle(900)
-    // The viewer's header prints the file's path, which here is this sandbox's. Say where a worker would keep it.
-    await page.evaluate(() => {
-      const walker = document.createTreeWalker(document.querySelector("[data-lightbox]"), NodeFilter.SHOW_TEXT)
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.includes("/pictures/")) node.data = node.data.replace(/^.*\/pictures\//, "~/work/mobile-app/.frizz/shots/")
+    await pointAt(page, await need(page, "[data-lightbox-tile]"), 0.55, 0.6)
+    await settle(500)
+    return page.evaluate(() => {
+      const gallery = document.querySelector("[data-lightbox-gallery]")
+      const reply = gallery.closest("[data-frizz-msg]").getBoundingClientRect(), top = reply.top - 14
+      return { x: reply.left - 14, y: top, width: reply.width + 28, height: gallery.getBoundingClientRect().bottom + 14 - top }
     })
   } },
   "f-md-code": { w: 780, h: 900, stage: async (page) => { await open(page, "md-code"); return lastMessage(page, 360) } },
@@ -359,8 +369,16 @@ const FEATURES = {
     await settle(200)
   } },
   // The rail beside a full-screen thread, in the whole window. dist/bundle.js was written too, and git ignores it.
+  // The rail's edited-files panel on its own, with the pointer on a file.
   "f-edited": { w: 1280, h: 620, stage: async (page) => {
-    await open(page, "edited-rail", "[data-focus-rail]")
+    await open(page, "edited-rail", "[data-edited-file-tree]")
+    await pointAt(page, await byText(page, "[data-edited-file-tree] a, [data-edited-file-tree] button", "retry.ts"), 0.5, 0.62)
+    await settle(400)
+    return page.evaluate(() => {
+      const rail = document.querySelector("[data-focus-rail]").getBoundingClientRect(), tree = document.querySelector("[data-edited-file-tree]").getBoundingClientRect()
+      const top = tree.top - 44
+      return { x: rail.left, y: top, width: rail.width, height: tree.bottom + 20 - top }
+    })
   } },
   // The sheet the GitHub button opens while Frizz is signed out, over the board. The code is made up; the sheet is real.
   "f-signin": { w: 880, h: 580, stage: async (page) => {
@@ -397,14 +415,21 @@ const FEATURES = {
     await (await need(page, "[data-recurring-prompt]")).click()
     await need(page, "[data-recurring-panel]")
     await settle(600)
+    await pointAt(page, await need(page, "[data-recurring-prompt]"), 0.5, 0.62)
+    await settle(300)
+    return inset(await around(page, ["[data-recurring-panel]", "[data-composer-box]"], 16), 6)
   } },
-  "f-steer": { w: THREAD_W, h: 470, stage: async (page) => {
+  "f-steer": { w: THREAD_W, h: 400, stage: async (page) => {
     await open(page, "steer-running")
     await (await need(page, "[data-composer-box] textarea")).click()
     await page.keyboard.type("Keep the system setting as the default.")
     await (await need(page, "[data-send-menu]")).click()
     await need(page, "[data-send-modes]")
     await settle(500)
+    await pointAt(page, await byText(page, "[data-send-modes] button, [data-send-modes] [role^='menuitem']", "Send as steer"), 0.84, 0.45)
+    await settle(300)
+    await page.evaluate(() => [...document.querySelectorAll("button, [role='button'], span, div")].filter((e) => (e.textContent || "").trim().startsWith("Running the UI tests")).at(-1).setAttribute("data-shot", ""))
+    return inset(await around(page, ["[data-shot]", "[data-send-modes]", "[data-composer-box]"], 16), 6)
   } },
   "f-peer": { w: THREAD_W, h: 684, stage: async (page) => {
     await open(page, "peer-message", "[data-session-message-toggle]")
@@ -434,15 +459,18 @@ const FEATURES = {
       }
       throw new Error(`no ${text} in the reader`)
     }, text)
-    await select("Every write carries the server revision it was based on.")
+    const line = "Every write carries the server revision it was based on."
+    await select(line)
     await page.keyboard.down("Meta")
     await page.keyboard.press("i")
     await page.keyboard.up("Meta")
     await settle(500)
     await page.keyboard.type(" What about a client that never reconnects?")
     await settle(300)
-    const next = await select("Anything else comes back as a conflict the client merges.")
-    await pointAt(page, { boundingBox: async () => next }, 0.98, 1.05)
+    // ⌘I collapses the selection. Select the line again, so the shot shows which line the reference names,
+    // with the pointer in the chat, where the comment is going.
+    await select(line)
+    await pointAt(page, await need(page, '[data-composer-box] button[aria-label="Send"]'), 0.84, 0.72)
     await settle(300)
   } },
 }
