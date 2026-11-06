@@ -201,7 +201,7 @@ kbd {
 .browserbar .url {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: flex; align-items: center; justify-content: center;
-  width: 34%; height: 28px; padding-top: 1px; border-radius: 8px; /* 1px of top padding centres the digits' ink */
+  min-width: 34%; max-width: calc(100% - 180px); height: 28px; padding: 1px 16px 0; border-radius: 8px; white-space: nowrap; overflow: hidden; /* 1px of top padding centres the digits' ink */
   background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.74);
   font: 500 13.5px/1 var(--sans); letter-spacing: -0.003em;
 }
@@ -260,7 +260,6 @@ kbd {
 /* Features: rows that swap sides, with a big centered section every few rows. Each image keeps its own height. */
 .story { padding: clamp(120px, 14vw, 200px) 0 0; }
 .story .lead { max-width: none; font-size: clamp(20px, 1.8vw, 25px); line-height: 1.35; letter-spacing: -0.018em; }
-.story .lead strong { font-weight: 640; color: var(--ink); }
 .features { display: grid; gap: clamp(96px, 10vw, 144px); margin-top: clamp(72px, 8vw, 112px); }
 .feature h3 { margin: 0; font-size: clamp(26px, 2.5vw, 34px); line-height: 1.1; font-weight: 700; letter-spacing: -0.034em; text-wrap: balance; }
 .feature p { margin: 14px 0 0; font-size: 19px; line-height: 1.48; font-weight: 450; color: var(--ink); letter-spacing: -0.011em; text-wrap: pretty; }
@@ -275,10 +274,9 @@ kbd {
 .center p { max-width: 34em; margin-inline: auto; }
 .big-shot { max-width: 1040px; margin: clamp(32px, 4vw, 48px) auto 0; }
 .big-shot img { border-radius: 16px; }
-/* The focus card and the parallel card, side by side. Subgrid keeps both shots on one line when a heading wraps. */
-.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto auto auto; column-gap: clamp(28px, 3.5vw, 48px); }
-.pair-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; align-items: start; }
-.pair-card img { margin-top: 24px; }
+/* A big shot as a whole window: the hero's toolbar over the page it is showing. */
+.big-shot.browser { position: relative; overflow: hidden; border-radius: 16px; background: var(--app); box-shadow: var(--shadow-small); }
+.big-shot.browser img { border-radius: 0; box-shadow: none; }
 .md-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(32px, 3.5vw, 48px) clamp(24px, 3vw, 40px); margin-top: clamp(32px, 4vw, 48px); text-align: left; align-items: start; }
 .md-grid figure { margin: 0; }
 .md-grid figcaption { margin-top: 12px; font-size: 16px; line-height: 1.45; color: var(--ink-2); letter-spacing: -0.006em; }
@@ -306,6 +304,34 @@ kbd {
 .not-item h3 { margin: 0; font-size: clamp(26px, 2.5vw, 34px); line-height: 1.06; font-weight: 700; letter-spacing: -0.038em; text-wrap: balance; }
 .not-item p { margin: 14px 0 0; font-size: 17px; color: var(--ink-2); text-wrap: pretty; }
 
+/* How it runs: one machine, three boxes, and what passes between them. */
+.arch-sec { padding: clamp(120px, 14vw, 200px) 0 0; }
+.arch-sec .lead { max-width: 42em; }
+.arch {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(104px, 150px) minmax(0, 1fr) minmax(72px, 110px) minmax(0, 1fr); align-items: center;
+  margin: clamp(40px, 5vw, 64px) 0 0; padding: 28px clamp(20px, 3vw, 36px) 36px; border-radius: 22px; border: 1.5px dashed var(--rule-2);
+}
+.arch-tag { grid-column: 1; grid-row: 1; align-self: start; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink-3); }
+.arch-cmd { grid-column: 3; grid-row: 1; justify-self: center; padding: 11px 20px; border-radius: 999px; background: var(--ink); color: #f6f3ec; font: 600 16px/1 var(--mono); }
+.arch-cmd .dollar { color: var(--gold); }
+.arch-starts { position: relative; grid-column: 3; grid-row: 2; justify-self: center; display: grid; place-items: center; padding: 6px 0; font-size: 13.5px; font-weight: 520; color: var(--ink-3); }
+.arch-starts svg { width: 12px; height: 40px; fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.arch-starts span { position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); }
+.arch-node { grid-row: 3; align-self: stretch; padding: 22px 24px 24px; border-radius: 16px; background: var(--paper-hi); box-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(70, 50, 15, 0.04); }
+.arch-node b { display: block; font-size: 20px; font-weight: 680; line-height: 1.15; letter-spacing: -0.024em; }
+.arch-node span { display: block; margin-top: 8px; font-size: 15.5px; line-height: 1.38; color: var(--ink-3); letter-spacing: -0.006em; text-wrap: pretty; }
+.arch-browser { grid-column: 1; }
+.arch-server { grid-column: 3; background: #0d0e10; color: #f4f1ea; box-shadow: var(--shadow-small); }
+.arch-server span { color: rgba(244, 241, 234, 0.66); font-family: var(--mono); font-size: 14.5px; letter-spacing: 0; }
+.arch-agents { grid-column: 5; }
+.arch-link { grid-row: 3; display: grid; gap: 7px; padding: 0 12px; text-align: center; font-size: 13.5px; font-weight: 520; line-height: 1.2; color: var(--ink-3); }
+.arch-link-rpc { grid-column: 2; }
+.arch-link-pipes { grid-column: 4; padding-bottom: calc(1.2em + 7px); /* the label's height again below the arrow, so the arrow sits on the middle of the boxes it joins */ }
+.arch-arrow { position: relative; display: block; height: 0; border-top: 1.5px solid var(--gold-deep); /* a border keeps its width wherever it lands: a 1.5px-tall box snapped to 1px or 2px by its fractional position, so the two RPC arrows drew different weights */ }
+.arch-arrow::before, .arch-arrow::after { content: none; position: absolute; top: -0.75px; width: 7px; height: 7px; border: solid var(--gold-deep); border-width: 1.5px 1.5px 0 0; }
+.arch-arrow.r::after { content: ""; right: 0; transform: translateY(-50%) rotate(45deg); }
+.arch-arrow.l::before { content: ""; left: 0; transform: translateY(-50%) rotate(-135deg); }
+
 /* Remote access: the terminal's R menu, then one card per guide. */
 .remote { padding: clamp(120px, 14vw, 200px) 0 0; scroll-margin-top: 40px; }
 .remote-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(40px, 6vw, 96px); align-items: center; }
@@ -313,14 +339,13 @@ kbd {
 .termwin-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 .termwin-bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); }
 .termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.42); }
-/* The R menu, as rows rather than a <pre>: a blurb wraps in its own column, and nothing can scroll sideways. */
+/* The R menu, as rows rather than a <pre>, so nothing can scroll sideways. */
 .termbody { padding: 24px 26px 28px; font: 400 14px/1.5 var(--mono); }
 .termbody .title { margin: 0 0 18px; color: #fff; font-weight: 500; }
-.termbody ul { display: grid; grid-template-columns: 2ch 19ch minmax(0, 1fr); gap: 9px 1ch; margin: 0; padding: 0; list-style: none; }
+.termbody ul { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 9px 1ch; margin: 0; padding: 0; list-style: none; }
 .termbody li { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; color: rgba(255, 255, 255, 0.42); }
 .termbody b { font-weight: 400; color: rgba(255, 255, 255, 0.72); }
 .termbody .on b { color: #fff; }
-.termbody .on .blurb { color: rgba(255, 255, 255, 0.62); }
 .termbody .caret { color: var(--gold); }
 .opts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-top: 64px; }
 .opt {
@@ -425,11 +450,17 @@ kbd {
   .row, .row.flip { grid-template-columns: 1fr; gap: 28px; }
   .row.flip .row-text { order: 0; }
   .features { gap: 88px; }
-  .pair { grid-template-columns: 1fr; grid-template-rows: none; row-gap: 88px; }
-  .pair-card { display: block; }
   .not-grid { grid-template-columns: 1fr; grid-template-rows: none; gap: 14px; margin-top: 40px; }
   .not-item { grid-row: auto; grid-template-rows: auto; padding: 26px 26px 28px; }
   .remote-grid { grid-template-columns: 1fr; }
+  /* Stacked: the browser over the server over the agents. The command is in the sentence above. */
+  .arch { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .arch-tag { margin-bottom: 18px; }
+  .arch-cmd, .arch-starts { display: none; }
+  .arch-tag, .arch-node, .arch-link { grid-column: 1; grid-row: auto; }
+  .arch-link { padding: 12px 0; }
+  .arch-link .arch-arrow { display: none; }
+  .arch-link::after { content: "\2195"; order: -1; font-size: 18px; color: var(--gold-deep); }
   .opts { grid-template-columns: repeat(2, 1fr); margin-top: 44px; }
   .legend { grid-template-columns: repeat(2, 1fr); }
 }
@@ -447,7 +478,7 @@ kbd {
   .browserbar { height: 30px; padding: 0 12px; }
   .browserbar .dots { gap: 5px; }
   .browserbar .dots i { width: 8px; height: 8px; }
-  .browserbar .url { width: 46%; height: 19px; border-radius: 5px; font-size: 10.5px; }
+  .browserbar .url { min-width: 46%; max-width: calc(100% - 80px); height: 19px; padding: 1px 8px 0; border-radius: 5px; font-size: 10.5px; }
   .meta { font-size: 13.5px; }
   .window { border-radius: 10px; }
   .stage { padding: 0; margin-top: 48px; }
@@ -458,8 +489,6 @@ kbd {
   .opt { padding: 18px 20px; }
   .opt .go { display: none; }
   .termbody { padding: 20px 18px 22px; font-size: 13px; }
-  .termbody ul { grid-template-columns: 2ch minmax(0, 1fr); gap: 12px 1ch; }
-  .termbody .blurb { grid-column: 2; }
   .slab { border-radius: 26px; }
   /* A thread's window is 880px wide, with a dark margin either side of its column. At this width the margins
      cost the text its last bit of legibility, so they go. */

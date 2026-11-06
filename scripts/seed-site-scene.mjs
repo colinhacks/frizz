@@ -263,7 +263,7 @@ async function seedFeatures() {
     title: "Watch production after the checkout deploy", rested: 44,
     records: [
       user(190, "Deploy the checkout worker, then keep an eye on production and fix anything that breaks."),
-      say(188, `The worker is deployed. A monitor is tailing its error log on the Frizz server, so this session can stop until an error wakes it.\n\n${parkOnMonitor}`),
+      say(188, `The worker is deployed. A monitor is tailing its error log, so this thread can stop until an error wakes it.\n\n${parkOnMonitor}`),
       user(46, `${monitorEventWakeMessage({ id: monitorId, label: "Errors in deploy.log", lines: ["ERROR checkout: upstream timeout after 30s (payments)"], event: 1 })}\n\n${wakeDeliveryToken("site-monitor")}`),
       say(44, `Payments ran past the worker's 30s budget, which was shorter than its retry window. I raised it to 45s in \`workers/checkout.ts\` and redeployed. Back to waiting.\n\n${parkOnMonitor}`),
     ],
@@ -313,6 +313,24 @@ async function seedFeatures() {
       ]),
       results(22, [[loadAgent, launched("siteC", loadFile)], [loadShell, shellAck("bgsite03", loadPath)]]),
       say(4, "The load test is running and a helper is pulling last week's numbers. Nothing for you yet.\n\n```awaiting\nagents: [siteC]\nshells: [bgsite03]\nstatus: working\nfor: 2h\ntitle: Sync load test\n```"),
+    ],
+  })
+
+  // A thread resting on a fleet of helpers, each one openable from its card.
+  const fleet = [
+    ["siteF1", "Audit every retry path in the sync engine", "Reading src/sync/retry.ts and its callers."],
+    ["siteF2", "Reproduce the stall on an Android 15 emulator", "Booting the emulator with a throttled network."],
+    ["siteF3", "Compare sync latency against last week", "Pulling last week's numbers to compare against."],
+    ["siteF4", "Check the migration against a production snapshot", "Restoring the snapshot into a scratch database."],
+    ["siteF5", "Write regression tests for the conflict merge", "Listing the merge cases the tests miss."],
+  ].map(([agent, label, line]) => ({ agent, label, id: `toolu_${agent}`, file: subAgent(APP, "fleet", { agent, id: `toolu_${agent}`, label, lines: [line] }) }))
+  write(APP, "fleet", {
+    title: "Find out why sync stalls under load", rested: 3,
+    records: [
+      user(20, "Find out why sync stalls under load. Split it up however you like."),
+      calls(18, fleet.map(({ id, label }) => [id, "Agent", { description: label, prompt: `${label}.`, run_in_background: true, subagent_type: "frizz:high" }])),
+      results(18, fleet.map(({ id, agent, file }) => [id, launched(agent, file)])),
+      say(3, `Five helpers are on it, one per suspect. I will put their findings together when they report back.\n\n\`\`\`awaiting\nagents: [${fleet.map((f) => f.agent).join(", ")}]\nstatus: working\nfor: 2h\n\`\`\``),
     ],
   })
 
