@@ -197,6 +197,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
       // (useThreadComposerControls): two bordered pills on `gap-x-1` read as one segmented control.
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5">
         {projectPicker}
+        {/* The model and the marks that answer to it hold ONE line, on which the chip truncates, so a long
+            model name in a 272px sidebar never strands them on a row of their own. A phone's tool row has no
+            marks to keep, and its chips still wrap. */}
+        <div className={agentMarks ? "flex min-w-0 max-w-full items-center gap-x-1.5" : "contents"}>
         <ProfileGridSelector
           groups={profileGroups}
           agentSettings
@@ -214,8 +218,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
           title={resolved.modelAvailable && resolved.effortAvailable
             ? "Model and reasoning effort"
             : "Saved model or reasoning effort unavailable — choose a supported pair"}
-          // Of the footer rather than the window, so the marks after it keep their line in a 272px sidebar.
-          className="max-w-[min(21rem,72%)]"
+          className="max-w-[min(21rem,72vw)]"
         />
         {acpAgent && (
           <AcpModelSelect
@@ -229,6 +232,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
           />
         )}
         {agentMarks}
+        </div>
       </div>
     )
   }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, agentMarks])
