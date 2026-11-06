@@ -75,7 +75,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 // back to it.
 const HOVER_CLOSE_DELAY_MS = 300
 // How often a held swap or close looks at the pointer again. A pointer that stopped reads as stopped
-// within TRAIL_MS, so a deliberate hover on a neighbouring count wins in about that long.
+// within REST_MS, so a deliberate hover on a neighbouring count wins in about that long.
 const AIM_RECHECK_MS = 50
 
 // The panel's width where the line is wide enough: the rows' column, which fits a sub-agent's whole label.

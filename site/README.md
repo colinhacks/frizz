@@ -50,7 +50,7 @@ nub scripts/seed-site-scene.mjs --stack=stack.log --features    # one thread per
 nub scripts/shoot-site.mjs --stack=stack.log --out=shots --set=features
 ```
 
-Shoot the hero set first: `--features` adds threads to `mobile-app`, and its badge would show on the hero's rail. Each project folder needs a `public/icon.svg`, a `package.json`, and a git repo with a GitHub remote. A new image gets a new `?v=` in `index.html`, the first 8 characters of its SHA-1.
+Shoot the hero set first: `--features` adds threads to `mobile-app`, and its badge would show on the hero's rail. Each project folder needs a `public/icon.svg`, a `package.json`, and a git repo with a GitHub remote, and `acme-api` also needs a `README.md`. A new image gets a new `?v=` in `index.html`, the first 8 characters of its SHA-1.
 
 ## Regenerating the social card
 

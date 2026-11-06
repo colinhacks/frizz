@@ -119,6 +119,14 @@ export function SettingsDrawer({ offerUpdate = false }: {
         <SheetHeader title="Settings" actions={<SaveStatus state={saveState} />} onClose={close} />
 
         <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-6">
+          {/* FIRST, on purpose: the one row that is an account rather than a preference, and the PR and
+              issue watchers and the GitHub picker are off without it. Frizz's OWN GitHub sign-in
+              (machine-wide, read-only) is not a server Settings value: it reads and writes through its
+              own RPCs, so it does not wait for the draft. */}
+          <SettingsField label="GitHub" help={SETTINGS_HELP.github}>
+            <GithubAccountField />
+          </SettingsField>
+
           {/* Browser appearance remains usable even while server settings are unavailable. */}
           <SettingsField label="Appearance" help={SETTINGS_HELP.appearance}>
             <AppearanceControl />
@@ -150,15 +158,9 @@ export function SettingsDrawer({ offerUpdate = false }: {
               {draft.notifications && <PermHint perm={perm} />}
             </SettingsField>
 
-            {/* Frizz's OWN GitHub sign-in (machine-wide, read-only) — not a server Settings value, so it
-                reads and writes through its own RPCs rather than the draft. */}
-            <SettingsField label="GitHub" help={SETTINGS_HELP.github}>
-              <GithubAccountField />
-            </SettingsField>
-
             {/* An experiment, so it sits below every preference an operator ordinarily adjusts and
                 above only the one power-user knob. Off by default (Settings.childThreads). */}
-            <SettingsField label="Child threads" help={SETTINGS_HELP.childThreads}>
+            <SettingsField label="Child threads" experimental help={SETTINGS_HELP.childThreads}>
               <OnOffToggle value={draft.childThreads} onChange={(childThreads) => update({ ...draft, childThreads })} />
             </SettingsField>
 

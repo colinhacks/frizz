@@ -175,7 +175,7 @@ export function durableReexecArgs(options: { entry: string; port: number }): str
 const RETIRED_NETWORK_FLAGS = ["--host", "--allowed-host", "--public-origin", "--cloud"];
 
 function retiredFlagMessage(flag: string): string {
-  return `${flag} was retired — how a board is reached is set up from the running board now: press R in its terminal to pick a private frizz.sh subdomain, a Cloudflare Tunnel, Tailscale or a proxy of your own. The choice is remembered, so a plain launch serves it.`;
+  return `${flag} was retired — how a board is reached is set up from the running board now: press R in its terminal to pick a frizz.sh subdomain, a Cloudflare Tunnel, Tailscale or a proxy of your own. The choice is remembered, so a plain launch serves it.`;
 }
 
 export function parseCliArgs(argv: string[]): CliOptions {
@@ -463,7 +463,7 @@ Commands:
   restart                restart the currently promoted artifact without building
 
 To reach the board from a phone or another machine, press R in the terminal running it: a short
-walkthrough sets up a private frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
+walkthrough sets up a frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
 Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
 on. The board stays on loopback and shows a single-use sign-in link as a QR; press L for a fresh
 one, or run --link from another shell.

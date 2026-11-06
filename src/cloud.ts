@@ -119,7 +119,7 @@ export function customNamesOffered(env: NodeJS.ProcessEnv = process.env): boolea
 
 /** Why a word answer is refused while custom names are withdrawn. */
 export const CUSTOM_NAMES_PAUSED =
-  "custom frizz.sh subdomains are paused for now — press enter for a private subdomain (no account needed), or answer with the hostname of a tunnel you run";
+  "custom frizz.sh subdomains are paused for now — press enter for a random subdomain (no account needed), or answer with the hostname of a tunnel you run";
 
 /** A claimed name runs a remotely-managed tunnel; a hand-made one runs by name from a config file. */
 export function isClaimedConfig(config: CloudConfig): boolean {
@@ -187,7 +187,7 @@ export async function reconcileCloudConfig(
   if (!label) return config;
   if (!isAnonymousClaimName(label) && !customNamesOffered()) {
     throw new Error(
-      `${config.hostname} needs moving onto the Frizz relay, which means claiming it again, and custom frizz.sh subdomains are paused for now — press R to pick a private subdomain or another setup`,
+      `${config.hostname} needs moving onto the Frizz relay, which means claiming it again, and custom frizz.sh subdomains are paused for now — press R to pick a random subdomain or another setup`,
     );
   }
   onNotice?.(
@@ -303,8 +303,8 @@ export async function promptForCloudName(): Promise<string> {
     return (
       await rl.question(
         customNamesOffered()
-          ? "Name for this board — press enter for a private unguessable name (no account), a word claims <name>.frizz.sh (needs GitHub), or paste a hostname you already run a tunnel for: "
-          : "Name for this board — press enter for a private unguessable name (no account), or paste a hostname you already run a tunnel for: ",
+          ? "Name for this board — press enter for a random name (no account), a word claims <name>.frizz.sh (needs GitHub), or paste a hostname you already run a tunnel for: "
+          : "Name for this board — press enter for a random name (no account), or paste a hostname you already run a tunnel for: ",
       )
     ).trim();
   } finally {
@@ -377,7 +377,7 @@ export async function establishCloudConfig(
     token = authorization.token;
     if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
   } else {
-    console.log("  claiming a private frizz.sh subdomain — no account needed");
+    console.log("  claiming a frizz.sh subdomain — no account needed");
   }
   let result;
   try {

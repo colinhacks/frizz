@@ -66,6 +66,12 @@ const leftPanel = (page, height) => page.evaluate((height) => {
 }, height)
 
 const CARD = (slug) => `[data-queue-card-root="${slug}"]`
+/** The newest message in the transcript, with a little of the page around it. `height` evens up two shots that sit side by side. */
+const lastMessage = async (page, height) => {
+  await page.evaluate(() => [...document.querySelectorAll("[data-frizz-msg]")].at(-1).setAttribute("data-shot", ""))
+  const clip = await around(page, ["[data-shot]"], 14)
+  return { ...clip, height: Math.max(clip.height, height) }
+}
 
 /** The hero thread with an answer picked and a note typed: the state several shots start from. */
 async function stageAnswer(page) {
@@ -135,7 +141,7 @@ const HERO = {
     await settle(1800)
     await hideLoadEarlier(page)
   } },
-  "f-console": { w: 1440, h: 900, stage: async (page) => {
+  "f-console": { w: 1280, h: 760, stage: async (page) => {
     await page.goto(`${base}/console`, { waitUntil: "networkidle2" })
     await settle(SIGN_IN_TOAST)
   } },
@@ -145,15 +151,21 @@ const HERO = {
     await settle(1500)
     await railCounts(page)
   } },
-  "f-picker": { w: 1440, h: 700, stage: async (page) => {
+  "f-picker": { w: 1440, h: 520, stage: async (page) => {
     await page.goto(`${base}/project/${API}`, { waitUntil: "networkidle2" })
     await settle(1500)
     await (await need(page, ".profile-grid-trigger")).click()
     await need(page, ".profile-grid-menu")
     await settle(600)
-    return leftPanel(page, 700)
+    return leftPanel(page, 520)
   } },
-  "f-github": { w: 860, h: 860, stage: async (page) => {
+  // One project's page: its queue and threads, and the other projects only as counts on the rail.
+  "f-workspace": { w: 1280, h: 760, stage: async (page) => {
+    await stageAnswer(page)
+    await page.mouse.move(4, 4)
+    await settle(SIGN_IN_TOAST)
+  } },
+  "f-github": { w: 860, h: 640, stage: async (page) => {
     // A sandbox has no GitHub sign-in, so the picker's two reads answer from here. The picker itself is real.
     await page.evaluateOnNewDocument((rows) => {
       const real = window.fetch.bind(window)
@@ -215,11 +227,11 @@ const open = async (page, slug, selector) => {
 }
 
 const FEATURES = {
-  "f-queue": { w: 1440, h: 800, stage: async (page) => {
+  "f-queue": { w: 1440, h: 560, stage: async (page) => {
     await page.goto(`${base}/project/${APP}`, { waitUntil: "networkidle2" })
     await need(page, "[data-queue-card-root]")
     await settle(2500)
-    return leftPanel(page, 800)
+    return leftPanel(page, 560)
   } },
   "f-question": { w: THREAD_W, h: 548, stage: async (page) => {
     await open(page, "push-provider", "[data-question-id]")
@@ -230,17 +242,58 @@ const FEATURES = {
     await pointAt(page, await need(page, 'button[aria-label="Send"]'), 0.82, 0.78)
     await settle(500)
   } },
+  // The parent's option is picked, so the question that hangs on it has opened.
+  "f-followup": { w: THREAD_W, h: 900, stage: async (page) => {
+    await open(page, "crash-reports", "[data-question-id]")
+    await (await byText(page, "[data-question-option]", "A hosted service")).click()
+    await settle(600)
+    await pointAt(page, await byText(page, "[data-question-option]", "Sentry"), 0.72, 0.62)
+    await settle(500)
+    return around(page, ["[data-question-id]"], 14)
+  } },
+  "f-multi": { w: THREAD_W, h: 650, stage: async (page) => {
+    await open(page, "release-gates", "[data-question-id]")
+    for (const label of ["Unit tests", "End-to-end tests", "Bundle size budget"]) await (await byText(page, "[data-question-option]", label)).click()
+    await page.mouse.move(10, 10)
+    await settle(500)
+  } },
+  // A resting thread: the wake from its monitor above, and the monitor still listed on the card.
+  "f-monitor": { w: THREAD_W, h: 600, stage: async (page) => {
+    await open(page, "watch-production", "[data-awaiting-background]")
+    await settle(600)
+  } },
+  "f-lightbox": { w: 1180, h: 720, stage: async (page) => {
+    await open(page, "billing-gallery", "[data-lightbox-gallery]")
+    await (await need(page, "[data-lightbox-tile]")).click()
+    await need(page, "[data-lightbox]")
+    await page.mouse.move(10, 10)
+    await settle(900)
+    // The viewer's header prints the file's path, which here is this sandbox's. Say where a worker would keep it.
+    await page.evaluate(() => {
+      const walker = document.createTreeWalker(document.querySelector("[data-lightbox]"), NodeFilter.SHOW_TEXT)
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.includes("/pictures/")) node.data = node.data.replace(/^.*\/pictures\//, "~/work/mobile-app/.frizz/shots/")
+    })
+  } },
+  "f-md-code": { w: 780, h: 900, stage: async (page) => { await open(page, "md-code"); return lastMessage(page, 360) } },
+  "f-md-diff": { w: 780, h: 900, stage: async (page) => { await open(page, "md-diff"); return lastMessage(page, 250) } },
+  "f-md-callouts": { w: 780, h: 900, stage: async (page) => { await open(page, "md-callouts"); return lastMessage(page, 250) } },
+  "f-md-ansi": { w: 780, h: 900, stage: async (page) => { await open(page, "md-ansi"); return lastMessage(page, 194) } },
+  "f-md-tasks": { w: 780, h: 900, stage: async (page) => { await open(page, "md-tasks"); return lastMessage(page, 194) } },
+  "f-md-diagram": { w: 780, h: 900, stage: async (page) => { await open(page, "md-diagram", '[data-mermaid-state="ready"]'); return lastMessage(page, 360) } },
   "f-wait": { w: THREAD_W, h: 600, stage: async (page) => {
     await open(page, "load-test", "[data-awaiting-background]")
     await settle(600)
   } },
-  "f-options": { w: THREAD_W, h: 1084, stage: async (page) => {
+  "f-options": { w: THREAD_W, h: 1040, stage: async (page) => {
     await open(page, "billing-layout", "[data-question-id]")
     // Its label, not its middle: the middle of this option is a picture, and a click there opens it.
     const option = await (await byText(page, "[data-question-option]", "Two columns")).boundingBox()
     await page.mouse.click(option.x + 70, option.y + 20)
     await page.mouse.move(10, 10)
     await settle(500)
+    // The card alone, cut off partway down its second option: whole, it is the tallest shot on the page.
+    const card = await around(page, ["[data-question-id]"], 14)
+    return { ...card, height: Math.min(card.height, card.width * 0.68) }
   } },
   "f-steps": { w: THREAD_W, h: 520, stage: async (page) => {
     await open(page, "publish-docs", "[data-awaiting-steps]")
@@ -275,13 +328,6 @@ const FEATURES = {
     await open(page, "peer-message", "[data-session-message-toggle]")
     await (await page.$("[data-session-message-toggle]")).click()
     await settle(500)
-  } },
-  "f-markdown": { w: THREAD_W, h: 960, stage: async (page) => {
-    await open(page, "retry-report", '[data-mermaid-state="ready"]')
-  } },
-  "f-gallery": { w: THREAD_W, h: 630, stage: async (page) => {
-    await open(page, "billing-gallery", "[data-lightbox-gallery]")
-    await settle(800)
   } },
   "f-reader": { w: 1440, h: 760, stage: async (page) => {
     await open(page, "sync-design")

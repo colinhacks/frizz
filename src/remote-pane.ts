@@ -64,7 +64,7 @@ interface Choice {
 
 /** Every setup, in menu order. The menu shows the subset `choicesFor` picks, never this list directly. */
 const CHOICES: Choice[] = [
-  { kind: "private", title: "frizz.sh subdomain", blurb: "a private, unguessable address; no account, nothing to install" },
+  { kind: "private", title: "frizz.sh subdomain", blurb: "a random address and a one-time QR code; no account" },
   { kind: "frizz", title: "Custom subdomain", blurb: "<name>.frizz.sh of your choosing; needs a GitHub account" },
   { kind: "cloudflare", title: "Cloudflare Tunnel", blurb: "a domain you own on Cloudflare; cloudflared on this machine" },
   { kind: "tailscale", title: "Tailscale", blurb: "your tailnet; tailscale serve does the TLS" },
@@ -389,7 +389,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   // No form and nothing to ask: the name is minted, so choosing this IS the claim.
   const claimPrivate = async () => {
     const back: Screen = { name: "menu", index: 0 };
-    screen = { name: "busy", message: "claiming a private frizz.sh subdomain…" };
+    screen = { name: "busy", message: "claiming a frizz.sh subdomain…" };
     paint();
     try {
       // A private subdomain has no GitHub step, so nothing is ever shown and nothing can be cancelled.

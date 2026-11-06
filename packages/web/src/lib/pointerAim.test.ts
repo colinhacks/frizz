@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { extendTrail, headingInto, trailHeadingInto, TRAIL_MS } from "./pointerAim.ts"
+import { extendTrail, headingInto, REST_MS, trailHeadingInto, TRAIL_MS } from "./pointerAim.ts"
 
 // The panel the line of op counts opens: 440px wide, 35px tall, standing 4px over the counts.
 const PANEL = { left: 429, right: 869, top: 223, bottom: 258 }
@@ -14,6 +14,10 @@ test("a shallow line from a count to the far end of its panel is still heading i
   assert.equal(headingInto(from, step(0.1), PANEL), true)
   assert.equal(headingInto(step(0.1), step(0.2), PANEL), true)
   assert.equal(headingInto(step(0.2), step(0.3), PANEL), true)
+})
+
+test("a pointer that has already reached the panel's box is heading into it", () => {
+  assert.equal(headingInto({ x: 700, y: 259 }, { x: 680, y: 257 }, PANEL), true)
 })
 
 test("straight up from a count is heading into its panel", () => {
@@ -50,8 +54,21 @@ test("the trail reads the recent move, and a pointer that stopped reads as stopp
   trail = extendTrail(trail, { x: 800, y: 268, at: 1020 })
   trail = extendTrail(trail, { x: 760, y: 264, at: 1040 })
   assert.equal(trailHeadingInto(trail, 1050, PANEL), true)
-  assert.equal(trailHeadingInto(trail, 1040 + TRAIL_MS + 1, PANEL), false, "nothing recent: it has stopped")
+  assert.equal(trailHeadingInto(trail, 1040 + REST_MS - 1, PANEL), true, "a hesitation is not a stop")
+  assert.equal(trailHeadingInto(trail, 1040 + REST_MS + 1, PANEL), false, "nothing recent: it has stopped")
   assert.equal(trailHeadingInto([], 1040, PANEL), false)
+})
+
+test("a trail that turned reads the way it is going now, not where it came from", () => {
+  // Down from over the panel onto a count, then straight off along a shallow line for the panel's far end.
+  const panel = { left: 233, right: 709, top: 314, bottom: 399 }
+  const trail = [
+    { x: 454, y: 277, at: 1000 },
+    { x: 680, y: 415, at: 1008 },
+    { x: 667, y: 413, at: 1130 },
+    { x: 655, y: 411, at: 1150 },
+  ]
+  assert.equal(trailHeadingInto(trail, 1150, panel), true)
 })
 
 test("the trail ages out, but moves a busy page hands over far apart still read as a direction", () => {

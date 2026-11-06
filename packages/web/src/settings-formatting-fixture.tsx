@@ -45,6 +45,19 @@ window.fetch = async (input, init) => {
     writes.push({ at: performance.now(), body, ok: true })
     return rpcResult(settings)
   }
+  if (url.pathname === "/_frizz/rpc/githubAccount") {
+    // `?github=out` draws the signed-out row, `?github=pending` holds the first read open so the loading
+    // row can be measured, and the default is signed in.
+    const github = new URLSearchParams(location.search).get("github")
+    if (github === "pending") return new Promise<Response>(() => {})
+    return rpcResult({
+      signedIn: github !== "out",
+      login: github === "out" ? null : "octocat",
+      appRegistered: true,
+      signIn: { phase: "idle" },
+      ...(github === "out" ? {} : { source: "app" }),
+    })
+  }
   if (url.pathname === "/_frizz/rpc/codexModels") return rpcResult([])
   if (url.pathname === "/_frizz/rpc/acpAgents") return rpcResult([])
   if (url.pathname === "/_frizz/rpc/githubPromptDefaults") {

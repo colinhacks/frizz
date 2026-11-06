@@ -116,23 +116,31 @@
           <div class="features">
             <article class="feature row">
               <div class="row-text"><h3>The queue</h3><p>Agents work on their own. A thread joins the queue when it has a question, finishes, or needs you to do something. Mark it as done and it moves out.</p></div>
-              <div class="row-shot narrow"><img src="/img/f-queue.webp?v=f8745cdb" width="1284" height="1600" loading="lazy" decoding="async" alt="The left side of the board: a reply box, then a queue of twelve threads and two running below it." /></div>
+              <div class="row-shot narrow"><img src="/img/f-queue.webp?v=74849ee9" width="1284" height="1120" loading="lazy" decoding="async" alt="The left side of a project&#x27;s page: a box for a new task, then a queue of threads with an icon for what each one needs." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>One-click answers</h3><p>An agent that needs a decision asks with lettered options and marks the one it recommends. Click one and press Enter. A note typed in the box goes with it.</p></div>
               <div class="row-shot thread"><img src="/img/f-question.webp?v=d0e575ea" width="1500" height="934" loading="lazy" decoding="async" alt="A thread asking which push provider to use, with the first option picked, a note typed in the reply box, and the pointer on Send." /></div>
             </article>
             <article class="feature row">
-              <div class="row-text"><h3>Options with pictures</h3><p>An option can carry its own screenshots, diff, or table. You compare the real thing inside the question.</p></div>
-              <div class="row-shot thread"><img src="/img/f-options.webp?v=dd8ccd48" width="1500" height="1848" loading="lazy" decoding="async" alt="A question about a billing page layout, with desktop and phone pictures inside each option." /></div>
+              <div class="row-text"><h3>Follow-up questions</h3><p>A question can hang on one option. It appears only if you pick that option.</p></div>
+              <div class="row-shot"><img src="/img/f-followup.webp?v=958c1aa2" width="1382" height="980" loading="lazy" decoding="async" alt="A question about where crash reports go with its first option picked, and a follow-up asking which hosted service opened under it." /></div>
             </article>
             <article class="feature row flip">
-              <div class="row-text"><h3>Steps only you can do</h3><p>When something needs you, like a sign-in or a merge, the agent hands you numbered steps with links. One checkbox says you finished.</p></div>
-              <div class="row-shot thread"><img src="/img/f-steps.webp?v=012f57f1" width="1500" height="886" loading="lazy" decoding="async" alt="A thread resting on three numbered steps, with an I have completed this checkbox." /></div>
+              <div class="row-text"><h3>Multiple select</h3><p>When several answers can apply, the agent asks with checkboxes and marks each one it recommends.</p></div>
+              <div class="row-shot thread"><img src="/img/f-multi.webp?v=caa28742" width="1500" height="1108" loading="lazy" decoding="async" alt="A question with checkboxes asking which checks should block a release, with three ticked and marked as recommended." /></div>
             </article>
             <article class="feature row">
+              <div class="row-text"><h3>Options with pictures</h3><p>An option can carry its own screenshots, diff, or table. You compare the real thing inside the question.</p></div>
+              <div class="row-shot"><img src="/img/f-options.webp?v=06ea071a" width="1382" height="940" loading="lazy" decoding="async" alt="A question about a billing page layout, with desktop, dark and phone pictures inside each option." /></div>
+            </article>
+            <article class="feature row flip">
               <div class="row-text"><h3>Masked secrets</h3><p>An agent that needs a one-time code or token asks in a masked box. The value never appears in the transcript.</p></div>
               <div class="row-shot thread"><img src="/img/f-secret.webp?v=1d9504db" width="1500" height="750" loading="lazy" decoding="async" alt="A thread asking for an npm one-time code in a masked box." /></div>
+            </article>
+            <article class="feature row">
+              <div class="row-text"><h3>Steps only you can do</h3><p>When something needs you, like a sign-in or a merge, the agent hands you numbered steps with links. One checkbox says you finished.</p></div>
+              <div class="row-shot thread"><img src="/img/f-steps.webp?v=012f57f1" width="1500" height="886" loading="lazy" decoding="async" alt="A thread resting on three numbered steps, with an I have completed this checkbox." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Snooze</h3><p>Park a card for an hour, until tomorrow at 9, or until a time you pick. Attach a prompt and the thread wakes up working on it.</p></div>
@@ -142,32 +150,50 @@
               <div class="row-text"><h3>Running work on the card</h3><p>When a thread rests on its own work, its card lists the sub-agents and shells still running.</p></div>
               <div class="row-shot thread"><img src="/img/f-wait.webp?v=9571be52" width="1500" height="1023" loading="lazy" decoding="async" alt="A thread resting on one running sub-agent and one background shell, both listed on its card." /></div>
             </article>
-            <article class="feature center">
-              <h3>The Console</h3>
-              <p>One board for every open project, grouped by status or by project.</p>
-              <div class="big-shot"><img src="/img/f-console.webp?v=57d43ece" width="2200" height="1375" loading="lazy" decoding="async" alt="The Console: threads from five projects grouped under each project&#x27;s name and icon, with two thread cards beside them." /></div>
+            <article class="feature row flip">
+              <div class="row-text"><h3>Project home screen</h3><p>Every project is an icon, badged with how many threads are waiting or running.</p></div>
+              <div class="row-shot"><img src="/img/f-home.webp?v=2b88ad25" width="1500" height="800" loading="lazy" decoding="async" alt="The home page: five project icons with counts on them, a button to add a project, and a switch to the Console." /></div>
+            </article>
+            <article class="feature pair">
+              <div class="pair-card"><h3>One repo at a time, for focus</h3><p>Each project has its own workspace, with its own queue and threads. Other projects stay out of view, apart from a count on the rail.</p><img src="/img/f-workspace.webp?v=6af97d2e" width="1500" height="891" loading="lazy" decoding="async" alt="One project&#x27;s page: its queue and running threads on the left, one open thread on the right, and the other projects as icons with counts on the rail." /></div>
+              <div class="pair-card"><h3>Every repo at once, for parallel work</h3><p>The Console puts every open project on one board, grouped by status or by project. Start a thread in any repo and answer any card from the same page.</p><img src="/img/f-console.webp?v=c87c2ed0" width="1500" height="891" loading="lazy" decoding="async" alt="The Console: threads from five projects grouped under each project&#x27;s name, every project on the rail, and thread cards beside them." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Counts of what's running</h3><p>A line above the reply box counts a thread's sub-agents, shells, watchers, timers, and saved files. Hover a count to see the rows.</p></div>
               <div class="row-shot thread"><img src="/img/f-ops.webp?v=371243a3" width="1500" height="1176" loading="lazy" decoding="async" alt="A thread with the pointer on 1 shell in the line above its reply box, and a popover naming that shell." /></div>
             </article>
             <article class="feature row">
-              <div class="row-text"><h3>Sub-agent drawers</h3><p>Each sub-agent opens in its own drawer with its live transcript and model. On a Claude Code thread, you can type into it and steer that sub-agent.</p></div>
-              <div class="row-shot"><img src="/img/f-subagent.webp?v=fdea2854" width="1500" height="1149" loading="lazy" decoding="async" alt="A sub-agent&#x27;s drawer over the dimmed board, with its transcript as it works and a box to steer it." /></div>
+              <div class="row-text"><h3>Live sub-agents</h3><p>Open a sub-agent to read its transcript as it works. On a Claude Code thread, you can type to it and steer it.</p></div>
+              <div class="row-shot"><img src="/img/f-subagent.webp?v=fdea2854" width="1500" height="1149" loading="lazy" decoding="async" alt="A sub-agent&#x27;s live transcript over the dimmed board, with a box to steer it." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Pull request and CI watching</h3><p>A thread can watch a pull request and rest. The card shows each PR's checks, and the agent picks the work back up when CI finishes or a review lands.</p></div>
               <div class="row-shot thread"><img src="/img/f-watch.webp?v=0a101a19" width="1500" height="920" loading="lazy" decoding="async" alt="A thread watching three pull requests: one running, one green, one with two failed checks." /></div>
             </article>
             <article class="feature row">
+              <div class="row-text"><h3>Monitors that outlive the session</h3><p>An agent can hand Frizz a script and stop. The Frizz server keeps it running while the session sleeps, and each line it prints wakes the agent.</p>
+                <svg class="lanes" viewBox="0 0 420 96" role="img" aria-label="Two timelines. The agent's session runs, sleeps and wakes twice. The monitor runs the whole time, and each line it prints wakes the session.">
+                  <text x="0" y="12">Agent session</text>
+                  <g class="awake"><rect x="0" y="22" width="72" height="8" rx="4"/><rect x="186" y="22" width="56" height="8" rx="4"/><rect x="336" y="22" width="56" height="8" rx="4"/></g>
+                  <g class="asleep"><line x1="80" y1="26" x2="178" y2="26"/><line x1="250" y1="26" x2="328" y2="26"/><line x1="400" y1="26" x2="420" y2="26"/></g>
+                  <text x="0" y="66">Monitor on the server</text>
+                  <rect class="monitor" x="0" y="76" width="420" height="8" rx="4"/>
+                  <g class="wake"><path d="M190 74V38M185 44l5-7 5 7"/><path d="M340 74V38M335 44l5-7 5 7"/></g>
+                  <circle class="event" cx="190" cy="80" r="6"/><circle class="event" cx="340" cy="80" r="6"/>
+                </svg>
+                <p class="fine">On Claude Code threads that run without permission checks.</p>
+              </div>
+              <div class="row-shot thread"><img src="/img/f-monitor.webp?v=4aae4cb8" width="1500" height="1023" loading="lazy" decoding="async" alt="A resting thread: a line in the transcript shows a monitor printed one line, the agent fixed the error, and its card lists the monitor as still running." /></div>
+            </article>
+            <article class="feature row flip">
               <div class="row-text"><h3>Goals</h3><p>Frizz re-sends a goal every time the agent stops, on a clock you set, or both. It runs until you switch it off or the agent says it is finished.</p></div>
               <div class="row-shot thread"><img src="/img/f-goal.webp?v=33519f75" width="1500" height="1040" loading="lazy" decoding="async" alt="The goal panel above a reply box: keep going until the test suite is green, with stop hook and heartbeat switched on." /></div>
             </article>
-            <article class="feature row flip">
+            <article class="feature row">
               <div class="row-text"><h3>Steering</h3><p>Send while an agent works and it reads your message at its next step. Or send it to the queue, where each message gets its own turn.</p></div>
               <div class="row-shot thread"><img src="/img/f-steer.webp?v=b8c56820" width="1500" height="801" loading="lazy" decoding="async" alt="A running thread with a message typed and the menu beside Send open, offering Send as steer and Send to queue." /></div>
             </article>
-            <article class="feature row">
+            <article class="feature row flip">
               <div class="row-text"><h3>Messages between threads</h3><p>A worker can send a message to another thread, even in another project. It lands as one line naming the sender, with a link back.</p></div>
               <div class="row-shot thread"><img src="/img/f-peer.webp?v=2d37e6bd" width="1500" height="1166" loading="lazy" decoding="async" alt="A message from another thread, expanded in a transcript, and the agent acting on it." /></div>
             </article>
@@ -176,35 +202,34 @@
               <p>Expand a thread and a rail beside it lists its sub-agents, shells, watched PRs, saved files, and edited files.</p>
               <div class="big-shot"><img src="/img/f-full.webp?v=0fd5d13c" width="2200" height="1360" loading="lazy" decoding="async" alt="A full-screen thread with a rail of sub-agents, shells, pull requests, files and links, and edited files." /></div>
             </article>
-            <article class="feature row flip">
-              <div class="row-text"><h3>Diagrams, callouts, and diffs</h3><p>Agent replies render tables, Mermaid diagrams, callouts, collapsed sections, and highlighted diffs.</p></div>
-              <div class="row-shot thread"><img src="/img/f-markdown.webp?v=da8fac3f" width="1500" height="1636" loading="lazy" decoding="async" alt="An agent reply with a flowchart, a callout and a two-line diff." /></div>
-            </article>
             <article class="feature row">
               <div class="row-text"><h3>Screenshot and video galleries</h3><p>Agents show their work as a gallery. Click one to page through full screen, zoom in, and download.</p></div>
-              <div class="row-shot thread"><img src="/img/f-gallery.webp?v=896e7ea9" width="1500" height="1074" loading="lazy" decoding="async" alt="A gallery of four screenshots of a billing page in a transcript." /></div>
+              <div class="row-shot"><img src="/img/f-lightbox.webp?v=aac0bf99" width="1500" height="915" loading="lazy" decoding="async" alt="A screenshot open full screen in the viewer, with a page counter and zoom, download and close buttons." /></div>
+            </article>
+            <article class="feature center">
+              <h3>Rich agent replies</h3>
+              <p>Agents write Markdown, and Frizz draws more of it than text.</p>
+              <div class="md-grid">
+                <figure><img src="/img/f-md-code.webp?v=3a149305" width="1382" height="720" loading="lazy" decoding="async" alt="A code block titled with its file name and one highlighted line, above a block with tabs for npm, pnpm and yarn." /><figcaption><b>Code blocks</b>File names, marked lines, and tabs for alternatives.</figcaption></figure>
+                <figure><img src="/img/f-md-diagram.webp?v=75c93215" width="1382" height="720" loading="lazy" decoding="async" alt="A flowchart of an upload retry above a small table of wait times." /><figcaption><b>Diagrams and tables</b>Mermaid diagrams render in place, beside ordinary tables.</figcaption></figure>
+                <figure><img src="/img/f-md-diff.webp?v=a378d129" width="1382" height="500" loading="lazy" decoding="async" alt="A one-line diff with its file name, a count of lines added and removed, and line numbers." /><figcaption><b>Diffs</b>Line numbers, syntax colors, and a count of what changed.</figcaption></figure>
+                <figure><img src="/img/f-md-callouts.webp?v=f128c297" width="1382" height="500" loading="lazy" decoding="async" alt="A warning callout and a tip callout above a collapsed full test log." /><figcaption><b>Callouts and collapsed sections</b>Warnings and tips stand out, and long logs stay folded.</figcaption></figure>
+                <figure><img src="/img/f-md-ansi.webp?v=44a51ae9" width="1382" height="388" loading="lazy" decoding="async" alt="Test output with green PASS and red FAIL labels." /><figcaption><b>Terminal colors</b>Output from a test run or a build keeps its ANSI colors.</figcaption></figure>
+                <figure><img src="/img/f-md-tasks.webp?v=6540bfaa" width="1382" height="388" loading="lazy" decoding="async" alt="A task list showing one item in each of five states." /><figcaption><b>Task lists</b>Done, in progress, to do, blocked, and cancelled.</figcaption></figure>
+              </div>
             </article>
             <article class="feature center">
               <h3>File reader</h3>
               <p>Links to files open in a reader that stays live as the file changes. Select text and press <kbd>⌘I</kbd> to quote it into your reply.</p>
               <div class="big-shot"><img src="/img/f-reader.webp?v=d55ff5e5" width="2200" height="1161" loading="lazy" decoding="async" alt="A thread beside a rendered Markdown file, opened from a link in the transcript." /></div>
             </article>
-            <article class="feature row flip">
-              <div class="row-text"><h3>Project home screen</h3><p>Every project is an icon, badged with how many threads are waiting or running.</p></div>
-              <div class="row-shot"><img src="/img/f-home.webp?v=2b88ad25" width="1500" height="800" loading="lazy" decoding="async" alt="The home page: five project icons with counts on them, a button to add a project, and a switch to the Console." /></div>
-            </article>
             <article class="feature row">
               <div class="row-text"><h3>Claude Code and Codex, side by side</h3><p>Pick the agent, model, and effort for each new thread. Both can run on the same repo at once.</p></div>
-              <div class="row-shot narrow"><img src="/img/f-picker.webp?v=e1c4a725" width="1284" height="1400" loading="lazy" decoding="async" alt="The model picker open under the new thread box, with Claude Code models and Codex models each listed by effort." /></div>
+              <div class="row-shot narrow"><img src="/img/f-picker.webp?v=a276873f" width="1284" height="1040" loading="lazy" decoding="async" alt="The model picker open under the new thread box, with Claude Code models and Codex models each listed by effort." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Threads from GitHub</h3><p>Browse issues and pull requests from the composer, select a range, and start one thread for each.</p></div>
-              <div class="row-shot"><img src="/img/f-github.webp?v=e87e1074" width="1500" height="1500" loading="lazy" decoding="async" alt="The GitHub picker over the dimmed board, listing open issues with three of them checked." /></div>
-            </article>
-            <article class="feature center">
-              <h3>Phone layout</h3>
-              <p>On a phone, Frizz has a board of tabs, rows you swipe to snooze or finish, and questions answered one at a time in a sheet.</p>
-              <div class="phones"><img src="/img/f-phone-board.webp?v=6ba89847" width="780" height="1688" loading="lazy" decoding="async" alt="The board on a phone: tabs for queue, snoozed and done, with threads below." /><img src="/img/f-phone-question.webp?v=a692a6e3" width="780" height="1688" loading="lazy" decoding="async" alt="A question on a phone, open in a sheet with its options." /></div>
+              <div class="row-shot"><img src="/img/f-github.webp?v=c6999040" width="1500" height="1116" loading="lazy" decoding="async" alt="The GitHub picker over the dimmed board, listing open issues with three of them checked." /></div>
             </article>
           </div>
         </div>
@@ -226,16 +251,15 @@
           <div class="remote-grid">
             <div>
               <p class="kicker">Remote access</p>
-              <h2 id="remote-h">Use it from your phone.</h2>
-              <p class="lead">Frizz binds <code>127.0.0.1</code>. To reach a board from a phone or another machine, press <kbd>R</kbd> in the terminal running it and pick how.</p>
-              <p class="auth"><strong>Whichever you pick, Frizz does the authenticating.</strong> A device has to redeem a single-use sign-in link before it gets in. Press <kbd>L</kbd> for a fresh one, <code>npx frizz --sessions</code> lists the devices holding one, and <code>--sign-out</code> revokes one.</p>
+              <h2 id="remote-h">Reach it from anywhere.</h2>
+              <p class="lead">Frizz binds <code>127.0.0.1</code>. Press <kbd>R</kbd> in its terminal to pick how other devices reach it, and each one signs in by scanning a single-use QR code.</p>
             </div>
             <div class="termwin" role="img" aria-label="The remote access menu in the terminal">
               <div class="termwin-bar"><i></i><i></i><i></i><span>npx frizz</span></div>
 <div class="termbody">
               <p class="title">Reach this board from anywhere</p>
               <ul>
-                <li class="on"><span class="caret">❯</span><b>frizz.sh subdomain</b><span class="blurb">a private, unguessable address; no account, nothing to install</span></li>
+                <li class="on"><span class="caret">❯</span><b>frizz.sh subdomain</b><span class="blurb">a random address and a one-time QR code; no account</span></li>
                 <li><span class="caret"></span><b>Cloudflare Tunnel</b><span class="blurb">a domain you own on Cloudflare; cloudflared on this machine</span></li>
                 <li><span class="caret"></span><b>Tailscale</b><span class="blurb">your tailnet; tailscale serve does the TLS</span></li>
                 <li><span class="caret"></span><b>Something else</b><span class="blurb">any proxy or tunnel you run — tell Frizz its address</span></li>
