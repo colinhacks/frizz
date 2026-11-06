@@ -37,10 +37,9 @@
 // API tokens are not on the list, so each sitting's `cloudflare-tokens.mjs --audit` reads those.
 //
 // A NAME THE MAINTAINER'S DEVICES TRUST, in BASELINE.claims with the public key that owns it. A write to
-// the registry re-points a name to another board and leaves no version and no audit event, so this reads
-// the row itself. Only a user-owned token can read KV (an account-owned one gets 401, 2026-11-06), so this
-// read has its own secret, `CLOUDFLARE_CLAIMS_READ`: made in the dashboard, Workers KV Storage Read on the
-// Frizz account and nothing else. A new key on the board means changing BASELINE in the same commit.
+// the registry re-points a name to another board and leaves no version and no audit event, so this asks
+// the registrar who owns it. That needs no token, and drift's own can't read KV: an account-owned token
+// gets 401 there (2026-11-06). A new key on the board means changing BASELINE in the same commit.
 //
 // A MEMBER'S OWN TOKEN is what this most has to catch. The one Keyward holds has been unable to upload,
 // tail or write KV since 2026-11-06, but a member can make one in the dashboard that can, with no reviewer,
@@ -76,6 +75,7 @@ export const DEPLOY_ENVIRONMENT = "workers-deploy"
 export const DEPLOY_STEP = "Deploy"
 export const LOOKBACK_MS = 2 * 60 * 60 * 1000
 export const CLAIMS_NAMESPACE = "aa4a9c11473d4511a556e3e3a6857058"
+export const REGISTRAR = "https://registrar.frizz.sh"
 // A claim lapses 30 days after its last renewal, and then anyone can have the name.
 const CLAIM_RENEWAL_ALARM_MS = 25 * 24 * 60 * 60 * 1000
 // Cloudflare's and GitHub's clocks, and the gap between the run starting and wrangler's first call.
@@ -127,16 +127,15 @@ export function cloudflareClient(token, { base = "https://api.cloudflare.com/cli
   }
 }
 
-/** Reads one name's row from the registry: the parsed record, or null for no row. Throws on any error. */
-export function claimReader(token, { base = "https://api.cloudflare.com/client/v4" } = {}) {
+/** Asks the registrar who owns a name: its public key and last renewal, or null for no row. Throws on anything else. */
+export function claimReader({ base = REGISTRAR } = {}) {
   return async (name) => {
-    const key = encodeURIComponent(`claim:${name}`)
-    const response = await fetch(`${base}/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${CLAIMS_NAMESPACE}/values/${key}`, { headers: { authorization: `Bearer ${token}` } })
+    const response = await fetch(`${base}/claim/${encodeURIComponent(name)}`)
     if (response.status === 404) {
       await response.body?.cancel()
       return null
     }
-    if (!response.ok) throw new Error(`the registry row for ${name}: HTTP ${response.status}`)
+    if (!response.ok) throw new Error(`the registrar on ${name}: HTTP ${response.status}`)
     return response.json()
   }
 }
@@ -354,7 +353,7 @@ export async function checkClaims({ read, pins = BASELINE.claims, now = Date.now
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { CLOUDFLARE_READ_TOKEN, CLOUDFLARE_CLAIMS_READ, GITHUB_TOKEN, GITHUB_REPOSITORY, WORKERS_CI_AUTHOR } = process.env
+  const { CLOUDFLARE_READ_TOKEN, GITHUB_TOKEN, GITHUB_REPOSITORY, WORKERS_CI_AUTHOR } = process.env
   for (const [name, value] of Object.entries({ CLOUDFLARE_READ_TOKEN, GITHUB_TOKEN, GITHUB_REPOSITORY })) {
     if (!value) {
       console.error(`::error::${name} is not set; the drift check cannot read anything, so it fails`)
@@ -375,8 +374,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     failed = true
   }
   try {
-    if (Object.keys(BASELINE.claims).length && !CLOUDFLARE_CLAIMS_READ) throw new Error("CLOUDFLARE_CLAIMS_READ is not set, so nothing reads the names it should")
-    const problems = await checkClaims({ read: claimReader(CLOUDFLARE_CLAIMS_READ) })
+    const problems = await checkClaims({ read: claimReader() })
     for (const problem of problems) console.error(`::error::${problem}`)
     failed ||= problems.length > 0
   } catch (error) {

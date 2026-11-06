@@ -23,14 +23,17 @@ The commands are in that script's header. In order:
 3. `--only=drift`, then `gh workflow enable workers-drift.yml`, push `main`, and dispatch it. This first run must fail, naming the 2026-10-08 versions, which is the proof it can.
 4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both`. The maintainer approves it within the hour.
 5. `--revoke-deploy`, then `nub scripts/verify-relay-live.mjs`.
-6. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
+6. If `BASELINE.claims` in `scripts/workers-drift.mjs` lacks a name a board serves, this deploy has the registrar's `GET /claim/<name>`, so add it now and push: `colin` is `d9kLXHjYy72vpsoYcWCsO04DjxKJk39M4QukIDPeIpE`, the key created on 2026-11-06.
+7. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
    - **The sitting's own changes.** Any change in the audit log that CI would not make fails the check until it is two hours old, including removing a member or turning on DNSSEC.
    - **Something CI's own run does.** Add it to `JUDGED_BY_VERSION` only if `checkAccount` already compares what that action can change.
-7. The maintainer deletes the token from step 1.
+8. The maintainer deletes the token from step 1.
 
-## 2. Bring custom names back (optional)
+## 2. Bring custom names back
 
-Only when custom names are wanted again.
+The maintainer wants these back for everyone, after running `colin.frizz.sh` himself for a while (2026-11-06). Until they work for end users, no page or doc mentions them.
+
+**One name by hand.** A board's own name needs no GitHub app and no release. Create its key, save `{"hostname":"<name>.frizz.sh","claim":"<name>","serve":"relay"}` as `cloud.json`, and add the KV pair `claim:<name>` = `{"pubkey":"<key>","tunnelId":"","port":9393,"claimedAt":<ms>,"renewedAt":<ms>}` to `frizz-registrar-CLAIMS` in the dashboard. Renewals then use the key alone. No stored token can write KV, on purpose. End users never do any of this: the R pane claims through the registrar, and the wildcard record already covers every name.
 
 Before any name returns, including one set up by hand for a single board:
 
