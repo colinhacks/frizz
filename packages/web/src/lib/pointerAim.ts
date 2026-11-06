@@ -20,10 +20,21 @@ export interface PanelRect {
   bottom: number
 }
 
-// How far back "where the pointer just was" reaches, and how long a pointer sits before it counts as
-// having stopped. Long enough to ride out a hand's small hesitation partway across and a single jittery
-// event, short enough that a deliberate hover on a neighbouring count still wins at once.
+// How far back "where the pointer just was" reaches: long enough that one jittery event cannot decide
+// the direction.
 export const TRAIL_MS = 150
+
+// The stretch of the trail that says which way it is going now, in px. The whole trail will not do: a
+// pointer that came down onto a count and set off for the panel within TRAIL_MS has its oldest sample up
+// where it came from, and read from there it was heading away (10 failed paths of 24, driven). Short
+// stretches will not do either: a shallow line rises a pixel in a dozen, and events land on whole pixels.
+const STRETCH_PX = 24
+
+// How long a pointer sits before it counts as having stopped. A hand slows and hesitates as it closes on
+// a small target, and reading that as a choice is the bug this file answers, so this is a hover-intent's
+// length rather than a frame's. Only a rising move that then rests on a neighbour waits it out, since a
+// slide along the counts never reads as heading anywhere.
+export const REST_MS = 250
 
 // Under this, in px over the trail, the pointer has stopped: a hand resting on a mouse still reports a
 // pixel or so, and that is not an aim.
@@ -45,6 +56,8 @@ function nearEdge(from: { x: number; y: number }, panel: PanelRect): [number, nu
 /** Has the move from `from` to `to` stayed inside the triangle from `from` to the panel's near edge? */
 export function headingInto(from: { x: number; y: number }, to: { x: number; y: number }, panel: PanelRect): boolean {
   if (Math.hypot(to.x - from.x, to.y - from.y) < STILL_PX) return false
+  // Already over the panel's own box, whatever is drawn on top of it there, is as heading as it gets.
+  if (to.x >= panel.left && to.x <= panel.right && to.y >= panel.top && to.y <= panel.bottom) return true
   const edge = nearEdge(from, panel)
   if (!edge) return false
   const [ax, ay, bx, by] = edge
@@ -66,7 +79,15 @@ export function extendTrail(trail: readonly PointerSample[], sample: PointerSamp
 
 /** Is the pointer, by its trail, heading into `panel` as of `now`? One that has not moved lately has stopped. */
 export function trailHeadingInto(trail: readonly PointerSample[], now: number, panel: PanelRect): boolean {
-  const from = trail[0]
   const to = trail[trail.length - 1]
-  return from !== undefined && to !== undefined && from !== to && now - to.at <= TRAIL_MS && headingInto(from, to, panel)
+  if (!to || trail.length < 2 || now - to.at > REST_MS) return false
+  let from = trail[0]!
+  for (let i = trail.length - 2; i >= 0; i--) {
+    const earlier = trail[i]!
+    if (Math.hypot(to.x - earlier.x, to.y - earlier.y) >= STRETCH_PX) {
+      from = earlier
+      break
+    }
+  }
+  return headingInto(from, to, panel)
 }
