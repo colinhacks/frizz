@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { findOnPath } from "./backend/acp-agents.ts"
@@ -467,9 +468,11 @@ async function fetchLogin(token: string, deps: TokenDeps): Promise<string | null
 // one when the server renews it. And the token stays out of every child's environment, where one
 // `env` in a transcript would print it.
 //
-// ONLY WHERE KEYWARD IS INSTALLED. Elsewhere a worker's `gh` is its operator's own sign-in, which may
-// well be able to write, and there would be no path left for a write at all. So a machine without
-// Keyward keeps exactly the environment it had.
+// WHERE IT COSTS NO WRITE. Keyward installed is the first case: the writes still have a way out. No
+// Keyward and a `gh` sign-in of the operator's own is the case it would cost one, because that sign-in
+// may well be able to write and this folder would hide it, so that machine keeps exactly the environment
+// it had. No Keyward and no sign-in is the second case (Colin, 2026-11-06): there is no write to lose,
+// and without this the worker has no GitHub at all while Frizz itself is signed in.
 
 /** A worker's GH_CONFIG_DIR: Frizz-owned, holding hosts.yml with the read-only token. */
 export function frizzWorkerGhConfigDir(): string {
@@ -524,11 +527,29 @@ export function syncWorkerGhConfig(): void {
   }
 }
 
-/** What a worker's environment adds so its `gh` reads with Frizz's credential. Empty unless Frizz is
- *  signed in and this machine has a Keyward to send writes through. Read when a worker's process
+/** Whether `gh` has a sign-in of the operator's own, to any host. It reads the file rather than running
+ *  `gh auth status`, because this runs on every worker start. hosts.yml names a keychain-held sign-in as
+ *  well, so nothing here can raise a keychain prompt. An expired sign-in counts, which leaves that machine
+ *  as it was. */
+function operatorGhSignedIn(env: NodeJS.ProcessEnv): boolean {
+  if (env.GH_TOKEN || env.GITHUB_TOKEN || env.GH_ENTERPRISE_TOKEN || env.GITHUB_ENTERPRISE_TOKEN) return true
+  const appData = env.AppData ?? env.APPDATA
+  const dir = env.GH_CONFIG_DIR
+    || (env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "gh") : undefined)
+    || (process.platform === "win32" && appData ? join(appData, "GitHub CLI") : join(homedir(), ".config", "gh"))
+  try {
+    return /^[^\s#].*:/m.test(readFileSync(join(dir, "hosts.yml"), "utf8"))
+  } catch {
+    return false
+  }
+}
+
+/** What a worker's environment adds so its `gh` reads with Frizz's credential. Empty while Frizz is signed
+ *  out, and on a machine with no Keyward whose `gh` has a sign-in of its own. Read when a worker's process
  *  starts, so one started before the sign-in keeps its own `gh` until it next resumes. */
 export function frizzGithubWorkerEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  if (!githubSignedIn() || !findOnPath("keyward", env)) return {}
+  if (!githubSignedIn()) return {}
+  if (!findOnPath("keyward", env) && operatorGhSignedIn(env)) return {}
   syncWorkerGhConfig()
   return { GH_CONFIG_DIR: frizzWorkerGhConfigDir() }
 }

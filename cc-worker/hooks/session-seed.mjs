@@ -108,6 +108,15 @@ const ghFrizzReadOnlyBlock =
   ghReadOnly +
   'To wait on CI or reviews, register `frizzctl watch-pr add` / `frizzctl watch-issue add` rather than polling. Load the `frizz:gh` skill for the full playbook.';
 
+// The same credential on a machine with no Keyward, where `gh` had no sign-in of its own, so a write has
+// nowhere to go from here (frizzGithubWorkerEnv).
+const ghFrizzReadOnlyNoWritesBlock =
+  '⟦gh available, read-only⟧ Plain `gh` is signed in here with Frizz\'s own READ-ONLY GitHub credential. Use it EAGERLY and well — it is the fastest path to issue/PR/CI/release context, and you should reach for it before guessing:\n' +
+  '• READ freely: `gh issue view N -R OWNER/REPO --comments`, `gh pr view N`, `gh pr diff N`, `gh pr checks N`, `gh run list`/`gh run view`, `gh run view <id> --log-failed`, `gh api repos/OWNER/REPO/…`. Prefer `--json <fields>` over scraping human text. Repo source is not readable through it; read the checkout.\n' +
+  '• A WRITE fails with a permission error (`Resource not accessible by integration`, HTTP 403), and so does a read that needs more than it holds, such as a private repo on an account where Frizz\'s GitHub App is not installed (it reads as not found). That is this credential, not a fault, and this machine has no other GitHub sign-in: hand the write to the human as steps, with the exact command or page.\n' +
+  ghReadOnly +
+  'To wait on CI or reviews, register `frizzctl watch-pr add` / `frizzctl watch-issue add` rather than polling. Load the `frizz:gh` skill for the full playbook.';
+
 const ghKeywardBlock =
   '⟦gh available through Keyward⟧ Plain `gh` is signed OUT here; Keyward, the human\'s vault, signs it in for one run at a time. Run EVERY gh command as `keyward --reason "<what this command is for>" -- gh …` (`gh` must be the first word after `--`). It is still the fastest path to issue/PR/CI/release context — reach for it before guessing:\n' +
   '• One Touch ID covers this repository\'s gh runs for 10 minutes (less if the screen locks), so BATCH your gh reads together rather than spreading them out. Prefer `--json <fields>`.\n' +
@@ -168,7 +177,7 @@ if (!ghMode) {
 
 const parts = [core];
 if (input.source === 'compact') parts.push(grounding);
-if (ghMode === 'read-only') parts.push(ghFrizzReadOnlyBlock);
+if (ghMode === 'read-only') parts.push(onPath('keyward') ? ghFrizzReadOnlyBlock : ghFrizzReadOnlyNoWritesBlock);
 else if (ghMode === 'plain') parts.push(ghBlock);
 else if (ghMode === 'keyward') parts.push(ghKeywardBlock);
 
