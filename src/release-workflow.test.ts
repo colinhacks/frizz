@@ -190,38 +190,39 @@ esac
   assert.ok(stdout.includes(`**Full changelog**: [frizz-server@1.2.2...frizz-server@1.2.3](https://github.com/acme/frizz/compare/${previous}...${head})`));
 });
 
-test("the release publishes the server, waits for npm to serve it, then publishes the shell", () => {
-  const server = step("Build and publish frizz-server to npm");
+test("the release stages the server, then the shell, and finishes only when npm serves both", () => {
+  const server = step("Build and stage frizz-server on npm");
+  const shell = step("Stage the frizz shell on npm");
   const serverWait = step("Wait for npm to serve frizz-server");
-  const shell = step("Publish the frizz shell to npm");
   const shellWait = step("Wait for npm to serve frizz");
 
-  // Staged publishing was dropped on 2026-09-30; a leftover `npm stage` would hang every release on
-  // an approval nobody is asked for. The header still names it as history, so comments are skipped.
+  // A direct `npm publish` would need the trusted publisher to allow one, and would put a version on
+  // the registry with no 2FA approval. The bootstrap of a new package stays a manual, local publish.
   const code = workflow.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
-  assert.doesNotMatch(code, /npm stage|npm-stage-publish/, "the release path publishes directly");
-  assert.match(server, /npm-publish\.sh \.\/packages\/server-release --ignore-scripts/);
-  assert.match(shell, /npm-publish\.sh \.$/m);
-  assert.match(shell, /frizzServer\.version/, "the shell refuses to publish over a pinned server npm does not serve");
+  assert.doesNotMatch(code, /npm publish|npm-publish\.sh/, "the release path can only stage");
+  assert.match(server, /npm-stage-publish\.sh \.\/packages\/server-release --ignore-scripts/);
+  assert.match(shell, /npm-stage-publish\.sh \.$/m);
+  assert.match(shell, /frizzServer\.version/, "the shell refuses a pinned server this run does not stage and npm does not serve");
   assert.match(serverWait, /npm-wait-served\.sh frizz-server "\$SERVER_VERSION"/);
   assert.match(shellWait, /npm-wait-served\.sh frizz "\$VERSION"/);
-  // A retry finds a version an earlier run published and npm may still hold in review, so neither
-  // wait may be skipped just because this run published nothing.
+  // A retry finds a version an earlier run staged, so neither wait may be skipped because this run
+  // staged nothing.
   assert.doesNotMatch(serverWait, /\n\s+if:/, "the server wait must run on a retry");
   assert.doesNotMatch(shellWait, /\n\s+if:/, "the shell wait must run on a retry");
   assert.match(workflow, /RELEASE_DEADLINE=/, "both waits need the shared deadline");
-  assert.match(workflow, /^ {4}timeout-minutes: 360$/m, "npm's review can take hours; the waits need the job's full six hours");
+  assert.match(workflow, /^ {4}timeout-minutes: 360$/m, "npm can take hours; the waits need the job's full six hours");
 
-  // A shell fetches its pinned server from the registry on first boot, so the server must be served
-  // before the shell publishes; a green run means npm serves the shell the releaser then tags.
+  // stager approves a release's packages in the order they were staged, and a shell fetches its
+  // pinned server from the registry on first boot, so the server has to be staged first.
   const order = [
-    "- name: Build and publish frizz-server to npm",
+    "- name: Build and stage frizz-server on npm",
+    "- name: Stage the frizz shell on npm",
+    "\n  finish:\n",
     "- name: Wait for npm to serve frizz-server",
-    "- name: Publish the frizz shell to npm",
     "- name: Wait for npm to serve frizz\n",
   ].map((name) => workflow.indexOf(name));
   assert.ok(!order.includes(-1), "every release step is present");
-  assert.deepEqual([...order].sort((a, b) => a - b), order, "server, server wait, shell, shell wait, tag, release");
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "server, shell, then the held job: server wait, shell wait");
 });
 
 // The helpers run against fake `npm` and `curl` on PATH, so these exercise the real scripts without
@@ -274,25 +275,25 @@ function runScript(script: string, args: string[], fake: FakeRegistry) {
   return { status: result.status, out: result.stdout + result.stderr, calls };
 }
 
-test("npm-publish.sh skips a served version, tolerates a re-run during npm's review, and fails on E403", () => {
-  const served = runScript("npm-publish.sh", ["<pkg>"], { served: true });
+test("npm-stage-publish.sh skips a served version, tolerates a version already staged, and fails on E403", () => {
+  const served = runScript("npm-stage-publish.sh", ["<pkg>"], { served: true });
   assert.equal(served.status, 0);
-  assert.equal(served.calls, "", "a served version must not be published again");
+  assert.equal(served.calls, "", "a served version must not be staged again");
 
-  const fresh = runScript("npm-publish.sh", ["<pkg>", "--ignore-scripts"], { served: false });
+  const fresh = runScript("npm-stage-publish.sh", ["<pkg>", "--ignore-scripts"], { served: false });
   assert.equal(fresh.status, 0);
-  assert.match(fresh.calls, /^publish .*\/pkg --ignore-scripts$/m, "a direct publish, never `npm stage publish`");
+  assert.match(fresh.calls, /^stage publish .*\/pkg --ignore-scripts$/m, "`npm stage publish`, never a direct publish");
 
-  const inReview = runScript("npm-publish.sh", ["<pkg>"], {
+  const staged = runScript("npm-stage-publish.sh", ["<pkg>"], {
     served: false,
     npmExit: 1,
     npmOut: "npm error code E409\nnpm error 409 Conflict - Cannot publish over previously staged version",
   });
-  assert.equal(inReview.status, 0, inReview.out);
+  assert.equal(staged.status, 0, staged.out);
 
-  // A stage-only trusted publisher refuses a direct publish with E403; the step must fail at once and
+  // A trusted publisher that doesn't allow staging refuses with E403; the step must fail at once and
   // say which npm setting to change.
-  const denied = runScript("npm-publish.sh", ["<pkg>"], {
+  const denied = runScript("npm-stage-publish.sh", ["<pkg>"], {
     served: false,
     npmExit: 1,
     npmOut: "npm error code E403\nnpm error 403 Forbidden - OIDC permission denied for this action",
@@ -300,7 +301,7 @@ test("npm-publish.sh skips a served version, tolerates a re-run during npm's rev
   assert.equal(denied.status, 1, denied.out);
   assert.match(denied.out, /trusted publisher/);
 
-  const other = runScript("npm-publish.sh", ["<pkg>"], { served: false, npmExit: 1, npmOut: "npm error code E500" });
+  const other = runScript("npm-stage-publish.sh", ["<pkg>"], { served: false, npmExit: 1, npmOut: "npm error code E500" });
   assert.equal(other.status, 1, other.out);
 });
 
@@ -313,7 +314,7 @@ test("npm-wait-served.sh returns once npm serves the version and fails at the de
   assert.match(missing.out, /npm still does not serve frizz@9\.9\.9/);
 });
 
-test("a publish is refused unless it directly follows the highest version npm serves", () => {
+test("staging is refused unless it directly follows the highest version npm serves", () => {
   const order = (version: string, versions: string[] | null, allowGap = false) =>
     runScript("npm-refuse-overtake.sh", ["frizz", version], { served: false, versions, allowGap });
 
@@ -326,7 +327,7 @@ test("a publish is refused unless it directly follows the highest version npm se
   // npm served them the other way round.
   const overtaking = order("0.13.11", ["0.13.8", "0.13.9"]);
   assert.equal(overtaking.status, 1, overtaking.out);
-  assert.match(overtaking.out, /npm serves frizz up to 0\.13\.9, and this run would publish 0\.13\.11/);
+  assert.match(overtaking.out, /npm serves frizz up to 0\.13\.9, and this run would stage 0\.13\.11/);
   assert.match(overtaking.out, /allow_version_gap=true/, "the refusal names the way past a number that was never published");
   for (const gap of ["0.13.13", "0.14.1", "2.0.0", "0.13.10"]) assert.equal(order(gap, ["0.13.11"]).status, 1, gap);
 
@@ -338,32 +339,41 @@ test("a publish is refused unless it directly follows the highest version npm se
   assert.match(unreadable.out, /could not read frizz from the npm registry/);
 });
 
-test("both packages are checked for order before npm is asked to publish", () => {
-  const refused = runScript("npm-publish.sh", ["<pkg>"], { served: false, versions: ["9.9.7"] });
+test("both packages are checked for order before npm is asked to stage", () => {
+  const refused = runScript("npm-stage-publish.sh", ["<pkg>"], { served: false, versions: ["9.9.7"] });
   assert.equal(refused.status, 1, refused.out);
-  assert.equal(refused.calls, "", "a refused publish never reaches npm");
+  assert.equal(refused.calls, "", "a refused version never reaches npm");
 
-  const allowed = runScript("npm-publish.sh", ["<pkg>"], { served: false, versions: ["9.9.7"], allowGap: true });
+  const allowed = runScript("npm-stage-publish.sh", ["<pkg>"], { served: false, versions: ["9.9.7"], allowGap: true });
   assert.equal(allowed.status, 0, allowed.out);
-  assert.match(allowed.calls, /^publish /m);
+  assert.match(allowed.calls, /^stage publish /m);
 
-  // A re-run for a version npm already holds in review is still the immediate successor, and the
-  // refusal npm gives it stays tolerated.
-  const rerun = runScript("npm-publish.sh", ["<pkg>"], {
+  // A re-run for a version already in the queue is still the immediate successor, and the refusal npm
+  // gives it stays tolerated.
+  const rerun = runScript("npm-stage-publish.sh", ["<pkg>"], {
     served: false,
     npmExit: 1,
     npmOut: "npm error code E409\nnpm error 409 Conflict - Cannot publish over previously staged version",
   });
   assert.equal(rerun.status, 0, rerun.out);
 
-  // The flag reaches the script only through the dispatch input, on both publish steps.
+  // The flag reaches the script only through the dispatch input, on both staging steps.
   assert.match(workflow, /^  workflow_dispatch:\n    inputs:\n(?:      #.*\n)*      allow_version_gap:\n/m);
-  for (const name of ["Build and publish frizz-server to npm", "Publish the frizz shell to npm"])
+  for (const name of ["Build and stage frizz-server on npm", "Stage the frizz shell on npm"])
     assert.match(step(name), /ALLOW_VERSION_GAP: \$\{\{ inputs\.allow_version_gap \}\}/, name);
 });
 
 // npm's trusted publishers for `frizz` and `frizz-server` name this environment, and GitHub admits
-// only the `release` branch to it (2026-10-12). Dropping or renaming it here breaks every publish.
-test("the release job runs in the npm-publish environment its trusted publishers name", () => {
-  assert.match(workflow, /\n  release:\n(?:    .*\n)*?    environment: npm-publish\n/);
+// only the `release` branch to it (2026-10-12). Dropping or renaming it here breaks every release.
+test("the stage job runs in the npm-publish environment its trusted publishers name", () => {
+  assert.match(workflow, /\n  stage:\n(?:    .*\n)*?    environment: npm-publish\n/);
+});
+
+// stager resumes a run through this environment's name, and a job waiting on it holds no runner, so
+// the wait can outlast a job's six hours. The held job has no reason to be able to reach npm.
+test("the finish job waits on release-approval, after stage, with no way to reach npm", () => {
+  const finish = workflow.slice(workflow.indexOf("\n  finish:\n"));
+  assert.match(finish, /^ {4}needs: stage$/m);
+  assert.match(finish, /^ {4}environment: release-approval$/m);
+  assert.doesNotMatch(finish, /id-token/);
 });

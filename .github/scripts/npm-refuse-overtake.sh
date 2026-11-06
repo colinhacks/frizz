@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refuse to publish <name>@<version> past a version npm does not serve yet.
+# Refuse to stage <name>@<version> past a version npm does not serve yet.
 #
 # npm holds every new version in automated review and does not release them in the order they
 # arrived. On 2026-10-10 frizz 0.13.10 was accepted at 21:40 UTC and held for 14h 56m; the run
@@ -8,7 +8,7 @@
 # wrong one, but the older shell was the newest publish and 0.13.12 was cut only to put that right.
 #
 # The registry does not say what it is holding, so this reads the gap instead. The version about to
-# be published must be the IMMEDIATE successor of the highest one npm serves: the next patch, or the
+# be staged must be the IMMEDIATE successor of the highest one npm serves: the next patch, or the
 # first release of the next minor or major. Anything further ahead means a version in between was
 # either accepted and is still in review, or was never published at all (a number skipped because
 # its run was cancelled, as frizz-server 0.15.21 was). Only a person can tell those apart: wait for
@@ -16,14 +16,14 @@
 # release.yml hands down as ALLOW_VERSION_GAP.
 #
 # A re-run for a version npm already holds passes: nothing higher is served, so it is still the
-# immediate successor, and npm-publish.sh tolerates the refusal npm then gives it.
+# immediate successor, and npm-stage-publish.sh tolerates the refusal npm then gives it.
 set -euo pipefail
 name="${1:?usage: npm-refuse-overtake.sh <name> <version>}"
 version="${2:?usage: npm-refuse-overtake.sh <name> <version>}"
 
-# Fail closed: a publish whose order cannot be checked is the one this exists to stop.
+# Fail closed: a version whose order cannot be checked is the one this exists to stop.
 if ! packument="$(curl -sf "https://registry.npmjs.org/$name")"; then
-  echo "::error::could not read $name from the npm registry, so the order of this publish cannot be checked. Re-run this job."
+  echo "::error::could not read $name from the npm registry, so the order of this release cannot be checked. Re-run this job."
   exit 1
 fi
 
@@ -54,8 +54,8 @@ case "$verdict" in
 esac
 
 if [ "${ALLOW_VERSION_GAP:-false}" = "true" ]; then
-  echo "✓ publishing $name@$version past $highest, the highest version npm serves — allow_version_gap was set"
+  echo "✓ staging $name@$version past $highest, the highest version npm serves — allow_version_gap was set"
   exit 0
 fi
-echo "::error::npm serves $name up to $highest, and this run would publish $version. If a version in between was published and npm still holds it in review, wait until npm serves it and re-run this job: publishing past it lets npm serve the two out of order. If that number was never published, dispatch again with \`gh workflow run release.yml --ref release -f allow_version_gap=true\`."
+echo "::error::npm serves $name up to $highest, and this run would stage $version. If a version in between was published and npm still holds it in review, wait until npm serves it and re-run this job: publishing past it lets npm serve the two out of order. If that number was never published, dispatch again with \`gh workflow run release.yml --ref release -f allow_version_gap=true\`."
 exit 1

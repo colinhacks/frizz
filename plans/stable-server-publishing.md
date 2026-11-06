@@ -38,15 +38,15 @@ After the manual bootstrap, configure a trusted publisher for `frizz-server` on 
 | Repository | `frizz` |
 | Workflow filename | `release.yml` |
 | Environment name | `npm-publish` (GitHub lets only the `release` branch deploy to it; see the header of `release.yml`) |
-| Allowed actions | allow `npm publish` |
+| Allowed actions | `npm stage publish` only |
 
-The workflow file is `.github/workflows/release.yml` and already grants `id-token: write`. npm requires the filename only, not its path. Trusted-publisher configurations created after 2026-09-03 are stage-only by default, so direct `npm publish` must be allowed explicitly: a stage-only publisher rejects the workflow's publish with `E403 OIDC permission denied for this action`. From 2026-09-22 to 2026-09-30 this repo kept both publishers stage-only on purpose, with the workflow running `npm stage publish` and a maintainer approving every version with 2FA; that was dropped as too onerous. What still keeps a stolen push credential from shipping a package is the trigger: the workflow is `workflow_dispatch`-only (since 2026-09-23), and a push credential cannot dispatch.
+The workflow file is `.github/workflows/release.yml` and already grants `id-token: write`. npm requires the filename only, not its path. Keep the publisher stage-only: `npm publish` unticked is what makes a maintainer's 2FA approval the only way a version reaches the registry, so no stolen credential ships a package. A publisher that doesn't allow `npm stage publish` rejects the workflow with `E403 OIDC permission denied for this action`. The first publish of a new package is the manual one above, because a trusted publisher can't be configured on a package that doesn't exist.
 
 The npm organization `frizzsh` does not change these fields: they identify the GitHub repository, and the package is the unscoped `frizz-server` selected for this release.
 
 ## Automated releases
 
-The server package must exist before `release.yml` can publish a shell version that bootstraps it. After the first package and trusted publisher are configured, move the verified commit to the `release` branch and dispatch the workflow against it (`gh workflow run release.yml --ref release`); moving the branch alone starts nothing. The workflow publishes `frizz-server`, waits until npm serves it, then publishes `frizz`, and uses npm registry checks to make retries idempotent. The wait is what orders the two releases: npm holds each new version in review before serving it, and a shell must not go live before the server it boots.
+The server package must exist before `release.yml` can publish a shell version that bootstraps it. After the first package and trusted publisher are configured, move the verified commit to the `release` branch and dispatch the workflow against it (`gh workflow run release.yml --ref release`); moving the branch alone starts nothing. The workflow stages `frizz-server`, then `frizz`, and uses npm registry checks to make retries idempotent. A maintainer approves both with one 2FA code, in the order they were staged, because a shell must not go live before the server it boots.
 
 Server/frontend/provider changes normally bump only `packages/server-release/package.json`. A shell release separately bumps root `package.json`; its `frizzServer.version` is the exact default for a machine without a selected generation, not a dependency range. Compatible server updates are selected independently after bootstrap.
 
@@ -56,6 +56,6 @@ Reference: [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
 ## Recovery after publication
 
-The workflow publishes and waits for npm to serve each version; it does not tag. Tags, GitHub releases and their release notes are made by the releaser after a green run, from its own `gh` session, for every release (the server's tagged `frizz-server-vX.Y.Z`): `nub scripts/tag-release.mjs [frizz-server] --notes-file <file>`. The script refuses to create a release without notes, waits up to 30s for the exact version's registry metadata, fails closed on a missing or invalid `gitHead`, tags that commit and never a checkout, never moves an existing tag, and creates only what is missing.
+The workflow stages each version and waits for npm to serve it; it does not tag. Tags, GitHub releases and their release notes are made by the releaser after a green run, from its own `gh` session, for every release (the server's tagged `frizz-server-vX.Y.Z`): `nub scripts/tag-release.mjs [frizz-server] --notes-file <file>`. The script refuses to create a release without notes, waits up to 30s for the exact version's registry metadata, fails closed on a missing or invalid `gitHead`, tags that commit and never a checkout, never moves an existing tag, and creates only what is missing.
 
 The workflow tagged the shell itself until 2026-10-12. GitHub rejects a tag from the workflow's own token when that commit's workflow differs from the current run's, because the token may not introduce that workflow revision, and a later run reconciling an earlier shell is exactly that case (frizz 0.13.13).
