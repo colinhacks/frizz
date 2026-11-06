@@ -19,10 +19,13 @@ export function SignInModal({
   backend,
   onClose,
   onAuthed,
+  onUseOpenCode,
 }: {
   backend: AccountBackend
   onClose: () => void
   onAuthed: () => void
+  /** Given when OpenCode is installed and this thread has not started, so it can still change agent. */
+  onUseOpenCode?: () => void
 }) {
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
@@ -84,7 +87,22 @@ export function SignInModal({
             </button>
           </div>
 
+          {onUseOpenCode && (
+            <p className="mb-4 text-[12.5px] leading-relaxed text-muted">
+              Or use OpenCode, which is installed here and needs no {label} account.
+            </p>
+          )}
+
           <div className="flex items-center justify-end gap-2">
+            {onUseOpenCode && (
+              <button
+                type="button"
+                onClick={onUseOpenCode}
+                className="button-outline mr-auto rounded-md px-3 py-1.5 text-[12.5px] text-fg outline-none transition-colors hover:bg-panel-2"
+              >
+                Use OpenCode
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}

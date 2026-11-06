@@ -27,7 +27,8 @@ import { useBoard } from "../hooks.ts"
 import { projectIdentity } from "./Sidebar.tsx"
 import { X } from "lucide-react"
 import { isConsolePath } from "../lib/base-path.ts"
-import { ProjectScope, useProjectScope } from "../lib/projectScope.tsx"
+import { ProjectScope, scopedKey, useProjectScope } from "../lib/projectScope.tsx"
+import { runtimeDownloadNote } from "../lib/signIn.ts"
 import { beginDispatch, dispatchAnswered, dispatchFailed } from "../lib/pendingDispatch.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
@@ -44,7 +45,7 @@ const NEW_THREAD_MARKS = <NewThreadAgentMarks />
 // preview — only the layout around them differs.
 function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
-  const { resolved, codexList, claudeList, acpList, loadError: profileLoadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, opencodeInstalled, firstGroup, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -135,6 +136,21 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     },
   })
 
+  // A runtime waiting for its first thread comes down inside the dispatch call (runtime-deferral.ts), which
+  // can take minutes. Polled only while a Claude or Codex dispatch is out, and drawn over the same toast.
+  const downloadingBackend = dispatch.isPending && dispatch.variables?.backend !== "acp" ? (dispatch.variables?.backend ?? "claude") : undefined
+  const downloads = useQuery({
+    queryKey: scopedKey(["runtimeDownloads"], project),
+    queryFn: () => rpcFor(project).runtimeDownloads(),
+    enabled: downloadingBackend !== undefined,
+    refetchInterval: 1000,
+    gcTime: 0,
+  })
+  const downloadNote = downloadingBackend ? runtimeDownloadNote(downloadingBackend, downloads.data?.[downloadingBackend]) : undefined
+  useEffect(() => {
+    if (downloadNote) showToast(downloadNote, { spinner: true, sticky: true })
+  }, [downloadNote])
+
   // Fire the dispatch and do the one-shot UI bookkeeping (optimistic toast + prompt clear). Called both
   // on a clean submit and after the sign-in gate is cleared, so the prompt is only cleared once the
   // thread is actually being started — a gated submit leaves the draft intact.
@@ -216,7 +232,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </PromptControlGroup>
       )
     }
-    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList)
+    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
@@ -282,7 +298,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </div>
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, firstGroup, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>
@@ -296,6 +312,16 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             setSignInFor(null)
             if (input) runDispatch(input)
           }}
+          // Only a thread that has not started can change agent, so the thread composer's and the transcript's
+          // copies of this modal leave this out. A gated Send goes through on OpenCode with the same words.
+          onUseOpenCode={opencodeInstalled ? () => {
+            const input = gatedInputRef.current
+            gatedInputRef.current = null
+            setSignInFor(null)
+            const model = acpModelSlug("opencode")
+            saveProfile({ field: "profile", backend: "acp", model, effort: undefined })
+            if (input) runDispatch({ ...input, backend: "acp", model, effort: undefined })
+          } : undefined}
         />
       )}
       {logoutFor && <LogoutConfirmModal backend={logoutFor} onClose={() => setLogoutFor(null)} />}

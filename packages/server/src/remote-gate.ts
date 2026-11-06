@@ -73,6 +73,7 @@ export const REMOTE_ACCESS = {
   // What the page reads as it loads. None of these takes input that reaches a process.
   settingsGet: "allow",
   dispatchPreferencesGet: "allow",
+  runtimeDownloads: "allow",
   codexModels: "allow",
   acpAgents: "allow",
   quota: (input: { force?: unknown } | undefined) => input?.force ? onThisMachine("Refreshing the quota") : null,

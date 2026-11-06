@@ -186,7 +186,10 @@ import {
 import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
 import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command-watch.ts"
-import { listAcpAgents } from "./backend/acp-agents.ts"
+import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
+import { hasLaunchPrefix } from "./backend/launch-prefix.ts"
+import { withDefaultAgentProfile } from "./dispatch-preferences.ts"
+import { runtimeDownloads } from "./runtime-deferral.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { appServerTurnStalled, resolveLiveWatchTarget, resolveRecurringPrompt, resolveSessionTitle } from "./board.ts"
@@ -239,7 +242,7 @@ import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
+import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
@@ -4776,6 +4779,12 @@ export function createRouter(ctx: AppContext) {
 
     // The ACP agents Frizz knows how to launch, with `available` for the ones on this machine's PATH.
     // The composer lists the available ones as `acp:<id>` models (plans/acp-backend.md, decision 9).
+    // What each runtime that waited for its first thread is doing while it comes down (runtime-deferral.ts).
+    // The composer polls this for as long as a dispatch call is out, and draws it in its toast.
+    runtimeDownloads: query({
+      output: z.object({ claude: z.string().optional(), codex: z.string().optional() }),
+      handler: async () => runtimeDownloads(),
+    }),
     acpAgents: query({
       output: z.array(AcpAgent),
       handler: async () => listAcpAgents(ctx.getSettings().acpAgents).map((a) => ({ id: a.id, label: a.label, command: a.command, available: a.bin !== undefined })),
@@ -5219,7 +5228,18 @@ export function createRouter(ctx: AppContext) {
 
     dispatchPreferencesGet: query({
       output: DispatchPreferences,
-      handler: async () => ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion)),
+      handler: async () => {
+        const prefs = ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion))
+        if (ctx.hasSavedDispatchPreferences()) return prefs
+        const settings = ctx.getSettings()
+        const auth = await readAuthSnapshot({ claudeBin: ctx.claudeBin })
+        return withDefaultAgentProfile(prefs, defaultAgentProfile({
+          // A launch prefix may be what supplies a provider's credentials, so its "signed-out" says nothing.
+          claude: hasLaunchPrefix(settings, "claude") ? "unknown" : auth.claude,
+          codex: hasLaunchPrefix(settings, "codex") ? "unknown" : auth.codex,
+          opencodeInstalled: resolveAcpAgent("opencode", settings.acpAgents)?.bin !== undefined,
+        }))
+      },
     }),
 
     dispatchPreferenceSet: mutation({

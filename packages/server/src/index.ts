@@ -48,7 +48,7 @@ import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { pidIsAlive } from "./project-identity.ts"
 import { createBootProgressPublisher } from "./boot-progress.ts"
 import { log as frizzLog } from "./logging.ts"
-import { describeRuntime, resolveRuntimes, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
+import { describeRuntime, resolveRuntimes, shouldDeferRuntimes, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
 import { createTenantMap } from "./tenants.ts"
 import { openFrizzDatabase, type FrizzDatabase, type OpenFrizzDatabaseOptions } from "./frizz-db.ts"
 import { startTenantPrime, type TenantPrimeRun } from "./tenant-prime.ts"
@@ -988,17 +988,19 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // The executables every backend below will run. First boot on a machine downloads the pins (a few
     // hundred MB, once per pin), and the launcher's readout follows it through bootProgress; after
     // that the phase is a marker read. An explicit executable skips it; a failure falls back to PATH
-    // with a warning rather than refusing to boot (runtimes.ts).
-    runtimes = await phase("runtimes", () => runtime.resolveRuntimes({
+    // with a warning rather than refusing to boot (runtimes.ts). A machine signed out of both with
+    // OpenCode on PATH fetches nothing here: each pin waits for its first thread.
+    runtimes = await phase("runtimes", async () => runtime.resolveRuntimes({
       claudeBin: opts.claudeBin,
       codexBin: opts.codexBin,
+      defer: await shouldDeferRuntimes(),
       log: (level, message) => frizzLog[level]("server", message),
       onProgress: (backend, message) => bootProgress(`runtimes: ${backend} ${message}`),
     }))
     for (const backend of ["claude", "codex"] as const) frizzLog.info("server", `runtimes: ${describeRuntime(backend, runtimes[backend])}`)
     // A provisioned Claude Code must not update itself out from under the pin. Every worker, and every
     // `claude auth status` / `claude auth login` Frizz runs, inherits the server's environment.
-    if (runtimes.claude.source === "provisioned") process.env.DISABLE_AUTOUPDATER = "1"
+    if (runtimes.claude.source === "provisioned" || runtimes.claude.source === "deferred") process.env.DISABLE_AUTOUPDATER = "1"
     // Committed through the ledger callback, like the context below: an injected failure right after
     // this phase throws before the assignment would run, and the rollback must still find the handle.
     frizzDb = await phase("database", () => runtime.openDatabase({ stateDir: project.stateDir }), (value) => { frizzDb = value })

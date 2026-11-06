@@ -21,7 +21,7 @@ import { createStorage, isBrokerClaudeRow, isHeadlessRow, workerTaughtMcp, type 
 import { clearSecrets } from "./secret-files.ts"
 import type Database from "./sqlite.ts"
 import { getSettings, setSettings, resetSettings } from "./settings.ts"
-import { getDispatchPreferences, setDispatchPreference } from "./dispatch-preferences.ts"
+import { getDispatchPreferences, hasSavedDispatchPreferences, setDispatchPreference } from "./dispatch-preferences.ts"
 import { readQuota } from "./quota.ts"
 import { refreshClaudeQuotaInBackground } from "./backend/claude-quota.ts"
 import { createBoard, resolveSessionTitle, type BoardManager } from "./board.ts"
@@ -48,6 +48,7 @@ import { needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { onClaudeModelsResolved, peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { claudeModelUpgradeDue, claudeUpgradeCandidate, SERVER_STARTED_AT_MS } from "./backend/claude-model-upgrade.ts"
 import { detectGithub, type GithubDetection } from "./github.ts"
+import { isRuntimeDeferred } from "./runtime-deferral.ts"
 import { startGithubCredentialKeeper } from "./github-credential.ts"
 import type { InteractionStore } from "./interaction-store.ts"
 import {
@@ -221,6 +222,7 @@ export interface AppContext {
   // this server serves (dispatch-preferences.ts) — which is why these close over `home` here rather
   // than the router reaching for it.
   getDispatchPreferences: (codexModels?: readonly CodexModel[]) => DispatchPreferences
+  hasSavedDispatchPreferences: () => boolean
   setDispatchPreference: (update: SetDispatchPreferenceInput, codexModels?: readonly CodexModel[]) => DispatchPreferences
   /**
    * Every project this PROCESS has open, with its board — the launching project and each tenant
@@ -824,7 +826,8 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   // restart is still running in there, and until we attach its `turn/completed` sits queued and the
   // board's stall grace would card the thread as crashed. Fire-and-forget: codex being unavailable
   // must never hold up (or fail) a boot.
-  void codexAppServer?.warmUp()
+  // A runtime still waiting for its first thread is not brought down by a boot; that first use connects.
+  if (!isRuntimeDeferred("codex")) void codexAppServer?.warmUp()
   opts.startup?.afterPhase?.("Codex app-server bridge")
 
   // The generic ACP bridge. Its agents live in detached daemons (acp-host.ts), so like codex and the
@@ -1348,6 +1351,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     setSettings: (s) => setSettings(storage, s, home),
     resetSettings: () => resetSettings(storage, home),
     getDispatchPreferences: (codexModels) => getDispatchPreferences(storage, getSettings(storage, home), home, codexModels),
+    hasSavedDispatchPreferences: () => hasSavedDispatchPreferences(storage, getSettings(storage, home), home),
     setDispatchPreference: (update, codexModels) =>
       setDispatchPreference(storage, getSettings(storage, home), home, update, codexModels),
     activeTenants: opts.activeTenants,

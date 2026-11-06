@@ -15,6 +15,15 @@ export const PROVIDER_LABEL: Record<AccountBackend, string> = {
   codex: "Codex",
 }
 
+// The toast over a dispatch whose runtime is coming down, from what runtimes.ts reports. Undefined for
+// everything but the download itself: resolving the package takes a moment and needs no words.
+export function runtimeDownloadNote(backend: AccountBackend, progress: string | undefined): string | undefined {
+  if (!progress?.startsWith("downloading")) return undefined
+  const label = backend === "claude" ? "Claude Code" : "Codex"
+  const detail = progress.slice("downloading".length).replace(/^[, ]+/u, "")
+  return detail ? `Downloading ${label}: ${detail}` : `Downloading ${label}…`
+}
+
 // `/login` and `/logout` are FRIZZ-OWNED aliases for the typed provider account actions — they are
 // intercepted at the composer submit boundary and NEVER sent to a thread as prompt text (a leading
 // slash is not a stable provider command transport: live input is pasted into a TUI while a dead
