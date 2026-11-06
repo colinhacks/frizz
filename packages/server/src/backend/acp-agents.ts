@@ -10,6 +10,8 @@ import { ACP_MODEL_PREFIX, acpAgentIdFromModel, acpModelSlug } from "@frizz/shar
 // github.com/agentclientprotocol/registry is the source for those launch shapes; the ones here are the
 // agents with measurable usage in 2026 (see plans/acp-backend.md) plus the ones that share a binary
 // family with them. Anything else rides `settings.acpAgents`, the same shape, and wins on id collision.
+// A name on PATH is all this can check, so a name another popular tool holds stays out: Block's goose agent
+// takes a `settings.acpAgents` entry, because Homebrew's `goose` is a database migration tool.
 
 export interface AcpAgentSpec {
   /** Stable id, used as the thread's `acp_agent` column and the composer's `acp:<id>` model slug. */
@@ -27,7 +29,6 @@ export const ACP_AGENT_CATALOGUE: readonly AcpAgentSpec[] = [
   { id: "copilot", label: "GitHub Copilot CLI", command: "copilot", args: ["--acp"] },
   { id: "kilo", label: "Kilo", command: "kilo", args: ["acp"] },
   { id: "qwen", label: "Qwen Code", command: "qwen", args: ["--acp"] },
-  { id: "goose", label: "goose", command: "goose", args: ["acp"] },
   { id: "kimi", label: "Kimi CLI", command: "kimi", args: ["acp"] },
   // `grok agent stdio` is ACP over stdio (registry: `npx @xai-official/grok agent stdio`); verified
   // live 2026-09-16 against grok 1.0.13 — it mounted the probe MCP server and called its tool.

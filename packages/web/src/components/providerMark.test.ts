@@ -16,7 +16,7 @@ test("provider marks identify only known, backend-backed threads", () => {
 test("an ACP thread's mark is its agent's brand glyph, falling back to the generic plug", () => {
   assert.deepEqual(providerMarkFor("acp", "acp:opencode"), { key: "acp:opencode", backend: "acp", label: "OpenCode" })
   assert.equal(providerMarkFor("acp", "acp:gemini")?.key, "acp:gemini")
-  // Agents without a CC0 glyph (Grok Build, pi, Kilo, goose) and an unknown/absent model wear the plug.
+  // Agents without a CC0 glyph (Grok Build, pi, Kilo) and an unknown/absent model wear the plug.
   assert.equal(providerMarkFor("acp", "acp:grok")?.key, "acp")
   assert.equal(providerMarkFor("acp", undefined)?.key, "acp")
   // A Claude/Codex thread's model never changes its mark.
