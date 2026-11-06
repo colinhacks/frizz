@@ -211,6 +211,7 @@ test("warmUp leaves the interactions of a session whose daemon is still alive al
     await sleep(500)
 
     assert.equal(store.get(scope, live.id)?.lifecycle, "pending", "an answerable card survives the boot")
+    assert.equal(store.get(scope, live.id)?.expiresAt, live.expiresAt, "and keeps the deadline it was shown with")
     assert.ok(second.binding(slug, sessionId), "and its session was adopted, not swept")
   } finally {
     second?.releaseSession(slug, sessionId, "session-deleted")

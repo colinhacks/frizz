@@ -219,8 +219,16 @@ test("the contract teaches steps: as the wait on a human's act, and routes to it
 // (command-watch.ts `commandWatchRefusal`), so only Claude's contract may teach the key, the week-long
 // ceiling and the route to it; anywhere else each mention is a refused call per wait. Claude's must
 // also say why a polling shell is the wrong wait, and where the loop goes when Frizz refuses.
-test("only the Claude contract teaches command watches, and it routes outside-condition waits to them", () => {
+test("a Claude thread that starts in auto is told to use a background shell, in words a later switch cannot make false", () => {
   const claude = buildWorkerPrompt("claude")
+  assert.doesNotMatch(claude, /watch-command add|monitor add|commands:|cmw_/)
+  assert.match(claude, /a polling loop in a background shell that exits once it holds/)
+  assert.match(claude, /refused unless this thread is in\s+`bypassPermissions` mode, and it did not start in that mode/)
+  assert.doesNotMatch(claude, /\{\{FRIZZ_/)
+})
+
+test("only a bypass Claude contract teaches command watches, and it routes outside-condition waits to them", () => {
+  const claude = buildWorkerPrompt("claude", { commandWatches: true })
   assert.match(claude, /`commands:` — command watches you REGISTERED with `frizzctl watch-command add`/)
   assert.match(claude, /`commands:` with nothing but those, where it runs to a week/)
   assert.match(claude, /`frizzctl watch-command add "<check that exits 0 once it holds>" --every 5m --for 6h`/)

@@ -310,6 +310,23 @@ refusal also lands in the transcript, so the card is a pointer to something real
 copy of it. If approval visibility is ever wanted again it needs an EXPIRY (or a per-turn scope) —
 re-adding the sticky line is not the fix.
 
+AUTO MODE'S HAND-BACKS GO TO A PERSON (2026-11-06). Until then `worker-autonomy` approved everything that
+reached this hook under `auto`, on the 2026-07-25 reasoning above: nobody was at the keyboard and an
+unanswered prompt parked a thread forever. Both premises changed. An approval card now lapses into a denial
+after 5m, so an unanswered one costs five minutes instead of a day. And `auto` became the default, so what
+this hook does under `auto` is what every new thread gets. The Claude Code 2.1.318 source shows the problem
+with approving here: a classifier refusal returns a denial with no hook, but after 3 refusals in a row or
+20 in a session the same action falls back to a prompt, and that prompt reaches this hook. Approving it
+turned a refusal into a retry count. So `auto-escalation` defers, ahead of `worker-autonomy`, and
+`worker-autonomy` now serves bypass. The fallback was read from the source and not reproduced with a live
+model: in about 12 attempts the classifier allowed most of the actions, or the model stopped first. An `ask`
+rule is the deterministic way to exercise this path. In the same version, approving an `ask` rule's request
+here produced a bare refusal and no card, which the KNOWN LIMIT above describes from the other side.
+
+How often this matters: on the maintainer's board, 57 threads that ran in `auto` made 11,842 tool calls with
+24 denials, and only 1 thread's last hook marker reached `worker-autonomy`. Cards should stay rare, and each
+one is a request the classifier would not decide.
+
 VERIFICATION: `scripts/verify-perm-marker.mjs` runs the REAL hook the way Claude Code does and
 asserts every branch. The allow path was additionally driven against a REAL interactive `claude` (it
 cannot be exercised under `claude -p`, where PermissionRequest hooks do not fire).

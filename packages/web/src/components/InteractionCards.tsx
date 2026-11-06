@@ -18,6 +18,7 @@ import type {
   ThreadView,
 } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import {
   failClosedAmbiguousInteraction,
@@ -147,6 +148,7 @@ function InteractionQuestionCard({
   siblings: readonly InteractionRecord[]
 }) {
   const qc = useQueryClient()
+  const remoteHost = useRemoteHost()
   const turn = useTurnRelease(record, siblings)
   const cardRef = useRef<HTMLElement>(null)
   const responseIds = useRef(new Map<string, string>())
@@ -289,7 +291,8 @@ function InteractionQuestionCard({
           {delivery.status ?? (sent ? "Answer sent." : "Sending…")}
         </div>
       )}
-      {delivery.actionsEnabled && !sent && (
+      {remoteHost && <p data-remote-note className="text-[12px] text-muted">This has to be answered on {remoteHost}.</p>}
+      {delivery.actionsEnabled && !sent && !remoteHost && (
         // The SAME Send answers verb, chrome and placement a fence question's message-level button uses.
         <div className="flex justify-start">
           <button
@@ -388,6 +391,7 @@ function InteractionApprovalCard({
   siblings: readonly InteractionRecord[]
 }) {
   const qc = useQueryClient()
+  const remoteHost = useRemoteHost()
   const turn = useTurnRelease(record, siblings)
   const headingId = useId()
   const cardRef = useRef<HTMLElement>(null)
@@ -707,7 +711,10 @@ function InteractionApprovalCard({
         {error && <div role="alert" className="mt-3 break-words text-[11px] leading-snug text-danger-soft">{error}</div>}
         {(delivery.status ?? status) && <div role="status" aria-live="polite" className="mt-3 text-[11px] leading-snug text-muted">{delivery.status ?? status}</div>}
 
-        {delivery.actionsEnabled && !confirming && !responseAccepted && visibleDecisions.length > 0 && (
+        {/* The server refuses both of these to a remote session (remote-gate.ts), since a hostile relay can
+            act as one, so the card names where to answer it rather than offering what cannot work. */}
+        {remoteHost && <p data-remote-note className="mt-3 text-[12px] text-muted">This has to be answered on {remoteHost}.</p>}
+        {delivery.actionsEnabled && !confirming && !responseAccepted && visibleDecisions.length > 0 && !remoteHost && (
           <div className="mt-4 flex flex-wrap justify-start gap-2">
             {visibleDecisions.map((decision) => (
               <button

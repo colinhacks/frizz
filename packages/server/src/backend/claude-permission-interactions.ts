@@ -79,11 +79,50 @@ function inputPreview(input: Record<string, unknown> | undefined, shown: string 
   return clip(text.length > PREVIEW_MAX_LINES ? `${text.slice(0, PREVIEW_MAX_LINES).join("\n")}\n…` : text.join("\n"), PREVIEW_MAX_CHARS)
 }
 
+// HOW LONG AN APPROVAL MAY HOLD A TURN. A permission escalation blocks the tool call, and the tool call
+// blocks the whole turn, so an unanswered card does not stall one marginal command — it stalls the
+// thread. The journal measured what that costs (2026-10-02, 18 Claude cards, every one on a
+// bypassPermissions thread, where the CLI's own safety checks still escalate heredoc and out-of-tree
+// shell scripts): 8 of 11 approvals landed inside 2.6m, and the rest sat 15–53m, with a dismissed one at
+// 59m — the turn frozen the whole time, usually on a throwaway `/tmp` script the work could route
+// around. So the card carries a deadline: past it the call is DENIED (fail closed, never auto-approved)
+// with CLAUDE_PERMISSION_LAPSED_MESSAGE, and the agent carries on with everything that did not need it.
+// Five minutes covers an operator who is watching; one who is not loses five minutes instead of hours.
+export const CLAUDE_PERMISSION_DEADLINE_MS = 5 * 60_000
+
+/** The deny an unanswered approval gets at its deadline. It must stop the model from doing the two things
+ *  it does with a bare deny — waiting, or retrying the identical call into another card. */
+export const CLAUDE_PERMISSION_LAPSED_MESSAGE =
+  "Nobody approved this tool call in time, so it was denied automatically. The operator is not watching " +
+  "right now — do not wait for them and do not retry the same call. Carry on with the rest of the work, " +
+  "taking a route that needs no approval where one exists (the Write/Edit tools instead of a shell heredoc, " +
+  "a path inside the project instead of an outside directory). If the work genuinely cannot proceed without " +
+  "this exact call, finish everything else first, then say what is blocked and why in your final message."
+
+// WHEN `auto` WAS ASKED FOR AND DID NOT START. Claude Code starts a session in `default` (its Manual mode)
+// when auto mode is unavailable: a settings file or an organization turned it off, the model does not
+// support it, or it is temporarily off for everyone. Nothing tells the thread. Every action then needs a
+// person, which reads as a broken thread unless the card says why, so it does. Frizz does not fall back to
+// bypass on its own: that would quietly remove the check the operator was told they had.
+export const CLAUDE_AUTO_UNAVAILABLE_NOTE =
+  "Auto mode isn't available in this session, so Claude Code is asking before each action. It can be off in " +
+  "settings or for the organization, unsupported on this model, or temporarily off. Setting Permissions to " +
+  "Bypass stops these cards, and Bypass checks nothing."
+
+/** The journal's key for a Claude request: the SDK's own id, which a re-delivery after a reconnect repeats.
+ *  The daemon's frame id is a different string, so this is what finds the card already on screen. */
+export function claudeProviderRequestId(request: Pick<ClaudePermissionRequest, "requestId">): string {
+  return clip(request.requestId, 500)
+}
+
 /** Build the durable interaction request for a Claude tool-permission escalation, or return null when it
- *  can't be represented (never blocks the daemon — the caller falls back to a decision hook). */
+ *  can't be represented (never blocks the daemon — the caller falls back to a decision hook).
+ *  `expiresAt` is the card's deadline (see CLAUDE_PERMISSION_DEADLINE_MS); null means none. */
 export function buildClaudePermissionInteraction(
   request: ClaudePermissionRequest,
   owner: { projectId: string; threadSlug: string; sessionId: string; cwd: string },
+  expiresAt: string | null = null,
+  note?: string,
 ): InteractionRequestType | null {
   const tool = request.toolName || "tool"
   // A shell command is shown the way a terminal shows it: the working directory becomes the prompt in
@@ -96,7 +135,7 @@ export function buildClaudePermissionInteraction(
   // prose, as a "requested permission", or as a resource label — the card carries each fact one time.
   const description = request.description ? clip(redactCredentialSyntax(request.description), 1_000) : ""
   const message = clip(
-    [description, request.blockedPath ? `Blocked path: ${clip(request.blockedPath, 500)}` : ""].filter(Boolean).join("\n\n"),
+    [description, request.blockedPath ? `Blocked path: ${clip(request.blockedPath, 500)}` : "", note ?? ""].filter(Boolean).join("\n\n"),
     2_000,
   )
   // The input is UNTRUSTED provider text; redact credential syntax and bound it hard before it ever
@@ -118,7 +157,7 @@ export function buildClaudePermissionInteraction(
       sessionEpoch: 0,
       capabilityRevision: 0,
     },
-    providerRequestId: clip(request.requestId, 500),
+    providerRequestId: claudeProviderRequestId(request),
     allowedDecisions: ALLOWED_DECISIONS,
     payload: {
       kind: "permission-approval",
@@ -132,7 +171,7 @@ export function buildClaudePermissionInteraction(
         ? { promptLabel: singleLine(tildePath(owner.cwd), 250, "~", false) }
         : { workingDirectoryLabel: clip(owner.cwd, 2_000) }),
     },
-    expiresAt: null,
+    expiresAt,
   })
   return parsed.success ? parsed.data : null
 }
@@ -371,7 +410,7 @@ export function buildClaudeQuestionInteraction(
       sessionEpoch: 0,
       capabilityRevision: 0,
     },
-    providerRequestId: clip(request.requestId, 500),
+    providerRequestId: claudeProviderRequestId(request),
     allowedDecisions: QUESTION_DECISIONS,
     payload: { kind: "agent-question", title, fields: askFields(spec) },
     expiresAt: null,

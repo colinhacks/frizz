@@ -60,14 +60,37 @@ test("the rail, notifications and the file opener are the MACHINE's, shared by e
   }
 })
 
+test("a machine's own default is where a project with nothing stored starts, and a stored value still wins", () => {
+  const box = sandbox()
+  try {
+    const stored = box.open("stored")
+    const fresh = box.open("fresh")
+    setSettings(stored, { ...defaultSettings(), permissionMode: "auto" }, box.home)
+    assert.equal(getSettings(fresh, box.home).permissionMode, "auto", "the shipped default, with no record")
+
+    writeMachineConfig(box.home, "permissionDefault", "bypassPermissions")
+    assert.equal(getSettings(fresh, box.home).permissionMode, "bypassPermissions")
+    assert.equal(getSettings(box.open("added-later"), box.home).permissionMode, "bypassPermissions")
+    assert.equal(getSettings(stored, box.home).permissionMode, "auto", "a project's stored value wins")
+
+    assert.equal(resetSettings(stored, box.home).permissionMode, "bypassPermissions", "a reset returns to this machine's default")
+    assert.equal(getSettings(stored, box.home).permissionMode, "bypassPermissions")
+
+    writeMachineConfig(box.home, "permissionDefault", "not-a-mode")
+    assert.equal(getSettings(fresh, box.home).permissionMode, "auto", "a bad record falls back to the shipped default")
+  } finally {
+    box.done()
+  }
+})
+
 test("a project's own settings stay its own", () => {
   const box = sandbox()
   try {
     const alpha = box.open("alpha")
     const beta = box.open("beta")
-    setSettings(alpha, { ...defaultSettings(), permissionMode: "auto", model: "opus" }, box.home)
-    assert.equal(getSettings(alpha, box.home).permissionMode, "auto")
-    assert.equal(getSettings(beta, box.home).permissionMode, "bypassPermissions", "permissions are per project")
+    setSettings(alpha, { ...defaultSettings(), permissionMode: "bypassPermissions", model: "opus" }, box.home)
+    assert.equal(getSettings(alpha, box.home).permissionMode, "bypassPermissions")
+    assert.equal(getSettings(beta, box.home).permissionMode, "auto", "permissions are per project")
     assert.equal(getSettings(beta, box.home).model, undefined)
   } finally {
     box.done()

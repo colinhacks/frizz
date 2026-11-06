@@ -30,6 +30,7 @@ A device signed in this way reads the board and answers question cards by pickin
 
 - starting or steering a thread, or changing its settings;
 - answering a free-text, secret or danger card;
+- approving or denying an action a worker is waiting on;
 - terminals, restarts and sign-in links;
 - reading a file outside a registered project or a thread's scratch and attachment directories, or a secret-looking file inside one (`.env`, a key, anything under a dotted folder other than `.frizz`).
 

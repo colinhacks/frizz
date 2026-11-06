@@ -620,18 +620,18 @@ test("adoptSession: the promoted row carries the dispatch launch mode, never an 
   const CLAUDE_ID = "6543d3fb-e38e-461a-b10a-9c78261b67b2"
   const ROLLOUT = "01a01b81-bbf3-7841-b704-a7c4b95b7bd7"
 
-  // Shipped default: bypass for claude, danger-full-access for codex.
+  // Shipped default: auto for claude, danger-full-access for codex.
   const shipped = harness()
   await shipped.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
   await shipped.dispatcher.adoptSession({ sessionId: ROLLOUT, backend: "codex" })
-  assert.equal(shipped.storage.getSession(CLAUDE_ID)?.permission_mode, "bypassPermissions")
+  assert.equal(shipped.storage.getSession(CLAUDE_ID)?.permission_mode, "auto")
   assert.equal(shipped.storage.getSession(ROLLOUT)?.permission_mode, "bypassPermissions")
 
   // The one Settings deviation frizz honours for claude — and a restrictive value left by an older
   // build still coerces to the floor rather than to Claude's `default`.
-  const auto = harness({ settings: { permissionMode: "auto" } })
-  await auto.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
-  assert.equal(auto.storage.getSession(CLAUDE_ID)?.permission_mode, "auto")
+  const bypass = harness({ settings: { permissionMode: "bypassPermissions" } })
+  await bypass.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
+  assert.equal(bypass.storage.getSession(CLAUDE_ID)?.permission_mode, "bypassPermissions")
   const restrictive = harness({ settings: { permissionMode: "default" } })
   await restrictive.dispatcher.adoptSession({ sessionId: CLAUDE_ID, backend: "claude", title: "Terminal" })
   assert.equal(restrictive.storage.getSession(CLAUDE_ID)?.permission_mode, "auto")

@@ -33,7 +33,7 @@ function runHook(payload, env = {}) {
 const marker = () => JSON.parse(readFileSync(permMarkerPath(project, slug), "utf8"))
 const bash = (command, over = {}) => ({
   session_id: "sid", transcript_path: "/x.jsonl", cwd: "/x", prompt_id: "p1",
-  permission_mode: "auto", hook_event_name: "PermissionRequest",
+  permission_mode: "bypassPermissions", hook_event_name: "PermissionRequest",
   tool_name: "Bash", tool_input: { command, description: "d" }, ...over,
 })
 
@@ -72,12 +72,18 @@ try {
   check("defer: marker records the defer + rule", m3.decision === "defer" && m3.rule === "restrictive-mode", `${m3.decision}/${m3.rule}`)
   check("defer: the tailer reads this AS a human block", markerDecision(m3) === "defer")
 
+  // Auto mode's classifier answers almost everything itself, so what reaches the hook is what auto mode
+  // handed back to a person. Approving it here would turn a refusal into a retry count.
+  const escalated = runHook(bash("touch y", { permission_mode: "auto" }))
+  check("defer: what auto mode leaves for a person emits NOTHING (prompt is raised)", escalated === "", JSON.stringify(escalated))
+  check("defer: the marker names auto-escalation", marker().decision === "defer" && marker().rule === "auto-escalation", `${marker().decision}/${marker().rule}`)
+
   for (const mode of ["acceptEdits", "plan", "some-future-mode"]) {
     check(`defer: \`${mode}\` emits NOTHING (unknown must mean ask)`, runHook(bash("touch y", { permission_mode: mode })) === "" && marker().rule === "restrictive-mode")
   }
 
-  // 4b. BYPASS IS NOT RESTRICTIVE — it is the one mode more permissive than auto, so a prompt Claude
-  // Code still raises under it is approved like auto's, behind the same two refusals.
+  // 4b. BYPASS IS NOT RESTRICTIVE — it asked for nothing to be checked, so a prompt Claude Code still
+  // raises under it is approved, behind the same two refusals.
   const bypass = JSON.parse(runHook(bash("touch y", { permission_mode: "bypassPermissions" })) || "{}")
   check("allow: bypassPermissions is approved, not handed to a human", bypass.hookSpecificOutput?.decision?.behavior === "allow" && marker().rule === "worker-autonomy", marker().rule)
   const bypassRm = JSON.parse(runHook(bash("rm -rf ~", { permission_mode: "bypassPermissions" })) || "{}")

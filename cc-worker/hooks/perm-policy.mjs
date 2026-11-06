@@ -4,17 +4,12 @@
 // structured signal the tailer reads instead of scraping the worker's terminal output.
 //
 // WHY THIS DECIDES (it used to only observe): a frizz worker runs under a dashboard with nobody at the
-// keyboard, so a tool-approval prompt parks the thread invisibly until a human happens to look. frizz
-// dispatches Claude workers at `--permission-mode auto` (dispatch.ts WORKER_DISPATCH_PERMISSION), and
-// `auto` is NOT non-interactive — its classifier still raises a prompt for anything it deems risky
-// (a `git push`, a publish), which is exactly how a worker silently wedges for hours.
-//
-// The blunt fix would be to dispatch at `bypassPermissions`. This is deliberately NOT that: bypass
-// removes the decision POINT, so nothing can ever inspect a request again. Keeping `auto` + deciding
-// here preserves the seam — the same request that is auto-approved today can be routed to a policy,
-// or to a human, without changing how workers launch. Claude Code labels the outcome in the
-// transcript ("Allowed by PermissionRequest hook"), so an auto-approval stays visible rather than
-// being indistinguishable from bypass.
+// keyboard, so a tool-approval prompt parks the thread invisibly until a human happens to look. Under
+// `bypassPermissions` this approves what Claude Code still asks about, because the operator chose not to
+// be asked. Under `auto`, the default since 2026-11-06, the classifier has already allowed or refused
+// nearly everything by the time a request gets here, and what is left goes to a person: see the
+// `auto-escalation` rule. Claude Code labels an approval in the transcript ("Allowed by PermissionRequest
+// hook"), so one stays visible rather than being indistinguishable from no check at all.
 //
 // THREE OUTCOMES:
 //   allow  — auto-approve; the worker proceeds with no prompt.
@@ -26,14 +21,12 @@
 // UNIVERSAL rules. Nothing repo-specific belongs here — a rule that is right for one repo (e.g. "never
 // open a PR") is wrong for the next.
 //
-// KNOWN LIMIT — an explicit `ask` RULE outranks this hook (verified 2026-07-25). A project or user
-// settings entry like `"permissions": {"ask": ["Bash(git push:*)"]}` raises a prompt that an `allow`
-// from here does NOT override: Claude Code says so on the prompt itself ("Ask rule … overrides auto
-// mode for this command"). This was isolated against a hook that allows unconditionally — it prompted
-// too — so it is Claude Code precedence, not a defect here, and it is arguably the right precedence
-// (an explicit human rule should beat a blanket policy). The practical consequence: a repo whose
-// settings carry `ask` rules can still park a worker, and the fix for that repo is to relax its own
-// rule, not to change this file. Mode-driven asks (the `default`-mode prompt) ARE overridden.
+// KNOWN LIMIT — an explicit `ask` RULE outranks this hook. A project or user settings entry like
+// `"permissions": {"ask": ["Bash(git push:*)"]}` is not overridden by an `allow` from here. In 2.1.318
+// that allow refuses the call outright ("Claude requested permissions to use Bash, but you haven't
+// granted it yet", measured 2026-11-06), where 2026-07-25's build raised a prompt. An `auto` thread defers
+// instead, so the rule gets the card it asks for; a `bypassPermissions` thread still gets the refusal.
+// Mode-driven asks (the `default`-mode prompt) ARE overridden.
 //
 // GATE: inert unless FRIZZ_THREAD is set, so a foreign/non-frizz session is never affected.
 // FAIL-SAFE: any error at all → emit nothing → the prompt is raised and the human decides. Note this
@@ -157,6 +150,22 @@ const RULES = [
     test: () => (process.env.FRIZZ_PERM_POLICY ?? 'auto').toLowerCase() === 'review',
     decision: 'defer',
     reason: 'FRIZZ_PERM_POLICY=review — every request is left for a human to answer.',
+  },
+  {
+    // WHAT AUTO MODE WILL NOT DECIDE GOES TO A PERSON, it is not approved here (2026-11-06). In `auto` the
+    // classifier answers first, so a request reaches this hook only when Claude Code is asking a person in
+    // the classifier's place. One of those is its denial limit: after 3 refusals in a row or 20 in a session
+    // it falls back to asking (`Abn` in 2.1.318, which leaves hooks free to allow). Approving here turned a
+    // refusal into a retry count. The others are an explicit `ask` rule, which this hook's allow turned into
+    // a bare refusal, and a conversation too long for the check. This used to fall through to
+    // `worker-autonomy` because one parked card once stalled a thread for a day, on a CLI whose classifier
+    // prompted instead of refusing; a card now lapses into a denial after 5m (claude-permission-interactions.ts
+    // CLAUDE_PERMISSION_DEADLINE_MS), so the most an unanswered one costs is 5m. Rare in practice: 1 of 57
+    // real `auto` threads on the maintainer's board had one, against 11,842 tool calls.
+    id: 'auto-escalation',
+    test: (i) => i.permission_mode === 'auto',
+    decision: 'defer',
+    reason: 'Auto mode left this request for a person to answer.',
   },
   {
     id: 'worker-autonomy',

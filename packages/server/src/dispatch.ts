@@ -248,14 +248,22 @@ export function writeScratchDir(projectDir: string, sessionId: string): string {
 // The FIXED worker system prompt for `kind`, compiled in via workerPrompt.ts (single source of truth).
 // Not user-modifiable — project-specific conventions ride FRIZZ.md (frizzConfigBlock), appended
 // separately. Thin adapter kept so existing callers (spawn/adopt/resume builders + tests) are untouched.
-/** What a contract varies on besides its backend: today only whether the CHILD THREADS experiment is on
- *  (Settings.childThreads), which every caller reads from its own settings. */
+/** What a contract varies on besides its backend: whether the CHILD THREADS experiment is on
+ *  (Settings.childThreads), which every caller reads from its own settings, and whether this thread may
+ *  register a command the server runs, which only `bypassPermissions` may (claudeContractOptions). */
 export interface WorkerContractOptions {
   childThreads?: boolean
+  commandWatches?: boolean
+}
+
+/** The contract options of a Claude thread launching in `mode`. A worker told about a wait Frizz will
+ *  refuse spends a call finding that out, on every wait, in what is now the default mode. */
+export function claudeContractOptions(mode: PermissionMode, settings: Partial<Pick<Settings, "childThreads">>): WorkerContractOptions {
+  return { childThreads: settings.childThreads, commandWatches: mode === "bypassPermissions" }
 }
 
 export function loadWorkerPrompt(kind: BackendKind = "claude", contract: WorkerContractOptions = {}): string {
-  return buildWorkerPrompt(kind, { monitorsDir: monitorScriptsDir(), childThreads: contract.childThreads === true })
+  return buildWorkerPrompt(kind, { monitorsDir: monitorScriptsDir(), childThreads: contract.childThreads === true, commandWatches: contract.commandWatches === true })
 }
 
 // The portable CI/review monitors, which ship inside the worker plugin (`sync-portable-monitors.mjs`
@@ -481,6 +489,13 @@ function workerPermissionMode(m: PermissionMode): PermissionMode {
 // `bypassPermissions` (→ `-s danger-full-access`). These are the FLOOR the dispatch/adopt paths stamp
 // (a client-sent permissionMode is still ignored); the only thing that moves it is the operator's own
 // Settings choice — see workerDispatchPermission, which can only relax it further.
+//
+// CODEX STAYS WHERE IT IS (2026-11-06, when Claude's shipped default moved from bypass to `auto`). The
+// two modes do not map. Everything below `bypassPermissions` on Codex is a `workspace-write` sandbox with
+// `networkAccess: false` and approvals `never` (codexSandbox, codex-app-server.ts), so there is no
+// classifier and no card, only a call that fails, and it cuts the worker off from `frizzctl`, which
+// reaches Frizz over loopback. So a new Codex thread starts in full access, and the thread's own control
+// is how to lower it.
 export const WORKER_DISPATCH_PERMISSION: Record<BackendKind, PermissionMode> = {
   claude: "auto",
   codex: "bypassPermissions",
@@ -1218,7 +1233,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error("Claude session broker is unavailable; cannot start this thread.")
           }
-          const appendSystemPrompt = claudeWorkerSystemPrompt(sessionId, deps.project.dir, { childThreads: settings.childThreads })
+          const appendSystemPrompt = claudeWorkerSystemPrompt(sessionId, deps.project.dir, claudeContractOptions(permissionMode, settings))
           try {
             await bridge.spawnDispatch({
               threadSlug: slug,
@@ -1496,7 +1511,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
           cwd: deps.project.dir,
           prompt,
           permissionMode,
-          appendSystemPrompt: [claudeWorkerSystemPrompt(sessionId, deps.project.dir, { childThreads: deps.getSettings().childThreads }), adoption].filter(Boolean).join("\n\n"),
+          appendSystemPrompt: [claudeWorkerSystemPrompt(sessionId, deps.project.dir, claudeContractOptions(permissionMode, settings)), adoption].filter(Boolean).join("\n\n"),
           model: settings.model,
           effort: settings.effort,
         })

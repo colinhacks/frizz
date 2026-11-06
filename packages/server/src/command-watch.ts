@@ -24,6 +24,14 @@
 // sandbox does. The same gate is asked again before EVERY run, so a thread whose mode changes after it
 // registered stops getting its commands run (the scheduler cancels the watch and tells it why).
 //
+// `auto` STAYS REFUSED, and it became the default on 2026-11-06. Auto mode's classifier reviews what a
+// worker runs, and a registration is a way past that review: in a real run under Claude Code 2.1.318 the same
+// exfiltrating `curl` was denied when run directly, and reached Frizz unreviewed inside
+// `frizzctl watch-command add`, because `Bash(frizzctl:*)` is pre-approved. So opening this gate to `auto`
+// would be one call around the check that mode offers. The cost is memory: an `auto` thread's wait is a
+// background shell, which pins its daemon tree. The worker contract says so per mode (claudeContractOptions),
+// so an `auto` worker is not told to try this first.
+//
 // CODEX AND ACP ARE REFUSED, not gated. A codex thread's "permission" is a sandbox level on a shared
 // app-server, and Frizz has no reading of whether a given command would have run inside it; an ACP agent
 // has no such reading at all. Neither can hibernate either (hibernation is Claude-only), so the memory

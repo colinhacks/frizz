@@ -61,7 +61,7 @@ test("dispatch preferences infer an old Settings record's Codex backend from the
     {
       backend: "codex",
       claude: { permissionMode: "auto" },
-      codex: { model: "gpt-new-from-cache", effort: "xhigh", permissionMode: "bypassPermissions" },
+      codex: { model: "gpt-new-from-cache", effort: "xhigh", permissionMode: "default" },
     },
   )
 })
@@ -82,7 +82,7 @@ test("dispatch preferences persist provider-specific selections across a databas
   storage = createStorage(path, "p")
   assert.deepEqual(getDispatchPreferences(storage, settings, box.home), {
     backend: "claude",
-    claude: { model: "sonnet", effort: "max", permissionMode: "bypassPermissions" },
+    claude: { model: "sonnet", effort: "max", permissionMode: "auto" },
     codex: { model: "gpt-5.5", effort: "xhigh", permissionMode: "default" },
   })
   storage.close()
@@ -100,7 +100,7 @@ test("a selection made in one project is the profile every other project opens o
     assert.deepEqual(getDispatchPreferences(beta, settings, box.home).claude, {
       model: "haiku",
       effort: "low",
-      permissionMode: "bypassPermissions",
+      permissionMode: "auto",
     })
     // …and the other direction: beta's change is what alpha sees next, not alpha's own last write.
     setDispatchPreference(beta, settings, box.home, { field: "effort", backend: "claude", value: "xhigh" })
@@ -149,7 +149,7 @@ test("a profile cell persists model and effort in one provider-scoped mutation",
   })
   assert.equal(next.backend, "codex")
   assert.deepEqual(next.codex, { model: "gpt-5.6-sol", effort: "ultra", permissionMode: "default" })
-  assert.deepEqual(next.claude, { permissionMode: "bypassPermissions" })
+  assert.deepEqual(next.claude, { permissionMode: "auto" })
   box.done()
 })
 

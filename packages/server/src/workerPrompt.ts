@@ -18,10 +18,15 @@ export type BackendKind = "claude" | "codex" | "acp"
 
 // COMMAND WATCHES ARE CLAUDE-ONLY, so only Claude's contract teaches them (2026-10-11). The server runs a
 // watched command with no permission check, so `commandWatchRefusal` (command-watch.ts) refuses every
-// Codex and ACP thread outright: nothing in Codex's own sandbox or approval policy reaches a command
-// the SERVER runs. A contract line telling those workers about a key they can never register is a
-// refused call per wait, and a ceiling they can never reach. Each token carries its own leading
-// punctuation and line break, so the empty value leaves the shared prose exactly as it was.
+// Codex and ACP thread outright, and every Claude thread outside `bypassPermissions`: nothing in Codex's
+// own sandbox, or in Claude Code's auto-mode classifier, reaches a command the SERVER runs. A contract
+// line telling those workers about a key they can never register is a refused call per wait, and a
+// ceiling they can never reach. So the contract varies on the mode a thread STARTS in (WorkerPromptOptions
+// .commandWatches). A later switch does not reach it: Claude Code 2.1.318 sends a thread's first system
+// prompt on every resume, measured 2026-11-06 in its own `api-request` records, whose `shapeHash` stays
+// the same across a switch in both directions. So neither variant says anything a switch would make false,
+// and the gate decides. Each token carries its own leading punctuation and line break, so the empty value
+// leaves the shared prose exactly as it was.
 const COMMANDS_KEY_CLAUDE = `
   - \`commands:\` — command watches you REGISTERED with \`frizzctl watch-command add\`, by their \`cmw_…\`
     id: a shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
@@ -35,26 +40,62 @@ const COMMANDS_CI_CLAUDE = `;
     \`frizzctl watch-command\` where Frizz allows it`
 const NO_COMMAND_WATCHES = { "COMMANDS_KEY": "", "COMMANDS_FOR": "", "COMMANDS_CI": "" }
 
-const INLINE: Record<BackendKind, Record<"SESSION_KIND" | "RESUME_CMD" | "COMMANDS_KEY" | "COMMANDS_FOR" | "COMMANDS_CI", string>> = {
+// The two "Automated waits" bullets that name a server-run command, and the one aside about `Monitor`,
+// for a Claude thread. WITH is a thread in `bypassPermissions`; WITHOUT is every other, which since
+// 2026-11-06 is the default. The background shell a WITHOUT thread gets costs what the server-run check
+// was built to save (command-watch.ts header), and the prose says so rather than hiding it.
+const COMMAND_WATCH_WAITS = {
+  "WAIT_ANY_CONDITION": `\`frizzctl watch-command add "<check that exits 0 once it holds>" --every 5m --for 6h\`, then rest on
+  its id (\`commands: [cmw_…]\`) with \`status: watching\`. Not a polling loop in a background shell
+  and not a sub-agent that owns the wait: either keeps your process tree alive (~250 MB) for the whole
+  wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
+  Only when Frizz REFUSES it (this thread is not in \`bypassPermissions\`, or Claude Code's sandbox is
+  on) does the loop go in a background shell.`,
+  "WAIT_EACH_OCCURRENCE": `\`frizzctl monitor add "<script
+  printing one line per occurrence>" --description "<what>" --for 1d\`, then rest on its id
+  (\`commands: [cmw_…]\`) with \`status: watching\`. The server keeps the script running across your
+  rests, a hibernation and a restart, and each line it prints wakes you; lines printed within 5m of your
+  last wake arrive together. A pull request or an issue needs none of this: \`watch-pr\` and
+  \`watch-issue\` already wake you on each comment, review and check. Where Frizz refuses a monitor (the
+  same gate as above), a background shell whose script exits on the first occurrence wakes you once:
+  rest on it, then start it again.`,
+  "MONITOR_PARK": `end); it is not something to park a rest on — \`frizzctl monitor\` is.`,
+}
+const NO_COMMAND_WATCH_WAITS = {
+  "WAIT_ANY_CONDITION": `a polling loop in a background shell that exits once it holds: its exit wakes you, so
+  rest on it with \`status: watching\`, and give it an end. It keeps your process tree alive (~250 MB)
+  for the whole wait, and a thread holding one can never be hibernated, so end it the moment it stops
+  mattering. \`frizzctl watch-command\` and \`frizzctl monitor\` are refused unless this thread is in
+  \`bypassPermissions\` mode, and it did not start in that mode: the server runs their command with no
+  permission check.`,
+  "WAIT_EACH_OCCURRENCE": `a background shell whose script exits on the first occurrence, which wakes you once:
+  rest on it, then start it again. A pull request or an issue needs none of this: \`watch-pr\` and
+  \`watch-issue\` already wake you on each comment, review and check.`,
+  "MONITOR_PARK": `end); it is not something to park a rest on.`,
+}
+
+const INLINE: Record<BackendKind, Record<"SESSION_KIND" | "RESUME_CMD", string>> = {
   "claude": {
     "SESSION_KIND": "claude",
     "RESUME_CMD": "claude -r",
-    "COMMANDS_KEY": COMMANDS_KEY_CLAUDE,
-    "COMMANDS_FOR": COMMANDS_FOR_CLAUDE,
-    "COMMANDS_CI": COMMANDS_CI_CLAUDE,
   },
   "codex": {
     "SESSION_KIND": "codex",
     "RESUME_CMD": "codex resume",
-    ...NO_COMMAND_WATCHES,
   },
   // An ACP agent has no resume command Frizz can name: the session lives inside the agent and Frizz
   // re-opens it over the protocol. The token still has to resolve, so it names the mechanism.
   "acp": {
     "SESSION_KIND": "coding-agent",
     "RESUME_CMD": "(Frizz re-opens the session over ACP)",
-    ...NO_COMMAND_WATCHES,
   }
+}
+
+/** The tokens that depend on whether this thread may register a server-run command. */
+function commandWatchTokens(kind: BackendKind, commandWatches: boolean): Record<string, string> {
+  if (kind !== "claude") return NO_COMMAND_WATCHES
+  if (!commandWatches) return { ...NO_COMMAND_WATCHES, ...NO_COMMAND_WATCH_WAITS }
+  return { "COMMANDS_KEY": COMMANDS_KEY_CLAUDE, "COMMANDS_FOR": COMMANDS_FOR_CLAUDE, "COMMANDS_CI": COMMANDS_CI_CLAUDE, ...COMMAND_WATCH_WAITS }
 }
 
 const INTRO = `You are a dispatched worker agent — a top-level \`{{FRIZZ_SESSION_KIND}}\` session frizz spawned to drive ONE
@@ -1420,33 +1461,21 @@ sub-agent alone does not.
 - **Resting until a condition is met** (the usual CI / PR / release wait) → for a pull request,
   \`frizzctl watch-pr\`; for a GitHub issue, \`frizzctl watch-issue\`; for any other OUTSIDE condition a
   shell command can check — a package version published, a release run finished, a URL answering —
-  \`frizzctl watch-command add "<check that exits 0 once it holds>" --every 5m --for 6h\`, then rest on
-  its id (\`commands: [cmw_…]\`) with \`status: watching\`. Not a polling loop in a background shell
-  and not a sub-agent that owns the wait: either keeps your process tree alive (~250 MB) for the whole
-  wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
-  Only when Frizz REFUSES it (this thread is not in \`bypassPermissions\`, or Claude Code's sandbox is
-  on) does the loop go in a background shell. For a wait no command can judge, dispatch a SUB-AGENT
+  {{FRIZZ_WAIT_ANY_CONDITION}} For a wait no command can judge, dispatch a SUB-AGENT
   to own it. It runs the watcher
   to completion in its own foreground and returns the verdict, and its return re-invokes you; rest on
   it with \`status: watching\`. A Bash call that names no \`timeout\` moves to the background at the
   tool's default, so the watcher names one sized to the wait (up to 24h) and loops until its terminal
   condition. A helper must not hand back while its own watcher is still live.
 - **Resting, but woken on EACH occurrence rather than the first** (each ERROR a log tail turns up,
-  each new row a poll finds, each message a listener receives) → \`frizzctl monitor add "<script
-  printing one line per occurrence>" --description "<what>" --for 1d\`, then rest on its id
-  (\`commands: [cmw_…]\`) with \`status: watching\`. The server keeps the script running across your
-  rests, a hibernation and a restart, and each line it prints wakes you; lines printed within 5m of your
-  last wake arrive together. A pull request or an issue needs none of this: \`watch-pr\` and
-  \`watch-issue\` already wake you on each comment, review and check. Where Frizz refuses a monitor (the
-  same gate as above), a background shell whose script exits on the first occurrence wakes you once:
-  rest on it, then start it again.
+  each new row a poll finds, each message a listener receives) → {{FRIZZ_WAIT_EACH_OCCURRENCE}}
 - **Working alongside a process you launched** (a dev server, a build whose output you read as you go)
   → \`Bash\` with \`run_in_background: true\`. Its output is yours to read; it wakes you only when it
   exits. Never put shell job control (\`&\`, \`nohup … &\`, \`disown\`) inside the
   command to imitate the native flag: frizz's hook rejects an escaping job, because the process could
   survive without a lifecycle id or wake.
 - \`Monitor\` streams events INTO an active turn (\`persistent: true\` runs until \`TaskStop\` or session
-  end); it is not something to park a rest on — \`frizzctl monitor\` is. \`TaskOutput\` is deprecated —
+  {{FRIZZ_MONITOR_PARK}} \`TaskOutput\` is deprecated —
   use \`Read\` on that output path for diagnostics. \`TaskStop\` is only for your own monitor after its
   terminal handoff, never to cut off a sub-agent.
 
@@ -1899,7 +1928,7 @@ checks. Depth scales with blast radius and yields to the project's conventions.`
  */
 const MONITORS_DIR_FALLBACK = "<frizz>/cc-worker/skills/gh/scripts"
 
-export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitorsDir?: string; childThreads?: boolean } = {}): string {
+export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitorsDir?: string; childThreads?: boolean; commandWatches?: boolean } = {}): string {
   // Claude gets the LEAN list: frizz mechanics + the autonomy anchor, and nothing that merely narrates
   // good engineering. Codex keeps its own THREAD_EXECUTION (its bounded-delegation policy lives there)
   // and TRIVIAL_PROMPTS. See the SIZING note at the top of this file.
@@ -1931,7 +1960,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     lean ? null : TRIVIAL_PROMPTS,
   ]
   let out = sections.filter((s): s is string => s != null).join("\n\n")
-  for (const [token, value] of Object.entries(INLINE[kind])) out = out.replaceAll(`{{FRIZZ_${token}}}`, value)
+  for (const [token, value] of Object.entries({ ...INLINE[kind], ...commandWatchTokens(kind, opts.commandWatches === true) })) out = out.replaceAll(`{{FRIZZ_${token}}}`, value)
   out = out.replaceAll("{{FRIZZ_MONITORS_DIR}}", opts.monitorsDir?.trim() || MONITORS_DIR_FALLBACK)
   return out
 }
