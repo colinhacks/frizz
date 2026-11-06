@@ -20,9 +20,10 @@
 //   run, and a replayed message lands outside the step. A drift run that fires during a real deploy
 //   therefore fails once, because that deploy has not finished yet.
 // - The author. Every version records who uploaded it. CI uploads with an account-owned token that
-//   nothing else holds, so its author differs from any laptop's; `WORKERS_CI_AUTHOR` (a repository
-//   variable) names it. Unset, the check fails and prints the authors it saw, so the first CI deploy
-//   tells you the value.
+//   nothing else holds, and such a token uploads as its own id with no address (seen on the first CI
+//   deploy, 2026-11-06), so its author differs from any laptop's. A deploy token lasts one hour, so each
+//   deploy has a new author: `cloudflare-tokens.mjs` adds each id it mints to `WORKERS_CI_AUTHOR` (a
+//   repository variable, a comma-separated list). Unset, the check fails and prints the authors it saw.
 // - The source. `metadata.source` must be `wrangler`. Weak — an attacker uses wrangler too — but a
 //   dashboard edit or a raw API upload fails it for free.
 //
@@ -131,11 +132,14 @@ export function githubClient(token, { base = "https://api.github.com" } = {}) {
   }
 }
 
+/** The authors `WORKERS_CI_AUTHOR` names. */
+export const parseAuthors = (value) => String(value ?? "").split(",").map((author) => author.trim()).filter(Boolean)
+
 /**
  * Every problem with one Worker, as sentences; an empty list means everything it runs came from CI.
  * `cf` and `gh` take an API path and return the parsed body (see the two clients above).
  */
-export async function checkWorker(script, { cf, gh, repo, expectedAuthor, members = BASELINE.members, now = Date.now(), lookbackMs = LOOKBACK_MS, log = () => {} }) {
+export async function checkWorker(script, { cf, gh, repo, expectedAuthors = [], members = BASELINE.members, now = Date.now(), lookbackMs = LOOKBACK_MS, log = () => {} }) {
   const problems = []
   const answers = new Map()
   const since = now - lookbackMs
@@ -191,10 +195,10 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthor, member
     const reason = await notFromCi(message, meta.created_on)
     if (reason) problems.push(`${label}: ${reason}`)
     if (meta.source !== "wrangler") problems.push(`${label}: uploaded from ${meta.source ?? "an unknown source"}, not wrangler`)
-    if (!expectedAuthor) {
+    if (expectedAuthors.length === 0) {
       problems.push(`${label}: WORKERS_CI_AUTHOR is not set, so its author (author_id ${meta.author_id ?? "-"}, author_email ${maskEmail(meta.author_email)}) cannot be checked`)
-    } else if (meta.author_id !== expectedAuthor && meta.author_email !== expectedAuthor) {
-      problems.push(`${label}: uploaded by author_id ${meta.author_id ?? "-"} / author_email ${maskEmail(meta.author_email)}, not the CI token's ${expectedAuthor}`)
+    } else if (!expectedAuthors.includes(meta.author_id) && !expectedAuthors.includes(meta.author_email)) {
+      problems.push(`${label}: uploaded by author_id ${meta.author_id ?? "-"} / author_email ${maskEmail(meta.author_email)}, which is none of the CI tokens in WORKERS_CI_AUTHOR`)
     }
     if (byMember(meta.author_email)) problems.push(`${label}: uploaded by an account member's own sign-in or token, and CI's token belongs to the account`)
   }
@@ -332,7 +336,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   for (const script of scripts) {
     try {
-      const problems = await checkWorker(script, { cf, gh, repo: GITHUB_REPOSITORY, expectedAuthor: WORKERS_CI_AUTHOR, log: console.log })
+      const problems = await checkWorker(script, { cf, gh, repo: GITHUB_REPOSITORY, expectedAuthors: parseAuthors(WORKERS_CI_AUTHOR), log: console.log })
       if (problems.length === 0) console.log(`✓ ${script}: everything it ran in the lookback came from ${DEPLOY_WORKFLOW}`)
       for (const problem of problems) console.error(`::error::${problem}`)
       failed ||= problems.length > 0

@@ -22,12 +22,9 @@ The commands are in that script's header. In order:
 3. `--only=drift`, then `gh workflow enable workers-drift.yml`, push `main`, and dispatch it. This first run must fail, naming the 2026-10-08 versions, which is the proof it can.
 4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both`. The maintainer approves it within the hour.
 5. `--revoke-deploy`, then `nub scripts/verify-relay-live.mjs`.
-6. Dispatch drift again. It fails with `WORKERS_CI_AUTHOR is not set` and prints the deploy token's author. Set that repository variable and dispatch until it is green. Three things can keep it red:
+6. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
    - **The sitting's own changes.** Any change in the audit log that CI would not make fails the check until it is two hours old, including removing a member or turning on DNSSEC.
-   - **Something CI's own run does.** The check has only read a real log of laptop deploys, so it may name an action `wrangler versions` also takes, such as `patch_settings`. Add it to `JUDGED_BY_VERSION` only if `checkAccount` already compares what that action can change.
-   - **An account-owned token that reports a member's address.** Stop here if it does: the check then fails every CI deploy and cannot tell CI from a member's token, so it needs another way to tell them apart.
-
-   Compare the author across deploys, because if each token uploads as itself, this variable changes per deploy.
+   - **Something CI's own run does.** Add it to `JUDGED_BY_VERSION` only if `checkAccount` already compares what that action can change.
 7. The maintainer deletes the token from step 1.
 
 ## 2. Bring custom names back (optional)

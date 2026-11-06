@@ -76,6 +76,8 @@ export const TOKENS = [
     zone: [],
     expiresDays: 1 / 24,
     sink: { kind: "gh", secret: "CLOUDFLARE_API_TOKEN", env: "workers-deploy" },
+    // This token uploads as its own id, so workers-drift has to be told each new one.
+    authorVariable: "WORKERS_CI_AUTHOR",
   },
   {
     // What checkAccount and checkWorker read. Never Workers Tail or Logs: see SNAPSHOT_TOKEN. The optional
@@ -226,6 +228,30 @@ function deliver(sink, value) {
 /** Empties a GitHub secret. Returns null on success, or what went wrong. */
 function removeFromSink(sink) {
   const [command, args] = ghCommand(`Remove the expired ${sink.secret} secret from ${REPO}`, ["secret", "delete", sink.secret, "--repo", REPO, ...(sink.env ? ["--env", sink.env] : [])], { write: true })
+  const result = spawnSync(command, args, { encoding: "utf8" })
+  if (result.error) return `${command} did not start: ${result.error.message}`
+  if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
+  return null
+}
+
+/** `list`, a repository variable's comma-separated authors, with `id` added. */
+export function withAuthor(list, id) {
+  const authors = list.split(",").map((author) => author.trim()).filter(Boolean)
+  return (authors.includes(id) ? authors : [...authors, id]).join(",")
+}
+
+/**
+ * Adds a new token's id to the authors workers-drift accepts, keeping the older ones: the Workers go on
+ * running what the last token uploaded until this one deploys, and a mint that never deploys changes
+ * nothing. Returns null on success, or what went wrong.
+ */
+function recordAuthor(variable, id) {
+  const [readCommand, readArgs] = ghCommand(`Read ${variable} on ${REPO}`, ["variable", "get", variable, "--repo", REPO], { write: true })
+  const read = spawnSync(readCommand, readArgs, { encoding: "utf8" })
+  if (read.error) return `${readCommand} did not start: ${read.error.message}`
+  if (read.status !== 0 && !/not found/i.test(read.stderr)) return `${readCommand} ${readArgs.slice(0, 3).join(" ")} exited ${read.status}: ${(read.stderr || read.stdout).trim()}`
+  const list = read.status === 0 ? read.stdout : ""
+  const [command, args] = ghCommand(`Add the new deploy token to ${variable} on ${REPO}`, ["variable", "set", variable, "--repo", REPO, "--body", withAuthor(list, id)], { write: true })
   const result = spawnSync(command, args, { encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`
   if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
@@ -556,7 +582,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     })
     for (const p of plans) {
       const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: p.spec.name, policies: p.policies, expires_on: expiresOn(Date.now(), p.spec.expiresDays) })
-      const failure = deliver(p.spec.sink, created.value)
+      const failure = deliver(p.spec.sink, created.value) ?? (p.spec.authorVariable ? recordAuthor(p.spec.authorVariable, created.id) : null)
       if (failure) {
         await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${created.id}`).catch(() => {})
         throw new Error(`${p.spec.name}: ${failure} — the new token ${created.id} was revoked again`)
