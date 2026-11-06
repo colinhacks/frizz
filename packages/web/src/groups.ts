@@ -15,6 +15,7 @@ import {
   type AwaitingHint,
   type SectionKey,
   type ThreadView,
+  githubReadingStale,
 } from "@frizz/shared"
 
 // The band predicates live in @frizz/shared so the server counts the rail's running badge with the
@@ -388,12 +389,15 @@ function restingOnLiveBackgroundWork(t: ThreadView): boolean {
  *  GATED CI IS NOT RUNNING. Workflows held at GitHub's "Approve and run" gate read `checks: "running"`
  *  (nothing has settled), but nothing is moving either: a maintainer has to press a button. The PR row's
  *  own checks glyph already refuses to spin for that shape (AwaitingBackgroundCard ChecksGlyph), and the
- *  rail follows it — a spinner over a gate would promise motion for as long as nobody notices. */
-export function prChecksRunning(t: Pick<ThreadView, "watches">): boolean {
+ *  rail follows it — a spinner over a gate would promise motion for as long as nobody notices.
+ *
+ *  NOR IS A STALE READING (2026-11-06), for the reason the server's ciInMotion gives: "running" read an
+ *  hour ago says nothing about now. */
+export function prChecksRunning(t: Pick<ThreadView, "watches">, nowMs = Date.now()): boolean {
   return (t.watches ?? []).some(
     (w) =>
       w.kind === "github" && w.state === "armed" && w.github?.checks === "running" && w.github.state === "open" &&
-      !(w.github.running === 0 && (w.github.gated ?? 0) > 0),
+      !(w.github.running === 0 && (w.github.gated ?? 0) > 0) && !githubReadingStale(w.github, nowMs),
   )
 }
 

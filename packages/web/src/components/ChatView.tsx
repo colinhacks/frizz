@@ -4,7 +4,7 @@ import { useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon } from "lucide-react"
-import { awaitingFenceTitle, awaitingSteps, RETRY_FOLLOW_UP } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP } from "@frizz/shared"
 import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
 import { store, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
 import { useBackgroundShellLines, useProjectDir, useThreadSnapshot, useTranscript, type ChatMessage, type TranscriptData } from "../hooks.ts"
@@ -4532,7 +4532,8 @@ export function BackgroundOpsStrip({
           // An ISSUE has no checks to count, so its counter is its conversation size — the one number
           // that says whether anybody has answered — and "closed" once it is.
           counter={w.subject === "issue" ? issueCounterLabel(w.issue) : checksCounterLabel(w.github)}
-          counterTone={w.github?.checks === "failing" ? "danger" : undefined}
+          // A stale reading's age is not a failure, whatever the reading was (githubReadingStale).
+          counterTone={w.github?.checks === "failing" && !githubReadingStale(w.github, Date.now()) ? "danger" : undefined}
           counterTitle={w.subject === "issue"
             ? (w.issue ? `${w.target} — ${issueStatusLine(w.issue)}` : undefined)
             : (w.github ? `${w.target} — ${watchStatusLine(w.github)}` : undefined)}

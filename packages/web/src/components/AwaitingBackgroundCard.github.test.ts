@@ -20,7 +20,7 @@ import { checkCountLine, GithubWatchRow, showsRestingCard, watchCounterLine, wat
 
 const status = (over: Partial<GithubWatchStatus> = {}): GithubWatchStatus => ({
   checks: "running", running: 0, passed: 0, failed: 0, failing: [], merge: "unknown", state: "open",
-  polledAt: "2026-08-14T00:00:00.000Z", ...over,
+  polledAt: new Date().toISOString(), ...over,
 })
 
 // SEVERITY FIRST and the order fixed, so a reader scanning four rows finds the failing count in the same
@@ -99,6 +99,39 @@ test("a red PR row's count links to its checks, and the full line rides the tool
   const green = renderToStaticMarkup(createElement(GithubWatchRow, { watch: watch(status({ checks: "passing", passed: 15, merge: "mergeable" })) }))
   assert.match(green, /data-wait-status[^>]*>15 green</)
   assert.doesNotMatch(green, /\/checks"/, "nothing failed, nothing to link")
+})
+
+// ---- FRESHNESS (2026-11-06) ----
+// "A stale reading stated as current is worse than no reading", the doc comment on `polledAt` has said since
+// the field arrived, and no component read it. These pin what the row, its tooltip and its glyph say once a
+// reading is old, on the one component every surface mounts.
+test("a stale row states its age, not its verdict: no red link, no red glyph, the verdict in the tooltip", () => {
+  const watch = (github: GithubWatchStatus) => ({ id: "github:demo:acme/app#393", kind: "github", target: "acme/app#393", state: "armed", createdAt: "2026-08-14T00:00:00.000Z", github }) as ThreadWatchView
+  const polledAt = new Date(Date.now() - 12.5 * 60_000).toISOString()
+  const red = renderToStaticMarkup(createElement(GithubWatchRow, { watch: watch(status({ checks: "failing", failed: 2, passed: 9, head: "abc1234def5678", polledAt })) }))
+  assert.match(red, /data-wait-status[^>]*>as of 12m ago</)
+  assert.doesNotMatch(red, /\/checks"/, "the age links nowhere")
+  assert.doesNotMatch(red, /lucide-circle-x/, "and the glyph stops claiming red")
+  assert.match(red, /lucide-circle-dashed/)
+  assert.ok(red.includes("Last read 12m ago: 2 failing, 9 successful · on abc1234"))
+  const green = renderToStaticMarkup(createElement(GithubWatchRow, { watch: watch(status({ checks: "passing", passed: 29, merge: "conflicting", polledAt })) }))
+  assert.match(green, /data-wait-status[^>]*>as of 12m ago</, "a merge fact goes as stale as a count")
+  assert.doesNotMatch(green, /lucide-circle-check/)
+})
+
+test("a fresh row is unchanged but for the commit in its tooltip", () => {
+  const fresh = status({ checks: "passing", passed: 29, merge: "mergeable", head: "abc1234def5678" })
+  assert.equal(watchCounterLine(fresh), "29 green")
+  assert.equal(watchStatusLine(fresh), "29 successful · no conflicts · on abc1234")
+})
+
+test("a new commit CI has not reported on reads as waiting for CI, never as no checks", () => {
+  const waiting = status({ checks: "running", newHeadSince: new Date().toISOString(), head: "abc1234def5678" })
+  assert.equal(watchCounterLine(waiting), "waiting for CI")
+  assert.equal(watchStatusLine(waiting), "Waiting for CI on abc1234")
+  const row = renderToStaticMarkup(createElement(GithubWatchRow, { watch: { id: "g", kind: "github", target: "acme/app#393", state: "armed", createdAt: "2026-08-14T00:00:00.000Z", github: waiting } as ThreadWatchView }))
+  assert.match(row, /lucide-circle-dashed/, "nothing has been seen moving, so no spinner")
+  assert.equal(watchStatusLine(status({ checks: "none", head: "abc1234def5678" })), "No checks · on abc1234", "the fallback once the limit is up")
 })
 
 // ---- WHERE THE CHAT SHOWS THIS CARD AT ALL ----------------------------------------------------------

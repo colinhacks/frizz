@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
+import { AwaitingWaitTable } from "./components/AwaitingBackgroundCard.tsx"
 import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
@@ -26,9 +27,11 @@ const messages: TranscriptMessage[] = [
   },
 ]
 
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+
 const status = (over: Record<string, unknown>) => ({
   checks: "running", running: 0, passed: 0, failed: 0, skipped: 0, gated: 0, gating: [], failing: [],
-  merge: "unknown", state: "open", polledAt: "2026-09-04T16:44:00.000Z", ...over,
+  merge: "unknown", state: "open", polledAt: new Date().toISOString(), ...over,
 })
 
 const thread = {
@@ -66,6 +69,15 @@ const thread = {
       github: status({ checks: "running", running: 14, passed: 15 }) },
     { id: "w4", kind: "github", target: "nubjs/nub#874", state: "armed", createdAt: "2026-09-04T13:31:00.000Z",
       github: status({ checks: "passing", passed: 29, skipped: 1, merge: "mergeable" }) },
+    // The reading is old (2026-11-06): polling failed or was deferred, so this verdict is 12m of nobody
+    // checking, and a 3h one past that. Neither may be drawn as live.
+    { id: "w6", kind: "github", target: "acme/app#393", state: "armed", createdAt: "2026-09-04T13:31:00.000Z",
+      github: status({ checks: "failing", failed: 1, passed: 28, failing: ["lint"], merge: "blocked", head: "abc1234def5678", polledAt: ago(12) }) },
+    { id: "w7", kind: "github", target: "acme/app#394", state: "armed", createdAt: "2026-09-04T13:31:00.000Z",
+      github: status({ checks: "passing", passed: 29, merge: "mergeable", head: "abc1234def5678", polledAt: ago(180) }) },
+    // The head just moved and CI has reported nothing on the new commit: not "No checks".
+    { id: "w8", kind: "github", target: "acme/app#395", state: "armed", createdAt: "2026-09-04T13:31:00.000Z",
+      github: status({ head: "def5678abc1234", newHeadSince: ago(1) }) },
     // Never polled: the row must say nothing rather than a fabricated zero.
     { id: "w5", kind: "github", target: "microsoft/TypeScript#64172", state: "armed", createdAt: "2026-09-04T16:43:00.000Z" },
   ],
@@ -92,6 +104,10 @@ function Fixture() {
   return (
     <div className="mx-auto w-[min(680px,calc(100%-32px))] py-8">
       <TodosView />
+      {/* The other way a row is drawn: the wait table the resting card and the focus rail share. */}
+      <div data-fixture-wait-table className="mt-6 rounded-lg border border-border bg-surface p-2">
+        <AwaitingWaitTable thread={thread} divider={false} />
+      </div>
     </div>
   )
 }

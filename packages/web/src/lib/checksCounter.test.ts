@@ -37,3 +37,30 @@ test("a finished PR says so instead of counting its history", () => {
   assert.equal(checksCounterLabel(status({ state: "merged", passed: 29, checks: "passing" })), "merged")
   assert.equal(checksCounterLabel(status({ state: "closed", failed: 3, checks: "failing" })), "closed")
 })
+
+// ---- AN OLD READING IS NOT A COUNT (2026-11-06) ----
+const NOW = Date.parse("2026-11-06T12:00:00.000Z")
+const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString()
+
+test("past five minutes the counter is the reading's age, ahead of every count", () => {
+  for (const reading of [{ checks: "passing", passed: 29 }, { checks: "failing", failed: 1 }, { gated: 9 }, { running: 14 }]) {
+    assert.equal(checksCounterLabel(status({ ...reading, polledAt: ago(12) }), NOW), "as of 12m ago")
+  }
+  assert.equal(checksCounterLabel(status({ checks: "passing", passed: 29, polledAt: ago(155) }), NOW), "as of 2h ago", "the house grammar's ladder")
+})
+
+test("a fresh reading says nothing extra, and a late poll is still fresh", () => {
+  assert.equal(checksCounterLabel(status({ checks: "passing", passed: 29, polledAt: ago(0) }), NOW), "29 green")
+  assert.equal(checksCounterLabel(status({ checks: "passing", passed: 29, polledAt: ago(5) }), NOW), "29 green", "at the threshold")
+  assert.equal(checksCounterLabel(status({ checks: "passing", passed: 29, polledAt: new Date(NOW - 5 * 60_000 - 1).toISOString() }), NOW), "as of 5m ago", "one ms past it")
+})
+
+test("a merged or closed PR has no age to state", () => {
+  assert.equal(checksCounterLabel(status({ state: "merged", polledAt: ago(600) }), NOW), "merged")
+  assert.equal(checksCounterLabel(status({ state: "closed", polledAt: ago(600) }), NOW), "closed")
+})
+
+test("a new commit CI has not reported on says so, and goes stale like any reading", () => {
+  assert.equal(checksCounterLabel(status({ newHeadSince: ago(1), polledAt: ago(0) }), NOW), "waiting for CI")
+  assert.equal(checksCounterLabel(status({ newHeadSince: ago(20), polledAt: ago(15) }), NOW), "as of 15m ago")
+})

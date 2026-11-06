@@ -43,7 +43,7 @@ const prWatch = (github?: Record<string, unknown>) => [{
   target: "acme/app#391",
   state: "armed" as const,
   createdAt: "2026-09-20T09:00:00.000Z",
-  ...(github ? { github: { checks: "running", running: 2, passed: 1, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "unknown", state: "open", polledAt: "2026-09-20T09:01:00.000Z", ...github } } : {}),
+  ...(github ? { github: { checks: "running", running: 2, passed: 1, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "unknown", state: "open", polledAt: new Date().toISOString(), ...github } } : {}),
 }]
 
 const markup = (over: Partial<ThreadView>) => renderToStaticMarkup(sessionIndicatorFor({ ...base, ...over } as ThreadView).node)
@@ -108,6 +108,9 @@ test("awaiting a PR: the octocat spins while checks run on a `working` rest, and
   const queued = markup({ needsYou: true, awaitingBackground: true, watches: prWatch({}) as never })
   assert.ok(queued.includes("lucide-github") && !spins(queued), "a queue row never spins, checks or no checks")
   assert.equal(sessionIndicatorFor({ ...base, needsYou: true, awaitingBackground: true, watches: prWatch({}) } as never).tip, "At rest — checks are running", "the tooltip still says the checks are going")
+  // A reading nobody has renewed in an hour is not a claim about now (2026-11-06).
+  const stale = prWatch({ polledAt: new Date(Date.now() - 3_600_000).toISOString() })
+  assert.equal(sessionIndicatorFor({ ...base, needsYou: true, awaitingBackground: true, watches: stale } as never).tip, "At rest", "the tooltip stops saying so")
   for (const [what, github] of [
     ["passing", { checks: "passing", running: 0, passed: 3 }],
     ["failing", { checks: "failing", running: 0, failed: 1 }],

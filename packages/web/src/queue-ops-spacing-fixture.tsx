@@ -75,9 +75,9 @@ const thread = {
   // carries all six counts — each opens a panel of its own kind of row and no other (2026-10-11).
   watches: new URLSearchParams(location.search).get("watches") === "1" ? [
     { id: "w_pr_a", kind: "github", target: "colinhacks/zod#6559", state: "armed", createdAt: "2026-07-18T08:40:00.000Z",
-      github: { checks: "running", running: 14, passed: 15, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "unknown", state: "open", polledAt: "2026-07-18T09:10:00.000Z" } },
+      github: { checks: "running", running: 14, passed: 15, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "unknown", state: "open", polledAt: new Date().toISOString() } },
     { id: "w_pr_b", kind: "github", target: "nubjs/nub#874", state: "armed", createdAt: "2026-07-18T08:12:00.000Z",
-      github: { checks: "passing", running: 0, passed: 29, failed: 0, skipped: 1, gated: 0, gating: [], failing: [], merge: "mergeable", state: "open", polledAt: "2026-07-18T09:10:00.000Z" } },
+      github: { checks: "passing", running: 0, passed: 29, failed: 0, skipped: 1, gated: 0, gating: [], failing: [], merge: "mergeable", state: "open", polledAt: new Date().toISOString() } },
     { id: "w_issue", kind: "github", subject: "issue", target: "colinhacks/frizz#61", state: "armed", createdAt: "2026-07-18T07:55:00.000Z",
       issue: { state: "open", title: "Ops panel lists every row", comments: 4, polledAt: "2026-07-18T09:10:00.000Z" } },
   ] : [],

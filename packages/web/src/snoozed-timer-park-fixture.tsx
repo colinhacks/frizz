@@ -121,7 +121,7 @@ const prPark = {
     createdAt: "2026-08-26T00:00:00.000Z",
     github: {
       checks: "passing", running: 0, passed: 10, failed: 0, failing: [],
-      merge: "mergeable", state: "open", polledAt: "2026-08-26T00:19:00.000Z",
+      merge: "mergeable", state: "open", polledAt: new Date().toISOString(),
     },
   }],
   lastActivityAt: "2026-08-26T00:15:00.000Z",

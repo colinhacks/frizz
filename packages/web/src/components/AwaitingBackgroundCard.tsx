@@ -27,7 +27,7 @@
 // short as 0.13s. This card is what makes that alternation legible.)
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, Radio, RefreshCw, TerminalSquare, X } from "lucide-react"
-import type { AwaitingHint, GithubIssueStatus, GithubWatchStatus, ThreadView, ThreadWatchView } from "@frizz/shared"
+import { githubReadingStale, shortCommit, type AwaitingHint, type GithubIssueStatus, type GithubWatchStatus, type ThreadView, type ThreadWatchView } from "@frizz/shared"
 import { awaitingFenceTitle, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
@@ -37,6 +37,7 @@ import { childThreadStartedAt, childThreadState } from "../lib/childThreads.ts"
 import { useChildThreads } from "../hooks.ts"
 import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels.ts"
 import { useNowMs } from "../lib/liveClock.ts"
+import { compactAge } from "../lib/activityTime.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { restingOnSteps } from "../lib/stepsAnswer.ts"
 import { openThread, pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
@@ -331,10 +332,15 @@ function ChecksInProgress() {
  *
  *  The CircleDashed arms stay on the app's `muted`, deliberately: "frizz has not polled this PR yet" is
  *  not a GitHub state, so no Primer colour means it. */
-function ChecksGlyph({ status }: { status: GithubWatchStatus | undefined }) {
+function ChecksGlyph({ status, now }: { status: GithubWatchStatus | undefined; now: number }) {
   if (!status) return <CircleDashed size={12} className={`${ON_CAP} text-muted-60`} />
   if (status.state === "merged") return <GitMerge size={12} className={ON_CAP} style={{ color: PRIMER.fgDone }} />
   if (status.state === "closed") return <GitPullRequestClosed size={12} className={ON_CAP} style={{ color: PRIMER.fgDanger }} />
+  // NO LIVE READING, THE SAME MARK AS NOT HAVING POLLED YET (2026-11-06). A red or green circle is the
+  // loudest claim on the row, and past githubReadingStale nobody is renewing it. A commit CI has not
+  // reported on takes the mark too, rather than the spinner: nothing has been seen moving, and the limit on
+  // that wait exists because sometimes nothing will.
+  if (githubReadingStale(status, now) || status.newHeadSince) return <CircleDashed size={12} className={`${ON_CAP} text-muted-60`} />
   if (status.checks === "failing") return <CircleX size={12} className={ON_CAP} style={{ color: PRIMER.fgDanger }} />
   if (status.checks === "passing") return <CircleCheck size={12} className={ON_CAP} style={{ color: PRIMER.fgSuccess }} />
   // GATED CI DOES NOT SPIN. `checks` reads `running` for it — correctly, since nothing has settled — but
@@ -374,15 +380,23 @@ export function checkCountLine(status: GithubWatchStatus): string {
  *
  *  Merged/closed outrank everything — a merged PR's CI is history. Otherwise the counts speak and the
  *  glyph beside them carries the verdict they used to spell out in prose. */
-export function watchStatusLine(status: GithubWatchStatus | undefined): string {
+export function watchStatusLine(status: GithubWatchStatus | undefined, nowMs = Date.now()): string {
   if (!status) return "Checking…" // frizz has not polled yet — NOT "no checks"
   if (status.state === "merged") return "Merged"
   if (status.state === "closed") return "Closed"
+  const commit = status.head ? shortCommit(status.head) : undefined
   const counts = checkCountLine(status)
   const merge = mergeClause(status)
   // "No checks" rather than an empty left half: a PR with no CI at all is a real state, and the wait
-  // then hangs entirely on the merge verdict beside it.
-  return [counts || "No checks", merge].filter((p): p is string => p !== null).join(" · ")
+  // then hangs entirely on the merge verdict beside it. A commit CI has not reported on yet is not that.
+  const lead = status.newHeadSince ? `Waiting for CI${commit ? ` on ${commit}` : ""}` : counts || "No checks"
+  const line = [lead, merge].filter((p): p is string => p !== null).join(" · ")
+  // WHICH COMMIT, AND WHEN (2026-11-06). The row has room for one fact, and this sentence is where the
+  // rest goes: the commit the verdict belongs to, and for a stale reading what it last said and how long ago.
+  const on = commit && !status.newHeadSince ? ` · on ${commit}` : ""
+  return githubReadingStale(status, nowMs)
+    ? `Last read ${compactAge(status.polledAt, nowMs)}: ${line}${on}`
+    : `${line}${on}`
 }
 
 /** THE ROW'S READING: ONE fact, the one that decides what the reader does next — and the whole sentence
@@ -398,13 +412,14 @@ export function watchStatusLine(status: GithubWatchStatus | undefined): string {
  *  required branch holds it, by the same rule mergeClause keeps). Failures outrank both: they are red on
  *  the glyph already, and the count is the link to them. Unpolled says "Checking…", never nothing — an
  *  unpolled PR and one with no CI are different facts (the second is simply silent). */
-export function watchCounterLine(status: GithubWatchStatus | undefined): string | undefined {
+export function watchCounterLine(status: GithubWatchStatus | undefined, nowMs = Date.now()): string | undefined {
   if (!status) return "Checking…"
-  if (status.state === "open" && status.failed === 0) {
+  // A merge fact goes as stale as a count, so neither of the two below may outrank the age.
+  if (status.state === "open" && status.failed === 0 && !githubReadingStale(status, nowMs)) {
     if (status.merge === "conflicting") return "conflicts"
     if (status.merge === "blocked" && status.checks === "passing") return "blocked"
   }
-  return checksCounterLabel(status)
+  return checksCounterLabel(status, nowMs)
 }
 
 // ---- ONE ROW SHAPE, EVERY KIND -------------------------------------------------------------------
@@ -637,6 +652,8 @@ export function GithubWatchRow({ watch }: { watch: ThreadWatchView }) {
   if (watch.subject === "issue") return <GithubIssueWatchRow watch={watch} />
   const status = watch.github
   const url = githubRefUrl(watch.target)
+  // The clock is what ages a reading: when polling stops, no board update will ever redraw this row.
+  const now = useNowMs()
   // Queue the hovercard fetch at render time, the same contract prose keeps (useGithubHovercardRefs):
   // the delegated pointerover asks again just in time, but pre-noting means the first hover is never
   // blank. Only a ref that resolved to a URL — the card is keyed by the same `owner/repo#N`.
@@ -647,18 +664,19 @@ export function GithubWatchRow({ watch }: { watch: ThreadWatchView }) {
     <WaitRow
       testKind="github"
       testId={watch.target}
-      mark={<ChecksGlyph status={status} />}
+      mark={<ChecksGlyph status={status} now={now} />}
       name={watch.target}
       href={url ?? undefined}
       ghRef={url ? watch.target : undefined}
-      title={url ? `Open ${watch.target} on GitHub — ${watchStatusLine(status)}` : watch.target}
+      title={url ? `Open ${watch.target} on GitHub — ${watchStatusLine(status, now)}` : watch.target}
       status={
         // THE FAILED COUNT IS THE LINK TO THE FAILURES (maintainer 2026-08-15: "there should just be a
         // button to view the failures, and it can just link out to the PR"). It was a separate "view
         // failures" link after the counts until 2026-10-08; the count itself now goes to the PR's own
         // CHECKS tab, which is where the failures are, so the button costs no words of its own.
         // `relative` lifts it over the stretched overlay so it keeps its own click.
-        status && status.state === "open" && status.failed > 0 && url
+        // A stale reading's age is not that count, so it links nowhere.
+        status && status.state === "open" && status.failed > 0 && url && !githubReadingStale(status, now)
           ? (
             <a
               href={`${url}/checks`}
@@ -668,10 +686,10 @@ export function GithubWatchRow({ watch }: { watch: ThreadWatchView }) {
               onMouseDown={(e) => e.stopPropagation()}
               className={`relative underline underline-offset-2 ${PRIMER_DANGER_LINK}`}
             >
-              {watchCounterLine(status)}
+              {watchCounterLine(status, now)}
             </a>
           )
-          : watchCounterLine(status)
+          : watchCounterLine(status, now)
       }
     />
   )

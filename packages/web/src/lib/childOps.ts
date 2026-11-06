@@ -1,3 +1,6 @@
+import { githubReadingStale } from "@frizz/shared"
+import { compactAge } from "./activityTime.ts"
+
 // ── THE CHILD-OPERATION ROW VOCABULARY ───────────────────────────────────────────────────────────
 //
 // Four surfaces list a thread's CHILD operations — the sidebar rail's sub-agent rows, a queue card's
@@ -129,12 +132,23 @@ export function shellLinesLabel(lines: number | undefined): string | undefined {
 // full sentence rides its tooltip. The order is the same severity order the card's line uses, so the two
 // surfaces can never lead on different numbers: what is red first, then what is waiting on a human, then
 // what is still moving, then what passed.
+//
+// AN OLD READING IS NOT A COUNT (2026-11-06; the doc comment on `polledAt` had asked for this since 2026-08).
+// When polling fails or is deferred the book simply stops changing, so "29 green" stood indefinitely, drawn
+// exactly as it is drawn a minute after the poll. Past githubReadingStale the label is the reading's age
+// instead, ahead of every count: the reader's question is "is this true?", and the honest answer is "not
+// known since then". The count it was is in the tooltip (watchStatusLine). Nothing is added while a reading
+// is fresh, because this column is a glance and the maintainer is picky about what it carries.
+//
+// NEW COMMIT, NOTHING REPORTED: the server's `newHeadSince`, read as what it is rather than as "no CI".
 export function checksCounterLabel(status: {
-  checks: string; failed: number; gated: number; running: number; passed: number; state: string
-} | undefined): string | undefined {
+  checks: string; failed: number; gated: number; running: number; passed: number; state: string; polledAt?: string; newHeadSince?: string
+} | undefined, nowMs = Date.now()): string | undefined {
   // Not polled yet is not a reading. The row's own liveness mark already says the watcher is armed.
   if (!status) return undefined
   if (status.state !== "open") return status.state
+  if (githubReadingStale(status, nowMs)) return staleReadingLabel(status.polledAt, nowMs)
+  if (status.newHeadSince) return "waiting for CI"
   if (status.failed > 0) return `${status.failed} failed`
   // "held" rather than "gated": the row has ~10 characters, and the operator's question is whether
   // something is stuck, not which GitHub noun describes it.
@@ -142,6 +156,11 @@ export function checksCounterLabel(status: {
   if (status.running > 0) return `${status.running} running`
   if (status.passed > 0) return `${status.passed} green`
   return undefined // a PR with no CI at all — nothing to count, and "0" would imply otherwise
+}
+
+/** `as of 12m ago`, the words a stale reading's row says instead of its count. */
+export function staleReadingLabel(polledAt: string | undefined, nowMs: number): string {
+  return `as of ${compactAge(polledAt, nowMs)}`
 }
 
 /** The issue twin of `checksCounterLabel`: "closed" once it is, else the comment count — the glance that
