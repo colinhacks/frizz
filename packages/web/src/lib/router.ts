@@ -1,5 +1,5 @@
 import { subscribe } from "valtio"
-import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, takeQueueCardNavigation } from "../store.ts"
+import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, paneEnabled, takeQueueCardNavigation } from "../store.ts"
 import { innerPath, outerPath, projectHref } from "./base-path.ts"
 import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 
@@ -58,11 +58,25 @@ export function applyPath(path: string): void {
     const slug = decodeSegment(thread[1])
     if (slug === null) {
       store.routeThreadSlug = null
+      store.paneSlug = null
       closeDrawersById(store.drawers.map((d) => d.id))
       store.view = "todos"
       return
     }
     store.view = "todos"
+    // THE PANE (prototype): the address names what the pane shows. A path it already shows is this
+    // sync coming back around, and the sheets over it stay. Anything else is Back, Forward or a link:
+    // parked like any thread path, with the board's App settling it through pushDrawer (store.ts).
+    if (paneEnabled()) {
+      if (store.paneSlug === slug) {
+        store.routeThreadSlug = null
+        return
+      }
+      closeDrawersById(store.drawers.map((d) => d.id))
+      store.paneSlug = null
+      store.routeThreadSlug = slug
+      return
+    }
     // Back/forward landed on a thread path: if that thread is somewhere in the stack, unwind ABOVE
     // it and we're done — the surface it asks for is already up.
     const idx = store.drawers.findIndex((d) => d.kind === "thread" && d.slug === slug && !d.closing)
@@ -92,6 +106,7 @@ export function applyPath(path: string): void {
   const status = path.match(/^\/status\/([^/]+)$/)
   if (status) {
     store.routeThreadSlug = null
+    store.paneSlug = null
     closeDrawersById(store.drawers.map((d) => d.id))
     const statusName = decodeSegment(status[1])
     store.view = statusName === null ? "todos" : `status:${statusName}`
@@ -99,6 +114,7 @@ export function applyPath(path: string): void {
   }
   // Everything else is the queue; Back past the last thread layer unwinds the stack (animated).
   store.routeThreadSlug = null
+  store.paneSlug = null
   closeDrawersById(store.drawers.map((d) => d.id))
   store.view = "todos"
 }

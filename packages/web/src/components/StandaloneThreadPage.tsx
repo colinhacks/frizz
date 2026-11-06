@@ -37,7 +37,7 @@ import { useQuery } from "@tanstack/react-query"
  * without either column having to change size to get there.
  */
 const PANE_W = `max(50%, calc(100% - ${SHEET_BASE_WIDTH}px))`
-const LAYOUT_VARS = {
+export const LAYOUT_VARS = {
   "--full-thread": `min(${SHEET_BASE_WIDTH}px, ${PANE_W})`,
   // Below the split there is no rail and no viewer, so the column simply takes the page under the cap
   // — which is the DRAWER's width, so the two surfaces agree and the morph between them is a translate.
@@ -231,7 +231,7 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
 // arrive. The rail stays MOUNTED under the pane — its live rows keep polling — but goes inert, so
 // nothing hidden can take focus or a click. Readers stay mounted under each new layer, including
 // during its slide-out, so dismissing a file reveals exactly the reading position beneath it.
-function SidePane({ slug, thread }: { slug: string; thread: ThreadView }) {
+export function SidePane({ slug, thread }: { slug: string; thread: ThreadView }) {
   const snap = useSnapshot(store)
   return (
     <div

@@ -16,6 +16,10 @@ export const ThreadSlugContext = createContext<string | null>(null)
 export interface SurfaceExit {
   dismiss: () => void
   cancel: () => void
+  // What a SEND does, where that differs from dismissing (prototype, the one-thread pane): a thread the
+  // human just replied to may stay on screen, while Done and Snooze always move on. Absent ⇒ a send
+  // dismisses, which is the queue card.
+  sent?: () => void
 }
 
 // A QUEUE card provides this so any in-transcript dismissal control — the ```done fence's Mark-as-done

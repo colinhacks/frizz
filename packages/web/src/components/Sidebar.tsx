@@ -221,7 +221,10 @@ export function Sidebar() {
   // The two bands of the Active section: RESTED is the cue (one row per queue card), RUNNING the rows
   // with no card. Split here rather than at the render so the scroll marker can be told the cue's order.
   const { running, rested } = useMemo(() => partitionActive(activeThreads), [activeThreads])
-  const { railRef, activeId, navigateToQueueCard } = useQueueScrollspy(snap.view, snap.drawers.length, rested.map((t) => t.id))
+  const spy = useQueueScrollspy(snap.view, snap.drawers.length, rested.map((t) => t.id))
+  const { railRef, navigateToQueueCard } = spy
+  // THE PANE (prototype): the marked row is the thread on screen, not a card under a reading line.
+  const activeId = snap.paneSlug ?? spy.activeId
   // A dispatch from the prompt box above, drawn as the Running row it is about to become — see StartingRow.
   // The board's ids are only gathered while one is pending.
   const pending = usePendingDispatches(useProjectScope())
@@ -342,7 +345,7 @@ export function Sidebar() {
                   reader — and the marker is handed to the row that took its place (markerRow). */}
               {running.map((t) => (
                 <div key={t.id}>
-                  <ThreadRow t={t} onQueueNavigate={navigateToQueueCard} />
+                  <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={navigateToQueueCard} />
                   <SubAgentRows t={t} />
                 </div>
               ))}
@@ -930,7 +933,7 @@ export const ThreadRow = memo(function ThreadRow({
   return (
     <div
       data-sidebar-item={t.id}
-      className={`group relative flex min-w-0 items-start rounded-md transition-[color,opacity] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-hover after:opacity-0 after:transition-opacity hover:after:opacity-100 ${legacy ? "opacity-80" : dim ? "sidebar-row-dim" : ""}`}
+      className={`group relative flex min-w-0 items-start rounded-md transition-[color,opacity] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-hover after:transition-opacity hover:after:opacity-100 ${active ? "after:opacity-100" : "after:opacity-0"} ${legacy ? "opacity-80" : dim ? "sidebar-row-dim" : ""}`}
     >
       {/* The reading position owns a real, in-row rail rather than borrowing the status-icon column.
           The marker spans the row's complete visual height, including wrapped titles and subtitles,

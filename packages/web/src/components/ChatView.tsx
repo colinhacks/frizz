@@ -35,7 +35,7 @@ import { parseSentContext, splitProseByTokens, tokenLabel, type SentContextItem 
 import { AnswersCard } from "./AnswersCard.tsx"
 import { DividerQuotedTitle, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
 import { usePromptBoxSends } from "../lib/sendScope.tsx"
-import { QueueDismissContext, QueuedRunContext, ThreadSlugContext } from "../lib/threadContexts.ts"
+import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { ThreadSurface, useThreadMessages, useThreadSurface, useThreadTranscript, type ThreadTranscript } from "./ThreadSurface.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
@@ -172,7 +172,15 @@ function useChildDrillSlug(): string | null {
 // desktop chrome on every width; a phone never links to it. (Desktop had a lifecycle footer under the
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
-export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean }) {
+/** What the one-thread pane hands the thread view it hosts (prototype): where acting on the thread takes
+ *  the human, whether the header offers full screen, and the queue's position beside the header's verbs. */
+export interface ThreadPaneHooks {
+  exit: SurfaceExit
+  expand: boolean
+  stepper?: ReactNode
+}
+
+export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
   const thread = useThreadSnapshot(slug)
   const phone = useIsMobile() && onClose !== undefined
   // THE RAIL IS BESIDE THIS THREAD — the /full page's own column (`showReturnToQueue` is passed by
@@ -187,16 +195,17 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
       slug={slug}
       phone={phone}
       railBeside={showReturnToQueue && splitFileViewer}
+      pane={pane}
       header={phone ? (
         <MobileThreadHeader slug={slug} onClose={onClose} />
       ) : (
-        <ThreadHeader slug={slug} onStatusApplied={onStatusApplied} onClose={onClose} showReturnToQueue={showReturnToQueue} />
+        <ThreadHeader slug={slug} onStatusApplied={onStatusApplied} onClose={onClose} showReturnToQueue={showReturnToQueue} pane={pane} />
       )}
     />
   )
 }
 
-function ChatView({ slug, phone = false, railBeside = false, header }: { slug: string; phone?: boolean; railBeside?: boolean; header: ReactNode }) {
+function ChatView({ slug, phone = false, railBeside = false, header, pane }: { slug: string; phone?: boolean; railBeside?: boolean; header: ReactNode; pane?: ThreadPaneHooks }) {
   const boardThread = useThreadSnapshot(slug)
   // Freshness is centrally managed (transcript-live.ts keeps every observed transcript live); `poll`
   // only gates the SSE-fallback interval for a running thread.
@@ -257,7 +266,7 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
   // message carries, which answers it pairs with. This component decides only how the drawer and the
   // full-screen page lay those out. `messages` and `presentationMessages` share their indices, so the
   // model's answers address the rows below directly.
-  const surface = useThreadSurface({ slug, thread, messages, openQuestions, settledQuestions })
+  const surface = useThreadSurface({ slug, thread, messages, openQuestions, settledQuestions }, pane ? { exit: pane.exit } : undefined)
   const { inFlightAnswers } = surface.transcript
   // Question-block interactivity in the thread view: EVERY ask stays answerable, wherever it sits —
   // scroll back to a question a sub-agent return / the agent's own continuation buried and answer it in
@@ -350,7 +359,7 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
           earlierError={earlierError}
           loadEarlier={() => void loadEarlier()}
           jumpOverlay={jumpOverlay}
-          openAtLastMessage={phone && !running}
+          openAtLastMessage={(phone || pane !== undefined) && !running}
         />
       ) : (
       <>
@@ -614,6 +623,7 @@ export function RuntimeStatusLadder({
   liveToolRun,
   onRestingExit,
   onRestingExitFailed,
+  onRestingReplied,
   wrap,
 }: {
   state: RuntimeStatusState
@@ -628,6 +638,8 @@ export function RuntimeStatusLadder({
    *  server declines. RuntimeStatusSlot passes the surface's exit; off the queue there is none. */
   onRestingExit?: () => void
   onRestingExitFailed?: () => void
+  /** The steps reply where a send does not dismiss (prototype, the one-thread pane). */
+  onRestingReplied?: () => void
   /** The queue card's narrower column: the done card wraps its prose there (FenceCard `wrap`). */
   wrap?: boolean
 }) {
@@ -646,7 +658,7 @@ export function RuntimeStatusLadder({
     case "snooze":
       return <SnoozeCard thread={thread!} />
     case "resting":
-      return <AwaitingBackgroundCard thread={thread!} onSnooze={onRestingExit} onSnoozeFailed={onRestingExitFailed} onReplied={onRestingExit} onReplyFailed={onRestingExitFailed} />
+      return <AwaitingBackgroundCard thread={thread!} onSnooze={onRestingExit} onSnoozeFailed={onRestingExitFailed} onReplied={onRestingReplied ?? onRestingExit} onReplyFailed={onRestingExitFailed} />
     // THE THREAD'S OWN ENDING, for a sign-off that came in as a tool call rather than a fence: the same
     // card the fence draws, in the slot the fence would have occupied at the transcript's end. Below
     // everything because `done` refuses while anything above could still be true — an open question or an
@@ -750,6 +762,7 @@ export function RuntimeStatusSlot({ tail, wrap }: { tail: RuntimeTail; wrap?: bo
         liveToolRun={tail.liveToolRun}
         onRestingExit={exit?.dismiss}
         onRestingExitFailed={exit?.cancel}
+        onRestingReplied={exit?.sent}
         wrap={wrap}
       />
       {thread?.permPolicy ? (
@@ -1584,7 +1597,7 @@ function JumpToLatest({ overlay, hidden, onJump }: { overlay: HTMLElement | null
 // shared HeaderActions closed by the two lifecycle verbs, snooze and mark as done (ThreadLifecycleActions)
 // — the same strip the queue card's header draws. It carried a Chat|Doc tab strip until 2026-08-06; see
 // ThreadView for why that went.
-export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue = false }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean }) {
+export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
   const thread = useThreadSnapshot(slug)
   const markComplete = useMutation({ mutationFn: () => rpc.markComplete({ slug }) })
   // The "Frizz document" header affordance opens .frizz/<slug>.md (threadBody). Many session threads have
@@ -1627,6 +1640,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
         {/* `gap-0.5` — the action strip's own distance (HeaderActions spaces its icons on the same one),
             so the lifecycle verbs that close the strip stand in the row's rhythm. */}
         <div className="flex shrink-0 items-center gap-0.5">
+          {pane?.stepper}
           <HeaderActions
             thread={thread}
             // The /full page is the one surface with a fullscreen to LEAVE, and it leaves through the
@@ -1635,16 +1649,16 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
             // The fullscreen door, in the slot the queue card's sits in (before Retry) — only where there
             // is a drawer to leave, since the /full page is already there. The drawer mounted its own
             // after the whole strip until 2026-10-09, so the icon sat on the other side of Retry here.
-            expand={Boolean(onClose)}
+            expand={Boolean(onClose) || pane?.expand === true}
             onDoc={hasDoc ? () => pushDrawer("doc", thread.id) : undefined}
-            onDone={() => markComplete.mutate(undefined, { onSuccess: onStatusApplied })}
+            onDone={() => markComplete.mutate(undefined, { onSuccess: onStatusApplied ?? pane?.exit.dismiss })}
             doneBusy={markComplete.isPending}
             onStatusApplied={onStatusApplied}
           />
           {/* Snooze leaves the drawer the way Mark as done does — both take the thread off the reader's
               plate, and the queue card leaves on both (maintainer 2026-10-09). The snooze left the drawer
               open until then. */}
-          <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied} onSnoozed={onStatusApplied} />
+          <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied ?? pane?.exit.dismiss} onDismissCancel={pane?.exit.cancel} onSnoozed={onStatusApplied ?? pane?.exit.dismiss} />
         </div>
       </div>
     </header>

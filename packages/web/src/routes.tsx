@@ -16,6 +16,7 @@ import { ownedByThisPage } from "./lib/projectOwnership.ts"
 import { choseProjects, setHomeView, useHomeView, withoutProjectsChoice } from "./lib/homeView.ts"
 import { useConsoleFeedProjects } from "./lib/consoleProjects.ts"
 import { HomeSwitcher } from "./components/HomeSwitcher.tsx"
+import { paneProto } from "./lib/threadPane.ts"
 import { useIsMobile } from "./lib/mobile.ts"
 
 // THE ROUTE TREE — and, more to the point, the LAYOUT that outlives a navigation.
@@ -76,13 +77,20 @@ function RootLayout() {
       </div>
       {/* The Console's placement of the Projects | Console pill. The grid draws its own, at the head of
           the page (HomeSwitcher.tsx). */}
-      {isConsolePath(pathname) && !isMobile ? <HomeSwitcher railVisible={railVisible} /> : null}
+      {isConsolePath(pathname) && !isMobile ? <ConsoleHomeSwitcher railVisible={railVisible} /> : null}
       {/* HOSTED BY THE LAYOUT, not by the board: the toaster lived inside <App/>, so `showToast` from
           anywhere else raised a toast with nowhere to render — silently, since the store field is set
           either way. The full-screen page, outside this layout, mounts the same set (PageHosts). */}
       <PageHosts />
     </TooltipProvider>
   )
+}
+
+// THE ONE-THREAD PANE (prototype): the pill's corner belongs to the sidebar, which full screen puts away.
+function ConsoleHomeSwitcher({ railVisible }: { railVisible: boolean }) {
+  const { folded } = useSnapshot(paneProto)
+  const { paneSlug } = useSnapshot(store)
+  return folded && paneSlug ? null : <HomeSwitcher railVisible={railVisible} />
 }
 
 /**

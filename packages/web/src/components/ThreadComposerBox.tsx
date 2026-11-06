@@ -26,6 +26,7 @@ import { RegisteredAnsweringContext } from "./RegisteredQuestionCards.tsx"
 import { SendScopeContext } from "../lib/sendScope.tsx"
 import { useStepsAnswer, withStepsDone } from "../lib/stepsAnswer.ts"
 import { sendPlaceholder, setSendMode, useSendMode } from "../lib/sendMode.ts"
+import { QueueDismissContext } from "../lib/threadContexts.ts"
 import { QueuedRunContext } from "../lib/threadContexts.ts"
 import { useThreadSurfaceBox } from "./ThreadSurface.tsx"
 
@@ -166,6 +167,7 @@ function LocalThreadComposerBox({
   // surface around it simply has nothing staged.
   const registered = useContext(RegisteredAnsweringContext)
   const scope = useContext(SendScopeContext)
+  const surfaceExit = useContext(QueueDismissContext)
   // …and a steps card's ticked "I have completed this" box, which is answered the same way (lib/
   // stepsAnswer). It reads the thread rather than a context: the card and this box address one draft.
   const stepsAnswer = useStepsAnswer(thread)
@@ -301,7 +303,10 @@ function LocalThreadComposerBox({
       },
     }
     if (submitOverride) submitOverride(outgoing, callbacks)
-    else followUp.submit(outgoing, { ...callbacks, interrupt })
+    else {
+      followUp.submit(outgoing, { ...callbacks, interrupt })
+      surfaceExit?.sent?.()
+    }
   }
 
   // Register this box as its surface's send, so Enter in a question card's own text box — and the
