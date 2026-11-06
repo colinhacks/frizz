@@ -220,7 +220,9 @@ function PaneStepper({ slug }: { slug: string }) {
   if (queue.length === 0) return null
   const at = queue.findIndex((t) => t.id === slug)
   return (
-    <span data-pane-stepper className="mr-1 flex shrink-0 items-center">
+    // The two chevrons read as one control: 14.5px of ink between them, the distance from the count to the
+    // first. Their boxes alone put 20.5px there (measured at 1440px, dsf 6; count and chevron share a centre).
+    <span data-pane-stepper className="flex shrink-0 items-center">
       <span data-pane-position className="mr-1 text-[12px] tabular-nums text-muted-80">{at === -1 ? `${queue.length} waiting` : `${at + 1} of ${queue.length}`}</span>
       <Tooltip label="Previous in queue (⌥↑)">
         <button type="button" aria-label="Previous in queue" disabled={at <= 0} onMouseDown={(e) => e.preventDefault()} onClick={() => stepPane(-1)} className={`${HEADER_ICON_CLASS} disabled:opacity-30`}>
@@ -228,7 +230,7 @@ function PaneStepper({ slug }: { slug: string }) {
         </button>
       </Tooltip>
       <Tooltip label="Next in queue (⌥↓)">
-        <button type="button" aria-label="Next in queue" disabled={at === queue.length - 1} onMouseDown={(e) => e.preventDefault()} onClick={() => stepPane(1)} className={`${HEADER_ICON_CLASS} disabled:opacity-30`}>
+        <button type="button" aria-label="Next in queue" disabled={at === queue.length - 1} onMouseDown={(e) => e.preventDefault()} onClick={() => stepPane(1)} className={`${HEADER_ICON_CLASS} -ml-1.5 disabled:opacity-30`}>
           <ChevronDown size={15} strokeWidth={2} />
         </button>
       </Tooltip>
