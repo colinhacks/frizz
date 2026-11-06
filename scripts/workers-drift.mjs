@@ -42,11 +42,11 @@
 // read has its own secret, `CLOUDFLARE_CLAIMS_READ`: made in the dashboard, Workers KV Storage Read on the
 // Frizz account and nothing else. A new key on the board means changing BASELINE in the same commit.
 //
-// THE MAINTAINER'S OWN TOKEN is what this most has to catch. Keyward holds a Cloudflare token that can
-// deploy these Workers and tail them, behind one Touch ID and no reviewer, so an upload by it must fail
-// however it is stamped: CI's token belongs to the account, and a version authored by a member's address
-// did not come from CI, whatever WORKERS_CI_AUTHOR says. A tail leaves no version, so it, and every other
-// change CI would not make, is read from the audit log.
+// A MEMBER'S OWN TOKEN is what this most has to catch. The one Keyward holds has been unable to upload,
+// tail or write KV since 2026-11-06, but a member can make one in the dashboard that can, with no reviewer,
+// so an upload by a member must fail however it is stamped: CI's token belongs to the account, and a
+// version authored by a member's address did not come from CI, whatever WORKERS_CI_AUTHOR says. A tail
+// leaves no version, so it, and every other change CI would not make, is read from the audit log.
 //
 // WHAT IT READS. The ACTIVE deployment always (the newest; it serves 100% of traffic unless a split
 // names two versions, and then both are checked), plus every deployment and every version created in
