@@ -269,10 +269,12 @@ kbd {
 .row { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: clamp(36px, 5vw, 72px); align-items: center; }
 .row.flip { grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); }
 .row.flip .row-text { order: 2; }
-.row-shot.narrow { justify-self: end; width: 100%; max-width: 540px; }
-.row.flip .row-shot.narrow { justify-self: start; } /* hugs the page's edge, so a row opening a division lines up with the H2 above it */
+/* A narrow shot's column is only as wide as the shot, so the gap to the text matches every other row's. */
+.row.fit { grid-template-columns: minmax(0, 1fr) minmax(0, 540px); }
+.row.fit.flip { grid-template-columns: minmax(0, 540px) minmax(0, 1fr); }
+.row-shot.narrow { justify-self: center; width: 100%; max-width: 540px; }
 /* The drill-down: a row whose shot is bigger and a whole window, so each view can be told from the last. */
-.row.level { grid-template-columns: minmax(0, 3fr) minmax(0, 8fr); gap: clamp(32px, 3.6vw, 52px); }
+.row.level { grid-template-columns: minmax(0, 3fr) minmax(0, 8fr); }
 .row.level.flip { grid-template-columns: minmax(0, 8fr) minmax(0, 3fr); }
 .big-shot img { border-radius: 16px; }
 /* A big shot as a whole window: the hero's toolbar over the page it is showing. */
@@ -449,8 +451,7 @@ kbd {
   :root { --shadow-object: var(--shadow-small); }
   .nav-links .opt-link { display: none; }
   .fit-grid { grid-template-columns: 1fr; gap: 36px; }
-  .row, .row.flip, .row.level, .row.level.flip { grid-template-columns: 1fr; gap: 28px; }
-  .row-shot.narrow, .row.flip .row-shot.narrow { justify-self: center; }
+  .row, .row.flip, .row.fit, .row.fit.flip, .row.level, .row.level.flip { grid-template-columns: 1fr; gap: 28px; }
   .row.flip .row-text { order: 0; }
   .features { gap: 88px; }
   .not-grid { grid-template-columns: 1fr; grid-template-rows: none; gap: 14px; margin-top: 40px; }
