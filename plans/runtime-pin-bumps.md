@@ -67,7 +67,7 @@ A version gate proves Frizz is talking to the right binary. It says nothing abou
 
 **It SKIPS when nothing on the machine was written by the new pin, which is the state every bump leaves behind.** A skip is not a pass; it means the format is unproven. So after bumping:
 
-1. Write a real session on each backend you moved, without restarting the server: `claude-probe.mjs` for Claude, one `codex exec` on the pin for Codex. The gate skips a transcript touched in the last ten minutes, so wait that long.
+1. Write a real session on each backend you moved, without restarting the server: `claude-probe.mjs` for Claude, one `codex exec` on the pin for Codex. That turn has to run a shell command, because the gate fails a rollout with no `tool-call` ("Reply with ok" wrote one on 0.167.0), and it needs `</dev/null`, because `codex exec` under a worker's shell otherwise waits on stdin forever. A server restart sweeps the provisioned build away, so re-run `provision.mjs codex` if the binary has gone. The gate skips a transcript touched in the last ten minutes, so wait that long.
 2. `nub run test packages/server/src/backend/log-format-conformance.test.ts` and confirm it reports `pass`, not `skipped`.
 
 If it fails, the vendor moved the format and the parser — `parseCodexLine` in [`codex.ts`](../packages/server/src/backend/codex.ts), `applyRecord` in [`tailer.ts`](../packages/server/src/tailer.ts) — is what has to change. Capture a redacted rollout into `codex.fixtures/` alongside the existing ones as the regression pin, the way `multi-agent-0153.jsonl` records the last such move.

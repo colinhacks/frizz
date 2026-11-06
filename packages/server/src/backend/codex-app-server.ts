@@ -80,7 +80,7 @@ export function selectCodexHostKind(
   if (flagValue === "1" || flagValue === "true") return nativeSupported ? "native" : "daemon"
   return nativeSupported ? "native" : "daemon"
 }
-export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.166.0"
+export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.167.0"
 // Upgrade policy: the AUDITED version is an exact coordinate — changing it requires a fresh
 // generated-protocol audit plus a source audit at the matching immutable Rust tag/commit, then a new
 // fingerprint and contract fixtures. These coordinates are intentionally runtime-visible diagnostics,
@@ -89,8 +89,8 @@ export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.166.0"
 // The ACCEPTANCE RULE is deliberately not that exact coordinate — see codexVersionVerdict below.
 export const CODEX_APP_SERVER_PROTOCOL_REVISION = Object.freeze({
   packageVersion: CODEX_APP_SERVER_SUPPORTED_VERSION,
-  sourceTag: "rust-v0.166.0",
-  sourceCommit: "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+  sourceTag: "rust-v0.167.0",
+  sourceCommit: "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a",
 })
 /** Numeric semver compare; a version that will not parse sorts BELOW everything (fails closed). */
 export function compareCodexVersions(a: string, b: string): number {
