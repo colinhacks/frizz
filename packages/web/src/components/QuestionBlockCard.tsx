@@ -250,10 +250,13 @@ export function QuestionBlockCard({
             // Safari), the same rule the option rows use, so the browser places the digit and the text on
             // one line at every zoom. A hand-set `top-[7px]` measured 0.8px high at 110% zoom and 0.4px
             // low at 600%: the two snapped to device pixels independently. The -mr cancels the number's
-            // 13px + 16px, so the box still starts at the row's left edge.
+            // 13px + 16px, so the box still starts at the row's left edge. `relative` with NO z-index is
+            // what lifts it over the box's fill, which is not positioned: a z-10 here tied the thread's
+            // sticky header and, later in the DOM, won, so the letter stayed lit across the header as the
+            // card scrolled (2026-11-06).
             <div className={`relative col-span-full${parsed.options.length > 0 ? " flex items-baseline" : ""}`}>
             {parsed.options.length > 0 && (
-              <span className="pointer-events-none relative z-10 ml-[13px] -mr-[29px] flex">
+              <span className="pointer-events-none relative ml-[13px] -mr-[29px] flex">
                 <OptionId id={optionLetter(parsed.options.length).slice(0, -1)} live />
               </span>
             )}

@@ -45,6 +45,8 @@ export interface RemoteControllerOptions {
   /** A line for the operator's terminal, for the warnings that must not only go to the log file. */
   say: (message: string) => void;
   home?: string;
+  /** How often a served name renews its lease. Only a test sets this. */
+  leaseRenewalMs?: number;
 }
 
 export interface RemoteController {
@@ -64,14 +66,34 @@ export interface RemoteController {
   stop(): void;
 }
 
+/**
+ * A lease lasts 30 days. Until 2026-11-06 only a launch renewed one, so a launcher left running that
+ * long lost its name to the registrar's daily sweep while still serving it, and anyone could claim it.
+ */
+const LEASE_RENEWAL_MS = 24 * 60 * 60_000;
+
 export function createRemoteController(options: RemoteControllerOptions): RemoteController {
   const home = options.home ?? homedir();
   let config: CloudConfig | null = null;
   let transport: CloudTransport | null = null;
+  let leaseRenewal: ReturnType<typeof setInterval> | null = null;
 
   const stopTransport = () => {
+    if (leaseRenewal) clearInterval(leaseRenewal);
+    leaseRenewal = null;
     transport?.stop();
     transport = null;
+  };
+
+  const keepLease = (next: CloudConfig) => {
+    leaseRenewal = setInterval(() => {
+      resolveRunToken(next, options.port, home).catch((error: unknown) => {
+        const message = `could not renew ${next.hostname}, which lapses 30 days after its last renewal: ${error instanceof Error ? error.message : error}`;
+        options.log.warn("cloud", message);
+        options.say(message);
+      });
+    }, options.leaseRenewalMs ?? LEASE_RENEWAL_MS);
+    leaseRenewal.unref();
   };
 
   const startTransport = async (next: CloudConfig, justClaimed: boolean): Promise<void> => {
@@ -86,6 +108,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
         });
       }
       transport = await startRelay(next, await options.host.relayListener(), home, (message) => options.log.info("relay", message));
+      keepLease(next);
       options.log.info("relay", `serving ${next.hostname} through the Frizz relay`);
       return;
     }
@@ -113,6 +136,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
       home,
       runToken ?? undefined,
     );
+    if (isClaimedConfig(next)) keepLease(next);
     options.log.info("tunnel", `running cloudflared for ${next.hostname}`);
   };
 

@@ -500,7 +500,8 @@ export function deliverCodexWake(deps: {
  * outright now); route through the bridge, which reconnects the live daemon's socket or cold-resumes a
  * dead one. Returns the promise so the scheduler owns the retry/supersede policy (see
  * deliverCodexWake for why detaching it loses the wake silently).
- * The worker system prompt is rebuilt so a cold resume re-applies it (ignored when the daemon is live).
+ * The worker system prompt is rebuilt for a cold resume, though Claude Code 2.1.318 keeps sending the one
+ * the thread started with (workerPrompt.ts), and a live daemon ignores it.
  */
 export function deliverClaudeBrokerWake(deps: {
   bridge: Pick<ClaudeAgentBrokerBridge, "followUp">

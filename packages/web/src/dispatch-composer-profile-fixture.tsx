@@ -12,7 +12,8 @@ const codexModels: CodexModel[] = [
 ]
 
 let preferences: DispatchPreferences = {
-  backend: "codex",
+  // `?backend=claude` opens on a Claude model, where the prompt box has its permission selector.
+  backend: new URL(window.location.href).searchParams.get("backend") === "claude" ? "claude" : "codex",
   claude: { permissionMode: "auto" },
   codex: { model: "gpt-5.6-sol", effort: "medium", permissionMode: "default" },
 }

@@ -36,6 +36,12 @@
 // ruleset, a new member. Changing any of those on purpose means changing BASELINE in the same commit.
 // API tokens are not on the list, so each sitting's `cloudflare-tokens.mjs --audit` reads those.
 //
+// A NAME THE MAINTAINER'S DEVICES TRUST, in BASELINE.claims with the public key that owns it. A write to
+// the registry re-points a name to another board and leaves no version and no audit event, so this reads
+// the row itself. Only a user-owned token can read KV (an account-owned one gets 401, 2026-11-06), so this
+// read has its own secret, `CLOUDFLARE_CLAIMS_READ`: made in the dashboard, Workers KV Storage Read on the
+// Frizz account and nothing else. A new key on the board means changing BASELINE in the same commit.
+//
 // THE MAINTAINER'S OWN TOKEN is what this most has to catch. Keyward holds a Cloudflare token that can
 // deploy these Workers and tail them, behind one Touch ID and no reviewer, so an upload by it must fail
 // however it is stamped: CI's token belongs to the account, and a version authored by a member's address
@@ -69,6 +75,9 @@ export const DEPLOY_ENVIRONMENT = "workers-deploy"
 // The step of that workflow that uploads. Renaming it there fails every deploy's check here.
 export const DEPLOY_STEP = "Deploy"
 export const LOOKBACK_MS = 2 * 60 * 60 * 1000
+export const CLAIMS_NAMESPACE = "aa4a9c11473d4511a556e3e3a6857058"
+// A claim lapses 30 days after its last renewal, and then anyone can have the name.
+const CLAIM_RENEWAL_ALARM_MS = 25 * 24 * 60 * 60 * 1000
 // Cloudflare's and GitHub's clocks, and the gap between the run starting and wrangler's first call.
 const SKEW_MS = 2 * 60 * 1000
 const CI_MESSAGE = /^ci:([0-9a-f]{40}) run:(\d+)$/
@@ -96,6 +105,7 @@ export const BASELINE = {
       crons: ["17 4 * * *"],
     },
   },
+  claims: {},
 }
 
 /** The sha and run id a CI deploy stamps, or null for any other message. */
@@ -114,6 +124,20 @@ export function cloudflareClient(token, { base = "https://api.cloudflare.com/cli
       throw new Error(`Cloudflare ${path}: HTTP ${response.status}${errors ? ` (${errors})` : ""}`)
     }
     return body.result
+  }
+}
+
+/** Reads one name's row from the registry: the parsed record, or null for no row. Throws on any error. */
+export function claimReader(token, { base = "https://api.cloudflare.com/client/v4" } = {}) {
+  return async (name) => {
+    const key = encodeURIComponent(`claim:${name}`)
+    const response = await fetch(`${base}/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${CLAIMS_NAMESPACE}/values/${key}`, { headers: { authorization: `Bearer ${token}` } })
+    if (response.status === 404) {
+      await response.body?.cancel()
+      return null
+    }
+    if (!response.ok) throw new Error(`the registry row for ${name}: HTTP ${response.status}`)
+    return response.json()
   }
 }
 
@@ -313,8 +337,24 @@ export async function checkAccount({ cf, baseline = BASELINE, accountId = ACCOUN
   return problems
 }
 
+/** Every problem with the names in `pins` (name to owning public key), as sentences. */
+export async function checkClaims({ read, pins = BASELINE.claims, now = Date.now() }) {
+  const problems = []
+  for (const [name, pubkey] of Object.entries(pins)) {
+    const record = await read(name)
+    if (!record) {
+      problems.push(`${name}.${BASELINE.zone} has no row in the registry, so anyone can claim it`)
+    } else if (record.pubkey !== pubkey) {
+      problems.push(`${name}.${BASELINE.zone} is owned by key ${record.pubkey}, not ${pubkey}, so another board can serve it`)
+    } else if (!(now - record.renewedAt < CLAIM_RENEWAL_ALARM_MS)) {
+      problems.push(`${name}.${BASELINE.zone} was last renewed on ${new Date(Number(record.renewedAt) || 0).toISOString()} and lapses 30 days after that. Restarting Frizz renews it`)
+    }
+  }
+  return problems
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { CLOUDFLARE_READ_TOKEN, GITHUB_TOKEN, GITHUB_REPOSITORY, WORKERS_CI_AUTHOR } = process.env
+  const { CLOUDFLARE_READ_TOKEN, CLOUDFLARE_CLAIMS_READ, GITHUB_TOKEN, GITHUB_REPOSITORY, WORKERS_CI_AUTHOR } = process.env
   for (const [name, value] of Object.entries({ CLOUDFLARE_READ_TOKEN, GITHUB_TOKEN, GITHUB_REPOSITORY })) {
     if (!value) {
       console.error(`::error::${name} is not set; the drift check cannot read anything, so it fails`)
@@ -332,6 +372,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     failed ||= problems.length > 0
   } catch (error) {
     console.error(`::error::the account: ${error.message}`)
+    failed = true
+  }
+  try {
+    if (Object.keys(BASELINE.claims).length && !CLOUDFLARE_CLAIMS_READ) throw new Error("CLOUDFLARE_CLAIMS_READ is not set, so nothing reads the names it should")
+    const problems = await checkClaims({ read: claimReader(CLOUDFLARE_CLAIMS_READ) })
+    for (const problem of problems) console.error(`::error::${problem}`)
+    failed ||= problems.length > 0
+  } catch (error) {
+    console.error(`::error::the registry: ${error.message}`)
     failed = true
   }
   for (const script of scripts) {

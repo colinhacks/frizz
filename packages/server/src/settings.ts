@@ -71,9 +71,10 @@ export const defaultSettings = (): Settings => ({
   // `auto` is Claude Code's classifier mode: each action is reviewed, the ones it judges dangerous are
   // refused, and what it will not decide becomes an approval card. It is a classifier, not a boundary.
   // The default since 2026-11-06 (maintainer: "we should probably have things default to auto"); it was
-  // `bypassPermissions` (--dangerously-skip-permissions) from 0.7.2 until then, and the "Permissions"
-  // control behind the Claude Code gear in the model picker still offers that, because how someone runs
-  // Frizz is theirs to choose. Those are the only two values a headless worker can run in: the dispatch
+  // `bypassPermissions` (--dangerously-skip-permissions) from 0.7.2 until then, and the selector in the
+  // prompt box and the "Permissions" control behind the Claude Code gear in the model picker still offer
+  // that, because how someone runs Frizz is theirs to choose. Those are the only two values a headless
+  // worker can run in: the dispatch
   // floor (WORKER_DISPATCH_PERMISSION) is this same `auto`, and workerDispatchPermission honors exactly
   // one deviation from it.
   //

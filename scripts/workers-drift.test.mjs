@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { createServer } from "node:http"
 import { test } from "node:test"
-import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkWorker, cloudflareClient, githubClient, parseAuthors, parseCiMessage } from "./workers-drift.mjs"
+import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkClaims, checkWorker, claimReader, cloudflareClient, githubClient, parseAuthors, parseCiMessage } from "./workers-drift.mjs"
 
 // The bodies below follow the shapes Cloudflare documents for
 //   GET /accounts/{account_id}/workers/scripts/{script}/deployments
@@ -420,4 +420,37 @@ test("the GitHub client returns null for a missing run and throws on anything el
   assert.equal((await gh(`/repos/${REPO}/actions/runs/1`)).head_sha, SHA)
   assert.equal(await gh(`/repos/${REPO}/actions/runs/2`), null)
   await assert.rejects(gh(`/repos/${REPO}/actions/runs/3`), /HTTP 500/)
+})
+
+const CLAIM_NOW = Date.parse("2026-11-06T12:00:00Z")
+const claimCheck = (record) => checkClaims({ read: async () => record, pins: { colin: "good-key" }, now: CLAIM_NOW })
+const daysAgo = (days) => CLAIM_NOW - days * 24 * 60 * 60 * 1000
+
+test("a pinned name passes while its key owns it and its lease is fresh", async () => {
+  assert.deepEqual(await claimCheck({ pubkey: "good-key", renewedAt: daysAgo(24) }), [])
+})
+
+test("a pinned name fails on another key, on no row, and before its lease lapses", async () => {
+  assert.match((await claimCheck({ pubkey: "other-key", renewedAt: daysAgo(0) }))[0], /owned by key other-key, not good-key/)
+  assert.match((await claimCheck(null))[0], /no row in the registry/)
+  assert.match((await claimCheck({ pubkey: "good-key", renewedAt: daysAgo(26) }))[0], /Restarting Frizz renews it/)
+  assert.match((await claimCheck({ pubkey: "good-key" }))[0], /lapses 30 days/, "a row with no date is not a fresh one")
+})
+
+test("the claim reader sends its token, parses a row, is null on 404 and throws on anything else", async (t) => {
+  const seen = []
+  const server = createServer((req, res) => {
+    seen.push([req.url, req.headers.authorization])
+    if (req.url.endsWith("/claim%3Acolin")) return res.end(JSON.stringify({ pubkey: "k", renewedAt: 1 }))
+    res.statusCode = req.url.endsWith("/claim%3Afree") ? 404 : 401
+    res.end("{}")
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  t.after(() => server.close())
+  const read = claimReader("claims-token", { base: `http://127.0.0.1:${server.address().port}` })
+  assert.deepEqual(await read("colin"), { pubkey: "k", renewedAt: 1 })
+  assert.equal(await read("free"), null)
+  await assert.rejects(read("refused"), /HTTP 401/)
+  assert.ok(seen[0][0].includes(`/storage/kv/namespaces/`) && seen[0][1] === "Bearer claims-token", String(seen[0]))
 })
