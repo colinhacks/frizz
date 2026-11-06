@@ -28,7 +28,7 @@ import { createBoard, resolveSessionTitle, type BoardManager } from "./board.ts"
 import { createSessionPeerResolver, type SessionPeerThread } from "./session-peer.ts"
 import { auditLogPathForStateDir, fileAuditLog, type AuditLog } from "./audit.ts"
 import { createTailer, defaultLogDir, type Tailer } from "./tailer.ts"
-import { createDispatcher, acpWorkerContract, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
+import { createDispatcher, acpWorkerContract, claudeContractOptions, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
 import { createScheduler, type Scheduler, probeIssueReadable, probePrReadable, type PrRef, type PrProbe } from "./scheduler.ts"
 import {
 resumeThread,
@@ -514,7 +514,7 @@ export function deliverClaudeBrokerWake(deps: {
   freshProcess?: boolean
 }): Promise<void> {
   const { bridge, slug, cwd, row, settings, deliveryMessage, freshProcess } = deps
-  const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, cwd, { childThreads: settings.childThreads })
+  const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, cwd, claudeContractOptions(coldResumePermission(row, settings), settings))
   return bridge.followUp({
     threadSlug: slug,
     sessionId: row.session_id,
@@ -878,6 +878,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
         // has to divide by: a `[1m]` worker forked at the shipped 500K compacts at 500K, and reading its
         // fullness against 1M reported a comfortable 25% for a session that was half full.
         onCompactionWindow: (sessionId, window) => claudeRuntimeIngest?.noteCompactionWindow(sessionId, window),
+        requestedPermissionMode: (slug) => storage.getSession(slug)?.permission_mode,
         stateDir: project.stateDir,
         executablePath: opts.claudeBin ?? "claude",
         // Scoped to THIS project, not to whichever one launched the server — see

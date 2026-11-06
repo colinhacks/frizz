@@ -109,7 +109,15 @@ test("anything that is not provably that one shape is still left for a human", (
 // The rule is an addition to the table, not a way round it.
 test("the two refusals still come first, and an unattended worker is still approved as before", () => {
   assert.deepEqual(decide("frizzctl done --body-file - <<'EOF'\nrm -rf /\nEOF"), { behavior: "deny", rule: "catastrophic-delete" })
-  assert.deepEqual(decide("touch x", "auto"), { behavior: "allow", rule: "worker-autonomy" })
+  assert.deepEqual(decide("touch x", "bypassPermissions"), { behavior: "allow", rule: "worker-autonomy" })
   assert.deepEqual(decide(`frizzctl ask --input - <<'EOF'\n${QUESTION}\nEOF`, "auto"), { behavior: "allow", rule: "own-frizzctl" })
   assert.deepEqual(decide("touch x"), { behavior: "ask", rule: "restrictive-mode" })
+})
+
+// Auto mode's classifier answers almost everything itself; a request reaches this hook because auto mode
+// handed it back: an `ask` rule, a protected path, or the fallback after repeated refusals. Approving those
+// here turned a refusal into a retry count, so they go to a person, and the refusals still come first.
+test("what auto mode leaves for a person is never approved by the hook", () => {
+  assert.deepEqual(decide("git push --force origin main", "auto"), { behavior: "ask", rule: "auto-escalation" })
+  assert.deepEqual(decide("rm -rf /", "auto"), { behavior: "deny", rule: "catastrophic-delete" })
 })

@@ -28,7 +28,10 @@ import { decodeBody, encodeBody } from "@frizz/shared"
 import { loadSessionState } from "@frizz/server/access-codes"
 import { RestartSupervisorProxy } from "@frizz/server/restart-supervisor"
 import { auditLogPathForStateDir, fileAuditLog } from "../packages/server/src/audit.ts"
+import { buildClaudePermissionInteraction } from "../packages/server/src/backend/claude-permission-interactions.ts"
+import { createInteractionStore } from "../packages/server/src/interaction-store.ts"
 import { REMOTE_ACCESS } from "../packages/server/src/remote-gate.ts"
+import Database from "../packages/server/src/sqlite.ts"
 import { serveRelayRequest, serveRelayWebSocket } from "../src/relay-agent.ts"
 import { launchHeadless } from "./lib/headless-browser.mjs"
 
@@ -260,6 +263,24 @@ try {
   check("and its message is plain", jsonOf(publicDispatch)?.error === `This can only be done on ${process.platform === "darwin" ? "the Mac" : "the computer running Frizz"}.`, jsonOf(publicDispatch)?.error)
   const publicWatch = await pub.mutate("addOwnCommandWatch", watch(WATCH_MARK))
   check("addOwnCommandWatch is refused", refused(publicWatch), said(publicWatch))
+
+  section("An approval card a worker is waiting on")
+  // A risky action asking to go ahead. Journaled the way the bridge does it, so the page below draws a real
+  // card and the store below answers for it.
+  const cards = createInteractionStore(new Database(db))
+  const cardScope = { projectId, threadSlug: SLUG, sessionId }
+  const approval = cards.create(buildClaudePermissionInteraction(
+    { requestId: "verify-request", toolUseId: "toolu_verify", toolName: "Bash", input: { command: "git push --force origin main" }, suggestions: [] },
+    { projectId, threadSlug: SLUG, sessionId, cwd: project },
+  )).interaction
+  const cardAddress = { slug: SLUG, sessionId, interactionId: approval.id, sessionEpoch: approval.owner.sessionEpoch, capabilityRevision: approval.owner.capabilityRevision, expectedRecordRevision: approval.recordRevision }
+  const grant = { ...cardAddress, responseId: "verify-grant", decisionId: "grant-turn" }
+  const remoteGrant = await pub.mutate("interactionResolve", grant)
+  check("granting it is refused", refused(remoteGrant), said(remoteGrant))
+  const remoteCancel = await pub.mutate("interactionCancel", cardAddress)
+  check("cancelling it is refused", refused(remoteCancel), said(remoteCancel))
+  check("and it is still waiting", cards.get(cardScope, approval.id)?.lifecycle === "pending")
+
   await sleep(1500)
   check("the command watch's marker was not created", !existsSync(WATCH_MARK))
   check("no worker started", !existsSync(WORKER_MARK))
@@ -637,6 +658,9 @@ try {
   check("it says starting or steering a thread happens on this machine", /Starting or steering a thread happens on (the Mac|the computer running Frizz)\./.test(seen.text))
   check("there is nowhere to type", seen.disabledComposer)
   check("the secret and free-text cards say to answer on this machine", (seen.text.match(/This question has to be answered on /g) ?? []).length >= 2, `${(seen.text.match(/This question has to be answered on /g) ?? []).length} cards`)
+  check("the approval card says to answer it on this machine", /This has to be answered on (the Mac|the computer running Frizz)\./.test(seen.text))
+  const cardButtons = await page.evaluate(() => [...document.querySelectorAll("button")].map((button) => button.textContent?.trim()).filter((label) => label === "Grant for turn" || label === "Deny"))
+  check("and offers no button to grant or deny it", cardButtons.length === 0, cardButtons.join(" "))
   check("the visualization frame renders, in the thread", seen.viz?.visible === "visible", JSON.stringify(seen.viz))
   const vizFrame = page.frames().find((f) => f.url().includes("/local-visualization"))
   check("and draws its fragment", (await vizFrame?.evaluate(() => document.body.innerText))?.includes("A chart fragment"))
@@ -663,6 +687,9 @@ try {
     mkdirSync(shots, { recursive: true })
     await page.screenshot({ path: join(shots, "remote-thread-desktop.png") })
   }
+  // The control: the same call from this machine is a good one, so the refusals were the gate's.
+  const localGrant = await loop.mutate("interactionResolve", grant)
+  check("from this machine, the same grant goes through", localGrant.status === 200 && cards.get(cardScope, approval.id)?.lifecycle === "resolved", said(localGrant))
 
   // A real click, the path a phone takes: the option, then the send.
   const before = open().length

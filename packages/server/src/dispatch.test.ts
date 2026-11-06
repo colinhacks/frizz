@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join, dirname, isAbsolute } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { DISPATCH_TASK_BANNER_MARKER } from "@frizz/shared"
-import { buildClaudeCommand, launchableWorkerPluginDir, loadWorkerPrompt, composePrompt, monitorScriptsDir, resolveWorkerPluginDir, scratchpadOrientation, workerPluginDir, frizzConfigBlock, workerDispatchPermission, WORKER_DISPATCH_PERMISSION } from "./dispatch.ts"
+import { buildClaudeCommand, claudeContractOptions, launchableWorkerPluginDir, loadWorkerPrompt, composePrompt, monitorScriptsDir, resolveWorkerPluginDir, scratchpadOrientation, workerPluginDir, frizzConfigBlock, workerDispatchPermission, WORKER_DISPATCH_PERMISSION } from "./dispatch.ts"
 import { parseTranscript } from "./transcript.ts"
 import { FRIZZ_MCP } from "./backend/types.ts"
 
@@ -30,6 +30,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 // The markdown loader trims the contract body; normalize the fixture's conventional POSIX newline
 // before making the byte-for-byte comparison of the actual prompt content.
 const CLAUDE_GOLDEN = readFileSync(join(here, "WORKER_PROMPT.claude.golden.txt"), "utf8").trimEnd()
+const CLAUDE_BYPASS_GOLDEN = readFileSync(join(here, "WORKER_PROMPT.claude.bypass.golden.txt"), "utf8").trimEnd()
 const CODEX_GOLDEN = readFileSync(join(here, "WORKER_PROMPT.codex.golden.txt"), "utf8").trimEnd()
 const SESSION_SEED = readFileSync(join(here, "../../../cc-worker/hooks/session-seed.mjs"), "utf8")
 
@@ -298,6 +299,24 @@ test("staging that fails costs no dispatch: the worker is launched against the i
 
 test("loadWorkerPrompt(claude) is BYTE-IDENTICAL to the pre-split contract (the regression bar)", () => {
   assert.equal(loadWorkerPrompt("claude"), CLAUDE_GOLDEN)
+})
+
+// A worker is told to register a server-run check only where the server would run it (command-watch.ts):
+// a `bypassPermissions` thread. Told it everywhere, a worker in `auto` tried it first, was refused, and
+// only then started the background shell the refusal named.
+test("loadWorkerPrompt(claude) in bypassPermissions is BYTE-IDENTICAL to its own golden", () => {
+  assert.equal(loadWorkerPrompt("claude", claudeContractOptions("bypassPermissions", { childThreads: false })), CLAUDE_BYPASS_GOLDEN)
+})
+
+test("a Claude worker's contract offers command watches and monitors only in bypassPermissions", () => {
+  const prompt = (mode: "auto" | "bypassPermissions") => loadWorkerPrompt("claude", claudeContractOptions(mode, { childThreads: false }))
+  assert.equal(prompt("auto"), CLAUDE_GOLDEN)
+  for (const offer of ["frizzctl watch-command add", "frizzctl monitor add", "cmw_"]) {
+    assert.ok(prompt("bypassPermissions").includes(offer), `bypass offers ${offer}`)
+    assert.ok(!prompt("auto").includes(offer), `auto does not offer ${offer}`)
+  }
+  assert.doesNotMatch(prompt("auto"), /\{\{FRIZZ_/, "every token is filled in the auto contract")
+  assert.doesNotMatch(prompt("bypassPermissions"), /\{\{FRIZZ_/, "every token is filled in the bypass contract")
 })
 
 // The codex contract prints the ABSOLUTE path of the bundled CI/review monitors, which differs per

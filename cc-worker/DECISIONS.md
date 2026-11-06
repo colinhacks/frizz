@@ -310,6 +310,23 @@ refusal also lands in the transcript, so the card is a pointer to something real
 copy of it. If approval visibility is ever wanted again it needs an EXPIRY (or a per-turn scope) —
 re-adding the sticky line is not the fix.
 
+AUTO MODE'S HAND-BACKS GO TO A PERSON (2026-11-06). Until then `worker-autonomy` approved everything that
+reached this hook under `auto`, on the 2026-07-25 reasoning above: nobody was at the keyboard and an
+unanswered prompt parked a thread forever. Both premises changed. An approval card now lapses into a denial
+after 5m, so an unanswered one costs five minutes instead of a day. And `auto` became the default, so what
+this hook does under `auto` is what every new thread gets. The Claude Code 2.1.318 source shows the problem
+with approving here: a classifier refusal returns a denial with no hook, but after 3 refusals in a row or
+20 in a session the same action falls back to a prompt, and that prompt reaches this hook. Approving it
+turned a refusal into a retry count. So `auto-escalation` defers, ahead of `worker-autonomy`, and
+`worker-autonomy` now serves bypass. The fallback was read from the source and not reproduced with a live
+model: in about 12 attempts the classifier allowed most of the actions, or the model stopped first. An `ask`
+rule is the deterministic way to exercise this path. In the same version, approving an `ask` rule's request
+here produced a bare refusal and no card, which the KNOWN LIMIT above describes from the other side.
+
+How often this matters: on the maintainer's board, 57 threads that ran in `auto` made 11,842 tool calls with
+24 denials, and only 1 thread's last hook marker reached `worker-autonomy`. Cards should stay rare, and each
+one is a request the classifier would not decide.
+
 VERIFICATION: `scripts/verify-perm-marker.mjs` runs the REAL hook the way Claude Code does and
 asserts every branch. The allow path was additionally driven against a REAL interactive `claude` (it
 cannot be exercised under `claude -p`, where PermissionRequest hooks do not fire).
@@ -1241,3 +1258,11 @@ Colin's decision (question `gh-reads` on the Keyward thread): an agent's GitHub 
 - **The credential is an encrypted file, with a random per-machine key in the keychain (Colin, 2026-11-05).** `github-credential-seal.ts`. It stops token scanners, accidental reads into a transcript, and a copied file or backup leaving the machine. It does not stop a program running as the same user, because any process can run `security`: a dummy item saved by `security` read back with no prompt from an unrelated process. Rejected: a key baked into Frizz, since Frizz is open source; a plain keychain item, whose 8-hourly rewrites risk the "Keychain Not Found" dialog (the key here is written once); a signed helper, since Frizz has no native code or release signing; and an in-memory keeper, which needs a new device code after every reboot. A worker's `hosts.yml` still holds the 8-hour access token in the clear, because `gh` reads it. The refresh token stays in the encrypted file.
 - **Contents read can post commit comments, and Colin kept it (2026-11-05).** GitHub files `POST /repos/{owner}/{repo}/commits/{sha}/comments` under Contents read. Measured with the App's token on `colinhacks/ci-testing`: an empty request came back 422 for the missing body, where the same request to issues and to file contents came back 403. No narrower permission gives commit data on a private repo, so the exposure is accepted and stated in Settings and the README. Forks and template repos are also filed under Contents read, but they need Administration write too.
 - **No organization permissions and no Administration, so a repo admin can install it.** GitHub lets a repository admin install an App on the repos they administer only if it requests neither (Colin, 2026-11-05: an org owner should not be a prerequisite for a repo-scoped install). Adding either one back turns every such install into a request to an org owner. Reads lost: classic branch protection and team member lists. Rulesets stay readable through Metadata.
+
+## 2026-11-06: a worker on a machine with no Keyward and no `gh` sign-in reads with Frizz's credential too
+
+Colin, on whether agents can read their own CI logs: *"Perhaps we should be providing a GitHub token to the agents, or providing a way for them to access the GitHub app token inside of their runs automatically (if they're signed in and if they're not signed into the GitHub CLI)."* The 2026-11-04 rule only moved `GH_CONFIG_DIR` where Keyward could take the writes, so that machine's worker had no GitHub at all while the server itself was signed in.
+
+- **`frizzGithubWorkerEnv` now asks whether the move costs a write.** Keyward on PATH: it doesn't. No Keyward and a sign-in of the operator's own: it would, so the worker keeps that sign-in, as before. No Keyward and no sign-in: there is no write to lose.
+- **Whether `gh` has a sign-in comes from its token variables and `hosts.yml`, never from running it.** This runs on every worker start. `hosts.yml` names a keychain-held sign-in as well, so nothing here can raise a keychain prompt. A sign-in to any host counts, because the move would hide it just the same, and an expired one counts, which leaves that machine as it was.
+- **The hook's read-only block has a second form for this machine.** It tells the worker to hand a write to the human as steps. The first form names a `keyward` that isn't there.

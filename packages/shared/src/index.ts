@@ -4962,10 +4962,12 @@ export const LocalFileOpener = z.enum(["system", "cursor", "vscode", "finder", "
 export type LocalFileOpener = z.infer<typeof LocalFileOpener>
 
 export const Settings = z.object({
-  // The mode NEW Claude workers launch in. Settings surfaces exactly two of them — `bypassPermissions`
-  // (--dangerously-skip-permissions, the shipped default since 0.7.2) and `auto` — because those are the only two
-  // an unattended worker can actually run in; the server's workerDispatchPermission enforces that same
-  // floor, so a restrictive value left here by an older build cannot reach a spawn.
+  // The mode NEW Claude workers launch in, per project. Settings surfaces exactly two of them — `auto`
+  // (the shipped default since 2026-11-06) and `bypassPermissions` (--dangerously-skip-permissions, the
+  // default from 0.7.2 until then) — because those are the only two an unattended worker can actually run
+  // in; the server's workerDispatchPermission enforces that same floor, so a restrictive value left here
+  // by an older build cannot reach a spawn. A project that saved any setting before 2026-11-06 stored
+  // `bypassPermissions` whether or not anyone chose it, and keeps it: see settings.ts defaultSettings.
   permissionMode: PermissionMode,
   model: z.string().optional(), // the agent's --model value; undefined = CLI default
   // The agent backend the selected model runs on (Codex-support epic, Phase 3). Persisted ALONGSIDE
@@ -5083,7 +5085,9 @@ export type Settings = z.infer<typeof Settings>
 // repository. Keep one profile per runtime so
 // moving between Claude and Codex never overwrites the other runtime's model, effort, or permission
 // selection. Fields stay optional for the first-run/default case: a displayed fallback is not stored
-// as user intent until the human actually chooses it.
+// as user intent until the human actually chooses it. `permissionMode` here is written and read by
+// nothing that launches a thread: Settings.permissionMode decides (workerDispatchPermission), and a stored
+// value here, `bypassPermissions` included, changes nothing.
 export const DispatchProviderPreferences = z.object({
   model: z.string().trim().min(1).max(200).optional(),
   effort: Settings.shape.effort,

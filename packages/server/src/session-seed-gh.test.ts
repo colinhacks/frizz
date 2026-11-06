@@ -140,3 +140,15 @@ test("the read-only marker wins over a signed-in gh, whose answer it never asks 
   const { context } = runSeed({ gh: "signed-in", frizzReadOnly: true })
   assert.match(context, /⟦gh available, read-only⟧/)
 })
+
+test("Frizz's read-only config with no keyward teaches the reads and never names a command that isn't there", () => {
+  const { context } = runSeed({ frizzReadOnly: true })
+  assert.match(context, /⟦gh available, read-only⟧/)
+  assert.match(context, /READ freely: `gh issue view N/)
+  assert.match(context, /--log-failed/)
+  assert.match(context, /Resource not accessible by integration/)
+  assert.match(context, /hand the write to the human as steps/)
+  assert.doesNotMatch(context, /keyward/i)
+  assert.doesNotMatch(context, /Touch ID/)
+  assert.match(context, /READ-ONLY BOUNDARY/)
+})

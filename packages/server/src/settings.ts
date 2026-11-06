@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { Settings } from "@frizz/shared"
+import { PermissionMode, Settings } from "@frizz/shared"
 import { launchPrefixSettingsError } from "./backend/launch-prefix.ts"
 import { frizzPaths } from "./frizz-paths.ts"
 import { deleteMachineConfig, readMachineConfig, writeMachineConfig } from "./machine-config.ts"
@@ -68,13 +68,20 @@ export function writeMachineSettings(next: MachineSettings, home: string): void 
 }
 
 export const defaultSettings = (): Settings => ({
-  // `bypassPermissions` = claude's --dangerously-skip-permissions: a headless worker never stops on an
-  // approval card. Shipped default since 0.7.2 (maintainer 2026-08-24); the "Permissions" control
-  // behind the Claude Code gear in the model picker can lower it to `auto` — the CLI's classifier mode, where risky actions
-  // still surface an approval card in the thread. Those are the only two values a headless worker can
-  // run in: the dispatch floor (WORKER_DISPATCH_PERMISSION) stays `auto`, and workerDispatchPermission
-  // honors exactly one deviation from it, which is this one.
-  permissionMode: "bypassPermissions",
+  // `auto` is Claude Code's classifier mode: each action is reviewed, the ones it judges dangerous are
+  // refused, and what it will not decide becomes an approval card. It is a classifier, not a boundary.
+  // The default since 2026-11-06 (maintainer: "we should probably have things default to auto"); it was
+  // `bypassPermissions` (--dangerously-skip-permissions) from 0.7.2 until then, and the "Permissions"
+  // control behind the Claude Code gear in the model picker still offers that, because how someone runs
+  // Frizz is theirs to choose. Those are the only two values a headless worker can run in: the dispatch
+  // floor (WORKER_DISPATCH_PERMISSION) is this same `auto`, and workerDispatchPermission honors exactly
+  // one deviation from it.
+  //
+  // A PROJECT'S STORED VALUE IS LEFT ALONE. setSettings writes the whole object, so any project that saved
+  // any setting while bypass was the default stored `bypassPermissions` without anyone choosing it, and
+  // the store cannot tell that from a choice. Rewriting them would override the people who did choose it,
+  // so they keep it until the control changes it, and the release notes say so.
+  permissionMode: "auto",
   model: undefined,
   effort: undefined,
   notifications: true,
@@ -94,15 +101,25 @@ export const defaultSettings = (): Settings => ({
   childThreads: false,
 })
 
+// What a project with no stored `permissionMode` starts in on THIS machine, when that is not the shipped
+// default. A record in the machine config store with no control behind it, so it survives a settings reset
+// and covers a project added later, which a value written into each project would not. The maintainer's
+// machine holds `bypassPermissions` (2026-11-06: "I want the defaults to be auto for other people, but I
+// want my own defaults to remain as bypass"). A project's own stored value still wins.
+const PERMISSION_DEFAULT_KEY = "permissionDefault"
+
+function machineDefaultSettings(home: string): Settings {
+  const permissionMode = readMachineConfig(home, PERMISSION_DEFAULT_KEY, PermissionMode)
+  return permissionMode ? { ...defaultSettings(), permissionMode } : defaultSettings()
+}
+
 // Settings persist as one JSON blob under settings['settings']. Read merges over defaults
 // (so a schema addition lands with a sane value on an old DB); a parse/validation miss also
 // degrades to defaults rather than throwing.
 export function getSettings(storage: Storage, home: string): Settings {
   const raw = storage.getSetting(SETTINGS_KEY)
-  const project =
-    raw === undefined
-      ? defaultSettings()
-      : (Settings.safeParse({ ...defaultSettings(), ...(raw as object) }).data ?? defaultSettings())
+  const defaults = machineDefaultSettings(home)
+  const project = raw === undefined ? defaults : (Settings.safeParse({ ...defaults, ...(raw as object) }).data ?? defaults)
   // machine file → this project's stored blob → shipped default. The middle term is what makes this
   // need no migration: a project that has a value keeps it until the next save promotes it upward.
   return { ...project, ...readMachineSettings(home) }
@@ -134,5 +151,5 @@ export function resetSettings(storage: Storage, home: string): Settings {
   } catch {
     // Nothing to reset, or unreadable — either way defaults are what the caller gets.
   }
-  return defaultSettings()
+  return machineDefaultSettings(home)
 }

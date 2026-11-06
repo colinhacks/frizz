@@ -5,10 +5,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createApp } from "./app.ts"
 import { CALLER_HEADER, encodeCallerStamp, type AuditRecord } from "./audit.ts"
+import { buildClaudePermissionInteraction } from "./backend/claude-permission-interactions.ts"
 import type { AppContext } from "./context.ts"
 import { resetFrizzRoots } from "./frizz-paths.ts"
+import { createInteractionStore } from "./interaction-store.ts"
 import { REMOTE_ACCESS, remoteAnswerRefusal, remoteRule } from "./remote-gate.ts"
 import { createRouter } from "./router.ts"
+import Database from "./sqlite.ts"
 
 const PORT = 49_411
 const PUBLIC = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", session: "Ab3dE9xY" })
@@ -103,6 +106,58 @@ test("every denied procedure is refused remotely before its input is read, and e
   }
   assert.equal((await post("dispatch", { prompt: "x" }, NETWORK)).status, 403, "another machine on an exposed bind is as remote as a relay")
   assert.equal(calls.dispatch, 0)
+})
+
+// The table says `deny` and the loop above proves a garbage body is refused. This is the claim that matters
+// with `auto` as the default: a real, pending approval, addressed correctly, stays pending whoever relays it,
+// because an approval card is a risky action asking to go ahead. The loopback control proves the same call
+// is a good one, so the refusals above it are the gate's and not a malformed request's.
+test("a remote session cannot answer or cancel a real approval card, and this machine can", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "remote-gate-card-"))
+  const store = createInteractionStore(new Database(":memory:"))
+  const owner = { projectId: "served", threadSlug: "the-thread", sessionId: "the-session", cwd: dir }
+  const card = (requestId: string) => store.create(buildClaudePermissionInteraction({
+    requestId, toolUseId: `use-${requestId}`, toolName: "Bash", input: { command: "git push --force origin main" }, suggestions: [],
+  }, owner)!).interaction
+  const session = { slug: "the-thread", session_id: "the-session" }
+  const storage = new Proxy({ getSession: (slug: string) => slug === "the-thread" ? session : undefined, interactions: store }, {
+    get: (target, name) => (target as Record<string | symbol, unknown>)[name] ?? (() => {}),
+  })
+  const { post, get, records } = gateApp({ interactions: store, storage } as unknown as Partial<AppContext>)
+  const scope = { projectId: "served", threadSlug: "the-thread", sessionId: "the-session" }
+  const address = (record: ReturnType<typeof card>) => ({
+    slug: "the-thread", sessionId: "the-session", interactionId: record.id,
+    sessionEpoch: record.owner.sessionEpoch, capabilityRevision: record.owner.capabilityRevision, expectedRecordRevision: record.recordRevision,
+  })
+  const resolve = (record: ReturnType<typeof card>, decisionId: string) => ({ ...address(record), responseId: `response-${decisionId}`, decisionId })
+  try {
+    const pending = card("request-1")
+    const approve = pending.allowedDecisions.find((decision) => decision.semantic === "approve")!.id
+    for (const stamp of [PUBLIC, NETWORK]) {
+      const refusals = [await post("interactionResolve", resolve(pending, approve), stamp), await post("interactionCancel", address(pending), stamp)]
+      for (const response of refusals) {
+        assert.equal(response.status, 403)
+        assert.equal((await response.json() as { code: string }).code, "remote_refused")
+      }
+    }
+    assert.equal(store.get(scope, pending.id)?.lifecycle, "pending", "the card is still waiting for an answer")
+    assert.deepEqual(records.filter((record) => record.action === "remoteRefused").map((record) => (record.detail as { procedure: string }).procedure), [
+      "interactionResolve", "interactionCancel", "interactionResolve", "interactionCancel",
+    ])
+    // A remote session can still SEE what the thread is waiting on, which is what its note is drawn from.
+    const seen = await get(`/_frizz/rpc/pendingInteractions?input=${encodeURIComponent(JSON.stringify({ slug: "the-thread", sessionId: "the-session" }))}`, PUBLIC)
+    assert.equal(seen.status, 200)
+
+    const answered = await post("interactionResolve", resolve(pending, approve), LOOPBACK)
+    assert.equal(answered.status, 200, await answered.clone().text())
+    assert.equal(store.get(scope, pending.id)?.lifecycle, "resolved")
+    const another = card("request-2")
+    const cancelled = await post("interactionCancel", address(another), LOOPBACK)
+    assert.equal(cancelled.status, 200, await cancelled.clone().text())
+    assert.equal(store.get(scope, another.id)?.lifecycle, "cancelled")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("no spelling of the URL reaches a denied procedure", async () => {

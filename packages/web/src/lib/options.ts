@@ -17,11 +17,11 @@ const PERMISSION_SHORT: Record<(typeof PERMISSION_MODES)[number], string> = {
 }
 
 export const PERMISSION_MODE_LABELS: Record<(typeof PERMISSION_MODES)[number], string> = {
-  auto: "auto — safe actions auto-approved, risky ones prompt",
+  auto: "auto — a classifier reviews each action and refuses the risky ones",
   default: "default — prompt for every permission",
   acceptEdits: "accept edits — file edits auto-approved",
   plan: "plan — read-only planning, approval before changes",
-  bypassPermissions: "bypass — never prompt (dangerous)",
+  bypassPermissions: "bypass — nothing is checked (dangerous)",
 }
 
 // "plan" is excluded: headless workers have no coherent plan-mode semantics (they plan by writing
@@ -35,7 +35,8 @@ export const PERMISSION_OPTIONS: SelectOption[] = PERMISSION_MODES.filter((m) =>
 }))
 
 // The permission modes Settings offers as the launch mode for NEW Claude workers. Deliberately just
-// two: `bypassPermissions` (claude's --dangerously-skip-permissions, the shipped default since 0.7.2) and `auto`.
+// two: `auto`, the shipped default since 2026-11-06, and `bypassPermissions` (claude's
+// --dangerously-skip-permissions, the default from 0.7.2 until then).
 // The restrictive modes are absent for the same reason dispatch's floor rejects them — an unattended
 // headless worker cannot answer a prompt, so `default`/`acceptEdits`/`plan` stall the thread on a modal
 // nobody is watching. Bypass is strictly MORE permissive than auto, so it is the one deviation that
@@ -50,8 +51,9 @@ export const CLAUDE_DISPATCH_PERMISSION_OPTIONS: SelectOption[] = (["auto", "byp
 }))
 
 // Claude Code-inspired permission accents for the dispatch form's mode readout. Bypass/full access
-// intentionally uses the ordinary readout color rather than danger-red: it is the default operating
-// mode here, while actual errors and destructive actions retain their dedicated warning styling.
+// intentionally uses the ordinary readout color rather than danger-red: someone who chose it does not
+// need warning about it on every thread, while actual errors and destructive actions retain their
+// dedicated warning styling.
 export const PERMISSION_COLOR: Record<(typeof PERMISSION_MODES)[number], string> = {
   auto: "text-accent",
   default: "text-muted",

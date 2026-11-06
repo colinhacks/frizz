@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { resetFrizzRoots } from "./frizz-paths.ts"
@@ -264,16 +264,46 @@ test("a refused renewal takes the dead token out of the worker's folder", async 
   })
 })
 
-test("a worker's GH_CONFIG_DIR moves only when Frizz is signed in AND Keyward can take the writes", async () => {
+test("a worker's GH_CONFIG_DIR moves when Frizz is signed in and the move costs no write", async () => {
   await withHome(async () => {
-    // Without Keyward a worker's `gh` stays its operator's own, which may be able to write.
     writeGithubCredential(app())
-    assert.deepEqual(frizzGithubWorkerEnv({ PATH: "/nonexistent" }), {})
+    const moved = { GH_CONFIG_DIR: frizzWorkerGhConfigDir() }
+    const noKeyward = { PATH: "/nonexistent" }
+    // No Keyward and no `gh` sign-in: no write to lose, and otherwise no GitHub at all.
+    assert.deepEqual(frizzGithubWorkerEnv(noKeyward), moved)
+
+    // No Keyward and a sign-in of the operator's: the worker keeps it, because it may be able to write.
+    for (const name of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]) {
+      assert.deepEqual(frizzGithubWorkerEnv({ ...noKeyward, [name]: "operator-token" }), {}, name)
+    }
+    const config = join(process.env.HOME!, ".config", "gh")
+    mkdirSync(config, { recursive: true })
+    const hosts = join(config, "hosts.yml")
+    writeFileSync(hosts, "github.com:\n    user: someone\n    git_protocol: ssh\n")
+    assert.deepEqual(frizzGithubWorkerEnv(noKeyward), {})
+    // A sign-in to another host would be hidden just the same.
+    writeFileSync(hosts, "ghe.example.com:\n    user: someone\n")
+    assert.deepEqual(frizzGithubWorkerEnv(noKeyward), {})
+    // `gh auth logout` leaves an empty file behind.
+    writeFileSync(hosts, "# signed out\n")
+    assert.deepEqual(frizzGithubWorkerEnv(noKeyward), moved)
+    // The folder `gh` would really read decides, not the default one.
+    const elsewhere = join(process.env.HOME!, "elsewhere")
+    mkdirSync(elsewhere)
+    writeFileSync(join(elsewhere, "hosts.yml"), "github.com:\n    user: someone\n")
+    assert.deepEqual(frizzGithubWorkerEnv({ ...noKeyward, GH_CONFIG_DIR: elsewhere }), {})
+    assert.deepEqual(frizzGithubWorkerEnv({ ...noKeyward, XDG_CONFIG_HOME: join(process.env.HOME!, "nowhere") }), moved)
+
     withKeywardOnPath((env) => {
-      assert.deepEqual(frizzGithubWorkerEnv(env), { GH_CONFIG_DIR: frizzWorkerGhConfigDir() })
+      // With Keyward to take the writes, the move costs nothing even over a sign-in of the operator's.
+      writeFileSync(hosts, "github.com:\n    user: someone\n")
+      assert.deepEqual(frizzGithubWorkerEnv(env), moved)
       clearGithubCredential()
       assert.deepEqual(frizzGithubWorkerEnv(env), {})
     })
+    // Signed out, nothing moves whatever else is true.
+    writeFileSync(hosts, "")
+    assert.deepEqual(frizzGithubWorkerEnv(noKeyward), {})
   })
 })
 

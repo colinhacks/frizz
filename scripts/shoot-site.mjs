@@ -175,10 +175,11 @@ const HERO = {
         if (url.pathname.endsWith("/rpc/githubStatus")) return reply({ inRepo: true, authed: true, nameWithOwner: "acme/acme-api" })
         if (url.pathname.endsWith("/rpc/githubList")) {
           const hour = 3_600_000
-          const items = rows.map(([number, title, author, comments, reactions, label], i) => ({
+          const items = rows.map(([number, title, author, comments, reactions, label, pr], i) => ({
             kind: "issue", number, title, url: `https://github.com/acme/acme-api/issues/${number}`, state: "OPEN", author,
             createdAt: new Date(Date.now() - (i + 2) * 9 * hour).toISOString(), updatedAt: new Date(Date.now() - (i + 1) * 3 * hour).toISOString(),
             labels: label ? [{ name: label[0], color: label[1] }] : [], comments, reactions,
+            ...(pr ? { linkedPrs: { count: 1, number: pr, url: `https://github.com/acme/acme-api/pull/${pr}`, state: "OPEN" } } : {}),
           }))
           return reply({ items, total: items.length, page: 1, pageCount: 1 })
         }
@@ -186,10 +187,10 @@ const HERO = {
       }
     }, [
       [412, "Rate limiter ignores the per-key override", "dana-k", 6, 4, ["bug", "d73a4a"]],
-      [409, "Add cursor pagination to /v2/events", "mhughes", 3, 11, ["enhancement", "a2eeef"]],
+      [409, "Add cursor pagination to /v2/events", "mhughes", 3, 11, ["enhancement", "a2eeef"], 418],
       [407, "Webhook retries stop after a 502", "tobiaso", 9, 2, ["bug", "d73a4a"]],
       [400, "Document the idempotency header", "dana-k", 1, 0, ["docs", "0075ca"]],
-      [398, "Receipt bus test times out on CI", "ravi-p", 4, 1, ["flaky", "fbca04"]],
+      [398, "Receipt bus test times out on CI", "ravi-p", 4, 1, ["flaky", "fbca04"], 416],
       [395, "CSV export drops rows past 10k", "lenaw", 7, 5, ["bug", "d73a4a"]],
       [390, "Support OIDC for service accounts", "mhughes", 12, 18, ["enhancement", "a2eeef"]],
       [388, "Slow query on the project settings page", "ravi-p", 2, 3, null],
@@ -307,8 +308,75 @@ const FEATURES = {
     await need(page, '[role="menu"]')
     await settle(500)
   } },
-  "f-watch": { w: THREAD_W, h: 540, stage: async (page) => {
+  "f-watch": { w: THREAD_W, h: 620, stage: async (page) => {
     await open(page, "ship-sync", "[data-awaiting-background]")
+  } },
+  // One PR from opened to merged, with every wake the watcher sent on the way.
+  "f-pr-life": { w: 920, h: 820, stage: async (page) => {
+    await open(page, "pr-life")
+    const bottom = await page.evaluate(() => [...document.querySelectorAll("[data-frizz-msg]")].at(-1).getBoundingClientRect().bottom)
+    return { x: 0, y: 0, width: 920, height: Math.round(bottom) + 16 }
+  } },
+  "f-issue": { w: THREAD_W, h: 640, stage: async (page) => {
+    await open(page, "issue-wait", "[data-awaiting-background]")
+  } },
+  // The snooze on a card that is waiting on GitHub, whose own line says what brings it back.
+  "f-snooze-pr": { w: THREAD_W, h: 560, stage: async (page) => {
+    await open(page, "ship-sync", "[data-awaiting-background]")
+    await pointAt(page, await need(page, "[data-awaiting-snooze] button"), 0.7, 0.75)
+    await settle(400)
+    return around(page, ["[data-awaiting-background]"], 18)
+  } },
+  // The card's data is answered here, since a sandbox has no GitHub sign-in. The hovercard itself is real.
+  "f-hovercard": { w: THREAD_W, h: 520, stage: async (page) => {
+    await page.evaluateOnNewDocument((card) => {
+      const real = window.fetch.bind(window)
+      window.fetch = async (input, init) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin)
+        if (url.pathname.endsWith("/rpc/githubRefPreview")) return new Response(JSON.stringify({ result: { cards: [{ ...card, fetchedAt: Date.now(), at: new Date(Date.now() - 5 * 3_600_000).toISOString() }], missing: [] } }), { headers: { "content-type": "application/json" } })
+        return real(input, init)
+      }
+    }, {
+      ref: "acme/mobile-app#392", kind: "pr", repo: "acme/mobile-app", url: "https://github.com/acme/mobile-app/pull/392",
+      title: "Stop retrying after the connection closes",
+      body: "A retry could fire after the socket had already closed, which crashed the sync worker on some devices and stalled it on others. Retries now check the connection first and stop at the limit in config.",
+      state: "OPEN", authorLogin: "dana-k", labels: [{ name: "bug", color: "d73a4a" }, { name: "sync", color: "0e8a16" }],
+      additions: 84, deletions: 12, changedFiles: 5, comments: 3,
+    })
+    await open(page, "hover-refs")
+    const link = await need(page, 'a[data-gh-ref="acme/mobile-app#392"]')
+    const box = await link.boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 })
+    await need(page, "[data-radix-popper-content-wrapper]")
+    await settle(700)
+    await pointAt(page, link, 0.5, 0.7)
+    await settle(200)
+  } },
+  // The rail beside a full-screen thread. dist/bundle.js was written too, and git ignores it.
+  "f-edited": { w: 1440, h: 620, stage: async (page) => {
+    await open(page, "edited-rail", "[data-focus-rail]")
+    const rail = await page.evaluate(() => { const r = [...document.querySelectorAll("[data-focus-rail]")].map((e) => e.getBoundingClientRect()).sort((a, b) => b.width - a.width)[0]; return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: innerWidth } })
+    const x = Math.max(0, Math.round(rail.left - 712))
+    return { x, y: 0, width: Math.min(rail.w, Math.round(rail.right + 8)) - x, height: 470 }
+  } },
+  // Settings, answered as a signed-in machine, with the field's own help saying what the sign-in can do.
+  "f-signed-in": { w: THREAD_W, h: 560, stage: async (page) => {
+    await page.evaluateOnNewDocument(() => {
+      const real = window.fetch.bind(window)
+      window.fetch = async (input, init) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin)
+        if (url.pathname.endsWith("/rpc/githubAccount")) return new Response(JSON.stringify({ result: { signedIn: true, source: "app", login: "dana-k", appRegistered: true, signIn: { phase: "idle" } } }), { headers: { "content-type": "application/json" } })
+        return real(input, init)
+      }
+    })
+    await page.goto(`${base}/project/${APP}`, { waitUntil: "networkidle2" })
+    await settle(1500)
+    await (await need(page, 'button[title="Settings"]')).click()
+    await settle(800)
+    await (await need(page, 'button[aria-label="About GitHub"]')).hover()
+    await settle(700)
+    const panel = await page.evaluate(() => { const r = [...document.querySelectorAll("button")].find((b) => b.textContent === "Sign out").getBoundingClientRect(); return { right: r.right } })
+    return { x: 322, y: 0, width: Math.min(THREAD_W, Math.round(panel.right) + 20) - 322, height: 340 }
   } },
   "f-goal": { w: THREAD_W, h: 610, stage: async (page) => {
     await open(page, "green-suite")

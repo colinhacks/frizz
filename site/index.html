@@ -167,11 +167,41 @@
               <div class="row-shot"><img src="/img/f-subagent.webp?v=fdea2854" width="1500" height="1149" loading="lazy" decoding="async" alt="A sub-agent&#x27;s live transcript over the dimmed board, with a box to steer it." /></div>
             </article>
             <article class="feature row flip">
-              <div class="row-text"><h3>Pull request and CI watching</h3><p>A thread can watch a pull request and rest. The card shows each PR's checks, and the agent picks the work back up when CI finishes or a review lands.</p></div>
-              <div class="row-shot thread"><img src="/img/f-watch.webp?v=0a101a19" width="1500" height="920" loading="lazy" decoding="async" alt="A thread watching three pull requests: one running, one green, one with two failed checks." /></div>
+              <div class="row-text"><h3>Threads from GitHub</h3><p>Browse issues and pull requests from the composer, sorted by recency or reactions. A badge marks issues that already have a PR. Shift-click a range and start one thread for each, with a prompt you can edit.</p></div>
+              <div class="row-shot"><img src="/img/f-github.webp?v=b7817dae" width="1500" height="1117" loading="lazy" decoding="async" alt="The GitHub picker over the dimmed board, listing open issues with three of them checked and badges on the two that already have a pull request." /></div>
             </article>
             <article class="feature row">
-              <div class="row-text"><h3>Monitors that outlive the session</h3><p>An agent can hand Frizz a script and stop. The Frizz server keeps it running while the session sleeps, and each line it prints wakes the agent.</p>
+              <div class="row-text"><h3>A pull request&#x27;s whole life</h3><p>A thread can watch a PR and rest, for up to a year. CI results, reviews, comments, label changes, conflicts, and a drop from the merge queue each wake the agent. The watch ends when the PR merges or closes.</p></div>
+              <div class="row-shot thread"><img src="/img/f-pr-life.webp?v=e986c858" width="1500" height="1086" loading="lazy" decoding="async" alt="A thread following one pull request: CI failed, the agent pushed a fix, CI passed, a change request arrived, a conflict appeared, and the pull request merged." /></div>
+            </article>
+            <article class="feature row flip">
+              <div class="row-text"><h3>Checks and merge state on the card</h3><p>Each watched PR gets a row with its check counts and whether it can merge. A failed count links to the failing checks on GitHub.</p></div>
+              <div class="row-shot thread"><img src="/img/f-watch.webp?v=d6687d35" width="1500" height="1057" loading="lazy" decoding="async" alt="A thread watching five pull requests, reading 3 running, 15 green, 2 failed, conflicts and blocked." /></div>
+            </article>
+            <article class="feature row">
+              <div class="row-text"><h3>Issue watching</h3><p>A thread can also rest on an issue, waiting for a reporter&#x27;s reply or a maintainer&#x27;s triage. A comment, a label, an assignee, or the close wakes the agent.</p></div>
+              <div class="row-shot thread"><img src="/img/f-issue.webp?v=50ee6879" width="1500" height="1091" loading="lazy" decoding="async" alt="A thread resting on three issues, with each title, its comment count, and one closed." /></div>
+            </article>
+            <article class="feature row flip">
+              <div class="row-text"><h3>Snooze until GitHub has news</h3><p>Snooze a card that is waiting on a PR and it leaves the queue. It comes back when the PR has new activity.</p></div>
+              <div class="row-shot"><img src="/img/f-snooze-pr.webp?v=9a77492c" width="1398" height="638" loading="lazy" decoding="async" alt="A card listing five pull requests, with the pointer on a Snooze button labeled Hides card until new activity is detected." /></div>
+            </article>
+            <article class="feature row">
+              <div class="row-text"><h3>GitHub hovercards</h3><p>Hover an issue, PR, or commit reference anywhere in a thread to see its state, labels, author, diffstat, and an excerpt. Frizz fetches them ahead of time, so the card opens at once.</p></div>
+              <div class="row-shot thread"><img src="/img/f-hovercard.webp?v=7ea9b6f3" width="1500" height="887" loading="lazy" decoding="async" alt="A card open over a pull request link in a transcript, with its title, Open state, lines added and removed, an excerpt, labels and author." /></div>
+            </article>
+            <article class="feature row flip">
+              <div class="row-text"><h3>Edited files on the thread</h3><p>The rail beside a full-screen thread lists the files it edited, with lines added and removed. Anything git ignores stays out, so build output doesn&#x27;t bury the real changes.</p></div>
+              <div class="row-shot"><img src="/img/f-edited.webp?v=09e70427" width="1500" height="666" loading="lazy" decoding="async" alt="A thread beside a rail of five edited files in a folder tree, each with counts of lines added and removed." /></div>
+            </article>
+            <article class="feature row">
+              <div class="row-text"><h3>Read-only GitHub sign-in</h3><p>Frizz signs in to GitHub with its own app, which can only read. The watchers keep working while your screen is locked, and they can&#x27;t push or merge anything.</p>
+                <p class="fine">The one exception is a comment on a commit, which GitHub allows with code access.</p>
+              </div>
+              <div class="row-shot narrow"><img src="/img/f-signed-in.webp?v=b7504663" width="1102" height="680" loading="lazy" decoding="async" alt="Settings with a GitHub field and its help open, saying the sign-in can read code, issues, pull requests and checks, and that the only thing it can do beyond reading is comment on a commit." /></div>
+            </article>
+            <article class="feature row flip">
+              <div class="row-text"><h3>Monitors that outlive the session</h3><p>An agent can hand Frizz a script and stop. The Frizz server keeps it running while the session sleeps, and each line it prints wakes the agent. It runs unchecked, so it needs a thread in Bypass.</p>
                 <svg class="lanes" viewBox="0 0 420 96" role="img" aria-label="Two timelines. The agent's session runs, sleeps and wakes twice. The monitor runs the whole time, and each line it prints wakes the session.">
                   <text x="0" y="12">Agent session</text>
                   <g class="awake"><rect x="0" y="22" width="72" height="8" rx="4"/><rect x="186" y="22" width="56" height="8" rx="4"/><rect x="336" y="22" width="56" height="8" rx="4"/></g>
@@ -185,15 +215,15 @@
               </div>
               <div class="row-shot thread"><img src="/img/f-monitor.webp?v=4aae4cb8" width="1500" height="1023" loading="lazy" decoding="async" alt="A resting thread: a line in the transcript shows a monitor printed one line, the agent fixed the error, and its card lists the monitor as still running." /></div>
             </article>
-            <article class="feature row flip">
+            <article class="feature row">
               <div class="row-text"><h3>Goals</h3><p>Frizz re-sends a goal every time the agent stops, on a clock you set, or both. It runs until you switch it off or the agent says it is finished.</p></div>
               <div class="row-shot thread"><img src="/img/f-goal.webp?v=33519f75" width="1500" height="1040" loading="lazy" decoding="async" alt="The goal panel above a reply box: keep going until the test suite is green, with stop hook and heartbeat switched on." /></div>
             </article>
-            <article class="feature row">
+            <article class="feature row flip">
               <div class="row-text"><h3>Steering</h3><p>Send while an agent works and it reads your message at its next step. Or send it to the queue, where each message gets its own turn.</p></div>
               <div class="row-shot thread"><img src="/img/f-steer.webp?v=b8c56820" width="1500" height="801" loading="lazy" decoding="async" alt="A running thread with a message typed and the menu beside Send open, offering Send as steer and Send to queue." /></div>
             </article>
-            <article class="feature row flip">
+            <article class="feature row">
               <div class="row-text"><h3>Messages between threads</h3><p>A worker can send a message to another thread, even in another project. It lands as one line naming the sender, with a link back.</p></div>
               <div class="row-shot thread"><img src="/img/f-peer.webp?v=2d37e6bd" width="1500" height="1166" loading="lazy" decoding="async" alt="A message from another thread, expanded in a transcript, and the agent acting on it." /></div>
             </article>
@@ -226,10 +256,6 @@
             <article class="feature row">
               <div class="row-text"><h3>Claude Code and Codex, side by side</h3><p>Pick the agent, model, and effort for each new thread. Both can run on the same repo at once.</p></div>
               <div class="row-shot narrow"><img src="/img/f-picker.webp?v=a276873f" width="1284" height="1040" loading="lazy" decoding="async" alt="The model picker open under the new thread box, with Claude Code models and Codex models each listed by effort." /></div>
-            </article>
-            <article class="feature row flip">
-              <div class="row-text"><h3>Threads from GitHub</h3><p>Browse issues and pull requests from the composer, select a range, and start one thread for each.</p></div>
-              <div class="row-shot"><img src="/img/f-github.webp?v=c6999040" width="1500" height="1116" loading="lazy" decoding="async" alt="The GitHub picker over the dimmed board, listing open issues with three of them checked." /></div>
             </article>
           </div>
         </div>

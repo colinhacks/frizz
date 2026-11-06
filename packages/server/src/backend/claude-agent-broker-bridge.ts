@@ -18,6 +18,10 @@ import {
   CLAUDE_ASK_DENY_MESSAGE,
   CLAUDE_ASK_USER_QUESTION_TOOL,
   CLAUDE_ASK_WITHDRAWN_MESSAGE,
+  CLAUDE_AUTO_UNAVAILABLE_NOTE,
+  claudeProviderRequestId,
+  CLAUDE_PERMISSION_DEADLINE_MS,
+  CLAUDE_PERMISSION_LAPSED_MESSAGE,
   buildClaudePermissionInteraction,
   buildClaudeQuestionInteraction,
   claudePermissionDecisionFor,
@@ -90,6 +94,12 @@ export interface ClaudeBrokerBridgeDeps {
    *  `decidePermission` hook (default auto-allow) decides — the pre-cutover behavior. */
   interactions?: InteractionStore
   projectId?: string
+  /** How long a dashboard approval may hold the turn before it is denied. Defaults to
+   *  CLAUDE_PERMISSION_DEADLINE_MS; tests shorten it. */
+  permissionDeadlineMs?: number
+  /** The mode this thread was launched to run in. Compared with what the session's own init frame says
+   *  it runs in, to tell the operator when `auto` did not start (CLAUDE_AUTO_UNAVAILABLE_NOTE). */
+  requestedPermissionMode?: (slug: string) => string | null | undefined
   /** Decide a tool-permission request when NOT routing to the dashboard (tests / interactions absent).
    *  Defaults to auto-allow, honoring the thread's permission mode — matching the retired argv path's
    *  `--permission-mode auto`. */
@@ -386,6 +396,28 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
   // re-delivered request on reconnect, so it survives a frizz restart with the question still open.
   const pendingPerms = new Map<string, { client: ClaudeBrokerClient; requestId: string; scope: InteractionSessionScope; ask?: ClaudeAskSpec }>()
 
+  // The mode each session's init frame reports, by session id. A provider's echo, read only for the note.
+  const initModes = new Map<string, string>()
+
+  // One timer per approval card with a deadline. Firing runs the store's own expiry sweep, so the card
+  // lands as `expired` through the same subscriber every other ending takes and the daemon is answered
+  // there. The timer is only a prompt: the board's reconcile and the boot sweep run `expireDue` too.
+  const deadlineMs = deps.permissionDeadlineMs ?? CLAUDE_PERMISSION_DEADLINE_MS
+  const deadlineTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const armDeadline = (id: string, expiresAt: string | null): void => {
+    if (expiresAt === null || deadlineTimers.has(id)) return
+    const timer = setTimeout(() => {
+      deadlineTimers.delete(id)
+      try { deps.interactions!.expireDue() } catch { /* the next reconcile sweeps it */ }
+    }, Math.max(0, Date.parse(expiresAt) - Date.now()))
+    timer.unref?.()
+    deadlineTimers.set(id, timer)
+  }
+  const disarmDeadline = (id: string): void => {
+    const timer = deadlineTimers.get(id)
+    if (timer) { clearTimeout(timer); deadlineTimers.delete(id) }
+  }
+
   // Route a Claude tool-permission escalation to the dashboard: reuse the still-pending journal entry on
   // a reconnect re-delivery, else journal a fresh approval interaction. Failure to represent/journal fails
   // CLOSED (deny) — a permission we can't put in front of a human must not silently run.
@@ -400,8 +432,11 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
     const scope: InteractionSessionScope = { projectId, threadSlug: slug, sessionId }
     const owner = { projectId, threadSlug: slug, sessionId, cwd }
     const ask = request.toolName === CLAUDE_ASK_USER_QUESTION_TOOL ? parseClaudeAskUserQuestion(request.input) : null
-    const existing = store.listPending(scope).find((r) => r.providerRequestId === requestId)
-    if (existing) { pendingPerms.set(existing.id, { client, requestId, scope, ...(ask ? { ask } : {}) }); return }
+    // Found by the SDK's id, because a re-delivery has a new frame id. It matters since cards carry a deadline:
+    // a rebuilt request differs in `expiresAt`, so a miss here is a conflict in `create`, which denies the call.
+    const providerRequestId = claudeProviderRequestId(request)
+    const existing = store.listPending(scope).find((r) => r.providerRequestId === providerRequestId)
+    if (existing) { pendingPerms.set(existing.id, { client, requestId, scope, ...(ask ? { ask } : {}) }); armDeadline(existing.id, existing.expiresAt); return }
     // A question we cannot represent EXACTLY is denied with a redirect rather than downgraded to an
     // approval card: an approximate answer (a clipped label, a dropped question) reads to the model as
     // freeform prose or as no answer at all, and it would ask again — the loop this whole path removes.
@@ -409,13 +444,21 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
       client.answerPermission(requestId, { behavior: "deny", message: CLAUDE_ASK_DENY_MESSAGE })
       return
     }
+    // Only an AUTHORIZATION card gets a deadline. A native question is the agent asking for a decision it
+    // needs, and the operator's follow-up already unblocks it (see retirePendingFor's `user-cancelled`).
     const req = ask
       ? buildClaudeQuestionInteraction(ask, request, owner)
-      : buildClaudePermissionInteraction(request, owner)
+      : buildClaudePermissionInteraction(
+          request,
+          owner,
+          new Date(Date.now() + deadlineMs).toISOString(),
+          initModes.get(sessionId) === "default" && deps.requestedPermissionMode?.(slug) === "auto" ? CLAUDE_AUTO_UNAVAILABLE_NOTE : undefined,
+        )
     if (!req) { client.answerPermission(requestId, { behavior: "deny", message: "This tool call could not be represented for approval." }); return }
     let id: string
     try { id = store.create(req).interaction.id } catch { client.answerPermission(requestId, { behavior: "deny", message: "The approval request could not be recorded." }); return }
     pendingPerms.set(id, { client, requestId, scope, ...(ask ? { ask } : {}) })
+    armDeadline(id, req.expiresAt)
   }
 
   // The daemon took a request back (a worker hook settled it, or the turn was interrupted): retire its
@@ -444,6 +487,7 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
   const unsubInteractions = deps.interactions?.subscribe((change) => {
     const pending = pendingPerms.get(change.interactionId)
     if (!pending || change.lifecycle === "pending") return
+    disarmDeadline(change.interactionId)
     const record = deps.interactions!.get(pending.scope, change.interactionId)
     const decision = pending.ask
       ? (change.lifecycle === "resolved"
@@ -451,7 +495,7 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
         : { behavior: "deny" as const, message: CLAUDE_ASK_WITHDRAWN_MESSAGE })
       : (change.lifecycle === "resolved"
         ? claudePermissionDecisionFor(record?.resolution?.decisionId)
-        : { behavior: "deny" as const, message: "This approval was withdrawn." })
+        : { behavior: "deny" as const, message: change.lifecycle === "expired" ? CLAUDE_PERMISSION_LAPSED_MESSAGE : "This approval was withdrawn." })
     pending.client.answerPermission(pending.requestId, decision)
     pendingPerms.delete(change.interactionId)
   })
@@ -488,7 +532,7 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
     try { cancelled = deps.interactions.cancelForSession(slug, sessionId, reason) } catch { return }
     // The subscriber above already denied and dropped every entry that was still live in this process.
     // Sweep the map anyway: an interaction journaled by a PREVIOUS frizz has no entry to fire against.
-    for (const record of cancelled) pendingPerms.delete(record.id)
+    for (const record of cancelled) { pendingPerms.delete(record.id); disarmDeadline(record.id) }
   }
 
   // The daemon deaths already reported through onDiagnostic, keyed by session id + the dead daemon's
@@ -533,6 +577,7 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
         // leaving any card already journaled for it with nothing left to resolve it). Codex retires its
         // own on `turn/completed` for exactly this reason; this is the Claude counterpart.
         if (event.kind === "result") retirePendingFor(slug, sessionId, "turn-ended")
+        if (event.kind === "init") initModes.set(sessionId, event.permissionMode)
         deps.onEvent?.(slug, sessionId, event)
       },
       onDiagnostic: (diagnostic) => deps.onDiagnostic?.(slug, sessionId, diagnostic),
@@ -1029,16 +1074,16 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
       // record is not returned). When it is router.stopThreadRuntime — Stop, or "Mark as done" — it is
       // the only sweep there is: a completion UPDATEs the row to state='archived' rather than deleting
       // or replacing it, so storage cancels nothing, and `ownedSessions` filters archived rows out of
-      // the boot sweep by design. Claude's create sites journal `expiresAt: null`, so expireDue never
-      // reaches them either. Without this the card outlives its daemon forever and still renders with
+      // the boot sweep by design. Only a permission card carries a deadline, and a question carries none,
+      // so expireDue cannot be relied on to reach them either. Without this the card outlives its daemon forever and still renders with
       // working buttons. `reason` was accepted and dropped here for exactly as long as that was true.
       retirePendingFor(threadSlug, sessionId, reason)
       // Belt and braces for the entry whose interaction was ALREADY terminal: it is returned by no
       // cancel, gets no change event, and there is no daemon left to answer it against.
-      for (const [id, pending] of pendingPerms) if (pending.scope.sessionId === sessionId) pendingPerms.delete(id)
+      for (const [id, pending] of pendingPerms) if (pending.scope.sessionId === sessionId) { pendingPerms.delete(id); disarmDeadline(id) }
       return s !== undefined
     },
 
-    close() { unsubInteractions?.(); pendingPerms.clear(); for (const s of sessions.values()) s.client.close(); sessions.clear() },
+    close() { unsubInteractions?.(); pendingPerms.clear(); for (const timer of deadlineTimers.values()) clearTimeout(timer); deadlineTimers.clear(); for (const s of sessions.values()) s.client.close(); sessions.clear() },
   }
 }

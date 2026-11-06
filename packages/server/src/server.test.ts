@@ -185,7 +185,7 @@ test("settings: defaults, roundtrip, merge-over-defaults", () => {
   assert.deepEqual(def, defaultSettings())
   // Project-specific conventions live in FRIZZ.md, not in settings — there is no preamble field.
   // system prompt ships separately (packages/server/src/workerPrompt.ts via dispatch.ts) and is not a setting.
-  assert.equal(def.permissionMode, "bypassPermissions")
+  assert.equal(def.permissionMode, "auto")
   assert.equal(def.notifications, true)
 
   setSettings(s, { ...def, permissionMode: "plan", model: "opus", notifications: false }, dir)
@@ -393,7 +393,7 @@ test("dispatch: creates an EMPTY scratch dir (not a thread file), argv carries i
   assert.equal(row?.state, "open")
   assert.equal(row?.model, "opus", "the dispatch model is pinned on the session row")
   assert.equal(row?.effort, "high", "the dispatch effort is pinned on the session row")
-  assert.equal(row?.permission_mode, "bypassPermissions", "the concrete launch permission is pinned on the session row")
+  assert.equal(row?.permission_mode, "auto", "the concrete launch permission is pinned on the session row")
 })
 
 test("adopt: requires the legacy file, provisions a scratch dir, orientation is context-not-contract", async () => {
@@ -417,7 +417,7 @@ test("adopt: requires the legacy file, provisions a scratch dir, orientation is 
   const row = h.storage.getSession(slug)
   assert.equal(row?.model, "sonnet", "adoption pins the model default used for its new session")
   assert.equal(row?.effort, "xhigh", "adoption pins the effort default used for its new session")
-  assert.equal(row?.permission_mode, "bypassPermissions", "adoption pins the concrete launch permission")
+  assert.equal(row?.permission_mode, "auto", "adoption pins the concrete launch permission")
 })
 
 test("cwdSlug: replaces every non-alphanumeric character with - (Claude Code project-log convention)", () => {
