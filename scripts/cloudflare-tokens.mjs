@@ -20,7 +20,8 @@
 //
 // THE CREDENTIAL is CLOUDFLARE_FRIZZ_MINTER, read from the environment and never stored by this script.
 // It manages the account's API tokens: Account API Tokens Edit, Account Settings Read and Zone Read on
-// the Frizz account, plus API Tokens Read on the user who made it. Only the dashboard can issue it,
+// the Frizz account. API Tokens Read on the user who made it adds that user's token list to the snapshot,
+// and the sitting goes on without it. Only the dashboard can issue it,
 // because Cloudflare refuses token-management permissions on a token made through its API. It can mint
 // a token that deploys the relay, and whatever can deploy the relay has code execution on every board
 // behind it. So it is made for one sitting with a one-day expiry, handed over on a secret card, kept
