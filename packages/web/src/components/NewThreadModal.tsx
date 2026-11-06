@@ -8,7 +8,7 @@ import { RemoteNote } from "./RemoteNote.tsx"
 import { showToast, store } from "../store.ts"
 import { Composer } from "./Composer.tsx"
 import { GithubTrigger } from "./GithubTrigger.tsx"
-import { PromptBoxActions } from "./PromptBoxActions.tsx"
+import { NewThreadAgentMarks } from "./AgentMarks.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { SETTINGS_WRITE_KEY, settingsQuery } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
@@ -29,6 +29,9 @@ import { beginDispatch, dispatchAnswered, dispatchFailed } from "../lib/pendingD
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 
+// One element for every desktop form, so it never invalidates the footer's memo below.
+const NEW_THREAD_MARKS = <NewThreadAgentMarks />
+
 // THE dispatch prompt box — composer + quiet selects row — shared by every surface that can start a
 // thread: the queue's inline section and the anywhere-modal. There is no title field — the server
 // derives a fallback and Claude names the session itself (ai-title), which the UI prefers for display.
@@ -36,7 +39,7 @@ import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 // The form's STATE and its dispatch live in useDispatchForm, so the phone's full-screen new-thread page
 // (PhoneNewThreadPage, below) runs the identical drafts, profile, sign-in gate, errors and pending
 // preview — only the layout around them differs.
-function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
+function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
   const { resolved, codexList, claudeList, acpList, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
@@ -211,7 +214,8 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
           title={resolved.modelAvailable && resolved.effortAvailable
             ? "Model and reasoning effort"
             : "Saved model or reasoning effort unavailable — choose a supported pair"}
-          className="max-w-[min(21rem,72vw)]"
+          // Of the footer rather than the window, so the marks after it keep their line in a 272px sidebar.
+          className="max-w-[min(21rem,72%)]"
         />
         {acpAgent && (
           <AcpModelSelect
@@ -224,9 +228,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
             className="max-w-[min(14rem,40vw)] px-2 py-1"
           />
         )}
+        {agentMarks}
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker])
+  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, agentMarks])
 
   const accountModals = (
     <>
@@ -282,7 +287,7 @@ function LocalDispatchForm({
    *  centred in its page, where a card in flow would lift everything above it by half its own height. */
   pendingCard?: boolean | "float"
 }) {
-  const form = useDispatchForm(onDispatched, projectPicker)
+  const form = useDispatchForm(onDispatched, projectPicker, NEW_THREAD_MARKS)
   return (
     <div className={`w-full flex flex-col gap-3 ${pendingCard === "float" ? "relative" : ""}`}>
       <Composer
@@ -428,10 +433,10 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
     <PhoneNewThreadPage onDispatched={onClose} projectPicker={target.chip} project={target.project?.name} />
   ) : (
     <>
-      {/* No status row here, so the prompt box's two doors take the title's line (PromptBoxActions.tsx). */}
+      {/* No status row here, so the GitHub picker's door takes the title's line. */}
       <div className="mb-1 flex min-h-6 items-center justify-between gap-3">
         <RadixDialog.Title className="text-[14px] font-medium">New thread</RadixDialog.Title>
-        <div className="flex shrink-0 items-center gap-3"><PromptBoxActions /></div>
+        <div className="flex shrink-0 items-center gap-3"><GithubTrigger /></div>
       </div>
       {/* No "Starting thread…" card: the dialog is centred, so the card arriving in flow grew it by 74px
           and lifted its title and prompt box 37px for the length of the dispatch call, and then the

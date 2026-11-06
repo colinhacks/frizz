@@ -9,13 +9,14 @@ import type { QuotaWindow } from "@frizz/shared"
  *
  * Claude reports a weekly cap per model beside the general one (`weekly-opus`, `weekly-sonnet`, and
  * from the modern `limits[]` body a slug of the model's display name, so `weekly-fable` or
- * `weekly-fable-5-1` — server backend/claude-quota.ts). The prompt box's model is an alias, and its
- * leading letters are the family those keys carry. Codex reports no per-model windows, so a Codex model
- * has no family and only its account-wide windows apply.
+ * `weekly-fable-5-1` — server backend/claude-quota.ts). A new-thread box's model is an alias, and its
+ * leading letters are the family those keys carry; a thread's own can be a full id (`claude-opus-5-5`), whose
+ * family follows the `claude-`. Codex reports no per-model windows, so a Codex model has no family and only
+ * its account-wide windows apply.
  */
 export function modelFamily(backend: string, model: string | undefined): string | undefined {
   if (backend !== "claude" || !model) return undefined
-  return /^[a-z]+/.exec(model.toLowerCase())?.[0]
+  return /^(?:claude-)?([a-z]+)/.exec(model.toLowerCase())?.[1]
 }
 
 // The remaining % at/below which a window is no longer "a good amount of quota": it enters the warn zone,
@@ -60,16 +61,16 @@ export function remainingPercent(window: QuotaWindow): number {
   return Math.max(0, Math.min(100, Math.round(100 - window.usedPercent)))
 }
 
-// THE DIAL, in a lucide-style 24-unit box. The arc is lucide's own `gauge` — radius 10, 240° from the lower
-// left, over the top, to the lower right — so the glyph reads as a gauge at a glance and paints as much
-// of its box as the row's gear and reload glyphs do. Angles are screen degrees: clockwise from +x, with
-// y pointing down.
+// THE DIAL, in a lucide-style 24-unit box: radius 10, 270° from the lower left, over the top, to the lower
+// right, so the glyph reads as a gauge at a glance. Lucide's own `gauge` sweeps 240°, which at 14px paints
+// about 10px tall beside a 12.5px plug; 270° paints 11.5px. Angles are screen degrees: clockwise from +x,
+// with y pointing down.
 //
 // E is the lower-left end and F the lower-right, as on a car's fuel gauge: the needle and the lit arc
-// climb from E toward F as quota remains. The centre sits half a unit low because the sweep leaves the
-// bottom 120° open: its ink then spans y 3.5–20.5, centred in the box. The needle swings from a filled
+// climb from E toward F as quota remains. The centre sits 1.4 units low because the sweep leaves the
+// bottom 90° open: its ink then spans y 3.4–20.5, centred in the box. The needle swings from a filled
 // hub, without which a 14px needle read as a loose dash floating inside the arc.
-export const GAUGE = { cx: 12, cy: 14.5, r: 10, start: 150, sweep: 240, needle: 6.5, hub: 2 } as const
+export const GAUGE = { cx: 12, cy: 13.4, r: 10, start: 135, sweep: 270, needle: 6.5, hub: 2 } as const
 
 function polar(angle: number, r: number): [number, number] {
   const rad = (angle * Math.PI) / 180

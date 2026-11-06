@@ -22,28 +22,12 @@ function render(
   label: string | null = "colinhacks/frizz",
   options: {
     connection?: ConnectionState
-    quota?: boolean
     githubRepo?: string | null
     projectName?: string
-    backend?: "claude" | "codex" | "acp"
     onConsole?: boolean
   } = {},
 ): string {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // The gauge reads these cache entries — the quota, the credential, and the prompt box's selection —
-  // and seeding them is how a static render reaches the shown state at all.
-  if (options.quota !== false) {
-    client.setQueryData(["quota"], {
-      claude: { status: "ok", planType: "max", windows: [{ key: "5h", label: "5h", usedPercent: 17 }] },
-      codex: { status: "ok", planType: "pro", windows: [{ key: "5h", label: "5h", usedPercent: 41 }] },
-    })
-    client.setQueryData(["authStatus"], { claude: "authed", codex: "authed", emails: {} })
-  }
-  client.setQueryData(["dispatchPreferencesGet"], {
-    backend: options.backend ?? "claude",
-    claude: { model: "opus", effort: "high" },
-    codex: { model: "gpt-5.5-codex", effort: "high" },
-  })
   const githubRepo =
     options.githubRepo === undefined ? (label?.includes("/") ? label : undefined) : (options.githubRepo ?? undefined)
   store.board = (label === null
@@ -72,13 +56,11 @@ test("a breadcrumb leads; the icons are right-justified with settings in the cor
 
   const home = html.indexOf('aria-label="All projects"')
   const crumb = html.indexOf("data-project-crumb")
-  const gauge = html.indexOf("data-quota-gauge")
   const settings = html.indexOf('aria-label="Settings"')
 
-  assert.ok(home >= 0 && crumb >= 0 && gauge >= 0 && settings >= 0, "every segment renders")
+  assert.ok(home >= 0 && crumb >= 0 && settings >= 0, "every segment renders")
   assert.ok(home < crumb, "the way out is the breadcrumb's root")
-  assert.ok(crumb < gauge, "the crumb is at the left, the readout after it")
-  assert.ok(gauge < settings, "settings is last, in the corner")
+  assert.ok(crumb < settings, "settings is last, in the corner")
   assert.doesNotMatch(html.slice(settings), /<button|<a /, "no control follows settings")
   // The breadcrumb is a nav with the slash as its separator, and the icons' group is pushed right by
   // `ml-auto` — without it they pack left against the crumb.
@@ -161,8 +143,7 @@ test("the Console's row keeps the house and draws no crumb", () => {
   assert.doesNotMatch(html, /aria-label="Breadcrumb"/)
   assert.doesNotMatch(html, /data-project-crumb/)
   assert.doesNotMatch(html, />\/<\/span>/, "no slash: nothing follows the house")
-  assert.ok(html.indexOf('aria-label="All projects"') < html.indexOf("data-quota-gauge"), "the house leads, the icons follow")
-  assert.match(html, /aria-label="Settings"/)
+  assert.ok(html.indexOf('aria-label="All projects"') < html.indexOf('aria-label="Settings"'), "the house leads, the icons follow")
   assert.match(html, /ml-auto/, "the icons keep the right end")
 })
 
@@ -172,35 +153,22 @@ test("the row's gap is 12px of INK: one flex gap, and every icon square trimmed 
   // The pair is the whole point and neither half works alone. `gap-3` without the trims puts 20px of
   // ink between two icon squares (measured 2026-08-14 with scripts/ink-gaps.mjs); the trims without a
   // matching gap pull the icons on top of each other. Every square takes its trim from
-  // STATUS_ROW_ACTION — the gauge too — so a new row action inherits the rhythm instead of re-deriving
-  // it. Measured 2026-10-26: gauge → reload 11.5px, reload → settings 12px.
-  assert.equal(html.match(/class="-mx-1\.5 inline-flex h-6 w-6/g)?.length, 3, "home, the gauge and settings")
+  // STATUS_ROW_ACTION, so a new row action inherits the rhythm instead of re-deriving it. Measured
+  // 2026-10-26: reload → settings 12px.
+  assert.equal(html.match(/class="-mx-1\.5 inline-flex h-6 w-6/g)?.length, 2, "home and settings")
   // The home square takes STATUS_ROW_ACTION's trim and NOTHING more. An extra `-ml-px` once REPLACED the
   // trim (`margin-left` outranks `margin-inline`) and left the house 5px inside the composer's border.
   assert.doesNotMatch(html, /-ml-px/)
 })
 
-test("the gauge follows the model the prompt box has selected", () => {
-  const claude = render("colinhacks/frizz", { backend: "claude" })
-  assert.match(claude, /data-quota-gauge="claude"/)
-  assert.match(claude, /data-remaining="83"/)
-  assert.match(claude, /aria-label="Claude quota for Opus: 83% remaining in the 5h window"/)
-
-  const codex = render("colinhacks/frizz", { backend: "codex" })
-  assert.match(codex, /data-quota-gauge="codex"/)
-  assert.match(codex, /data-remaining="59"/)
-
-  // An ACP agent reports no quota, so there is nothing to gauge.
-  assert.doesNotMatch(render("colinhacks/frizz", { backend: "acp" }), /data-quota-gauge/)
-})
-
-test("the gauge is a dial whose needle and lit arc stand at the reading", () => {
-  const html = render()
-  const gauge = html.slice(html.indexOf("data-fuel-gauge"))
-  assert.match(gauge, /data-gauge-track=""/)
-  assert.match(gauge, /data-gauge-level=""/)
-  assert.match(gauge, /data-gauge-needle=""/)
-  assert.match(gauge, /data-gauge-hub=""/)
+test("usage and MCP are not on the row: they answer to the model chip, and stand beside it", () => {
+  // Maintainer 2026-11-06: "put the agent-specific icons to the right of the chip". AgentMarks.test.ts has
+  // where they went.
+  for (const onConsole of [false, true]) {
+    const html = render("colinhacks/frizz", { onConsole })
+    assert.doesNotMatch(html, /data-quota-gauge|data-fuel-gauge/)
+    assert.doesNotMatch(html, /data-mcp-plug/)
+  }
 })
 
 test("the home crumb is a ROUTER link, not a raw anchor that reloads the document", () => {
@@ -244,15 +212,4 @@ test("the house goes to the grid even while the Console is the kept home", () =>
   } finally {
     setHomeView("projects")
   }
-})
-
-test("a provider with NO DATA renders no gauge at all", () => {
-  // "if there's no data available for a given agent, then it should just be entirely hidden instead of
-  // showing an em dash" (maintainer 2026-08-19). An em dash spent a readout's worth of space saying a
-  // readout was missing.
-  const none = render("colinhacks/frizz", { quota: false })
-  assert.doesNotMatch(none, /data-quota-gauge/)
-  assert.doesNotMatch(none, /—/, "no em dash anywhere")
-  // The buttons do not depend on it.
-  assert.match(none, /aria-label="Settings"/)
 })

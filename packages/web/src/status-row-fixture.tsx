@@ -7,10 +7,11 @@ import "./styles.css"
 // stack can produce: an adhoc stack has no restart-capable supervisor (so the reload button renders
 // null) and no provider credentials under its temp HOME (so the fuel gauge has no reading to show).
 // Stubbing the reads the row depends on is the only way to actually LOOK at the finished thing: the
-// breadcrumb, the gauge, reload and settings on one line.
+// breadcrumb, reload, GitHub and settings on one line.
 //
 // It renders over a stand-in prompt box, because the row's two ends are supposed to land on that box's
-// border and a row measured in a void cannot show that.
+// border and a row measured in a void cannot show that. The box holds the real agent marks, the gauge and
+// the plug, whose hover and panels quotaGaugeHover.e2e.test.ts drives here.
 //
 // Query params drive the states worth eyeballing:
 //   ?model=opus|sonnet|codex|acp — the model the prompt box has selected, which picks the gauge's
@@ -119,7 +120,7 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/_frizz/rpc/settingsGet") return json({ result: {} })
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json({ result: preferences })
   if (url.pathname === "/_frizz/rpc/projectsList") return json({ result: projects })
-  // The prompt box's two doors in the row: the GitHub mark (`?norepo` hides it), and the plug.
+  // The GitHub mark in the row (`?norepo` hides it), and the plug in the box.
   if (url.pathname === "/_frizz/rpc/githubStatus") return json({ result: { inRepo: !params.has("norepo"), authed: true } })
   if (url.pathname === "/_frizz/rpc/codexModels" || url.pathname === "/_frizz/rpc/claudeModels" || url.pathname === "/_frizz/rpc/acpAgents") return json({ result: [] })
   if (url.pathname === "/_frizz/rpc/mcpStatus") return json({ result: { backend: preferences.backend, servers: [{ name: "linear", state: params.has("plugattention") ? "needs-auth" : "connected" }, { name: "sentry", state: "connected" }] } })
@@ -129,6 +130,7 @@ window.fetch = async (input, init) => {
 document.documentElement.dataset.font = params.get("font") === "mono" ? "mono" : "sans"
 
 const { StatusRow } = await import("./components/StatusRow.tsx")
+const { NewThreadAgentMarks } = await import("./components/AgentMarks.tsx")
 const { store } = await import("./store.ts")
 const identityMode = params.get("identity")
 
@@ -158,8 +160,9 @@ createRoot(document.getElementById("root")!).render(
             measure it actually ships at; `?width=272` is the column's floor. */}
         <div style={{ width }}>
           <StatusRow onConsole={identityMode === "console"} />
-          <div className="rounded-xl border border-border bg-panel px-3 py-6 text-[13px] text-muted">
+          <div className="rounded-xl border border-border bg-panel px-3 pb-2 pt-6 text-[13px] text-muted">
             A stand-in prompt box. The row's two ends land on THIS border.
+            <div className="mt-4 flex min-h-7 items-center"><NewThreadAgentMarks /></div>
           </div>
         </div>
       </main>

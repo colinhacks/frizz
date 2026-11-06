@@ -9,6 +9,9 @@ test("a Claude alias names the family its weekly cap is keyed on; a Codex model 
   assert.equal(modelFamily("claude", "opus"), "opus")
   assert.equal(modelFamily("claude", "sonnet"), "sonnet")
   assert.equal(modelFamily("claude", "opus[1m]"), "opus")
+  // A thread's own box can carry the full id its row was launched with.
+  assert.equal(modelFamily("claude", "claude-opus-5-5"), "opus")
+  assert.equal(modelFamily("claude", "claude-fable-5-1[1m]"), "fable")
   assert.equal(modelFamily("codex", "gpt-5.5-codex"), undefined)
   assert.equal(modelFamily("claude", undefined), undefined)
 })
@@ -81,7 +84,7 @@ test("the dial runs from E at the lower left, over the top, to F at the lower ri
 
 test("the lit arc grows with the reading and is empty at zero", () => {
   assert.equal(gaugeArc(GAUGE.start, gaugeAngle(0)), "")
-  // Under 180° of sweep is the short way round; a full tank's 240° needs the large-arc flag.
+  // Under 180° of sweep is the short way round; a full tank's 270° needs the large-arc flag.
   assert.match(gaugeArc(GAUGE.start, gaugeAngle(50)), /A10 10 0 0 1 /)
   assert.match(gaugeArc(GAUGE.start, gaugeAngle(100)), /A10 10 0 1 1 /)
 })

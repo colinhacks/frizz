@@ -9,6 +9,7 @@ import { showToast, store } from "../store.ts"
 import { useThreadSnapshot } from "../hooks.ts"
 import { ProfileGridSelector } from "../components/ProfileGridSelector.tsx"
 import { AcpModelSelect } from "../components/AcpModelSelect.tsx"
+import { AgentMarks } from "../components/AgentMarks.tsx"
 import { Select } from "../components/ui/Select.tsx"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
@@ -32,7 +33,8 @@ import { threadProfileControlState } from "../lib/threadProfile.ts"
 // end is the one that caused the 2026-07-23 removal, and the ask was Claude-specific.
 //
 // ON A PHONE the strip is `phoneTools`: the model chip alone (it opens the phone's model sheet — the
-// ProfileGridSelector's own phone branch), with no permission picker. Permissions stay on the desktop.
+// ProfileGridSelector's own phone branch), with no permission picker and no agent marks. Those stay on the
+// desktop.
 export function useThreadComposerControls(slug: string): { busy: boolean; footer: ReactNode; phoneTools: ReactNode; status: ReactNode } {
   const thread = useThreadSnapshot(slug)
   const profiles = useQuery({
@@ -239,6 +241,12 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
             className="shrink-0"
           />
         )}
+        {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
+        <AgentMarks
+          gauge={backend === "acp" ? undefined : { backend, model }}
+          mcp={{ slug }}
+          side="top"
+        />
         {pendingModel && pendingEffort && (
           <span className="min-w-0 truncate text-[9px] text-muted-50">
             → {pendingModel} · {pendingEffort} pending

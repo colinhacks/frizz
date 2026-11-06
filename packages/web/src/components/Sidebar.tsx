@@ -267,7 +267,7 @@ export function Sidebar() {
               here on their own, then moved out to a fixed corner bar because quota is ACCOUNT-global
               rather than a property of this composer — which is still true, and is why they come back
               as part of a GLOBAL status row instead of as a composer decoration. */}
-          {/* The GitHub picker's door is an icon in this row, beside the gear (PromptBoxActions.tsx). */}
+          {/* The GitHub picker's door is an icon in this row, beside the gear. */}
           <StatusRow />
           {/* No "Starting thread…" card under this box: it stood between the box and the rail for the
               length of the dispatch call and then left, so every row moved down 73px and back up

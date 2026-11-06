@@ -1,12 +1,33 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { composerRail, SEND_SPLIT_WIDTH } from "./iconRhythm.ts"
+import { composerRail, GOAL_GLYPH, markGlyph, MIC_GLYPH, PAPERCLIP_GLYPH, PLUG_GLYPH, SEND_SPLIT_WIDTH } from "./iconRhythm.ts"
 
-// The offsets every composer drew before the microphone existed, as Tailwind classes measured with
-// scripts/ink-gaps.mjs. With no microphone the function must reproduce them exactly.
+// Measured with scripts/ink-gaps.mjs (the table's comment in iconRhythm.ts).
 test("without a microphone the rail keeps its measured offsets", () => {
-  assert.deepEqual(composerRail({}), { right: { send: 8, paperclip: 44 }, reserve: 80 })
-  assert.deepEqual(composerRail({ lead: true }), { right: { send: 8, paperclip: 44, lead: 71 }, reserve: 107 })
+  assert.deepEqual(composerRail({}), { right: { send: 8, paperclip: 42 }, reserve: 78 })
+  assert.deepEqual(composerRail({ lead: true }), { right: { send: 8, paperclip: 42, lead: 67 }, reserve: 103 })
+})
+
+// Painted px = strokeWidth x (rendered px per viewBox unit). A viewBox or size change that leaves the raw
+// `strokeWidth` alone still changes what the eye reads, so the painted width is what is pinned.
+const painted = (glyph: { size: number; strokeWidth: number; viewBox?: string }) =>
+  glyph.strokeWidth * (glyph.size / (glyph.viewBox ? Number(glyph.viewBox.split(" ")[2]) : 24))
+
+test("every bare mark in the prompt box paints one pen", () => {
+  const row14 = 2 * (14 / 24)
+  for (const glyph of [PAPERCLIP_GLYPH, GOAL_GLYPH, MIC_GLYPH, PLUG_GLYPH]) {
+    assert.ok(Math.abs(painted(glyph) - row14) < 1e-9, `${JSON.stringify(glyph)} paints ${painted(glyph)}`)
+  }
+})
+
+test("a scaled glyph keeps an even box and its ink centred in it", () => {
+  const glyph = markGlyph(12.5)
+  assert.equal(glyph.size % 2, 0, "an even box centres on a whole pixel in the 28px square")
+  const [x, y, w, h] = glyph.viewBox.split(" ").map(Number)
+  assert.equal(x, y)
+  assert.equal(w, h)
+  assert.ok(Math.abs(x! + w! / 2 - 12) < 1e-9, "the 24-unit grid's centre stays the box's centre")
+  assert.ok(Math.abs((24 * glyph.size) / w! - 12.5) < 1e-9, "the 24-unit grid draws at the asked scale")
 })
 
 test("the microphone sits beside send and the marks to its left close up behind it", () => {

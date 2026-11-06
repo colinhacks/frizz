@@ -237,8 +237,10 @@ function DesktopProfileGridSelector({
           data-profile-pending={pendingLabel ? "true" : undefined}
           className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] rounded-md border border-border/50 bg-transparent px-2 py-1 text-left text-muted outline-none data-[state=open]:bg-hover-strong ${triggerInteraction} ${className} ${typography}`}
         >
-          {/* Sans cap-band residual is 0.23px without a text nudge; 3px box gap paints 6.69px of ink. */}
-          <span className={`profile-grid-value min-w-0 flex-1 truncate text-left ${typography}`}>
+          {/* Lifted a pixel, as the permission picker's value is (`.select-trigger-readout`): petite caps sit on the
+              baseline, so their ink rode 1.2px below the caret and the marks on this line. The cap band it was once
+              measured against is 8.7px tall where these letters are 7.5px. 3px box gap paints 6.69px of ink. */}
+          <span className={`profile-grid-value relative -top-px min-w-0 flex-1 truncate text-left ${typography}`}>
             <TriggerLabel {...profileGridDisplayParts(groups, value, placeholder, runningModelLabel)} />
           </span>
           {pendingLabel && <Loader2 aria-hidden="true" size={compact ? 10 : 11} className="shrink-0 animate-spin text-muted-65" />}

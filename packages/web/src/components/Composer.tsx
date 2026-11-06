@@ -7,7 +7,7 @@ import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
 import { queueComposerHandlesOptionEnter } from "../lib/queueComposerKeyboard.ts"
-import { composerRail, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { useDictation } from "../lib/dictation.ts"
@@ -160,7 +160,6 @@ export function Composer({
   busy,
   footer,
   railLead,
-  railMcp,
   contextTokens,
   slashSuggest,
   onInterruptSubmit,
@@ -196,9 +195,6 @@ export function Composer({
   // A control at the rail's LEFT end, beyond the paperclip — the thread composer's Goal
   // (ThreadComposerBox). It owns its own popover; this component only places it.
   railLead?: React.ReactNode
-  // The MCP plug (components/McpPlug.tsx), between the lead and the paperclip. It owns its own popover and
-  // its own reading of the agent's servers; this component only places it.
-  railMcp?: React.ReactNode
   // SKILLS TYPEAHEAD. When set, a draft that is exactly one `/`-led token opens a suggestion menu of
   // the thread's invocable skills above the box (fetched lazily, once, on first trigger). The list is
   // whatever the thread's own harness reports — the caller owns sourcing entirely; this component only
@@ -546,7 +542,7 @@ export function Composer({
   // Something to send: words in the box, or — on a thread composer — an answer staged on a card.
   const armed = hasContent || (send?.staged ?? 0) > 0
   // Where each rail mark sits, and the padding every text row keeps clear of the absolutely-placed rail.
-  const rail = composerRail({ lead: Boolean(railLead), mcp: Boolean(railMcp), mic: micShown, sendWidth: send && !phone ? SEND_SPLIT_WIDTH : undefined })
+  const rail = composerRail({ lead: Boolean(railLead), mic: micShown, sendWidth: send && !phone ? SEND_SPLIT_WIDTH : undefined })
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     const el = e.currentTarget
@@ -1054,16 +1050,15 @@ export function Composer({
         </div>
       )}
       {/* Inline footer strip along the bottom edge — always reserved below the auto-growing text.
-          Inset = 6px (px-1.5 pb-1.5) so the leftmost readout chip's rounded-md (6px) bottom-left
-          corner reads CONCENTRIC with the box's rounded-xl (12px): inner radius (6) = outer (12) −
-          inset (6), i.e. both arcs share a center. At the old px-2 (8px) the chip's corner sat 2px
-          inside the box arc and read misaligned. */}
+          min-h-9 and an 8px inset put its centre line 22px above the box's bottom edge, the centre of the
+          28px rail marks at bottom-2, so the model chip, the agent's marks, the paperclip and send are one
+          line of marks, and the chip stands off the box's corner by the 8px send does (2026-11-06). It was
+          a 6px inset that shared an arc centre with the box's corner, and left the chip 3px below the rail. */}
       {/* Reserve the right-side action rail. Without this, three shrinkable readouts can extend under
           the absolutely positioned paperclip/send buttons on narrow composers. */}
-      {footer && <div className="flex min-w-0 flex-wrap items-center gap-1 pl-1.5 pb-1.5" style={{ paddingRight: rail.reserve }}>{footer}</div>}
+      {footer && <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-1 pl-2 pb-2" style={{ paddingRight: rail.reserve }}>{footer}</div>}
       {/* Outlined controls keep 8px between edges; prose reserves the same clearance. */}
       {railLead && <div className="absolute bottom-2 flex items-center" style={{ right: rail.right.lead }}>{railLead}</div>}
-      {railMcp && <div className="absolute bottom-2 flex items-center" style={{ right: rail.right.mcp }}>{railMcp}</div>}
       {/* Attach: a hidden file input driven by the paperclip. Sits in the right rail LEFT of the send
           button, so it never overlaps the mode/model footer or the send
           affordance. Accept is the shared extension allowlist; the /attach route re-validates. */}
@@ -1089,7 +1084,7 @@ export function Composer({
         style={{ right: rail.right.paperclip }}
         className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-[color,background-color] enabled:hover:bg-hover-strong enabled:hover:text-fg disabled:opacity-50`}
       >
-        {uploading ? <Loader2 size={15} strokeWidth={2} className="animate-spin" /> : <Paperclip size={15} strokeWidth={2} />}
+        {uploading ? <Loader2 {...PAPERCLIP_GLYPH} className="animate-spin" /> : <Paperclip {...PAPERCLIP_GLYPH} />}
       </button>
       {micShown && (
         <button
@@ -1128,11 +1123,11 @@ export function Composer({
           }`}
         >
           {dictation.state === "installing" || dictation.state === "starting" ? (
-            <Loader2 size={15} strokeWidth={2} className="animate-spin" />
+            <Loader2 {...MIC_GLYPH} className="animate-spin" />
           ) : dictation.state === "listening" && dictation.stream ? (
             <DictationLevel stream={dictation.stream} />
           ) : (
-            <Mic size={15} strokeWidth={2} />
+            <Mic {...MIC_GLYPH} />
           )}
         </button>
       )}

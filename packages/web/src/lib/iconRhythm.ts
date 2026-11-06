@@ -42,38 +42,83 @@
  *  read `deadLeft`/`deadRight` off each mark). */
 
 
+/** ONE PEN AND ONE SIZE FOR EVERY BARE MARK IN THE PROMPT BOX (maintainer 2026-11-06: "Let's make sure that
+ *  there's consistency in the icons here. The paperclip still looks way bigger than the other ones.").
+ *
+ *  Each mark is sized by what it PAINTS, because a shared box size means nothing here: lucide's plug paints
+ *  10 of its 16 box px and its paperclip 13 of 15. Readings at a real 2x, with each mark isolated (width x
+ *  height of the ink, then its ink mass in square px):
+ *
+ *    before    paperclip 13 x 14, 67.2 · Goal 13 x 13, 76.9 · mic 10 x 14, 48.4 · plug 10 x 15, 48.7
+ *    now       paperclip 11 x 12, 52.0 · Goal 11 x 11, 59.4 · mic  9 x 12, 40.2
+ *              plug 12 x 12, 42.9 · gauge 13 x 11.5, 39.9
+ *
+ *  The Goal and the paperclip keep the most mass because they are drawn with the most line, and with the pen
+ *  fixed a smaller size barely changes that (the paperclip at 12px: 50.8). What the five share is their height.
+ *
+ *  The pen is the 1.17px every 14px lucide glyph in the status row already paints. The send arrow keeps its
+ *  own 1.46px: it sits inside a filled button, where it is read against the fill. */
+const MARK_PEN = 7 / 6
+const MARK_GLYPH_BOX = 14
+
+/** Lucide props that draw a glyph at `ink` px (the size its 24-unit grid would be drawn at) with the one
+ *  pen, inside an even 14px box. The viewBox carries the scale so the box stays even: a 12.5px svg centres
+ *  in a 28px square on a quarter pixel and blurs on a 1x screen. */
+export function markGlyph(ink: number): { size: number; viewBox: string; strokeWidth: number } {
+  const span = (24 * MARK_GLYPH_BOX) / ink
+  const inset = (24 - span) / 2
+  return { size: MARK_GLYPH_BOX, viewBox: `${inset} ${inset} ${span} ${span}`, strokeWidth: (MARK_PEN * 24) / ink }
+}
+
+export const PAPERCLIP_GLYPH = markGlyph(12.5)
+export const GOAL_GLYPH = markGlyph(12.5)
+export const MIC_GLYPH = markGlyph(13)
+
+/** The usage gauge is drawn for its box, so it needs no scaling: 14px on its 2-unit pen is the one pen. */
+export const GAUGE_GLYPH_SIZE = MARK_GLYPH_BOX
+/** THE PLUG IS DIAGONAL (maintainer 2026-11-06: "I like the diagonal plug"). Upright it paints 10 x 15, a tall
+ *  sliver beside the round gauge; turned 45° it paints 12 x 12. Prongs up and to the right: at -45° it read as
+ *  a slashed "off" icon. Turning it leaves its ink 0.75px up and right of the box's centre, which the translate
+ *  takes back. */
+export const PLUG_GLYPH = {
+  size: 16,
+  strokeWidth: (MARK_PEN * 24) / 16,
+  style: { transform: "translate(-0.75px, 0.75px) rotate(45deg)" },
+} as const
+
+/** THE AGENT'S MARKS beside the model chip (components/AgentMarks.tsx). Each is the paperclip's own 28px
+ *  square, hover fill and tone, trimmed onto its ink so the row's one gap is a distance of ink: 11.5px of box
+ *  gap draws about 12px between the gauge and the plug, the same as from the chip's border to the gauge.
+ *  The two squares overlap by about 3.75px of empty padding. Only one can paint a fill at a time. */
+export const AGENT_MARKS = "ml-1.5 flex shrink-0 items-center gap-[11.5px] empty:hidden"
+const AGENT_MARK = "icon-focus-outline relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg"
+export const GAUGE_MARK = `-mx-[7.5px] ${AGENT_MARK}`
+export const PLUG_MARK = `-mx-[7.75px] ${AGENT_MARK}`
+
 /** THE RAIL, right to left: send, the microphone (only where on-device dictation exists — see
- *  lib/dictation.ts), the paperclip, the MCP plug
- *  (components/McpPlug.tsx), and the lead (the thread composer's Goal). Each is a 28px square; any of the middle marks may be absent, and
- *  the marks to its left close up.
+ *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 28px square; any of
+ *  the middle marks may be absent, and the marks to its left close up.
  *
  *  What is measured is the BOX GAP between each pair of neighbours — the gap that puts their INK
  *  ~14.5px apart, given the dead space each glyph wears. The Send button is filled, so its ink is its
- *  box; the bare 15px icons carry 7–9px of empty box per side. Hover outlines do not take part in the
+ *  box; the bare marks carry 8–9px of empty box per side. Hover outlines do not take part in the
  *  resting rhythm. A pair missing from the table falls back to the paperclip→send gap; add the
  *  measurement rather than relying on it. */
-export type RailMark = "lead" | "mcp" | "paperclip" | "mic" | "send"
-const RAIL_ORDER: readonly RailMark[] = ["lead", "mcp", "paperclip", "mic", "send"]
+export type RailMark = "lead" | "paperclip" | "mic" | "send"
+const RAIL_ORDER: readonly RailMark[] = ["lead", "paperclip", "mic", "send"]
 const RAIL_BOX = 28
 const RAIL_SEND_RIGHT = 8
 // Clearance the prose keeps from the leftmost mark.
 const RAIL_PROSE_CLEARANCE = 8
 
 const RAIL_BOX_GAP: Partial<Record<`${RailMark}>${RailMark}`, number>> = {
-  "paperclip>send": 8,
-  // GoalMark at 15px paints 7px of dead box on its right against the paperclip's 8.25px on its left, so
-  // the two hover squares overlap by a pixel of empty padding: 14.25px of ink between them, against
-  // 14.75px from the paperclip to send. Measured on a real queue card with scripts/ink-gaps.mjs at dsf 4,
-  // 2026-10-05; the two glyphs also read at one weight there (mean contrast 338.5 against 338.9).
-  "lead>paperclip": -1,
-  // The plug (16px, lucide's 2-unit pen) wears more dead box than the paperclip or the Goal, and its ink
-  // sits half a pixel right of its box's centre: its square overlaps the paperclip's by 3px and the Goal's
-  // by 2px of empty padding for 14.5px of ink on both sides, against 14.75px from the paperclip to send.
-  // Measured on a real queue card and the new-thread box with scripts/ink-gaps.mjs at dsf 4, 2026-10-19.
-  "mcp>paperclip": -3,
-  "lead>mcp": -2,
-  "mic>send": 6,
-  "paperclip>mic": -2,
+  // The paperclip's 11px of ink wears 8.5px of dead box a side, the Goal's the same and the microphone's 9.5px.
+  // Painted pixels at a real 4x, 2026-11-06: paperclip→send 14.25, Goal→paperclip 14.50, paperclip→mic 14.75,
+  // mic→send 14.50. The squares overlap by empty padding where the gap is negative.
+  "paperclip>send": 6,
+  "lead>paperclip": -3,
+  "mic>send": 5,
+  "paperclip>mic": -3,
 }
 
 /** THE THREAD COMPOSER'S SEND IS A SPLIT BUTTON, not a 28px square: the word "Send", a hairline, and a
@@ -88,12 +133,12 @@ export const SEND_SPLIT_WIDTH = SEND_SPLIT_LABEL_WIDTH + SEND_SPLIT_SEAM_WIDTH +
 /** Where each present mark sits (its CSS `right`, px) and how much right padding the prose keeps.
  *  `sendWidth` is the Send control's own width when it is not the 28px square. A fractional one is
  *  rounded UP for the marks beside it: the button is filled and may end on a half pixel, but a bare
- *  15px icon placed on one draws soft on a 1x screen. */
-export function composerRail(present: { lead?: boolean; mcp?: boolean; mic?: boolean; sendWidth?: number }): {
+ *  icon placed on one draws soft on a 1x screen. */
+export function composerRail(present: { lead?: boolean; mic?: boolean; sendWidth?: number }): {
   right: Partial<Record<RailMark, number>>
   reserve: number
 } {
-  const shown: Record<RailMark, boolean> = { send: true, paperclip: true, lead: !!present.lead, mcp: !!present.mcp, mic: !!present.mic }
+  const shown: Record<RailMark, boolean> = { send: true, paperclip: true, lead: !!present.lead, mic: !!present.mic }
   const marks = RAIL_ORDER.filter((m) => shown[m])
   const right: Partial<Record<RailMark, number>> = {}
   let edge = 0

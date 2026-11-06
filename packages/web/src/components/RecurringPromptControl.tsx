@@ -6,6 +6,7 @@ import {
 } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { formatAgo } from "../lib/durationLabels.ts"
+import { GOAL_GLYPH } from "../lib/iconRhythm.ts"
 import { showToast } from "../store.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { panelWidthOn } from "../lib/overlaySurface.ts"
@@ -30,15 +31,20 @@ import { Switch } from "./ui/Switch.tsx"
 // icon for a target." It was — one ring, an oversized dot and a bare corner for an arrowhead — and beside
 // this one it reads as a record button with a stick through it. Reach for a real icon set (Tabler,
 // Phosphor, Remix and Bootstrap were all compared here at 12px) before drawing anything.
-export function GoalMark({ size = 12, className = "" }: { size?: number; className?: string }) {
+export function GoalMark({ size = 12, viewBox = "0 0 24 24", strokeWidth = 2, className = "" }: {
+  size?: number
+  viewBox?: string
+  strokeWidth?: number
+  className?: string
+}) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox={viewBox}
       fill="none"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
@@ -219,10 +225,9 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
               "As soon as I'm hovering over the box at all, the icon and the border should both
               animate"). The group is NAMED because Tailwind's `group-hover` matches ANY `.group`
               ancestor, not the nearest one. */}
-          {/* 15px with the lucide paperclip's 2-unit pen on the same 24-unit grid, so the two glyphs
-              paint the same 1.25px line. */}
+          {/* The paperclip's scale and pen (lib/iconRhythm.ts), so the two read as one family. */}
           <GoalMark
-            size={15}
+            {...GOAL_GLYPH}
             className={live ? "text-attention-90" : "text-muted group-hover/goal:text-fg group-focus-visible/goal:text-fg"}
           />
         </button>

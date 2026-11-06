@@ -7,16 +7,16 @@ import { rpc } from "../api/rpc.ts"
 import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
-import { STATUS_ROW_PLUG_ACTION, STATUS_ROW_PLUG_ICON } from "../lib/statusRow.ts"
+import { PLUG_GLYPH, PLUG_MARK } from "../lib/iconRhythm.ts"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 
-// THE PLUG: the MCP servers of the agent a prompt box talks to, and their sign-ins. It rides a thread box's
-// icon rail, and the row above the new-thread box (`placement="row"`, components/PromptBoxActions.tsx).
+// THE PLUG: the MCP servers of the agent a prompt box talks to, and their sign-ins. It stands beside that
+// box's model chip (AgentMarks.tsx), since the servers it lists are the selected agent's.
 // A thread's box asks about the thread (its live session when one runs, else what its next session would
 // get); the new-thread box asks about the agent its model chip picks. The server decides where a reading
 // comes from (packages/server/src/mcp-status.ts).
 //
-// QUIET BY DEFAULT. The plug is a plain icon like the paperclip beside it, and it carries one signal: a
+// QUIET BY DEFAULT. The plug is a plain icon like the paperclip across from it, and it carries one signal: a
 // small yellow dot when a server needs a sign-in that the operator has not chosen to ignore. Ignoring is
 // per agent and per browser (lib/prefs.ts `mcpIgnored`), and lasts until that server's state changes.
 //
@@ -37,13 +37,12 @@ export function mcpTargetKey(target: McpTarget): string {
 
 const ignoreKey = (backend: string, server: string) => `${backend}:${server}`
 
-export function McpPlug(props: { target: McpTarget; placement?: "rail" | "row" }) {
+export function McpPlug(props: { target: McpTarget; side: "top" | "bottom" }) {
   // Its readings can start a probe and its sign-ins are this machine's, so a remote session has no plug.
   return useRemoteHost() ? null : <LocalMcpPlug {...props} />
 }
 
-function LocalMcpPlug({ target, placement = "rail" }: { target: McpTarget; placement?: "rail" | "row" }) {
-  const inRow = placement === "row"
+function LocalMcpPlug({ target, side }: { target: McpTarget; side: "top" | "bottom" }) {
   const [open, setOpen] = useState(false)
   const key = mcpTargetKey(target)
   const status = useQuery({
@@ -82,30 +81,26 @@ function LocalMcpPlug({ target, placement = "rail" }: { target: McpTarget; place
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen((was) => !was)}
-          // In the rail, the paperclip's square, hover fill and tone (Composer), so the rail reads as one family;
-          // in the row, the row's own. Held in its hover state while the menu is open, like a pressed toolbar
-          // button.
-          className={inRow
-            ? `relative ${STATUS_ROW_PLUG_ACTION} ${open ? "bg-hover-strong text-fg" : ""}`
-            : `icon-focus-outline relative flex h-7 w-7 items-center justify-center rounded-lg outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg ${open ? "bg-hover-strong text-fg" : "text-muted"}`}
+          // The paperclip's square, hover fill and tone, and held in its hover state while the menu is open,
+          // like a pressed toolbar button.
+          className={PLUG_MARK}
         >
-          {/* 16px in the rail, a size up from the paperclip's 15: lucide's plug paints 8 of its 13 box px where
-              the paperclip paints 10, so at one size the plug read small and light beside it. */}
-          <Plug size={inRow ? STATUS_ROW_PLUG_ICON : 16} strokeWidth={2} aria-hidden />
+          <Plug {...PLUG_GLYPH} aria-hidden />
           {attention && (
             <span
               aria-hidden
               data-mcp-attention-dot
-              className="absolute right-[3px] top-[4px] h-[6px] w-[6px] rounded-full"
+              // In the lower right, a corner the plug's diagonal leaves empty.
+              className="absolute bottom-[4px] right-[4px] h-[6px] w-[6px] rounded-full"
               style={{ background: PRIMER.fgAttention, boxShadow: "0 0 0 2px var(--color-bg)" }}
             />
           )}
         </button>
       </PopoverAnchor>
       <PopoverContent
-        // The row has the page's top edge above it, the rail has the box's text.
-        side={inRow ? "bottom" : "top"}
-        align="end"
+        // From the plug's left edge, so the menu stays over the box. Which way it opens is the box's to say.
+        side={side}
+        align="start"
         data-mcp-menu
         className="w-[min(380px,calc(100vw-1.5rem))] overflow-hidden text-[12px]"
         onOpenAutoFocus={(event) => event.preventDefault()}
