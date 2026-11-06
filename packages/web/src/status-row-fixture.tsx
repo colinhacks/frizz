@@ -124,6 +124,8 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/_frizz/rpc/settingsGet") return json({ result: {} })
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json({ result: preferences })
   if (url.pathname === "/_frizz/rpc/projectsList") return json({ result: projects })
+  // The Console's chip lists the projects with a board on the server, which these counts name.
+  if (url.pathname === "/_frizz/rpc/projectsRailCounts") return json({ result: Object.fromEntries(projects.map((project) => [project.id, { queued: 0, running: 0 }])) })
   // The GitHub mark in the row (`?norepo` hides it), and the plug in the box.
   if (url.pathname === "/_frizz/rpc/githubStatus") return json({ result: { inRepo: !params.has("norepo"), authed: true } })
   if (url.pathname === "/_frizz/rpc/codexModels") return json({ result: codexModels })
@@ -135,6 +137,7 @@ window.fetch = async (input, init) => {
 document.documentElement.dataset.font = params.get("font") === "mono" ? "mono" : "sans"
 
 const { StatusRow } = await import("./components/StatusRow.tsx")
+const { useConsoleDispatchTarget } = await import("./components/ConsoleProjectChip.tsx")
 const { DispatchForm } = await import("./components/NewThreadModal.tsx")
 const { TooltipProvider } = await import("./components/Tooltip.tsx")
 const { store } = await import("./store.ts")
@@ -153,6 +156,12 @@ store.board = (identityMode === "loading"
         : { projectName: "frizz", projectLabel: "colinhacks/frizz", githubRepo: "colinhacks/frizz", projectSlug: "frizz", threads: [] }) as never
 const width = Number(params.get("width") ?? 489)
 
+/** The Console's row, with the chip ConsoleSidebar.tsx gives it. */
+function ConsoleRow() {
+  const { chip } = useConsoleDispatchTarget()
+  return <StatusRow onConsole projectChip={chip} />
+}
+
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
 createRoot(document.getElementById("root")!).render(
@@ -166,7 +175,7 @@ createRoot(document.getElementById("root")!).render(
         {/* The sidebar column's real width at a 1440px viewport by default, so the row's split reads at the
             measure it actually ships at; `?width=272` is the column's floor. */}
         <div style={{ width }}>
-          <StatusRow onConsole={identityMode === "console"} />
+          {identityMode === "console" ? <ConsoleRow /> : <StatusRow />}
           <DispatchForm pendingCard={false} />
         </div>
       </main>

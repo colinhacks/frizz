@@ -14,6 +14,7 @@ import { SETTINGS_WRITE_KEY, settingsQuery, useSettingsAutosave } from "../hooks
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { Select } from "./ui/Select.tsx"
+import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
 import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS } from "../lib/options.ts"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
@@ -203,79 +204,81 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
   const footer = useMemo(() => {
     if (!resolved) {
       return (
-        <ProfileGridSelector
-          groups={[]}
-          value={undefined}
-          onValueChange={() => {}}
-          placeholder={profileLoadError ? "Profile unavailable" : "Profile loading…"}
-          ariaLabel="Model and effort loading"
-          disabled
-        />
+        <PromptControlGroup>
+          <ProfileGridSelector
+            groups={[]}
+            value={undefined}
+            onValueChange={() => {}}
+            placeholder={profileLoadError ? "Profile unavailable" : "Profile loading…"}
+            ariaLabel="Model and effort loading"
+            disabled
+          />
+        </PromptControlGroup>
       )
     }
     const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
-      // gap-1.5 between the pills, the same measured gap the thread composer's strip uses
-      // (useThreadComposerControls): two bordered pills on `gap-x-1` read as one segmented control.
-      // The same gap down, because the Console's project chip wraps the strip onto a second row, and
-      // 2px there read as one stack beside the 6px across.
+      // `gap-1.5` for the phone's tool row, where the project chip and the model chip stand side by side
+      // and can wrap. On a desktop the strip is the one line below.
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {projectPicker}
-        {/* The model and the marks that answer to it hold ONE line, on which the chip truncates, so a long
-            model name in a 272px sidebar never strands them on a row of their own. A phone's tool row has no
-            marks to keep, and its chips still wrap. */}
+        {/* The dropdowns and the marks that answer to them hold ONE line, on which the model name truncates,
+            so a long one in a 272px sidebar never strands them on a row of their own. A phone's tool row has
+            no marks to keep, and its chips still wrap. */}
         <div className={agentMarks ? "flex min-w-0 max-w-full items-center gap-x-1.5" : "contents"}>
-        <ProfileGridSelector
-          groups={profileGroups}
-          agentSettings
-          // `pickerModel`, not `model`: an ACP row is keyed on the bare agent slug; the model inside
-          // the agent is the dropdown's, below.
-          value={{ provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }}
-          onValueChange={(selection) => saveProfile({
-            field: "profile",
-            backend: selection.provider as typeof resolved.backend,
-            model: selection.model,
-            // An ACP row has no effort cell, so its selection carries "" — stored as absent.
-            effort: (selection.effort || undefined) as DispatchInput["effort"],
-          })}
-          ariaLabel="Model and effort"
-          title={resolved.modelAvailable && resolved.effortAvailable
-            ? "Model and reasoning effort"
-            : "Saved model or reasoning effort unavailable — choose a supported pair"}
-          className="max-w-[min(21rem,72vw)]"
-        />
-        {acpAgent && (
-          <AcpModelSelect
-            agentId={acpAgent.id}
-            agentLabel={acpAgent.label}
-            modelId={resolved.acpModelId}
-            // The pick becomes the profile's model slug (`acp:<agent>@<model>`); "" (the agent's own
-            // default) drops the tail.
-            onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
-            className="max-w-[min(14rem,40vw)] px-2 py-1"
-          />
-        )}
-        {/* Claude only, and not on a phone, for the reasons the thread composer's picker gives
-            (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop.
-            Beside the model chip, as it is there: two dropdowns with a mark between them read as two
-            unrelated controls (maintainer 2026-11-06). It holds its width, so in a narrow sidebar the
-            model name is what truncates. */}
-        {showPermission && (
-          <Select
-            variant="readout"
-            value={permissionMode}
-            onValueChange={(mode) => changePermission(mode as PermissionMode)}
-            options={CLAUDE_DISPATCH_PERMISSION_OPTIONS}
-            ariaLabel="New thread permission mode"
-            title={permissionMode === "bypassPermissions"
-              ? "New Claude threads in this project start in Bypass: nothing is checked."
-              : "New Claude threads in this project start in Auto: a classifier reviews each action, and what it won't decide becomes an approval card."}
-            className="shrink-0"
-          />
-        )}
-        {agentMarks}
+          <PromptControlGroup>
+            <ProfileGridSelector
+              groups={profileGroups}
+              agentSettings
+              // `pickerModel`, not `model`: an ACP row is keyed on the bare agent slug; the model inside
+              // the agent is the dropdown's, below.
+              value={{ provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }}
+              onValueChange={(selection) => saveProfile({
+                field: "profile",
+                backend: selection.provider as typeof resolved.backend,
+                model: selection.model,
+                // An ACP row has no effort cell, so its selection carries "" — stored as absent.
+                effort: (selection.effort || undefined) as DispatchInput["effort"],
+              })}
+              ariaLabel="Model and effort"
+              title={resolved.modelAvailable && resolved.effortAvailable
+                ? "Model and reasoning effort"
+                : "Saved model or reasoning effort unavailable — choose a supported pair"}
+              className="max-w-[min(21rem,72vw)]"
+            />
+            {acpAgent && (
+              <AcpModelSelect
+                agentId={acpAgent.id}
+                agentLabel={acpAgent.label}
+                modelId={resolved.acpModelId}
+                // The pick becomes the profile's model slug (`acp:<agent>@<model>`); "" (the agent's own
+                // default) drops the tail.
+                onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
+                className="max-w-[min(14rem,40vw)]"
+              />
+            )}
+            {/* Claude only, and not on a phone, for the reasons the thread composer's picker gives
+                (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop.
+                Joined to the model, as it is there: two dropdowns with a mark between them read as two
+                unrelated controls (maintainer 2026-11-06). It holds its width, so in a narrow sidebar the
+                model name is what truncates. */}
+            {showPermission && (
+              <Select
+                variant="readout"
+                value={permissionMode}
+                onValueChange={(mode) => changePermission(mode as PermissionMode)}
+                options={CLAUDE_DISPATCH_PERMISSION_OPTIONS}
+                ariaLabel="New thread permission mode"
+                title={permissionMode === "bypassPermissions"
+                  ? "New Claude threads in this project start in Bypass: nothing is checked."
+                  : "New Claude threads in this project start in Auto: a classifier reviews each action, and what it won't decide becomes an approval card."}
+                className="shrink-0"
+              />
+            )}
+          </PromptControlGroup>
+          {agentMarks}
         </div>
       </div>
     )
@@ -322,20 +325,17 @@ export function DispatchForm(props: DispatchFormProps) {
 function LocalDispatchForm({
   autoFocus,
   onDispatched,
-  projectPicker,
   pendingCard = true,
 }: {
   autoFocus?: boolean
   onDispatched?: () => void
-  /** The Console's project chip, first in the footer. The dispatch goes to the enclosing ProjectScope. */
-  projectPicker?: ReactNode
   /** Draw the "Starting thread…" card under the box while the dispatch call runs. Off (`false`) where the
    *  surface shows the pending thread itself: a project's sidebar and the Console's draw it as a Running
    *  row (lib/pendingDispatch). `"float"` draws it OUT OF FLOW, hung under the form: for a form that is
    *  centred in its page, where a card in flow would lift everything above it by half its own height. */
   pendingCard?: boolean | "float"
 }) {
-  const form = useDispatchForm(onDispatched, projectPicker, NEW_THREAD_MARKS)
+  const form = useDispatchForm(onDispatched, undefined, NEW_THREAD_MARKS)
   return (
     <div className={`w-full flex flex-col gap-3 ${pendingCard === "float" ? "relative" : ""}`}>
       <Composer
@@ -464,9 +464,10 @@ function LocalPhoneNewThreadPage({ onDispatched, projectPicker, project }: { onD
 // here BEFORE the composer's own Escape-blurs handler can swallow it).
 //
 // On the Console (⌘K → "New thread", and the phone's New thread button) the page names no project, so
-// the form wears the same project chip as the sidebar's prompt box and runs inside that project's scope
-// (ConsoleProjectChip.tsx) — without it the dispatch was refused and an attachment was uploaded to the
-// LAUNCHING project first.
+// the form runs inside the scope of the project the chip names (ConsoleProjectChip.tsx) — without it the
+// dispatch was refused and an attachment was uploaded to the LAUNCHING project first. The chip stands where
+// the sidebar's does, at the box's upper left: here that is the title's line, since a dialog has no status
+// row. A phone has neither, so its page keeps the chip in the tool row, beside the model chip it matches.
 export function NewThreadDialog({ onClose }: { onClose: () => void }) {
   const isMobile = useIsMobile()
   const onConsole = isConsolePath()
@@ -483,7 +484,12 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
     <>
       {/* No status row here, so the GitHub picker's door takes the title's line. */}
       <div className="mb-1 flex min-h-6 items-center justify-between gap-3">
-        <RadixDialog.Title className="text-[14px] font-medium">New thread</RadixDialog.Title>
+        {/* The chip takes the title's 14px rather than its row's 12px: centred side by side at two sizes, the
+            two names' baselines sat 1.5px apart. */}
+        <div className="flex min-w-0 items-center gap-3 text-[14px]">
+          <RadixDialog.Title className="shrink-0 font-medium">New thread</RadixDialog.Title>
+          {target.chip}
+        </div>
         <div className="flex shrink-0 items-center gap-3"><GithubTrigger /></div>
       </div>
       {/* No "Starting thread…" card: the dialog is centred, so the card arriving in flow grew it by 74px
@@ -491,7 +497,7 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
           dialog closed (2026-10-13, the call answering at +461ms). Floated, it would hang off the
           panel's edge. The rail behind the scrim draws the thread as the Running row it becomes
           (lib/pendingDispatch), and the toast and the Send spinner say it is starting. */}
-      <DispatchForm autoFocus onDispatched={onClose} projectPicker={target.chip} pendingCard={false} />
+      <DispatchForm autoFocus onDispatched={onClose} pendingCard={false} />
     </>
   )
   useEffect(() => () => {

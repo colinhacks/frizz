@@ -5,6 +5,7 @@ import { Link } from "react-router"
 import { rpc } from "../api/rpc.ts"
 import { projectHref } from "../lib/base-path.ts"
 import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
+import { STATUS_ROW_CRUMB, STATUS_ROW_CRUMB_CHEVRON } from "../lib/statusRow.ts"
 import { ProjectSquare } from "./ProjectRail.tsx"
 
 // THE BREADCRUMB'S LAST CRUMB — `<home> / <this>` at the head of the status row above the prompt box: the
@@ -23,7 +24,7 @@ import { ProjectSquare } from "./ProjectRail.tsx"
 //
 // The menu is the Console project chip's (ConsoleProjectChip.tsx) — the same surface, row and check —
 // so the app's two project menus read as one control. They are never on one screen: the Console's status
-// row draws no crumb (StatusRow.tsx).
+// row draws the chip in this crumb's place (StatusRow.tsx).
 
 /** One menu row: the chip's own row, so the two project menus match. The tone is each row's own. */
 const ROW =
@@ -65,17 +66,14 @@ export function ProjectCrumb({
           data-project-crumb={currentSlug ?? ""}
           aria-label={`${label}: switch project`}
           title="Switch project"
-          className="group -ml-1.5 -mr-[3px] inline-flex h-6 min-w-0 items-center rounded-md pl-1.5 pr-[3px] font-semibold text-fg/90 outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong data-[state=open]:bg-hover-strong data-[state=open]:text-fg"
+          className={STATUS_ROW_CRUMB}
         >
           <span className="flex min-w-0 items-baseline gap-1">
             <span className="min-w-0 truncate">{label}</span>
             {/* lucide's chevron paints the middle half of its box, so a quarter of an em is dead space a
                 side; `-ml-[0.25em]` takes the near quarter back and leaves the gap's 4px as INK between
                 the name and the chevron, the reading a label and its handle want. */}
-            <ChevronDown
-              aria-hidden="true"
-              className="-ml-[0.25em] size-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)] text-muted-70 transition-[color,transform] group-hover:text-fg group-data-[state=open]:rotate-180 group-data-[state=open]:text-fg"
-            />
+            <ChevronDown aria-hidden="true" className={STATUS_ROW_CRUMB_CHEVRON} />
           </span>
         </button>
       </RadixDropdown.Trigger>
