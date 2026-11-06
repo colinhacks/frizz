@@ -21,6 +21,7 @@ import {
   type ProjectLaunchTarget,
 } from "./project-launch.ts"
 import type { SessionDirectory } from "./access-codes.ts"
+import type { RelayAccess } from "@frizz/shared"
 import { auditLogPathForStateDir, fileAuditLog } from "./audit.ts"
 import { RestartSupervisorProxy, type RestartResult } from "./restart-supervisor.ts"
 import { log as frizzLog } from "./logging.ts"
@@ -206,6 +207,8 @@ export interface DevSupervisor {
   issueAccessLink(): { code: string; url: string; expiresAt: number } | null
   /** Declare (or clear) the public origin on the running board; the gate follows at once. */
   setPublicOrigin(origin: string | undefined): void
+  /** What a session through the relay may do. See RestartSupervisorProxy.setRelayAccess. */
+  setRelayAccess(access: RelayAccess | undefined): void
   /** The port the relay agent dials, on which every request is public. See RestartSupervisorProxy.relayListener. */
   relayListener(): Promise<number>
   readonly firstBoot: Promise<DevBoot>
@@ -665,6 +668,10 @@ class Supervisor implements DevSupervisor {
   /** Mint a single-use access link for the public origin, or null when none is declared. */
   setPublicOrigin(origin: string | undefined): void {
     this.publicProxy.setPublicOrigin(origin)
+  }
+
+  setRelayAccess(access: RelayAccess | undefined): void {
+    this.publicProxy.setRelayAccess(access)
   }
 
   relayListener(): Promise<number> {

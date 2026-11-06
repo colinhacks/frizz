@@ -505,6 +505,7 @@ async function runSupervisor(
         port,
         current: () => remote?.current() ?? null,
         apply: (next, applyOptions) => remote!.apply(next, applyOptions),
+        setRelayAccess: (access) => remote!.setRelayAccess(access),
         // The pane shows the GitHub device code itself: a console line would land under its alternate screen.
         claim: (name, signIn) =>
           establishCloudConfig(name, port, undefined, undefined, githubDeviceFlow({ onPrompt: signIn.onDeviceCode, signal: signIn.signal })),

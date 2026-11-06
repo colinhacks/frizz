@@ -149,7 +149,8 @@ Invoking `nub --test` by hand is fine for one file, but it bypasses that check.
   hook. A request that does reach the worker's PermissionRequest hook is one auto mode declined to decide,
   so the hook defers it (`auto-escalation`) and it becomes an approval card. An unanswered card lapses into
   a denial after 5m (`CLAUDE_PERMISSION_DEADLINE_MS`), so a thread nobody is watching carries on. A remote
-  session can read a card but cannot answer it (`remote-gate.ts`). When auto mode is unavailable, Claude
+  session with full control answers a card as a tab on this machine does, and one the owner limited to read
+  and answer can read it but cannot answer it (`remote-gate.ts`). When auto mode is unavailable, Claude
   Code starts the session in `default` without saying so; Frizz does not fall back to bypass, and each card
   says why it appeared. The board row keeps the mode that was asked for. The worker contract has a variant
   per starting mode: `watch-command` and `monitor` appear only in the bypass one, because only bypass may

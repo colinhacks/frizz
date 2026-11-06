@@ -1,20 +1,26 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import type { Context } from "hono"
 import { createApp } from "./app.ts"
 import { CALLER_HEADER, encodeCallerStamp, type AuditRecord } from "./audit.ts"
 import { buildClaudePermissionInteraction } from "./backend/claude-permission-interactions.ts"
 import type { AppContext } from "./context.ts"
 import { resetFrizzRoots } from "./frizz-paths.ts"
 import { createInteractionStore } from "./interaction-store.ts"
-import { REMOTE_ACCESS, remoteAnswerRefusal, remoteRule } from "./remote-gate.ts"
+import { REMOTE_ACCESS, remoteAnswerRefusal, remoteGate, remoteRule } from "./remote-gate.ts"
 import { createRouter } from "./router.ts"
 import Database from "./sqlite.ts"
 
 const PORT = 49_411
-const PUBLIC = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", session: "Ab3dE9xY" })
+const SESSION = { via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", session: "Ab3dE9xY" } as const
+const READ_AND_ANSWER = encodeCallerStamp({ ...SESSION, access: "read-and-answer" })
+const FULL_CONTROL = encodeCallerStamp({ ...SESSION, access: "full" })
+/** A launcher from before the owner had a choice, whose sessions are therefore unset. */
+const OLDER_LAUNCHER = encodeCallerStamp(SESSION)
 const NETWORK = encodeCallerStamp({ via: "network", remote: "192.0.2.4", host: "192.0.2.1", session: null })
 const LOOPBACK = encodeCallerStamp({ via: "loopback", remote: "127.0.0.1", session: null })
 
@@ -85,17 +91,17 @@ test("a name the table does not hold is refused, including names every object ha
   }
 })
 
-test("every denied procedure is refused remotely before its input is read, and each refusal is written down", async () => {
+test("under read and answer, what the table limits is refused before its input is read, and each refusal is written down", async () => {
   const { post, get, records, calls } = gateApp()
-  const denied = Object.entries(REMOTE_ACCESS).filter(([, rule]) => rule === "deny").map(([name]) => name)
+  const denied = Object.entries(REMOTE_ACCESS).filter(([, rule]) => rule === "deny" || rule === "full").map(([name]) => name)
   assert.ok(denied.length > 60, "the table has not been emptied")
   const router = routerShape()
   for (const name of denied) {
     const procedure = (router as Record<string, { _tag: string }>)[name]!
     // Input that would fail validation: a refusal has to come first, so it says nothing about the shape.
     const response = procedure._tag === "mutation"
-      ? await post(name, { garbage: true }, PUBLIC)
-      : await get(`/_frizz/rpc/${name}?input=%7B%22garbage%22%3Atrue%7D`, PUBLIC)
+      ? await post(name, { garbage: true }, READ_AND_ANSWER)
+      : await get(`/_frizz/rpc/${name}?input=%7B%22garbage%22%3Atrue%7D`, READ_AND_ANSWER)
     assert.equal(response.status, 403, name)
     const body = await response.json() as { code: string; error: string }
     assert.equal(body.code, "remote_refused", name)
@@ -108,11 +114,66 @@ test("every denied procedure is refused remotely before its input is read, and e
   assert.equal(calls.dispatch, 0)
 })
 
-// The table says `deny` and the loop above proves a garbage body is refused. This is the claim that matters
-// with `auto` as the default: a real, pending approval, addressed correctly, stays pending whoever relays it,
-// because an approval card is a risky action asking to go ahead. The loopback control proves the same call
-// is a good one, so the refusals above it are the gate's and not a malformed request's.
-test("a remote session cannot answer or cancel a real approval card, and this machine can", async () => {
+test("each procedure is refused by exactly what the table says, at each level, and a level is only what the proxy stamped", () => {
+  const guard = remoteGate({ audit: undefined, project: { id: "served", dir: "/" }, questionSpec: () => undefined, mayRead: () => false })
+  const refuses = (stamp: string | undefined, name: string) => guard.procedure!({
+    req: { header: (header: string) => header === CALLER_HEADER ? stamp : undefined },
+    env: {},
+    json: (body: unknown, status: number) => Response.json(body, { status }),
+  } as unknown as Context, name) !== undefined
+  // A value this build does not know is narrower, and another machine with no session does not get more for claiming it.
+  const unknownLevel = encodeCallerStamp({ ...SESSION, access: "something-new" } as never)
+  const networkClaimingFull = encodeCallerStamp({ via: "network", remote: "192.0.2.4", host: "192.0.2.1", session: null, access: "full" })
+  for (const [name, rule] of Object.entries(REMOTE_ACCESS)) {
+    for (const stamp of [FULL_CONTROL, OLDER_LAUNCHER]) assert.equal(refuses(stamp, name), rule === "deny", `full control: ${name}`)
+    for (const stamp of [READ_AND_ANSWER, NETWORK, unknownLevel, networkClaimingFull]) {
+      assert.equal(refuses(stamp, name), rule === "deny" || rule === "full", `read and answer: ${name}`)
+    }
+    for (const stamp of [LOOPBACK, undefined]) assert.equal(refuses(stamp, name), false, `this machine: ${name}`)
+  }
+  for (const stamp of [FULL_CONTROL, READ_AND_ANSWER]) assert.equal(refuses(stamp, "no-such-procedure"), true)
+})
+
+test("full control means what a tab on this machine can do: `deny` holds nothing a page calls", () => {
+  const web = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "web", "src")
+  const source = readdirSync(web, { recursive: true, encoding: "utf8" })
+    .filter((path) => /\.tsx?$/.test(path) && !/\.test\.|fixture|contract\.ts$/.test(path))
+    .map((path) => readFileSync(join(web, path), "utf8"))
+    .join("\n")
+  const called = (name: string) => new RegExp(`(?:\\b(?:rpc|api|client)|\\brpcFor\\([^)]*\\))\\.${name}\\b`).test(source)
+  for (const name of ["dispatch", "followUp", "interactionResolve"]) assert.ok(called(name), `the scan reads the page's calls: ${name}`)
+  const denied = Object.entries(REMOTE_ACCESS).filter(([, rule]) => rule === "deny").map(([name]) => name)
+  assert.deepEqual(denied.filter(called), [])
+})
+
+test("full control starts a thread and writes on a card, and what a limited session may not say comes through", async (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "remote-gate-secret-"))
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }))
+  const { post, get, calls, records } = gateApp({ project: { id: "served", dir: stateDir, stateDir, cwdSlug: "-served", name: "served", label: "served" } } as Partial<AppContext>)
+  assert.equal((await post("dispatch", { prompt: "x" }, FULL_CONTROL)).status, 200)
+  assert.equal((await post("dispatch", { prompt: "x" }, OLDER_LAUNCHER)).status, 200)
+  assert.equal(calls.dispatch, 2)
+  for (const [id, spec, chosen, extra] of [
+    ["qst_text", TEXT, [], { text: "a typed name" }],
+    ["qst_secret", SECRET, [], { text: "a pasted value" }],
+    ["qst_danger", DANGER, ["Yes"], {}],
+  ] as const) {
+    const response = await post("answerQuestions", { slug: "the-thread", answers: [answer(id, spec, [...chosen], extra)] }, FULL_CONTROL)
+    assert.equal(response.status, 200, id)
+  }
+  assert.deepEqual(calls.answered, ["qst_text", "qst_secret", "qst_danger"])
+  const input = (value: unknown) => encodeURIComponent(JSON.stringify(value))
+  assert.notEqual((await get(`/_frizz/rpc/quota?input=${input({ force: true })}`, FULL_CONTROL)).status, 403)
+  const snooze = { slug: "the-thread", sessionId: "s", until: new Date(Date.now() + 60_000).toISOString(), prompt: "run the deploy" }
+  assert.notEqual((await post("setThreadSnooze", snooze, FULL_CONTROL)).status, 403)
+  assert.deepEqual(records.filter((record) => record.action === "remoteRefused"), [])
+})
+
+// The table says `full` and the loop above proves a garbage body is refused. This is the claim that matters
+// with `auto` as the default: under read and answer a real, pending approval, addressed correctly, stays
+// pending, because an approval card is a risky action asking to go ahead. The loopback control proves the same
+// call is a good one, so the refusals above it are the gate's and not a malformed request's.
+test("read and answer cannot answer or cancel a real approval card, and full control and this machine can", async () => {
   const dir = mkdtempSync(join(tmpdir(), "remote-gate-card-"))
   const store = createInteractionStore(new Database(":memory:"))
   const owner = { projectId: "served", threadSlug: "the-thread", sessionId: "the-session", cwd: dir }
@@ -133,7 +194,7 @@ test("a remote session cannot answer or cancel a real approval card, and this ma
   try {
     const pending = card("request-1")
     const approve = pending.allowedDecisions.find((decision) => decision.semantic === "approve")!.id
-    for (const stamp of [PUBLIC, NETWORK]) {
+    for (const stamp of [READ_AND_ANSWER, NETWORK]) {
       const refusals = [await post("interactionResolve", resolve(pending, approve), stamp), await post("interactionCancel", address(pending), stamp)]
       for (const response of refusals) {
         assert.equal(response.status, 403)
@@ -144,8 +205,8 @@ test("a remote session cannot answer or cancel a real approval card, and this ma
     assert.deepEqual(records.filter((record) => record.action === "remoteRefused").map((record) => (record.detail as { procedure: string }).procedure), [
       "interactionResolve", "interactionCancel", "interactionResolve", "interactionCancel",
     ])
-    // A remote session can still SEE what the thread is waiting on, which is what its note is drawn from.
-    const seen = await get(`/_frizz/rpc/pendingInteractions?input=${encodeURIComponent(JSON.stringify({ slug: "the-thread", sessionId: "the-session" }))}`, PUBLIC)
+    // A limited session can still SEE what the thread is waiting on, which is what its note is drawn from.
+    const seen = await get(`/_frizz/rpc/pendingInteractions?input=${encodeURIComponent(JSON.stringify({ slug: "the-thread", sessionId: "the-session" }))}`, READ_AND_ANSWER)
     assert.equal(seen.status, 200)
 
     const answered = await post("interactionResolve", resolve(pending, approve), LOOPBACK)
@@ -155,6 +216,18 @@ test("a remote session cannot answer or cancel a real approval card, and this ma
     const cancelled = await post("interactionCancel", address(another), LOOPBACK)
     assert.equal(cancelled.status, 200, await cancelled.clone().text())
     assert.equal(store.get(scope, another.id)?.lifecycle, "cancelled")
+
+    // A device with full control answers the same card a tab on this machine does, whatever it came through.
+    for (const stamp of [FULL_CONTROL, OLDER_LAUNCHER]) {
+      const third = card(`request-approve-${stamp}`)
+      const granted = await post("interactionResolve", { ...resolve(third, approve), responseId: `response-${third.id}` }, stamp)
+      assert.equal(granted.status, 200, await granted.clone().text())
+      assert.equal(store.get(scope, third.id)?.lifecycle, "resolved")
+      const fourth = card(`request-cancel-${stamp}`)
+      const dropped = await post("interactionCancel", address(fourth), stamp)
+      assert.equal(dropped.status, 200, await dropped.clone().text())
+      assert.equal(store.get(scope, fourth.id)?.lifecycle, "cancelled")
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -162,7 +235,7 @@ test("a remote session cannot answer or cancel a real approval card, and this ma
 
 test("no spelling of the URL reaches a denied procedure", async () => {
   const { app, calls } = gateApp()
-  const headers = { host: `127.0.0.1:${PORT}`, origin: `http://127.0.0.1:${PORT}`, "content-type": "application/json", [CALLER_HEADER]: PUBLIC }
+  const headers = { host: `127.0.0.1:${PORT}`, origin: `http://127.0.0.1:${PORT}`, "content-type": "application/json", [CALLER_HEADER]: READ_AND_ANSWER }
   const body = JSON.stringify({ prompt: "x" })
   for (const path of [
     "/_frizz/rpc/dispatch",
@@ -205,21 +278,21 @@ test("the same call from this machine and from a worker's direct path reaches th
 
 test("remote reads are answered, and a read that would start something is not", async () => {
   const { get, records } = gateApp()
-  assert.equal((await get("/_frizz/rpc/settingsGet", PUBLIC)).status, 200)
+  assert.equal((await get("/_frizz/rpc/settingsGet", READ_AND_ANSWER)).status, 200)
   assert.equal(records.length, 0)
   const input = (value: unknown) => encodeURIComponent(JSON.stringify(value))
-  assert.equal((await get(`/_frizz/rpc/quota?input=${input({ force: true })}`, PUBLIC)).status, 403)
-  assert.equal((await get(`/_frizz/rpc/quota?input=${input({ force: "claude" })}`, PUBLIC)).status, 403)
-  assert.equal((await get(`/_frizz/rpc/authStatus?input=${input({ fresh: true })}`, PUBLIC)).status, 403)
+  assert.equal((await get(`/_frizz/rpc/quota?input=${input({ force: true })}`, READ_AND_ANSWER)).status, 403)
+  assert.equal((await get(`/_frizz/rpc/quota?input=${input({ force: "claude" })}`, READ_AND_ANSWER)).status, 403)
+  assert.equal((await get(`/_frizz/rpc/authStatus?input=${input({ fresh: true })}`, READ_AND_ANSWER)).status, 403)
   assert.deepEqual(records.map((record) => record.detail), [{ procedure: "quota" }, { procedure: "quota" }, { procedure: "authStatus" }])
 })
 
 test("a remote snooze is bookkeeping until it carries a prompt", async () => {
   const { post, records } = gateApp()
   const snooze = { slug: "the-thread", sessionId: "s", until: null }
-  const plain = await post("setThreadSnooze", snooze, PUBLIC)
+  const plain = await post("setThreadSnooze", snooze, READ_AND_ANSWER)
   assert.notEqual(plain.status, 403, "a plain snooze gets past the gate")
-  assert.equal((await post("setThreadSnooze", { ...snooze, until: new Date(Date.now() + 60_000).toISOString(), prompt: "run the deploy" }, PUBLIC)).status, 403)
+  assert.equal((await post("setThreadSnooze", { ...snooze, until: new Date(Date.now() + 60_000).toISOString(), prompt: "run the deploy" }, READ_AND_ANSWER)).status, 403)
   assert.deepEqual(records.at(-1)?.detail, { procedure: "setThreadSnooze" })
 })
 
@@ -235,7 +308,7 @@ test("a remote caller can pick listed options on a card, and the answer lands", 
     answer("qst_branch", BRANCH, ["No"]),
   ]
   for (const one of accepted) {
-    const response = await post("answerQuestions", { slug: "the-thread", answers: [one] }, PUBLIC)
+    const response = await post("answerQuestions", { slug: "the-thread", answers: [one] }, READ_AND_ANSWER)
     assert.equal(response.status, 200, JSON.stringify(one))
     assert.equal(calls.answered.at(-1), one.questionId)
   }
@@ -269,7 +342,7 @@ test("a remote answer holds nothing a caller wrote, and no card that belongs to 
     "a branch that leads to a free-text card": answer("qst_totext", BRANCH_TO_TEXT, ["Yes"], { followUps: [answer("qst_totext", TEXT, [])] }),
   }
   for (const [what, one] of Object.entries(refused)) {
-    const response = await post("answerQuestions", { slug: "the-thread", answers: [one] }, PUBLIC)
+    const response = await post("answerQuestions", { slug: "the-thread", answers: [one] }, READ_AND_ANSWER)
     assert.equal(response.status, 403, what)
     const body = await response.json() as { code: string; error: string }
     assert.equal(body.code, "remote_refused", what)
@@ -277,7 +350,7 @@ test("a remote answer holds nothing a caller wrote, and no card that belongs to 
     assert.deepEqual(records.at(-1)?.detail, { procedure: "answerQuestions" }, what)
   }
   // One bad answer in a batch refuses the batch: nothing is half-settled.
-  const mixed = await post("answerQuestions", { slug: "the-thread", answers: [answer("qst_choice", CHOICE, ["SQLite"]), answer("qst_text", TEXT, [], { text: "x" })] }, PUBLIC)
+  const mixed = await post("answerQuestions", { slug: "the-thread", answers: [answer("qst_choice", CHOICE, ["SQLite"]), answer("qst_text", TEXT, [], { text: "x" })] }, READ_AND_ANSWER)
   assert.equal(mixed.status, 403)
   assert.deepEqual(calls.answered, [], "a refused answer reached the row")
 
@@ -302,7 +375,7 @@ test("outside RPC, a remote caller reaches what the list names and nothing else"
     ["GET", "/_frizz/%68ealth"],
     ["POST", "/_frizz/%61ttach"],
   ] as const) {
-    const response = await get(path, PUBLIC, method)
+    const response = await get(path, READ_AND_ANSWER, method)
     assert.equal(response.status, 403, `${method} ${path}`)
     assert.equal(((await response.json()) as { code: string }).code, "remote_refused", path)
   }
@@ -310,6 +383,25 @@ test("outside RPC, a remote caller reaches what the list names and nothing else"
   assert.equal(records.length, 7)
   assert.equal((await get("/_frizz/health", LOOPBACK)).status, 200)
   assert.equal((await get("/_frizz/health")).status, 200)
+})
+
+test("full control gets the attachment route back, and the launcher's routes stay the machine's", async () => {
+  const { get } = gateApp()
+  for (const [method, path] of [
+    ["GET", "/_frizz/health"],
+    ["POST", "/_frizz/control/stop"],
+    ["POST", "/_frizz/control/launch"],
+    ["GET", "/_frizz/no-such-route"],
+    ["GET", "/_frizz/%68ealth"],
+  ] as const) {
+    const response = await get(path, FULL_CONTROL, method)
+    assert.equal(response.status, 403, `${method} ${path}`)
+    assert.equal(((await response.json()) as { code: string }).code, "remote_refused", path)
+  }
+  for (const stamp of [FULL_CONTROL, OLDER_LAUNCHER]) {
+    const attach = await get("/_frizz/attach", stamp, "POST")
+    assert.doesNotMatch(await attach.text(), /remote_refused/, "the route answers for itself")
+  }
 })
 
 test("file routes confine a remote caller, and leave this machine's tab alone", async (t) => {
@@ -337,21 +429,27 @@ test("file routes confine a remote caller, and leave this machine's tab alone", 
   const rpcInput = (value: unknown) => encodeURIComponent(JSON.stringify(value))
 
   for (const path of [join(project, "README.md"), join(project, ".frizz", "threads", "abc", "notes.md")]) {
-    assert.equal((await get(`/_frizz/rpc/localMarkdown?input=${rpcInput({ path })}`, PUBLIC)).status, 200, path)
-    assert.equal((await get(`/_frizz/rpc/localFile?input=${rpcInput({ path })}`, PUBLIC)).status, 200, path)
+    assert.equal((await get(`/_frizz/rpc/localMarkdown?input=${rpcInput({ path })}`, READ_AND_ANSWER)).status, 200, path)
+    assert.equal((await get(`/_frizz/rpc/localFile?input=${rpcInput({ path })}`, READ_AND_ANSWER)).status, 200, path)
   }
-  assert.equal((await get(`/_frizz/local-image?path=${q(join(project, "shot.png"))}`, PUBLIC)).status, 200)
+  assert.equal((await get(`/_frizz/local-image?path=${q(join(project, "shot.png"))}`, READ_AND_ANSWER)).status, 200)
   for (const path of [join(home, ".ssh", "notes.md"), join(project, ".env")]) {
-    assert.equal((await get(`/_frizz/rpc/localFile?input=${rpcInput({ path })}`, PUBLIC)).status, 403, path)
-    assert.equal((await get(`/_frizz/local-file?path=${q(path)}`, PUBLIC)).status, 404, path)
+    assert.equal((await get(`/_frizz/rpc/localFile?input=${rpcInput({ path })}`, READ_AND_ANSWER)).status, 403, path)
+    assert.equal((await get(`/_frizz/local-file?path=${q(path)}`, READ_AND_ANSWER)).status, 404, path)
   }
-  assert.equal((await get(`/_frizz/rpc/localMarkdown?input=${rpcInput({ path: join(home, ".ssh", "notes.md") })}`, PUBLIC)).status, 403)
-  assert.equal((await get(`/_frizz/local-image?path=${q(join(home, ".ssh", "photo.png"))}`, PUBLIC)).status, 404)
+  assert.equal((await get(`/_frizz/rpc/localMarkdown?input=${rpcInput({ path: join(home, ".ssh", "notes.md") })}`, READ_AND_ANSWER)).status, 403)
+  assert.equal((await get(`/_frizz/local-image?path=${q(join(home, ".ssh", "photo.png"))}`, READ_AND_ANSWER)).status, 404)
 
-  const resolved = await get(`/_frizz/rpc/resolveLocalPaths?input=${rpcInput({ paths: [join(project, "README.md"), join(project, ".env"), join(home, ".ssh", "notes.md"), "~/.ssh/notes.md"] })}`, PUBLIC)
+  const resolved = await get(`/_frizz/rpc/resolveLocalPaths?input=${rpcInput({ paths: [join(project, "README.md"), join(project, ".env"), join(home, ".ssh", "notes.md"), "~/.ssh/notes.md"] })}`, READ_AND_ANSWER)
   assert.deepEqual(((await resolved.json()) as { result: { resolved: Array<{ path: string | null }> } }).result.resolved.map((row) => row.path !== null), [true, false, false, false])
 
-  // The machine's own tab keeps every one of these.
-  assert.equal((await get(`/_frizz/rpc/localMarkdown?input=${rpcInput({ path: join(home, ".ssh", "notes.md") })}`, LOOPBACK)).status, 200)
-  assert.equal((await get(`/_frizz/local-image?path=${q(join(home, ".ssh", "photo.png"))}`, LOOPBACK)).status, 200)
+  // The machine's own tab keeps every one of these, and so does a device with full control.
+  for (const stamp of [LOOPBACK, FULL_CONTROL, OLDER_LAUNCHER]) {
+    assert.equal((await get(`/_frizz/rpc/localMarkdown?input=${rpcInput({ path: join(home, ".ssh", "notes.md") })}`, stamp)).status, 200)
+    assert.equal((await get(`/_frizz/rpc/localFile?input=${rpcInput({ path: join(project, ".env") })}`, stamp)).status, 200)
+    assert.equal((await get(`/_frizz/local-file?path=${q(join(project, ".env"))}`, stamp)).status, 200)
+    assert.equal((await get(`/_frizz/local-image?path=${q(join(home, ".ssh", "photo.png"))}`, stamp)).status, 200)
+    const everything = await get(`/_frizz/rpc/resolveLocalPaths?input=${rpcInput({ paths: [join(project, ".env"), join(home, ".ssh", "notes.md")] })}`, stamp)
+    assert.deepEqual(((await everything.json()) as { result: { resolved: Array<{ path: string | null }> } }).result.resolved.map((row) => row.path !== null), [true, true])
+  }
 })

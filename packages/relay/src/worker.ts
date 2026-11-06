@@ -25,9 +25,10 @@ import { BoardSocket } from "./board-socket.ts"
  * cookie. Deploys go through CI only (packages/relay/README.md), and plans/blind-relay.md is the design
  * that takes the plaintext away from this hop.
  *
- * WHAT THAT ACTING REACHES IS THE BOARD'S CALL, not this file's. A remote session may read the board and
- * pick listed options on question cards, and nothing else runs (packages/server/src/remote-gate.ts). The
- * board's relay agent dials a listener on which every request is public, so no frame can claim to be local.
+ * WHAT THAT ACTING REACHES IS THE BOARD'S CALL, not this file's. By default a session may do what a tab on
+ * the machine can, and an owner can limit one to reading the board and picking listed options on question
+ * cards (packages/server/src/remote-gate.ts). Only the machine can change that. The board's relay agent
+ * dials a listener on which every request is public, so no frame can claim to be local.
  */
 
 export interface RelayEnv {

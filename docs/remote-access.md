@@ -26,12 +26,18 @@ A device can sign itself out: **Sign out this device** in Settings ends that bro
 
 ## What a remote session can do
 
-A device signed in this way reads the board and answers question cards by picking a listed option. Everything else happens on the computer running Frizz:
+A signed-in device has full control, which is what a tab on the computer running Frizz can do. A few things stay on that computer for every device:
+
+- minting a sign-in link;
+- listing the devices that hold a session, or signing another one out;
+- changing what a device signed in through frizz.sh can do.
+
+A [frizz.sh subdomain](#a-frizzsh-subdomain) also offers a narrower level, read and answer, which you choose in the **R** menu. Cloudflare Tunnel, Tailscale and your own proxy don't offer it, because nothing Frizz runs is in their path. A device at this level reads the board and answers question cards by picking a listed option. Everything else happens on the computer running Frizz:
 
 - starting or steering a thread, or changing its settings;
 - answering a free-text, secret or danger card;
 - approving or denying an action a worker is waiting on;
-- terminals, restarts and sign-in links;
+- restarts and updates;
 - reading a file outside a registered project or a thread's scratch and attachment directories, or a secret-looking file inside one (`.env`, a key, anything under a dotted folder other than `.frizz`).
 
 A refused call is written to `logs/audit.jsonl` under Frizz's data folder, with the session and device that made it. [SSH port forwarding](#ssh-port-forwarding) counts as the computer itself, so it keeps the whole board.
@@ -48,7 +54,16 @@ Press **R** in it and walk through any setup. Credentials come along (`gh`, clou
 
 ## A frizz.sh subdomain
 
-Pick it and you are done. It needs no account, no domain, no Tailscale, and no tunnel.
+Pick it and answer one question. It needs no account, no domain, no Tailscale, and no tunnel.
+
+```
+  What can a device signed in through frizz.sh do?
+
+  ❯ Full control      start and steer threads, answer cards
+    Read and answer   read the board and pick options on cards
+```
+
+To change the answer later, press **R** and pick **Device access**. The new answer applies to devices already signed in. [What a remote session can do](#what-a-remote-session-can-do) lists both levels.
 
 ```
   Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).
@@ -73,7 +88,7 @@ Your board stays on loopback and opens one outbound connection to a relay Frizz 
 
 - **One per machine.** Each machine key holds one subdomain.
 - **Lease.** Frizz can reclaim any subdomain at any time.
-- **Relay.** Every request and keystroke passes through a relay Frizz runs, and the sign-in check runs on your machine. To keep a relay out of the path, use Tailscale or your own proxy.
+- **Relay.** Every request and keystroke passes through a relay Frizz runs, and the sign-in check runs on your machine. A device with full control can run anything on your machine. The relay carries that traffic, so anyone who took control of the relay could do the same. Under read and answer, they could read the board and pick options on cards. To keep the relay out of the path, use Tailscale or your own proxy.
 - **No warranty.** If you cannot afford to lose access, use a domain you control.
 
 ## Cloudflare Tunnel

@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { acpModelSlug, type AccountBackend, type DispatchInput, type PermissionMode, type Settings } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
-import { useRemoteHost } from "../api/supervisorStatus.ts"
-import { RemoteNote } from "./RemoteNote.tsx"
+import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
+import { ReadAndAnswerNote } from "./ReadAndAnswerNote.tsx"
 import { showToast, store } from "../store.ts"
 import { Composer } from "./Composer.tsx"
 import { GithubTrigger } from "./GithubTrigger.tsx"
@@ -314,8 +314,8 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
 type DispatchFormProps = Parameters<typeof LocalDispatchForm>[0]
 
 export function DispatchForm(props: DispatchFormProps) {
-  const remoteHost = useRemoteHost()
-  if (remoteHost) return <RemoteNote remoteHost={remoteHost} />
+  const readAndAnswerHost = useReadAndAnswerHost()
+  if (readAndAnswerHost) return <ReadAndAnswerNote host={readAndAnswerHost} />
   return <LocalDispatchForm {...props} />
 }
 
@@ -381,11 +381,11 @@ function PendingDispatch({ prompt, className = "" }: { prompt: string; className
 // the prompt fills the page at 17px; the tool row — attach, the model chip, the GitHub picker — rides
 // on the keyboard. Start returns to the board when the server has the thread, as the dialog does.
 function PhoneNewThreadPage(props: { onDispatched: () => void; projectPicker?: ReactNode; project?: string }) {
-  const remoteHost = useRemoteHost()
-  if (!remoteHost) return <LocalPhoneNewThreadPage {...props} />
+  const readAndAnswerHost = useReadAndAnswerHost()
+  if (!readAndAnswerHost) return <LocalPhoneNewThreadPage {...props} />
   return (
     <div data-phone-new-thread className="flex flex-col items-start gap-3 p-[18px]">
-      <RemoteNote remoteHost={remoteHost} />
+      <ReadAndAnswerNote host={readAndAnswerHost} />
       <RadixDialog.Close asChild>
         <button type="button" data-phone-new-thread-close className="rounded-md border border-border px-3 py-1.5 text-[14px] text-fg outline-none">Close</button>
       </RadixDialog.Close>

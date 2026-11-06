@@ -1,6 +1,5 @@
 import { queryOptions, useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { FRIZZ_SUPERVISOR_STATUS_WAKE_EVENT, getFrizzSupervisorStatus, type FrizzSupervisorStatus, type StampedSupervisorStatus } from "./restart.ts"
-import { isRemoteSession } from "./signOut.ts"
 import { isLoopbackUrl } from "../lib/mobileThread.ts"
 import { store } from "../store.ts"
 
@@ -66,16 +65,25 @@ export function useSupervisorStatus(): UseQueryResult<StampedSupervisorStatus | 
 const ANY_HOST = "the computer running Frizz"
 
 /**
- * THE READ-AND-ANSWER BOARD. A remote session may read and pick listed options, and everything else is
- * the machine's (server remote-gate.ts, which is the rule; this only stops offering what it refuses).
- * The machine's name on a remote session, and null on the machine's own tab.
+ * What this page offers, given what its session may do. A session the owner limited to reading the board and
+ * picking listed options gets the machine's name here, for the copy that sends it back there, and everything
+ * else gets null: the machine's own tab, and a remote session with full control. Server remote-gate.ts is the
+ * rule, and this only stops offering what it refuses. isRemoteSession is the question of being remote at all.
+ *
+ * A supervisor from before the choice sends no `remoteAccess`. Unset is full control, there and on the server.
+ *
+ * `location` is the page's own address, and is absent when a component renders outside a browser.
  */
-export function useRemoteHost(): string | null {
-  const status = useSupervisorStatus().data
-  // Before the first answer, a page on a public name is taken for remote: mounting the composer for those
-  // few milliseconds would ask for what the server refuses, and each refusal is a line in its audit trail.
-  if (status === undefined) return typeof location === "undefined" || isLoopbackUrl(location.href) ? null : ANY_HOST
-  return isRemoteSession(status) ? status?.remoteHost ?? ANY_HOST : null
+export function readAndAnswerHost(status: FrizzSupervisorStatus | null | undefined, href: string | undefined): string | null {
+  // Before the first answer, a page on a public name holds back: mounting the composer for those few
+  // milliseconds on a limited session would ask for what the server refuses, and each refusal is a line in
+  // its audit trail. ReadAndAnswerNote stays blank meanwhile, so a full-control session reads nothing untrue.
+  if (status === undefined) return href === undefined || isLoopbackUrl(href) ? null : ANY_HOST
+  return status?.remoteAccess === "read-and-answer" ? status.remoteHost ?? ANY_HOST : null
+}
+
+export function useReadAndAnswerHost(): string | null {
+  return readAndAnswerHost(useSupervisorStatus().data, typeof location === "undefined" ? undefined : location.href)
 }
 
 let wakeClient: QueryClient | null = null

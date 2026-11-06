@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
-import { claimNameIsValid, generateAnonymousClaimName, isAnonymousClaimName, normalizeClaimName } from "@frizz/shared";
+import { claimNameIsValid, generateAnonymousClaimName, isAnonymousClaimName, normalizeClaimName, type RelayAccess } from "@frizz/shared";
 import { loadOrCreateClaimIdentity } from "./identity.ts";
 import { deviceCodeMessage, githubDeviceFlow, type GithubAuthorizer } from "./github-device-flow.ts";
 import { ClaimError, claimName } from "./registrar-client.ts";
@@ -67,6 +67,15 @@ export interface CloudConfig {
   serve?: "relay" | "tunnel" | "external";
   /** For an `external` config, which setup the R pane walked through — only a label for the readout. */
   provider?: "tailscale" | "other";
+  /**
+   * What a device signed in through the Frizz relay may do. Absent means full control, so a board claimed
+   * before this was asked keeps working the way it always has. Only meaningful on a relay config: nothing
+   * Frizz runs is in the path of any other setup, so a device on one always has full control.
+   *
+   * Here, and not in the board's settings, because a remote session can write those. Only the launcher's R
+   * pane writes this file.
+   */
+  relayAccess?: RelayAccess;
 }
 
 /** A config Frizz serves by knowing the origin alone — nothing to start, nothing to renew. */
@@ -231,6 +240,8 @@ export function readCloudConfig(home = homedir()): CloudConfig | null {
       ...(parsed.serve === "relay" || parsed.serve === "tunnel" || external ? { serve: parsed.serve } : {}),
       ...(external && (parsed.provider === "tailscale" || parsed.provider === "other") ? { provider: parsed.provider } : {}),
       ...(parsed.config ? { config: parsed.config } : {}),
+      // A value this build does not know is the narrower one.
+      ...(parsed.relayAccess === undefined ? {} : { relayAccess: parsed.relayAccess === "full" ? "full" as const : "read-and-answer" as const }),
     };
   } catch {
     return null;

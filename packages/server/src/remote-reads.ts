@@ -5,10 +5,11 @@ import { isUnderRoot } from "./local-file.ts"
 import { normalizeLocalPath } from "./local-path.ts"
 import { listProjects } from "./project-registry.ts"
 
-// ── WHAT A REMOTE CALLER MAY READ OFF THE DISK ──────────────────────────────────────────────────────
-// A file route was a session's whole way to `~/.ssh`: the readers' roots include all of home, on the
-// reasoning that anyone holding a session could dispatch a worker anyway. A remote session no longer can,
-// so this is the boundary now, and it is narrower than the local one on purpose:
+// ── WHAT A READ-AND-ANSWER SESSION MAY READ OFF THE DISK ────────────────────────────────────────────
+// A file route is a session's whole way to `~/.ssh`: the readers' roots include all of home, on the reasoning
+// that anyone holding a session could dispatch a worker anyway. A session with full control can, and reads what
+// a local tab reads. One the owner limited to read and answer cannot, so this is its boundary, and it is
+// narrower than the local one on purpose:
 //
 //   · registered project directories, which covers each thread's scratch under `.frizz/threads/`;
 //   · the state root's attachment folders, and nothing else under any state root (`session-key`,

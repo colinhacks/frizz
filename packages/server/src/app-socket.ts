@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { WebSocketServer, type WebSocket } from "ws"
 import type { BoardDelta, BoardResyncReason, ServerEvent, SocketServerMsg, TranscriptMessage, TranscriptPushPage } from "@frizz/shared"
 import { projectTranscriptSessionPeers, type SessionPeerThread } from "./session-peer.ts"
-import { SocketClientMsg, frizzRoute } from "@frizz/shared"
+import { SocketClientMsg, frizzRoute, type RelayAccess } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import type { Emitter } from "./bus.ts"
 import type { Project } from "./project.ts"
@@ -13,7 +13,7 @@ import type { AgentBackend } from "./backend/types.ts"
 import { projectRetiredBackgroundOps, retiredOpsFor, projectTranscriptAgentLifecycles, projectTranscriptPeerNames, readLatestThreadTranscriptPage, type AgentLifecycleProjection } from "./transcript.ts"
 import { isTrustedLocalWebSocketRequest, rejectWebSocketUpgrade } from "./local-origin.ts"
 import { CALLER_HEADER } from "./audit.ts"
-import { isRemoteCaller, REMOTE_SOCKET_MESSAGES } from "./remote-gate.ts"
+import { callerAccess, REMOTE_SOCKET_MESSAGES } from "./remote-gate.ts"
 
 // Stage-2 multiplex: a noServer WebSocket at /ws carrying the board
 // channel (deltas + notify — the stage-1 ServerEvent shapes, wrapped in {t:"event"}; never the board
@@ -136,7 +136,7 @@ export interface AppSocketDeps {
    * test harness), the topic is accepted and does nothing.
    */
   watchFile?: (path: string, onChange: () => void) => () => void
-  /** Whether a remote caller may read this path (remote-reads.ts). Absent means no. */
+  /** Whether a read-and-answer session may read this path (remote-reads.ts). Absent means no. */
   mayReadRemotely?: (path: string) => boolean
   /** Write down what a remote socket was refused. */
   refusedRemotely?: (request: { stamp: string | undefined; userAgent: string | undefined }, detail: Record<string, unknown>) => void
@@ -351,11 +351,11 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
   let fileWatchCount = 0
   // Sockets a remote caller opened, with what the proxy stamped on the upgrade: it is the only request
   // these messages ever had. A socket outlives its upgrade, so the answer is kept, not re-derived.
-  const remoteSockets = new WeakMap<WebSocket, { stamp: string | undefined; userAgent: string | undefined }>()
+  const remoteSockets = new WeakMap<WebSocket, { stamp: string | undefined; userAgent: string | undefined; access: RelayAccess }>()
 
   function subscribeFile(ws: WebSocket, path: string): void {
     const remote = remoteSockets.get(ws)
-    if (remote && !deps.mayReadRemotely?.(path)) {
+    if (remote?.access === "read-and-answer" && !deps.mayReadRemotely?.(path)) {
       // Dropped without a word, as a path that cannot be watched is below: the frame this would have sent
       // is only ever a change notice, and silence says nothing about what exists.
       deps.refusedRemotely?.(remote, { socket: "file" })
@@ -1166,10 +1166,8 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
           const origin = req.headers.origin
           if (typeof origin === "string") socketOrigins.set(ws, origin)
           const stamp = req.headers[CALLER_HEADER]
-          if (typeof stamp === "string" && isRemoteCaller(stamp)) {
-            const userAgent = req.headers["user-agent"]
-            remoteSockets.set(ws, { stamp, userAgent })
-          }
+          const access = typeof stamp === "string" ? callerAccess(stamp) : "local"
+          if (access !== "local") remoteSockets.set(ws, { stamp: stamp as string, userAgent: req.headers["user-agent"], access })
           wss.emit("connection", ws, req)
         })
       } catch {

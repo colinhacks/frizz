@@ -247,3 +247,10 @@ export function relayHandshakeInput(name: string, pubkey: string, issuedAt: numb
     ["frizz-relay", `v${RELAY_PROTOCOL_VERSION}`, name, pubkey, String(issuedAt)].join(":")
   )
 }
+
+/**
+ * What a device signed in through the Frizz relay may do, as the owner chose in the R pane: everything a
+ * tab on the machine can do short of what stays the machine's (server remote-gate.ts), or read the board
+ * and pick listed options on cards. Unset means full control.
+ */
+export type RelayAccess = "full" | "read-and-answer"

@@ -54,11 +54,13 @@ export interface FrizzSupervisorStatus {
    * Did THIS page reach Frizz through the public origin, holding a live session? Sent only when true.
    * A fact about the request, not the board: the operator's own loopback tab never gets it, and the
    * page cannot work it out for itself because the session cookie is HttpOnly. It is what shows the
-   * "Sign out this device" row (see api/signOut.ts) and the read-and-answer board (useRemoteHost).
+   * "Sign out this device" row (see api/signOut.ts).
    */
   remoteSession?: boolean
   /** How a remote visitor names the machine Frizz runs on, for the copy that sends them back to it. */
   remoteHost?: string
+  /** What this session may do, sent beside `remoteSession`. Absent means full control: useReadAndAnswerHost. */
+  remoteAccess?: "full" | "read-and-answer"
 }
 
 /** Wakes the app-level status monitor immediately after a control action is accepted. */

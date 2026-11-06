@@ -157,6 +157,7 @@ function buildPane(initial: CloudConfig | null) {
     port: 9393,
     current: () => current,
     apply: async (next) => { applied.push(next); current = next; },
+    setRelayAccess: (relayAccess) => { current = { ...current!, relayAccess }; },
     claim: async () => { throw new Error("nothing may be claimed here"); },
     issueLink: () => (current ? { code: "c0de", url: `https://${current.hostname}/?frizz_code=c0de`, expiresAt: Date.now() + 300_000 } : null),
     probes: {
@@ -202,7 +203,8 @@ test("while custom names are paused, a board already on a custom name shows it, 
   const { pane, out, applied } = buildPane(saved);
   pane.open();
   const rows = menuRows(out.text());
-  assert.equal(rows.length, 6, "the custom row stays while it is the current setup");
+  assert.equal(rows.length, 7, "the custom row stays while it is the current setup, and what a device may do is the last");
+  assert.match(rows[6]!, /^ {2}  Device access\s+Full control/);
   assert.match(rows[1]!, /^ {2}❯ Custom subdomain\s+colin\.frizz\.sh — kept and renewed; new custom subdomains are paused.*\(current\)/);
   assert.doesNotMatch(out.text(), /needs a GitHub account/);
   pane.key("\r");

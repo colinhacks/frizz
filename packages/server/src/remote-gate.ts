@@ -1,16 +1,23 @@
 import type { Context } from "hono"
-import { AskedQuestionSchema, type AskedQuestion, type QuestionAnswer, type SocketClientMsg } from "@frizz/shared"
+import { AskedQuestionSchema, type AskedQuestion, type QuestionAnswer, type RelayAccess, type SocketClientMsg } from "@frizz/shared"
 import type { RouterGuard } from "@frizz/rpc/server"
-import { CALLER_HEADER, decodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog } from "./audit.ts"
+import { accessOf, CALLER_HEADER, decodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
 import type { AppRouter } from "./router.ts"
 
 // ── WHAT A REMOTE SESSION MAY DO ────────────────────────────────────────────────────────────────────
-// A remote session, stolen or not, and a hostile relay driving a real session's page, must not be able
-// to run anything on this machine. So it may read the board and pick listed options on question cards,
-// and everything else is the machine's. The compromise this answers (2026-10-08) was one stolen cookie
-// starting about 13 workers, and until now `dispatch` with `bypassPermissions`, or a command watch's first
-// check, was a shell one POST away.
+// Two levels, and the proxy's stamp says which one a request is under (accessOf in audit.ts):
+//
+//  - FULL CONTROL is what a tab on this machine can do, short of `deny` below. A session through a tunnel or
+//    a proxy of the owner's has it, and so does one through the Frizz relay unless the owner said otherwise.
+//  - READ AND ANSWER is reading the board and picking listed options on question cards. The owner can choose
+//    it for sessions through the Frizz relay, in the R pane, because that relay is the one hop here run by
+//    someone else: on 2026-10-08 a backdoored build of it drove a real session and started about 13 workers.
+//
+// THE REST IS THE MACHINE'S, for every remote session. Minting a sign-in link, signing other devices out and
+// the session directory are supervisor routes (MACHINE_ONLY_CONTROL_PATHS in restart-supervisor.ts), because a
+// session is not presence on the machine. The read-and-answer setting has no route of any kind: it lives in
+// the launcher's saved setup, and only the R pane changes it.
 //
 // DEFAULT DENY, IN ONE TABLE. `satisfies` below makes a new procedure fail typecheck until someone says
 // which side it is on, and a name the table does not hold is refused at runtime. Widening what a remote
@@ -22,7 +29,7 @@ import type { AppRouter } from "./router.ts"
 //
 // A READ CAN STILL BE A WRITE. Each `allow` below was read for what it starts: several queries here spawn
 // a process (`acpAgentModels`, `mcpStatus`, `threadSkills`) or read through this machine's credentials
-// (`githubList`), and those stay denied.
+// (`githubList`), and those are `full`.
 
 type Refusal = string | null
 
@@ -33,8 +40,14 @@ interface GateChecks {
   mayRead(path: string): boolean
 }
 
-/** Allowed, refused, or allowed only for this input: return why not, or null. Runs on parsed input. */
-type RemoteRule = "allow" | "deny" | ((input: never, checks: GateChecks) => Refusal)
+/**
+ * - `allow`: every remote session.
+ * - `full`: full control only.
+ * - A function: full control always. Under read and answer, only for this input: it returns why not, or null,
+ *   and runs on parsed input.
+ * - `deny`: no remote session.
+ */
+type RemoteRule = "allow" | "full" | "deny" | ((input: never, checks: GateChecks) => Refusal)
 
 const onThisMachine = (what: string) => `${what} can only be done on ${remoteHostLabel()}.`
 
@@ -86,97 +99,107 @@ export const REMOTE_ACCESS = {
   // Picking a listed option on a question card.
   answerQuestions: (input: { slug: string; answers: QuestionAnswer[] }, checks) => remoteAnswerRefusal(input, checks),
 
-  // Everything else is the machine's.
-  interactionResolve: "deny",
-  interactionCancel: "deny",
-  subAgentSteer: "deny",
-  subAgentStop: "deny",
-  stopBackgroundOp: "deny",
-  dispatch: "deny",
-  adoptThread: "deny",
-  followUp: "deny",
+  // Starting, steering and settling threads.
+  dispatch: "full",
+  adoptThread: "full",
+  followUp: "full",
+  dismissFailedFollowUp: "full",
+  unqueueFollowUp: "full",
+  deliverQueuedNow: "full",
+  compactThread: "full",
+  githubDispatchBatch: "full",
+  interactionResolve: "full",
+  interactionCancel: "full",
+  dismissQuestions: "full",
+  subAgentSteer: "full",
+  subAgentStop: "full",
+  stopBackgroundOp: "full",
+  stopMonitor: "full",
+  setThreadState: "full",
+  setThreadStatus: "full",
+  completeThread: "full",
+  markComplete: "full",
+  repairThread: "full",
+  renameThread: "full",
+  aiRenameThread: "full",
+
+  // A thread's settings, and what the prompt box asks for to offer them.
+  setThreadPermission: "full",
+  setThreadProfile: "full",
+  upgradeThreadModel: "full",
+  setThreadRecurringPrompt: "full",
+  threadProfileOptions: "full",
+  threadSkills: "full",
+  claudeModels: "full",
+  acpAgentModels: "full",
+
+  // MCP, provider and GitHub sign-ins.
+  mcpStatus: "full",
+  mcpSignIn: "full",
+  mcpSignInPoll: "full",
+  mcpSignInFinish: "full",
+  mcpSignInCancel: "full",
+  accountLogout: "full",
+  githubPromptDefaults: "full",
+  githubStatus: "full",
+  githubAccount: "full",
+  githubSignInStart: "full",
+  githubSignInCancel: "full",
+  githubSignOut: "full",
+  githubList: "full",
+  githubRefPreview: "full",
+
+  // Projects and settings.
+  projectAdd: "full",
+  projectPick: "full",
+  projectPickWarm: "full",
+  projectRemove: "full",
+  projectRename: "full",
+  projectIconPick: "full",
+  projectIconPickWarm: "full",
+  projectIconSet: "full",
+  projectIconClear: "full",
+  settingsSet: "full",
+  dispatchPreferenceSet: "full",
+  openLocalFile: "full",
+
+  // WHAT NO PAGE CALLS. A worker's own surface, which it reaches over its direct path, and a few procedures
+  // only scripts use. Refused because a page has no reason to ask, and because several act out of sight: a
+  // command watch runs a shell on an existing thread, where `dispatch` puts a new thread on the board.
   steerThread: "deny",
   spawnThread: "deny",
   spawnChild: "deny",
-  dismissFailedFollowUp: "deny",
-  unqueueFollowUp: "deny",
-  deliverQueuedNow: "deny",
-  compactThread: "deny",
-  setThreadPermission: "deny",
-  threadProfileOptions: "deny",
-  threadSkills: "deny",
-  mcpStatus: "deny",
-  mcpSignIn: "deny",
-  mcpSignInPoll: "deny",
-  mcpSignInFinish: "deny",
-  mcpSignInCancel: "deny",
-  setThreadProfile: "deny",
-  upgradeThreadModel: "deny",
-  archiveThread: "deny",
-  setThreadState: "deny",
-  completeThread: "deny",
-  setThreadRecurringPrompt: "deny",
+  listThreads: "deny",
+  ask: "deny",
+  unask: "deny",
+  markOwnDone: "deny",
+  setOwnThreadTitle: "deny",
   setOwnThreadRecurringPrompt: "deny",
   getOwnThreadRecurringPrompt: "deny",
   setOwnThreadTimer: "deny",
   cancelOwnThreadTimer: "deny",
   listOwnThreadTimers: "deny",
   listOwnThreadActivity: "deny",
-  listThreads: "deny",
   upsertOwnLink: "deny",
   dropOwnLink: "deny",
   addOwnPrWatch: "deny",
   dropOwnPrWatch: "deny",
+  listOwnPrWatches: "deny",
   addOwnCommandWatch: "deny",
   dropOwnCommandWatch: "deny",
-  stopMonitor: "deny",
-  addOwnMonitor: "deny",
   listOwnCommandWatches: "deny",
+  addOwnMonitor: "deny",
   addOwnWatch: "deny",
   dropOwnWatch: "deny",
-  ask: "deny",
-  unask: "deny",
-  dismissQuestions: "deny",
-  markOwnDone: "deny",
-  listOwnPrWatches: "deny",
   setOwnThreadStopHook: "deny",
   setOwnThreadHeartbeat: "deny",
   setThreadHeartbeat: "deny",
+  archiveThread: "deny",
   forgetThread: "deny",
-  openExternal: "deny",
-  openLocalFile: "deny",
-  markComplete: "deny",
-  setThreadStatus: "deny",
-  repairThread: "deny",
   dismissThread: "deny",
-  renameThread: "deny",
-  setOwnThreadTitle: "deny",
-  aiRenameThread: "deny",
   killAgent: "deny",
-  claudeModels: "deny",
-  acpAgentModels: "deny",
-  accountLogout: "deny",
-  projectRemove: "deny",
-  projectIconPick: "deny",
-  projectIconPickWarm: "deny",
-  projectIconSet: "deny",
-  projectIconClear: "deny",
-  projectRename: "deny",
-  projectPick: "deny",
-  projectPickWarm: "deny",
-  projectAdd: "deny",
-  settingsSet: "deny",
+  openExternal: "deny",
   settingsReset: "deny",
-  dispatchPreferenceSet: "deny",
-  githubPromptDefaults: "deny",
-  githubStatus: "deny",
-  githubAccount: "deny",
-  githubSignInStart: "deny",
-  githubSignInCancel: "deny",
-  githubSignOut: "deny",
-  githubList: "deny",
-  githubRefPreview: "deny",
-  githubDispatchBatch: "deny",
 } satisfies Record<keyof AppRouter, RemoteRule>
 
 /**
@@ -252,10 +275,14 @@ function refusalOfNode(node: AskedQuestion, said: QuestionAnswer, rootId: string
  */
 export const REMOTE_SOCKET_MESSAGES = { board: true, sub: true, unsub: true } satisfies Record<SocketClientMsg["t"], boolean>
 
-/** Does this stamp name someone who is not on this machine? The rule every remote check keys on. */
+/** What the caller of a request may do, from the proxy's stamp. See accessOf. */
+export function callerAccess(stamp: string | undefined): ReturnType<typeof accessOf> {
+  return accessOf(decodeCallerStamp(stamp))
+}
+
+/** Does this stamp name someone who is not on this machine? */
 export function isRemoteCaller(stamp: string | undefined): boolean {
-  const via = decodeCallerStamp(stamp)?.via
-  return via === "public" || via === "network"
+  return callerAccess(stamp) !== "local"
 }
 
 /** Write down that a remote caller was refused, attributed to who asked. Never fails the refusal. */
@@ -289,15 +316,17 @@ export interface RemoteGateOptions extends GateChecks {
  * through `currentRequestOrigin()`, whose answer with no request in scope is `internal`, a local caller.
  */
 export function remoteGate(options: RemoteGateOptions): RouterGuard {
-  const isRemote = (c: Context) => isRemoteCaller(c.req.header(CALLER_HEADER))
+  const accessIn = (c: Context) => callerAccess(c.req.header(CALLER_HEADER))
   return {
     procedure(c, name) {
-      if (!isRemote(c)) return undefined
-      if (remoteRule(name) !== "deny") return undefined
+      const access = accessIn(c)
+      if (access === "local") return undefined
+      const rule = remoteRule(name)
+      if (rule !== "deny" && !(rule === "full" && access === "read-and-answer")) return undefined
       return refuse(c, options.audit, options.project, { procedure: name })
     },
     input(c, name, input) {
-      if (!isRemote(c)) return undefined
+      if (accessIn(c) !== "read-and-answer") return undefined
       const rule = remoteRule(name)
       if (typeof rule !== "function") return undefined
       const refusal = (rule as (input: unknown, checks: GateChecks) => Refusal)(input, options)
@@ -308,13 +337,15 @@ export function remoteGate(options: RemoteGateOptions): RouterGuard {
 
 /**
  * The routes outside RPC a remote caller may reach, each named in full. Everything else under `/_frizz` is
- * the machine's: the launch and stop controls, the attachment intake, and the health probe. `suffix` is the
- * part after the route prefix, as Hono decoded and routed it.
+ * the machine's for every remote session: the launcher's stop and launch controls, which hold a token no page
+ * has, and the health probe. `suffix` is the part after the route prefix, as Hono decoded and routed it.
  */
 const REMOTE_ROUTES: ReadonlySet<string> = new Set(["/events", "/project-icon", "/local-visualization", "/local-image", "/local-file"])
+/** The prompt box's attachment intake, which writes to disk. */
+const FULL_CONTROL_ROUTES: ReadonlySet<string> = new Set(["/attach"])
 
-export function remoteRouteAllowed(suffix: string): boolean {
-  return REMOTE_ROUTES.has(suffix) || suffix.startsWith("/rpc/")
+export function remoteRouteAllowed(suffix: string, access: RelayAccess): boolean {
+  return REMOTE_ROUTES.has(suffix) || suffix.startsWith("/rpc/") || (access === "full" && FULL_CONTROL_ROUTES.has(suffix))
 }
 
 export function refuseRemoteRoute(c: Context, options: Pick<RemoteGateOptions, "audit" | "project">, route: string): Response {

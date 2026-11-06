@@ -841,7 +841,7 @@ test("the proxy tells the child who called: loopback or public, and which sessio
     const relayed = { ...publicHeaders, cookie, "cf-connecting-ip": "203.0.113.9", [CALLER_HEADER]: forged }
     assert.equal((await proxied(port, "/_frizz/rpc/projectsList", relayed)).status, 200)
     const stamp = decodeCallerStamp(seen.at(-1))
-    assert.deepEqual(stamp, { via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: id })
+    assert.deepEqual(stamp, { via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: id, access: "full" })
     const raw = Buffer.from(seen.at(-1)!, "base64url").toString("utf8")
     assert.ok(!raw.includes(cookie.slice("__Host-frizz_session=".length)), "the session value never leaves the proxy")
   } finally {
@@ -1151,33 +1151,35 @@ test("the control plane is behind the session gate: no session through the tunne
     assert.equal(restarts, 0, "an unauthenticated restart ran")
     assert.equal(updates, 0, "an unauthenticated update ran")
 
-    // A live session reads the status, and nothing else here is its to do.
+    // A live session reads the status. Minting and the device list stay loopback-only even WITH a session.
     const authed = { ...publicHeaders, cookie: session }
     const status = await proxied(port, SUPERVISOR_STATUS_PATH, authed)
     assert.equal(status.status, 200)
     assert.equal(JSON.parse(status.body).protocol, 1)
-    for (const path of [SUPERVISOR_RESTART_PATH, SUPERVISOR_UPDATE_RESTART_PATH]) {
-      const refused = await proxied(port, path, authed, "POST")
-      assert.equal(refused.status, 403, path)
-      assert.equal(JSON.parse(refused.body).code, "remote_refused", path)
+    for (const [path, method] of [[SUPERVISOR_ACCESS_CODE_PATH, "POST"], [SUPERVISOR_SESSIONS_PATH, "GET"], [SUPERVISOR_SESSIONS_PATH, "POST"]] as const) {
+      const refused = await proxied(port, path, authed, method)
+      assert.equal(refused.status, 403, `${method} ${path}`)
+      assert.equal(JSON.parse(refused.body).code, "remote_refused", `${method} ${path}`)
     }
-    await settle()
-    assert.equal(restarts, 0, "a remote session restarted the board")
-    assert.equal(updates, 0, "a remote session started an update")
-    // Minting and the device list stay loopback-only even WITH a session.
-    assert.equal((await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, authed, "POST")).status, 403)
-    assert.equal((await proxied(port, SUPERVISOR_SESSIONS_PATH, authed)).status, 403)
-    assert.equal((await proxied(port, SUPERVISOR_SESSIONS_PATH, authed, "POST")).status, 403)
 
     // Loopback is never asked for a session.
     const localStatus = await proxied(port, SUPERVISOR_STATUS_PATH, loopback)
     assert.equal(localStatus.status, 200)
-    assert.equal(localStatus.body, status.body.replace(/,"remoteSession":true,"remoteHost":"[^"]*"/, ""), "loopback status changed shape")
+    assert.equal(localStatus.body, status.body.replace(/,"remoteSession":true,"remoteHost":"[^"]*","remoteAccess":"full"/, ""), "loopback status changed shape")
     assert.equal((await proxied(port, SUPERVISOR_RESTART_PATH, loopback, "POST")).status, 202)
     assert.equal((await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, loopback, "POST")).status, 200)
     assert.equal((await proxied(port, SUPERVISOR_SESSIONS_PATH, loopback)).status, 200)
     await settle()
     assert.equal(restarts, 1)
+    assert.equal(updates, 0)
+
+    // A session has full control here, since this is not the relay's listener, and that includes both of these.
+    assert.equal((await proxied(port, SUPERVISOR_RESTART_PATH, authed, "POST")).status, 202)
+    await settle()
+    assert.equal((await proxied(port, SUPERVISOR_UPDATE_RESTART_PATH, authed, "POST")).status, 202)
+    await settle()
+    assert.equal(restarts, 2)
+    assert.equal(updates, 1)
 
     // A foreign authority is still the authority check's 403, exactly as before.
     assert.equal((await proxied(port, SUPERVISOR_RESTART_PATH, { host: "evil.example", origin: "https://evil.example" }, "POST")).status, 403)
@@ -1361,6 +1363,7 @@ test("the relay listener is public by construction: no header can read as loopba
   const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, childPort: () => current.port, restart: async () => { restarts++; return { state: "ready" } } })
   try {
     await proxy.listen()
+    proxy.setRelayAccess("read-and-answer")
     const relay = await proxy.relayListener()
     assert.equal(await proxy.relayListener(), relay, "one listener, however often it is asked for")
     const claims: Array<Record<string, string> & { host: string }> = [
@@ -1410,6 +1413,120 @@ test("the relay listener is public by construction: no header can read as loopba
     // The operator's own port is unmoved by any of this.
     assert.equal((await proxied(port, "/", { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })).status, 200)
     assert.equal(current.stamps.at(-1)?.via, "loopback")
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+test("what a relay session may do is the launcher's to say: the same cookie is judged by the door it came through", async () => {
+  const current = await countingChild()
+  const port = await freePort()
+  let restarts = 0
+  let updates = 0
+  const proxy = new RestartSupervisorProxy({
+    port, publicOrigin: PUBLIC, childPort: () => current.port,
+    restart: async () => { restarts++; return { state: "ready" } },
+    updateRestart: async () => { updates++; return { state: "ready" } },
+  })
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50))
+  try {
+    await proxy.listen()
+    const relay = await proxy.relayListener()
+    const cookie = await redeemed(port, proxy)
+    const visitor = { ...publicVisitor, cookie }
+    const said = async (door: number) => {
+      const status = JSON.parse((await proxied(door, SUPERVISOR_STATUS_PATH, visitor)).body) as { remoteSession?: boolean; remoteAccess?: string }
+      assert.equal((await proxied(door, "/", visitor)).status, 200)
+      return { status: status.remoteAccess, stamp: current.stamps.at(-1)?.access, via: current.stamps.at(-1)?.via, session: status.remoteSession }
+    }
+    const machineOnly = async (door: number) => {
+      for (const [path, method] of [[SUPERVISOR_ACCESS_CODE_PATH, "POST"], [SUPERVISOR_SESSIONS_PATH, "GET"], [SUPERVISOR_SESSIONS_PATH, "POST"]] as const) {
+        const refused = await proxied(door, path, visitor, method)
+        assert.equal(refused.status, 403, `${method} ${path}`)
+        assert.equal(JSON.parse(refused.body).code, "remote_refused", `${method} ${path}`)
+      }
+    }
+
+    // Never asked is full control: a board claimed before there was a question keeps working.
+    assert.deepEqual(await said(relay), { status: "full", stamp: "full", via: "public", session: true })
+    await machineOnly(relay)
+    assert.equal((await proxied(relay, SUPERVISOR_RESTART_PATH, visitor, "POST")).status, 202)
+    await settle()
+    assert.equal((await proxied(relay, SUPERVISOR_UPDATE_RESTART_PATH, visitor, "POST")).status, 202)
+    await settle()
+    assert.deepEqual([restarts, updates], [1, 1])
+
+    proxy.setRelayAccess("read-and-answer")
+    assert.deepEqual(await said(relay), { status: "read-and-answer", stamp: "read-and-answer", via: "public", session: true })
+    await machineOnly(relay)
+    for (const path of [SUPERVISOR_RESTART_PATH, SUPERVISOR_UPDATE_RESTART_PATH]) {
+      const refused = await proxied(relay, path, visitor, "POST")
+      assert.equal(refused.status, 403, path)
+      assert.equal(JSON.parse(refused.body).code, "remote_refused", path)
+    }
+    await settle()
+    assert.deepEqual([restarts, updates], [1, 1], "a limited session restarted the board")
+
+    // A stamp of its own, an answer of its own, and every door a client could guess at change nothing.
+    const claimsFull = { ...visitor, [CALLER_HEADER]: encodeCallerStamp({ via: "loopback", remote: "127.0.0.1", session: null, access: "full" }), "x-frizz-relay-access": "full" }
+    assert.equal((await proxied(relay, "/", claimsFull)).status, 200)
+    assert.equal(current.stamps.at(-1)?.access, "read-and-answer")
+    assert.equal(current.stamps.at(-1)?.via, "public")
+    for (const path of ["/_frizz/control/relay-access", "/_frizz/control/access", "/_frizz/relay-access", "/_frizz/control/settings"]) {
+      await proxied(relay, path, visitor, "POST")
+    }
+    assert.deepEqual((await said(relay)).status, "read-and-answer")
+
+    // The relay is the only hop this setting is about. The same device through a proxy of the owner's on the
+    // board's own port is not limited by it, and the machine's own tab is not told any of this.
+    assert.deepEqual(await said(port), { status: "full", stamp: "full", via: "public", session: true })
+    const local = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }
+    assert.equal(JSON.parse((await proxied(port, SUPERVISOR_STATUS_PATH, local)).body).remoteAccess, undefined)
+    assert.equal((await proxied(port, "/", local)).status, 200)
+    assert.equal(current.stamps.at(-1)?.via, "loopback")
+    assert.equal(current.stamps.at(-1)?.access, undefined)
+
+    proxy.setRelayAccess("full")
+    assert.deepEqual(await said(relay), { status: "full", stamp: "full", via: "public", session: true })
+    await machineOnly(relay)
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+test("a change of what a relay session may do closes what it opened under the old answer, and only a real change does", async () => {
+  const current = await countingChild()
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  try {
+    await proxy.listen()
+    const relay = await proxy.relayListener()
+    const cookie = await redeemed(port, proxy)
+    const socket = await openUpgrade(relay, { ...publicVisitor, cookie })
+    const stream = await openStream(relay, { ...publicVisitor, cookie, "sec-fetch-site": "same-origin" })
+    const local = await openUpgrade(port, { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })
+    assert.equal(socket.status, "101")
+    assert.equal(local.status, "101")
+
+    proxy.setRelayAccess("full")
+    proxy.setRelayAccess(undefined)
+    assert.equal(await stillOpen(socket.closed), true, "unset and full control are the same answer")
+    assert.equal(await stillOpen(stream.closed), true)
+
+    proxy.setRelayAccess("read-and-answer")
+    await within(2_000, socket.closed, "the socket opened under full control")
+    await within(2_000, stream.closed, "the stream opened under full control")
+    assert.equal(await stillOpen(local.closed), true, "the machine's own tab is not a session")
+
+    const again = await openUpgrade(relay, { ...publicVisitor, cookie })
+    assert.equal(again.status, "101")
+    assert.equal(current.stamps.at(-1)?.access, "read-and-answer", "it comes back under the new answer")
+    proxy.setRelayAccess("read-and-answer")
+    assert.equal(await stillOpen(again.closed), true)
+    local.socket.destroy()
+    again.socket.destroy()
   } finally {
     await proxy.close().catch(() => undefined)
     await current.close().catch(() => undefined)

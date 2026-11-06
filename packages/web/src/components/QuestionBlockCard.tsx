@@ -33,7 +33,7 @@ export interface BlockInteractive {
    *  a focused box until 2026-08-28. MULTI keeps its toggled set. */
   onText: (text: string) => void
   onSubmit: () => void
-  /** No free-text row: a remote session picks listed options and types nothing. */
+  /** No free-text row: a read-and-answer session picks listed options and types nothing. */
   optionsOnly?: boolean
 }
 

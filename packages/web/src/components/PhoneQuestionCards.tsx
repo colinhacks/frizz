@@ -4,8 +4,9 @@ import type { RegisteredQuestionView } from "@frizz/shared"
 import { useInlineMarkdownHtml, useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { optionLetter } from "../lib/questionBlocks.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
-import { useRemoteHost } from "../api/supervisorStatus.ts"
+import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { questionNeedsMachine } from "../lib/registeredQuestion.ts"
+import { ReadAndAnswerCardNote } from "./ReadAndAnswerNote.tsx"
 
 // ON A PHONE THE TRANSCRIPT'S QUESTIONS ARE A READING SURFACE (mockup v2 §3, "The questions in the
 // transcript"; the maintainer's 2026-08-17 review: the questions stay visible in the context that
@@ -64,7 +65,7 @@ export function CompactQuestionList({ questions }: { questions: readonly Registe
 function CompactQuestion({ q, n }: { q: RegisteredQuestionView; n: number }) {
   const html = useMarkdownHtml(q.spec.question)
   const options = q.spec.options ?? []
-  const remoteHost = useRemoteHost()
+  const readAndAnswerHost = useReadAndAnswerHost()
   return (
     <>
       <div className="flex gap-2 px-3.5 pb-1 pt-[11px] font-semibold">
@@ -80,7 +81,7 @@ function CompactQuestion({ q, n }: { q: RegisteredQuestionView; n: number }) {
           </span>
         </div>
       ))}
-      {remoteHost && questionNeedsMachine(q.spec) && <p data-remote-note className="px-3.5 pt-1 text-[13px] text-muted">This question has to be answered on {remoteHost}.</p>}
+      {readAndAnswerHost && questionNeedsMachine(q.spec) && <ReadAndAnswerCardNote className="px-3.5 pt-1 text-[13px] text-muted">This question has to be answered on {readAndAnswerHost}.</ReadAndAnswerCardNote>}
     </>
   )
 }

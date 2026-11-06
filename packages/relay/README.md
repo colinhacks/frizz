@@ -12,14 +12,18 @@ records who owns a name; this serves it.
 
 ## What a remote session may do
 
-A session that arrives through the relay may read the board and pick listed options on question cards. Everything else is the machine's, and the board refuses it:
+The owner of a board chooses one of two levels for a session that arrives through the relay, in the terminal's **R** menu. Only that menu can change it, and the Worker has no way to ask.
+
+**Full control** is the default, and it is what a tab on the machine can do. **A hostile build of this Worker holding a real cookie can therefore run anything on that machine**, because it can start a worker. Minting sign-in links, listing and signing out devices, and changing the level stay on the machine at this level too.
+
+**Read and answer** is reading the board and picking listed options on question cards. The board refuses the rest:
 
 - starting or steering a thread, and any change to its settings or permissions;
-- typing an answer, and answering a secret or danger card;
-- terminals, restarts and minting sign-in links;
+- typing an answer, answering a secret or danger card, and answering an approval card;
+- restarts, updates and minting sign-in links;
 - reading a file outside a registered project and a thread's scratch and attachment directories, or a secret-looking file inside one.
 
-The rule lives on the board, in one table (`REMOTE_ACCESS` in [`remote-gate.ts`](../server/src/remote-gate.ts)), so a hostile build of this Worker holding a real cookie gets no more than that. It still reads what the session reads and can rewrite what the visitor sees, which only the blind relay removes.
+The rule lives on the board, in one table (`REMOTE_ACCESS` in [`remote-gate.ts`](../server/src/remote-gate.ts)), so at this level a hostile build holding a real cookie gets no more than that. It still reads what the session reads and can rewrite what the visitor sees, which only the blind relay removes.
 
 A frame can't claim to be local. The board's relay agent dials a loopback listener of its own on which every request counts as public, whatever the frame's headers say.
 

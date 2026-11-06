@@ -16,7 +16,7 @@ import { localFileHeaders, resolveServedLocalFile } from "./local-file.ts"
 import { resolveProjectIconResponse } from "./project-icon.ts"
 import { resolveLocalVisualization } from "./local-visualization.ts"
 import { CALLER_HEADER, requestOriginFrom, withRequestOrigin } from "./audit.ts"
-import { isRemoteCaller, refuseRemoteRoute, remoteGate, remoteRouteAllowed } from "./remote-gate.ts"
+import { callerAccess, refuseRemoteRoute, remoteGate, remoteRouteAllowed } from "./remote-gate.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { LAUNCH_ROUTE_PATH, LAUNCH_ROUTE_PROTOCOL, LAUNCH_TOKEN_HEADER, parseLaunchRouteRequest, routeLaunch } from "./launch-routing.ts"
 import { openableFileRoots, resolveProject } from "./project.ts"
@@ -103,11 +103,12 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
   // A REMOTE CALLER REACHES WHAT remote-gate.ts NAMES AND NOTHING ELSE. Judged on the path Hono routes by,
   // so a spelling that does not decode to an allowed route is refused rather than guessed at.
   const gateProject = { id: ctx.project.id, dir: ctx.project.dir }
-  const isRemote = (c: Context) => isRemoteCaller(c.req.header(CALLER_HEADER))
+  const accessIn = (c: Context) => callerAccess(c.req.header(CALLER_HEADER))
   app.use("*", async (c, next) => {
-    if (isRemote(c)) {
+    const access = accessIn(c)
+    if (access !== "local") {
       const suffix = c.req.path.startsWith(FRIZZ_ROUTE_PREFIX) ? c.req.path.slice(FRIZZ_ROUTE_PREFIX.length) : ""
-      if (!remoteRouteAllowed(suffix)) return refuseRemoteRoute(c, { audit: ctx.audit, project: gateProject }, c.req.path.slice(0, 200))
+      if (!remoteRouteAllowed(suffix, access)) return refuseRemoteRoute(c, { audit: ctx.audit, project: gateProject }, c.req.path.slice(0, 200))
     }
     await next()
   })
@@ -224,7 +225,7 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
   // Pictures AND videos (a ```lightbox gallery plays both), in byte ranges — see local-image.ts.
   app.get(frizzRoute("/local-image"), (c) => {
     // One 404 for a remote caller's refusal, as for a missing file: the answer says nothing about the disk.
-    if (isRemote(c) && !mayReadRemotely(c.req.query("path") ?? "")) return c.text("404", 404)
+    if (accessIn(c) === "read-and-answer" && !mayReadRemotely(c.req.query("path") ?? "")) return c.text("404", 404)
     const r = resolveLocalImage(c.req.query("path"), c.req.header("range"))
     if (r.status === 416) return c.body(null, 416, { "content-range": `bytes */${r.size}`, "accept-ranges": "bytes" })
     if (r.status === 400 || r.status === 404) return c.text(String(r.status), r.status)
@@ -241,7 +242,7 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
   app.get(frizzRoute("/local-file"), (c) => {
     let file
     try {
-      if (isRemote(c) && !mayReadRemotely(c.req.query("path") ?? "")) return c.text("404", 404)
+      if (accessIn(c) === "read-and-answer" && !mayReadRemotely(c.req.query("path") ?? "")) return c.text("404", 404)
       file = resolveServedLocalFile(c.req.query("path") ?? "", openableFileRoots(ctx.project))
     } catch {
       return c.text("404", 404)

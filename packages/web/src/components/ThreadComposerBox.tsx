@@ -9,8 +9,8 @@ import { buildMessageWithContext, hasToken } from "../lib/composerContext.ts"
 import { splitComposerValue } from "../lib/imagePaths.ts"
 import { useThreadComposerControls } from "../hooks/useThreadComposerControls.tsx"
 import { Composer } from "./Composer.tsx"
-import { RemoteNote } from "./RemoteNote.tsx"
-import { useRemoteHost } from "../api/supervisorStatus.ts"
+import { ReadAndAnswerNote } from "./ReadAndAnswerNote.tsx"
+import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { draftKey, mergeIntoDraft, useDraft, useProjectDir } from "../lib/drafts.ts"
 import { noteFailedDraftOrigin, takeSupersededFailure } from "../lib/failedDelivery.ts"
@@ -64,16 +64,16 @@ function fetchThreadSkills(slug: string): Promise<ThreadSkill[]> {
 }
 
 /**
- * The prompt box on a remote session: nothing to type in, and the one line saying where typing happens.
+ * The prompt box on a read-and-answer session: nothing to type in, and the one line saying where typing happens.
  * The answers staged on the cards still leave from here, since this is where the Send they use lives.
  */
-function RemoteComposerBox({ surface, className, above, phoneBarOverride, phoneChrome, remoteHost }: {
+function ReadAndAnswerComposerBox({ surface, className, above, phoneBarOverride, phoneChrome, readAndAnswerHost }: {
   surface: "queueComposer" | "chatComposer"
   className?: string
   above?: ReactNode
   phoneBarOverride?: (api: PhoneBarApi) => ReactNode
   phoneChrome?: boolean
-  remoteHost: string
+  readAndAnswerHost: string
 }): ReactElement {
   const registered = useContext(RegisteredAnsweringContext)
   const isMobile = useIsMobile()
@@ -88,7 +88,7 @@ function RemoteComposerBox({ surface, className, above, phoneBarOverride, phoneC
       {above}
       {phoneBar && phoneBarOverride && <div className="flex items-center gap-2">{phoneBarOverride({ editReply: () => {} })}</div>}
       <div className={`flex items-center justify-between gap-3 ${phoneBar ? "" : "px-3 py-2"}`}>
-        <RemoteNote remoteHost={remoteHost} />
+        <ReadAndAnswerNote host={readAndAnswerHost} />
         {!phoneBar && (registered?.staged ?? 0) > 0 && (
           <button
             type="button"
@@ -108,8 +108,8 @@ function RemoteComposerBox({ surface, className, above, phoneBarOverride, phoneC
 type ThreadComposerBoxProps = Parameters<typeof LocalThreadComposerBox>[0]
 
 export function ThreadComposerBox(props: ThreadComposerBoxProps): ReactElement {
-  const remoteHost = useRemoteHost()
-  if (remoteHost) return <RemoteComposerBox {...props} remoteHost={remoteHost} />
+  const readAndAnswerHost = useReadAndAnswerHost()
+  if (readAndAnswerHost) return <ReadAndAnswerComposerBox {...props} readAndAnswerHost={readAndAnswerHost} />
   return <LocalThreadComposerBox {...props} />
 }
 

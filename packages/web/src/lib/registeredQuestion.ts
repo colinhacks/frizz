@@ -70,7 +70,7 @@ export function toParsedQuestion(spec: AskedQuestion): { question: ParsedQuestio
   }
 }
 
-/** Does this question have to be answered on the machine? A remote session picks listed options, so a
+/** Does this question have to be answered on the machine? A read-and-answer session picks listed options, so a
  *  secret, a free-text box and a `danger` gate anywhere in the tree all keep it there (the server's
  *  remoteAnswerRefusal is the rule, and judges only the branch taken; this asks before any is). */
 export function questionNeedsMachine(spec: AskedQuestion): boolean {

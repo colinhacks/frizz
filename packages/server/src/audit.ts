@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { createHash } from "node:crypto"
 import { appendFileSync, chmodSync, mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
+import type { RelayAccess } from "@frizz/shared"
 import { describeDevice } from "./access-codes.ts"
 import { serverAddressPathForStateDir } from "./frizz-paths.ts"
 import { log as frizzLog } from "./logging.ts"
@@ -55,6 +56,8 @@ export interface CallerStamp {
   /** The client address a public origin's proxy CLAIMS (`cf-connecting-ip`, `x-forwarded-for`). */
   clientIp?: string
   session: string | null
+  /** What this caller may do, for `public` and `network`. See accessOf. */
+  access?: RelayAccess
 }
 
 const VIAS: readonly CallerVia[] = ["public", "network", "loopback"]
@@ -83,6 +86,8 @@ export function decodeCallerStamp(value: string | undefined): CallerStamp | unde
       ...(host ? { host } : {}),
       ...(clientIp ? { clientIp } : {}),
       session: bounded(parsed.session) ?? null,
+      // A value this build does not know is the narrower one.
+      ...(parsed.access === undefined ? {} : { access: parsed.access === "full" ? "full" as const : "read-and-answer" as const }),
     }
   } catch {
     return undefined
@@ -110,6 +115,21 @@ export function requestOriginFrom(input: {
   const stamp = decodeCallerStamp(input.caller)
   if (stamp) return { ...stamp, device }
   return { via: "direct", remote: input.socketRemote ?? null, session: null, device }
+}
+
+/**
+ * What a caller may do, read off what the proxy said about it.
+ *
+ * `local` is this machine: a loopback tab, a worker's direct path, or no request at all.
+ *
+ * `public` with no `access` is a launcher from before the owner had a choice, whose sessions are therefore
+ * unset, and unset is full control. `network` is another machine on an exposed bind, which the proxy asks no
+ * session of, so it never gets more than read and answer, whatever its stamp says.
+ */
+export function accessOf(origin: { via: CallerVia | "direct" | "internal"; access?: RelayAccess } | undefined): RelayAccess | "local" {
+  if (origin?.via === "network") return "read-and-answer"
+  if (origin?.via !== "public") return "local"
+  return origin.access ?? "full"
 }
 
 const requestOrigin = new AsyncLocalStorage<RequestOrigin>()

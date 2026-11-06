@@ -273,7 +273,7 @@ test("no context, no change: the body is the question line alone", () => {
   assert.equal("detailMd" in question, false)
 })
 
-test("a card a remote session can't answer: secret, danger, free text, or a follow-up that is any of those", () => {
+test("a card a read-and-answer session can't answer: secret, danger, free text, or a follow-up that is any of those", () => {
   const choice = { question: "Which?", kind: "question", options: [{ label: "A" }, { label: "B" }] } as const
   assert.equal(questionNeedsMachine(choice), false)
   assert.equal(questionNeedsMachine({ ...choice, kind: "multi" }), false)

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { isDevFrizzBuild } from "./restart.ts"
-import { supervisorPollMs, supervisorStatusQueryOptions } from "./supervisorStatus.ts"
+import { readAndAnswerHost, supervisorPollMs, supervisorStatusQueryOptions } from "./supervisorStatus.ts"
 
 // The contract, not an optimisation detail: THREE independent surfaces ask the supervisor the same
 // question — App's control-plane monitor, the Restart Frizz button, and the dev-build verb in a thread
@@ -91,4 +91,19 @@ test("the poll runs gently at rest and promptly across a handoff", () => {
   assert.equal(supervisorPollMs("restarting", false), 500)
   // The optimistic window: the button raised the overlay, the supervisor has not confirmed it yet.
   assert.equal(supervisorPollMs("ready", true), 500)
+})
+
+test("a page offers less only on a session limited to read and answer", () => {
+  const status = (fields: object) => ({ protocol: 1, state: "ready", updateRestart: false, ...fields }) as Parameters<typeof readAndAnswerHost>[0]
+  const onPhone = "https://colin.frizz.sh/"
+  const limited = status({ remoteSession: true, remoteHost: "the Mac", remoteAccess: "read-and-answer" })
+  assert.equal(readAndAnswerHost(limited, onPhone), "the Mac")
+  assert.equal(readAndAnswerHost(status({ remoteSession: true, remoteHost: "the Mac", remoteAccess: "full" }), onPhone), null, "full control offers everything")
+  assert.equal(readAndAnswerHost(status({ remoteSession: true, remoteHost: "the Mac" }), onPhone), null, "an older supervisor's session is unset, which is full control")
+  assert.equal(readAndAnswerHost(status({}), "http://127.0.0.1:9393/"), null, "the machine's own tab")
+  assert.equal(readAndAnswerHost(null, onPhone), null, "a supervisor that did not answer offers everything, and the server is still the rule")
+  // Not answered yet: a public name holds back, the machine's own tab never does.
+  assert.equal(readAndAnswerHost(undefined, onPhone), "the computer running Frizz")
+  assert.equal(readAndAnswerHost(undefined, "http://127.0.0.1:9393/"), null)
+  assert.equal(readAndAnswerHost(undefined, undefined), null)
 })

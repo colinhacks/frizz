@@ -36,12 +36,13 @@ import { useInlineMarkdownHtml } from "../lib/useMarkdown.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import type { PairedAnswer } from "../lib/answersMessage.ts"
 import { ROOT_PATH, liveQuestionNodes, nodeAnswered, questionNeedsMachine, registeredAnswer, settledQuestionNodes, toParsedQuestion } from "../lib/registeredQuestion.ts"
-import { useRemoteHost } from "../api/supervisorStatus.ts"
+import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { decodeQuestionPick, encodeQuestionPick, questionSpecAt } from "../lib/registeredPicks.ts"
 import { AnswersCard } from "./AnswersCard.tsx"
 import { QueueDismissContext } from "../lib/threadContexts.ts"
 import { QuestionBlockCard } from "./QuestionBlockCard.tsx"
 import { CompactQuestionList, usePhoneQuestions } from "./PhoneQuestionCards.tsx"
+import { ReadAndAnswerCardNote } from "./ReadAndAnswerNote.tsx"
 
 function errorText(error: unknown): string {
   const message = error instanceof Error ? error.message : "The answer could not be sent."
@@ -67,8 +68,8 @@ export interface RegisteredAnswering {
   staged: number
   sending: boolean
   error: string | undefined
-  /** The machine's name on a remote session, which picks listed options and types nothing. */
-  remoteHost?: string | null
+  /** The machine's name on a read-and-answer session, which picks listed options and types nothing. */
+  readAndAnswerHost?: string | null
 }
 
 /** The staged answers as the prompt box's send needs them, with the three edges of that send. */
@@ -95,7 +96,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
   const slug = thread?.id
   const questions = thread?.questions ?? []
   const projectDir = useProjectDir()
-  const remoteHost = useRemoteHost()
+  const readAndAnswerHost = useReadAndAnswerHost()
   // A SECRET's typed value, keyed by question id. In React state and nowhere else: the draft store
   // mirrors into localStorage, which every tab reads and which outlives the browser, and a pasted
   // credential must not outlive the tab in a cache (lib/drafts says so for the typed interaction cards
@@ -281,7 +282,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
       draftStore.set(key, encodeQuestionPick(spec, next))
     },
     onText: (q, path, isMulti, text) => {
-      if (!slug || remoteHost) return
+      if (!slug || readAndAnswerHost) return
       if (q.spec.secret) {
         setSecrets((prev) => (prev.get(q.id) === text ? prev : new Map(prev).set(q.id, text)))
         return
@@ -299,7 +300,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
     staged: staged.length,
     sending: send.isPending,
     error,
-    remoteHost,
+    readAndAnswerHost,
   }
 }
 
@@ -591,11 +592,11 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
   if (!a || !a.slug) return null
   // On the phone thread page the card is a reading surface; the sheet answers it (PhoneQuestionCards).
   if (phone) return <CompactQuestionList questions={[q]} />
-  if (a.remoteHost && questionNeedsMachine(q.spec)) {
+  if (a.readAndAnswerHost && questionNeedsMachine(q.spec)) {
     return (
       <article data-question-id={q.id} className="flex min-w-0 flex-col gap-2">
         <QuestionBlockCard question={toParsedQuestion(q.spec).question} />
-        <p data-remote-note className="text-[12px] text-muted">This question has to be answered on {a.remoteHost}.</p>
+        <ReadAndAnswerCardNote className="text-[12px] text-muted">This question has to be answered on {a.readAndAnswerHost}.</ReadAndAnswerCardNote>
       </article>
     )
   }
@@ -611,7 +612,7 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
       // a `danger` question: a generic close icon is not consent for something irreversible, and
       // declining is a real option INSIDE that question. The server refuses one too, so this is the
       // affordance and not the rule.
-      aside={node.depth === 1 && !q.spec.danger && !a.remoteHost ? (
+      aside={node.depth === 1 && !q.spec.danger && !a.readAndAnswerHost ? (
         <button
           type="button"
           data-dismiss-question
@@ -647,7 +648,7 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
         onChip: (optIdx) => a.onChip(q, node.path, node.spec.kind === "multi", optIdx),
         onText: (text) => a.onText(q, node.path, node.spec.kind === "multi", text),
         onSubmit: a.submit,
-        ...(a.remoteHost ? { optionsOnly: true } : {}),
+        ...(a.readAndAnswerHost ? { optionsOnly: true } : {}),
       }}
     />
   )

@@ -30,7 +30,7 @@ import { localImageHeaders, localImageStream, resolveLocalImage } from "./local-
 import { recoveryPage, unauthorizedPage, unlistedHostPage } from "./supervisor-pages.ts"
 import { CALLER_HEADER, encodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog, type CallerVia } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
-import { FRIZZ_ROUTE_PREFIX, frizzRoute } from "@frizz/shared"
+import { FRIZZ_ROUTE_PREFIX, frizzRoute, type RelayAccess } from "@frizz/shared"
 
 export const SUPERVISOR_CONTROL_PREFIX = "/_frizz/control"
 export const SUPERVISOR_RESTART_PATH = `${SUPERVISOR_CONTROL_PREFIX}/restart`
@@ -227,11 +227,16 @@ function isControlRequest(req: IncomingMessage): boolean {
     || url.pathname === SUPERVISOR_SIGN_OUT_PATH
 }
 
-const LOOPBACK_ONLY_CONTROL_PATHS: ReadonlySet<string> = new Set([
-  SUPERVISOR_RESTART_PATH,
-  SUPERVISOR_UPDATE_RESTART_PATH,
+/** Who may sign in, and who stays signed in, is the machine's to say: a session is not presence on it. */
+const MACHINE_ONLY_CONTROL_PATHS: ReadonlySet<string> = new Set([
   SUPERVISOR_ACCESS_CODE_PATH,
   SUPERVISOR_SESSIONS_PATH,
+])
+
+/** Running the launcher's own work on a remote say-so, which full control can do by other means anyway. */
+const FULL_CONTROL_PATHS: ReadonlySet<string> = new Set([
+  SUPERVISOR_RESTART_PATH,
+  SUPERVISOR_UPDATE_RESTART_PATH,
 ])
 
 // `/_frizz/local-image` AND `/_frizz/<project>/local-image` — the client builds it from `apiBase()`,
@@ -289,6 +294,8 @@ export class RestartSupervisorProxy {
   private policy: LocalAuthorityPolicy
   /** The origin a tunnel or proxy serves this board at; undefined while loopback-only. Live: see setPublicOrigin. */
   private publicOrigin: string | undefined
+  /** What a session through the relay listener may do; unset means full control. Live: see setRelayAccess. */
+  private relayAccess: RelayAccess | undefined
   /**
    * Codes and sessions for the public origin, or null when no public origin is declared (loopback-only
    * boards are never gated, so there is nothing to store).
@@ -333,6 +340,16 @@ export class RestartSupervisorProxy {
     if (origin !== this.publicOrigin) this.dropSessionHolds()
     this.publicOrigin = origin
     this.policy = this.buildPolicy()
+  }
+
+  /**
+   * Change what a session through the relay listener may do. Only the launcher's R pane and its saved setup
+   * call this, and no route, RPC or socket message reaches it. What such a session has open was judged when it
+   * opened, so it closes, and the page reconnects under the new answer.
+   */
+  setRelayAccess(access: RelayAccess | undefined): void {
+    if ((access ?? "full") !== (this.relayAccess ?? "full")) this.dropSessionHolds()
+    this.relayAccess = access
   }
 
   private buildPolicy(): LocalAuthorityPolicy {
@@ -577,9 +594,10 @@ export class RestartSupervisorProxy {
       res.end("Forbidden")
       return
     }
-    // LOOPBACK ONLY, these four: they are the machine's, and a session is not presence on it. Restarting
-    // or updating runs the launcher's own work on a remote say-so, and the other two are below.
-    if (LOOPBACK_ONLY_CONTROL_PATHS.has(pathname) && this.callerVia(req) !== "loopback") {
+    // Restarting and updating come back under full control: a phone away from the machine is when a wedged
+    // board most needs one, and a session that can start a worker gains nothing from them.
+    const access = this.callerVia(req) === "loopback" ? "local" : this.remoteAccess(req)
+    if (access !== "local" && (MACHINE_ONLY_CONTROL_PATHS.has(pathname) || (FULL_CONTROL_PATHS.has(pathname) && access !== "full"))) {
       this.refuseRemote(req, res, pathname)
       return
     }
@@ -662,7 +680,7 @@ export class RestartSupervisorProxy {
         // Sent ONLY when true, so a loopback tab's payload is byte-identical to what it was. The web
         // app cannot tell on its own: the session cookie is HttpOnly, and the page is the same bundle
         // whichever way it was reached. It is a fact about THIS request, never about the board.
-        ...(this.carriesRemoteSession(req) ? { remoteSession: true, remoteHost: remoteHostLabel() } : {}),
+        ...(this.carriesRemoteSession(req) ? { remoteSession: true, remoteHost: remoteHostLabel(), remoteAccess: this.remoteAccess(req) } : {}),
       })
       return
     }
@@ -769,6 +787,15 @@ export class RestartSupervisorProxy {
     return isLoopbackAddress(req.socket.remoteAddress ?? null) ? "loopback" : "network"
   }
 
+  /**
+   * What a caller who is not on this machine may do. Only the relay can be limited, because it is the one hop
+   * the owner does not run. `network` asks for no session, so it stays at the narrower level (accessOf).
+   */
+  private remoteAccess(req: IncomingMessage): RelayAccess {
+    if (this.relayedSockets.has(req.socket)) return this.relayAccess ?? "full"
+    return this.callerVia(req) === "public" ? "full" : "read-and-answer"
+  }
+
   /** Answer a remote caller who asked for something only the machine itself may do, and write it down. */
   private refuseRemote(req: IncomingMessage, res: ServerResponse, route: string): void {
     const origin = requestOriginFrom({
@@ -808,6 +835,7 @@ export class RestartSupervisorProxy {
       ...(host ? { host: host.slice(0, 200) } : {}),
       ...(clientIp ? { clientIp: clientIp.slice(0, 200) } : {}),
       session: this.access.sessionIdOf(readCookie(req.headers.cookie, SESSION_COOKIE)),
+      ...(via === "loopback" ? {} : { access: this.remoteAccess(req) }),
     })
   }
 
@@ -912,10 +940,10 @@ export class RestartSupervisorProxy {
       return
     }
     // Keep screenshots responsive even while the disposable child is parsing large transcripts,
-    // restarting, or unavailable. The durable owner applies the same local-origin gate itself. Only for
-    // the machine's own tab: this answers any image on the disk, and what a remote caller may read is
-    // the child's to judge (remote-reads.ts).
-    if (isLocalImageRequest(req) && this.callerVia(req) === "loopback") {
+    // restarting, or unavailable. The durable owner applies the same local-origin gate itself. Not for a
+    // read-and-answer caller: this answers any image on the disk, and what that caller may read is the
+    // child's to judge (remote-reads.ts).
+    if (isLocalImageRequest(req) && (this.callerVia(req) === "loopback" || this.remoteAccess(req) === "full")) {
       this.handleLocalImage(req, res)
       return
     }

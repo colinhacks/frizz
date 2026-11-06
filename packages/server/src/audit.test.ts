@@ -70,11 +70,11 @@ function rpc(
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
-test("a relayed dispatch never runs: the refusal names the procedure, the session and the device, and no prompt", async () => {
+test("a read-and-answer dispatch never runs: the refusal names the procedure, the session and the device, and no prompt", async () => {
   const sink = capture()
   let dispatched = 0
   const app = auditApp(sink, async () => { dispatched++; return { slug: "deploy-it", sessionId: "sess-1" } })
-  const stamp = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: "Ab3dE9xY" })
+  const stamp = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: "Ab3dE9xY", access: "read-and-answer" })
   const response = await rpc(app, "dispatch", { prompt: PROMPT }, { [CALLER_HEADER]: stamp, "user-agent": IPHONE })
   assert.equal(response.status, 403)
   assert.equal(dispatched, 0)
@@ -92,8 +92,23 @@ test("a relayed dispatch never runs: the refusal names the procedure, the sessio
     host: "colin.frizz.sh",
     clientIp: "203.0.113.9",
     session: "Ab3dE9xY",
+    access: "read-and-answer",
     device: "Safari on iPhone",
   })
+  assert.ok(!JSON.stringify(record).includes("sk-live"), JSON.stringify(record))
+})
+
+test("a dispatch from a device with full control runs, and the record says which session asked at which level", async () => {
+  const sink = capture()
+  let dispatched = 0
+  const app = auditApp(sink, async () => { dispatched++; return { slug: "deploy-it", sessionId: "sess-1" } })
+  const stamp = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: "Ab3dE9xY", access: "full" })
+  const response = await rpc(app, "dispatch", { prompt: PROMPT }, { [CALLER_HEADER]: stamp, "user-agent": IPHONE })
+  assert.equal(response.status, 200)
+  assert.equal(dispatched, 1)
+  const record = sink.records.find((one) => one.action === "dispatch")!
+  assert.equal(record.outcome, "ok")
+  assert.deepEqual(record.origin, { via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: "Ab3dE9xY", access: "full", device: "Safari on iPhone" })
   assert.ok(!JSON.stringify(record).includes("sk-live"), JSON.stringify(record))
 })
 

@@ -1469,10 +1469,12 @@ test("a remote socket reads the board, and watches only files a remote caller ma
     mayReadRemotely: (path: string) => path === "/repo/README.md",
     refusedRemotely: (_request: unknown, detail: Record<string, unknown>) => void refusals.push(detail),
   })
-  const stamp = (via: "public" | "network" | "loopback") => ({ headers: { "x-frizz-caller": encodeCallerStamp({ via, remote: "127.0.0.1", session: "Ab3dE9xY" }) } })
+  const stamp = (via: "public" | "network" | "loopback", access?: "full" | "read-and-answer") => ({
+    headers: { "x-frizz-caller": encodeCallerStamp({ via, remote: "127.0.0.1", session: "Ab3dE9xY", ...(access ? { access } : {}) }) },
+  })
   try {
-    for (const via of ["public", "network"] as const) {
-      const remote = await connectClient(h.port, "/_frizz/ws", stamp(via))
+    for (const options of [stamp("public", "read-and-answer"), stamp("network")]) {
+      const remote = await connectClient(h.port, "/_frizz/ws", options)
       await remote.next() // hello
       remote.ws.send(JSON.stringify({ t: "sub", topic: "file", path: "/home/me/.ssh/id_rsa" }))
       remote.ws.send(JSON.stringify({ t: "sub", topic: "file", path: "/repo/README.md" }))
@@ -1482,8 +1484,8 @@ test("a remote socket reads the board, and watches only files a remote caller ma
       remote.ws.close()
       await waitFor(() => !fake.armed.has("/repo/README.md"), "the release")
     }
-    // The machine's own tab, stamped or not, is not asked.
-    for (const options of [stamp("loopback"), {}]) {
+    // The machine's own tab, stamped or not, is not asked, and a device with full control reads what it can.
+    for (const options of [stamp("loopback"), {}, stamp("public", "full"), stamp("public")]) {
       const local = await connectClient(h.port, "/_frizz/ws", options)
       await local.next()
       local.ws.send(JSON.stringify({ t: "sub", topic: "file", path: "/home/me/.ssh/id_rsa" }))

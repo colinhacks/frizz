@@ -218,7 +218,7 @@ import { peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { deliverableInputText } from "./backend/claude-agent-sdk-protocol.ts"
 import { claudeModelStanding, claudeModelUpgradeBlock, claudeModelUpgradeDue, claudeModelUpgradeRefusal, claudeUpgradeCandidate, SERVER_STARTED_AT_MS } from "./backend/claude-model-upgrade.ts"
 import { log as frizzLog } from "./logging.ts"
-import { audited, currentRequestOrigin, recordAudit, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
+import { accessOf, audited, currentRequestOrigin, recordAudit, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { codexSandbox } from "./backend/codex.ts"
 import { liveBrokerRecords } from "./backend/claude-broker-host.ts"
@@ -4594,14 +4594,13 @@ export function createRouter(ctx: AppContext) {
       output: z.object({ resolved: z.array(z.object({ input: z.string(), path: z.string().nullable() })) }),
       handler: async ({ input }) => {
         const memo = new Map<string, string | null>()
-        // A remote reader learns about the files it could open, and no others (remote-reads.ts).
-        const via = currentRequestOrigin().via
-        const remote = via === "public" || via === "network"
-        const dirs = remote ? remoteProjectDirs(ctx.project.dir) : []
+        // A confined reader learns about the files it could open, and no others (remote-reads.ts).
+        const confined = accessOf(currentRequestOrigin()) === "read-and-answer"
+        const dirs = confined ? remoteProjectDirs(ctx.project.dir) : []
         const resolved = input.paths.map((raw) => {
           if (!memo.has(raw)) {
             const path = resolveOpenableFile(raw, ctx.project.dir, openRoots)
-            memo.set(raw, path && (!remote || remoteReadablePath(path, dirs)) ? path : null)
+            memo.set(raw, path && (!confined || remoteReadablePath(path, dirs)) ? path : null)
           }
           return { input: raw, path: memo.get(raw) ?? null }
         })

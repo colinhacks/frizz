@@ -9,6 +9,7 @@
  * switch from one setup to another leave no tunnel behind.
  */
 import { homedir } from "node:os";
+import type { RelayAccess } from "@frizz/shared";
 import {
   type CloudConfig,
   type CloudTransport,
@@ -28,6 +29,8 @@ import {
 export interface RemoteHost {
   /** Declare or clear the origin the gate keys on. */
   setPublicOrigin(origin: string | undefined): void;
+  /** What a session through that port may do. Declared before the port can carry one, unset being full control. */
+  setRelayAccess(access: RelayAccess | undefined): void;
   /** The port the relay agent dials instead of the board's own: everything on it is public. */
   relayListener(): Promise<number>;
 }
@@ -62,6 +65,11 @@ export interface RemoteController {
    * nothing serves. `justClaimed` skips the renewal a fresh claim just performed.
    */
   apply(next: CloudConfig | null, options?: { justClaimed?: boolean }): Promise<void>;
+  /**
+   * Change what a device signed in through the relay may do, on a board the relay serves. Saved first, as
+   * `apply` does, and the transport stays up: a sign-in link and the name are unaffected.
+   */
+  setRelayAccess(access: RelayAccess): void;
   /** Stop the transport without touching the saved setup — shutdown. */
   stop(): void;
 }
@@ -109,7 +117,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
       }
       transport = await startRelay(next, await options.host.relayListener(), home, (message) => options.log.info("relay", message));
       keepLease(next);
-      options.log.info("relay", `serving ${next.hostname} through the Frizz relay`);
+      options.log.info("relay", `serving ${next.hostname} through the Frizz relay, ${next.relayAccess ?? "full"} access`);
       return;
     }
     // The tunnel is a CHILD of this launcher, so the two halves share a lifetime. A tunnel outliving
@@ -156,6 +164,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
       });
       const justClaimed = reconciled !== saved;
       if (justClaimed) writeCloudConfig(reconciled, home);
+      options.host.setRelayAccess(reconciled.relayAccess);
       await startTransport(reconciled, justClaimed);
       config = reconciled;
       options.host.setPublicOrigin(originOf(reconciled));
@@ -171,6 +180,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
         return;
       }
       writeCloudConfig(next, home);
+      options.host.setRelayAccess(next.relayAccess);
       try {
         await startTransport(next, applyOptions.justClaimed ?? false);
       } catch (error) {
@@ -181,6 +191,14 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
       }
       config = next;
       options.host.setPublicOrigin(originOf(next));
+    },
+    setRelayAccess(access) {
+      if (!config || !isRelayConfig(config)) throw new Error("this board is not served through the Frizz relay");
+      const next = { ...config, relayAccess: access };
+      writeCloudConfig(next, home);
+      config = next;
+      options.host.setRelayAccess(access);
+      options.log.info("relay", `devices signed in through the Frizz relay now have ${access} access`);
     },
     stop: stopTransport,
   };

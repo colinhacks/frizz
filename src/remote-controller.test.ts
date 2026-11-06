@@ -1,12 +1,113 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
-import { createServer } from "node:http";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { test, type TestContext } from "node:test";
+import { dirname, join } from "node:path";
+import { after, before, test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { cloudConfigPath, type CloudConfig, readCloudConfig, writeCloudConfig } from "./cloud.ts";
 import { createRemoteController } from "./remote-controller.ts";
+
+for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete process.env[name];
+
+// `.invalid` never resolves, so the relay's socket goes nowhere and nothing reaches a real registrar or relay.
+const RELAY: CloudConfig = { hostname: "ada.invalid", claim: "ada", serve: "relay", relayAccess: "read-and-answer" };
+const STOP_HERE = "stopped where the relay would start";
+
+let registrar: Server;
+before(async () => {
+  registrar = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ hostname: RELAY.hostname, leaseExpiresAt: 0, renewed: true }));
+  }).listen(0, "127.0.0.1");
+  await once(registrar, "listening");
+  process.env.FRIZZ_REGISTRAR = `http://127.0.0.1:${(registrar.address() as { port: number }).port}`;
+});
+after(() => { registrar.close(); });
+
+function controller({ stopAtRelay = true } = {}) {
+  const home = mkdtempSync(join(tmpdir(), "frizz-remote-controller-"));
+  const calls: string[] = [];
+  const remote = createRemoteController({
+    host: {
+      setPublicOrigin: (origin) => { calls.push(`origin ${origin ?? "none"}`); },
+      setRelayAccess: (access) => { calls.push(`access ${access ?? "unset"}`); },
+      relayListener: async () => {
+        calls.push("relay listener");
+        if (stopAtRelay) throw new Error(STOP_HERE);
+        return 1;
+      },
+    },
+    port: 9393,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    say: () => {},
+    home,
+  });
+  return { remote, calls, home, [Symbol.dispose]: () => { remote.stop(); rmSync(home, { recursive: true, force: true }); } };
+}
+
+test("a saved answer is in force before the relay can carry a session: a limited board is never full for a moment", async () => {
+  using saved = controller();
+  writeCloudConfig(RELAY, saved.home);
+  await assert.rejects(saved.remote.serveSaved(), new RegExp(STOP_HERE));
+  assert.deepEqual(saved.calls, ["access read-and-answer", "relay listener"]);
+
+  using applied = controller();
+  await assert.rejects(applied.remote.apply(RELAY, { justClaimed: true }), new RegExp(STOP_HERE));
+  assert.deepEqual(applied.calls, ["origin none", "access read-and-answer", "relay listener"]);
+});
+
+test("a change is saved, declared, and leaves the name and the transport alone", async () => {
+  using board = controller({ stopAtRelay: false });
+  await board.remote.apply(RELAY, { justClaimed: true });
+  board.calls.length = 0;
+
+  board.remote.setRelayAccess("full");
+  assert.deepEqual(board.calls, ["access full"], "the relay listener and the origin are not touched");
+  assert.deepEqual(readCloudConfig(board.home), { ...RELAY, relayAccess: "full" });
+  assert.equal(board.remote.current()!.relayAccess, "full");
+});
+
+test("a board the relay does not serve has nothing to change, and nothing is written", async () => {
+  using nothing = controller();
+  assert.throws(() => nothing.remote.setRelayAccess("read-and-answer"), /not served through the Frizz relay/);
+  assert.equal(existsSync(cloudConfigPath(nothing.home)), false);
+
+  using tailscale = controller();
+  const external: CloudConfig = { hostname: "mac.corgi-alpha.ts.net", serve: "external", provider: "tailscale" };
+  await tailscale.remote.apply(external);
+  assert.throws(() => tailscale.remote.setRelayAccess("read-and-answer"), /not served through the Frizz relay/);
+  assert.deepEqual(readCloudConfig(tailscale.home), external);
+});
+
+test("a saved value this build does not know is the narrower answer, and a board with none is unset", () => {
+  using board = controller();
+  writeCloudConfig({ ...RELAY, relayAccess: "something-new" as "full" }, board.home);
+  assert.equal(readCloudConfig(board.home)!.relayAccess, "read-and-answer");
+  const { relayAccess: _dropped, ...before } = RELAY;
+  writeCloudConfig(before, board.home);
+  assert.equal("relayAccess" in readCloudConfig(board.home)!, false);
+});
+
+test("only the launcher writes the setting: nothing a request can reach calls it, or saves the setup", () => {
+  const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+  const sources = [
+    ...readdirSync(join(repo, "src"), { recursive: true, encoding: "utf8" }).map((path) => join("src", path)),
+    ...readdirSync(join(repo, "packages/server/src"), { recursive: true, encoding: "utf8" }).map((path) => join("packages/server/src", path)),
+  ].filter((path) => /\.tsx?$/.test(path) && !/\.test\.tsx?$/.test(path));
+  const callers = sources.filter((path) => /\b(?:setRelayAccess|writeCloudConfig)\(/.test(readFileSync(join(repo, path), "utf8"))).sort();
+  assert.deepEqual(callers, [
+    "packages/server/src/dev-supervisor.ts", // forwards to the proxy, for the launcher
+    "packages/server/src/restart-supervisor.ts", // the proxy's own method, and it writes no file
+    "src/cloud.ts", // defines writeCloudConfig
+    "src/index.ts", // hands the pane its controller, in the dev launcher
+    "src/production.ts", // and in the shipped one
+    "src/remote-controller.ts", // the launcher's controller
+    "src/remote-pane.ts", // the R pane
+  ]);
+});
 
 const quiet = { info() {}, warn() {}, error() {} };
 
@@ -27,7 +128,7 @@ async function serving(t: TestContext, status: number) {
   const saved = process.env.FRIZZ_REGISTRAR;
   process.env.FRIZZ_REGISTRAR = `http://127.0.0.1:${(registrar.address() as { port: number }).port}`;
   const controller = createRemoteController({
-    host: { setPublicOrigin() {}, relayListener: async () => 1 },
+    host: { setPublicOrigin() {}, setRelayAccess() {}, relayListener: async () => 1 },
     port: 1,
     log: quiet,
     say: (message) => said.push(message),

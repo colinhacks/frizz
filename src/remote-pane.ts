@@ -1,8 +1,8 @@
-import { isAnonymousClaimName } from "@frizz/shared";
+import { isAnonymousClaimName, type RelayAccess } from "@frizz/shared";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import type { AccessLink } from "./access-pane.ts";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, DIM, fitScreen, HIDE_CURSOR, type OptionalLine, RESET, SHOW_CURSOR } from "./access-pane.ts";
-import { type CloudConfig, customNamesOffered, describeCloudConfig, isClaimedConfig, isExternalConfig, normalizeHostname } from "./cloud.ts";
+import { type CloudConfig, customNamesOffered, describeCloudConfig, isClaimedConfig, isExternalConfig, isRelayConfig, normalizeHostname } from "./cloud.ts";
 import type { Pane } from "./pane-host.ts";
 import type { DeviceCodePrompt } from "./github-device-flow.ts";
 import type { CloudflaredProbe, TailscaleProbe } from "./remote-detect.ts";
@@ -30,6 +30,8 @@ export interface RemotePaneOptions {
   current: () => CloudConfig | null;
   /** Switch the running board to `next`, or to loopback-only with null. Rejects with a message. */
   apply: (next: CloudConfig | null, options?: { justClaimed?: boolean }) => Promise<void>;
+  /** Change what a device signed in through the relay may do, on a board the relay already serves. */
+  setRelayAccess: (access: RelayAccess) => void;
   /**
    * Claim `<name>.frizz.sh`. An empty name mints a private unguessable one with no account; a word
    * claims that word for a GitHub account, confirmed through a device code the pane shows via
@@ -57,10 +59,17 @@ export interface ClaimSignIn {
 }
 
 interface Choice {
-  kind: RemoteKind;
+  kind: RemoteKind | "access";
   title: string;
   blurb: string;
 }
+
+/** What a device signed in through the relay may do, in the order the question lists it. */
+const RELAY_ACCESS: Array<{ access: RelayAccess; title: string; blurb: string; changed: string }> = [
+  { access: "full", title: "Full control", blurb: "start and steer threads, answer cards", changed: "A device signed in through frizz.sh now has full control." },
+  { access: "read-and-answer", title: "Read and answer", blurb: "read the board and pick options on cards", changed: "A device signed in through frizz.sh can now read the board and pick options on cards." },
+];
+const accessChoice = (access: RelayAccess | undefined) => RELAY_ACCESS.find((choice) => choice.access === (access ?? "full"))!;
 
 /** Every setup, in menu order. The menu shows the subset `choicesFor` picks, never this list directly. */
 const CHOICES: Choice[] = [
@@ -81,13 +90,20 @@ const CHOICES: Choice[] = [
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
 function choicesFor(current: CloudConfig | null): Choice[] {
-  if (customNamesOffered()) return CHOICES;
+  // The last row, so a digit still picks the setup it always has, and only where there is a relay to ask about.
+  const access: Choice[] = current && isRelayConfig(current)
+    ? [{ kind: "access", title: "Device access", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
+    : [];
+  if (customNamesOffered()) return [...CHOICES, ...access];
   if (kindOf(current) === "frizz") {
-    return CHOICES.map((choice) =>
-      choice.kind === "frizz" ? { ...choice, blurb: `${current!.hostname} — kept and renewed; new custom subdomains are paused` } : choice,
-    );
+    return [
+      ...CHOICES.map((choice) =>
+        choice.kind === "frizz" ? { ...choice, blurb: `${current!.hostname} — kept and renewed; new custom subdomains are paused` } : choice,
+      ),
+      ...access,
+    ];
   }
-  return CHOICES.filter((choice) => choice.kind !== "frizz");
+  return [...CHOICES.filter((choice) => choice.kind !== "frizz"), ...access];
 }
 
 const ENTER = new Set(["\r", "\n"]);
@@ -100,7 +116,9 @@ const SHIFT_TAB = "\x1b[Z";
 
 type Screen =
   | { name: "menu"; index: number }
-  | { name: "form"; kind: FormKind; fields: Field[]; focus: number; note?: string }
+  /** What a device signed in through the relay may do. `then` is what the answer goes to. */
+  | { name: "access"; index: number; then: (access: RelayAccess) => void; back: Screen }
+  | { name: "form"; kind: FormKind; fields: Field[]; focus: number; note?: string; relayAccess?: RelayAccess }
   /** `cancel` makes escape back out — only while waiting on something the person can abandon. */
   | { name: "busy"; message: string; detail?: string[]; cancel?: () => void }
   | { name: "done"; message: string; link: AccessLink | null; config: CloudConfig | null }
@@ -159,7 +177,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   // Read on every use: the current setup moves under the pane, and the custom row follows it.
   const choices = () => choicesFor(options.current());
   /** The row for `kind`, or the first row when the menu does not list it. */
-  const rowOf = (kind: RemoteKind) => Math.max(0, choices().findIndex((choice) => choice.kind === kind));
+  const rowOf = (kind: Choice["kind"]) => Math.max(0, choices().findIndex((choice) => choice.kind === kind));
 
   const paint = () => {
     if (!open) return;
@@ -179,6 +197,16 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           const now = choice.kind === current ? `  ${DIM}(current)${RESET}` : "";
           return `${marker} ${title}${DIM}${choice.blurb}${RESET}${now}`;
         }),
+        "",
+        `${DIM}↑↓ move · enter choose · esc back${RESET}`,
+      ]);
+      return;
+    }
+    if (s.name === "access") {
+      write([
+        "What can a device signed in through frizz.sh do?",
+        "",
+        ...RELAY_ACCESS.map((choice, index) => `${index === s.index ? "❯" : " "} ${choice.title.padEnd(18)}${DIM}${choice.blurb}${RESET}`),
         "",
         `${DIM}↑↓ move · enter choose · esc back${RESET}`,
       ]);
@@ -302,7 +330,14 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     ];
   };
 
-  const openForm = (kind: FormKind) => {
+  /** Ask, with what is in force preselected: full control, on a board that has never answered. */
+  const askAccess = (back: Screen, then: (access: RelayAccess) => void) => {
+    const asked = options.current()?.relayAccess ?? "full";
+    screen = { name: "access", index: RELAY_ACCESS.findIndex((choice) => choice.access === asked), then, back };
+    paint();
+  };
+
+  const openForm = (kind: FormKind, relayAccess?: RelayAccess) => {
     const current = options.current();
     const same = kindOf(current) === kind ? current : null;
     let fields: Field[];
@@ -331,11 +366,17 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     } else {
       fields = [{ label: "Origin", value: same ? `https://${same.hostname}` : "", placeholder: "https://board.example.com" }];
     }
-    screen = { name: "form", kind, fields, focus: 0 };
+    screen = { name: "form", kind, fields, focus: 0, ...(relayAccess ? { relayAccess } : {}) };
     paint();
   };
 
   const valueOf = (field: Field): string => field.value || field.placeholder || "";
+
+  // A claim knows nothing of this, and serving the same name again keeps the answer it already had.
+  const withAccess = (claimed: CloudConfig, asked: RelayAccess | undefined): CloudConfig => {
+    const relayAccess = asked ?? options.current()?.relayAccess;
+    return relayAccess ? { ...claimed, relayAccess } : claimed;
+  };
 
   const submit = async (form: Extract<Screen, { name: "form" }>) => {
     const back: Screen = form;
@@ -348,7 +389,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         screen = { name: "busy", message: `claiming ${name}.frizz.sh…` };
         paint();
         const abort = new AbortController();
-        next = await options.claim(name, {
+        const claimed = await options.claim(name, {
           signal: abort.signal,
           onDeviceCode: (prompt) => {
             screen = {
@@ -365,6 +406,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
             paint();
           },
         });
+        next = withAccess(claimed, form.relayAccess);
         justClaimed = true;
       } else if (form.kind === "cloudflare") {
         const hostname = normalizeHostname(valueOf(form.fields[0]!));
@@ -387,13 +429,13 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   };
 
   // No form and nothing to ask: the name is minted, so choosing this IS the claim.
-  const claimPrivate = async () => {
+  const claimPrivate = async (relayAccess?: RelayAccess) => {
     const back: Screen = { name: "menu", index: 0 };
     screen = { name: "busy", message: "claiming a frizz.sh subdomain…" };
     paint();
     try {
       // A private subdomain has no GitHub step, so nothing is ever shown and nothing can be cancelled.
-      const next = await options.claim("", { signal: new AbortController().signal, onDeviceCode: () => {} });
+      const next = withAccess(await options.claim("", { signal: new AbortController().signal, onDeviceCode: () => {} }), relayAccess);
       screen = { name: "busy", message: `serving ${next.hostname}…` };
       paint();
       await options.apply(next, { justClaimed: true });
@@ -419,6 +461,16 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
       screen = { name: "done", message: `Serving https://${current.hostname} (${describeCloudConfig(current)}).`, link: options.issueLink(), config: current };
     } catch (error) {
       screen = { name: "error", message: error instanceof Error ? error.message : String(error), back };
+    }
+    paint();
+  };
+
+  const changeAccess = (access: RelayAccess) => {
+    try {
+      options.setRelayAccess(access);
+      screen = { name: "done", message: accessChoice(access).changed, link: null, config: options.current() };
+    } catch (error) {
+      screen = { name: "error", message: error instanceof Error ? error.message : String(error), back: { name: "menu", index: rowOf("access") } };
     }
     paint();
   };
@@ -460,6 +512,20 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         paint();
         return "keep";
       }
+      if (s.name === "access") {
+        if (key === ESC) {
+          screen = s.back;
+        } else if (key === UP || key === "k" || key === DOWN || key === "j") {
+          s.index = (s.index + 1) % RELAY_ACCESS.length;
+        } else if (/^[1-9]$/.test(key) && Number(key) <= RELAY_ACCESS.length) {
+          s.index = Number(key) - 1;
+        } else if (ENTER.has(key)) {
+          s.then(RELAY_ACCESS[s.index]!.access);
+          return "keep";
+        }
+        paint();
+        return "keep";
+      }
       if (s.name === "menu") {
         if (key === ESC || key === "q") return "close";
         const rows = choices();
@@ -468,9 +534,16 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         else if (/^[1-9]$/.test(key) && Number(key) <= rows.length) s.index = Number(key) - 1;
         else if (ENTER.has(key)) {
           const choice = rows[Math.min(s.index, rows.length - 1)]!;
+          // The relay's two setups ask what a device may do, the first time this board picks one. Picking the
+          // one already in force keeps the answer, and "Device access" is the way to change it.
+          const firstPick = choice.kind !== kindOf(options.current());
           if (choice.kind === "off") void turnOff();
-          else if (choice.kind === "private") void claimPrivate();
-          else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
+          else if (choice.kind === "access") askAccess(s, changeAccess);
+          else if (choice.kind === "private") {
+            if (firstPick) askAccess(s, (access) => void claimPrivate(access));
+            else void claimPrivate();
+          } else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
+          else if (choice.kind === "frizz" && firstPick) askAccess(s, (access) => openForm("frizz", access));
           else openForm(choice.kind);
           return "keep";
         }

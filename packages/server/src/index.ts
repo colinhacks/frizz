@@ -42,7 +42,7 @@ import {
 import { serverAddressPathForStateDir } from "./frizz-paths.ts"
 import { CALLER_HEADER } from "./audit.ts"
 import { FRAME_REFUSED_HEADERS } from "./local-origin.ts"
-import { auditRemoteRefusal, isRemoteCaller } from "./remote-gate.ts"
+import { auditRemoteRefusal, callerAccess, isRemoteCaller } from "./remote-gate.ts"
 import { remoteRefusedMessage } from "./remote-refusal.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { pidIsAlive } from "./project-identity.ts"
@@ -1179,8 +1179,9 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
         return
       }
       if (vite) {
-        // Vite's dev middleware serves `/@fs/` and opens an editor on request. It is for this machine.
-        if (isRemoteCaller(firstValue(req.headers[CALLER_HEADER]))) {
+        // Vite's dev middleware serves `/@fs/` and opens an editor on request, which is more than reading
+        // the board and answering. Full control can do that anyway.
+        if (callerAccess(firstValue(req.headers[CALLER_HEADER])) === "read-and-answer") {
           res.writeHead(403, { "content-type": "text/plain; charset=UTF-8", ...FRAME_REFUSED_HEADERS })
           res.end(remoteRefusedMessage())
           return

@@ -4,7 +4,7 @@ import { openGithubPicker } from "../store.ts"
 import { isConsolePath } from "../lib/base-path.ts"
 import { scopedKey, useProjectScope, useRpc } from "../lib/projectScope.tsx"
 import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
-import { useRemoteHost } from "../api/supervisorStatus.ts"
+import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 
 /**
  * What the picker does, in one line: the tooltip on this door and the heading of the room it opens
@@ -29,13 +29,13 @@ export const GITHUB_PICKER_TITLE = "Start threads from issues and PRs"
 export function useGithubStatus() {
   const project = useProjectScope()
   const api = useRpc()
-  const remoteHost = useRemoteHost()
+  const readAndAnswerHost = useReadAndAnswerHost()
   return useQuery({
     queryKey: scopedKey(["githubStatus"], project),
     queryFn: () => api.githubStatus(),
-    // The Console belongs to no repo: it asks only for a surface that names its project. A remote session
-    // starts no thread, so it has no use for the picker this drives, and the server refuses the read.
-    enabled: !remoteHost && (project !== undefined || !isConsolePath()),
+    // The Console belongs to no repo: it asks only for a surface that names its project. A read-and-answer
+    // session starts no thread, so it has no use for the picker this drives, and the server refuses the read.
+    enabled: !readAndAnswerHost && (project !== undefined || !isConsolePath()),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
     // A NO IS NEVER FINAL — re-ask on a slow interval until it turns yes, then stop.
