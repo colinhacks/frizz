@@ -254,8 +254,11 @@ async function reachOf(cf, id) {
     console.log(`  accounts it can see: ${error.message}`)
   }
   try {
-    const { name, policies = [] } = await cf("GET", `/user/tokens/${id}`)
-    console.log(`  named ${JSON.stringify(name)}`)
+    const { name, issued_on, last_used_on, policies = [] } = await cf("GET", `/user/tokens/${id}`)
+    console.log(`  named ${JSON.stringify(name)}, issued ${issued_on}, last used ${last_used_on ?? "never"}`)
+    for (const token of await cf("GET", "/user/tokens?per_page=50")) {
+      console.log(`  the user's token ${JSON.stringify(token.name)} …${token.id.slice(-4)}: ${token.status}, issued ${token.issued_on}, last used ${token.last_used_on ?? "never"}, expires ${token.expires_on ?? "never"}`)
+    }
     for (const policy of policies) {
       const on = Object.entries(policy.resources ?? {}).map(([resource, level]) => (typeof level === "string" ? resource : `${resource} ${JSON.stringify(level)}`))
       console.log(`  ${policy.effect}: ${(policy.permission_groups ?? []).map((g) => g.name).join(", ")} on ${on.join(", ")}`)
