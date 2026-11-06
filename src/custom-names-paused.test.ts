@@ -78,7 +78,7 @@ test("while custom names are paused, a word is refused before GitHub or the regi
         return true;
       });
     }
-    assert.match(CUSTOM_NAMES_PAUSED, /custom frizz\.sh subdomains are paused[\s\S]*private subdomain[\s\S]*hostname of a tunnel/);
+    assert.match(CUSTOM_NAMES_PAUSED, /custom frizz\.sh subdomains are paused[\s\S]*random subdomain[\s\S]*hostname of a tunnel/);
     assert.equal(server.claims.length, 0, "the registrar was never called");
     // The same registrar and the same untouchable GitHub serve the paths the gate leaves alone, which
     // proves the refusals above were the gate's and not a broken harness.

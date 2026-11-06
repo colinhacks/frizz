@@ -116,23 +116,31 @@
           <div class="features">
             <article class="feature row">
               <div class="row-text"><h3>The queue</h3><p>Agents work on their own. A thread joins the queue when it has a question, finishes, or needs you to do something. Mark it as done and it moves out.</p></div>
-              <div class="row-shot narrow"><img src="/img/f-queue.webp?v=f8745cdb" width="1284" height="1600" loading="lazy" decoding="async" alt="The left side of the board: a reply box, then a queue of twelve threads and two running below it." /></div>
+              <div class="row-shot narrow"><img src="/img/f-queue.webp?v=74849ee9" width="1284" height="1120" loading="lazy" decoding="async" alt="The left side of a project&#x27;s page: a box for a new task, then a queue of threads with an icon for what each one needs." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>One-click answers</h3><p>An agent that needs a decision asks with lettered options and marks the one it recommends. Click one and press Enter. A note typed in the box goes with it.</p></div>
               <div class="row-shot thread"><img src="/img/f-question.webp?v=d0e575ea" width="1500" height="934" loading="lazy" decoding="async" alt="A thread asking which push provider to use, with the first option picked, a note typed in the reply box, and the pointer on Send." /></div>
             </article>
             <article class="feature row">
-              <div class="row-text"><h3>Options with pictures</h3><p>An option can carry its own screenshots, diff, or table. You compare the real thing inside the question.</p></div>
-              <div class="row-shot thread"><img src="/img/f-options.webp?v=dd8ccd48" width="1500" height="1848" loading="lazy" decoding="async" alt="A question about a billing page layout, with desktop and phone pictures inside each option." /></div>
+              <div class="row-text"><h3>Follow-up questions</h3><p>A question can hang on one option. It appears only if you pick that option.</p></div>
+              <div class="row-shot"><img src="/img/f-followup.webp?v=958c1aa2" width="1382" height="980" loading="lazy" decoding="async" alt="A question about where crash reports go with its first option picked, and a follow-up asking which hosted service opened under it." /></div>
             </article>
             <article class="feature row flip">
-              <div class="row-text"><h3>Steps only you can do</h3><p>When something needs you, like a sign-in or a merge, the agent hands you numbered steps with links. One checkbox says you finished.</p></div>
-              <div class="row-shot thread"><img src="/img/f-steps.webp?v=012f57f1" width="1500" height="886" loading="lazy" decoding="async" alt="A thread resting on three numbered steps, with an I have completed this checkbox." /></div>
+              <div class="row-text"><h3>Multiple select</h3><p>When several answers can apply, the agent asks with checkboxes and marks each one it recommends.</p></div>
+              <div class="row-shot thread"><img src="/img/f-multi.webp?v=caa28742" width="1500" height="1108" loading="lazy" decoding="async" alt="A question with checkboxes asking which checks should block a release, with three ticked and marked as recommended." /></div>
             </article>
             <article class="feature row">
+              <div class="row-text"><h3>Options with pictures</h3><p>An option can carry its own screenshots, diff, or table. You compare the real thing inside the question.</p></div>
+              <div class="row-shot"><img src="/img/f-options.webp?v=06ea071a" width="1382" height="940" loading="lazy" decoding="async" alt="A question about a billing page layout, with desktop, dark and phone pictures inside each option." /></div>
+            </article>
+            <article class="feature row flip">
               <div class="row-text"><h3>Masked secrets</h3><p>An agent that needs a one-time code or token asks in a masked box. The value never appears in the transcript.</p></div>
               <div class="row-shot thread"><img src="/img/f-secret.webp?v=1d9504db" width="1500" height="750" loading="lazy" decoding="async" alt="A thread asking for an npm one-time code in a masked box." /></div>
+            </article>
+            <article class="feature row">
+              <div class="row-text"><h3>Steps only you can do</h3><p>When something needs you, like a sign-in or a merge, the agent hands you numbered steps with links. One checkbox says you finished.</p></div>
+              <div class="row-shot thread"><img src="/img/f-steps.webp?v=012f57f1" width="1500" height="886" loading="lazy" decoding="async" alt="A thread resting on three numbered steps, with an I have completed this checkbox." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Snooze</h3><p>Park a card for an hour, until tomorrow at 9, or until a time you pick. Attach a prompt and the thread wakes up working on it.</p></div>
@@ -142,32 +150,50 @@
               <div class="row-text"><h3>Running work on the card</h3><p>When a thread rests on its own work, its card lists the sub-agents and shells still running.</p></div>
               <div class="row-shot thread"><img src="/img/f-wait.webp?v=9571be52" width="1500" height="1023" loading="lazy" decoding="async" alt="A thread resting on one running sub-agent and one background shell, both listed on its card." /></div>
             </article>
-            <article class="feature center">
-              <h3>The Console</h3>
-              <p>One board for every open project, grouped by status or by project.</p>
-              <div class="big-shot"><img src="/img/f-console.webp?v=57d43ece" width="2200" height="1375" loading="lazy" decoding="async" alt="The Console: threads from five projects grouped under each project&#x27;s name and icon, with two thread cards beside them." /></div>
+            <article class="feature row flip">
+              <div class="row-text"><h3>Project home screen</h3><p>Every project is an icon, badged with how many threads are waiting or running.</p></div>
+              <div class="row-shot"><img src="/img/f-home.webp?v=2b88ad25" width="1500" height="800" loading="lazy" decoding="async" alt="The home page: five project icons with counts on them, a button to add a project, and a switch to the Console." /></div>
+            </article>
+            <article class="feature pair">
+              <div class="pair-card"><h3>One repo at a time, for focus</h3><p>Each project has its own workspace, with its own queue and threads. Other projects stay out of view, apart from a count on the rail.</p><img src="/img/f-workspace.webp?v=6af97d2e" width="1500" height="891" loading="lazy" decoding="async" alt="One project&#x27;s page: its queue and running threads on the left, one open thread on the right, and the other projects as icons with counts on the rail." /></div>
+              <div class="pair-card"><h3>Every repo at once, for parallel work</h3><p>The Console puts every open project on one board, grouped by status or by project. Start a thread in any repo and answer any card from the same page.</p><img src="/img/f-console.webp?v=c87c2ed0" width="1500" height="891" loading="lazy" decoding="async" alt="The Console: threads from five projects grouped under each project&#x27;s name, every project on the rail, and thread cards beside them." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Counts of what's running</h3><p>A line above the reply box counts a thread's sub-agents, shells, watchers, timers, and saved files. Hover a count to see the rows.</p></div>
               <div class="row-shot thread"><img src="/img/f-ops.webp?v=371243a3" width="1500" height="1176" loading="lazy" decoding="async" alt="A thread with the pointer on 1 shell in the line above its reply box, and a popover naming that shell." /></div>
             </article>
             <article class="feature row">
-              <div class="row-text"><h3>Sub-agent drawers</h3><p>Each sub-agent opens in its own drawer with its live transcript and model. On a Claude Code thread, you can type into it and steer that sub-agent.</p></div>
-              <div class="row-shot"><img src="/img/f-subagent.webp?v=fdea2854" width="1500" height="1149" loading="lazy" decoding="async" alt="A sub-agent&#x27;s drawer over the dimmed board, with its transcript as it works and a box to steer it." /></div>
+              <div class="row-text"><h3>Live sub-agents</h3><p>Open a sub-agent to read its transcript as it works. On a Claude Code thread, you can type to it and steer it.</p></div>
+              <div class="row-shot"><img src="/img/f-subagent.webp?v=fdea2854" width="1500" height="1149" loading="lazy" decoding="async" alt="A sub-agent&#x27;s live transcript over the dimmed board, with a box to steer it." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Pull request and CI watching</h3><p>A thread can watch a pull request and rest. The card shows each PR's checks, and the agent picks the work back up when CI finishes or a review lands.</p></div>
               <div class="row-shot thread"><img src="/img/f-watch.webp?v=0a101a19" width="1500" height="920" loading="lazy" decoding="async" alt="A thread watching three pull requests: one running, one green, one with two failed checks." /></div>
             </article>
             <article class="feature row">
+              <div class="row-text"><h3>Monitors that outlive the session</h3><p>An agent can hand Frizz a script and stop. The Frizz server keeps it running while the session sleeps, and each line it prints wakes the agent.</p>
+                <svg class="lanes" viewBox="0 0 420 96" role="img" aria-label="Two timelines. The agent's session runs, sleeps and wakes twice. The monitor runs the whole time, and each line it prints wakes the session.">
+                  <text x="0" y="12">Agent session</text>
+                  <g class="awake"><rect x="0" y="22" width="72" height="8" rx="4"/><rect x="186" y="22" width="56" height="8" rx="4"/><rect x="336" y="22" width="56" height="8" rx="4"/></g>
+                  <g class="asleep"><line x1="80" y1="26" x2="178" y2="26"/><line x1="250" y1="26" x2="328" y2="26"/><line x1="400" y1="26" x2="420" y2="26"/></g>
+                  <text x="0" y="66">Monitor on the server</text>
+                  <rect class="monitor" x="0" y="76" width="420" height="8" rx="4"/>
+                  <g class="wake"><path d="M190 74V38M185 44l5-7 5 7"/><path d="M340 74V38M335 44l5-7 5 7"/></g>
+                  <circle class="event" cx="190" cy="80" r="6"/><circle class="event" cx="340" cy="80" r="6"/>
+                </svg>
+                <p class="fine">On Claude Code threads that run without permission checks.</p>
+              </div>
+              <div class="row-shot thread"><img src="/img/f-monitor.webp?v=4aae4cb8" width="1500" height="1023" loading="lazy" decoding="async" alt="A resting thread: a line in the transcript shows a monitor printed one line, the agent fixed the error, and its card lists the monitor as still running." /></div>
+            </article>
+            <article class="feature row flip">
               <div class="row-text"><h3>Goals</h3><p>Frizz re-sends a goal every time the agent stops, on a clock you set, or both. It runs until you switch it off or the agent says it is finished.</p></div>
               <div class="row-shot thread"><img src="/img/f-goal.webp?v=33519f75" width="1500" height="1040" loading="lazy" decoding="async" alt="The goal panel above a reply box: keep going until the test suite is green, with stop hook and heartbeat switched on." /></div>
             </article>
-            <article class="feature row flip">
+            <article class="feature row">
               <div class="row-text"><h3>Steering</h3><p>Send while an agent works and it reads your message at its next step. Or send it to the queue, where each message gets its own turn.</p></div>
               <div class="row-shot thread"><img src="/img/f-steer.webp?v=b8c56820" width="1500" height="801" loading="lazy" decoding="async" alt="A running thread with a message typed and the menu beside Send open, offering Send as steer and Send to queue." /></div>
             </article>
-            <article class="feature row">
+            <article class="feature row flip">
               <div class="row-text"><h3>Messages between threads</h3><p>A worker can send a message to another thread, even in another project. It lands as one line naming the sender, with a link back.</p></div>
               <div class="row-shot thread"><img src="/img/f-peer.webp?v=2d37e6bd" width="1500" height="1166" loading="lazy" decoding="async" alt="A message from another thread, expanded in a transcript, and the agent acting on it." /></div>
             </article>
@@ -176,35 +202,34 @@
               <p>Expand a thread and a rail beside it lists its sub-agents, shells, watched PRs, saved files, and edited files.</p>
               <div class="big-shot"><img src="/img/f-full.webp?v=0fd5d13c" width="2200" height="1360" loading="lazy" decoding="async" alt="A full-screen thread with a rail of sub-agents, shells, pull requests, files and links, and edited files." /></div>
             </article>
-            <article class="feature row flip">
-              <div class="row-text"><h3>Diagrams, callouts, and diffs</h3><p>Agent replies render tables, Mermaid diagrams, callouts, collapsed sections, and highlighted diffs.</p></div>
-              <div class="row-shot thread"><img src="/img/f-markdown.webp?v=da8fac3f" width="1500" height="1636" loading="lazy" decoding="async" alt="An agent reply with a flowchart, a callout and a two-line diff." /></div>
-            </article>
             <article class="feature row">
               <div class="row-text"><h3>Screenshot and video galleries</h3><p>Agents show their work as a gallery. Click one to page through full screen, zoom in, and download.</p></div>
-              <div class="row-shot thread"><img src="/img/f-gallery.webp?v=896e7ea9" width="1500" height="1074" loading="lazy" decoding="async" alt="A gallery of four screenshots of a billing page in a transcript." /></div>
+              <div class="row-shot"><img src="/img/f-lightbox.webp?v=aac0bf99" width="1500" height="915" loading="lazy" decoding="async" alt="A screenshot open full screen in the viewer, with a page counter and zoom, download and close buttons." /></div>
+            </article>
+            <article class="feature center">
+              <h3>Rich agent replies</h3>
+              <p>Agents write Markdown, and Frizz draws more of it than text.</p>
+              <div class="md-grid">
+                <figure><img src="/img/f-md-code.webp?v=3a149305" width="1382" height="720" loading="lazy" decoding="async" alt="A code block titled with its file name and one highlighted line, above a block with tabs for npm, pnpm and yarn." /><figcaption><b>Code blocks</b>File names, marked lines, and tabs for alternatives.</figcaption></figure>
+                <figure><img src="/img/f-md-diagram.webp?v=75c93215" width="1382" height="720" loading="lazy" decoding="async" alt="A flowchart of an upload retry above a small table of wait times." /><figcaption><b>Diagrams and tables</b>Mermaid diagrams render in place, beside ordinary tables.</figcaption></figure>
+                <figure><img src="/img/f-md-diff.webp?v=a378d129" width="1382" height="500" loading="lazy" decoding="async" alt="A one-line diff with its file name, a count of lines added and removed, and line numbers." /><figcaption><b>Diffs</b>Line numbers, syntax colors, and a count of what changed.</figcaption></figure>
+                <figure><img src="/img/f-md-callouts.webp?v=f128c297" width="1382" height="500" loading="lazy" decoding="async" alt="A warning callout and a tip callout above a collapsed full test log." /><figcaption><b>Callouts and collapsed sections</b>Warnings and tips stand out, and long logs stay folded.</figcaption></figure>
+                <figure><img src="/img/f-md-ansi.webp?v=44a51ae9" width="1382" height="388" loading="lazy" decoding="async" alt="Test output with green PASS and red FAIL labels." /><figcaption><b>Terminal colors</b>Output from a test run or a build keeps its ANSI colors.</figcaption></figure>
+                <figure><img src="/img/f-md-tasks.webp?v=6540bfaa" width="1382" height="388" loading="lazy" decoding="async" alt="A task list showing one item in each of five states." /><figcaption><b>Task lists</b>Done, in progress, to do, blocked, and cancelled.</figcaption></figure>
+              </div>
             </article>
             <article class="feature center">
               <h3>File reader</h3>
               <p>Links to files open in a reader that stays live as the file changes. Select text and press <kbd>⌘I</kbd> to quote it into your reply.</p>
               <div class="big-shot"><img src="/img/f-reader.webp?v=d55ff5e5" width="2200" height="1161" loading="lazy" decoding="async" alt="A thread beside a rendered Markdown file, opened from a link in the transcript." /></div>
             </article>
-            <article class="feature row flip">
-              <div class="row-text"><h3>Project home screen</h3><p>Every project is an icon, badged with how many threads are waiting or running.</p></div>
-              <div class="row-shot"><img src="/img/f-home.webp?v=2b88ad25" width="1500" height="800" loading="lazy" decoding="async" alt="The home page: five project icons with counts on them, a button to add a project, and a switch to the Console." /></div>
-            </article>
             <article class="feature row">
               <div class="row-text"><h3>Claude Code and Codex, side by side</h3><p>Pick the agent, model, and effort for each new thread. Both can run on the same repo at once.</p></div>
-              <div class="row-shot narrow"><img src="/img/f-picker.webp?v=e1c4a725" width="1284" height="1400" loading="lazy" decoding="async" alt="The model picker open under the new thread box, with Claude Code models and Codex models each listed by effort." /></div>
+              <div class="row-shot narrow"><img src="/img/f-picker.webp?v=a276873f" width="1284" height="1040" loading="lazy" decoding="async" alt="The model picker open under the new thread box, with Claude Code models and Codex models each listed by effort." /></div>
             </article>
             <article class="feature row flip">
               <div class="row-text"><h3>Threads from GitHub</h3><p>Browse issues and pull requests from the composer, select a range, and start one thread for each.</p></div>
-              <div class="row-shot"><img src="/img/f-github.webp?v=e87e1074" width="1500" height="1500" loading="lazy" decoding="async" alt="The GitHub picker over the dimmed board, listing open issues with three of them checked." /></div>
-            </article>
-            <article class="feature center">
-              <h3>Phone layout</h3>
-              <p>On a phone, Frizz has a board of tabs, rows you swipe to snooze or finish, and questions answered one at a time in a sheet.</p>
-              <div class="phones"><img src="/img/f-phone-board.webp?v=6ba89847" width="780" height="1688" loading="lazy" decoding="async" alt="The board on a phone: tabs for queue, snoozed and done, with threads below." /><img src="/img/f-phone-question.webp?v=a692a6e3" width="780" height="1688" loading="lazy" decoding="async" alt="A question on a phone, open in a sheet with its options." /></div>
+              <div class="row-shot"><img src="/img/f-github.webp?v=c6999040" width="1500" height="1116" loading="lazy" decoding="async" alt="The GitHub picker over the dimmed board, listing open issues with three of them checked." /></div>
             </article>
           </div>
         </div>
@@ -226,16 +251,15 @@
           <div class="remote-grid">
             <div>
               <p class="kicker">Remote access</p>
-              <h2 id="remote-h">Use it from your phone.</h2>
-              <p class="lead">Frizz binds <code>127.0.0.1</code>. To reach a board from a phone or another machine, press <kbd>R</kbd> in the terminal running it and pick how.</p>
-              <p class="auth"><strong>Whichever you pick, Frizz does the authenticating.</strong> A device has to redeem a single-use sign-in link before it gets in. Press <kbd>L</kbd> for a fresh one, <code>npx frizz --sessions</code> lists the devices holding one, and <code>--sign-out</code> revokes one.</p>
+              <h2 id="remote-h">Reach it from anywhere.</h2>
+              <p class="lead">Frizz binds <code>127.0.0.1</code>. Press <kbd>R</kbd> in its terminal to pick how other devices reach it, and each one signs in by scanning a single-use QR code.</p>
             </div>
             <div class="termwin" role="img" aria-label="The remote access menu in the terminal">
               <div class="termwin-bar"><i></i><i></i><i></i><span>npx frizz</span></div>
 <div class="termbody">
               <p class="title">Reach this board from anywhere</p>
               <ul>
-                <li class="on"><span class="caret">❯</span><b>frizz.sh subdomain</b><span class="blurb">a private, unguessable address; no account, nothing to install</span></li>
+                <li class="on"><span class="caret">❯</span><b>frizz.sh subdomain</b><span class="blurb">a random address and a one-time QR code; no account</span></li>
                 <li><span class="caret"></span><b>Cloudflare Tunnel</b><span class="blurb">a domain you own on Cloudflare; cloudflared on this machine</span></li>
                 <li><span class="caret"></span><b>Tailscale</b><span class="blurb">your tailnet; tailscale serve does the TLS</span></li>
                 <li><span class="caret"></span><b>Something else</b><span class="blurb">any proxy or tunnel you run — tell Frizz its address</span></li>
@@ -258,7 +282,7 @@
         <div class="wrap">
           <div class="slab" id="slab">
             <svg class="big-mark" viewBox="144.5 41.7 435.4 428.5" aria-hidden="true"><path class="mark-path" pathLength="1" d="M170.9 260.4C174.5 260.0 185.6 258.7 192.5 257.7C199.4 256.7 206.2 255.5 212.1 254.3C218.0 253.1 222.8 252.0 227.9 250.6C233.0 249.1 238.1 247.6 242.6 245.8C247.1 244.1 251.3 242.2 255.0 240.2C258.7 238.2 262.0 236.1 265.0 233.9C268.0 231.7 270.4 229.6 273.0 227.0C275.6 224.4 278.1 221.5 280.4 218.2C282.7 214.9 284.8 211.4 286.8 207.3C288.7 203.2 290.6 198.5 292.0 193.8C293.5 189.0 294.7 184.1 295.6 178.6C296.6 173.1 297.4 166.7 297.8 160.7C298.2 154.7 298.3 148.9 298.1 142.7C297.9 136.4 297.4 129.3 296.6 123.2C295.8 117.2 294.6 111.3 293.3 106.4C292.0 101.5 290.9 98.2 288.7 93.8C286.6 89.5 282.5 83.4 280.4 80.3C278.3 77.2 277.6 76.8 276.0 75.2C274.4 73.7 272.5 72.1 271.0 71.1C269.4 70.0 268.3 69.5 266.9 69.0C265.5 68.5 264.0 68.1 262.5 68.1C261.1 68.1 259.3 68.4 258.0 68.8C256.8 69.1 256.2 69.3 254.9 70.2C253.6 71.1 251.6 72.9 250.3 74.2C249.0 75.5 248.2 76.4 247.1 78.0C246.0 79.6 244.8 81.5 243.7 83.7C242.5 86.0 241.5 87.7 240.2 91.7C239.0 95.7 237.1 101.9 235.9 108.0C234.8 114.1 233.8 122.5 233.3 128.4C232.7 134.4 232.7 138.8 232.6 143.7C232.5 148.5 232.7 153.4 232.9 157.7C233.1 162.0 233.4 165.6 233.9 169.5C234.4 173.4 234.4 174.3 236.0 181.3C237.6 188.4 237.5 189.6 243.5 211.8C249.6 233.9 266.6 293.8 272.2 314.5C277.8 335.2 275.9 330.1 277.0 335.8C278.1 341.6 278.4 344.1 278.8 348.9C279.2 353.6 279.4 359.3 279.4 364.4C279.5 369.5 279.3 374.4 279.0 379.5C278.7 384.5 278.2 390.3 277.5 394.9C276.9 399.6 276.2 403.5 275.4 407.5C274.5 411.5 273.3 415.7 272.2 419.0C271.1 422.3 270.2 424.5 268.9 427.1C267.6 429.8 265.8 432.7 264.3 434.8C262.7 437.0 261.1 438.6 259.6 439.9C258.0 441.3 256.4 442.2 254.9 442.9C253.4 443.5 252.1 443.9 250.4 443.9C248.6 443.9 246.4 443.5 244.6 442.8C242.7 442.1 241.1 441.1 239.2 439.6C237.3 438.1 235.2 436.1 233.3 433.8C231.3 431.5 229.4 428.7 227.6 425.9C225.8 423.1 224.0 419.9 222.7 417.0C221.3 414.1 220.4 411.6 219.5 408.5C218.6 405.5 217.8 402.7 217.1 398.9C216.3 395.0 215.5 389.8 215.0 385.5C214.5 381.3 214.2 377.5 214.0 373.4C213.8 369.2 213.8 364.9 213.8 360.6C213.9 356.3 214.1 352.0 214.5 347.7C214.9 343.4 215.5 338.7 216.1 334.9C216.7 331.1 217.3 328.3 218.1 325.0C218.9 321.6 219.7 318.7 221.1 314.8C222.5 311.0 224.6 305.8 226.6 301.9C228.6 298.1 230.7 294.9 233.3 291.5C235.9 288.2 238.8 285.0 242.1 282.0C245.5 279.1 249.5 276.3 253.2 273.9C257.0 271.6 260.7 269.8 264.9 268.0C269.1 266.2 273.6 264.6 278.4 263.1C283.3 261.6 285.4 260.9 294.0 259.0C302.6 257.1 321.9 253.4 330.1 251.6C338.3 249.7 339.4 249.1 343.1 247.8C346.9 246.6 349.5 245.7 352.8 244.2C356.0 242.8 359.6 241.1 362.9 239.2C366.3 237.3 369.8 235.0 372.8 232.7C375.8 230.4 378.2 228.1 380.8 225.4C383.3 222.7 386.0 219.0 387.9 216.2C389.8 213.5 390.9 211.5 392.2 208.9C393.5 206.2 394.5 204.7 395.9 200.4C397.4 196.1 399.7 189.4 401.0 183.1C402.3 176.8 403.3 170.0 403.8 162.8C404.4 155.5 404.5 147.1 404.2 139.7C403.9 132.2 403.1 124.8 402.1 118.3C401.0 111.8 398.9 104.7 397.8 100.7C396.6 96.7 396.3 96.7 395.2 94.3C394.0 91.9 392.4 89.0 390.9 86.6C389.5 84.2 387.9 82.0 386.4 80.0C384.9 78.1 383.3 76.4 382.0 75.0C380.6 73.6 379.5 72.7 378.2 71.8C376.9 70.9 375.6 70.0 374.2 69.4C372.8 68.8 371.1 68.4 369.9 68.2C368.7 68.0 368.2 68.0 366.9 68.2C365.7 68.4 363.7 69.0 362.4 69.6C361.1 70.1 360.8 70.1 359.3 71.5C357.7 73.0 354.9 75.8 353.0 78.5C351.1 81.2 349.5 84.2 347.9 88.0C346.3 91.8 344.8 96.5 343.6 101.2C342.4 105.9 341.6 110.5 340.8 116.0C340.0 121.5 339.4 126.7 339.1 134.1C338.8 141.5 339.0 154.3 339.2 160.3C339.4 166.2 339.6 166.2 340.1 169.8C340.7 173.4 340.7 174.7 342.3 181.8C343.9 188.8 344.1 190.9 349.9 212.3C355.7 233.6 371.7 289.5 377.2 309.8C382.7 330.1 381.6 327.6 382.9 334.2C384.2 340.7 384.5 344.1 385.0 349.3C385.5 354.4 385.6 359.8 385.6 364.9C385.6 370.0 385.5 374.9 385.2 380.0C384.9 385.1 384.3 390.8 383.7 395.5C383.1 400.1 382.4 404.0 381.5 407.9C380.6 411.9 379.5 415.9 378.3 419.4C377.0 423.0 375.6 426.4 374.0 429.4C372.4 432.3 370.3 435.2 368.6 437.2C366.9 439.2 365.4 440.3 363.9 441.4C362.3 442.4 360.8 443.1 359.3 443.5C357.8 443.9 356.5 444.1 354.8 443.8C353.1 443.6 350.9 443.0 349.1 442.1C347.3 441.1 345.5 439.8 343.9 438.4C342.3 436.9 341.0 435.6 339.2 433.5C337.5 431.4 335.4 428.4 333.6 425.6C331.9 422.9 330.2 419.8 328.9 416.9C327.5 414.0 326.5 411.3 325.6 408.2C324.7 405.1 323.9 401.9 323.2 398.4C322.5 395.0 322.0 393.3 321.4 387.4C320.9 381.4 320.1 368.9 320.0 362.7C319.9 356.4 320.2 354.1 320.5 349.8C320.9 345.5 321.4 340.7 322.0 336.9C322.5 333.1 323.1 330.3 323.9 327.0C324.6 323.6 325.3 320.7 326.6 316.8C328.0 312.8 329.8 307.8 332.0 303.5C334.2 299.3 336.9 294.9 339.7 291.2C342.5 287.6 345.3 284.7 348.6 281.8C351.9 278.9 355.7 276.2 359.7 273.8C363.8 271.3 368.7 269.0 373.0 267.2C377.2 265.4 380.4 264.3 385.1 262.9C389.7 261.6 392.0 260.8 400.6 258.9C409.3 257.0 428.6 253.3 436.7 251.5C444.9 249.6 446.0 248.9 449.8 247.7C453.5 246.5 455.7 245.7 459.2 244.1C462.8 242.5 467.5 240.2 470.9 238.2C474.2 236.3 476.6 234.6 479.3 232.4C482.0 230.3 484.7 227.9 487.2 225.1C489.7 222.4 492.5 218.7 494.4 215.9C496.2 213.1 497.3 211.1 498.6 208.5C499.9 205.8 501.2 203.0 502.3 200.0C503.5 196.9 504.6 193.5 505.5 190.2C506.4 186.9 506.9 185.6 507.8 180.1C508.6 174.6 509.9 163.1 510.4 157.1C510.9 151.1 510.6 148.4 510.6 144.2C510.5 140.0 510.5 137.2 509.9 131.8C509.3 126.3 507.8 116.1 507.0 111.5C506.1 106.8 505.8 106.4 505.0 103.8C504.2 101.2 503.3 98.5 502.1 95.8C500.8 93.1 499.3 90.3 497.7 87.6C496.1 84.9 494.0 81.9 492.4 79.8C490.8 77.6 489.5 76.3 487.9 74.8C486.3 73.2 484.4 71.7 482.8 70.7C481.3 69.7 479.9 69.2 478.7 68.8C477.5 68.4 477.3 68.1 475.8 68.2C474.3 68.2 471.8 68.2 469.8 69.0C467.8 69.8 465.6 71.2 463.6 73.2C461.6 75.2 459.4 78.0 457.6 80.9C455.9 83.8 454.4 87.0 453.1 90.4C451.8 93.9 450.7 97.3 449.7 101.7C448.7 106.0 447.6 111.5 446.9 116.5C446.2 121.6 445.7 125.0 445.4 132.0C445.1 139.0 445.2 152.5 445.3 158.6C445.4 164.6 445.7 164.9 446.2 168.4C446.6 172.0 446.4 172.6 448.1 180.0C449.8 187.4 450.1 190.2 456.2 212.8C462.3 235.4 479.2 294.6 484.9 315.6C490.5 336.5 488.8 332.2 489.9 338.6C491.0 345.0 491.2 348.6 491.5 353.9C491.8 359.2 491.9 364.6 491.8 370.3C491.6 376.1 491.3 382.7 490.7 388.2C490.2 393.8 489.5 398.6 488.6 403.5C487.6 408.4 486.5 413.3 485.0 417.7C483.6 422.1 481.7 426.4 480.0 429.7C478.2 433.0 476.4 435.4 474.4 437.5C472.5 439.6 470.3 441.4 468.2 442.4C466.2 443.5 463.9 443.8 462.2 443.9C460.4 444.0 459.5 443.7 457.8 443.1C456.2 442.5 454.1 441.4 452.4 440.2C450.7 439.0 449.2 437.6 447.5 435.8C445.8 434.0 443.9 431.6 442.2 429.3C440.6 427.0 439.0 424.4 437.6 421.9C436.2 419.4 435.1 417.1 434.0 414.5C432.9 411.8 432.0 409.1 431.2 406.0C430.3 402.9 429.6 399.5 428.9 395.9C428.3 392.3 427.7 388.5 427.3 384.6C426.9 380.6 426.5 376.5 426.4 372.4C426.2 368.2 426.1 363.9 426.2 359.6C426.4 355.3 426.6 350.9 427.0 346.6C427.4 342.4 428.0 337.7 428.7 333.9C429.3 330.1 429.9 327.2 430.8 323.9C431.6 320.6 432.7 317.0 433.8 313.9C434.9 310.8 435.7 308.4 437.4 305.1C439.1 301.8 441.3 297.6 443.8 294.1C446.3 290.6 449.4 286.9 452.4 284.0C455.4 281.0 458.2 278.8 461.9 276.3C465.7 273.8 470.3 271.2 474.9 269.1C479.5 267.0 484.1 265.2 489.5 263.5C494.9 261.8 500.7 260.3 507.3 258.8C513.9 257.3 521.8 255.9 529.4 254.7C537.1 253.5 549.3 252.1 553.3 251.6" fill="none" stroke="url(#fffInk)" stroke-width="20.73" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <h2 id="finale-h">Try it in one command.</h2>
+            <h2 id="finale-h">Frizz control in one command.</h2>
             <p>Free and open source under MIT. Runs on your machine, in your browser, with the CLIs you already use.</p>
             <div class="cta">
               <div class="install" data-copy="npx frizz"><span class="dollar" aria-hidden="true">$</span><code class="cmd">npx frizz</code><button class="copy" type="button" aria-label="Copy npx frizz"><svg class="idle" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg class="done" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></button><span class="sr-only" role="status" aria-live="polite"></span></div>

@@ -11,7 +11,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { formatThreadMessage } from "../packages/shared/src/index.ts"
+import { formatThreadMessage, monitorEventWakeMessage, wakeDeliveryToken } from "../packages/shared/src/index.ts"
 import { launchHeadless } from "./lib/headless-browser.mjs"
 import { createRpcClient } from "./lib/rpc-client.mjs"
 
@@ -154,6 +154,7 @@ async function drawPictures(dir) {
     "billing-two": `${nav}<div style="padding:32px 40px"><h1>Billing</h1><p class="sub">Your plan and invoices</p><div style="display:grid;grid-template-columns:5fr 7fr;gap:20px"><div class="card">${plan}</div><div class="card"><b>Invoices</b>${invoices}</div></div></div>`,
     "billing-one": `${nav}<div style="padding:32px 40px;max-width:680px;margin:0 auto"><h1>Billing</h1><p class="sub">Your plan and invoices</p><div class="card" style="margin-bottom:16px">${plan}</div><div class="card"><b>Invoices</b>${invoices}</div></div>`,
     "billing-dark": `<style>body{background:#101114;color:#eceef2}.nav,.card{background:#17181c;border-color:#2a2c31}td{border-color:#2a2c31}.nav span:last-child{color:#eceef2!important}</style>${nav}<div style="padding:32px 40px"><h1>Billing</h1><p class="sub">Your plan and invoices</p><div style="display:grid;grid-template-columns:5fr 7fr;gap:20px"><div class="card">${plan}</div><div class="card"><b>Invoices</b>${invoices}</div></div></div>`,
+    "billing-one-dark": `<style>body{background:#101114;color:#eceef2}.nav,.card{background:#17181c;border-color:#2a2c31}td{border-color:#2a2c31}.nav span:last-child{color:#eceef2!important}</style>${nav}<div style="padding:32px 40px;max-width:680px;margin:0 auto"><h1>Billing</h1><p class="sub">Your plan and invoices</p><div class="card" style="margin-bottom:16px">${plan}</div><div class="card"><b>Invoices</b>${invoices}</div></div>`,
   }
   const browser = await launchHeadless({ colorScheme: "light" })
   try {
@@ -197,8 +198,8 @@ async function seedFeatures() {
   await askWhenKnown("billing-layout", [{
     question: "Which layout should the billing page use?", kind: "question",
     options: [
-      { label: "Two columns", recommended: true, description: ["Plan beside invoices, so both are visible without scrolling.", "", "```lightbox", `${pic("billing-two")}  Desktop`, `${pic("billing-phone")}  Phone`, "```"].join("\n") },
-      { label: "One column", description: ["A single scrolling page that matches the rest of settings.", "", "```lightbox", `${pic("billing-one")}  Desktop`, `${pic("billing-phone")}  Phone`, "```"].join("\n") },
+      { label: "Two columns", recommended: true, description: ["Plan beside invoices, so both are visible without scrolling.", "", "```lightbox", `${pic("billing-two")}  Desktop`, `${pic("billing-dark")}  Dark`, `${pic("billing-phone")}  Phone`, "```"].join("\n") },
+      { label: "One column", description: ["A single scrolling page that matches the rest of settings.", "", "```lightbox", `${pic("billing-one")}  Desktop`, `${pic("billing-one-dark")}  Dark`, `${pic("billing-phone")}  Phone`, "```"].join("\n") },
     ],
   }])
 
@@ -221,6 +222,76 @@ async function seedFeatures() {
     title: "Add push notifications", rested: 2,
     records: [user(40, "Add push notifications to the app."), say(2, ["The notification service is stubbed behind one interface, so either provider fits. This choice decides what I wire up next.", "", question("push-provider", "Which push provider should the app use?", [["APNs and FCM directly", "No vendor or per-message cost; two integrations to maintain", true], ["A push vendor", "One API and delivery reports; a monthly bill and a third party"]])].join("\n"))],
   })
+
+  // A question that opens another: the follow-up is asked only if the option it hangs on is picked.
+  write(APP, "crash-reports", {
+    title: "Add crash reporting", rested: 3,
+    records: [user(35, "Add crash reporting to the app."), say(3, [
+      "The app has no crash reporting yet. This decides which SDK goes in, and where the reports go.", "",
+      question("crash-reports", "Where should crash reports go?", [["A hosted service", "Set up in an afternoon; a monthly bill and a third party", true], ["Our own server", "No third party; one more service to run"]]), "",
+      "```question", "id: crash-service", "kind: choice", "when: crash-reports = A hosted service", "question: Which hosted service?", "options:",
+      "  - label: Sentry", "    description: The best stack traces for this stack", "    recommended: true",
+      "  - label: Bugsnag", "    description: Release health out of the box",
+      "  - label: Firebase Crashlytics", "    description: Free, and ties the app to Firebase",
+      "```",
+    ].join("\n"))],
+  })
+
+  // Several answers can apply, so the card is a checklist with a mark on each option worth ticking.
+  write(APP, "release-gates", {
+    title: "Prepare the 2.4 release", rested: 4,
+    records: [user(45, "Get the 2.4 release ready."), say(4, [
+      "The release branch is cut. Every check that blocks adds time to each release, so these are worth choosing.", "",
+      "```question", "id: release-gates", "kind: multi", "question: Which checks should block the 2.4 release?", "options:",
+      "  - label: Unit tests", "    description: 4 minutes, and green today", "    recommended: true",
+      "  - label: End-to-end tests on a device", "    description: 25 minutes on the device farm", "    recommended: true",
+      "  - label: Bundle size budget", "    description: Fails above 40 MB", "    recommended: true",
+      "  - label: Accessibility audit", "    description: 10 minutes, with two known warnings",
+      "  - label: Translations complete", "    description: Holds the release for the French strings",
+      "```",
+    ].join("\n"))],
+  })
+
+  // A monitor: a script the server keeps running while the session sleeps. adhoc-stack leaves the scheduler off
+  // unless asked, so this row only reads as armed: nothing starts the script and nothing wakes the simulated worker.
+  const monitorId = "cmw_0a1b2c3d4e5f"
+  const parkOnMonitor = ["```awaiting", `commands: [${monitorId}]`, "status: watching", "for: 7d", "```"].join("\n")
+  write(APP, "watch-production", {
+    title: "Watch production after the checkout deploy", rested: 44,
+    records: [
+      user(190, "Deploy the checkout worker, then keep an eye on production and fix anything that breaks."),
+      say(188, `The worker is deployed. A monitor is tailing its error log on the Frizz server, so this session can stop until an error wakes it.\n\n${parkOnMonitor}`),
+      user(46, `${monitorEventWakeMessage({ id: monitorId, label: "Errors in deploy.log", lines: ["ERROR checkout: upstream timeout after 30s (payments)"], event: 1 })}\n\n${wakeDeliveryToken("site-monitor")}`),
+      say(44, `Payments ran past the worker's 30s budget, which was shorter than its retry window. I raised it to 45s in \`workers/checkout.ts\` and redeployed. Back to waiting.\n\n${parkOnMonitor}`),
+    ],
+  })
+  execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO command_watch (id, project_id, thread_slug, command, every_ms, state, created_at, expires_at, runs, kind, description, events, last_event_at, last_event)
+    VALUES (${sql(monitorId)}, ${sql(projects[APP].id)}, 'watch-production', ${sql("tail -n0 -F /var/log/checkout/deploy.log | grep --line-buffered ERROR")}, 0, 'armed', ${Date.now() - 188 * 60_000}, ${Date.now() + 7 * 24 * 60 * 60_000}, 1, 'monitor', 'Errors in deploy.log', 1, ${Date.now() - 46 * 60_000}, ${sql("ERROR checkout: upstream timeout after 30s (payments)")})`])
+
+  // What the Markdown renderer draws beyond text: one short reply each, photographed tight.
+  const reply = (slug, title, lines) => write(APP, slug, { title, rested: 4, archived: true, records: [user(24, `${title}.`), say(4, lines.join("\n"))] })
+  reply("md-code", "Show the retry and how to run its tests", [
+    "```ts title=\"src/upload.ts\" {4}", "export async function upload(file: File) {", "  for (let attempt = 0; attempt < 5; attempt++) {", "    if ((await send(file)).ok) return", "    await sleep(2 ** attempt * 100)", "  }", "}", "```", "", "Run its tests:", "",
+    "```bash npm", "npm test -- upload", "```", "", "```bash pnpm", "pnpm test upload", "```", "", "```bash yarn", "yarn test upload", "```",
+  ])
+  reply("md-diff", "Show the retry fix", [
+    "```ts-diff", "--- a/src/upload.ts", "+++ b/src/upload.ts", "@@ -12,6 +12,6 @@ export async function upload(file: File) {", "   for (let attempt = 0; attempt < 5; attempt++) {", "     if ((await send(file)).ok) return", "-    await sleep(100)", "+    await sleep(2 ** attempt * 100)", "   }", " }", "```",
+  ])
+  reply("md-callouts", "Say what to check before merging", [
+    "> [!WARNING] Before you merge", "> The migration cannot be rolled back.", "",
+    "> [!TIP]", "> Run it on a copy of production first.", "",
+    "<details>", "<summary>Full test log, 412 lines</summary>", "", "47 tests passed.", "", "</details>",
+  ])
+  reply("md-ansi", "Run the upload tests", [
+    "```ansi", "\\x1b[42;30m PASS \\x1b[0m src/upload.test.ts", "\\x1b[42;30m PASS \\x1b[0m src/retry.test.ts", "\\x1b[41;37m FAIL \\x1b[0m src/resume.test.ts", "  \\x1b[31m✕ resumes after a dropped connection\\x1b[0m \\x1b[2m(212 ms)\\x1b[0m", "", "\\x1b[1mTests:\\x1b[0m \\x1b[31m1 failed\\x1b[0m, \\x1b[32m46 passed\\x1b[0m, 47 total", "```",
+  ])
+  reply("md-tasks", "Say where the settings migration stands", [
+    "- [x] Move the settings store to SQLite", "- [/] Migrate existing settings files", "- [ ] Add a rollback test", "- [?] Keep the JSON export, once that is decided", "- [-] Remove the legacy reader",
+  ])
+  reply("md-diagram", "Explain the retry schedule", [
+    "```mermaid", "flowchart LR", "  A[Upload] -- ok --> C[Done]", "  A -- timeout --> D[Wait longer]", "  D --> A", "```", "",
+    "| Attempt | Wait |", "| --- | --- |", "| 1 | 100ms |", "| 2 | 200ms |",
+  ])
 
   // A thread resting on its own work: one helper and one shell, still running.
   const loadAgent = "toolu_load_agent", loadShell = "toolu_load_shell"
@@ -275,18 +346,6 @@ async function seedFeatures() {
       user(12, formatThreadMessage({ slug: "ship-sync", title: "Ship the offline sync fixes" }, "Heads up: `acme/mobile-app#392` touches the same key loader. Rebase on it before you remove the old keys, or the sync worker loses its credentials.")),
       say(7, "Thanks. I rebased on acme/mobile-app#392, and the sync worker reads the new loader. The old keys come out once the last client has moved.\n\n```done\ntitle: Push keys rotated\n---\n- Rotated the keys in `src/push/keys.ts`.\n- Rebased on acme/mobile-app#392.\n```"),
     ],
-  })
-
-  write(APP, "retry-report", {
-    title: "Explain the upload failures", rested: 5,
-    records: [user(40, "Why do uploads fail on slow networks?"), say(5, [
-      "## Why uploads fail", "",
-      "Retries wait a fixed `100ms`, so a slow network burns all five tries in under a second.", "",
-      "```mermaid", "flowchart LR", "  A[Upload] --> B{Timed out?}", "  B -- no --> C[Done]", "  B -- yes --> D[Wait longer]", "  D --> A", "```", "",
-      "> [!TIP] Worth keeping", "> The cap stops a long outage from holding the upload queue open.", "",
-      "```ts-diff", "-  await sleep(100)", "+  await sleep(2 ** attempt * 100)", "```", "",
-      "```done", "title: Uploads back off on slow networks", "---", "- Fixed the retry in `src/upload.ts`.", "```",
-    ].join("\n"))],
   })
 
   write(APP, "billing-gallery", {

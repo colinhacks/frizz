@@ -7,7 +7,7 @@ Press **R** in the terminal running Frizz. A walkthrough offers four ways to rea
 ```
   Reach this board from anywhere
 
-  ❯ frizz.sh subdomain  a private, unguessable address; no account, nothing to install
+  ❯ frizz.sh subdomain  a random address and a one-time QR code; no account
     Cloudflare Tunnel   a domain you own on Cloudflare; cloudflared on this machine
     Tailscale           your tailnet; tailscale serve does the TLS
     Something else      any proxy or tunnel you run — tell Frizz its address
