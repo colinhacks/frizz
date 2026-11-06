@@ -7,22 +7,27 @@
     <meta charset="utf-8" />
     <link rel="stylesheet" href="/site.css" />
     <style>
+      /* The homepage's first screen on a card: its headline, swash and pill, with the name above them. */
       html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; background: var(--paper); }
-      .og { display: grid; grid-template-columns: 200px 1fr; gap: 60px; align-items: center; height: 630px; padding: 0 84px 0 92px; }
-      .og img { width: 200px; height: 200px; filter: drop-shadow(0 10px 18px rgba(70, 50, 15, 0.22)) drop-shadow(0 28px 40px rgba(70, 50, 15, 0.16)); }
-      .og h1 { margin: 0; font-size: 62px; line-height: 1.04; font-weight: 720; letter-spacing: -0.05em; color: var(--ink); }
-      .og p { margin: 26px 0 0; font-size: 26px; line-height: 1.4; color: var(--ink-2); letter-spacing: -0.012em; }
-      .og .install { margin-top: 34px; height: 60px; padding: 0 30px; font-size: 23px; }
+      .og { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 630px; text-align: center; }
+      .og-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 34px; font-size: 38px; line-height: 1; font-weight: 650; letter-spacing: -0.025em; }
+      .og-brand img { width: 60px; height: 60px; }
+      .og h1 { margin: 0; font-size: 112px; line-height: 1.06; font-weight: 720; letter-spacing: -0.05em; }
+      .og .install { margin-top: 44px; padding: 0 34px; font-size: 28px; box-shadow: none; }
     </style>
   </head>
   <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <linearGradient id="swashInk" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#eabe2c"/><stop offset="1" stop-color="#e2ad1f"/>
+        </linearGradient>
+      </defs>
+    </svg>
     <div class="og">
-      <img src="/img/fff-mark.svg?v=1b5b5878" alt="" />
-      <div>
-        <h1>The agent console for<br />extreme productivity.</h1>
-        <p>A web app for running many Claude&nbsp;Code and Codex agents.</p>
-        <code class="install"><span class="dollar">$</span><span class="cmd">npx frizz</span></code>
-      </div>
+      <div class="og-brand"><img src="/img/fff-mark.svg?v=1b5b5878" alt="" /><span>Frizz</span></div>
+      <h1>The <span class="swashed"><span>agent console</span><svg class="swash" viewBox="0 0 400 44" preserveAspectRatio="none" aria-hidden="true"><path d="M6 30 C 70 22, 150 17, 236 16.5 C 300 16, 352 18, 394 23" fill="none" stroke="url(#swashInk)" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg></span> for<br />extreme productivity.</h1>
+      <div class="install"><span class="dollar">$</span><code class="cmd">npx frizz</code></div>
     </div>
   </body>
 </html>
