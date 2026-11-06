@@ -33,6 +33,8 @@ export interface BlockInteractive {
    *  a focused box until 2026-08-28. MULTI keeps its toggled set. */
   onText: (text: string) => void
   onSubmit: () => void
+  /** No free-text row: a remote session picks listed options and types nothing. */
+  optionsOnly?: boolean
 }
 
 // A ```question block, set off from the surrounding prose: rounded neutral border + slightly elevated
@@ -241,7 +243,7 @@ export function QuestionBlockCard({
           {/* The free-text answer IS the final option — but it SPANS THE FULL WIDTH (col-span-full)
               below the multi-column options, and is an auto-growing textarea (see taRef effect above)
               rather than a one-line input, so a long "something else…" answer stays fully visible. */}
-          {interactive && (
+          {interactive && !interactive.optionsOnly && (
             // The free-text row takes the next number when the question has options, laid over the box's
             // left padding so the box itself keeps its own border and focus treatment. It sits
             // on the BASELINE of the box's first line (a textarea is a baseline item in Chrome and

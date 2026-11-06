@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { launchApp, launchBrowserTab } from "./browser.ts";
-import { adoptSessionState, loadSessionState, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
+import { adoptSessionState, liveSessions, loadSessionState, remoteDevicesLine, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import { listSessions, signOutSession } from "./sessions-cli.ts";
 import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
@@ -608,6 +608,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     allowedHosts: [],
       // A spent code repaints the open QR pane as stale, so nobody photographs a dead link.
       onCodeConsumed: () => accessPane?.markConsumed(),
+    onDeviceSignedIn: ({ label, devices }) => activityReadout?.notice("done", "Remote", `${label} signed in · ${remoteDevicesLine(devices)}`),
     sessionKey: sessions.key,
     rotateSessionKey: sessions.rotateKey,
     sessionDirectory: sessions.directory,
@@ -729,6 +730,8 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   await supervisor.firstBoot;
   store.commit(active);
   activityReadout?.notice("done", "Server", `${active.version} · launcher ${PACKAGE_VERSION}`);
+  const heldSessions = liveSessions(sessions.directory).length;
+  if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · frizz --sessions lists them`);
   // The execve'd generation prints no boot block (it is not an interactive launch), so this one line
   // is the only thing that tells the operator the update finished and this terminal still owns it.
   if (reexec) {

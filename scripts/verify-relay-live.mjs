@@ -56,7 +56,7 @@ import { connectRelay } from "../src/relay-connection.ts";
 /** Generous for a round trip that measures ~120 ms, and short enough that a hang reads as one. */
 const DEADLINE_MS = 15_000;
 const BIG = 2 * 1024 * 1024;
-const PROBE_COOKIE = "frizz_session=probe-value";
+const PROBE_COOKIE = "__Host-frizz_session=probe-value";
 
 /**
  * The board every check talks to. Its `/cached` answers 304 to the weak form of its own tag as well as

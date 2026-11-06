@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useIsMutating, useMutation, useQuery } from "@tanstack/react-query"
 import { acpModelSlug, type AccountBackend, type DispatchInput } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
+import { RemoteNote } from "./RemoteNote.tsx"
 import { showToast, store } from "../store.ts"
 import { Composer } from "./Composer.tsx"
 import { GithubTrigger } from "./GithubTrigger.tsx"
@@ -256,7 +258,15 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
   }
 }
 
-export function DispatchForm({
+type DispatchFormProps = Parameters<typeof LocalDispatchForm>[0]
+
+export function DispatchForm(props: DispatchFormProps) {
+  const remoteHost = useRemoteHost()
+  if (remoteHost) return <RemoteNote remoteHost={remoteHost} />
+  return <LocalDispatchForm {...props} />
+}
+
+function LocalDispatchForm({
   autoFocus,
   onDispatched,
   projectPicker,
@@ -317,7 +327,20 @@ function PendingDispatch({ prompt, className = "" }: { prompt: string; className
 // the prompt a third of the screen. × closes; "Start" in the header sends, disabled until there is text;
 // the prompt fills the page at 17px; the tool row — attach, the model chip, the GitHub picker — rides
 // on the keyboard. Start returns to the board when the server has the thread, as the dialog does.
-function PhoneNewThreadPage({ onDispatched, projectPicker, project }: { onDispatched: () => void; projectPicker?: ReactNode; project?: string }) {
+function PhoneNewThreadPage(props: { onDispatched: () => void; projectPicker?: ReactNode; project?: string }) {
+  const remoteHost = useRemoteHost()
+  if (!remoteHost) return <LocalPhoneNewThreadPage {...props} />
+  return (
+    <div data-phone-new-thread className="flex flex-col items-start gap-3 p-[18px]">
+      <RemoteNote remoteHost={remoteHost} />
+      <RadixDialog.Close asChild>
+        <button type="button" data-phone-new-thread-close className="rounded-md border border-border px-3 py-1.5 text-[14px] text-fg outline-none">Close</button>
+      </RadixDialog.Close>
+    </div>
+  )
+}
+
+function LocalPhoneNewThreadPage({ onDispatched, projectPicker, project }: { onDispatched: () => void; projectPicker?: ReactNode; project?: string }) {
   const form = useDispatchForm(onDispatched, projectPicker)
   const board = useBoard()
   const identity = projectIdentity(board)

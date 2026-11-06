@@ -106,12 +106,12 @@ try {
 
   // Two devices, so the test can prove signing out one leaves the other alone.
   const phone = await redeem(first.code, "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1");
-  check("a phone redeems a link and gets a session", phone.includes("frizz_session="));
+  check("a phone redeems a link and gets a session", phone.includes("__Host-frizz_session="));
 
   const second = await cli("--link");
   const laptopCode = (second.out.match(/frizz_code=([A-Za-z0-9_-]+)/) ?? [])[1];
   const laptop = laptopCode ? await redeem(laptopCode, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120 Safari/537.36") : "";
-  check("a second device redeems its own link", laptop.includes("frizz_session="), laptopCode ? "" : second.out.slice(0, 120));
+  check("a second device redeems its own link", laptop.includes("__Host-frizz_session="), laptopCode ? "" : second.out.slice(0, 120));
 
   check("both devices reach the board", (await ask("/", { cookie: phone })).status === 200 && (await ask("/", { cookie: laptop })).status === 200);
 
@@ -129,7 +129,7 @@ try {
   // LAPTOP's id and asks for all; both must be ignored, because the id comes from the cookie alone.
   const tabletCode = ((await cli("--link")).out.match(/frizz_code=([A-Za-z0-9_-]+)/) ?? [])[1];
   const tablet = tabletCode ? await redeem(tabletCode, "Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537.36") : "";
-  check("a third device redeems its own link", tablet.includes("frizz_session="));
+  check("a third device redeems its own link", tablet.includes("__Host-frizz_session="));
   const tabletStatus = json((await ask("/_frizz/control/status", { cookie: tablet, origin: ORIGIN })).body);
   check("status tells the tablet it holds a remote session", tabletStatus?.remoteSession === true, JSON.stringify(tabletStatus ?? {}).slice(0, 120));
   const loopbackStatus = json((await ask("/_frizz/control/status", { host: `127.0.0.1:${PORT}`, origin: `http://127.0.0.1:${PORT}` })).body);
@@ -141,7 +141,7 @@ try {
   });
   const selfBody = json(self.body);
   check("the tablet signs itself out", self.status === 200 && selfBody?.result === "signed-out" && selfBody?.id === idOf(tablet), self.body);
-  check("and is told to drop its cookie", self.setCookie.some((c) => /^frizz_session=;.*Max-Age=0/.test(c)), self.setCookie.join(" | "));
+  check("and is told to drop its cookie", self.setCookie.some((c) => /^__Host-frizz_session=;.*Max-Age=0/.test(c)), self.setCookie.join(" | "));
   check("the tablet is refused on its next request", (await ask("/", { cookie: tablet })).status === 401);
   check("the laptop its body named is untouched", (await ask("/", { cookie: laptop })).status === 200);
   check("and so is the phone", (await ask("/", { cookie: phone })).status === 200);

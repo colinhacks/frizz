@@ -5,6 +5,7 @@ import { once } from "node:events"
 import type { AddressInfo } from "node:net"
 import { WebSocket, type ClientOptions } from "ws"
 import type { BoardDelta, SocketServerMsg, ThreadView, TranscriptMessage } from "@frizz/shared"
+import { encodeCallerStamp } from "./audit.ts"
 import { Bus, Emitter } from "./bus.ts"
 import { DeltaRing } from "./board.ts"
 import {
@@ -1455,6 +1456,42 @@ test("file topic: a change on a subscribed file is pushed as file-changed with t
     assert.equal(h.appSocket.fileWatchCount, 0)
     assert.equal(fake.armed.size, 0)
     c.ws.close()
+  } finally {
+    await h.close()
+  }
+})
+
+test("a remote socket reads the board, and watches only files a remote caller may read", async () => {
+  const fake = fakeWatcher()
+  const refusals: Array<Record<string, unknown>> = []
+  const h = await startHarness({
+    watchFile: fake.watchFile,
+    mayReadRemotely: (path: string) => path === "/repo/README.md",
+    refusedRemotely: (_request: unknown, detail: Record<string, unknown>) => void refusals.push(detail),
+  })
+  const stamp = (via: "public" | "network" | "loopback") => ({ headers: { "x-frizz-caller": encodeCallerStamp({ via, remote: "127.0.0.1", session: "Ab3dE9xY" }) } })
+  try {
+    for (const via of ["public", "network"] as const) {
+      const remote = await connectClient(h.port, "/_frizz/ws", stamp(via))
+      await remote.next() // hello
+      remote.ws.send(JSON.stringify({ t: "sub", topic: "file", path: "/home/me/.ssh/id_rsa" }))
+      remote.ws.send(JSON.stringify({ t: "sub", topic: "file", path: "/repo/README.md" }))
+      await waitFor(() => fake.armed.has("/repo/README.md"), "the readable file's watch")
+      assert.equal(fake.armed.has("/home/me/.ssh/id_rsa"), false)
+      assert.deepEqual(refusals.pop(), { socket: "file" })
+      remote.ws.close()
+      await waitFor(() => !fake.armed.has("/repo/README.md"), "the release")
+    }
+    // The machine's own tab, stamped or not, is not asked.
+    for (const options of [stamp("loopback"), {}]) {
+      const local = await connectClient(h.port, "/_frizz/ws", options)
+      await local.next()
+      local.ws.send(JSON.stringify({ t: "sub", topic: "file", path: "/home/me/.ssh/id_rsa" }))
+      await waitFor(() => fake.armed.has("/home/me/.ssh/id_rsa"), "the local watch")
+      local.ws.close()
+      await waitFor(() => !fake.armed.has("/home/me/.ssh/id_rsa"), "the release")
+    }
+    assert.deepEqual(refusals, [])
   } finally {
     await h.close()
   }

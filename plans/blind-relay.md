@@ -20,7 +20,7 @@ The backdoored relay (`evidence/live-vs-main-relay.diff` in the incident thread)
 
 Three conclusions follow, and the design rests on them.
 
-- **The access gate protects a board from strangers, not from the relay.** The comment at the top of [`worker.ts`](../packages/relay/src/worker.ts) and the [relay README](../packages/relay/README.md) say "Nothing in the board is trusted to us — the visitor still meets Frizz's own single-use access gate on the far side". That is false in effect: the credential the gate checks rides through the relay on every request, and the single-use code in `?frizz_code=` rides through it too, in the query string, before it is redeemed. Both statements need correcting whatever else is decided (Phase 0).
+- **The access gate protects a board from strangers, not from the relay.** The comment at the top of [`worker.ts`](../packages/relay/src/worker.ts) and the [relay README](../packages/relay/README.md) say "Nothing in the board is trusted to us — the visitor still meets Frizz's own single-use access gate on the far side". That is false in effect: the credential the gate checks rides through the relay on every request, and the single-use code in `?frizz_code=` rides through it too, in the query string, before it is redeemed. Both statements were corrected in Phase 0.
 - **The trust anchors live in the same account as the relay.** The relay authenticates a board against the pubkey the registrar wrote to the `CLAIMS` KV namespace, and Cloudflare also holds the `frizz.sh` DNS zone and terminates TLS for `*.frizz.sh`. An attacker with the account can change all three. So any defence whose root is "the name `ada.frizz.sh`" fails against this attacker: web origin security is rooted in DNS and the CA system, and the attacker controls the DNS.
 - **The relay serves the code.** `index.html` and every JavaScript asset reach the browser through the same Durable Object. A protocol that encrypts inside that page stops the passive half of this backdoor and nothing else: the next upload serves a page that sends the plaintext out before it encrypts it. 1Password states the same limit for its own web client: "An attacker capable of changing the web client on the server could deliver a malicious client to the user", and its advice to users is to "Use (code signed) native clients as much as possible" ([1Password security design, "Crypto over HTTPS"](https://agilebits.github.io/security-design/leopard.html)).
 
@@ -211,10 +211,19 @@ Each phase ships on its own and says what it protects against. The plaintext pat
 
 ### Phase 0 — board-side limits, no protocol change
 
-- A remote session cannot dispatch with `bypassPermissions`, cannot switch a thread to it, and cannot make it the default. The loopback tab can. The refusal names the reason and the way to do it from the laptop.
-- The readout announces every redeemed code with the device label, and the access pane shows how many remote devices hold a session.
-- Correct the [relay README](../packages/relay/README.md) and the header comment of [`worker.ts`](../packages/relay/src/worker.ts): the access gate's credential crosses the relay, so the relay is trusted with it today.
-- **Protects against:** the exact escalation of this incident, from a stolen cookie. **Does not protect against:** reading transcripts, rewriting prompts, or sending a prompt to a thread that already runs in `bypassPermissions` or `auto` — in `auto`, Claude's own approval decides what runs, so a prompt is still a path to the shell. Phase 0 is a speed bump and is described to users as one.
+**Built, and it went further than this section first said.** The first draft refused only `bypassPermissions`, and called the result a speed bump. A prompt into a thread already running in `bypassPermissions` or `auto` is a path to the shell, and so are a command watch's first check and a monitor, so a ceiling on one permission mode left the escalation open. The strict default replaces it.
+
+- **A remote session may read the board and pick listed options on question cards, and nothing else.** One table over every procedure (`REMOTE_ACCESS` in [`remote-gate.ts`](../packages/server/src/remote-gate.ts)), exhaustive at the type level and default-deny at runtime, enforced where an RPC name resolves to a procedure. Routes outside RPC, the supervisor's controls and socket message types are default-deny too. A later widening is one line in that table.
+- **Answers are judged against the stored question.** Listed options only, with no free text. A secret or danger card is the machine's, as is any free-text follow-up on the branch taken.
+- **Reads are confined.** A remote read resolves its real path and has to land in a registered project or a thread's scratch or attachment directory, with secret-looking names refused inside them. Loopback reads are unchanged.
+- **A relay frame is public by construction.** The relay agent dials a listener of its own on which every request counts as public, and frame headers can't name the host. This also closes a route that needed no visitor at all: a frame with a second `Host` header used to read as loopback.
+- **A session has to exist.** The key alone no longer makes a cookie: the session has to be in the directory, unrevoked, with an expiry within what it was issued. Signing out closes the sockets and streams that session holds open, and sign-out-all works from loopback with no public origin declared. The cookie is now `__Host-frizz_session`, which a sibling subdomain can't shadow, so each device signs in once more.
+- **A document can't be framed**, on loopback or a public name, apart from the board's own PDF and visualization frames.
+- **The readout announces every redeemed code** with the device label and says how many remote devices hold a session. A refused remote call writes one audit line with its via, session, device and procedure. Arming a command watch or a monitor is audited, and a `dispatch` record stores the permission mode.
+- **The [relay README](../packages/relay/README.md) and the header comment of [`worker.ts`](../packages/relay/src/worker.ts) are corrected:** the access gate's credential crosses the relay, so the relay is trusted with it.
+- **The web app shows a read-and-answer board** to a remote session, and says where the rest happens.
+- **Protects against:** a stolen cookie, or a hostile relay driving a real session's page, running anything on the machine or reading a secret off it. **Does not protect against:** reading what the board shows, which is every transcript, or rewriting what the visitor sees. A hostile relay can still pick a listed option on a card in a real session's name, and a worker acts on that answer. Those remain for the phases below.
+- **Not built:** the access pane's count of remote devices. The launcher's readout says it instead. Signing the caller stamp and an owner token on the control endpoints were left out, since both defend against a process already on the machine.
 
 ### Phase 1 — the channel, the pipe and the loader, opt-in
 
@@ -233,7 +242,7 @@ Each phase ships on its own and says what it protects against. The plaintext pat
 ### Phase 3 — step-up and capability tiers
 
 - Passkey registration at pairing, the step-up check on escalating actions, and a per-device tier (`read`, `act`, `admin`) the laptop sets with `frizz --sessions`.
-- Phase 0's refusal becomes "refused without step-up".
+- Phase 0's refusal becomes "refused without step-up", for whichever procedures the table is widened to.
 - **Protects against:** A5 for escalation; an attacker with the device key and no user cannot turn permissions off. **Does not protect against:** A4 with a cooperative user.
 
 ### Phase 4 — narrow the loader host
@@ -255,7 +264,7 @@ Each phase ships on its own and says what it protects against. The plaintext pat
 
 1. **Which domain and host for the loader?** It must be outside the Frizz Cloudflare account and its DNS outside Cloudflare too. A host that deploys only from `release.yml` on a dispatch keeps the npm rule. GitHub Pages cannot serve a wildcard, which matters for question 2.
 2. **One origin per board, or one origin for all?** Per-board origins (`<name>.<loader-domain>`) isolate boards from each other and keep the app root-mounted, at the cost of a wildcard certificate. A single origin is simpler to host, but then any board's app can use every other paired board's device key, and the app needs an outer mount prefix.
-3. **How far should Phase 0's ceiling reach?** Refusing `bypassPermissions` is cheap. Refusing remote follow-ups to threads already in `bypassPermissions`, or in `auto`, would close the prompt-to-shell path too, and would also stop the maintainer from steering those threads from a phone.
+3. **How far should Phase 0's ceiling reach?** Answered for now: as far as it can. Remote follow-ups are refused for every thread, which also stops the maintainer steering a thread from a phone. Widening it is one line per procedure in `REMOTE_ACCESS`, and step-up (Phase 3) is the likely condition for doing so.
 4. **What is the step-up?** A WebAuthn passkey on the phone (as designed), an approval on the laptop (strong, but the operator is usually away from it), or no step-up and a hard "laptop only" rule for escalation.
 5. **Is an installed client in scope?** It is the only way to remove the loader host from the trust base before browsers enforce WAICT.
 6. **Padding for metadata?** Bucketed record sizes hide typing and transcript length from the relay at a bandwidth cost.

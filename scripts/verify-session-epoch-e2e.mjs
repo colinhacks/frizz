@@ -101,14 +101,14 @@ try {
 
   const phoneCookies = await redeem(first.code);
   const phone = phoneCookies.map((c) => c.split(";")[0]).join("; ");
-  check("a phone redeems a link", phone.includes("frizz_session="));
-  check("its cookie lives 30 days, not a year", /Max-Age=2592000\b|Max-Age=2591999\b/.test(phoneCookies.join(" ")), phoneCookies.join(" ").replace(/frizz_session=[^;]+/, "frizz_session=…"));
+  check("a phone redeems a link", phone.includes("__Host-frizz_session="));
+  check("its cookie lives 30 days, not a year", /Max-Age=2592000\b|Max-Age=2591999\b/.test(phoneCookies.join(" ")), phoneCookies.join(" ").replace(/__Host-frizz_session=[^;]+/, "__Host-frizz_session=…"));
   check("the phone is let in", (await ask("/", { cookie: phone })).status === 200);
-  // A session from before per-device ids, signed with this board's real key: no denylist can name it.
+  // A cookie signed with this board's real key that the device list never recorded: refused all along.
   const key = readFileSync(join(stateDir, "session-key"));
-  const payload = `${Date.now() + 60 * 24 * 60 * 60_000}.legacy-nonce`;
-  const legacy = `frizz_session=${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`;
-  check("so is a pre-id session signed with the same key", (await ask("/", { cookie: legacy })).status === 200);
+  const payload = `${Date.now() + 60 * 24 * 60 * 60_000}.never-recorded.nonce`;
+  const forged = `__Host-frizz_session=${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`;
+  check("a session the key signed but nobody redeemed is refused", (await ask("/", { cookie: forged })).status === 401);
 
   // Back to a board from before the release: an older launcher never wrote the epoch record.
   await stopBoard();
@@ -121,7 +121,6 @@ try {
   const notice = upgraded.out().match(NOTICE);
   check("the upgraded start tells the operator, on the terminal", notice?.[1] === "1", notice?.[0] ?? upgraded.out().slice(-400));
   check("the phone's old session is refused", (await ask("/", { cookie: phone })).status === 401);
-  check("and so is the pre-id one", (await ask("/", { cookie: legacy })).status === 401);
   check("the epoch is recorded again", existsSync(epochFile));
   const loopback = await ask("/", { host: `127.0.0.1:${PORT}` });
   check("the operator's own loopback tab is untouched", loopback.status < 400, `HTTP ${loopback.status}`);

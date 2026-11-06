@@ -29,7 +29,7 @@ export interface RelayConnectionOptions {
   identity: CryptoKeyPair;
   /** The relay's origin, e.g. `https://frizz.sh`. */
   relayOrigin: string;
-  /** The board on loopback, e.g. `http://127.0.0.1:9393`. */
+  /** The supervisor's relay listener on loopback, e.g. `http://127.0.0.1:53124`: see relayListener. */
   boardOrigin: string;
   /** The hostname visitors use, e.g. `https://ada.frizz.sh`. */
   publicOrigin: string;
@@ -89,6 +89,14 @@ export function defaultBackoff(attempt: number, random: () => number = Math.rand
  */
 export const RELAY_KEEPALIVE_INTERVAL_MS = 45_000;
 
+/**
+ * How much one relay connection may have open at once. Each entry holds a socket, memory and a timer
+ * here, and a frame costs its sender nothing, so without a ceiling whoever writes frames can exhaust
+ * the board. Well above a real page: a load's burst of reads, and a board socket plus its terminals.
+ */
+export const RELAY_MAX_OPEN_REQUESTS = 256;
+export const RELAY_MAX_OPEN_SOCKETS = 64;
+
 export async function signRelayHandshake(name: string, identity: CryptoKeyPair, issuedAt: number): Promise<RelayHandshake> {
   const pubkey = await exportClaimPublicKey(identity.publicKey);
   const signature = await crypto.subtle.sign(
@@ -145,6 +153,71 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
     } catch {
       // The socket died between the request arriving and its answer. The relay fails the request on
       // its side when the connection drops, so there is nothing useful to do here.
+    }
+  };
+
+  /** A nested socket's frames, watched for the last one: the entry goes when the local end does. */
+  const sendNested = (frame: RelayUpFrame) => {
+    if (frame.t === "ws-close" || (frame.t === "ws-ack" && !frame.ok)) nested.delete(frame.id);
+    send(frame);
+  };
+
+  const serveFrame = (data: string) => {
+    const frame = parseFrame(data) as RelayDownFrame | null;
+    if (!frame) return;
+    if (frame.t === "ping") {
+      send({ t: "pong", id: frame.id });
+      return;
+    }
+    if (frame.t === "pong") {
+      awaitingPong = false;
+      return;
+    }
+    if (frame.t === "req") {
+      // A reused id would orphan the entry it replaced, and the ceiling would stop counting it.
+      if (requests.has(frame.id)) return;
+      if (requests.size >= RELAY_MAX_OPEN_REQUESTS) {
+        send({ t: "res", id: frame.id, status: 503, headers: [], end: true });
+        return;
+      }
+      const handle = serveRelayRequest(frame, {
+        origin: options.boardOrigin,
+        publicOrigin: options.publicOrigin,
+        send,
+      });
+      requests.set(frame.id, handle);
+      void handle.done.then(() => {
+        if (requests.get(frame.id) === handle) requests.delete(frame.id);
+      });
+      return;
+    }
+    if (frame.t === "req-cancel") {
+      requests.get(frame.id)?.cancel();
+      requests.delete(frame.id);
+      return;
+    }
+    if (frame.t === "ws-open") {
+      if (nested.has(frame.id)) return;
+      if (nested.size >= RELAY_MAX_OPEN_SOCKETS) {
+        send({ t: "ws-ack", id: frame.id, ok: false });
+        return;
+      }
+      const session = serveRelayWebSocket(frame, {
+        origin: options.boardOrigin,
+        publicOrigin: options.publicOrigin,
+        send: sendNested,
+      });
+      // A session that failed outright has already said so, and has nothing to keep.
+      if (!session.failed) nested.set(frame.id, session);
+      return;
+    }
+    if (frame.t === "ws-msg") {
+      nested.get(frame.id)?.message(frame.data, frame.more);
+      return;
+    }
+    if (frame.t === "ws-close") {
+      nested.get(frame.id)?.close();
+      nested.delete(frame.id);
     }
   };
 
@@ -213,51 +286,12 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
 
     next.addEventListener("message", (event) => {
       if (typeof event.data !== "string") return;
-      const frame = parseFrame(event.data) as RelayDownFrame | null;
-      if (!frame) return;
-      if (frame.t === "ping") {
-        send({ t: "pong", id: frame.id });
-        return;
-      }
-      if (frame.t === "pong") {
-        awaitingPong = false;
-        return;
-      }
-      if (frame.t === "req") {
-        const handle = serveRelayRequest(frame, {
-          origin: options.boardOrigin,
-          publicOrigin: options.publicOrigin,
-          send,
-        });
-        requests.set(frame.id, handle);
-        void handle.done.then(() => {
-          if (requests.get(frame.id) === handle) requests.delete(frame.id);
-        });
-        return;
-      }
-      if (frame.t === "req-cancel") {
-        requests.get(frame.id)?.cancel();
-        requests.delete(frame.id);
-        return;
-      }
-      if (frame.t === "ws-open") {
-        nested.set(
-          frame.id,
-          serveRelayWebSocket(frame, {
-            origin: options.boardOrigin,
-            publicOrigin: options.publicOrigin,
-            send,
-          }),
-        );
-        return;
-      }
-      if (frame.t === "ws-msg") {
-        nested.get(frame.id)?.message(frame.data, frame.more);
-        return;
-      }
-      if (frame.t === "ws-close") {
-        nested.get(frame.id)?.close();
-        nested.delete(frame.id);
+      // ONE BAD FRAME COSTS ONE FRAME. Whoever writes to this socket must not be able to end the
+      // process serving every other visitor by sending something this code did not expect.
+      try {
+        serveFrame(event.data);
+      } catch {
+        // Dropped: the relay times out whatever was waiting on it.
       }
     });
 

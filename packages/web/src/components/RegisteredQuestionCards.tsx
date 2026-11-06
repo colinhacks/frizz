@@ -35,7 +35,8 @@ import { withQuestionOwners, type OwnerMessage } from "../lib/questionOwners.ts"
 import { useInlineMarkdownHtml } from "../lib/useMarkdown.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import type { PairedAnswer } from "../lib/answersMessage.ts"
-import { ROOT_PATH, liveQuestionNodes, nodeAnswered, registeredAnswer, settledQuestionNodes, toParsedQuestion } from "../lib/registeredQuestion.ts"
+import { ROOT_PATH, liveQuestionNodes, nodeAnswered, questionNeedsMachine, registeredAnswer, settledQuestionNodes, toParsedQuestion } from "../lib/registeredQuestion.ts"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { decodeQuestionPick, encodeQuestionPick, questionSpecAt } from "../lib/registeredPicks.ts"
 import { AnswersCard } from "./AnswersCard.tsx"
 import { QueueDismissContext } from "../lib/threadContexts.ts"
@@ -66,6 +67,8 @@ export interface RegisteredAnswering {
   staged: number
   sending: boolean
   error: string | undefined
+  /** The machine's name on a remote session, which picks listed options and types nothing. */
+  remoteHost?: string | null
 }
 
 /** The staged answers as the prompt box's send needs them, with the three edges of that send. */
@@ -92,6 +95,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
   const slug = thread?.id
   const questions = thread?.questions ?? []
   const projectDir = useProjectDir()
+  const remoteHost = useRemoteHost()
   // A SECRET's typed value, keyed by question id. In React state and nowhere else: the draft store
   // mirrors into localStorage, which every tab reads and which outlives the browser, and a pasted
   // credential must not outlive the tab in a cache (lib/drafts says so for the typed interaction cards
@@ -277,7 +281,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
       draftStore.set(key, encodeQuestionPick(spec, next))
     },
     onText: (q, path, isMulti, text) => {
-      if (!slug) return
+      if (!slug || remoteHost) return
       if (q.spec.secret) {
         setSecrets((prev) => (prev.get(q.id) === text ? prev : new Map(prev).set(q.id, text)))
         return
@@ -295,6 +299,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
     staged: staged.length,
     sending: send.isPending,
     error,
+    remoteHost,
   }
 }
 
@@ -586,6 +591,14 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
   if (!a || !a.slug) return null
   // On the phone thread page the card is a reading surface; the sheet answers it (PhoneQuestionCards).
   if (phone) return <CompactQuestionList questions={[q]} />
+  if (a.remoteHost && questionNeedsMachine(q.spec)) {
+    return (
+      <article data-question-id={q.id} className="flex min-w-0 flex-col gap-2">
+        <QuestionBlockCard question={toParsedQuestion(q.spec).question} />
+        <p data-remote-note className="text-[12px] text-muted">This question has to be answered on {a.remoteHost}.</p>
+      </article>
+    )
+  }
   const nodes = liveQuestionNodes(q.spec, a.answersOf(q))
   const card = (node: (typeof nodes)[number]) => (
     <QuestionBlockCard
@@ -598,7 +611,7 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
       // a `danger` question: a generic close icon is not consent for something irreversible, and
       // declining is a real option INSIDE that question. The server refuses one too, so this is the
       // affordance and not the rule.
-      aside={node.depth === 1 && !q.spec.danger ? (
+      aside={node.depth === 1 && !q.spec.danger && !a.remoteHost ? (
         <button
           type="button"
           data-dismiss-question
@@ -634,6 +647,7 @@ export function RegisteredQuestionCard({ q, answering: given }: { q: RegisteredQ
         onChip: (optIdx) => a.onChip(q, node.path, node.spec.kind === "multi", optIdx),
         onText: (text) => a.onText(q, node.path, node.spec.kind === "multi", text),
         onSubmit: a.submit,
+        ...(a.remoteHost ? { optionsOnly: true } : {}),
       }}
     />
   )

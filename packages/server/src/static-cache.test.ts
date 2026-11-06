@@ -52,6 +52,16 @@ test("a hashed asset is immutable; the shell that names it is not", async () => 
 // On Windows the platform `normalize` turns "/" into "\", which missed the root test, resolved the
 // URL to the dist directory itself, and answered "not found" — while every other route worked, so
 // only the grid was broken and only there (2026-09-09).
+test("no document can be framed, a revalidated one included", async () => {
+  const shell = await fetch(`${origin}/`)
+  assert.equal(shell.headers.get("x-frame-options"), "DENY")
+  assert.equal(shell.headers.get("content-security-policy"), "frame-ancestors 'none'")
+  const again = await fetch(`${origin}/`, { headers: { "if-none-match": shell.headers.get("etag")! } })
+  assert.equal(again.status, 304)
+  assert.equal(again.headers.get("x-frame-options"), "DENY")
+  assert.equal(again.headers.get("content-security-policy"), "frame-ancestors 'none'")
+})
+
 test("the root URL is the shell on every platform, with or without a query string", async () => {
   for (const path of ["/", "/?add=D%3A%5Cscratch", "/?unknown=gone"]) {
     const res = await fetch(`${origin}${path}`)

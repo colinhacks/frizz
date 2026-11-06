@@ -160,6 +160,7 @@ export function resolveLocalVisualization(projectDir: string, sessionId: string 
     "frame-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
+    "frame-ancestors 'self'",
     // Defense in depth for direct navigation to the route: keep the generated document opaque-origin
     // and capability-limited even when it is not inside the client's sandboxed iframe.
     "sandbox allow-scripts",

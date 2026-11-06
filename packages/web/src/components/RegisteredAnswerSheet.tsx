@@ -122,7 +122,7 @@ function QuestionStep({ a, step, writing, onWrite, onPick }: {
   const multi = step.spec.kind === "multi"
   // A free-text answer already typed on a single-choice step (and no chip over it) opens the box, so a
   // step revisited through Back or Change shows what was written rather than a closed row.
-  const textOpen = options.length === 0 || writing || (!multi && answer.chosen === null && answer.text.trim() !== "")
+  const textOpen = !a.remoteHost && (options.length === 0 || writing || (!multi && answer.chosen === null && answer.text.trim() !== ""))
   return (
     <div data-answer-question>
       <LinkedHtml className={`px-[18px] pb-3 pt-1 text-[17px] font-semibold leading-[23px] text-fg ${QUESTION_PROSE}`} html={html} />
@@ -145,7 +145,7 @@ function QuestionStep({ a, step, writing, onWrite, onPick }: {
               onClick={() => (multi ? a.onChip(step.q, step.path, true, i) : onPick(i))}
             />
           ))}
-          {!textOpen && (
+          {!textOpen && !a.remoteHost && (
             <button type="button" data-answer-write onClick={onWrite} className={`${ROW} text-left`}>
               <Mark multi={multi} on={false} dashed />
               <span className="text-[15.5px] font-medium leading-[21px] text-muted">{multi ? "Add a note…" : "Write a different answer…"}</span>

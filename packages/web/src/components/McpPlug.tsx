@@ -4,6 +4,7 @@ import { Loader2, Plug } from "lucide-react"
 import { useSnapshot } from "valtio"
 import type { McpServerReading, McpSignInState, McpTarget } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { STATUS_ROW_PLUG_ACTION, STATUS_ROW_PLUG_ICON } from "../lib/statusRow.ts"
@@ -36,7 +37,12 @@ export function mcpTargetKey(target: McpTarget): string {
 
 const ignoreKey = (backend: string, server: string) => `${backend}:${server}`
 
-export function McpPlug({ target, placement = "rail" }: { target: McpTarget; placement?: "rail" | "row" }) {
+export function McpPlug(props: { target: McpTarget; placement?: "rail" | "row" }) {
+  // Its readings can start a probe and its sign-ins are this machine's, so a remote session has no plug.
+  return useRemoteHost() ? null : <LocalMcpPlug {...props} />
+}
+
+function LocalMcpPlug({ target, placement = "rail" }: { target: McpTarget; placement?: "rail" | "row" }) {
   const inRow = placement === "row"
   const [open, setOpen] = useState(false)
   const key = mcpTargetKey(target)

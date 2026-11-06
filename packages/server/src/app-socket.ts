@@ -12,6 +12,8 @@ import type { Storage } from "./storage.ts"
 import type { AgentBackend } from "./backend/types.ts"
 import { projectRetiredBackgroundOps, retiredOpsFor, projectTranscriptAgentLifecycles, projectTranscriptPeerNames, readLatestThreadTranscriptPage, type AgentLifecycleProjection } from "./transcript.ts"
 import { isTrustedLocalWebSocketRequest, rejectWebSocketUpgrade } from "./local-origin.ts"
+import { CALLER_HEADER } from "./audit.ts"
+import { isRemoteCaller, REMOTE_SOCKET_MESSAGES } from "./remote-gate.ts"
 
 // Stage-2 multiplex: a noServer WebSocket at /ws carrying the board
 // channel (deltas + notify — the stage-1 ServerEvent shapes, wrapped in {t:"event"}; never the board
@@ -134,6 +136,10 @@ export interface AppSocketDeps {
    * test harness), the topic is accepted and does nothing.
    */
   watchFile?: (path: string, onChange: () => void) => () => void
+  /** Whether a remote caller may read this path (remote-reads.ts). Absent means no. */
+  mayReadRemotely?: (path: string) => boolean
+  /** Write down what a remote socket was refused. */
+  refusedRemotely?: (request: { stamp: string | undefined; userAgent: string | undefined }, detail: Record<string, unknown>) => void
   /** Narrow test/operational seams; production uses the conservative exported defaults below. */
   maxLogicalFrameBytes?: number
   maxFileWatchesPerConnection?: number
@@ -343,8 +349,18 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
   // (local-file-watch.ts), so two readers on one file cost one OS watch.
   const fileWatches = new WeakMap<WebSocket, Map<string, () => void>>()
   let fileWatchCount = 0
+  // Sockets a remote caller opened, with what the proxy stamped on the upgrade: it is the only request
+  // these messages ever had. A socket outlives its upgrade, so the answer is kept, not re-derived.
+  const remoteSockets = new WeakMap<WebSocket, { stamp: string | undefined; userAgent: string | undefined }>()
 
   function subscribeFile(ws: WebSocket, path: string): void {
+    const remote = remoteSockets.get(ws)
+    if (remote && !deps.mayReadRemotely?.(path)) {
+      // Dropped without a word, as a path that cannot be watched is below: the frame this would have sent
+      // is only ever a change notice, and silence says nothing about what exists.
+      deps.refusedRemotely?.(remote, { socket: "file" })
+      return
+    }
     let held = fileWatches.get(ws)
     if (!held) {
       held = new Map()
@@ -1043,6 +1059,11 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
         return
       }
       const msg = parsed.data
+      if (remoteSockets.has(ws) && !REMOTE_SOCKET_MESSAGES[msg.t]) {
+        deps.refusedRemotely?.(remoteSockets.get(ws)!, { socket: msg.t })
+        closeSocket(ws, 1008, "not available remotely")
+        return
+      }
       if (msg.t === "board") {
         resumeBoard(msg.bootId, msg.seq)
         return
@@ -1144,6 +1165,11 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
           releaseReservation()
           const origin = req.headers.origin
           if (typeof origin === "string") socketOrigins.set(ws, origin)
+          const stamp = req.headers[CALLER_HEADER]
+          if (typeof stamp === "string" && isRemoteCaller(stamp)) {
+            const userAgent = req.headers["user-agent"]
+            remoteSockets.set(ws, { stamp, userAgent })
+          }
           wss.emit("connection", ws, req)
         })
       } catch {

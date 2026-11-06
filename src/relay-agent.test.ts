@@ -313,7 +313,7 @@ test("the visitor's Host, Origin and session cookie reach the board — the gate
       headers: [
         ["host", "ada.frizz.sh"],
         ["origin", "https://ada.frizz.sh"],
-        ["cookie", "frizz_session=abc123"],
+        ["cookie", "__Host-frizz_session=abc123"],
         ["sec-websocket-key", "someone-elses-key"],
         ["connection", "Upgrade"],
       ],
@@ -324,7 +324,7 @@ test("the visitor's Host, Origin and session cookie reach the board — the gate
     await until(out.frames, (f) => f.t === "ws-ack", "the ack");
     assert.equal(t.handshake.host, "ada.frizz.sh");
     assert.equal(t.handshake.origin, "https://ada.frizz.sh");
-    assert.equal(t.handshake.cookie, "frizz_session=abc123");
+    assert.equal(t.handshake.cookie, "__Host-frizz_session=abc123");
     // The handshake is OURS, not a replay of the visitor's — a borrowed key is answered with an
     // accept value computed for somebody else, which a strict client rejects.
     assert.notEqual(t.handshake["sec-websocket-key"], "someone-elses-key");
@@ -405,4 +405,83 @@ test("cancel() aborts a stream mid-flight and goes quiet", async () => {
     assert.equal(out.frames.length, after, "frames were still sent after the cancel");
     assert.ok(!out.frames.some((f) => f.t === "res-end"), "a cancelled stream sent res-end anyway");
   } finally { await b.close(); }
+});
+
+test("a frame cannot speak for the board: each header once, lower-cased, and no claim about who called", async () => {
+  const seen: import("node:http").IncomingHttpHeaders[] = [];
+  const raw: string[][] = [];
+  const b = await board((req, res) => {
+    seen.push(req.headers);
+    raw.push(req.rawHeaders);
+    res.end("ok");
+  });
+  const out = collect();
+  const forged: Array<[string, string]> = [
+    ["host", "ada.frizz.sh"],
+    ["Host", "127.0.0.1:9393"],
+    ["hOsT", "localhost"],
+    ["X-Frizz-Caller", "eyJ2aWEiOiJsb29wYmFjayJ9"],
+    ["x-frizz-caller", "eyJ2aWEiOiJsb29wYmFjayJ9"],
+    ["X-Forwarded-Host", "127.0.0.1"],
+    ["x-forwarded-for", "127.0.0.1"],
+    ["X-FORWARDED-PROTO", "http"],
+    ["Forwarded", "for=127.0.0.1"],
+    ["Cookie", "first=1"],
+    ["cookie", "second=2"],
+    ["cf-connecting-ip", "203.0.113.9"],
+  ];
+  try {
+    await serveToEnd(
+      { t: "req", id: "r1", method: "GET", url: "https://ada.frizz.sh/", headers: forged },
+      { origin: b.origin, publicOrigin: "https://ada.frizz.sh", send: out.send },
+    );
+    assert.equal(seen[0]?.host, "ada.frizz.sh");
+    assert.equal(raw[0]?.filter((name) => name.toLowerCase() === "host").length, 1);
+    for (const name of ["x-frizz-caller", "x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "forwarded"]) {
+      assert.equal(seen[0]?.[name], undefined, name);
+    }
+    assert.equal(seen[0]?.cookie, "first=1", "one spelling of each header survives");
+    assert.equal(seen[0]?.["cf-connecting-ip"], "203.0.113.9", "the visitor's address stays the relay's to report");
+  } finally { await b.close(); }
+});
+
+test("a malformed frame gets a refusal, and the promise it returns never rejects", async () => {
+  let reached = 0;
+  const b = await board((_, res) => { reached++; res.end("ok"); });
+  const malformed: Array<Partial<Parameters<typeof serveRelayRequest>[0]>> = [
+    { url: "not a url" },
+    { url: undefined as unknown as string },
+    { headers: "nope" as unknown as Array<[string, string]> },
+    { headers: [["x", undefined as unknown as string]] },
+    { headers: [["bad name", "v"]] },
+    { headers: [["x", "line\r\nbreak: yes"]] },
+    { method: "GET / HTTP/1.1\r\nHost: x" },
+    { body: "%%% not base64 %%%" },
+  ];
+  try {
+    for (const [index, fields] of malformed.entries()) {
+      const out = collect();
+      const handle = serveRelayRequest(
+        { t: "req", id: `bad${index}`, method: "GET", url: "https://ada.frizz.sh/", headers: [], ...fields },
+        { origin: b.origin, publicOrigin: "https://ada.frizz.sh", send: out.send },
+      );
+      await handle.done;
+      const answer = out.frames.find((f) => f.t === "res");
+      assert.equal(answer?.t === "res" ? answer.status : undefined, 400, `frame ${index}`);
+      handle.cancel();
+    }
+    assert.equal(reached, 0);
+  } finally { await b.close(); }
+});
+
+test("a malformed terminal frame is refused, and leaves nothing to keep", () => {
+  for (const fields of [{ url: "not a url" }, { headers: "nope" as unknown as Array<[string, string]> }]) {
+    const { frames, send } = collect();
+    const session = serveRelayWebSocket(
+      { t: "ws-open", id: "w1", url: "https://ada.frizz.sh/ws", headers: [], ...fields },
+      { origin: "http://127.0.0.1:1", publicOrigin: "https://ada.frizz.sh", send },
+    );
+    assert.deepEqual(frames, [{ t: "ws-ack", id: "w1", ok: false }]);
+    assert.ok(session.failed);
+  }
 });

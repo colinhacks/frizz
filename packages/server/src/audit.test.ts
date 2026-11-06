@@ -28,14 +28,14 @@ function capture(): AuditLog & { records: AuditRecord[] } {
   return { records, append: (record) => void records.push(record) }
 }
 
-function auditApp(audit: AuditLog | undefined, dispatch: () => Promise<{ slug: string; sessionId: string }>) {
+function auditApp(audit: AuditLog | undefined, dispatch: () => Promise<{ slug: string; sessionId: string }>, storage: object = {}) {
   const inert = new Proxy({}, { get: () => () => {} })
   const ctx = {
     bootId: "audit-test-boot",
     project: { id: "served-project", dir: "/repos/served", stateDir: "/state/served", cwdSlug: "-repos-served", name: "served", label: "served" },
     bus: inert,
     transcriptChange: inert,
-    storage: inert,
+    storage: new Proxy(storage, { get: (target, name) => (target as Record<string | symbol, unknown>)[name] ?? (() => {}) }),
     interactions: inert,
     board: inert,
     tailer: inert,
@@ -70,18 +70,20 @@ function rpc(
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
-test("a relayed dispatch records the public origin, the session id and device, and the prompt only as a digest", async () => {
+test("a relayed dispatch never runs: the refusal names the procedure, the session and the device, and no prompt", async () => {
   const sink = capture()
-  const app = auditApp(sink, async () => ({ slug: "deploy-it", sessionId: "sess-1" }))
+  let dispatched = 0
+  const app = auditApp(sink, async () => { dispatched++; return { slug: "deploy-it", sessionId: "sess-1" } })
   const stamp = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: "Ab3dE9xY" })
   const response = await rpc(app, "dispatch", { prompt: PROMPT }, { [CALLER_HEADER]: stamp, "user-agent": IPHONE })
-  assert.equal(response.status, 200)
+  assert.equal(response.status, 403)
+  assert.equal(dispatched, 0)
 
   assert.equal(sink.records.length, 1)
   const [record] = sink.records
-  assert.equal(record!.action, "dispatch")
-  assert.equal(record!.outcome, "ok")
-  assert.equal(record!.thread, "deploy-it")
+  assert.equal(record!.action, "remoteRefused")
+  assert.equal(record!.outcome, "refused")
+  assert.deepEqual(record!.detail, { procedure: "dispatch" })
   assert.deepEqual(record!.project, { id: "served-project", dir: "/repos/served" })
   assert.equal(record!.servedBy, "served-project")
   assert.deepEqual(record!.origin, {
@@ -92,6 +94,24 @@ test("a relayed dispatch records the public origin, the session id and device, a
     session: "Ab3dE9xY",
     device: "Safari on iPhone",
   })
+  assert.ok(!JSON.stringify(record).includes("sk-live"), JSON.stringify(record))
+})
+
+test("a dispatch from this machine records its origin, its permission mode, and the prompt only as a digest", async () => {
+  const sink = capture()
+  const app = auditApp(sink, async () => ({ slug: "deploy-it", sessionId: "sess-1" }), { getSession: () => ({ permission_mode: "bypassPermissions" }) })
+  const stamp = encodeCallerStamp({ via: "loopback", remote: "127.0.0.1", session: null })
+  const response = await rpc(app, "dispatch", { prompt: PROMPT }, { [CALLER_HEADER]: stamp, "user-agent": IPHONE })
+  assert.equal(response.status, 200)
+
+  assert.equal(sink.records.length, 1)
+  const [record] = sink.records
+  assert.equal(record!.action, "dispatch")
+  assert.equal(record!.outcome, "ok")
+  assert.equal(record!.thread, "deploy-it")
+  assert.equal(record!.detail?.permissionMode, "bypassPermissions")
+  assert.deepEqual(record!.project, { id: "served-project", dir: "/repos/served" })
+  assert.equal(record!.origin.via, "loopback")
   assert.match(record!.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
   assert.deepEqual(record!.detail?.prompt, {
     chars: PROMPT.length,
@@ -168,7 +188,7 @@ test("projectAdd through the app: a refused folder is recorded as refused, an ac
   mkdirSync(folder)
   const sink = capture()
   const app = auditApp(sink, async () => ({ slug: "unused", sessionId: "unused" }))
-  const stamp = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", session: "Ab3dE9xY" })
+  const stamp = encodeCallerStamp({ via: "loopback", remote: "127.0.0.1", session: null })
 
   // The home folder is the one folder the add refuses.
   const refused = await rpc(app, "projectAdd", { path: home }, { [CALLER_HEADER]: stamp })
@@ -179,7 +199,7 @@ test("projectAdd through the app: a refused folder is recorded as refused, an ac
   assert.equal(sink.records[0]!.outcome, "refused")
   assert.equal(sink.records[0]!.error, message)
   assert.deepEqual(sink.records[0]!.project, { id: null, dir: home })
-  assert.equal(sink.records[0]!.origin.via, "public")
+  assert.equal(sink.records[0]!.origin.via, "loopback")
 
   const added = await rpc(app, "projectAdd", { path: folder })
   assert.equal(added.status, 200)

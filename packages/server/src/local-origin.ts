@@ -68,6 +68,19 @@ export interface LocalAuthorityPolicy {
   publicOrigin?: string
 }
 
+/**
+ * What every document Frizz serves says about being put inside someone else's page: no.
+ *
+ * The board is one click from starting work, and it answers on a name a visitor is signed in to. Framed
+ * under an invisible page, a tap on what looks like something else lands on the board's own controls,
+ * with the visitor's own session (`/?add=` is a prefilled form away from a new project). Both headers,
+ * because they cover different browsers and neither costs anything.
+ */
+export const FRAME_REFUSED_HEADERS = {
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+} as const
+
 /** The authority `policy.publicOrigin` describes, or null when the operator declared none. */
 function publicAuthority(policy: LocalAuthorityPolicy | undefined): ParsedLocalAuthority | null {
   const raw = policy?.publicOrigin

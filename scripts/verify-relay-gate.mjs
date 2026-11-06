@@ -16,7 +16,8 @@ import { createServer, request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { WebSocketServer } from "ws";
 import { RestartSupervisorProxy } from "@frizz/server/restart-supervisor";
-import { serveRelayWebSocket } from "../src/relay-agent.ts";
+import { CALLER_HEADER, decodeCallerStamp } from "../packages/server/src/audit.ts";
+import { serveRelayRequest, serveRelayWebSocket } from "../src/relay-agent.ts";
 
 const PUBLIC_ORIGIN = "https://ada.frizz.sh";
 const checks = [];
@@ -24,6 +25,16 @@ const check = (name, ok, detail = "") => {
   checks.push(ok);
   console.log(`${ok ? "  ok  " : " FAIL "} ${name}${detail ? ` — ${detail}` : ""}`);
 };
+
+/** Drive one relayed request and report the status it came back with. */
+function relayed(path, headers, options, method = "GET") {
+  return new Promise((resolve) => {
+    serveRelayRequest(
+      { t: "req", id: "r1", method, url: `${PUBLIC_ORIGIN}${path}`, headers },
+      { ...options, send: (frame) => { if (frame.t === "res") resolve(frame.status); } },
+    );
+  });
+}
 
 /** Drive one relayed upgrade and report what the board did with it. */
 function attempt(headers, options) {
@@ -43,10 +54,13 @@ try {
   // A stand-in board: the real proxy's child, serving one terminal. What it does with the socket is
   // beside the point — whether the upgrade reaches it at all is the whole test.
   const wss = new WebSocketServer({ noServer: true });
-  child = createServer((_, res) => { res.writeHead(200); res.end("board"); });
   let reached = 0;
+  let lastStamp;
+  const stampOf = (req) => { lastStamp = decodeCallerStamp(req.headers[CALLER_HEADER]); };
+  child = createServer((req, res) => { reached++; stampOf(req); res.writeHead(200); res.end("board"); });
   child.on("upgrade", (req, socket, head) => {
     reached++;
+    stampOf(req);
     wss.handleUpgrade(req, socket, head, (ws) => ws.on("message", (raw) => ws.send(`pty:${String(raw)}`)));
   });
   child.listen(0, "127.0.0.1");
@@ -62,7 +76,8 @@ try {
     restart: async () => ({ state: "ready" }),
   });
   await proxy.listen();
-  const boardOrigin = `http://127.0.0.1:${port}`;
+  // The relay agent's own door, as the launcher wires it: everything arriving on it is public.
+  const boardOrigin = `http://127.0.0.1:${await proxy.relayListener()}`;
   check("the real supervisor proxy is serving with a public origin", true, PUBLIC_ORIGIN);
 
   // 1. NO IDENTITY AT ALL — what the relay agent used to send.
@@ -102,7 +117,7 @@ try {
     req.end();
   });
   const cookie = redeem.setCookie.map((c) => c.split(";")[0]).join("; ");
-  check("an access code is traded for a session cookie", cookie.includes("frizz_session="), `HTTP ${redeem.status}`);
+  check("an access code is traded for a session cookie", cookie.includes("__Host-frizz_session="), `HTTP ${redeem.status}`);
 
   const invited = await attempt(
     [["host", "ada.frizz.sh"], ["origin", PUBLIC_ORIGIN], ["cookie", cookie]],
@@ -110,6 +125,37 @@ try {
   );
   check("a visitor holding a redeemed session opens a terminal", invited.ok === true, `ack ok=${invited.ok}`);
   invited.session.close();
+
+  // 4. A RELAY THAT LIES. `host` and `Host` together, then spellings Node would merge, with a forged Origin
+  //    as well: each one used to read as the operator's own tab, with no session asked for.
+  const loopbackOrigin = `http://127.0.0.1:${port}`;
+  const forgeries = {
+    "host + Host": [["host", "ada.frizz.sh"], ["Host", `127.0.0.1:${port}`]],
+    "HOST": [["HOST", `127.0.0.1:${port}`]],
+    "hOsT": [["hOsT", `localhost:${port}`]],
+    "X-Forwarded-Host": [["host", "ada.frizz.sh"], ["X-Forwarded-Host", "127.0.0.1"]],
+    "x-frizz-caller": [["host", "ada.frizz.sh"], ["X-Frizz-Caller", Buffer.from(JSON.stringify({ via: "loopback", remote: "127.0.0.1", session: null })).toString("base64url")]],
+  };
+  const agent = { origin: boardOrigin, publicOrigin: PUBLIC_ORIGIN };
+  for (const [name, forged] of Object.entries(forgeries)) {
+    const headers = [...forged, ["origin", loopbackOrigin], ["sec-fetch-site", "same-origin"]];
+    const before = reached;
+    check(`${name}, no cookie: GET / refused`, (await relayed("/", headers, agent)) === 401);
+    check(`${name}, no cookie: minting a link refused`, (await relayed("/_frizz/control/access-code", headers, agent, "POST")) === 401);
+    const socket = await attempt(headers, agent);
+    check(`${name}, no cookie: a terminal refused`, socket.ok === false, `ack ok=${socket.ok}`);
+    socket.session.close();
+    check(`${name}, no cookie: the board behind the gate was reached 0 times`, reached === before, `${reached - before} got through`);
+
+    // With a real session and an Origin that agrees, the same frame reaches the board as what it is.
+    const withSession = [...forged, ["origin", PUBLIC_ORIGIN], ["cookie", cookie]];
+    check(`${name}, with a session: reaches the board`, (await relayed("/", withSession, agent)) === 200);
+    check(`${name}, with a session: stamped public`, lastStamp?.via === "public", JSON.stringify(lastStamp?.via));
+    const live = await attempt(withSession, agent);
+    check(`${name}, with a session: a terminal opens, stamped public`, live.ok === true && lastStamp?.via === "public", JSON.stringify(lastStamp?.via));
+    live.session.close();
+    check(`${name}, with a session: minting a link still refused`, (await relayed("/_frizz/control/access-code", withSession, agent, "POST")) === 403);
+  }
 } catch (error) {
   check("harness completed", false, error instanceof Error ? error.stack ?? error.message : String(error));
 } finally {

@@ -94,7 +94,7 @@ try {
   // 4. Redeeming the code is what a phone does when it scans the QR.
   const redeem = await fetch(`${origin}/?frizz_code=${encodeURIComponent(code)}`, { redirect: "manual" });
   const cookie = (redeem.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
-  check("scanning the link trades the code for a session", redeem.status === 302 && cookie.includes("frizz_session="), `HTTP ${redeem.status}`);
+  check("scanning the link trades the code for a session", redeem.status === 302 && cookie.includes("__Host-frizz_session="), `HTTP ${redeem.status}`);
 
   const board200 = await fetch(origin, { headers: { cookie } });
   const html = await board200.text();

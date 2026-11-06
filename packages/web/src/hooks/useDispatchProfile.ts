@@ -2,6 +2,7 @@ import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { AcpAgent, ClaudeModel, CodexModel, SetDispatchPreferenceInput } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { showToast } from "../store.ts"
 import { scopedKey, useProjectScope } from "../lib/projectScope.tsx"
 import {
@@ -39,7 +40,8 @@ export function useDispatchProfile(): {
   // project the prompt box is pointed at (lib/projectScope.tsx).
   const project = useProjectScope()
   const api = rpcFor(project)
-  const claudeModels = useQuery({ queryKey: scopedKey(["claudeModels"], project), queryFn: () => api.claudeModels(), retry: false })
+  const remoteHost = useRemoteHost()
+  const claudeModels = useQuery({ queryKey: scopedKey(["claudeModels"], project), queryFn: () => api.claudeModels(), retry: false, enabled: !remoteHost })
   const claudeList = claudeModels.data ?? []
   const acpAgents = useQuery({ queryKey: scopedKey(["acpAgents"], project), queryFn: () => api.acpAgents() })
   const acpList = acpAgents.data ?? []

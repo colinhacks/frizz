@@ -8,7 +8,20 @@ Durable Object holding that socket and framed down it.
 per name, so the 200-record ceiling that bounded the original design is gone. The [registrar](../registrar)
 records who owns a name; this serves it.
 
-**This IS on the data path**, unlike the registrar, and that is the trade the design makes deliberately: unlimited names cost us the traffic. A visitor still meets Frizz's own single-use access gate on the far side, but every byte passes through the relay in plaintext — the access code as it is redeemed, the session cookie on every later request, prompts, transcripts and terminal keystrokes. **Whoever can deploy this Worker controls every board behind it.** That happened between 2026-09-21 and 2026-10-08: a stolen Cloudflare token was used to deploy a build that copied all of it out and drove a board with a copied cookie. That is why deploys go through CI only (below), and [`plans/blind-relay.md`](../../plans/blind-relay.md) is the design that takes the plaintext away from this hop.
+**This IS on the data path**, unlike the registrar, and that is the trade the design makes deliberately: unlimited names cost us the traffic. A visitor still meets Frizz's own single-use access gate on the far side, but the credential that gate checks crosses this hop, so the relay is trusted with it. Every byte passes through in plaintext: the access code as it is redeemed, the session cookie on every later request, and everything the board shows that session. **Whoever can deploy this Worker can act as any device signed in behind it.** That happened between 2026-09-21 and 2026-10-08: a stolen Cloudflare token was used to deploy a build that copied all of it out and drove a board with a copied cookie. That is why deploys go through CI only (below), and [`plans/blind-relay.md`](../../plans/blind-relay.md) is the design that takes the plaintext away from this hop.
+
+## What a remote session may do
+
+A session that arrives through the relay may read the board and pick listed options on question cards. Everything else is the machine's, and the board refuses it:
+
+- starting or steering a thread, and any change to its settings or permissions;
+- typing an answer, and answering a secret or danger card;
+- terminals, restarts and minting sign-in links;
+- reading a file outside a registered project and a thread's scratch and attachment directories, or a secret-looking file inside one.
+
+The rule lives on the board, in one table (`REMOTE_ACCESS` in [`remote-gate.ts`](../server/src/remote-gate.ts)), so a hostile build of this Worker holding a real cookie gets no more than that. It still reads what the session reads and can rewrite what the visitor sees, which only the blind relay removes.
+
+A frame can't claim to be local. The board's relay agent dials a loopback listener of its own on which every request counts as public, whatever the frame's headers say.
 
 ## What it carries
 
@@ -18,9 +31,9 @@ protocol in [`@frizz/shared/relay-protocol.ts`](../shared/src/relay-protocol.ts)
 - **a unary request**, answered in one frame;
 - **a streamed response**, because the board's event feed is SSE and never ends — the head and the body
   are separate frames for exactly that reason;
-- **a nested WebSocket**, because the board's terminals are WebSockets. The Durable Object asks the
+- **a nested WebSocket**, because the board's live feed is a WebSocket. The Durable Object asks the
   board to open its local end and links the two, and refuses the visitor's upgrade outright when it
-  cannot: a pane that opens and stays silent is far harder to diagnose than one that fails.
+  cannot: a feed that opens and stays silent is far harder to diagnose than one that fails.
 
 A frame body caps at 512 KiB. A Cloudflare WebSocket message caps at 1 MiB and base64 costs a third on
 top, so anything larger takes the streaming path rather than being dropped.

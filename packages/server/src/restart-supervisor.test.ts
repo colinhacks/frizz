@@ -16,7 +16,6 @@ import {
   SUPERVISOR_SIGN_OUT_PATH,
   type RestartResult,
 } from "./restart-supervisor.ts"
-import { createHmac } from "node:crypto"
 import { fileSessionDirectory, loadOrCreateSessionKey, readSessionEpoch, rotateSessionKey, SESSION_EPOCH } from "./access-codes.ts"
 import { signOutOlderSessionEpoch } from "./session-epoch-child.ts"
 import { CALLER_HEADER, decodeCallerStamp, encodeCallerStamp } from "./audit.ts"
@@ -780,7 +779,7 @@ test("--public-origin without a session is not a reachable state: the gate cover
     const exchange = await proxied(port, `/thread/abc?frizz_code=${minted.code}`, publicHeaders)
     assert.equal(exchange.status, 302)
     assert.equal(exchange.headers?.location, "/thread/abc")
-    assert.match(String(exchange.headers?.["set-cookie"]), /frizz_session=/)
+    assert.match(String(exchange.headers?.["set-cookie"]), /__Host-frizz_session=/)
     assert.match(String(exchange.headers?.["set-cookie"]), /HttpOnly/)
     const session = String(exchange.headers?.["set-cookie"]).split(";")[0]!
 
@@ -790,7 +789,7 @@ test("--public-origin without a session is not a reachable state: the gate cover
     // A tampered session of the SAME LENGTH is refused — the signature, not the shape, is the proof.
     const flipped = session.slice(0, -1) + (session.endsWith("a") ? "b" : "a")
     assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: flipped })).status, 401)
-    assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: "frizz_session=short" })).status, 401)
+    assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: "__Host-frizz_session=short" })).status, 401)
 
     // The board socket and every terminal ride this gate too.
     assert.equal(await upgradeStatus(port, publicHeaders), "401")
@@ -844,7 +843,7 @@ test("the proxy tells the child who called: loopback or public, and which sessio
     const stamp = decodeCallerStamp(seen.at(-1))
     assert.deepEqual(stamp, { via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", clientIp: "203.0.113.9", session: id })
     const raw = Buffer.from(seen.at(-1)!, "base64url").toString("utf8")
-    assert.ok(!raw.includes(cookie.slice("frizz_session=".length)), "the session value never leaves the proxy")
+    assert.ok(!raw.includes(cookie.slice("__Host-frizz_session=".length)), "the session value never leaves the proxy")
   } finally {
     await proxy.close().catch(() => undefined)
     await current.close().catch(() => undefined)
@@ -880,15 +879,15 @@ test("an access code is spent once over HTTP: it mints a session, then stops wor
     assert.equal(spent.status, 302)
     assert.equal(spent.headers?.location, "/thread/x", "the code is stripped from the redirect target")
     const setCookie = String(spent.headers?.["set-cookie"])
-    assert.match(setCookie, /frizz_session=/)
+    assert.match(setCookie, /__Host-frizz_session=/)
     assert.match(setCookie, /HttpOnly/)
     assert.match(setCookie, /SameSite=Lax/)
     assert.equal(consumed, 1, "consumption fires once, so a launcher can repaint the QR")
 
     // That session works.
-    const session = /frizz_session=([^;]+)/.exec(setCookie)![1]!
-    assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: `frizz_session=${session}` })).status, 200)
-    assert.equal(await upgrade(port, { ...publicHeaders, cookie: `frizz_session=${session}` }), "forwarded")
+    const session = /__Host-frizz_session=([^;]+)/.exec(setCookie)![1]!
+    assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: `__Host-frizz_session=${session}` })).status, 200)
+    assert.equal(await upgrade(port, { ...publicHeaders, cookie: `__Host-frizz_session=${session}` }), "forwarded")
 
     // The code does NOT. This is the property the standing secret never had.
     const replay = await proxied(port, `/?frizz_code=${code.code}`, publicHeaders)
@@ -937,11 +936,11 @@ test("--link mints from loopback only: a tunnelled session cannot hand out furth
 
     // From the tunnel: refused outright, session or no session.
     const publicHeaders = { host: "colin.frizz.sh", origin: "https://colin.frizz.sh" }
-    const session = /frizz_session=([^;]+)/.exec(String(redeemed.headers?.["set-cookie"]))![1]!
+    const session = /__Host-frizz_session=([^;]+)/.exec(String(redeemed.headers?.["set-cookie"]))![1]!
     // With no session the control plane's session gate answers first (see the control-plane gate test).
     assert.equal((await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, publicHeaders, "POST")).status, 401)
     assert.equal(
-      (await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, { ...publicHeaders, cookie: `frizz_session=${session}` }, "POST")).status,
+      (await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, { ...publicHeaders, cookie: `__Host-frizz_session=${session}` }, "POST")).status,
       403,
       "even a VALID session may not mint",
     )
@@ -1062,7 +1061,7 @@ test("sign out this device: a tunnelled session ends ITSELF, persisted, and can 
     })
     assert.equal(signOut.status, 200)
     assert.deepEqual(JSON.parse(signOut.body), { protocol: 1, result: "signed-out", id: idOf(phone) })
-    assert.match(String(signOut.headers["set-cookie"]), /^frizz_session=;.*Max-Age=0/, "the browser is told to drop the cookie")
+    assert.match(String(signOut.headers["set-cookie"]), /^__Host-frizz_session=;.*Max-Age=0/, "the browser is told to drop the cookie")
 
     // The phone is refused on its very next request — page and socket — even holding the old cookie.
     assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: phone })).status, 401)
@@ -1072,8 +1071,8 @@ test("sign out this device: a tunnelled session ends ITSELF, persisted, and can 
 
     // Persisted to the directory `--sign-out` uses, so a restart remembers it.
     const reloaded = fileSessionDirectory(dir)
-    assert.equal(reloaded.isRevoked(idOf(phone)), true)
-    assert.equal(reloaded.isRevoked(idOf(laptop)), false)
+    assert.notEqual(reloaded.get(idOf(phone))?.revokedAt, undefined)
+    assert.equal(reloaded.get(idOf(laptop))?.revokedAt, undefined)
 
     // Replaying the dead cookie changes nothing and says so.
     const replay = await proxied(port, SUPERVISOR_SIGN_OUT_PATH, { ...publicHeaders, cookie: phone }, "POST")
@@ -1152,16 +1151,19 @@ test("the control plane is behind the session gate: no session through the tunne
     assert.equal(restarts, 0, "an unauthenticated restart ran")
     assert.equal(updates, 0, "an unauthenticated update ran")
 
-    // A live session gets today's behaviour, path by path.
+    // A live session reads the status, and nothing else here is its to do.
     const authed = { ...publicHeaders, cookie: session }
     const status = await proxied(port, SUPERVISOR_STATUS_PATH, authed)
     assert.equal(status.status, 200)
     assert.equal(JSON.parse(status.body).protocol, 1)
-    assert.equal((await proxied(port, SUPERVISOR_RESTART_PATH, authed, "POST")).status, 202)
-    assert.equal((await proxied(port, SUPERVISOR_UPDATE_RESTART_PATH, authed, "POST")).status, 202)
+    for (const path of [SUPERVISOR_RESTART_PATH, SUPERVISOR_UPDATE_RESTART_PATH]) {
+      const refused = await proxied(port, path, authed, "POST")
+      assert.equal(refused.status, 403, path)
+      assert.equal(JSON.parse(refused.body).code, "remote_refused", path)
+    }
     await settle()
-    assert.equal(restarts, 1)
-    assert.equal(updates, 1)
+    assert.equal(restarts, 0, "a remote session restarted the board")
+    assert.equal(updates, 0, "a remote session started an update")
     // Minting and the device list stay loopback-only even WITH a session.
     assert.equal((await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, authed, "POST")).status, 403)
     assert.equal((await proxied(port, SUPERVISOR_SESSIONS_PATH, authed)).status, 403)
@@ -1170,12 +1172,12 @@ test("the control plane is behind the session gate: no session through the tunne
     // Loopback is never asked for a session.
     const localStatus = await proxied(port, SUPERVISOR_STATUS_PATH, loopback)
     assert.equal(localStatus.status, 200)
-    assert.equal(localStatus.body, status.body.replace(/,"remoteSession":true/, ""), "loopback status changed shape")
+    assert.equal(localStatus.body, status.body.replace(/,"remoteSession":true,"remoteHost":"[^"]*"/, ""), "loopback status changed shape")
     assert.equal((await proxied(port, SUPERVISOR_RESTART_PATH, loopback, "POST")).status, 202)
     assert.equal((await proxied(port, SUPERVISOR_ACCESS_CODE_PATH, loopback, "POST")).status, 200)
     assert.equal((await proxied(port, SUPERVISOR_SESSIONS_PATH, loopback)).status, 200)
     await settle()
-    assert.equal(restarts, 2)
+    assert.equal(restarts, 1)
 
     // A foreign authority is still the authority check's 403, exactly as before.
     assert.equal((await proxied(port, SUPERVISOR_RESTART_PATH, { host: "evil.example", origin: "https://evil.example" }, "POST")).status, 403)
@@ -1184,7 +1186,7 @@ test("the control plane is behind the session gate: no session through the tunne
     const dead = await proxied(port, SUPERVISOR_SIGN_OUT_PATH, { ...publicHeaders, cookie: forged }, "POST")
     assert.equal(dead.status, 401)
     assert.deepEqual(JSON.parse(dead.body), { protocol: 1, result: "no-remote-session" })
-    assert.match(String(dead.headers?.["set-cookie"]), /^frizz_session=;.*Max-Age=0/)
+    assert.match(String(dead.headers?.["set-cookie"]), /^__Host-frizz_session=;.*Max-Age=0/)
   } finally {
     await proxy.close().catch(() => undefined)
     await current.close().catch(() => undefined)
@@ -1193,8 +1195,8 @@ test("the control plane is behind the session gate: no session through the tunne
 
 test("an epoch bump reaches a RUNNING launcher: the server child signs every older session out, once", async () => {
   // An in-app update replaces only the child, so the launcher holding the key keeps running. The child's
-  // half (signOutOlderSessionEpoch) must end every pre-bump session on that live board — including a
-  // pre-id one no denylist can name — leave new ones alone, and do nothing on the next start.
+  // half (signOutOlderSessionEpoch) must end every pre-bump session on that live board, leave new ones
+  // alone, and do nothing on the next start.
   const current = await child("only")
   const port = await freePort()
   const dir = mkdtempSync(join(tmpdir(), "frizz-epoch-live-"))
@@ -1219,10 +1221,7 @@ test("an epoch bump reaches a RUNNING launcher: the server child signs every old
     // The cookie lives exactly as long as the session it carries: 30 days, not the old year.
     assert.match(phoneHeader, /; Max-Age=(2591999|2592000)(;|$)/)
     const phone = phoneHeader.split(";")[0]!
-    const payload = `${Date.now() + 60 * 24 * 60 * 60_000}.legacy-nonce`
-    const legacy = `frizz_session=${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`
     assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: phone })).status, 200)
-    assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: legacy })).status, 200)
 
     // The launcher's own status file is how the child finds it; a different pid is not trusted.
     writeFileSync(join(dir, "dev-supervisor.lock"), JSON.stringify({ pid: process.pid, port }))
@@ -1230,7 +1229,6 @@ test("an epoch bump reaches a RUNNING launcher: the server child signs every old
     assert.deepEqual(first, { advance: { advanced: true, from: 0, to: SESSION_EPOCH, rotatedKey: true }, signedOut: 1 })
     assert.equal(readSessionEpoch(dir), SESSION_EPOCH)
     assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: phone })).status, 401, "a pre-epoch session still works")
-    assert.equal((await proxied(port, "/", { ...publicHeaders, cookie: legacy })).status, 401, "a pre-id session survived")
     assert.equal(await upgradeStatus(port, { ...publicHeaders, cookie: phone }), "401")
     assert.equal((await proxied(port, "/", { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })).status, 200, "loopback was signed out")
 
@@ -1253,7 +1251,6 @@ test("an epoch bump reaches a RUNNING launcher: the server child signs every old
     await restarted.listen()
     try {
       assert.equal((await proxied(restartedPort, "/", { ...publicHeaders, cookie: tablet })).status, 200)
-      assert.equal((await proxied(restartedPort, "/", { ...publicHeaders, cookie: legacy })).status, 401)
     } finally {
       await restarted.close().catch(() => undefined)
     }
@@ -1280,5 +1277,290 @@ test("the server child trusts only its own launcher's status file to name the po
     assert.deepEqual(result, { advance: { advanced: true, from: 0, to: SESSION_EPOCH, rotatedKey: true }, signedOut: null })
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/** A toy child that counts what reached it, keeps the stamp each request carried, and holds what it is asked to. */
+async function countingChild() {
+  const stamps: Array<ReturnType<typeof decodeCallerStamp>> = []
+  let reached = 0
+  const server = await listen((req, res) => {
+    reached++
+    stamps.push(decodeCallerStamp(req.headers[CALLER_HEADER] as string | undefined))
+    res.writeHead(200, { "content-type": "text/plain" })
+    // A stream that never ends, the way the board's event feed does not.
+    if (req.url === "/stream") res.write("open\n")
+    else res.end("child")
+  })
+  const upgraded = new Set<import("node:stream").Duplex>()
+  server.server.on("upgrade", (req, socket) => {
+    reached++
+    stamps.push(decodeCallerStamp(req.headers[CALLER_HEADER] as string | undefined))
+    upgraded.add(socket)
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n")
+    socket.on("error", () => undefined)
+  })
+  return {
+    ...server,
+    stamps,
+    get reached() { return reached },
+    // An upgraded socket is detached from the server, and close() would wait for it forever.
+    close: async () => {
+      for (const socket of upgraded) socket.destroy()
+      await server.close()
+    },
+  }
+}
+
+/** An upgrade held open. `closed` settles when either side hangs up. */
+async function openUpgrade(port: number, headers: Record<string, string>) {
+  const socket = netConnect(port, "127.0.0.1")
+  await once(socket, "connect")
+  const lines = ["GET /ws HTTP/1.1", ...Object.entries(headers).map(([n, v]) => `${n}: ${v}`), "upgrade: websocket", "connection: Upgrade", "sec-websocket-version: 13", "sec-websocket-key: AQIDBAUGBwgJCgsMDQ4PEC=="]
+  const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()))
+  socket.on("error", () => undefined)
+  socket.write(`${lines.join("\r\n")}\r\n\r\n`)
+  const first = await new Promise<string>((resolve) => {
+    socket.once("data", (chunk) => resolve(String(chunk)))
+    void closed.then(() => resolve(""))
+  })
+  return { socket, closed, status: /^HTTP\/1\.1 (\d{3})/.exec(first)?.[1] ?? "refused" }
+}
+
+/** A forwarded stream held open, its first bytes read. `closed` settles when the proxy ends it. */
+async function openStream(port: number, headers: Record<string, string>) {
+  return new Promise<{ closed: Promise<void>; destroy: () => void }>((resolve, reject) => {
+    const req = request({ host: "127.0.0.1", port, path: "/stream", headers }, (res) => {
+      const closed = new Promise<void>((done) => res.once("close", () => done()))
+      res.on("error", () => undefined)
+      res.once("data", () => resolve({ closed, destroy: () => req.destroy() }))
+    })
+    req.once("error", reject)
+    req.end()
+  })
+}
+
+const within = (ms: number, what: Promise<unknown>, label: string) =>
+  Promise.race([what, new Promise((_, reject) => setTimeout(() => reject(new Error(`${label}: still open after ${ms}ms`)), ms).unref())])
+
+const stillOpen = async (what: Promise<unknown>) =>
+  Promise.race([what.then(() => false), new Promise((resolve) => setTimeout(() => resolve(true), 100))])
+
+const PUBLIC = "https://colin.frizz.sh"
+const publicVisitor = { host: "colin.frizz.sh", origin: PUBLIC }
+
+async function redeemed(port: number, proxy: RestartSupervisorProxy) {
+  const exchange = await proxied(port, `/?frizz_code=${proxy.issueAccessCode()!.code}`, publicVisitor)
+  return String(exchange.headers?.["set-cookie"]).split(";")[0]!
+}
+
+test("the relay listener is public by construction: no header can read as loopback", async () => {
+  const current = await countingChild()
+  const port = await freePort()
+  let restarts = 0
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, childPort: () => current.port, restart: async () => { restarts++; return { state: "ready" } } })
+  try {
+    await proxy.listen()
+    const relay = await proxy.relayListener()
+    assert.equal(await proxy.relayListener(), relay, "one listener, however often it is asked for")
+    const claims: Array<Record<string, string> & { host: string }> = [
+      { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, "sec-fetch-site": "same-origin" },
+      { host: "localhost", origin: `http://localhost:${port}` },
+      { host: "colin.frizz.sh", origin: PUBLIC },
+    ]
+    for (const headers of claims) {
+      assert.equal((await proxied(relay, "/", headers)).status, 401, headers.host)
+      assert.equal((await proxied(relay, SUPERVISOR_ACCESS_CODE_PATH, headers, "POST")).status, 401, headers.host)
+      assert.equal((await proxied(relay, SUPERVISOR_RESTART_PATH, headers, "POST")).status, 401, headers.host)
+      assert.equal((await proxied(relay, SUPERVISOR_SESSIONS_PATH, headers)).status, 401, headers.host)
+      assert.equal(await upgradeStatus(relay, headers), "401", headers.host)
+    }
+    assert.equal(current.reached, 0, "a claim got through to the child")
+    assert.equal(restarts, 0)
+
+    // A real session, claiming to be the operator's own tab: it arrives as what it is, and a forged Origin
+    // no longer agrees with the Host the listener forced.
+    const cookie = await redeemed(port, proxy)
+    const forged = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, cookie }
+    assert.equal((await proxied(relay, "/", forged)).status, 403)
+    assert.equal(await upgradeStatus(relay, forged), "refused")
+    assert.equal(current.reached, 0)
+    const lying = { host: `127.0.0.1:${port}`, origin: PUBLIC, cookie }
+    assert.equal((await proxied(relay, "/", lying)).status, 200)
+    assert.equal(current.stamps.at(-1)?.via, "public")
+    assert.equal(current.stamps.at(-1)?.host, "colin.frizz.sh")
+    assert.equal(await upgradeStatus(relay, lying), "101")
+    assert.equal(current.stamps.at(-1)?.via, "public")
+    assert.equal((await proxied(relay, SUPERVISOR_ACCESS_CODE_PATH, lying, "POST")).status, 403)
+    assert.equal((await proxied(relay, SUPERVISOR_RESTART_PATH, lying, "POST")).status, 403)
+    assert.equal(restarts, 0)
+
+    // A code redeems here as well, since this is where a phone's link arrives.
+    const phone = await proxied(relay, `/?frizz_code=${proxy.issueAccessCode()!.code}`, publicVisitor)
+    assert.equal(phone.status, 302)
+
+    // No origin declared, which is every relayed request's position before the launcher declares one.
+    proxy.setPublicOrigin(undefined)
+    const before = current.reached
+    assert.equal((await proxied(relay, "/", lying)).status, 403)
+    assert.equal((await proxied(relay, "/", { host: `127.0.0.1:${port}` })).status, 403)
+    assert.equal(await upgradeStatus(relay, lying), "403")
+    assert.equal(current.reached, before, "with no origin, the relay's door still looked like loopback")
+
+    // The operator's own port is unmoved by any of this.
+    assert.equal((await proxied(port, "/", { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })).status, 200)
+    assert.equal(current.stamps.at(-1)?.via, "loopback")
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+test("a sign-out ends what is already open: that device's sockets and streams at once, every device's with all", async () => {
+  const current = await countingChild()
+  const port = await freePort()
+  const signedIn: Array<{ label: string; devices: number }> = []
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, onDeviceSignedIn: (device) => signedIn.push(device), childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  const loopback = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }
+  try {
+    await proxy.listen()
+    const phone = await redeemed(port, proxy)
+    const laptop = await redeemed(port, proxy)
+    assert.deepEqual(signedIn.at(-1), { label: "unknown device", devices: 2 }, "the launcher hears about each device")
+    const sessionId = (cookie: string) => cookie.split("=")[1]!.split(".")[1]!
+
+    const phoneSocket = await openUpgrade(port, { ...publicVisitor, cookie: phone })
+    const phoneStream = await openStream(port, { ...publicVisitor, cookie: phone, "sec-fetch-site": "same-origin" })
+    const laptopSocket = await openUpgrade(port, { ...publicVisitor, cookie: laptop })
+    const laptopStream = await openStream(port, { ...publicVisitor, cookie: laptop, "sec-fetch-site": "same-origin" })
+    const localSocket = await openUpgrade(port, loopback)
+    assert.equal(phoneSocket.status, "101")
+    assert.equal(laptopSocket.status, "101")
+    assert.equal(localSocket.status, "101")
+
+    // One device, by the name `frizz --sign-out` takes.
+    const one = await new Promise<number>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path: SUPERVISOR_SESSIONS_PATH, method: "POST", headers: { ...loopback, "content-type": "application/json" } }, (res) => { res.resume(); resolve(res.statusCode ?? 0) })
+      req.once("error", reject)
+      req.end(JSON.stringify({ id: sessionId(phone) }))
+    })
+    assert.equal(one, 200)
+    await within(2_000, phoneSocket.closed, "the signed-out device's socket")
+    await within(2_000, phoneStream.closed, "the signed-out device's stream")
+    assert.equal(await stillOpen(laptopSocket.closed), true, "signing the phone out closed the laptop's socket")
+    assert.equal(await stillOpen(laptopStream.closed), true, "signing the phone out closed the laptop's stream")
+
+    // A device signing itself out closes its own, the same way.
+    const tablet = await redeemed(port, proxy)
+    const tabletSocket = await openUpgrade(port, { ...publicVisitor, cookie: tablet })
+    assert.equal((await proxied(port, SUPERVISOR_SIGN_OUT_PATH, { ...publicVisitor, cookie: tablet }, "POST")).status, 200)
+    await within(2_000, tabletSocket.closed, "the device that signed itself out")
+    assert.equal(await stillOpen(laptopSocket.closed), true)
+
+    // Everyone.
+    const all = await new Promise<number>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path: SUPERVISOR_SESSIONS_PATH, method: "POST", headers: { ...loopback, "content-type": "application/json" } }, (res) => { res.resume(); resolve(res.statusCode ?? 0) })
+      req.once("error", reject)
+      req.end(JSON.stringify({ all: true }))
+    })
+    assert.equal(all, 200)
+    await within(2_000, laptopSocket.closed, "sign out all, a socket")
+    await within(2_000, laptopStream.closed, "sign out all, a stream")
+    assert.equal(await stillOpen(localSocket.closed), true, "the operator's own tab is no session and was not touched")
+    localSocket.socket.destroy()
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+test("loopback can always list and end sessions, even with no public origin declared", async () => {
+  const current = await countingChild()
+  const port = await freePort()
+  let rotated = 0
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, rotateSessionKey: () => { rotated++; return Buffer.alloc(32, rotated) }, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  const loopback = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }
+  try {
+    await proxy.listen()
+    const phone = await redeemed(port, proxy)
+    // The relay turned off in a hurry. Those cookies are good again the moment it comes back on.
+    proxy.setPublicOrigin(undefined)
+    assert.equal(JSON.parse((await proxied(port, SUPERVISOR_SESSIONS_PATH, loopback)).body).sessions.length, 1)
+    const all = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path: SUPERVISOR_SESSIONS_PATH, method: "POST", headers: { ...loopback, "content-type": "application/json" } }, (res) => {
+        let body = ""
+        res.on("data", (chunk) => { body += chunk })
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }))
+      })
+      req.once("error", reject)
+      req.end(JSON.stringify({ all: true }))
+    })
+    assert.deepEqual([all.status, JSON.parse(all.body)], [200, { signedOut: 1 }])
+    assert.equal(rotated, 1, "the key rotated")
+    proxy.setPublicOrigin(PUBLIC)
+    assert.equal((await proxied(port, "/", { ...publicVisitor, cookie: phone })).status, 401)
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+test("the supervisor's own pages refuse to be framed", async () => {
+  const port = await freePort()
+  let childPort: number | undefined
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, childPort: () => childPort, restart: async () => ({ state: "ready" }) })
+  try {
+    await proxy.listen()
+    const framing = (answer: { headers?: IncomingHttpHeaders }) => [answer.headers?.["x-frame-options"], answer.headers?.["content-security-policy"]]
+    const refused = ["DENY", "frame-ancestors 'none'"]
+    const stranger = await proxied(port, "/", publicVisitor)
+    assert.equal(stranger.status, 401)
+    assert.deepEqual(framing(stranger), refused, "the sign-in page")
+    assert.deepEqual(framing(await proxied(port, "/?frizz_code=spent", publicVisitor)), refused, "a dead link's page")
+    const cookie = await redeemed(port, proxy)
+    const recovery = await proxied(port, "/", { ...publicVisitor, cookie })
+    assert.equal(recovery.status, 503)
+    assert.deepEqual(framing(recovery), refused, "the recovery page")
+    childPort = await freePort()
+    const unreachable = await proxied(port, "/", { ...publicVisitor, cookie })
+    assert.deepEqual(framing(unreachable), refused, "the page for a child that does not answer")
+    proxy.setPublicOrigin(undefined)
+    const unlisted = await proxied(port, "/", { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })
+    assert.equal(unlisted.status, 503)
+    assert.deepEqual(framing(unlisted), refused, "the loopback recovery page")
+  } finally {
+    await proxy.close().catch(() => undefined)
+  }
+})
+
+test("a child that answers an upgrade as plain HTTP never sees the visitor's next bytes, which no stamp covers", async () => {
+  const seen: Array<{ url: string | undefined; stamp: ReturnType<typeof decodeCallerStamp> }> = []
+  // A server with no `upgrade` listener: Node treats the handshake as an ordinary keep-alive request.
+  const child = await listen((req, res) => {
+    seen.push({ url: req.url, stamp: decodeCallerStamp(req.headers[CALLER_HEADER] as string | undefined) })
+    res.writeHead(200, { "content-type": "text/plain", "content-length": "5" })
+    res.end("child")
+  })
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, childPort: () => child.port, restart: async () => ({ state: "ready" }) })
+  await proxy.listen()
+  const socket = netConnect(port, "127.0.0.1")
+  try {
+    await once(socket, "connect")
+    socket.on("error", () => undefined)
+    const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()))
+    const host = `127.0.0.1:${port}`
+    const handshake = `GET /first HTTP/1.1\r\nhost: ${host}\r\norigin: http://${host}\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n`
+    const smuggled = `POST /_frizz/rpc/dispatch HTTP/1.1\r\nhost: 127.0.0.1:${child.port}\r\ncontent-length: 0\r\n\r\n`
+    socket.write(handshake + smuggled)
+    await once(socket, "data")
+    socket.write(smuggled)
+    await closed
+    assert.deepEqual(seen.map((request) => request.url), ["/first"])
+    assert.equal(seen[0]!.stamp?.via, "loopback")
+  } finally {
+    socket.destroy()
+    await proxy.close()
+    await child.close()
   }
 })

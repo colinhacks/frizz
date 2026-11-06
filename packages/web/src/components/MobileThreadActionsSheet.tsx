@@ -32,6 +32,7 @@ import { useBackDismiss } from "../lib/backDismiss.ts"
 import { MobileBottomSheet } from "./MobileBottomSheet.tsx"
 import { GoalMark, PromptPanel } from "./RecurringPromptControl.tsx"
 import { StateButton } from "./ThreadLifecycle.tsx"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
 
 // THE PHONE'S ⋯ SHEET — everything a thread can do that is not the bottom bar's one verb.
 //
@@ -461,10 +462,11 @@ function RenameView({ thread, back, dismiss }: { thread: ThreadView; back: () =>
  *  `runningModelLabel`, not whatever its family resolves to now). */
 export function useModelEffortLabel(thread: ThreadView | undefined): string | null {
   const owned = Boolean(thread && !thread.foreign && thread.kind === "session")
+  const remoteHost = useRemoteHost()
   const profiles = useQuery({
     queryKey: ["threadProfileOptions", thread?.id ?? ""],
     queryFn: () => rpc.threadProfileOptions({ slug: thread!.id }),
-    enabled: owned,
+    enabled: owned && !remoteHost,
     staleTime: 5_000,
   })
   if (!thread) return null

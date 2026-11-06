@@ -16,10 +16,13 @@ import { dirname, join } from "node:path"
  * revoked without disturbing anything else. GitHub minting the session instead of a code is policy on
  * top of that split; per-device names and sign-out are built here.
  *
- * REVOCATION IS A DENYLIST, not a session table. A session still verifies from its own signature with
- * no lookup — that is what makes it cheap and restart-proof — and the directory holds only the ids an
- * operator has actually signed out, plus a label per device so the list means something. A board with
- * nothing revoked pays nothing.
+ * A SESSION HAS TO EXIST. It verifies from its signature AND its record in the session directory: an id
+ * the directory never recorded, one signed out, or an expiry past what that record was issued with is
+ * refused. For a long time this was a denylist, and a session checked only its signature, on the reasoning
+ * that a lookup would make verification costly and a restart forget everybody. Neither holds: the directory
+ * is read from memory and written through to disk. What the denylist cost was real: anyone who read
+ * `session-key` could sign a 100-year cookie that no list ever showed and no sign-out could name (red team
+ * 2026-11-05). A device list that is the whole truth is what makes `frizz --sessions` worth reading.
  */
 
 /** Long enough that guessing is hopeless, short enough that the QR stays a small version. */
@@ -82,8 +85,13 @@ export interface AccessStoreOptions {
   rotateSigningKey?: () => Buffer
   /** Called when a code is successfully consumed, so a launcher can repaint its QR. */
   onConsumed?: (code: string) => void
-  /** Where sign-outs and device labels live. In-memory by default, which forgets them on restart. */
+  /** Where sessions and device labels live. In-memory by default, which forgets them on restart. */
   sessions?: SessionDirectory
+  /**
+   * A sign-out happened: this device's id, or nothing for every device. A check at the door cannot end
+   * what is already through it, so whoever holds open sockets for a session closes them here.
+   */
+  onSignedOut?: (id?: string) => void
 }
 
 export type RedeemResult =
@@ -101,14 +109,14 @@ export interface SessionRecord {
 }
 
 /**
- * Where sign-outs are remembered.
+ * Which sessions exist.
  *
  * Injected rather than assumed to be a file, so the store can be driven in a test without a temp
  * directory and so a future backend (a tenant DB) needs no change here.
  */
 export interface SessionDirectory {
   record(record: SessionRecord): void
-  isRevoked(id: string): boolean
+  get(id: string): SessionRecord | undefined
   list(): SessionRecord[]
   /** False when the id is unknown or already revoked, so a caller can say which. */
   revoke(id: string): boolean
@@ -120,7 +128,7 @@ export function memorySessionDirectory(seed: SessionRecord[] = []): SessionDirec
   const records = new Map<string, SessionRecord>(seed.map((r) => [r.id, r]))
   return {
     record: (r) => void records.set(r.id, r),
-    isRevoked: (id) => records.get(id)?.revokedAt !== undefined,
+    get: (id) => records.get(id),
     // Reverse FIRST, then sort. Array.sort is stable, so two devices that redeemed in the same
     // millisecond — which two taps on one page reliably are — keep newest-inserted-first instead of
     // falling back to insertion order and reading as oldest first.
@@ -143,6 +151,16 @@ export function memorySessionDirectory(seed: SessionRecord[] = []): SessionDirec
       return n
     },
   }
+}
+
+/** The devices that could sign in right now: neither signed out nor past their own expiry. */
+export function liveSessions(directory: Pick<SessionDirectory, "list">, now = Date.now()): SessionRecord[] {
+  return directory.list().filter((session) => session.revokedAt === undefined && (session.expiresAt === undefined || session.expiresAt > now))
+}
+
+/** What a launcher's readout says about the remote devices it holds. */
+export function remoteDevicesLine(count: number): string {
+  return count === 1 ? "1 remote device signed in" : `${count} remote devices signed in`
 }
 
 /**
@@ -188,9 +206,9 @@ export function secretsMatch(a: string, b: string): boolean {
 export class AccessStore {
   private readonly codes = new Map<string, StoredCode>()
   private readonly options: Required<
-    Omit<AccessStoreOptions, "onConsumed" | "signingKey" | "rotateSigningKey" | "sessions">
+    Omit<AccessStoreOptions, "onConsumed" | "onSignedOut" | "signingKey" | "rotateSigningKey" | "sessions">
   > &
-    Pick<AccessStoreOptions, "onConsumed">
+    Pick<AccessStoreOptions, "onConsumed" | "onSignedOut">
   readonly sessions: SessionDirectory
   /** Signing key for sessions. Persisted by the caller; a fresh one signs every device out. */
   private signingKey: Buffer
@@ -206,6 +224,7 @@ export class AccessStore {
       now: options.now ?? Date.now,
       randomToken: options.randomToken ?? defaultRandomToken,
       onConsumed: options.onConsumed,
+      onSignedOut: options.onSignedOut,
     }
   }
 
@@ -256,27 +275,31 @@ export class AccessStore {
   /**
    * Sign out EVERY device: `frizz --sign-out all`, and what a session-epoch bump asks of a running board.
    *
-   * The denylist alone is not enough for that. It names only the ids it recorded, so a session minted
-   * before ids existed (2026-08-25), or while the directory was held in memory, would survive it. A new
-   * key kills every outstanding session whatever it carries; the denylist entries are what make
-   * `frizz --sessions` stop listing those devices as signed in. Returns how many recorded devices that was.
+   * Marking every record would do it alone, since a session must have a live one. The new key is the
+   * second lock, and it is what makes `session-key` worth less to anyone who copied it before now.
+   * Returns how many recorded devices that was.
    */
   signOutAll(): number {
     this.signingKey = this.rotateSigningKey()
-    return this.sessions.revokeAll()
+    const count = this.sessions.revokeAll()
+    this.options.onSignedOut?.()
+    return count
+  }
+
+  /** Sign out one device by id, what `frizz --sign-out <id>` asks for. False when there is no such live device. */
+  revokeSession(id: string): boolean {
+    if (!this.sessions.revoke(id)) return false
+    this.options.onSignedOut?.(id)
+    return true
   }
 
   /**
    * A session is `<expiry>.<id>.<nonce>.<hmac>` — signed with a key the caller persists so it survives
-   * a restart, and self-describing enough that a stale cookie is rejected without any lookup.
+   * a restart, and naming the directory record it answers to.
    *
    * The `id` is what makes ONE device signable-out. It is short because an operator types it into
    * `frizz --sign-out <id>`, and it is inside the signed payload so it cannot be swapped for another
    * device's. Rotating the key still revokes everything at once; this is the scalpel beside that axe.
-   *
-   * A session minted before ids existed has a two-part payload and still verifies — it simply has no id
-   * to revoke individually. Adding ids was not meant to sign every device out; when that IS the intent,
-   * SESSION_EPOCH does it on purpose, by rotating the key.
    */
   private mintSession(now: number): { session: string; id: string } {
     const expiresAt = now + this.options.sessionTtlMs
@@ -286,12 +309,7 @@ export class AccessStore {
     return { session: `${payload}.${this.sign(payload)}`, id }
   }
 
-  /** The expiry a session carries in its own payload. Only called on a session that already verified. */
-  private static expiryOf(session: string): number {
-    return Number(session.slice(0, session.indexOf(".")))
-  }
-
-  /** The id inside a session payload, or null for a legacy two-part one. */
+  /** The id inside a session payload, or null for a shape this code never minted. */
   private static idOf(payload: string): string | null {
     const parts = payload.split(".")
     return parts.length >= 3 ? (parts[1] ?? null) : null
@@ -311,20 +329,32 @@ export class AccessStore {
     if (!secretsMatch(signature, this.sign(payload))) return false
     const expiresAt = Number(payload.slice(0, payload.indexOf(".")))
     if (!Number.isFinite(expiresAt) || this.options.now() >= expiresAt) return false
-    // The signature proves the id was not tampered with, so the denylist can be trusted to name a real
-    // device. Checked LAST: an expired or forged cookie should never reach the directory at all.
+    // The signature proves the id was not tampered with, so the directory can be trusted to answer for
+    // it. Checked LAST: an expired or forged cookie should never reach the directory at all.
+    //
+    // The expiry has to fit what was issued. A key copied off this disk signs anything, but it cannot
+    // write the directory that lives in this process: it can only borrow a real device's id, under that
+    // device's label, and only until that device's own session ends.
     const id = AccessStore.idOf(payload)
-    return !(id && this.sessions.isRevoked(id))
+    const record = id ? this.sessions.get(id) : undefined
+    if (!record || record.revokedAt !== undefined) return false
+    return expiresAt <= (record.expiresAt ?? record.createdAt + this.options.sessionTtlMs)
   }
 
   /**
    * Which device this session belongs to, for the audit trail: its record id (what `frizz --sessions`
-   * lists and `--sign-out` takes), `"legacy"` for a session minted before ids existed, or null when it
-   * does not verify. Never the session itself — the id is the one part of it that is not a credential.
+   * lists and `--sign-out` takes), or null when it does not verify. Never the session itself — the id is
+   * the one part of it that is not a credential.
    */
   sessionIdOf(session: string | undefined): string | null {
     if (!session || !this.verifySession(session)) return null
-    return AccessStore.idOf(session.slice(0, session.lastIndexOf("."))) ?? "legacy"
+    return AccessStore.idOf(session.slice(0, session.lastIndexOf(".")))
+  }
+
+  /** The directory's record for this session, once it verifies. */
+  recordOf(session: string | undefined): SessionRecord | undefined {
+    const id = this.sessionIdOf(session)
+    return id ? this.sessions.get(id) : undefined
   }
 
   /**
@@ -335,26 +365,14 @@ export class AccessStore {
    * parameter naming any other id: signing out SOMEONE ELSE stays loopback-only, because a stolen
    * session must not be able to evict the owner and keep the board.
    *
-   * - `revoked`: the id is on the denylist now, so a surviving copy of this cookie is refused too.
-   * - `legacy`: a session minted before ids existed verifies but has no id to revoke on its own. The
-   *   caller can still clear the cookie; signOutAll(), which rotates the key, is the way to kill a copy.
+   * - `revoked`: its record is marked now, so a surviving copy of this cookie is refused too.
    * - `no-session`: nothing valid was presented — absent, forged, expired, or already signed out.
    */
   signOutSession(session: string | undefined):
     | { result: "revoked"; id: string }
-    | { result: "legacy" }
     | { result: "no-session" } {
-    if (!session || !this.verifySession(session)) return { result: "no-session" }
-    const id = AccessStore.idOf(session.slice(0, session.lastIndexOf(".")))
-    if (!id) return { result: "legacy" }
-    // The directory only knows ids it recorded, so a session minted while it was held in memory (a board
-    // started without a persisted one) is unknown after a restart even though the key still verifies it.
-    // Record it first, or revoke() refuses the unknown id and the sign-out silently does nothing.
-    if (!this.sessions.revoke(id)) {
-      this.sessions.record({ id, label: "unknown device", createdAt: this.options.now(), expiresAt: AccessStore.expiryOf(session) })
-      this.sessions.revoke(id)
-    }
-    return this.sessions.isRevoked(id) ? { result: "revoked", id } : { result: "no-session" }
+    const id = this.sessionIdOf(session)
+    return id && this.revokeSession(id) ? { result: "revoked", id } : { result: "no-session" }
   }
 
   /**
@@ -386,19 +404,19 @@ export class AccessStore {
  * The session directory on disk, beside the signing key.
  *
  * A SIGN-OUT THAT DOES NOT SURVIVE A RESTART IS NOT A SIGN-OUT — and a board restarts often, on every
- * artifact update and every ordinary ctrl-C. So the denylist is written through on each change rather
+ * artifact update and every ordinary ctrl-C. So the records are written through on each change rather
  * than held in memory, and a lost phone stays signed out.
  *
- * Reads are served from memory: `isRevoked` runs on every single request, and hitting the filesystem
- * there would put a stat in the path of every page load and every socket frame.
+ * Reads are served from memory: `get` runs on every single request, and hitting the filesystem there
+ * would put a stat in the path of every page load and every socket frame.
  */
 export function fileSessionDirectory(stateDir: string, now: () => number = Date.now): SessionDirectory {
   const path = join(stateDir, SESSION_DIRECTORY_FILE)
   let records: SessionRecord[] = []
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown
-    // A hand-edited or truncated file must not take the board down; an unreadable directory means no
-    // remembered sign-outs, which is the same position a first run is in.
+    // A hand-edited or truncated file must not take the board down. An unreadable directory means no
+    // recorded sessions, the same position a first run is in: every device signs in again.
     if (Array.isArray(parsed)) {
       records = parsed.filter(
         (r): r is SessionRecord =>
@@ -412,17 +430,17 @@ export function fileSessionDirectory(stateDir: string, now: () => number = Date.
   const flush = () => {
     try {
       mkdirSync(dirname(path), { recursive: true })
-      // Prune what can no longer matter: a revoked session past its own expiry is denied by the expiry
-      // check alone, so keeping it would grow the file forever for nothing.
       writeFileSync(path, JSON.stringify(inner.list()), { mode: 0o600 })
     } catch (error) {
-      // Best effort. Losing the write costs a remembered sign-out, not correctness of the live board.
+      // Best effort. A new session whose record never reached the disk is a device asked to sign in again
+      // at the next start, which fails closed. A sign-out that never reached it comes back at that start,
+      // which is why `--sign-out all` rotates the key as well.
       if (process.env.FRIZZ_DEBUG_SESSIONS) console.error("[sessions] flush failed:", error)
     }
   }
   return {
     record(r) { inner.record(r); flush() },
-    isRevoked: (id) => inner.isRevoked(id),
+    get: (id) => inner.get(id),
     list: () => inner.list(),
     revoke(id) { const ok = inner.revoke(id); if (ok) flush(); return ok },
     revokeAll() { const n = inner.revokeAll(); if (n > 0) flush(); return n },

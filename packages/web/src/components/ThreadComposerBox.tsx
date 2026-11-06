@@ -9,6 +9,8 @@ import { buildMessageWithContext, hasToken } from "../lib/composerContext.ts"
 import { splitComposerValue } from "../lib/imagePaths.ts"
 import { useThreadComposerControls } from "../hooks/useThreadComposerControls.tsx"
 import { Composer } from "./Composer.tsx"
+import { RemoteNote } from "./RemoteNote.tsx"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { McpPlug } from "./McpPlug.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { draftKey, mergeIntoDraft, useDraft, useProjectDir } from "../lib/drafts.ts"
@@ -62,7 +64,57 @@ function fetchThreadSkills(slug: string): Promise<ThreadSkill[]> {
   return fetched
 }
 
-export function ThreadComposerBox({
+/**
+ * The prompt box on a remote session: nothing to type in, and the one line saying where typing happens.
+ * The answers staged on the cards still leave from here, since this is where the Send they use lives.
+ */
+function RemoteComposerBox({ surface, className, above, phoneBarOverride, phoneChrome, remoteHost }: {
+  surface: "queueComposer" | "chatComposer"
+  className?: string
+  above?: ReactNode
+  phoneBarOverride?: (api: PhoneBarApi) => ReactNode
+  phoneChrome?: boolean
+  remoteHost: string
+}): ReactElement {
+  const registered = useContext(RegisteredAnsweringContext)
+  const isMobile = useIsMobile()
+  const phoneBar = (phoneChrome ?? isMobile) && surface === "chatComposer"
+  return (
+    <div
+      data-thread-composer-box={surface}
+      data-remote-composer
+      {...(surface === "chatComposer" ? { "data-thread-action-bar": "" } : {})}
+      className={phoneBar ? "flex flex-col gap-2 px-3 py-2.5" : className}
+    >
+      {above}
+      {phoneBar && phoneBarOverride && <div className="flex items-center gap-2">{phoneBarOverride({ editReply: () => {} })}</div>}
+      <div className={`flex items-center justify-between gap-3 ${phoneBar ? "" : "px-3 py-2"}`}>
+        <RemoteNote remoteHost={remoteHost} />
+        {!phoneBar && (registered?.staged ?? 0) > 0 && (
+          <button
+            type="button"
+            data-remote-send-answers
+            disabled={registered!.sending}
+            onClick={registered!.submit}
+            className="shrink-0 rounded-md bg-fg px-3 py-1.5 text-[13px] font-medium text-bg outline-none disabled:opacity-40"
+          >
+            {registered!.sending ? "Sending…" : "Send answers"}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+type ThreadComposerBoxProps = Parameters<typeof LocalThreadComposerBox>[0]
+
+export function ThreadComposerBox(props: ThreadComposerBoxProps): ReactElement {
+  const remoteHost = useRemoteHost()
+  if (remoteHost) return <RemoteComposerBox {...props} remoteHost={remoteHost} />
+  return <LocalThreadComposerBox {...props} />
+}
+
+function LocalThreadComposerBox({
   slug,
   surface,
   className,

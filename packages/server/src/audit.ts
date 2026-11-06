@@ -45,7 +45,7 @@ export const CALLER_HEADER = "x-frizz-caller"
  */
 export type CallerVia = "public" | "network" | "loopback"
 
-/** What the proxy saw. `session` is a record id, `"legacy"` for a session minted before ids, or null. */
+/** What the proxy saw. `session` is a record id, or null. */
 export interface CallerStamp {
   via: CallerVia
   /** The proxy's peer address. A relayed request's peer is the relay agent in the launcher: loopback. */
@@ -147,6 +147,10 @@ export type AuditAction =
   | "spawnChild"
   | "answerQuestions"
   | "interactionResolve"
+  | "commandWatchArm"
+  | "monitorArm"
+  /** A remote caller asked for what only this machine may do: remote-gate.ts. `detail` says what. */
+  | "remoteRefused"
 
 export interface AuditRecord {
   /** UTC, ISO 8601. */

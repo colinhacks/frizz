@@ -21,6 +21,7 @@ import {
   type ProjectLaunchTarget,
 } from "./project-launch.ts"
 import type { SessionDirectory } from "./access-codes.ts"
+import { auditLogPathForStateDir, fileAuditLog } from "./audit.ts"
 import { RestartSupervisorProxy, type RestartResult } from "./restart-supervisor.ts"
 import { log as frizzLog } from "./logging.ts"
 import { BOOT_HARD_TIMEOUT_MS, BOOT_STALL_TIMEOUT_MS, readBootProgress } from "./boot-progress.ts"
@@ -120,6 +121,8 @@ export interface DevSupervisorOptions {
   publicOrigin?: string
   /** Fired when an access code is redeemed, so the launcher can repaint a spent QR. */
   onCodeConsumed?: () => void
+  /** A new device just signed in. See RestartSupervisorProxyOptions. */
+  onDeviceSignedIn?: (device: { label: string; devices: number }) => void
   /** Persisted session-signing key, so devices stay signed in across restarts. */
   sessionKey?: Buffer
   /** Persists a replacement for `sessionKey` when every device is signed out. See RestartSupervisorProxyOptions. */
@@ -203,6 +206,8 @@ export interface DevSupervisor {
   issueAccessLink(): { code: string; url: string; expiresAt: number } | null
   /** Declare (or clear) the public origin on the running board; the gate follows at once. */
   setPublicOrigin(origin: string | undefined): void
+  /** The port the relay agent dials, on which every request is public. See RestartSupervisorProxy.relayListener. */
+  relayListener(): Promise<number>
   readonly firstBoot: Promise<DevBoot>
   readonly stopRequested: Promise<void>
   currentBoot(): DevBoot | null
@@ -621,9 +626,11 @@ class Supervisor implements DevSupervisor {
       allowedHosts: opts.allowedHosts,
       publicOrigin: opts.publicOrigin,
       onCodeConsumed: opts.onCodeConsumed,
+      onDeviceSignedIn: opts.onDeviceSignedIn,
       sessionKey: opts.sessionKey,
       rotateSessionKey: opts.rotateSessionKey,
       sessionDirectory: opts.sessionDirectory,
+      audit: fileAuditLog(auditLogPathForStateDir(opts.launchTarget.stateDir)),
       childPort: () => this.childPort,
       restart: () => this.restartFromBrowser(),
       updateRestart: this.updateRestart ? () => this.updateFromBrowser() : undefined,
@@ -658,6 +665,10 @@ class Supervisor implements DevSupervisor {
   /** Mint a single-use access link for the public origin, or null when none is declared. */
   setPublicOrigin(origin: string | undefined): void {
     this.publicProxy.setPublicOrigin(origin)
+  }
+
+  relayListener(): Promise<number> {
+    return this.publicProxy.relayListener()
   }
 
   issueAccessLink(): { code: string; url: string; expiresAt: number } | null {

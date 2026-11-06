@@ -164,7 +164,7 @@ try {
   // means something redeemed it first (a retry at the edge would do that, and single-use plus retry is
   // a broken sign-in); "no such link" means the code was minted against a different board.
   const why = redeem.status === 302 ? "" : (await redeem.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
-  check("the access link redeems into a session", redeem.status === 302 && cookie.includes("frizz_session="), `HTTP ${redeem.status}${why ? ` — ${why}` : ""}`);
+  check("the access link redeems into a session", redeem.status === 302 && cookie.includes("__Host-frizz_session="), `HTTP ${redeem.status}${why ? ` — ${why}` : ""}`);
 
   const page = await fetch(ORIGIN, { headers: { cookie } });
   const html = await page.text();

@@ -1,4 +1,4 @@
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 
@@ -102,16 +102,29 @@ function errorEnvelope(err: any): { error: string; retryable?: true; kept?: true
 
 // ---- Mount router onto Hono ----
 
-export function mountRouter(app: Hono, prefix: string, router: Router) {
+/**
+ * Who may call what, judged at the one place a request's URL has already become a procedure. Returning a
+ * Response ends the request with it. `procedure` runs first, for every request including a name this
+ * router does not hold and the procedure list, before any input is read. `input` runs with the input as
+ * parsed, for a rule that depends on what was asked.
+ */
+export interface RouterGuard {
+  procedure(c: Context, name: string): Response | undefined
+  input?(c: Context, name: string, input: unknown): Response | undefined
+}
+
+export function mountRouter(app: Hono, prefix: string, router: Router, guard?: RouterGuard) {
   // Serve the procedure map so the client can self-configure
   const procMap = extractProcedureMap(router)
-  app.get(`${prefix}/__procedures`, (c) => c.json(procMap))
+  app.get(`${prefix}/__procedures`, (c) => guard?.procedure(c, "__procedures") ?? c.json(procMap))
 
   for (const [name, proc] of Object.entries(router)) {
     const path = `${prefix}/${name}`
 
     if (proc._tag === "query") {
       app.get(path, async (c) => {
+        const refused = guard?.procedure(c, name)
+        if (refused) return refused
         const rawInput = c.req.query("input")
         let input: unknown
         if (rawInput) {
@@ -128,6 +141,8 @@ export function mountRouter(app: Hono, prefix: string, router: Router) {
           }
           input = parsed.data
         }
+        const refusedInput = guard?.input?.(c, name, input)
+        if (refusedInput) return refusedInput
         try {
           const result = await proc.handler(input !== undefined ? { input } : {} as any)
           return c.json({ result })
@@ -137,6 +152,8 @@ export function mountRouter(app: Hono, prefix: string, router: Router) {
       })
     } else if (proc._tag === "mutation") {
       app.post(path, async (c) => {
+        const refused = guard?.procedure(c, name)
+        if (refused) return refused
         let input: unknown
         const contentType = c.req.header("content-type")
         if (contentType?.includes("application/json")) {
@@ -149,6 +166,8 @@ export function mountRouter(app: Hono, prefix: string, router: Router) {
           }
           input = parsed.data
         }
+        const refusedInput = guard?.input?.(c, name, input)
+        if (refusedInput) return refusedInput
         try {
           const result = await proc.handler({ input } as any)
           return c.json({ result: result ?? null })
@@ -158,6 +177,8 @@ export function mountRouter(app: Hono, prefix: string, router: Router) {
       })
     } else if (proc._tag === "stream") {
       app.get(path, async (c) => {
+        const refused = guard?.procedure(c, name)
+        if (refused) return refused
         const rawInput = c.req.query("input")
         let input: unknown
         if (rawInput) {
@@ -174,6 +195,8 @@ export function mountRouter(app: Hono, prefix: string, router: Router) {
           }
           input = parsed.data
         }
+        const refusedInput = guard?.input?.(c, name, input)
+        if (refusedInput) return refusedInput
         return streamSSE(c, async (sseStream) => {
           let id = 0
           const gen = proc.handler(input !== undefined ? { input } : {} as any)
@@ -196,7 +219,7 @@ export function mountRouter(app: Hono, prefix: string, router: Router) {
   // silent retries and a debugging session. Name the procedure and say what a 404 here MEANS, in the
   // readable-string `error` field both clients surface verbatim.
   app.all(`${prefix}/:procedure`, (c) =>
-    c.json(
+    guard?.procedure(c, c.req.param("procedure")) ?? c.json(
       {
         error:
           `unknown RPC procedure \`${c.req.param("procedure")}\` — this server does not implement it. ` +

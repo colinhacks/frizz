@@ -24,6 +24,17 @@ npx frizz --sign-out all  # revoke them
 
 A device can sign itself out: **Sign out this device** in Settings ends that browser's session and nothing else. Signing out any other device is still `frizz --sign-out`, which runs only on the host (SSH counts), so a stolen phone cannot sign out the laptop.
 
+## What a remote session can do
+
+A device signed in this way reads the board and answers question cards by picking a listed option. Everything else happens on the computer running Frizz:
+
+- starting or steering a thread, or changing its settings;
+- answering a free-text, secret or danger card;
+- terminals, restarts and sign-in links;
+- reading a file outside a registered project or a thread's scratch and attachment directories, or a secret-looking file inside one (`.env`, a key, anything under a dotted folder other than `.frizz`).
+
+A refused call is written to `logs/audit.jsonl` under Frizz's data folder, with the session and device that made it. [SSH port forwarding](#ssh-port-forwarding) counts as the computer itself, so it keeps the whole board.
+
 ## Try it without touching your board
 
 A second Frizz that shares nothing with the one you run: a throwaway home and project, its own port, deleted when you press ctrl-c.

@@ -1,0 +1,322 @@
+import type { Context } from "hono"
+import { AskedQuestionSchema, type AskedQuestion, type QuestionAnswer, type SocketClientMsg } from "@frizz/shared"
+import type { RouterGuard } from "@frizz/rpc/server"
+import { CALLER_HEADER, decodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog } from "./audit.ts"
+import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
+import type { AppRouter } from "./router.ts"
+
+// ── WHAT A REMOTE SESSION MAY DO ────────────────────────────────────────────────────────────────────
+// A remote session, stolen or not, and a hostile relay driving a real session's page, must not be able
+// to run anything on this machine. So it may read the board and pick listed options on question cards,
+// and everything else is the machine's. The compromise this answers (2026-10-08) was one stolen cookie
+// starting about 13 workers, and until now `dispatch` with `bypassPermissions`, or a command watch's first
+// check, was a shell one POST away.
+//
+// DEFAULT DENY, IN ONE TABLE. `satisfies` below makes a new procedure fail typecheck until someone says
+// which side it is on, and a name the table does not hold is refused at runtime. Widening what a remote
+// session may do is changing one line here.
+//
+// ENFORCED WHERE A NAME BECOMES A PROCEDURE. The guard runs inside each route mountRouter registers
+// (packages/rpc), so it answers for the procedure that was resolved, however the URL spelled it. A
+// middleware reading the path would have to agree with the router about every encoding.
+//
+// A READ CAN STILL BE A WRITE. Each `allow` below was read for what it starts: several queries here spawn
+// a process (`acpAgentModels`, `mcpStatus`, `threadSkills`) or read through this machine's credentials
+// (`githubList`), and those stay denied.
+
+type Refusal = string | null
+
+interface GateChecks {
+  /** The stored question a remote answer has to be judged against. */
+  questionSpec(slug: string, questionId: string): { spec: string } | undefined
+  /** Is this a path a remote caller may read? remote-reads.ts. */
+  mayRead(path: string): boolean
+}
+
+/** Allowed, refused, or allowed only for this input: return why not, or null. Runs on parsed input. */
+type RemoteRule = "allow" | "deny" | ((input: never, checks: GateChecks) => Refusal)
+
+const onThisMachine = (what: string) => `${what} can only be done on ${remoteHostLabel()}.`
+
+export const REMOTE_ACCESS = {
+  // Reading the board and its threads.
+  board: "allow",
+  boardState: "allow",
+  boardDeltas: "allow",
+  threadBody: "allow",
+  threadTranscript: "allow",
+  threadTranscriptEarlier: "allow",
+  threadSettledQuestions: "allow",
+  threadLocate: "allow",
+  pendingInteractions: "allow",
+  interactionGet: "allow",
+  subAgentTranscript: "allow",
+  backgroundShellOutput: "allow",
+  backgroundShellActivity: "allow",
+  monitorOutput: "allow",
+  projectsList: "allow",
+  projectsRailCounts: "allow",
+
+  // What the page reads as it loads. None of these takes input that reaches a process.
+  settingsGet: "allow",
+  dispatchPreferencesGet: "allow",
+  codexModels: "allow",
+  acpAgents: "allow",
+  quota: (input: { force?: unknown } | undefined) => input?.force ? onThisMachine("Refreshing the quota") : null,
+  authStatus: (input: { fresh?: unknown } | undefined) => input?.fresh ? onThisMachine("Checking the sign-in again") : null,
+
+  // Files, confined to what remote-reads.ts allows.
+  localMarkdown: (input: { path: string }, checks) => checks.mayRead(input.path) ? null : remoteRefusedMessage(),
+  localFile: (input: { path: string }, checks) => checks.mayRead(input.path) ? null : remoteRefusedMessage(),
+  resolveLocalPaths: "allow", // Filters what it answers itself, since one batch mixes paths. See router.ts.
+
+  // Bookkeeping: the reader's own place on the board. Nothing here starts or changes any work.
+  markRead: "allow",
+  threadSeen: "allow",
+  snoozeAwaitingBackground: "allow",
+  setThreadPinned: "allow",
+  reorderPinnedThreads: "allow",
+  setThreadConsolePinned: "allow",
+  reorderConsolePinnedThreads: "allow",
+  projectsReorder: "allow",
+  // A snooze with a prompt is a message to the worker, sent later: the scheduler resumes the thread with
+  // it when the snooze ends, in whatever permission mode that thread runs.
+  setThreadSnooze: (input: { prompt?: unknown }) => input.prompt != null ? onThisMachine("Scheduling a message") : null,
+
+  // Picking a listed option on a question card.
+  answerQuestions: (input: { slug: string; answers: QuestionAnswer[] }, checks) => remoteAnswerRefusal(input, checks),
+
+  // Everything else is the machine's.
+  interactionResolve: "deny",
+  interactionCancel: "deny",
+  subAgentSteer: "deny",
+  subAgentStop: "deny",
+  stopBackgroundOp: "deny",
+  dispatch: "deny",
+  adoptThread: "deny",
+  followUp: "deny",
+  steerThread: "deny",
+  spawnThread: "deny",
+  spawnChild: "deny",
+  dismissFailedFollowUp: "deny",
+  unqueueFollowUp: "deny",
+  deliverQueuedNow: "deny",
+  compactThread: "deny",
+  setThreadPermission: "deny",
+  threadProfileOptions: "deny",
+  threadSkills: "deny",
+  mcpStatus: "deny",
+  mcpSignIn: "deny",
+  mcpSignInPoll: "deny",
+  mcpSignInFinish: "deny",
+  mcpSignInCancel: "deny",
+  setThreadProfile: "deny",
+  upgradeThreadModel: "deny",
+  archiveThread: "deny",
+  setThreadState: "deny",
+  completeThread: "deny",
+  setThreadRecurringPrompt: "deny",
+  setOwnThreadRecurringPrompt: "deny",
+  getOwnThreadRecurringPrompt: "deny",
+  setOwnThreadTimer: "deny",
+  cancelOwnThreadTimer: "deny",
+  listOwnThreadTimers: "deny",
+  listOwnThreadActivity: "deny",
+  listThreads: "deny",
+  upsertOwnLink: "deny",
+  dropOwnLink: "deny",
+  addOwnPrWatch: "deny",
+  dropOwnPrWatch: "deny",
+  addOwnCommandWatch: "deny",
+  dropOwnCommandWatch: "deny",
+  stopMonitor: "deny",
+  addOwnMonitor: "deny",
+  listOwnCommandWatches: "deny",
+  addOwnWatch: "deny",
+  dropOwnWatch: "deny",
+  ask: "deny",
+  unask: "deny",
+  dismissQuestions: "deny",
+  markOwnDone: "deny",
+  listOwnPrWatches: "deny",
+  setOwnThreadStopHook: "deny",
+  setOwnThreadHeartbeat: "deny",
+  setThreadHeartbeat: "deny",
+  forgetThread: "deny",
+  openExternal: "deny",
+  openLocalFile: "deny",
+  markComplete: "deny",
+  setThreadStatus: "deny",
+  repairThread: "deny",
+  dismissThread: "deny",
+  renameThread: "deny",
+  setOwnThreadTitle: "deny",
+  aiRenameThread: "deny",
+  killAgent: "deny",
+  claudeModels: "deny",
+  acpAgentModels: "deny",
+  accountLogout: "deny",
+  projectRemove: "deny",
+  projectIconPick: "deny",
+  projectIconPickWarm: "deny",
+  projectIconSet: "deny",
+  projectIconClear: "deny",
+  projectRename: "deny",
+  projectPick: "deny",
+  projectPickWarm: "deny",
+  projectAdd: "deny",
+  settingsSet: "deny",
+  settingsReset: "deny",
+  dispatchPreferenceSet: "deny",
+  githubPromptDefaults: "deny",
+  githubStatus: "deny",
+  githubAccount: "deny",
+  githubSignInStart: "deny",
+  githubSignInCancel: "deny",
+  githubSignOut: "deny",
+  githubList: "deny",
+  githubRefPreview: "deny",
+  githubDispatchBatch: "deny",
+} satisfies Record<keyof AppRouter, RemoteRule>
+
+/**
+ * The rule for one procedure name. A name the table does not hold is refused: this is the runtime half of
+ * the type check above, for the name a request made up.
+ */
+export function remoteRule(name: string): RemoteRule {
+  return Object.hasOwn(REMOTE_ACCESS, name) ? (REMOTE_ACCESS as Record<string, RemoteRule>)[name]! : "deny"
+}
+
+const refusedCard = (why: string) => `${why}, so it can only be answered on ${remoteHostLabel()}.`
+
+/**
+ * A remote answer has to be one a person could give by tapping the card's options: nothing in it that a
+ * caller wrote. So every field is checked against the stored question, not only `text`:
+ *
+ * - `question` is restated to the worker verbatim in its answer, so it has to be the question that was
+ *   asked. Left free, it is 4000 characters of prompt delivered as the human's own turn.
+ * - `chosen` holds labels, also delivered verbatim, so each has to be one of the listed options.
+ * - A question's taken branch is answered whole, positionally, as the card builds it. A branch left off
+ *   would let a remote caller take an option past its own danger confirmation.
+ */
+export function remoteAnswerRefusal(input: { slug: string; answers: readonly QuestionAnswer[] }, checks: Pick<GateChecks, "questionSpec">): Refusal {
+  for (const answer of input.answers) {
+    const stored = checks.questionSpec(input.slug, answer.questionId)
+    const spec = stored && parseSpec(stored.spec)
+    if (!spec) return refusedCard("This question can't be read here")
+    const refusal = refusalOfNode(spec, answer, answer.questionId, true)
+    if (refusal) return refusal
+  }
+  return null
+}
+
+function parseSpec(spec: string): AskedQuestion | undefined {
+  try {
+    const parsed = AskedQuestionSchema.safeParse(JSON.parse(spec))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function refusalOfNode(node: AskedQuestion, said: QuestionAnswer, rootId: string, root: boolean): Refusal {
+  if (node.secret) return refusedCard("This question asks for a secret")
+  if (node.danger) return refusedCard("This question is marked as dangerous")
+  const options = node.options ?? []
+  if (options.length === 0) return refusedCard("This question takes typed text")
+  // Every node of one answer carries its root's id: the card builds them that way (web registeredAnswer).
+  if (said.questionId !== rootId || said.question !== node.question) return refusedCard("This answer doesn't match its question")
+  if (said.text?.trim()) return refusedCard("This answer has typed text in it")
+  const labels = new Set(options.map((option) => option.label))
+  if (new Set(said.chosen).size !== said.chosen.length || said.chosen.some((label) => !labels.has(label))) {
+    return refusedCard("This answer has something in it that isn't one of the options")
+  }
+  // A root has to say something. A follow-up may be left blank, which the worker reads as "(no answer)".
+  if (root && said.chosen.length === 0) return refusedCard("This answer doesn't pick an option")
+  if (node.kind !== "multi" && said.chosen.length > 1) return refusedCard("This answer picks more than one option")
+  const taken = node.kind === "multi" || said.chosen.length === 0 ? undefined : options.find((option) => option.label === said.chosen[0])
+  const asked = taken?.followUps ?? []
+  const given = said.followUps ?? []
+  if (given.length !== asked.length) return refusedCard("This answer doesn't match its question")
+  for (const [index, child] of asked.entries()) {
+    const refusal = refusalOfNode(child, given[index]!, rootId, false)
+    if (refusal) return refusal
+  }
+  return null
+}
+
+/**
+ * The socket messages a remote caller may send. `satisfies` is the table's type check again: a new message
+ * fails typecheck until someone says which side it is on. A local file subscription is also confined to
+ * what remote-reads.ts allows.
+ */
+export const REMOTE_SOCKET_MESSAGES = { board: true, sub: true, unsub: true } satisfies Record<SocketClientMsg["t"], boolean>
+
+/** Does this stamp name someone who is not on this machine? The rule every remote check keys on. */
+export function isRemoteCaller(stamp: string | undefined): boolean {
+  const via = decodeCallerStamp(stamp)?.via
+  return via === "public" || via === "network"
+}
+
+/** Write down that a remote caller was refused, attributed to who asked. Never fails the refusal. */
+export function auditRemoteRefusal(
+  audit: AuditLog | undefined,
+  request: { stamp: string | undefined; userAgent: string | undefined; socketRemote?: string },
+  detail: Record<string, unknown>,
+  project: { id: string; dir: string },
+): void {
+  const origin = requestOriginFrom({ caller: request.stamp, userAgent: request.userAgent, socketRemote: request.socketRemote })
+  withRequestOrigin(origin, () => recordAudit(audit, () => ({ action: "remoteRefused", outcome: "refused", project, servedBy: project.id, detail })))
+}
+
+/** The refusal a remote caller gets from a route, with its code, written to the audit trail first. */
+function refuse(c: Context, audit: AuditLog | undefined, project: { id: string; dir: string }, detail: Record<string, unknown>, message = remoteRefusedMessage()): Response {
+  auditRemoteRefusal(audit, {
+    stamp: c.req.header(CALLER_HEADER),
+    userAgent: c.req.header("user-agent"),
+    socketRemote: (c.env as { remoteAddress?: string } | undefined)?.remoteAddress,
+  }, detail, project)
+  return c.json({ error: message, code: REMOTE_REFUSED_CODE }, 403)
+}
+
+export interface RemoteGateOptions extends GateChecks {
+  audit: AuditLog | undefined
+  project: { id: string; dir: string }
+}
+
+/**
+ * The guard mountRouter runs for every procedure. It reads the proxy's stamp off the request itself, not
+ * through `currentRequestOrigin()`, whose answer with no request in scope is `internal`, a local caller.
+ */
+export function remoteGate(options: RemoteGateOptions): RouterGuard {
+  const isRemote = (c: Context) => isRemoteCaller(c.req.header(CALLER_HEADER))
+  return {
+    procedure(c, name) {
+      if (!isRemote(c)) return undefined
+      if (remoteRule(name) !== "deny") return undefined
+      return refuse(c, options.audit, options.project, { procedure: name })
+    },
+    input(c, name, input) {
+      if (!isRemote(c)) return undefined
+      const rule = remoteRule(name)
+      if (typeof rule !== "function") return undefined
+      const refusal = (rule as (input: unknown, checks: GateChecks) => Refusal)(input, options)
+      return refusal ? refuse(c, options.audit, options.project, { procedure: name }, refusal) : undefined
+    },
+  }
+}
+
+/**
+ * The routes outside RPC a remote caller may reach, each named in full. Everything else under `/_frizz` is
+ * the machine's: the launch and stop controls, the attachment intake, and the health probe. `suffix` is the
+ * part after the route prefix, as Hono decoded and routed it.
+ */
+const REMOTE_ROUTES: ReadonlySet<string> = new Set(["/events", "/project-icon", "/local-visualization", "/local-image", "/local-file"])
+
+export function remoteRouteAllowed(suffix: string): boolean {
+  return REMOTE_ROUTES.has(suffix) || suffix.startsWith("/rpc/")
+}
+
+export function refuseRemoteRoute(c: Context, options: Pick<RemoteGateOptions, "audit" | "project">, route: string): Response {
+  return refuse(c, options.audit, options.project, { route })
+}

@@ -104,12 +104,17 @@ test("a session SURVIVES a restart when the signing key is persisted", () => {
   // artifact update, crash or ctrl-C silently signed out every device — making a nominally year-long
   // cookie last only until the next restart. The board must load the same key back.
   const key = randomBytes(32)
-  const first = new AccessStore({ signingKey: key, randomToken: counter() })
-  const redeemed = first.redeem(first.issue().code)
-  assert.ok(redeemed.ok)
+  const dir = mkdtempSync(join(tmpdir(), "frizz-session-restart-"))
+  try {
+    const first = new AccessStore({ signingKey: key, sessions: fileSessionDirectory(dir), randomToken: counter() })
+    const redeemed = first.redeem(first.issue().code)
+    assert.ok(redeemed.ok)
 
-  const afterRestart = new AccessStore({ signingKey: key, randomToken: counter() })
-  assert.equal(afterRestart.verifySession(redeemed.session), true, "the phone stays signed in")
+    const afterRestart = new AccessStore({ signingKey: key, sessions: fileSessionDirectory(dir), randomToken: counter() })
+    assert.equal(afterRestart.verifySession(redeemed.session), true, "the phone stays signed in")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("the session key is persisted at 0600 and reloaded, not regenerated", () => {
@@ -227,15 +232,26 @@ test("a session id cannot be swapped for another device's — the signature cove
   assert.equal(store.verifySession(`${exp}.${laptop.id}.${nonce}.${sig}`), false)
 })
 
-test("a session minted before ids existed still works, so upgrading signs nobody out", () => {
-  // Legacy payload is `<expiry>.<nonce>`; it has no id, so it cannot be revoked individually — but it
-  // must not be rejected outright, or every device is kicked by the upgrade that added this feature.
+test("the signing key alone mints nothing: a session has to exist in the directory, as it was issued", () => {
+  // What a copy of `session-key` buys. Every cookie below carries a good signature.
   const key = Buffer.alloc(32, 7)
   const store = new AccessStore({ signingKey: key })
-  const expiry = Date.now() + 60_000
-  const payload = `${expiry}.legacy-nonce`
-  const sig = createHmac("sha256", key).update(payload).digest("base64url")
-  assert.equal(store.verifySession(`${payload}.${sig}`), true)
+  const forge = (payload: string) => `${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`
+  const phone = store.redeem(store.issue().code, "iPhone")
+  assert.ok(phone.ok)
+  const hundredYears = Date.now() + 100 * 365 * 24 * 60 * 60_000
+
+  assert.equal(store.verifySession(forge(`${Date.now() + 60_000}.never-recorded.nonce`)), false, "an id nobody redeemed")
+  assert.equal(store.verifySession(forge(`${hundredYears}.never-recorded.nonce`)), false, "the same, for a century")
+  assert.equal(store.verifySession(forge(`${Date.now() + 60_000}.two-part-nonce`)), false, "the old shape, with no id")
+  assert.equal(store.verifySession(forge(`${hundredYears}.${phone.id}.nonce`)), false, "a real id, past the expiry it was issued")
+  assert.equal(store.sessionIdOf(forge(`${hundredYears}.${phone.id}.nonce`)), null)
+
+  // Inside the record's bounds it does verify. It shows under that device's label, and dies with it.
+  const within = forge(`${phone.expiresAt}.${phone.id}.nonce`)
+  assert.equal(store.verifySession(within), true)
+  assert.equal(store.revokeSession(phone.id), true)
+  assert.equal(store.verifySession(within), false)
 })
 
 test("a device label is coarse on purpose, and never invents one", () => {
@@ -290,8 +306,8 @@ test("a session signs ITSELF out: its own id is revoked and persisted, and no ot
     assert.equal(store.verifySession(phone.session), false, "the phone still works after signing itself out")
     assert.equal(store.verifySession(laptop.session), true, "signing the phone out kicked the laptop")
     // On disk, where a restart and `frizz --sessions` both read it.
-    assert.equal(fileSessionDirectory(dir).isRevoked(phone.id), true)
-    assert.equal(fileSessionDirectory(dir).isRevoked(laptop.id), false)
+    assert.notEqual(fileSessionDirectory(dir).get(phone.id)?.revokedAt, undefined)
+    assert.equal(fileSessionDirectory(dir).get(laptop.id)?.revokedAt, undefined)
 
     // Once dead, presenting it again ends nothing.
     assert.deepEqual(store.signOutSession(phone.session), { result: "no-session" })
@@ -316,27 +332,20 @@ test("signing out needs a VALID session: nothing, a forgery, or a grafted id rev
   assert.deepEqual(store.sessions.list().filter((r) => r.revokedAt !== undefined), [])
 })
 
-test("a session the directory never recorded still signs itself out, instead of silently not", () => {
-  // A board whose directory was in memory forgets its records on restart while a persisted key keeps
-  // verifying the session. revoke() refuses unknown ids, so without recording first this reported
-  // success and changed nothing.
-  const key = Buffer.alloc(32, 9)
-  const before = new AccessStore({ signingKey: key })
-  const phone = before.redeem(before.issue().code, "iPhone")
-  assert.ok(phone.ok)
-  const after = new AccessStore({ signingKey: key })
-  assert.equal(after.verifySession(phone.session), true)
-  assert.deepEqual(after.signOutSession(phone.session), { result: "revoked", id: phone.id })
-  assert.equal(after.verifySession(phone.session), false)
-})
+test("a sign-out says who it ended, so whatever holds that device's sockets can close them", () => {
+  const ended: Array<string | undefined> = []
+  const store = new AccessStore({ onSignedOut: (id) => ended.push(id) })
+  const phone = store.redeem(store.issue().code, "iPhone")
+  const laptop = store.redeem(store.issue().code, "macOS")
+  assert.ok(phone.ok && laptop.ok)
 
-test("a pre-id session cannot be put on the denylist, and says so rather than claiming it was", () => {
-  const key = Buffer.alloc(32, 7)
-  const store = new AccessStore({ signingKey: key })
-  const payload = `${Date.now() + 60_000}.legacy-nonce`
-  const legacy = `${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`
-  assert.deepEqual(store.signOutSession(legacy), { result: "legacy" })
-  assert.deepEqual(store.sessions.list(), [])
+  assert.deepEqual(store.signOutSession(phone.session), { result: "revoked", id: phone.id })
+  assert.deepEqual(ended, [phone.id])
+  assert.equal(store.revokeSession(phone.id), false, "already gone")
+  assert.equal(store.revokeSession("no-such-id"), false)
+  assert.deepEqual(ended, [phone.id], "nothing happened, so nothing is announced")
+  assert.equal(store.signOutAll(), 1)
+  assert.deepEqual(ended, [phone.id, undefined])
 })
 
 test("a session lasts 30 days, and the redeem result says so", () => {
@@ -359,18 +368,14 @@ function preEpochBoard(dir: string) {
   const store = new AccessStore({ signingKey: key, sessions: fileSessionDirectory(dir) })
   const phone = store.redeem(store.issue().code, "iPhone")
   assert.ok(phone.ok)
-  // And one from before per-device ids, which no denylist can name: only a new key ends it.
-  const payload = `${Date.now() + 60 * 24 * 60 * 60_000}.legacy-nonce`
-  const legacy = `${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`
-  assert.equal(store.verifySession(legacy), true)
   assert.equal(readSessionEpoch(dir), 0)
-  return { phone, legacy }
+  return { phone }
 }
 
 test("an epoch bump refuses every session from before it, once, and a new one works", () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-epoch-"))
   try {
-    const { phone, legacy } = preEpochBoard(dir)
+    const { phone } = preEpochBoard(dir)
 
     // The upgraded launcher's start.
     const upgraded = loadSessionState(dir)
@@ -379,7 +384,6 @@ test("an epoch bump refuses every session from before it, once, and a new one wo
     assert.match(sessionEpochNotice(upgraded.signedOut) ?? "", /signed out 1 remote device/)
     const board = new AccessStore({ signingKey: upgraded.key, sessions: upgraded.directory })
     assert.equal(board.verifySession(phone.session), false, "a pre-epoch session still verifies")
-    assert.equal(board.verifySession(legacy), false, "a pre-id session survived the epoch")
     assert.equal(board.sessions.list().every((r) => r.revokedAt !== undefined), true, "--sessions would still list the phone")
 
     const laptop = board.redeem(board.issue().code, "Chrome on macOS")
@@ -438,10 +442,10 @@ test("an unreadable epoch record errs towards one more sign-out, never towards k
   }
 })
 
-test("sign out all rotates the key, so a session the denylist cannot name dies too", () => {
+test("sign out all rotates the key as well as marking every record", () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-signout-all-"))
   try {
-    const { phone, legacy } = preEpochBoard(dir)
+    const { phone } = preEpochBoard(dir)
     let rotated: Buffer | undefined
     const board = new AccessStore({
       signingKey: loadOrCreateSessionKey(dir),
@@ -451,7 +455,6 @@ test("sign out all rotates the key, so a session the denylist cannot name dies t
     assert.equal(board.signOutAll(), 1)
     assert.ok(rotated)
     assert.equal(board.verifySession(phone.session), false)
-    assert.equal(board.verifySession(legacy), false, "--sign-out all left a pre-id session signed in")
     const next = board.redeem(board.issue().code, "iPad")
     assert.ok(next.ok)
     assert.equal(board.verifySession(next.session), true, "the board stopped minting usable sessions")

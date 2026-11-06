@@ -70,6 +70,14 @@ export function toParsedQuestion(spec: AskedQuestion): { question: ParsedQuestio
   }
 }
 
+/** Does this question have to be answered on the machine? A remote session picks listed options, so a
+ *  secret, a free-text box and a `danger` gate anywhere in the tree all keep it there (the server's
+ *  remoteAnswerRefusal is the rule, and judges only the branch taken; this asks before any is). */
+export function questionNeedsMachine(spec: AskedQuestion): boolean {
+  if (spec.secret || spec.danger || !spec.options?.length) return true
+  return spec.options.some((option) => option.followUps?.some(questionNeedsMachine))
+}
+
 /** Which option a staged answer has taken, for the purpose of opening a branch. Only a SINGLE-select
  *  question can open one (a `multi` option cannot carry follow-ups — several picked options would open
  *  several branches at once, refused at registration). The chip governs while set: focusing or typing

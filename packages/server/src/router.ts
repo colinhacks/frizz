@@ -218,7 +218,8 @@ import { peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { deliverableInputText } from "./backend/claude-agent-sdk-protocol.ts"
 import { claudeModelStanding, claudeModelUpgradeBlock, claudeModelUpgradeDue, claudeModelUpgradeRefusal, claudeUpgradeCandidate, SERVER_STARTED_AT_MS } from "./backend/claude-model-upgrade.ts"
 import { log as frizzLog } from "./logging.ts"
-import { audited, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
+import { audited, currentRequestOrigin, recordAudit, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
+import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { codexSandbox } from "./backend/codex.ts"
 import { liveBrokerRecords } from "./backend/claude-broker-host.ts"
 import { hibernationVerdict } from "./thread-hibernation.ts"
@@ -2795,7 +2796,7 @@ export function createRouter(ctx: AppContext) {
           detail: { prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
         },
         () => ctx.dispatcher.dispatch(input, { backend: input.backend }),
-        (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId } }),
+        (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId, permissionMode: ctx.storage.getSession(result.slug)?.permission_mode ?? null } }),
       ),
     }),
 
@@ -3971,6 +3972,11 @@ export function createRouter(ctx: AppContext) {
           ...(everyMs !== everyAsked ? { every: input.every } : {}),
           ...(forMs !== forAsked ? { for: input.for } : {}),
         }
+        // Written first, because the first check below IS this command running, whatever comes of it.
+        recordAudit(ctx.audit, () => ({
+          action: "commandWatchArm", outcome: "ok", project: thisProject, thread: input.slug, servedBy: ctx.project.id,
+          detail: { command: textDigest(command), everyMs, forMs },
+        }))
         // THE FIRST CHECK, before anything is stored. Exit 0 means the condition already holds: nothing
         // is armed, and the worker carries on now instead of resting a whole cadence to be told so.
         const first = await service!.probe(input.slug, command)
@@ -4126,6 +4132,10 @@ export function createRouter(ctx: AppContext) {
         const id = `cmw_${randomUUID().replace(/-/g, "").slice(0, 12)}`
         // A registration trumps a done — see setOwnThreadTimer.
         ctx.storage.clearThreadDone(input.slug)
+        recordAudit(ctx.audit, () => ({
+          action: "monitorArm", outcome: "ok", project: thisProject, thread: input.slug, servedBy: ctx.project.id,
+          detail: { id, command: textDigest(command), forMs },
+        }))
         ctx.storage.armMonitor({ id, slug: input.slug, command, description, createdAtMs: now, expiresAtMs: now + forMs })
         const started = await ctx.scheduler.startMonitor(id)
         ctx.board.refresh()
@@ -4583,8 +4593,15 @@ export function createRouter(ctx: AppContext) {
       output: z.object({ resolved: z.array(z.object({ input: z.string(), path: z.string().nullable() })) }),
       handler: async ({ input }) => {
         const memo = new Map<string, string | null>()
+        // A remote reader learns about the files it could open, and no others (remote-reads.ts).
+        const via = currentRequestOrigin().via
+        const remote = via === "public" || via === "network"
+        const dirs = remote ? remoteProjectDirs(ctx.project.dir) : []
         const resolved = input.paths.map((raw) => {
-          if (!memo.has(raw)) memo.set(raw, resolveOpenableFile(raw, ctx.project.dir, openRoots))
+          if (!memo.has(raw)) {
+            const path = resolveOpenableFile(raw, ctx.project.dir, openRoots)
+            memo.set(raw, path && (!remote || remoteReadablePath(path, dirs)) ? path : null)
+          }
           return { input: raw, path: memo.get(raw) ?? null }
         })
         return { resolved }

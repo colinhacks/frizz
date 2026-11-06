@@ -26,20 +26,47 @@ import {
  */
 
 export interface ServeOptions {
-  /** The board's loopback origin, e.g. `http://127.0.0.1:9393`. */
+  /** The supervisor's relay listener, e.g. `http://127.0.0.1:53124`. Never its main port: see relayListener. */
   origin: string;
   /** Where a frame goes. Separated so a test can collect them instead of writing to a socket. */
   send: (frame: RelayUpFrame) => void;
   /**
    * The public origin the visitor used, so the board's own gate sees the request as arriving there.
    *
-   * WITHOUT THIS THE BOARD REFUSES EVERY RELAYED REQUEST. Frizz's origin gate keys on the request
-   * having arrived AS the declared public origin; a request forwarded to loopback with a loopback Host
-   * would be judged local and skip the access gate entirely, which is the opposite of what anyone
-   * wants for a board on the internet.
+   * The relay listener forces the same Host whatever this says. A Host is what the board's main port
+   * judges a caller by, so nothing a frame carries is trusted to set it: see visitorHeaders.
    */
   publicOrigin: string;
 }
+
+/**
+ * What a frame may not say about itself: which host it arrived at, who called, or what a proxy before
+ * it saw. The frame's author is the relay, and the board does not trust the relay with any of that.
+ */
+const FRAME_CLAIMS = /^(?:host|x-frizz-caller|forwarded|x-forwarded-.*)$/;
+
+/**
+ * A frame's headers as the one request they may describe: each name once, in lower case, none of
+ * FRAME_CLAIMS, and the Host the board is publicly known by.
+ *
+ * LOWER-CASED BEFORE ANYTHING ELSE LOOKS AT THEM. Copied as sent, a frame carrying both `host` and
+ * `Host` kept both keys, Node wrote them in order, the later one won, and the supervisor read a
+ * loopback name as the operator's own tab: no session asked for, and a sign-in link minted on request
+ * (red team 2026-11-05).
+ */
+function visitorHeaders(frameHeaders: Array<[string, string]>, publicUrl: URL): Record<string, string> {
+  const headers = new Map<string, string>();
+  for (const [name, value] of stripHopByHop(frameHeaders)) {
+    const lower = name.toLowerCase();
+    if (FRAME_CLAIMS.test(lower) || headers.has(lower)) continue;
+    headers.set(lower, value);
+  }
+  headers.set("host", publicUrl.host);
+  return Object.fromEntries(headers);
+}
+
+/** What goes back for a frame that describes no request anyone can make. */
+const badFrameAnswer = (id: string): RelayUpFrame => ({ t: "res", id, status: 400, headers: [], end: true });
 
 /** A response streams when it has no length we can know up front — SSE above all. */
 function shouldStream(headers: Array<[string, string]>): boolean {
@@ -71,9 +98,21 @@ export interface RelayedRequest {
  * pending for as long as the visitor keeps the connection open.
  */
 export function serveRelayRequest(frame: Extract<RelayDownFrame, { t: "req" }>, options: ServeOptions): RelayedRequest {
-  const target = new URL(frame.url);
+  // A FRAME IS UNTRUSTED INPUT, and only its `t` and `id` have been checked. Everything that can throw
+  // on its contents runs here, or inside the promise below, whose `catch` answers rather than rejects:
+  // one unhandled rejection in this process would take the whole board down.
+  let target: URL;
+  let headers: Record<string, string>;
+  let body: Buffer | undefined;
+  try {
+    target = new URL(frame.url);
+    headers = visitorHeaders(frame.headers, new URL(options.publicOrigin));
+    body = frame.body ? Buffer.from(decodeBody(frame.body)) : undefined;
+  } catch {
+    options.send(badFrameAnswer(frame.id));
+    return { done: Promise.resolve(), cancel: () => {} };
+  }
   const local = new URL(options.origin);
-  const publicUrl = new URL(options.publicOrigin);
 
   let cancelled = false;
   let abort: (() => void) | undefined;
@@ -83,10 +122,6 @@ export function serveRelayRequest(frame: Extract<RelayDownFrame, { t: "req" }>, 
     const send = (upFrame: RelayUpFrame) => {
       if (!cancelled) options.send(upFrame);
     };
-    const headers: Record<string, string> = {};
-    for (const [name, value] of stripHopByHop(frame.headers)) headers[name] = value;
-    // Present the request as the visitor's, not as loopback. See ServeOptions.publicOrigin.
-    headers.host = publicUrl.host;
 
     const req = httpRequest(
       {
@@ -177,7 +212,7 @@ export function serveRelayRequest(frame: Extract<RelayDownFrame, { t: "req" }>, 
       resolve();
     });
 
-    if (frame.body) req.write(Buffer.from(decodeBody(frame.body)));
+    if (body) req.write(body);
     req.end();
 
     // Destroying the request destroys its response stream too, so a streaming SSE body stops being
@@ -187,6 +222,9 @@ export function serveRelayRequest(frame: Extract<RelayDownFrame, { t: "req" }>, 
       req.destroy();
       resolve();
     };
+  }).catch(() => {
+    // Node refused what the frame asked for: a method or a header value it will not write.
+    if (!cancelled) options.send(badFrameAnswer(frame.id));
   });
 
   return {
@@ -220,13 +258,11 @@ const HANDSHAKE_HEADERS: ReadonlySet<string> = new Set([
  * The visitor's socket lives in the relay; this one is local; every message is carried between them as
  * a frame. Returns a handle the caller drives when frames arrive for this session.
  *
- * THE VISITOR'S HEADERS ARE THE WHOLE POINT OF THIS FUNCTION'S SHAPE, and getting them wrong fails in
- * both directions. Frizz gates an upgrade on three of them together: the `Host` decides whether the
- * request arrived publicly and so whether the access gate applies at all, the `Origin` has to agree
- * with it, and the session cookie is what proves the visitor redeemed an access code. Forward none of
- * them and the board destroys the socket, because a browser always sends an Origin and this would not.
- * Forward the Host alone and it is far worse: the board would judge the request LOCAL and hand a shell
- * to anyone who found the name.
+ * THE VISITOR'S HEADERS ARE THE WHOLE POINT OF THIS FUNCTION'S SHAPE. Frizz gates an upgrade on two of
+ * them together: the `Origin` has to agree with the public origin, and the session cookie is what proves
+ * the visitor redeemed an access code. Forward neither and the board destroys the socket, because a
+ * browser always sends an Origin and this would not. The `Host` is not theirs to give: the relay
+ * listener this dials treats every arrival as public, whatever it names.
  */
 export function serveRelayWebSocket(
   frame: Extract<RelayDownFrame, { t: "ws-open" }>,
@@ -237,25 +273,17 @@ export function serveRelayWebSocket(
     connect?: (url: string, headers: Record<string, string>) => WebSocketLike
   },
 ): NestedSession {
-  const target = new URL(frame.url);
-  const local = new URL(options.origin);
-  const publicUrl = new URL(options.publicOrigin);
-  target.protocol = local.protocol === "https:" ? "wss:" : "ws:";
-  target.host = local.host;
-
-  const headers: Record<string, string> = {};
-  for (const [name, value] of stripHopByHop(frame.headers)) {
-    if (!HANDSHAKE_HEADERS.has(name.toLowerCase())) headers[name] = value;
-  }
-  // Present the upgrade as the visitor's, not as loopback. See the note above: this single line is
-  // what puts the board's access gate in front of a relayed terminal.
-  headers.host = publicUrl.host;
-
   const open =
     options.connect ??
     ((url: string, h: Record<string, string>) => new WsWebSocket(url, { headers: h }) as unknown as WebSocketLike);
   let socket: WebSocketLike;
   try {
+    const target = new URL(frame.url);
+    const local = new URL(options.origin);
+    target.protocol = local.protocol === "https:" ? "wss:" : "ws:";
+    target.host = local.host;
+    const headers = visitorHeaders(frame.headers, new URL(options.publicOrigin));
+    for (const name of HANDSHAKE_HEADERS) delete headers[name];
     socket = open(target.toString(), headers);
   } catch (error) {
     options.send({ t: "ws-ack", id: frame.id, ok: false });

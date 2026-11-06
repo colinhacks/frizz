@@ -459,6 +459,7 @@ export interface CloudTransport {
  */
 export async function startRelay(
   config: CloudConfig,
+  /** The supervisor's relay listener, not the board's own port: see relayListener. */
   port: number,
   home = homedir(),
   onStatus?: (message: string) => void,

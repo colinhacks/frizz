@@ -2,11 +2,13 @@
 // only a private loopback port, which means a browser can still ask the owner to recover it after a
 // crash.  This intentionally contains no source-watch logic: stable and legacy launchers can share it.
 import { request as requestHttp, createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http"
+import type { AddressInfo } from "node:net"
 import { connect } from "node:net"
 import { pipeline } from "node:stream"
 import {
   AccessStore,
   describeDevice,
+  liveSessions,
   secretsMatch,
   type AccessCode,
   type SessionDirectory,
@@ -16,6 +18,7 @@ import {
   authoritySendsFetchMetadata,
   bindHostIsExposed,
   FORWARDED_HEADERS,
+  FRAME_REFUSED_HEADERS,
   isTrustedLocalHttpRequest,
   LOOPBACK_BIND_HOST,
   parseLocalHost,
@@ -25,7 +28,8 @@ import {
 } from "./local-origin.ts"
 import { localImageHeaders, localImageStream, resolveLocalImage } from "./local-image.ts"
 import { recoveryPage, unauthorizedPage, unlistedHostPage } from "./supervisor-pages.ts"
-import { CALLER_HEADER, encodeCallerStamp, type CallerVia } from "./audit.ts"
+import { CALLER_HEADER, encodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog, type CallerVia } from "./audit.ts"
+import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
 import { FRIZZ_ROUTE_PREFIX, frizzRoute } from "@frizz/shared"
 
 export const SUPERVISOR_CONTROL_PREFIX = "/_frizz/control"
@@ -45,15 +49,12 @@ export const SUPERVISOR_CONTROL_PROTOCOL = 1
 /**
  * What POST SUPERVISOR_SIGN_OUT_PATH answers.
  *
- * - `signed-out`: this device's session is on the persisted denylist and its cookie is cleared.
- * - `cookie-cleared`: the session predates per-device ids, so there was nothing to put on the denylist;
- *   this browser forgot it, which is all that can be done without rotating the key.
+ * - `signed-out`: this device's session record is marked, and its cookie is cleared.
  * - `no-remote-session`: the request carried no session to end — the operator's own tab on loopback,
  *   a board with no public origin, or a cookie that was already dead. Nothing was changed.
  */
 export type SignOutThisDeviceResult =
   | { protocol: 1; result: "signed-out"; id: string }
-  | { protocol: 1; result: "cookie-cleared" }
   | { protocol: 1; result: "no-remote-session" }
 
 export type RestartControlState = "ready" | "restarting" | "failed"
@@ -79,6 +80,8 @@ export interface RestartSupervisorProxyOptions {
    *
   /** Fired when an access code is redeemed, so a launcher can repaint a now-spent QR. */
   onCodeConsumed?: () => void
+  /** A new device just signed in: what it calls itself, and how many now hold a session. */
+  onDeviceSignedIn?: (device: { label: string; devices: number }) => void
   /**
    * Persisted HMAC key for sessions. Without one, every restart signs out every device — which made a
    * nominally year-long cookie (30 days since 2026-10-08) last only until the next artifact update.
@@ -94,6 +97,8 @@ export interface RestartSupervisorProxyOptions {
    * next restart — and a board restarts on every artifact update and every ordinary ctrl-C.
    */
   sessionDirectory?: SessionDirectory
+  /** Where a remote caller's refusals here are written, beside the application server's own. */
+  audit?: AuditLog
   /** The current disposable child. Undefined means it is starting, stopped, or failed. */
   childPort: () => number | undefined
   /** Must coalesce work itself or return the same in-flight promise for repeat requests. */
@@ -181,7 +186,12 @@ function proxyHeaders(
 }
 
 export const ACCESS_CODE_PARAM = "frizz_code"
-const SESSION_COOKIE = "frizz_session"
+/**
+ * `__Host-` is the browser's promise that nothing but this exact origin set it: no parent domain, so a
+ * page on another `*.frizz.sh` name cannot plant a cookie that shadows this one. It needs what the exchange
+ * sets anyway: `Secure`, `Path=/`, no `Domain`. The name changed on 2026-11-05, so each device signs in once.
+ */
+const SESSION_COOKIE = "__Host-frizz_session"
 /** Loopback spellings the token gate must never challenge — the operator's own tab on the box. */
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"])
 
@@ -216,6 +226,13 @@ function isControlRequest(req: IncomingMessage): boolean {
     || url.pathname === SUPERVISOR_SESSIONS_PATH
     || url.pathname === SUPERVISOR_SIGN_OUT_PATH
 }
+
+const LOOPBACK_ONLY_CONTROL_PATHS: ReadonlySet<string> = new Set([
+  SUPERVISOR_RESTART_PATH,
+  SUPERVISOR_UPDATE_RESTART_PATH,
+  SUPERVISOR_ACCESS_CODE_PATH,
+  SUPERVISOR_SESSIONS_PATH,
+])
 
 // `/_frizz/local-image` AND `/_frizz/<project>/local-image` — the client builds it from `apiBase()`,
 // which carries the project slug on every prefixed board. Matching only the unprefixed spelling meant
@@ -279,6 +296,17 @@ export class RestartSupervisorProxy {
   private readonly access: AccessStore
   /** Both halves of every live upgraded pair, so close() can actually finish. See close(). */
   private readonly upgradedSockets = new Set<import("node:stream").Duplex>()
+  /** The relay's own listener, once asked for: see relayListener. */
+  private relayServer: Server | null = null
+  private relayPort: Promise<number> | null = null
+  /** Every connection `relayServer` accepted. Being in here is what makes a request public. */
+  private readonly relayedSockets = new WeakSet<object>()
+  /**
+   * What each session has open right now, by id: a way to end every socket and stream forwarded under it.
+   * The gate runs once, when a request arrives, so without these a sign-out left an open board socket
+   * working until it happened to drop. Signing out is the incident-response step; it has to mean now.
+   */
+  private readonly sessionHolds = new Map<string, Set<() => void>>()
 
   constructor(options: RestartSupervisorProxyOptions) {
     this.options = options
@@ -291,16 +319,18 @@ export class RestartSupervisorProxy {
       ...(options.sessionKey ? { signingKey: options.sessionKey } : {}),
       ...(options.rotateSessionKey ? { rotateSigningKey: options.rotateSessionKey } : {}),
       ...(options.sessionDirectory ? { sessions: options.sessionDirectory } : {}),
+      onSignedOut: (id) => this.dropSessionHolds(id),
     })
     this.policy = this.buildPolicy()
   }
 
   /**
    * Change the public origin on a running board — what the R pane does when the operator picks or
-   * clears a remote setup. Requests already in flight finish under the policy they started with; the
-   * next one is judged by the new origin. Sessions survive the change.
+   * clears a remote setup. What was open under the old origin is closed, so "Off" leaves nothing behind;
+   * the next request is judged by the new one. Sessions survive the change.
    */
   setPublicOrigin(origin: string | undefined): void {
+    if (origin !== this.publicOrigin) this.dropSessionHolds()
     this.publicOrigin = origin
     this.policy = this.buildPolicy()
   }
@@ -346,6 +376,51 @@ export class RestartSupervisorProxy {
   }
 
   /**
+   * The relay agent's own way in: a second listener, on loopback, on a port the system picks. Every
+   * request that comes through it is public, whatever it claims about itself.
+   *
+   * THE MAIN PORT JUDGES BY HOST, and that is sound only for something that has to route by Host to get
+   * here: a tunnel's edge, or an operator's proxy. A relay frame writes its own headers, and the agent
+   * forwards them from inside this process, so on the main port one forged `Host` read as the operator's
+   * own tab, with no session asked for. Here nothing in a frame can change the answer, because the answer
+   * comes from which socket the request arrived on. A local process that finds this port is only treated
+   * as a stranger, which costs nothing.
+   */
+  relayListener(): Promise<number> {
+    this.relayPort ??= new Promise<number>((resolveListen, rejectListen) => {
+      const server = createServer((req, res) => {
+        if (this.admitRelayed(req)) return this.handle(req, res)
+        res.writeHead(403, { "content-type": "text/plain; charset=UTF-8" })
+        res.end("Forbidden")
+      })
+      server.keepAliveTimeout = 5_000
+      server.headersTimeout = 10_000
+      server.on("connection", (socket) => this.relayedSockets.add(socket))
+      server.on("upgrade", (req, socket, head) => {
+        if (this.admitRelayed(req)) return this.handleUpgrade(req, socket, head)
+        rejectWebSocketUpgrade(socket, 403, "Forbidden")
+      })
+      server.once("error", rejectListen)
+      server.listen(0, LOOPBACK_BIND_HOST, () => {
+        server.off("error", rejectListen)
+        this.relayServer = server
+        resolveListen((server.address() as AddressInfo).port)
+      })
+    })
+    return this.relayPort
+  }
+
+  /**
+   * Fix a relayed request's Host to the public origin, or refuse it when there is none: the agent starts
+   * before the origin is declared, and a board that declares no origin has nothing to serve a relay as.
+   */
+  private admitRelayed(req: IncomingMessage): boolean {
+    if (!this.publicOrigin) return false
+    req.headers.host = new URL(this.publicOrigin).host
+    return true
+  }
+
+  /**
    * Is this request allowed to reach the child at all?
    *
    * Deliberately the WEAKER of the two gates: a missing Origin passes here and the child then applies
@@ -384,19 +459,22 @@ export class RestartSupervisorProxy {
   }
 
   async close(): Promise<void> {
-    const server = this.server
+    const servers = [this.server, this.relayServer].filter((server) => server !== null)
     this.server = null
-    if (!server) return
-    await new Promise<void>((resolveClose, rejectClose) => {
+    this.relayServer = null
+    this.relayPort = null
+    if (servers.length === 0) return
+    const closed = servers.map((server) => new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => error ? rejectClose(error) : resolveClose())
       server.closeAllConnections()
-      // An upgraded socket is DETACHED from the http server, so closeAllConnections() cannot see it
-      // and server.close() waits on it forever. Frizz always has live WebSockets (the board socket and
-      // every open terminal), so without this the proxy never finishes closing once a browser has
-      // connected. Measured: close() hung indefinitely after a single forwarded upgrade.
-      for (const socket of this.upgradedSockets) socket.destroy()
-      this.upgradedSockets.clear()
-    })
+    }))
+    // An upgraded socket is DETACHED from the http server, so closeAllConnections() cannot see it
+    // and server.close() waits on it forever. Frizz always has live WebSockets (the board socket and
+    // every open terminal), so without this the proxy never finishes closing once a browser has
+    // connected. Measured: close() hung indefinitely after a single forwarded upgrade.
+    for (const socket of this.upgradedSockets) socket.destroy()
+    this.upgradedSockets.clear()
+    await Promise.all(closed)
   }
 
   private status(): { state: RestartControlState; message?: string; artifactDigest?: string; preparing?: boolean; updateRestart: boolean; updateAvailable?: boolean; version?: string; launcherVersion?: string; updateVersion?: string; dev?: boolean } {
@@ -499,15 +577,16 @@ export class RestartSupervisorProxy {
       res.end("Forbidden")
       return
     }
+    // LOOPBACK ONLY, these four: they are the machine's, and a session is not presence on it. Restarting
+    // or updating runs the launcher's own work on a remote say-so, and the other two are below.
+    if (LOOPBACK_ONLY_CONTROL_PATHS.has(pathname) && this.callerVia(req) !== "loopback") {
+      this.refuseRemote(req, res, pathname)
+      return
+    }
     if (pathname === SUPERVISOR_ACCESS_CODE_PATH) {
-      // LOOPBACK ONLY, deliberately. Minting is how you let a NEW device in, so it must require
-      // presence on the machine — not merely a session, which anyone already through the tunnel has.
-      // Otherwise one shared link silently becomes the power to hand out unlimited further links.
-      if (this.arrivedPublicly(req)) {
-        res.writeHead(403)
-        res.end("Forbidden")
-        return
-      }
+      // Minting is how you let a NEW device in, so it must require presence on the machine — not merely
+      // a session, which anyone already through the tunnel has. Otherwise one shared link silently
+      // becomes the power to hand out unlimited further links.
       if (req.method !== "POST") {
         res.writeHead(405, { allow: "POST" })
         res.end()
@@ -523,18 +602,11 @@ export class RestartSupervisorProxy {
       return
     }
     if (pathname === SUPERVISOR_SESSIONS_PATH) {
-      // LOOPBACK ONLY, for the same reason minting is: a stolen session must not be able to sign the
-      // real owner out and keep the board to itself. Being at the machine — or on it over ssh, which
-      // is how a headless box mints a link — is the proof this needs.
-      if (this.arrivedPublicly(req)) {
-        res.writeHead(403)
-        res.end("Forbidden")
-        return
-      }
-      if (!this.publicOrigin) {
-        responseJson(res, 409, { error: "this board has no public origin, so nothing is signed in" })
-        return
-      }
+      // For the same reason minting is: a stolen session must not be able to sign the real owner out and
+      // keep the board to itself. Being at the machine — or on it over ssh, which is how a headless box
+      // mints a link — is the proof this needs. No public origin is no reason to refuse: the relay may be
+      // off while every session is still good for the next time it comes on, and "sign everyone out" is
+      // exactly what someone would run after turning it off in a hurry.
       if (req.method === "GET") {
         responseJson(res, 200, { sessions: this.access.sessions.list() })
         return
@@ -547,9 +619,7 @@ export class RestartSupervisorProxy {
       const body = await readJsonBody(req)
       const id = typeof body?.id === "string" ? body.id : undefined
       if (body?.all === true) {
-        // signOutAll, not the denylist alone: it also rotates the key, so a session the directory never
-        // recorded (minted before per-device ids, or by a server child's request after an epoch bump)
-        // dies too. See signOutOlderSessionEpoch.
+        // signOutAll, not the records alone: it also rotates the key. See signOutOlderSessionEpoch.
         responseJson(res, 200, { signedOut: this.access.signOutAll() })
         return
       }
@@ -559,7 +629,7 @@ export class RestartSupervisorProxy {
       }
       // Reporting the miss matters: an operator who mistypes an id must not be told the lost phone is
       // signed out when nothing happened.
-      if (!this.access.sessions.revoke(id)) {
+      if (!this.access.revokeSession(id)) {
         responseJson(res, 404, { error: `no signed-in device has the id ${id}` })
         return
       }
@@ -592,7 +662,7 @@ export class RestartSupervisorProxy {
         // Sent ONLY when true, so a loopback tab's payload is byte-identical to what it was. The web
         // app cannot tell on its own: the session cookie is HttpOnly, and the page is the same bundle
         // whichever way it was reached. It is a fact about THIS request, never about the board.
-        ...(this.carriesRemoteSession(req) ? { remoteSession: true } : {}),
+        ...(this.carriesRemoteSession(req) ? { remoteSession: true, remoteHost: remoteHostLabel() } : {}),
       })
       return
     }
@@ -663,6 +733,7 @@ export class RestartSupervisorProxy {
    * a tunnelled board stays bound to 127.0.0.1 while being reachable from the internet by name.
    */
   private arrivedPublicly(req: IncomingMessage): boolean {
+    if (this.relayedSockets.has(req.socket)) return true
     const declared = this.publicOrigin
     if (!declared) return false
     const host = parseLocalHost(req.headers.host, this.options.port, this.policy)
@@ -684,8 +755,35 @@ export class RestartSupervisorProxy {
    * staying in somebody's URL bar.
    */
   private sessionAccepted(req: IncomingMessage): boolean {
-    if (!this.publicOrigin) return true
+    if (!this.publicOrigin) return !this.relayedSockets.has(req.socket)
     return this.access.verifySession(readCookie(req.headers.cookie, SESSION_COOKIE))
+  }
+
+  /**
+   * How a request reached this proxy, and the one word everything remote-or-local keys on. `network` is
+   * another machine naming a loopback Host, or an address on an exposed bind, and it is as remote as
+   * `public`: arrivedPublicly alone would call it local.
+   */
+  private callerVia(req: IncomingMessage): CallerVia {
+    if (this.arrivedPublicly(req)) return "public"
+    return isLoopbackAddress(req.socket.remoteAddress ?? null) ? "loopback" : "network"
+  }
+
+  /** Answer a remote caller who asked for something only the machine itself may do, and write it down. */
+  private refuseRemote(req: IncomingMessage, res: ServerResponse, route: string): void {
+    const origin = requestOriginFrom({
+      caller: this.callerStamp(req),
+      userAgent: req.headers["user-agent"],
+      socketRemote: req.socket.remoteAddress,
+    })
+    withRequestOrigin(origin, () => recordAudit(this.options.audit, () => ({
+      action: "remoteRefused",
+      outcome: "refused",
+      project: { id: null, dir: null },
+      detail: { route },
+    })))
+    // `protocol` and `message` are how the page's restart button reads a refusal (web api/restart.ts).
+    responseJson(res, 403, { protocol: SUPERVISOR_CONTROL_PROTOCOL, state: "failed", message: remoteRefusedMessage(), error: remoteRefusedMessage(), code: REMOTE_REFUSED_CODE })
   }
 
   /**
@@ -698,7 +796,7 @@ export class RestartSupervisorProxy {
    */
   private callerStamp(req: IncomingMessage): string {
     const remote = req.socket.remoteAddress ?? null
-    const via: CallerVia = this.arrivedPublicly(req) ? "public" : isLoopbackAddress(remote) ? "loopback" : "network"
+    const via = this.callerVia(req)
     const host = via === "loopback" ? undefined : firstHeader(req.headers.host)
     const forwarded = firstHeader(req.headers["x-forwarded-for"])?.split(",")[0]?.trim()
     const clientIp = via === "public"
@@ -744,10 +842,6 @@ export class RestartSupervisorProxy {
       reply(200, { protocol: SUPERVISOR_CONTROL_PROTOCOL, result: "signed-out", id: outcome.id }, true)
       return
     }
-    if (outcome.result === "legacy") {
-      reply(200, { protocol: SUPERVISOR_CONTROL_PROTOCOL, result: "cookie-cleared" }, true)
-      return
-    }
     // A dead cookie is cleared too: it can never work again, and leaving it only makes the browser keep
     // presenting it. 401 because a public request with no live session is unauthenticated.
     reply(401, { protocol: SUPERVISOR_CONTROL_PROTOCOL, result: "no-remote-session" }, true)
@@ -768,10 +862,14 @@ export class RestartSupervisorProxy {
     if (!redeemed?.ok) {
       // Say WHICH failure. "This link was already used" and "no such link" send a person to very
       // different next actions, and the store keeps consumed codes precisely so we can tell them apart.
-      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...FRAME_REFUSED_HEADERS })
       res.end(unauthorizedPage(redeemed?.reason))
       return true
     }
+    this.options.onDeviceSignedIn?.({
+      label: this.access.sessions.get(redeemed.id)?.label ?? "unknown device",
+      devices: liveSessions(this.access.sessions).length,
+    })
     const cookie = `${SESSION_COOKIE}=${redeemed.session}`
     // The browser forgets the cookie when the session it carries stops verifying, not a year later.
     const maxAge = Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1000))
@@ -798,14 +896,14 @@ export class RestartSupervisorProxy {
     // reject the very request that is meant to establish the session.
     if (this.arrivedPublicly(req) && this.exchangeCode(req, res)) return
     if (this.arrivedPublicly(req) && !this.sessionAccepted(req)) {
-      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...FRAME_REFUSED_HEADERS })
       res.end(unauthorizedPage())
       return
     }
     if (!this.authorityAccepted(req)) {
       const name = unlistedHostName(req.headers.host, this.options.port, this.policy)
       if (name) {
-        res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
+        res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...FRAME_REFUSED_HEADERS })
         res.end(req.method === "HEAD" ? undefined : unlistedHostPage(name))
         return
       }
@@ -814,14 +912,16 @@ export class RestartSupervisorProxy {
       return
     }
     // Keep screenshots responsive even while the disposable child is parsing large transcripts,
-    // restarting, or unavailable. The durable owner applies the same local-origin gate itself.
-    if (isLocalImageRequest(req)) {
+    // restarting, or unavailable. The durable owner applies the same local-origin gate itself. Only for
+    // the machine's own tab: this answers any image on the disk, and what a remote caller may read is
+    // the child's to judge (remote-reads.ts).
+    if (isLocalImageRequest(req) && this.callerVia(req) === "loopback") {
       this.handleLocalImage(req, res)
       return
     }
     const childPort = this.options.childPort()
     if (!childPort) {
-      res.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "retry-after": "2" })
+      res.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "retry-after": "2", ...FRAME_REFUSED_HEADERS })
       res.end(recoveryPage(req.url ?? "/"))
       return
     }
@@ -835,12 +935,38 @@ export class RestartSupervisorProxy {
       res.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
       upstreamResponse.pipe(res)
     })
+    res.once("close", this.holdForSession(req, () => {
+      upstream.destroy()
+      res.destroy()
+    }))
     upstream.once("error", () => {
       if (res.headersSent) return res.destroy()
-      res.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
+      res.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...FRAME_REFUSED_HEADERS })
       res.end(recoveryPage(req.url ?? "/", "unreachable"))
     })
     req.pipe(upstream)
+  }
+
+  /**
+   * Note that `drop` ends something forwarded under this request's session, until the returned function
+   * says it is over. Nothing to note for a request with no remote session: no sign-out can name it.
+   */
+  private holdForSession(req: IncomingMessage, drop: () => void): () => void {
+    const id = this.arrivedPublicly(req) ? this.access.sessionIdOf(readCookie(req.headers.cookie, SESSION_COOKIE)) : null
+    if (!id) return () => {}
+    const holds = this.sessionHolds.get(id) ?? new Set()
+    this.sessionHolds.set(id, holds)
+    holds.add(drop)
+    return () => {
+      holds.delete(drop)
+      if (holds.size === 0 && this.sessionHolds.get(id) === holds) this.sessionHolds.delete(id)
+    }
+  }
+
+  /** End everything open under one session, or under every session when no id is named. */
+  private dropSessionHolds(id?: string): void {
+    const drops = id === undefined ? [...this.sessionHolds.values()].flatMap((holds) => [...holds]) : [...(this.sessionHolds.get(id) ?? [])]
+    for (const drop of drops) drop()
   }
 
   private handleUpgrade(req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
@@ -867,6 +993,10 @@ export class RestartSupervisorProxy {
       this.upgradedSockets.add(half)
       half.once("close", () => this.upgradedSockets.delete(half))
     }
+    socket.once("close", this.holdForSession(req, () => {
+      socket.destroy()
+      upstream.destroy()
+    }))
     upstream.once("connect", () => {
       const headers = proxyHeaders(req, childPort, this.callerStamp(req))
       // proxyHeaders drops the hop-by-hop `connection` header (right for the plain-HTTP handle()
@@ -880,10 +1010,23 @@ export class RestartSupervisorProxy {
         for (const entry of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${entry}`)
       }
       upstream.write(`${lines.join("\r\n")}\r\n\r\n`)
-      if (head.length > 0) upstream.write(head)
-      socket.pipe(upstream).pipe(socket)
+      // NOT ONE MORE BYTE UNTIL THE CHILD SWITCHES. A raw pipe skips the stamp above, so if the child answered
+      // this as ordinary HTTP, the visitor's next bytes would be a new request on that connection with no
+      // stamp, which the child reads as a local caller. The child's own `upgrade` listener doesn't do that
+      // today. This stays true whatever it does.
+      upstream.once("data", (answer: Buffer) => {
+        if (!answer.subarray(0, 13).toString("latin1").match(/^HTTP\/1\.[01] 101 /)) {
+          socket.end(answer)
+          upstream.destroy()
+          return
+        }
+        socket.write(answer)
+        if (head.length > 0) upstream.write(head)
+        socket.pipe(upstream).pipe(socket)
+      })
     })
     upstream.once("error", () => socket.destroy())
+    upstream.once("close", () => socket.destroy())
     socket.once("error", () => upstream.destroy())
   }
 }

@@ -3,7 +3,7 @@ import test from "node:test";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { generateClaimIdentity, parseFrame, RELAY_KEEPALIVE_PING, serializeFrame } from "@frizz/shared";
-import { connectRelay, defaultBackoff, signRelayHandshake, type RelaySocket } from "./relay-connection.ts";
+import { connectRelay, defaultBackoff, RELAY_MAX_OPEN_REQUESTS, RELAY_MAX_OPEN_SOCKETS, signRelayHandshake, type RelaySocket } from "./relay-connection.ts";
 
 /** A socket a test drives by hand: it records what was sent and fires events on demand. */
 function fakeSocket() {
@@ -287,5 +287,102 @@ test("req-cancel aborts the request the relay named, and only that one", async (
     conn.stop();
     server.close();
     await once(server, "close");
+  }
+});
+
+test("a frame nothing can make sense of costs that one frame, and the next is served", async () => {
+  const { port, close } = await new Promise<{ port: number; close: () => void }>((resolve) => {
+    const server = createServer((_, res) => res.end("still here"));
+    server.listen(0, "127.0.0.1", () => resolve({ port: (server.address() as { port: number }).port, close: () => { server.closeAllConnections(); server.close(); } }));
+  });
+  const rejections: unknown[] = [];
+  const onRejection = (reason: unknown) => void rejections.push(reason);
+  process.on("unhandledRejection", onRejection);
+  const h = harness({ boardOrigin: `http://127.0.0.1:${port}` });
+  const conn = await h.start(await generateClaimIdentity());
+  const socket = h.sockets[0]!;
+  socket.fire("open");
+  try {
+  const garbage: unknown[] = [
+    "{",
+    "[]",
+    "null",
+    JSON.stringify({ t: "req" }),
+    { t: "req", id: "a", method: "GET" },
+    { t: "req", id: "b", method: "GET", url: "::::", headers: [] },
+    { t: "req", id: "c", method: "GET", url: "https://ada.frizz.sh/", headers: 7 },
+    { t: "req", id: "d", method: "BAD METHOD", url: "https://ada.frizz.sh/", headers: [] },
+    { t: "req", id: "e", method: "GET", url: "https://ada.frizz.sh/", headers: [], body: "%%%" },
+    { t: "ws-open", id: "f" },
+    { t: "ws-open", id: "g", url: "::::", headers: [] },
+    { t: "ws-msg", id: "nobody", data: 7 },
+    { t: "ws-close", id: "nobody" },
+    { t: "req-cancel", id: "nobody" },
+    { t: "made-up", id: "h" },
+  ];
+  for (const frame of garbage) socket.fire("message", { data: typeof frame === "string" ? frame : JSON.stringify(frame) });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(rejections, []);
+
+  socket.fire("message", { data: serializeFrame({ t: "req", id: "good", method: "GET", url: "https://ada.frizz.sh/", headers: [] }) });
+  const deadline = Date.now() + 5_000;
+  const answer = () => socket.sent.map((d) => parseFrame(d)).find((f) => f?.t === "res" && f.id === "good");
+  while (!answer() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2));
+  assert.equal((answer() as { status?: number } | undefined)?.status, 200);
+  } finally {
+    process.off("unhandledRejection", onRejection);
+    conn.stop();
+    close();
+  }
+});
+
+test("one connection can only open so much, and past that each new one is refused cleanly", async () => {
+  // A board that accepts and does not answer, so each request and terminal stays open until told.
+  const heldTerminals: Array<import("node:http").ServerResponse> = [];
+  const server = createServer((req, res) => { if (req.url === "/ws") heldTerminals.push(res); });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const h = harness({ boardOrigin: `http://127.0.0.1:${port}` });
+  const conn = await h.start(await generateClaimIdentity());
+  try {
+    const socket = h.sockets[0]!;
+    socket.fire("open");
+    const frames = () => socket.sent.map((d) => parseFrame(d));
+    const request = (id: string) => socket.fire("message", { data: serializeFrame({ t: "req", id, method: "GET", url: "https://ada.frizz.sh/", headers: [] }) });
+    const terminal = (id: string) => socket.fire("message", { data: serializeFrame({ t: "ws-open", id, url: "https://ada.frizz.sh/ws", headers: [] }) });
+    const answered = () => frames().filter((f) => f?.t === "res");
+    const refusedTerminals = () => frames().filter((f) => f?.t === "ws-ack" && !(f as { ok: boolean }).ok).map((f) => f?.id);
+    const eventually = async (ok: () => boolean, what: string) => {
+      const deadline = Date.now() + 5_000;
+      while (!ok() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+      assert.ok(ok(), what);
+    };
+
+    for (let i = 0; i <= RELAY_MAX_OPEN_REQUESTS; i++) request(`r${i}`);
+    assert.deepEqual(answered().map((f) => [f?.id, (f as { status?: number }).status]), [[`r${RELAY_MAX_OPEN_REQUESTS}`, 503]]);
+
+    // A reused id neither replaces the request it names nor gets a second one past the ceiling.
+    request("r0");
+    assert.equal(answered().length, 1);
+
+    // Cancelling one makes room.
+    socket.fire("message", { data: serializeFrame({ t: "req-cancel", id: "r0" }) });
+    request("next");
+    assert.equal(answered().length, 1, "room was made, and the new request is in flight");
+
+    for (let i = 0; i <= RELAY_MAX_OPEN_SOCKETS; i++) terminal(`w${i}`);
+    assert.deepEqual(refusedTerminals(), [`w${RELAY_MAX_OPEN_SOCKETS}`]);
+
+    // Once they end, they stop counting.
+    await eventually(() => heldTerminals.length === RELAY_MAX_OPEN_SOCKETS, "every terminal reached the board");
+    for (const res of heldTerminals.splice(0)) { res.writeHead(400); res.end(); }
+    await eventually(() => refusedTerminals().length === RELAY_MAX_OPEN_SOCKETS + 1, "the board's refusals came back");
+    terminal("later");
+    await eventually(() => heldTerminals.length === 1, "a terminal that ended still counted against the ceiling");
+    assert.equal(refusedTerminals().includes("later"), false);
+  } finally {
+    conn.stop();
+    server.closeAllConnections();
+    server.close();
   }
 });

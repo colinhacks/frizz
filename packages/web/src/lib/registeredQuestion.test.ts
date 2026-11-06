@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import type { AskedQuestion } from "@frizz/shared"
 import type { BlockAnswer } from "./questionBlocks.ts"
-import { ROOT_PATH, childPath, liveQuestionNodes, nodeAnswered, registeredAnswer, settledQuestionNodes, toParsedQuestion } from "./registeredQuestion.ts"
+import { ROOT_PATH, childPath, liveQuestionNodes, nodeAnswered, questionNeedsMachine, registeredAnswer, settledQuestionNodes, toParsedQuestion } from "./registeredQuestion.ts"
 
 const blank: BlockAnswer = { chosen: null, chosenSet: [], text: "" }
 const pick = (i: number): BlockAnswer => ({ chosen: i, chosenSet: [], text: "" })
@@ -271,4 +271,18 @@ test("no context, no change: the body is the question line alone", () => {
   const { question } = toParsedQuestion({ ...STORE, context: "   " })
   assert.equal(question.contextMd, "Where should the settings live?")
   assert.equal("detailMd" in question, false)
+})
+
+test("a card a remote session can't answer: secret, danger, free text, or a follow-up that is any of those", () => {
+  const choice = { question: "Which?", kind: "question", options: [{ label: "A" }, { label: "B" }] } as const
+  assert.equal(questionNeedsMachine(choice), false)
+  assert.equal(questionNeedsMachine({ ...choice, kind: "multi" }), false)
+  assert.equal(questionNeedsMachine({ question: "Name it", kind: "question" }), true)
+  assert.equal(questionNeedsMachine({ ...choice, options: [] }), true)
+  assert.equal(questionNeedsMachine({ ...choice, secret: true }), true)
+  assert.equal(questionNeedsMachine({ ...choice, danger: true }), true)
+  const under = (followUp: AskedQuestion): AskedQuestion => ({ ...choice, options: [{ label: "A", followUps: [followUp] }, { label: "B" }] })
+  assert.equal(questionNeedsMachine(under(choice)), false)
+  assert.equal(questionNeedsMachine(under({ ...choice, danger: true })), true)
+  assert.equal(questionNeedsMachine(under({ question: "Name it", kind: "question" })), true)
 })

@@ -40,6 +40,11 @@ import {
   type ProcessGeneration,
 } from "./project-launch.ts"
 import { serverAddressPathForStateDir } from "./frizz-paths.ts"
+import { CALLER_HEADER } from "./audit.ts"
+import { FRAME_REFUSED_HEADERS } from "./local-origin.ts"
+import { auditRemoteRefusal, isRemoteCaller } from "./remote-gate.ts"
+import { remoteRefusedMessage } from "./remote-refusal.ts"
+import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { pidIsAlive } from "./project-identity.ts"
 import { createBootProgressPublisher } from "./boot-progress.ts"
 import { log as frizzLog } from "./logging.ts"
@@ -209,6 +214,8 @@ export interface StartedServer {
 // Everything Frizz serves is under the reserved prefix now, so this is one test instead of a list
 // that had to grow with every new route — and a prefixed request that missed the old allowlist fell
 // through to the SPA shell with a 200, i.e. a blank page rather than an error.
+const firstValue = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value
+
 const isApiUrl = (url: string) => url === FRIZZ_ROUTE_PREFIX || url.startsWith(`${FRIZZ_ROUTE_PREFIX}/`)
 
 /**
@@ -535,6 +542,9 @@ export function serveStatic(distDir: string, req: IncomingMessage, res: ServerRe
       // Sent on every static response, not just the compressed ones: a shared cache in front of a
       // tunnelled Frizz must not hand a brotli body to a client that asked for identity.
       vary: "Accept-Encoding",
+      // Before the 304 below: a browser keeps the frame policy of the response it revalidated from, and
+      // an older copy of the page has none.
+      ...FRAME_REFUSED_HEADERS,
     }
     if (staticIsFresh(req, etag, stats.mtimeMs)) {
       res.writeHead(304, headers)
@@ -740,6 +750,8 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // path, so a symlinked `.md` and its target are one watch.
     watchFile: (path: string, onChange: () => void) =>
       watchLocalFile(resolveWatchableLocalFile(path, openableFileRoots(c.project)), onChange),
+    mayReadRemotely: (path: string) => remoteReadablePath(path, remoteProjectDirs(c.project.dir)) !== null,
+    refusedRemotely: (request: { stamp: string | undefined; userAgent: string | undefined }, detail: Record<string, unknown>) => auditRemoteRefusal(c.audit, request, detail, { id: c.project.id, dir: c.project.dir }),
   })
   let githubInit: Promise<void> | undefined
   let appSocket: AppSocketServer | undefined
@@ -1129,7 +1141,9 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
           (segment) => findProjectBySegment(segment),
           (projectId) => tenants.get(projectId) !== undefined,
         )
-        if (registered) {
+        // It names a project's directory, and only the launcher's probe needs it. A remote caller goes on
+        // to the app, whose gate refuses it.
+        if (registered && !isRemoteCaller(firstValue(req.headers[CALLER_HEADER]))) {
           res.writeHead(200, { "content-type": "application/json" })
           res.end(JSON.stringify(registered))
           return
@@ -1165,11 +1179,17 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
         return
       }
       if (vite) {
+        // Vite's dev middleware serves `/@fs/` and opens an editor on request. It is for this machine.
+        if (isRemoteCaller(firstValue(req.headers[CALLER_HEADER]))) {
+          res.writeHead(403, { "content-type": "text/plain; charset=UTF-8", ...FRAME_REFUSED_HEADERS })
+          res.end(remoteRefusedMessage())
+          return
+        }
         vite.middlewares(req, res, () => {
           try {
             const html = readFileSync(join(webRoot, "index.html"), "utf8")
             void vite!.transformIndexHtml(url, html).then((out) => {
-              res.writeHead(200, { "content-type": "text/html" })
+              res.writeHead(200, { "content-type": "text/html", ...FRAME_REFUSED_HEADERS })
               res.end(out)
             })
           } catch {

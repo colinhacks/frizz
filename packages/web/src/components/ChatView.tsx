@@ -40,6 +40,8 @@ import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { ThreadSurface, useThreadMessages, useThreadSurface, useThreadTranscript, type ThreadTranscript } from "./ThreadSurface.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
 import { MobileAnswerSheet } from "./MobileAnswerSheet.tsx"
+import { useRemoteHost } from "../api/supervisorStatus.ts"
+import { questionNeedsMachine } from "../lib/registeredQuestion.ts"
 import { PhoneAnswerBar, PhoneQuestionsContext, type PhoneQuestions } from "./PhoneQuestionCards.tsx"
 import { RegisteredAnswerSheet } from "./RegisteredAnswerSheet.tsx"
 import { sendEagerFollowUp } from "../lib/eagerComposerSubmission.ts"
@@ -218,6 +220,12 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
     [phone, openQuestions],
   )
   const [answerSheetOpen, setAnswerSheetOpen] = useState(false)
+  // A remote session's sheet steps through what it may answer. The rest stay in the list, saying where.
+  const remoteHost = useRemoteHost()
+  const sheetQuestions = useMemo(
+    () => (remoteHost ? openQuestions.filter((q) => !questionNeedsMachine(q.spec)) : openQuestions),
+    [remoteHost, openQuestions],
+  )
   const steerStamp = useSteeredAt()[slug]
   // The send that ends a rest draws where it will land, stamped with the instant this tab sent it — see
   // lib/restReply. The thread view's own stage: the queue card leaves on a send, so it never draws one.
@@ -426,15 +434,15 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
           // 'cause it's already showing up in the sidebar to the right"). The rail (FocusRail) lists every
           // row the line counts, its saved links and Codex shells included.
           above={phone || railBeside || !thread ? undefined : <QueueOpsSummary thread={thread} transcriptShells={transcriptShells} />}
-          phoneBarOverride={phone && openQuestions.length > 0
-            ? (api) => <PhoneAnswerBar count={openQuestions.length} onAnswer={() => setAnswerSheetOpen(true)} onReply={api.editReply} />
+          phoneBarOverride={phone && sheetQuestions.length > 0
+            ? (api) => <PhoneAnswerBar count={sheetQuestions.length} onAnswer={() => setAnswerSheetOpen(true)} onReply={remoteHost ? undefined : api.editReply} />
             : undefined}
           // The box matches the header above it: the phone bar under the phone's chrome, the desktop box
           // (and its rail's Goal) under the desktop header — which /full keeps at every width.
           phoneChrome={phone}
         />
       </div>
-      {phone && answerSheetOpen && <RegisteredAnswerSheet questions={openQuestions} onClose={() => setAnswerSheetOpen(false)} />}
+      {phone && answerSheetOpen && <RegisteredAnswerSheet questions={sheetQuestions} onClose={() => setAnswerSheetOpen(false)} />}
     </div>
     </PhoneQuestionsContext.Provider>
     </ThreadSurface>

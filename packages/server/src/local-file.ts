@@ -16,6 +16,15 @@ export interface SpawnedOpener {
 
 export type LocalFileSpawn = (command: string, args: readonly string[], options: SpawnOptions) => SpawnedOpener
 
+/**
+ * Is `path` this root, or below it? `real` says `path` is already canonical and the root should be too.
+ * With it off, nothing is resolved: the question is about the path as written.
+ */
+export function isUnderRoot(path: string, root: string, real = true): boolean {
+  if (!real) return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
+  return isUnder(path, root)
+}
+
 function isUnder(real: string, root: string): boolean {
   let rootReal: string
   try { rootReal = realpathSync(root) } catch { return false }
@@ -220,7 +229,8 @@ export function localFileHeaders(file: ServedLocalFile): Record<string, string> 
     "x-content-type-options": "nosniff",
     "cache-control": "private, no-store",
     // A CSP sandbox stops Chrome's PDF viewer from loading at all, so only the download carries one.
-    ...(file.pdf ? {} : { "content-security-policy": "default-src 'none'; sandbox" }),
+    // The board's own reader frames a PDF, and nobody else may.
+    ...(file.pdf ? { "x-frame-options": "SAMEORIGIN" } : { "content-security-policy": "default-src 'none'; sandbox" }),
   }
 }
 

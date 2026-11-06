@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { bindHostIsExposed } from "@frizz/server/local-origin";
-import { loadSessionState, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
+import { liveSessions, loadSessionState, remoteDevicesLine, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
 import {
   establishCloudConfig,
 } from "./cloud.ts";
@@ -462,6 +462,7 @@ async function runSupervisor(
       allowedHosts: [],
       // A spent code repaints the open QR pane as stale, so nobody photographs a dead link.
       onCodeConsumed: () => accessPane?.markConsumed(),
+      onDeviceSignedIn: ({ label, devices }) => activityReadout?.notice("done", "Remote", `${label} signed in · ${remoteDevicesLine(devices)}`),
       sessionKey: sessions.key,
       rotateSessionKey: sessions.rotateKey,
       sessionDirectory: sessions.directory,
@@ -555,6 +556,8 @@ async function runSupervisor(
   process.on("SIGHUP", stop);
   void supervisor.stopRequested.then(stop);
   await supervisor.firstBoot;
+  const heldSessions = liveSessions(sessions.directory).length;
+  if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · frizz --sessions lists them`);
   // The re-exec'd generation prints no boot block (it is not an interactive launch), so this one line
   // is the only thing that tells the operator the handoff finished. Two different things arrive here:
   // Update Frizz execs into a promoted artifact and names its digest, while `--dev` re-execs this

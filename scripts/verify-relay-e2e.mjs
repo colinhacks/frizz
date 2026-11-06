@@ -278,7 +278,7 @@ try {
     // link nothing else covers: whether workerd puts Origin and Cookie into the frame at all. If it
     // drops them, the board's access gate never sees a visitor and a real terminal is refused.
     const visitor = new WsClient(`ws://ada.localhost:${DEV_PORT}/terminal?id=abc`, {
-      headers: { origin: `http://ada.localhost:${DEV_PORT}`, cookie: "frizz_session=probe-value" },
+      headers: { origin: `http://ada.localhost:${DEV_PORT}`, cookie: "__Host-frizz_session=probe-value" },
     });
     const timer = setTimeout(() => resolve({ error: "the terminal never answered" }), 20_000);
     visitor.on("open", () => visitor.send("ls -la"));
@@ -294,7 +294,7 @@ try {
   check("a terminal opens THROUGH the relay and echoes what was typed", typed.data === "pty:ls -la", typed.error ?? JSON.stringify(typed.data));
   check(
     "the visitor's Origin and session cookie survive workerd and reach the board",
-    handshake.origin === `http://ada.localhost:${DEV_PORT}` && handshake.cookie === "frizz_session=probe-value",
+    handshake.origin === `http://ada.localhost:${DEV_PORT}` && handshake.cookie === "__Host-frizz_session=probe-value",
     `origin=${handshake.origin} cookie=${handshake.cookie}`,
   );
   check("and the board is addressed by its PUBLIC host, which is what arms the access gate", handshake.host === `ada.localhost:${DEV_PORT}`, `host=${handshake.host}`);

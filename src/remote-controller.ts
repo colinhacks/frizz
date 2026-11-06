@@ -28,6 +28,8 @@ import {
 export interface RemoteHost {
   /** Declare or clear the origin the gate keys on. */
   setPublicOrigin(origin: string | undefined): void;
+  /** The port the relay agent dials instead of the board's own: everything on it is public. */
+  relayListener(): Promise<number>;
 }
 
 export interface RemoteLog {
@@ -83,7 +85,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
           options.say(message);
         });
       }
-      transport = await startRelay(next, options.port, home, (message) => options.log.info("relay", message));
+      transport = await startRelay(next, await options.host.relayListener(), home, (message) => options.log.info("relay", message));
       options.log.info("relay", `serving ${next.hostname} through the Frizz relay`);
       return;
     }
