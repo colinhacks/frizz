@@ -52,7 +52,7 @@ export const PROVIDER_MARK_GEOMETRY: Record<ProviderMarkKey, string> = {
 const PROVIDER_MARKS: Record<ProviderMarkKey, ProviderMarkDefinition> = {
   claude: { key: "claude", backend: "claude", label: "Claude Code" },
   codex: { key: "codex", backend: "codex", label: "OpenAI Codex" },
-  // The generic mark for an ACP agent Frizz has no brand glyph for (Grok Build, pi, Kilo, goose):
+  // The generic mark for an ACP agent Frizz has no brand glyph for (Grok Build, pi, Kilo):
   // the protocol is the identity Frizz can vouch for, the agent is named in the profile readout.
   acp: { key: "acp", backend: "acp", label: "ACP agent" },
   "acp:opencode": { key: "acp:opencode", backend: "acp", label: "OpenCode" },
