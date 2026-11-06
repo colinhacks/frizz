@@ -1,8 +1,9 @@
 import { proxy, useSnapshot } from "valtio"
 import type { ThreadView } from "@frizz/shared"
-import { activeBandThread } from "@frizz/shared"
+import { activeBandThread, boardQueuedThread } from "@frizz/shared"
 import { isConsolePinned, orderByInteraction, orderDone, orderQueue, orderRunning, queued, sectionOf } from "../groups.ts"
 import type { QueueDirection } from "../groups.ts"
+import { isConsolePath } from "./base-path.ts"
 import type { PendingDispatchEntry } from "./pendingDispatch.ts"
 import { partitionBoard } from "./boardPartition.ts"
 import { keyProject } from "./threadKey.ts"
@@ -102,9 +103,23 @@ export function showMoreOfBand(band: ConsoleFoldedBand): void {
 // history. Asking all of them was 0.9ms of every delta at 5,000 threads (CPU profile, a streaming turn
 // with its drawer open on the Console), and it grew with each project's history.
 
-/** Every project's waiting threads, in the queue's own order. */
-export function consoleQueue(threads: readonly ThreadView[], direction: QueueDirection): ThreadView[] {
-  return orderQueue(partitionBoard(threads).live.filter(queued), direction)
+// A PINNED THREAD'S REPORT LOSES ITS CARD ONLY WHERE A PINNED ROW SHOWS IT INSTEAD, so nothing is ever in
+// neither place. On a project's board that is the board's pin (shared boardQueuedThread). On "By status"
+// it is the Console's own pin, since a project's pin is no part of that view and its row sits on no shelf
+// there. "By project" lifts nothing, whichever pin a thread wears, so a report keeps its card.
+export function holdsCardOnConsole(t: ThreadView, group: ConsoleGroup): boolean {
+  return queued(t) && !(group === "status" && t.plainReport === true && isConsolePinned(t))
+}
+
+/** Does this thread draw a queue card on the page on screen? `needsYou` says it is waiting to be read;
+ *  this says where. A row with no card here opens a drawer instead of scrolling to one. */
+export function holdsCardHere(t: ThreadView, group: ConsoleGroup = state.group): boolean {
+  return isConsolePath() ? holdsCardOnConsole(t, group) : boardQueuedThread(t)
+}
+
+/** Every project's waiting threads with a card on `group`, in the queue's own order. */
+export function consoleQueue(threads: readonly ThreadView[], direction: QueueDirection, group: ConsoleGroup): ThreadView[] {
+  return orderQueue(partitionBoard(threads).live.filter((t) => holdsCardOnConsole(t, group)), direction)
 }
 
 /** The Console's shelf order: oldest pin first, the key on a tie (the project board's rule). */

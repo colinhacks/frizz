@@ -249,6 +249,17 @@ export function isConsolePinned(t: ThreadView): boolean {
   return t.kind === "session" && t.foreign !== true && typeof t.consolePinnedAt === "string" && !drawnUnderParent(t)
 }
 
+/** A PINNED ROW'S UNREAD MARK: is the report it is resting on newer than the human's last look? A report
+ *  on a pin has no card to be seen on, so the shelf row is where it says so. `seenAt` is written by opening
+ *  the thread (router threadSeen), by its drawer and its full-screen page, and again each time a rest lands
+ *  while one of them is open, so a report read as it arrives is never marked. A thread nobody has opened
+ *  since it was dispatched reads as unread. */
+export function unreadReport(t: Pick<ThreadView, "needsYou" | "plainReport" | "lastAssistantAt" | "seenAt">): boolean {
+  if (t.needsYou !== true || t.plainReport !== true) return false
+  if (!t.seenAt) return true
+  return Date.parse(t.lastAssistantAt ?? "") > Date.parse(t.seenAt)
+}
+
 /** Which shelf a row's pin speaks for: its project board's, or the Console's "By status" view's. */
 export type PinShelf = "board" | "console"
 

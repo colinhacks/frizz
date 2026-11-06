@@ -239,7 +239,7 @@ import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
+import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, boardQueuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
@@ -4877,7 +4877,7 @@ export function createRouter(ctx: AppContext) {
           try {
             const { threads } = await board.snapshot()
             counts[project.id] = {
-              queued: threads.filter(queuedThread).length,
+              queued: threads.filter(boardQueuedThread).length,
               running: threads.filter(activeBandThread).length,
               asks: threads.filter(boardAskThread).length,
             }

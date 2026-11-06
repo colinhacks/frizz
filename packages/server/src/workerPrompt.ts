@@ -471,6 +471,9 @@ exactly ONE of them.
       to click through is \`needs_input\`, even when you need nothing back from them. And if you wrote
       ANY words for the human at this rest, the answer is \`needs_input\`: a \`working\` or \`watching\`
       rest is never put in front of them, so those words would go unread.
+      On a thread the human has pinned, a \`needs_input\` rest or a \`done\` that asks nothing marks the
+      pinned row unread instead of drawing a queue card, so they read it when they go there. What they
+      must answer or do still takes a question or \`steps:\`, which queue as always.
     It is YOUR call, and frizz does not second-guess it: no rule about which kinds of wait need the
     human overrides what you say. The one thing a quiet answer cannot do is take back a \`needs_input\`
     rest the human has not reached: until they type to this thread or snooze it, a later \`working\` or

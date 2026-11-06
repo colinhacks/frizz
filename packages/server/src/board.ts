@@ -1086,6 +1086,38 @@ export function deriveChildHandoff(input: {
   return true
 }
 
+/**
+ * A PLAIN REPORT: did this rest queue the thread while asking the human for nothing? A pinned thread's
+ * report draws no card (shared boardQueuedThread; maintainer 2026-11-06), so this is the line between what
+ * a pin may quieten and what it may not. ASKS and FAILURES are the two halves of "may not", because the
+ * human can only settle them, and a worker promised a question or `steps:` puts the thread in the queue
+ * without knowing whether it is pinned:
+ *
+ *   asks      a typed interaction, a permission prompt, a native ask, a fenced or registered question that
+ *             still stands, a `steps:` list
+ *   failures  a crash, a usage-limit stop, a provider error it is not retrying
+ *
+ * What is left is a bare rest, a `status: needs_input` handoff, a resting shell or a `done`.
+ */
+export function derivePlainReport(input: {
+  needsYou: boolean
+  runtime: RuntimeState
+  actionableInteraction: boolean
+  pendingAsk: boolean
+  pendingQuestion: boolean
+  standingQuestions: number
+  humanSteps: boolean
+  crashed: boolean
+  limitPause: boolean
+  providerError: boolean
+}): boolean {
+  if (!input.needsYou) return false
+  if (input.actionableInteraction || input.runtime === "perm-prompt" || input.pendingAsk) return false
+  if (input.pendingQuestion || input.standingQuestions > 0 || input.humanSteps) return false
+  if (input.crashed || input.limitPause || input.providerError) return false
+  return true
+}
+
 export function deriveNeedsYou(
   row: SessionRow,
   tele: SessionTelemetry | undefined,
@@ -2038,6 +2070,18 @@ function sessionThreadView(
   // carded as a stall and then silently become an ordinary bare rest — same lost work, no longer
   // mentioned. See hasUnretiredOwnAgents.
   const crashed = runtime === "exited" && (tele?.turn === "in-flight" || hasLiveBackgroundWork(tele) || headlessLostWork)
+  const plainReport = derivePlainReport({
+    needsYou,
+    runtime,
+    actionableInteraction: interactionPresence.needsUser,
+    pendingAsk: Boolean(tele?.pendingAsk),
+    pendingQuestion: Boolean(tele?.pendingQuestion),
+    standingQuestions: standingCount,
+    humanSteps: hasHumanSteps(tele),
+    crashed,
+    limitPause: Boolean(limitPause),
+    providerError: Boolean(tele?.providerError && !tele.providerError.retrying),
+  })
   const snoozedUntil = futureSnooze(row, nowMs)
   const profile = resolveSessionProfile(row, tele)
   // The Claude EDITION behind the family word — see ThreadView.runningModelLabel. Only when the observed
@@ -2134,6 +2178,7 @@ function sessionThreadView(
     awaitingBackground,
     waitStatus,
     crashed,
+    plainReport: plainReport || undefined,
     pendingInteraction: interactionPresence.pending,
     actionableInteraction: interactionPresence.needsUser,
     // Preserve only a durable, canonical backend identity. In particular, Claude is not inferred

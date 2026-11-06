@@ -88,7 +88,7 @@ export function ConsoleSidebar() {
   const group = useConsoleGroup()
   const { projects, bySlug } = useConsoleProjectList()
   const order = useMemo(() => projects.map((project) => project.slug), [projects])
-  const waiting = consoleCardOrder(consoleQueue(all, direction), group, order)
+  const waiting = consoleCardOrder(consoleQueue(all, direction, group), group, order)
   const running = consoleRunning(all)
   // "By status" lifts the Console's own pins out of Queue and Running into the Pinned band above them.
   // The card order already leads with the pinned rows' cards (consoleCardOrder), so `waiting` stays the

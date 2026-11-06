@@ -11,6 +11,7 @@ import { resolveThreadRoute } from "./lib/threadRouteState.ts"
 import { standaloneThreadHref } from "./lib/standaloneThreadRoute.ts"
 import { ownedByThisPage } from "./lib/projectOwnership.ts"
 import { isConsolePath } from "./lib/base-path.ts"
+import { holdsCardHere } from "./lib/consoleBoard.ts"
 import { CONSOLE_TOP_PX } from "./lib/homeView.ts"
 import { bareSlug, splitThreadKey } from "./lib/threadKey.ts"
 import { setGithubRepo } from "./lib/githubAutolink.ts"
@@ -457,7 +458,7 @@ export function primeFullscreenReturn(routedSlug: string | undefined): void {
   // actually reads; applyPath then finds the layer already present and leaves it be.
   if (routedSlug !== slug || !store.board) return
   const route = resolveThreadRoute(store.board, slug, threadBySlug)
-  if (route.kind !== "found" || route.thread.needsYou) return
+  if (route.kind !== "found" || holdsCardHere(route.thread)) return
   if (store.drawers.some((d) => d.kind === "thread" && d.slug === slug && !d.closing)) return
   pushDrawer("thread", slug, { routed: true })
 }

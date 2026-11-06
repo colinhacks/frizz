@@ -4198,6 +4198,13 @@ export const ThreadView = z.object({
   // Once every ordinary rest also queues, runtime=exited + needsYou is no longer enough for clients
   // to distinguish a failed worker from a clean completed process.
   crashed: z.boolean().optional(),
+  // SERVER-DERIVED (board.derivePlainReport): this rest queued the thread and asks the human for nothing.
+  // No question, no `steps:`, no permission prompt, no failure; the worker said what happened, or signed
+  // off. On a pinned thread it draws no card where the pinned row can show it instead (boardQueuedThread).
+  // `needsYou` stays set, because the rest is still waiting to be read: the row's band, its mark and the
+  // thread's resting card all read it as the handoff it is. Absent from an older server, which reads as
+  // every rest carding, today's behaviour on a pin before 2026-11-06.
+  plainReport: z.boolean().optional(),
   // The queued reason is "resting while its OWN background work (sub-agents / shells) is still live,
   // with no human ask": the agent came to rest awaiting results it dispatched, not awaiting the human.
   // The card renders the informational awaiting-background banner + an event-Snooze that hides it until
@@ -4304,6 +4311,20 @@ export type ThreadView = z.infer<typeof ThreadView>
  */
 export function queuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou" | "state">): boolean {
   return t.kind === "session" && t.foreign !== true && t.needsYou === true && t.state !== "archived"
+}
+
+/**
+ * The queue as a project's BOARD draws it, and so as its badges count it: `queuedThread`, less a pinned
+ * thread's plain report (maintainer 2026-11-06, of a pinned thread at rest: "Queue only its asks"). A pin
+ * marks a standing thread the human goes back to on their own schedule, and its row is already on the
+ * shelf at the top of the rail, so a report shows there as unread rather than taking a turn in the queue.
+ * Its asks and its failures still card (board.derivePlainReport says which is which).
+ *
+ * The board's pin only. The Console's "By status" has a shelf of its own and asks its own question
+ * (lib/consoleBoard holdsCardOnConsole), because a report loses its card only where a pinned row shows it.
+ */
+export function boardQueuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou" | "state" | "plainReport" | "pinnedAt">): boolean {
+  return queuedThread(t) && !(t.plainReport === true && typeof t.pinnedAt === "string")
 }
 
 // ── CHILD THREADS ──────────────────────────────────────────────────────────────────────────────────
