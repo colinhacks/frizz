@@ -73,7 +73,9 @@ export function useCopyCode(code: string) {
 export function GithubAccountField() {
   const { account, start, cancel, signOut, startError } = useGithubSignIn()
   const data = account.data
-  if (!data) return <div className="text-[12.5px] text-muted">{account.isError ? "Couldn't read the GitHub sign-in." : "Loading…"}</div>
+  // The height of the signed-in row (29px): this field leads the Settings drawer, so a shorter line here
+  // would push the whole form down when the first read lands.
+  if (!data) return <div className="flex min-h-[29px] items-center text-[12.5px] text-muted">{account.isError ? "Couldn't read the GitHub sign-in." : "Loading…"}</div>
 
   if (data.signIn.phase === "pending") {
     return <DeviceCode code={data.signIn.userCode} url={data.signIn.verificationUri} onCancel={() => cancel.mutate()} />

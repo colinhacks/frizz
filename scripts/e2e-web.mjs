@@ -66,6 +66,8 @@ const NEEDS_REAL_STACK = [
   "packages/web/src/components/consolePinnedBand.e2e.test.ts",
   "packages/web/src/components/queueOneAtATime.e2e.test.ts",
   "packages/web/src/components/homeSwitcher.e2e.test.ts",
+  "packages/web/src/components/stackingOrder.e2e.test.ts",
+  "packages/web/src/components/updatePopoverStacking.e2e.test.ts",
 ];
 
 const args = process.argv.slice(2);
