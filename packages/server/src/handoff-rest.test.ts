@@ -3,8 +3,8 @@
 // on its registered PR; the watcher then woke it for CI and an approval it had already read, and it re-parked
 // `status: watching` with nothing to add. That quiet park took the thread out of the queue, so the handoff it
 // replaced was never seen. The rule (board needsInputQueues): a quiet park cannot spend a `needs_input` rest
-// the human has not typed past, exactly as it cannot spend an open question. Driven through the real fold
-// (both backends' paths) and the real board.
+// the human has not reached, by typing past it, snoozing it or settling a question. Driven through the real
+// fold (both backends' paths) and the real board.
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync, rmSync } from "node:fs"
@@ -72,8 +72,15 @@ function world(backend: "claude" | "codex") {
         applyEvent(s, { kind: "user-message", at: at(minute), text, synthetic: false })
         applyEvent(s, { kind: "turn-start", at: at(minute) })
       }
+  // A registered question, asked and settled the way the board reads them: the row is all it consults.
+  const ask = (id: string, minute: number) => {
+    storage.askThreadQuestion({ id, slug, spec: JSON.stringify({ question: "Fix it in a follow-up?", kind: "question", options: [{ label: "Yes" }, { label: "No" }] }), askedAtMs: Date.parse(at(minute)), handle: id })
+  }
   return {
-    say, user, snooze,
+    say, user, snooze, ask,
+    answer: (id: string, minute: number) => assert.ok(storage.answerThreadQuestion(id, JSON.stringify({ [id]: "Yes" }), Date.parse(at(minute)))),
+    dismiss: (id: string, minute: number) => assert.ok(storage.dismissThreadQuestion(id, Date.parse(at(minute)))),
+    withdraw: (id: string, minute: number) => assert.ok(storage.withdrawThreadQuestion(slug, id, Date.parse(at(minute)))),
     view: () => board.refresh().threads.find((x) => x.id === slug)!,
     close: () => { board.stop(); storage.close(); rmSync(dir, { recursive: true, force: true }) },
   }
@@ -151,6 +158,85 @@ for (const backend of ["claude", "codex"] as const) {
       w.say(6, QUIET)
       assert.equal(w.view().needsYou, true, "the older snooze was not an answer to this handoff")
       assert.equal(w.view().heldHandoff, true)
+    } finally { w.close() }
+  })
+
+  // ANSWERING A QUESTION REACHES THE HANDOFF (reported 2026-11-06, of a thread back in the queue on a card
+  // with nothing to do: "there's nothing actionable for me"). The human typed, the worker handed off
+  // `status: needs_input` with a question, the human answered it, and the worker set off on the answer. An
+  // answer is not typing (shared isHumanTypedMessage), so every quiet park of that new work queued again.
+  test(`${backend}: answering a question reaches the handoff that asked it, so the next quiet park snoozes as before`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `what is going on with ${PR}?`)
+      w.say(1, READY)
+      w.ask("qst_followup", 1)
+      assert.equal(w.view().needsYou, true, "the handoff and its question queue")
+      w.answer("qst_followup", 5)
+      w.user(5, `Answers to earlier questions:\n1. Fix it in a follow-up? → Yes\n\n${wakeDeliveryToken("wake-answer")}`)
+      w.say(6, QUIET)
+      const v = w.view()
+      assert.equal(v.needsYou, false, "the worker is on the answer, and nothing here is the human's")
+      assert.equal(v.waitStatus, "watching")
+      assert.equal(v.heldHandoff, undefined)
+    } finally { w.close() }
+  })
+
+  test(`${backend}: dismissing a question reaches the handoff too`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, READY)
+      w.ask("qst_followup", 1)
+      w.dismiss("qst_followup", 5)
+      w.user(5, WAKE)
+      w.say(6, QUIET)
+      assert.equal(w.view().needsYou, false)
+      assert.equal(w.view().heldHandoff, undefined)
+    } finally { w.close() }
+  })
+
+  test(`${backend}: an answer given before the handoff does not reach it`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, QUIET)
+      w.ask("qst_earlier", 1)
+      w.answer("qst_earlier", 2)
+      w.user(2, `Answers to earlier questions:\n1. Fix it in a follow-up? → Yes\n\n${wakeDeliveryToken("wake-answer")}`)
+      w.say(3, READY)
+      w.user(5, WAKE)
+      w.say(6, QUIET)
+      assert.equal(w.view().needsYou, true, "the handoff came after the answer, so nothing has reached it")
+      assert.equal(w.view().heldHandoff, true)
+    } finally { w.close() }
+  })
+
+  test(`${backend}: a question the worker withdrew does not reach the handoff`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, READY)
+      w.ask("qst_followup", 1)
+      w.withdraw("qst_followup", 5)
+      w.user(5, WAKE)
+      w.say(6, QUIET)
+      assert.equal(w.view().needsYou, true, "a withdrawal is the worker's own act, and the human has done nothing")
+      assert.equal(w.view().heldHandoff, true)
+    } finally { w.close() }
+  })
+
+  test(`${backend}: answering one of two questions leaves the thread queued on the other`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, READY)
+      w.ask("qst_first", 1)
+      w.ask("qst_second", 1)
+      w.answer("qst_first", 5)
+      w.user(5, `Answers to earlier questions:\n1. Fix it in a follow-up? → Yes\n\n${wakeDeliveryToken("wake-answer")}`)
+      w.say(6, QUIET)
+      assert.equal(w.view().needsYou, true, "the other question still stands")
     } finally { w.close() }
   })
 }

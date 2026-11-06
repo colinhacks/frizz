@@ -222,8 +222,8 @@ export interface FoldState {
   // listing `steps:`). Unlike `lastFence` it is NOT cleared by a user record, because what it records is
   // an obligation on the reader, like a question: a later wake carrying no news let the worker re-park
   // `status: watching` and bury the handoff in Snoozed while the human still owed it a merge
-  // (2026-10-27). The board holds such a thread in the queue until the human types past it or snoozes it
-  // (board handoffStands).
+  // (2026-10-27). The board holds such a thread in the queue until the human types past it, snoozes it
+  // or settles a question (board handoffStands).
   handoffAt?: string
   // The human messages QUEUED and not yet seen delivered, oldest first — so the record that delivers one
   // does not move `restFromAt` a second time, to an instant later than the human wrote it. Bounded.
