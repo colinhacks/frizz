@@ -8,8 +8,8 @@ import { setConsoleGroup, type ConsoleGroup } from "../lib/consoleBoard.ts"
 import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 
 // THE SIDEBAR'S VIEW CHIPS — how the list under the prompt box is arranged, as one short row of chips at
-// the top of the rail, above every band: the queue's order on every board, and on the Console the
-// grouping in front of it. Each chip names its current choice and opens a menu of the others.
+// the top of the rail, above every band: the queue's order whenever there is a queue, and on the Console
+// the grouping in front of it. Each chip names its current choice and opens a menu of the others.
 //
 // Both used to live elsewhere. The order was a Settings field (maintainer 2026-11-03: "I don't care
 // about this, so we should just move the queue ordering to be an icon"), and the Console's grouping a
@@ -55,13 +55,19 @@ const GROUP_CHOICES: Choice<ConsoleGroup>[] = [
   { value: "project", label: "By project", icon: <Folders size={13} aria-hidden /> },
 ]
 
-/** `group` is the Console's grouping; a project's board passes none, having nothing to group. */
-export function RailViewChips({ group }: { group?: ConsoleGroup }) {
+/**
+ * `group` is the Console's grouping; a project's board passes none, having nothing to group.
+ * `queued` is whether the queue holds a row. The order chip arranges the queue and nothing else (Running,
+ * Pinned, Snoozed and Done each keep their own order, groups.ts), so with no queue it is a control with
+ * nothing under it, and it goes. The Console's grouping chip stays: it also picks which bands are drawn.
+ */
+export function RailViewChips({ group, queued }: { group?: ConsoleGroup; queued: boolean }) {
   const order = useSnapshot(prefs).queueOrder
+  if (!group && !queued) return null
   return (
     <div role="group" aria-label="Arrange the list" data-rail-view-chips className="mb-3 flex min-w-0 shrink-0 items-center gap-1.5 pl-5">
       {group ? <ViewChip kind="group" name="Group" value={group} choices={GROUP_CHOICES} onPick={setConsoleGroup} /> : null}
-      <ViewChip kind="order" name="Queue order" value={order} choices={ORDER_CHOICES} onPick={(v) => (prefs.queueOrder = v)} />
+      {queued ? <ViewChip kind="order" name="Queue order" value={order} choices={ORDER_CHOICES} onPick={(v) => (prefs.queueOrder = v)} /> : null}
     </div>
   )
 }
