@@ -7,14 +7,17 @@ import "./styles.css"
 // stack can produce: an adhoc stack has no restart-capable supervisor (so the reload button renders
 // null) and no provider credentials under its temp HOME (so the fuel gauge has no reading to show).
 // Stubbing the reads the row depends on is the only way to actually LOOK at the finished thing: the
-// breadcrumb, the gauge, reload and settings on one line.
+// breadcrumb, reload, GitHub and settings on one line.
 //
-// It renders over a stand-in prompt box, because the row's two ends are supposed to land on that box's
-// border and a row measured in a void cannot show that.
+// It renders over the real new-thread form, because the row's two ends are supposed to land on that box's
+// border and a row measured in a void cannot show that. The form holds the real agent marks, the gauge and
+// the plug: quotaGaugeHover.e2e.test.ts drives their hover and panels here, and agentMarksWidth.e2e.test.ts
+// their line at the column's narrowest.
 //
 // Query params drive the states worth eyeballing:
-//   ?model=opus|sonnet|codex|acp — the model the prompt box has selected, which picks the gauge's
+//   ?model=opus|sonnet|codex|long|acp — the model the prompt box has selected, which picks the gauge's
 //                       provider and, for Claude, its model's own weekly cap. acp: no gauge at all.
+//                       long: a Codex model with a name too long for the chip at 272px.
 //   ?remaining=<0-100> — every window at this much left, to step the needle across the dial
 //   ?state=low        — Claude in the amber warn zone, Codex critical
 //   ?state=weeklywall — a HEALTHY 5h window behind a nearly-spent weekly one: the gauge reads the weekly
@@ -88,12 +91,14 @@ const auth =
 
 // The prompt box's selection — the durable new-thread profile the gauge follows.
 const model = params.get("model") ?? "opus"
+const codexSlug = model === "long" ? "gpt-5.5-codex-max-preview" : "gpt-5.5-codex"
 const preferences = {
-  backend: model === "codex" ? "codex" : model === "acp" ? "acp" : "claude",
+  backend: model === "codex" || model === "long" ? "codex" : model === "acp" ? "acp" : "claude",
   claude: { model: model === "sonnet" ? "sonnet" : "opus", effort: "high" },
-  codex: { model: "gpt-5.5-codex", effort: "high" },
+  codex: { model: codexSlug, effort: "high" },
   acp: { model: "acp:gemini" },
 }
+const codexModels = [{ slug: codexSlug, displayName: codexSlug, defaultEffort: "high", efforts: ["medium", "high", "xhigh"] }]
 
 // The crumb's menu: every registered project, the grid's own cards. A stale one must be left out.
 const projectCard = (slug: string, name: string, extra: Record<string, unknown> = {}) => ({
@@ -119,9 +124,10 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/_frizz/rpc/settingsGet") return json({ result: {} })
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json({ result: preferences })
   if (url.pathname === "/_frizz/rpc/projectsList") return json({ result: projects })
-  // The prompt box's two doors in the row: the GitHub mark (`?norepo` hides it), and the plug.
+  // The GitHub mark in the row (`?norepo` hides it), and the plug in the box.
   if (url.pathname === "/_frizz/rpc/githubStatus") return json({ result: { inRepo: !params.has("norepo"), authed: true } })
-  if (url.pathname === "/_frizz/rpc/codexModels" || url.pathname === "/_frizz/rpc/claudeModels" || url.pathname === "/_frizz/rpc/acpAgents") return json({ result: [] })
+  if (url.pathname === "/_frizz/rpc/codexModels") return json({ result: codexModels })
+  if (url.pathname === "/_frizz/rpc/claudeModels" || url.pathname === "/_frizz/rpc/acpAgents") return json({ result: [] })
   if (url.pathname === "/_frizz/rpc/mcpStatus") return json({ result: { backend: preferences.backend, servers: [{ name: "linear", state: params.has("plugattention") ? "needs-auth" : "connected" }, { name: "sentry", state: "connected" }] } })
   return nativeFetch(input, init)
 }
@@ -129,6 +135,8 @@ window.fetch = async (input, init) => {
 document.documentElement.dataset.font = params.get("font") === "mono" ? "mono" : "sans"
 
 const { StatusRow } = await import("./components/StatusRow.tsx")
+const { DispatchForm } = await import("./components/NewThreadModal.tsx")
+const { TooltipProvider } = await import("./components/Tooltip.tsx")
 const { store } = await import("./store.ts")
 const identityMode = params.get("identity")
 
@@ -153,16 +161,16 @@ createRoot(document.getElementById("root")!).render(
         outside a router context throws on render. In the app the row always sits under RouterProvider;
         a MemoryRouter gives the fixture the same context without touching the address bar. */}
     <MemoryRouter>
+      <TooltipProvider>
       <main className="min-h-screen bg-bg p-6 text-fg">
         {/* The sidebar column's real width at a 1440px viewport by default, so the row's split reads at the
             measure it actually ships at; `?width=272` is the column's floor. */}
         <div style={{ width }}>
           <StatusRow onConsole={identityMode === "console"} />
-          <div className="rounded-xl border border-border bg-panel px-3 py-6 text-[13px] text-muted">
-            A stand-in prompt box. The row's two ends land on THIS border.
-          </div>
+          <DispatchForm pendingCard={false} />
         </div>
       </main>
+      </TooltipProvider>
     </MemoryRouter>
   </QueryClientProvider>,
 )

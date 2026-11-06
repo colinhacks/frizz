@@ -8,7 +8,7 @@ import { RemoteNote } from "./RemoteNote.tsx"
 import { showToast, store } from "../store.ts"
 import { Composer } from "./Composer.tsx"
 import { GithubTrigger } from "./GithubTrigger.tsx"
-import { PromptBoxActions } from "./PromptBoxActions.tsx"
+import { NewThreadAgentMarks } from "./AgentMarks.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { SETTINGS_WRITE_KEY, settingsQuery, useSettingsAutosave } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
@@ -31,6 +31,9 @@ import { beginDispatch, dispatchAnswered, dispatchFailed } from "../lib/pendingD
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 
+// One element for every desktop form, so it never invalidates the footer's memo below.
+const NEW_THREAD_MARKS = <NewThreadAgentMarks />
+
 // THE dispatch prompt box — composer + quiet selects row — shared by every surface that can start a
 // thread: the queue's inline section and the anywhere-modal. There is no title field — the server
 // derives a fallback and Claude names the session itself (ai-title), which the UI prefers for display.
@@ -38,7 +41,7 @@ import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 // The form's STATE and its dispatch live in useDispatchForm, so the phone's full-screen new-thread page
 // (PhoneNewThreadPage, below) runs the identical drafts, profile, sign-in gate, errors and pending
 // preview — only the layout around them differs.
-function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
+function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
   const { resolved, codexList, claudeList, acpList, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
@@ -212,6 +215,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
     }
     const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
+    const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
       // gap-1.5 between the pills, the same measured gap the thread composer's strip uses
       // (useThreadComposerControls): two bordered pills on `gap-x-1` read as one segmented control.
@@ -219,6 +223,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
       // 2px there read as one stack beside the 6px across.
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {projectPicker}
+        {/* The model and the marks that answer to it hold ONE line, on which the chip truncates, so a long
+            model name in a 272px sidebar never strands them on a row of their own. A phone's tool row has no
+            marks to keep, and its chips still wrap. */}
+        <div className={agentMarks ? `flex min-w-0 max-w-full items-center gap-x-1.5 ${showPermission ? "pr-1.5" : ""}` : "contents"}>
         <ProfileGridSelector
           groups={profileGroups}
           agentSettings
@@ -249,9 +257,14 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
             className="max-w-[min(14rem,40vw)] px-2 py-1"
           />
         )}
+        {agentMarks}
+        </div>
         {/* Claude only, and not on a phone, for the reasons the thread composer's picker gives
-            (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop. */}
-        {permissionMode && resolved.backend === "claude" && !isMobile && (
+            (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop.
+            After the marks, where the thread composer has it before them. Between the chip and the marks it
+            would take its width from the name the chip truncates, down to "OP…" in a 272px sidebar. Out here
+            it drops to a row of its own instead. */}
+        {showPermission && (
           <Select
             variant="readout"
             value={permissionMode}
@@ -266,7 +279,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
         )}
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>
@@ -322,7 +335,7 @@ function LocalDispatchForm({
    *  centred in its page, where a card in flow would lift everything above it by half its own height. */
   pendingCard?: boolean | "float"
 }) {
-  const form = useDispatchForm(onDispatched, projectPicker)
+  const form = useDispatchForm(onDispatched, projectPicker, NEW_THREAD_MARKS)
   return (
     <div className={`w-full flex flex-col gap-3 ${pendingCard === "float" ? "relative" : ""}`}>
       <Composer
@@ -468,10 +481,10 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
     <PhoneNewThreadPage onDispatched={onClose} projectPicker={target.chip} project={target.project?.name} />
   ) : (
     <>
-      {/* No status row here, so the prompt box's two doors take the title's line (PromptBoxActions.tsx). */}
+      {/* No status row here, so the GitHub picker's door takes the title's line. */}
       <div className="mb-1 flex min-h-6 items-center justify-between gap-3">
         <RadixDialog.Title className="text-[14px] font-medium">New thread</RadixDialog.Title>
-        <div className="flex shrink-0 items-center gap-3"><PromptBoxActions /></div>
+        <div className="flex shrink-0 items-center gap-3"><GithubTrigger /></div>
       </div>
       {/* No "Starting thread…" card: the dialog is centred, so the card arriving in flow grew it by 74px
           and lifted its title and prompt box 37px for the length of the dispatch call, and then the

@@ -11,7 +11,6 @@ import { useThreadComposerControls } from "../hooks/useThreadComposerControls.ts
 import { Composer } from "./Composer.tsx"
 import { RemoteNote } from "./RemoteNote.tsx"
 import { useRemoteHost } from "../api/supervisorStatus.ts"
-import { McpPlug } from "./McpPlug.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { draftKey, mergeIntoDraft, useDraft, useProjectDir } from "../lib/drafts.ts"
 import { noteFailedDraftOrigin, takeSupersededFailure } from "../lib/failedDelivery.ts"
@@ -232,9 +231,6 @@ function LocalThreadComposerBox({
   // THE GOAL rides the rail on every desktop surface that steers a Frizz-owned session — the same
   // threads the lifecycle verbs in the header serve. The phone reaches it from the header's ⋯ sheet.
   const goal = thread && thread.kind === "session" && thread.foreign !== true ? <RecurringPromptControl thread={thread as ThreadView} /> : undefined
-  // The MCP plug asks about THIS thread's servers, so it rides wherever the Goal does: a session Frizz
-  // owns. An external session has no row of Frizz's to read them through.
-  const mcpPlug = thread && thread.kind === "session" && thread.foreign !== true ? <McpPlug target={{ slug }} /> : undefined
 
   function send(interrupt = false) {
     const text = message.trim()
@@ -380,7 +376,6 @@ function LocalThreadComposerBox({
         busy={controls.busy}
         footer={controls.footer}
         railLead={goal}
-        railMcp={mcpPlug}
         fileDrop={fileDrop}
         // An external session keeps the ↑: sending there takes the session over, and there is no turn
         // of Frizz's to steer or queue behind until it has.

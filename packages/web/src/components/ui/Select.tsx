@@ -181,7 +181,7 @@ export function Select({
           title={title}
           // A readout sits beside the profile pill and takes its 3px gap, so a label reads the same distance
           // from its chevron in both (2026-11-06, sans: 5.71px of ink, where gap-1.5 drew 8.71px).
-          className={`group inline-flex min-w-0 max-w-full items-center ${variant === "readout" ? "gap-[3px]" : "gap-1.5"} rounded-md border px-2 py-1 text-left text-[12px] text-fg outline-none data-[placeholder]:text-muted ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer transition-colors"} ${triggerVariant} ${promptReadoutTypography} ${className}`}
+          className={`group inline-flex min-w-0 max-w-full items-center ${variant === "readout" ? "gap-[3px]" : "gap-1.5"} rounded-md border px-2 py-1 text-left text-[12px] text-fg outline-none data-[placeholder]:text-muted ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer transition-colors"} ${triggerVariant} ${variant === "readout" ? "select-trigger-readout" : ""} ${promptReadoutTypography} ${className}`}
         >
           <span className={`min-w-0 flex-1 truncate text-left ${display.placeholder ? "text-muted" : ""}`}>
             {display.text}

@@ -70,7 +70,8 @@ function useGithubTriggerVisible(): boolean {
 }
 
 // The door into the GitHub picker — a bare GitHub mark in the line above the new-thread box, beside the
-// gear (components/PromptBoxActions.tsx; maintainer 2026-07-10: not a full-width pill). Renders in a GitHub
+// gear (StatusRow.tsx), and at the right of ⌘K's title, which has no such line (maintainer 2026-07-10: not a
+// full-width pill). Renders in a GitHub
 // repo, signed in or not; otherwise NOTHING. Signed out, the picker it opens is the sign-in (GithubPickerModal). `githubStatus` is
 // shared with App's not-signed-in hint via the query cache (one fetch); detection is cached server-side,
 // `authed` re-checked live, so a sign-in turns the sign-in into the picker where it stands.

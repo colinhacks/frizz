@@ -7,11 +7,11 @@ import { ProviderMark } from "./ProviderMark.tsx"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { CLAUDE_MODELS } from "../lib/options.ts"
-import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
+import { GAUGE_GLYPH_SIZE, GAUGE_MARK } from "../lib/iconRhythm.ts"
 import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent } from "../lib/quotaGauge.ts"
 
-// THE FUEL GAUGE — the quota readout in the StatusRow above the prompt box: ONE gauge for the model the
-// prompt box has selected, its needle and lit arc standing at the quota that model has left. Pointing
+// THE FUEL GAUGE — the quota readout beside the prompt box's model chip (AgentMarks.tsx): ONE gauge for the
+// model that box has selected, its needle and lit arc standing at the quota that model has left. Pointing
 // at it opens the full per-window breakdown at once; clicking it rechecks.
 //
 // It was two chips until 2026-10-26, a provider mark and a 9px percentage for each of Claude and Codex
@@ -25,11 +25,12 @@ import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, mod
 // The sign-in door is the composer's dispatch gate (submitting a thread on a signed-out backend opens the
 // sign-in modal) and the `/login` alias.
 //
-// Quota is ACCOUNT-global — it was never a property of the composer it sits over — which is why it
-// rides the GLOBAL status row rather than being composer decoration. What it follows is the composer's
-// SELECTION, read off the same durable new-thread profile the selector writes (useDispatchProfile):
-// that write updates the cache before it reaches the server, so the gauge swings in the same frame the
-// selection changes.
+// Quota is ACCOUNT-global, and the gauge rode the global status row above the box for that reason until
+// 2026-11-06. What it shows is decided by the model chip, though, so it now stands beside the chip
+// (maintainer: "those things' behavior is obviously modified by the selected model"). A new-thread box follows
+// the same durable new-thread profile the selector writes (useDispatchProfile): that write updates the cache
+// before it reaches the server, so the gauge swings in the same frame the selection changes. A thread's box
+// follows the thread's own model.
 //
 // Quota is polled (rpc.quota) rather than pushed on the board: it is ACCOUNT-global, not per-thread.
 // The server keeps Claude's reading warm on its own heartbeat (refreshClaudeQuotaInBackground) and
@@ -81,7 +82,9 @@ function hasReading(quota: ProviderQuota | undefined, auth: ProviderAuth | undef
  * Opus (lib/dispatchPreferences.ts); an unset Codex model needs no answer, since no Codex window is
  * scoped to a model.
  */
-function useSelectedModel(): { backend: AccountBackend; model: string | undefined } | undefined {
+export type GaugeModel = { backend: AccountBackend; model: string | undefined }
+
+export function useSelectedModel(): GaugeModel | undefined {
   const preferences = useQuery({ queryKey: ["dispatchPreferencesGet"], queryFn: () => rpc.dispatchPreferencesGet() })
   const data = preferences.data
   if (!data || data.backend === "acp") return undefined
@@ -95,7 +98,7 @@ function modelWords(backend: AccountBackend, model: string | undefined): string 
   return model
 }
 
-export function QuotaGauge() {
+export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "top" | "bottom" }) {
   const queryClient = useQueryClient()
   const recheckInFlight = useRef<Promise<void> | null>(null)
   const [rechecking, setRechecking] = useState(false)
@@ -122,7 +125,6 @@ export function QuotaGauge() {
     staleTime: 30_000,
     refetchOnWindowFocus: true,
   })
-  const selected = useSelectedModel()
   // The breakdown is a HOVER PANEL (maintainer 2026-10-26: "we need an immediate popover to show on the
   // usage gauge when hovered"). Until then it opened on a click alone, and the hover had only a native
   // `title`, which the browser shows after about a second and draws as a one-line system label.
@@ -146,7 +148,6 @@ export function QuotaGauge() {
     recheckInFlight.current = request
   }
 
-  if (!selected) return null
   const { backend, model } = selected
   const reading = quota.data?.[backend]
   if (!hasReading(reading, auth.data?.[backend], quota.isLoading)) return null
@@ -175,9 +176,8 @@ export function QuotaGauge() {
     // opens, clicking opens and rechecks, leaving (or Escape, or a click elsewhere) shuts.
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        {/* The row's icon square (STATUS_ROW_ACTION), so it hovers, trims and spaces like the settings
-            and reload buttons it stands beside — and stays lit while its panel is open, as the crumb's
-            pill does with its menu. No `title`: the panel is the hover's answer, and a native tooltip
+        {/* The paperclip's square, so it hovers like the marks in the rail across from it, and stays lit
+            while its panel is open. No `title`: the panel is the hover's answer, and a native tooltip
             would arrive a second later on top of it. */}
         <button
           ref={button}
@@ -204,19 +204,16 @@ export function QuotaGauge() {
             // must not cost either.
             recheck(backend)
           }}
-          // A VARIANT, not a class added while open: a bare `text-fg` would tie STATUS_ROW_ACTION's
-          // `text-fg/75` and win or lose on stylesheet order.
-          className={`${STATUS_ROW_ACTION} aria-expanded:bg-elevated aria-expanded:text-fg`}
+          className={GAUGE_MARK}
         >
           <FuelGauge remaining={remaining} />
         </button>
       </PopoverAnchor>
-      {/* Drops DOWN from the row, which sits at the top of the sidebar column, and hangs off the
-          gauge's right edge — the gauge is near the column's right end, so a left-aligned panel would
-          run out past it. */}
+      {/* Hangs from the gauge's left edge: the gauge sits at the left of the box's footer, so the panel
+          stays over the box. Which way it opens is the box's to say (AgentMarks.tsx). */}
       <PopoverContent
-        side="bottom"
-        align="end"
+        side={side}
+        align="start"
         data-quota-panel={backend}
         aria-label={`${providerLabel} quota`}
         onMouseEnter={openNow}
@@ -237,9 +234,9 @@ export function QuotaGauge() {
  * The dial. The lit arc and the needle carry the reading; the track behind them stays faint so an
  * empty tank still reads as a gauge rather than as a stray tick. Colour is spent only where the old
  * chip spent it — amber in the warn zone, the danger colour when nearly empty — and a healthy tank takes
- * the row's own icon tone from the button around it, so it hovers to full fg like its neighbours.
+ * the mark's own icon tone from the button around it, so it hovers to full fg like its neighbours.
  */
-export function FuelGauge({ remaining, size = STATUS_ROW_ICON }: { remaining: number; size?: number }) {
+export function FuelGauge({ remaining, size = GAUGE_GLYPH_SIZE }: { remaining: number; size?: number }) {
   const level = gaugeAngle(remaining)
   const tone = remaining <= 8 ? "text-danger" : remaining <= HEALTHY_MIN ? "text-accent" : undefined
   return (
@@ -255,7 +252,7 @@ export function FuelGauge({ remaining, size = STATUS_ROW_ICON }: { remaining: nu
       data-fuel-gauge=""
       className={tone}
     >
-      <path data-gauge-track="" d={gaugeArc(GAUGE.start, GAUGE.start + GAUGE.sweep)} opacity={0.35} />
+      <path data-gauge-track="" d={gaugeArc(GAUGE.start, GAUGE.start + GAUGE.sweep)} opacity={0.42} />
       {remaining > 0 && <path data-gauge-level="" d={gaugeArc(GAUGE.start, level)} />}
       <path data-gauge-needle="" d={gaugeNeedle(remaining)} />
       <circle data-gauge-hub="" cx={GAUGE.cx} cy={GAUGE.cy} r={GAUGE.hub} fill="currentColor" stroke="none" />
@@ -323,7 +320,7 @@ function QuotaBreakdown({
 /**
  * THE PHONE'S QUOTA READING — every window of every provider that has one, as a labelled meter.
  *
- * The phone has no status row to hang the gauge on, and no hover to open its popover, so its Settings
+ * The phone's prompt boxes carry no gauge, and it has no hover to open a popover, so its Settings
  * page leads with the whole breakdown instead (phone design 2026-09-30, § 6): one row per backend
  * window, a bar and a number. The number is REMAINING quota, like the desktop breakdown's — a phone
  * that read 38% where the desktop reads 62% for the same window would be two answers to one question —
