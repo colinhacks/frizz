@@ -36,7 +36,7 @@ Only when custom names are wanted again.
 
 Before any name returns, including one set up by hand for a single board:
 
-- **The remote gate has shipped.** npm serves a shell and a server carrying `54434c0d`, and the board runs them.
+- **The board runs the remote gate.** `/_frizz/control/status` reads `launcherVersion` 0.13.15 or later, and the server is 0.15.46 or later. The fix for forged relay headers is in the shell, so updating the server alone leaves it out, and only restarting `npx frizz` replaces a running launcher.
 - **Old sessions are gone.** `frizz --sign-out all` rotates the `session-key`.
 - **The browser is clean.** The maintainer clears `frizz.sh` site data right before the name returns, which removes any service worker an earlier relay build left.
 - **The name is free, and is claimed in the same sitting.** The registrar has no client binding, so any zero-scope GitHub token from an account over 30 days old can claim it.
