@@ -449,6 +449,7 @@ kbd {
   .nav-links .opt-link { display: none; }
   .fit-grid { grid-template-columns: 1fr; gap: 36px; }
   .row, .row.flip, .row.level, .row.level.flip { grid-template-columns: 1fr; gap: 28px; }
+  .row-shot.narrow, .row.flip .row-shot.narrow { justify-self: center; }
   .row.flip .row-text { order: 0; }
   .features { gap: 88px; }
   .not-grid { grid-template-columns: 1fr; grid-template-rows: none; gap: 14px; margin-top: 40px; }
