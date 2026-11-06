@@ -8,6 +8,7 @@ import { rpc } from "../api/rpc.ts"
 import { formatAgo } from "../lib/durationLabels.ts"
 import { showToast } from "../store.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
+import { panelWidthOn } from "../lib/overlaySurface.ts"
 import { Popover, PopoverAnchor, PopoverContent, POPOVER_COLLISION_PADDING as COLLISION_MARGIN } from "./ui/Popover.tsx"
 import { Switch } from "./ui/Switch.tsx"
 
@@ -91,16 +92,21 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
   const trigger = useRef<HTMLButtonElement>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(hoverTimer.current), [])
-  // THE PANEL STAYS ON ITS OWN THREAD'S SURFACE — the queue card, the drawer, the /full column — AND
-  // SPANS ITS PROMPT BOX. The glyph sits near the right end of the box, so an end-aligned panel grows
-  // LEFTWARD, and at its full 46rem it ran past every surface it opened on: ~60px over the sidebar from a
-  // queue card, ~100px over the board behind a drawer, ~100px into the margin beside /full. The surface is
-  // the collision boundary, its side padding is the prompt box's inset within it, and the panel's width
-  // caps at what is left (`--radix-popper-available-width`, below) — so wherever the box is narrower than
-  // 46rem the panel lands exactly on the box's two edges, as one unit with it. Measured when the panel
-  // opens rather than on mount, because a resize can move the box's inset between openings.
+  // THE PANEL STAYS ON ITS OWN THREAD'S SURFACE — the queue card, the drawer, the /full column — AND ENDS
+  // ON ITS PROMPT BOX'S RIGHT EDGE. The glyph sits near the right end of the box, so an end-aligned panel
+  // grows LEFTWARD, and at its full 46rem it ran past every surface it opened on: ~60px over the sidebar
+  // from a queue card, ~100px over the board behind a drawer, ~100px into the margin beside /full. The
+  // surface is the collision boundary, and its side padding is the prompt box's inset within it.
+  //
+  // IT TAKES A SHARE OF THE BOX, NEVER THE BOX. From 2026-10-20 it filled what that boundary left, which
+  // on a 720px card landed it exactly on the box's two edges, a second box stacked on the first
+  // (maintainer 2026-11-06: "the fact that the goal popover is full width is very weird. It looks bad").
+  // `alignOffset` carries its end past the glyph to the box's edge, the one the panels of the counts over
+  // the box end on too; left at the glyph it stood 138px short of that edge, lined up with nothing.
+  //
+  // Measured when the panel opens rather than on mount, because a resize can move the box between openings.
   const open = mode !== "closed"
-  const [bounds, setBounds] = useState<{ surface: Element; left: number; right: number } | null>(null)
+  const [bounds, setBounds] = useState<{ surface: Element; left: number; right: number; width: number; toBoxEnd: number } | null>(null)
   useLayoutEffect(() => {
     if (!open) return
     const surface = trigger.current?.closest('[data-queue-card-root], [role="dialog"], main')
@@ -112,10 +118,13 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
     // 1px card border measured from the outer edge left the panel 1px short of the box on that side.
     const inner = surface.getBoundingClientRect().left + surface.clientLeft
     const b = trigger.current?.closest("[data-composer-box]")?.getBoundingClientRect()
+    const glyph = trigger.current?.getBoundingClientRect()
     setBounds({
       surface,
       left: Math.max(COLLISION_MARGIN, b ? b.left - inner : 0),
       right: Math.max(COLLISION_MARGIN, b ? inner + surface.clientWidth - b.right : 0),
+      width: panelWidthOn(b?.width ?? surface.clientWidth, GOAL_PANEL_WIDEST_PX),
+      toBoxEnd: b && glyph ? b.right - glyph.right : 0,
     })
   }, [open])
   const boundaryProps = bounds
@@ -241,14 +250,12 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
           side="top"
           align="end"
           {...boundaryProps}
-          // WIDE, and it takes the whole viewport when the viewport is small. A 21rem cap made this a
-          // narrow column for prose that can run to 4000 characters, and on a phone-width screen it was
-          // narrower than the space actually available. The panel is a writing surface, so it is sized
-          // like one: ~110 columns where there is room, everything-minus-a-margin where there is not.
-          // "Where there is room" is the prompt box's span on its surface (see `bounds` above): Radix
-          // publishes the boundary's width less its collision padding, and the fallback keeps the cap if
-          // it has not.
-          className="w-[min(46rem,calc(100vw-1.5rem),var(--radix-popper-available-width,46rem))] p-3 text-[11px] leading-relaxed text-fg"
+          // A WRITING SURFACE, so a real column of it: a 21rem cap made this a narrow strip for prose that
+          // can run to 4000 characters. Its width is a share of the prompt box (see `bounds` above), and
+          // the class is the fallback for the render before that first reading.
+          className="w-[min(46rem,calc(100vw-1.5rem))] p-3 text-[11px] leading-relaxed text-fg"
+          style={bounds ? { width: bounds.width } : undefined}
+          alignOffset={bounds ? -bounds.toBoxEnd : 0}
           onPointerDownOutside={keepAnchorClicks}
           // Radix otherwise autofocuses the first focusable child, which is a toggle segment — and a focus
           // ring sitting on "Off" reads as the toggle being SET to off by the act of opening the panel.
@@ -270,6 +277,10 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
     </Popover>
   )
 }
+
+// The panel's width on a box wide enough to give it this much (46rem, ~110 columns), which no surface
+// here is: the card, the drawer and /full all cap at 720px.
+const GOAL_PANEL_WIDEST_PX = 736
 
 // Long enough that dragging the pointer ACROSS the rail on the way to the send button does not flash a
 // panel over the prompt box, short enough that deliberately resting on the glyph answers immediately.

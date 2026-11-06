@@ -9,6 +9,22 @@ import { Z_POPOVER, Z_SELECT, Z_SELECT_IN_POPOVER } from "./layers.ts"
 export const OPAQUE_SURFACE_BASE =
   "isolate bg-elevated opacity-100 border border-border shadow-2xl shadow-overlay-shadow"
 
+// NO PANEL IS AS WIDE AS THE BOX IT OPENS OFF (maintainer 2026-11-06: "There should be no full-width
+// popovers like that. There should always be some fraction of the full width of the card"). The Goal panel
+// and the skills menu both took the prompt box's exact span until then, which on a 720px card is every
+// time, and a panel that lands on both edges of the box reads as a second box stacked on the first rather
+// than something opened from one control in it. A panel takes this share of the box at most, up to
+// whatever width suits its own content.
+//
+// The floor is the panel's own legibility and it wins on a narrow box, where a share of the width would
+// leave a column nobody can read. The phone's width lands there, and the box is the last word: a panel
+// never outgrows what it opens from.
+export const PANEL_SHARE_OF_BOX = 0.7
+
+export function panelWidthOn(boxWidth: number, widest: number, narrowest = 320): number {
+  return Math.min(widest, Math.max(narrowest, boxWidth * PANEL_SHARE_OF_BOX), boxWidth)
+}
+
 // The z-indexes below are NAMES for layers of lib/layers.ts, the one stacking order, where each
 // layer's reason lives; this file only says which surface takes which. Never re-elevate a persistent
 // layer to "win" a collision — raise the specific overlay instead, in layers.ts.

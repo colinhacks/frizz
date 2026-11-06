@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { ExternalLink, FileText } from "lucide-react"
 import type { BgShellView, ThreadView } from "@frizz/shared"
 import { CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, type TranscriptShellRecord } from "../lib/childOps.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
+import { panelWidthOn } from "../lib/overlaySurface.ts"
+import { extendTrail, trailHeadingInto, type PointerSample } from "../lib/pointerAim.ts"
 import { isMonitorWatch, queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
 import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
@@ -57,10 +59,27 @@ import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 // it pulses only while at least one row of that kind is running. Otherwise it is the rows' own settled
 // mark (lib/childOps.ts): the hollow ring when one of them rested, the flat dot when they went stale.
 
-// How long a panel survives the pointer leaving its count. It opens on hover and holds buttons, so the
-// pointer must be able to cross the gap between the two without it closing — the same grace
-// ContextMeter's panel gives.
-const HOVER_CLOSE_DELAY_MS = 150
+// THE POINTER'S WAY INTO A PANEL IS ITS OWN (maintainer 2026-11-06: "It's kind of hard to click on the
+// things, especially for links, without the little popover going away"). Every panel is right-aligned to
+// the line and a row's label sits at the panel's far left, so from "1 link" the natural line to "Dev
+// server" runs 300px left and only 30px up: straight across "2 files" and "1 issue", each of which took
+// the panel for itself, and through the 4px gap at a shallow enough angle to outlast the close delay.
+// Driven on the real card, that line read link → file → issue → closed.
+//
+// So a count the pointer is merely CROSSING does not take the panel. While the pointer is still closing
+// on the open panel (lib/pointerAim.ts) a swap waits, and a close does too; the moment it stops, or turns
+// away, whichever count it is on takes over. Sliding along the line of counts never rises toward the
+// panel, so it still swaps at once, the way a menu bar does.
+//
+// How long a panel survives the pointer leaving both it and its count, once the pointer is not heading
+// back to it.
+const HOVER_CLOSE_DELAY_MS = 300
+// How often a held swap or close looks at the pointer again. A pointer that stopped reads as stopped
+// within TRAIL_MS, so a deliberate hover on a neighbouring count wins in about that long.
+const AIM_RECHECK_MS = 50
+
+// The panel's width where the line is wide enough: the rows' column, which fits a sub-agent's whole label.
+const PANEL_WIDEST_PX = 440
 
 // What a panel is called, since it holds one kind of row.
 const PANEL_LABEL: Record<QueueOpsKind, string> = {
@@ -84,9 +103,37 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
   const childThreads = useChildThreads(thread.id)
   const [openKind, setOpenKind] = useState<QueueOpsKind | null>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(closeTimer.current), [])
+  const swapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => {
+    clearTimeout(closeTimer.current)
+    clearTimeout(swapTimer.current)
+  }, [])
   const groups = queueOpsCounts(thread, transcriptShells, childThreads)
   const line = useRef<HTMLDivElement>(null)
+  // Where the pointer has just been, for as long as a panel is open. On the document, because the panel
+  // is portaled and the pointer's whole path runs between the two.
+  const trail = useRef<PointerSample[]>([])
+  const anyOpen = openKind !== null
+  useEffect(() => {
+    if (!anyOpen) return
+    const follow = (event: PointerEvent) => {
+      trail.current = extendTrail(trail.current, { x: event.clientX, y: event.clientY, at: performance.now() })
+    }
+    document.addEventListener("pointermove", follow, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener("pointermove", follow, { capture: true })
+      trail.current = []
+    }
+  }, [anyOpen])
+  // Only one panel is mounted at a time, so the last to mount is the open one.
+  const openPanel = useRef<HTMLDivElement | null>(null)
+  const registerPanel = useCallback((element: HTMLDivElement | null) => {
+    if (element) openPanel.current = element
+  }, [])
+  const headingIntoPanel = () => {
+    const rect = openPanel.current?.isConnected ? openPanel.current.getBoundingClientRect() : undefined
+    return !!rect && trailHeadingInto(trail.current, performance.now(), rect)
+  }
   // The last row of a kind can end, or be stopped from its × in the panel, while its panel is open —
   // and nothing then says close: the count unmounts and its panel with it, so no pointer leaves either
   // and Radix sends no change. Left set, the panel sprang open by itself, over the transcript, the next
@@ -95,16 +142,39 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
   useEffect(() => {
     if (!gone) return
     clearTimeout(closeTimer.current)
+    clearTimeout(swapTimer.current)
     setOpenKind(null)
   }, [gone])
   if (groups.length === 0) return null
   const openNow = (kind: QueueOpsKind) => {
     clearTimeout(closeTimer.current)
+    clearTimeout(swapTimer.current)
     setOpenKind(kind)
+  }
+  // The pointer arrived on a count. With another count's panel open and the pointer still closing on it,
+  // this count is only on the way, so it waits for the pointer to settle.
+  const hoverCount = (kind: QueueOpsKind) => {
+    clearTimeout(closeTimer.current)
+    clearTimeout(swapTimer.current)
+    if (openKind === null || openKind === kind || !headingIntoPanel()) {
+      setOpenKind(kind)
+      return
+    }
+    swapTimer.current = setTimeout(() => hoverCount(kind), AIM_RECHECK_MS)
+  }
+  // The pointer entered the panel: it arrived, and nothing it crossed on the way may now take over.
+  const holdPanel = () => {
+    clearTimeout(closeTimer.current)
+    clearTimeout(swapTimer.current)
   }
   const closeSoon = () => {
     clearTimeout(closeTimer.current)
-    closeTimer.current = setTimeout(() => setOpenKind(null), HOVER_CLOSE_DELAY_MS)
+    clearTimeout(swapTimer.current)
+    const closeUnlessHeadingBack = () => {
+      if (headingIntoPanel()) closeTimer.current = setTimeout(closeUnlessHeadingBack, AIM_RECHECK_MS)
+      else setOpenKind(null)
+    }
+    closeTimer.current = setTimeout(closeUnlessHeadingBack, HOVER_CLOSE_DELAY_MS)
   }
   return (
     // THE LINE FILLS THE DOCK'S TOP INSET AND SITS IN THE MIDDLE OF IT. `-mt-3 h-8`: the dock pads 12px
@@ -129,7 +199,10 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
           line={line}
           open={openKind === group.key}
           onOpen={() => openNow(group.key)}
+          onHover={() => hoverCount(group.key)}
+          onHoverPanel={holdPanel}
           onCloseSoon={closeSoon}
+          registerPanel={registerPanel}
           // A change Radix sends for one panel (a press outside it, Escape, focus moving on) closes only
           // that panel: by then the pointer or the focus may already have opened the next count's.
           onOpenChange={(next) => (next ? openNow(group.key) : setOpenKind((current) => (current === group.key ? null : current)))}
@@ -148,12 +221,15 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
 }
 
 // One count and the panel it opens.
-function OpsCount({ group, line, open, onOpen, onCloseSoon, onOpenChange, children }: {
+function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoon, registerPanel, onOpenChange, children }: {
   group: QueueOpsCount
   line: RefObject<HTMLDivElement | null>
   open: boolean
   onOpen: () => void
+  onHover: () => void
+  onHoverPanel: () => void
   onCloseSoon: () => void
+  registerPanel: (element: HTMLDivElement | null) => void
   onOpenChange: (open: boolean) => void
   children: ReactNode
 }) {
@@ -193,7 +269,7 @@ function OpsCount({ group, line, open, onOpen, onCloseSoon, onOpenChange, childr
         aria-label={`${group.n} ${word} — show ${group.n === 1 ? "it" : "them"}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onMouseEnter={onOpen}
+        onMouseEnter={onHover}
         onMouseLeave={onCloseSoon}
         onFocus={onOpen}
         ref={button}
@@ -234,7 +310,7 @@ function OpsCount({ group, line, open, onOpen, onCloseSoon, onOpenChange, childr
         sideOffset={4}
         data-queue-ops-panel={group.key}
         aria-label={PANEL_LABEL[group.key]}
-        onMouseEnter={onOpen}
+        onMouseEnter={onHoverPanel}
         onMouseLeave={onCloseSoon}
         // Hover opened it, so focus stays where the operator left it — the caret in the prompt box.
         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -252,9 +328,15 @@ function OpsCount({ group, line, open, onOpen, onCloseSoon, onOpenChange, childr
           event.stopPropagation()
           if (panel.current?.contains(document.activeElement)) button.current?.focus()
         }}
-        ref={panel}
+        ref={(element) => {
+          panel.current = element
+          registerPanel(element)
+        }}
         onClick={(event) => event.stopPropagation()}
-        className="flex w-[440px] max-w-[calc(100vw-1.5rem)] flex-col px-3 py-2"
+        // THE GAP IS PART OF THE PANEL, to the pointer: `before:` hangs an invisible strip from its edge
+        // down to the count, so nothing it crosses on the way up counts as having left.
+        className="relative flex max-w-[calc(100vw-1.5rem)] flex-col px-3 py-2 before:absolute before:inset-x-0 before:top-full before:h-1 before:content-['']"
+        style={open ? { width: panelWidthOn(line.current?.getBoundingClientRect().width ?? PANEL_WIDEST_PX, PANEL_WIDEST_PX) } : undefined}
       >
         {children}
       </PopoverContent>

@@ -118,7 +118,8 @@ export type PhoneComposerLayout =
   | { layout: "page"; tools?: ReactNode }
 
 const LONG_PRESS_MS = 500
-// The skills menu's placement: the box's width, 6px above it (below when the top has no room).
+// The skills menu's placement: from the box's left edge, a share of its width, 6px above it (below when
+// the top has no room).
 const SUGGEST_PLACEMENT = aboveAnchor(6)
 
 // HOLDING THE BAR OPEN. The open box's toolbar is only there while the field has focus or text — but a

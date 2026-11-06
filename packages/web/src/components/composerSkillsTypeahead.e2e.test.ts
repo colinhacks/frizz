@@ -190,3 +190,22 @@ test("Escape dismisses without blurring and stays dismissed until the draft chan
   assert.deepEqual(await menuRows(), ["/visual-review"], "typing again reopens the menu")
   assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
 })
+
+// NO PANEL IS AS WIDE AS THE BOX IT OPENS OFF (maintainer 2026-11-06). The menu took the box's exact span
+// until then. It keeps the box's left edge, where its `/name` lands under the row that offered it.
+test("the menu takes a share of the prompt box, from its left edge", {
+  skip: !baseUrl,
+  timeout: 150_000,
+}, async () => {
+  await open()
+  await page!.type(BOX, "/")
+  await page!.waitForSelector(MENU)
+  const { share, offset, boxWidth } = await page!.evaluate((menu, textarea) => {
+    const panel = document.querySelector(menu)!.getBoundingClientRect()
+    const box = document.querySelector(textarea)!.closest("[data-composer-box]")!.getBoundingClientRect()
+    return { share: panel.width / box.width, offset: panel.left - box.left, boxWidth: box.width }
+  }, MENU, BOX)
+  assert.ok(share <= 0.72, `the menu takes ${share} of the ${boxWidth}px box`)
+  assert.ok(Math.abs(offset) < 0.5, `it starts on the box's left edge, off by ${offset}`)
+  assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
+})

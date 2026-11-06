@@ -122,6 +122,118 @@ test("each op count opens a panel of its own rows, one panel at a time", { skip:
   }
 })
 
+// THE POINTER'S WAY INTO A PANEL (maintainer 2026-11-06: "It's kind of hard to click on the things,
+// especially for links, without the little popover going away"). A panel is right-aligned to the line and
+// a row's label sits at its far left, so the natural line from "1 link" to its label runs far left and only
+// a little up, across its neighbours. It read link → file → issue → closed before this was fixed. Every
+// panel that mounts is logged from inside the page, so a swap that came and went between two reads is seen.
+test("a count the pointer only crosses on its way to the panel does not take it", { skip: !baseUrl, timeout: 120_000 }, async () => {
+  const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+  const browser = await launchHeadless({ protocolTimeout: 30_000 })
+  try {
+    const page = await browser.newPage()
+    await page.setViewport({ width: 1100, height: 800, deviceScaleFactor: 1 })
+    await page.goto(`${baseUrl}/queue-ops-spacing-fixture.html?agents=1&links=1&watches=1`, { waitUntil: "networkidle0" })
+    await page.evaluate(() => {
+      document.documentElement.dataset.font = "sans"
+      const log: (string | null)[] = []
+      ;(window as unknown as { __panels: (string | null)[] }).__panels = log
+      new MutationObserver(() => {
+        const now = (document.querySelector("[data-queue-ops-panel]") as HTMLElement | null)?.dataset.queueOpsPanel ?? null
+        if (log[log.length - 1] !== now) log.push(now)
+      }).observe(document.body, { childList: true, subtree: true })
+    })
+    await page.waitForSelector("[data-queue-ops-summary] [data-ops-count]")
+    const count = (kind: string) => `[data-queue-ops-summary] [data-ops-count="${kind}"]`
+    const centre = async (selector: string) => {
+      const box = (await (await page.$(selector))!.boundingBox())!
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    const panelLog = async () => page.evaluate(() => {
+      const log = (window as unknown as { __panels: (string | null)[] }).__panels
+      return log.splice(0, log.length)
+    })
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 500))
+
+    // 1. From "1 link" to its label, in one shallow line over "2 files" and "1 issue".
+    const from = await centre(count("link"))
+    await page.mouse.move(from.x, from.y)
+    await page.waitForSelector('[data-queue-ops-panel="link"]')
+    const row = '[data-queue-ops-panel="link"] [data-thread-link]'
+    const label = await centre(`${row} [data-link-label]`)
+    const aim = { x: (await (await page.$(`${row} [data-link-label]`))!.boundingBox())!.x + 20, y: label.y }
+    await panelLog()
+    await page.mouse.move(aim.x, aim.y, { steps: 40 })
+    await settled()
+    assert.deepEqual(await panelLog(), [], "no other panel mounted on the way, and this one stayed")
+    assert.ok(await page.evaluate((point, selector) => !!document.elementFromPoint(point.x, point.y)?.closest(selector), aim, row), "the pointer is on the link, with its panel still under it")
+
+    // 2. Leaving still closes it.
+    await page.mouse.move(4, 4, { steps: 4 })
+    await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
+
+    // 3. SLIDING ALONG THE LINE IS CHOOSING, so it swaps on the way, the way a menu bar does: holding every
+    // swap would pass step 1 and lose this.
+    await page.mouse.move(from.x, from.y)
+    await page.waitForSelector('[data-queue-ops-panel="link"]')
+    await panelLog()
+    const issue = await centre(count("issue"))
+    await page.mouse.move(issue.x, issue.y, { steps: 20 })
+    await page.waitForSelector('[data-queue-ops-panel="issue"]')
+    assert.deepEqual((await panelLog()).filter((kind) => kind !== null), ["file", "issue"], "each count on the way took the panel in turn")
+
+    // 4. A rising move that comes to rest on a neighbour was a choice after all: it takes over.
+    await page.mouse.move(4, 4, { steps: 4 })
+    await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
+    await page.mouse.move(from.x, from.y)
+    await page.waitForSelector('[data-queue-ops-panel="link"]')
+    const file = await centre(count("file"))
+    await page.mouse.move(file.x, file.y - 3, { steps: 10 })
+    await page.waitForSelector('[data-queue-ops-panel="file"]', { timeout: 2_000 })
+  } finally {
+    await browser.close()
+  }
+})
+
+// NO PANEL IS AS WIDE AS THE BOX IT OPENS OFF (maintainer 2026-11-06: "There should be no full-width
+// popovers like that. There should always be some fraction of the full width of the card"). The Goal panel
+// measured exactly 100% of the box here until then.
+test("the Goal panel and the op panels take a share of the prompt box", { skip: !baseUrl, timeout: 180_000 }, async () => {
+  const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+  const browser = await launchHeadless({ protocolTimeout: 30_000 })
+  try {
+    const page = await browser.newPage()
+    // 1100: the card's ordinary box. 520: a box narrow enough for the panels' floor to be what holds.
+    for (const [width, most] of [[1100, 0.72], [520, 0.75]] as const) {
+      await page.setViewport({ width, height: 800, deviceScaleFactor: 1 })
+      await page.goto(`${baseUrl}/queue-ops-spacing-fixture.html?agents=1&links=1&watches=1`, { waitUntil: "networkidle0" })
+      await page.evaluate(() => { document.documentElement.dataset.font = "sans" })
+
+      await page.click("[data-recurring-prompt]")
+      await page.waitForFunction(() => !!document.querySelector("[data-radix-popper-content-wrapper] textarea"))
+      const goal = await page.evaluate(() => {
+        const panel = document.querySelector("[data-radix-popper-content-wrapper] textarea")!.closest("[data-radix-popper-content-wrapper]")!.firstElementChild!.getBoundingClientRect()
+        const box = document.querySelector("[data-recurring-prompt]")!.closest("[data-composer-box]")!.getBoundingClientRect()
+        return { share: panel.width / box.width, toBoxEnd: panel.right - box.right, left: panel.left, boxLeft: box.left }
+      })
+      assert.ok(goal.share <= most, `the Goal panel takes ${goal.share} of the box at ${width}px`)
+      assert.ok(goal.share >= 0.6, `…and stays a writing surface, at ${goal.share}`)
+      assert.ok(Math.abs(goal.toBoxEnd) < 0.5, `it ends on the box's right edge, off by ${goal.toBoxEnd}`)
+      await page.keyboard.press("Escape")
+      await page.waitForFunction(() => !document.querySelector("[data-radix-popper-content-wrapper] textarea"))
+
+      await page.hover('[data-queue-ops-summary] [data-ops-count="link"]')
+      await page.waitForSelector('[data-queue-ops-panel="link"]')
+      const share = await page.$eval('[data-queue-ops-panel="link"]', (el) => el.getBoundingClientRect().width / document.querySelector("[data-queue-ops-summary] + [data-composer-box]")!.getBoundingClientRect().width)
+      assert.ok(share <= most, `the link panel takes ${share} of the box at ${width}px`)
+      await page.mouse.move(4, 4)
+      await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
 // THE LINE SITS IN THE MIDDLE OF THE SPACE IT IS IN: as far under the rule above the dock as it is over
 // the prompt box. It hung 4.6px low until 2026-10-11 (maintainer: "there's more space above the artifact
 // chips than below"). Measured on the cap band — baseline to cap height, which is what the eye reads as

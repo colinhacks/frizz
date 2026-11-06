@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { Z_POPOVER } from "../../lib/layers.ts"
+import { panelWidthOn } from "../../lib/overlaySurface.ts"
 
 // A PANEL PLACED BY HAND off the element it is rendered inside, and PORTALED to <body> — for what the
 // Radix primitives do not fit: a typeahead the textarea keeps driving (Composer's skills menu), a panel
@@ -95,16 +96,22 @@ export function AnchoredLayer({
   )
 }
 
+// A row is a name and a one-line description, which truncates, so the menu reads at any of these. The
+// floor keeps a phone's box close to its whole width, where a share of it would be all name.
+const TYPEAHEAD_WIDEST_PX = 560
+const TYPEAHEAD_NARROWEST_PX = 340
+
 /**
- * The typeahead's placement: the anchor's own width, `gap` px ABOVE it, and below it instead only when
- * the room above runs out and there is more below — a composer near the top of the window (a short
- * queue card scrolled up, the phone's composer page) would otherwise open its menu off the screen.
+ * The typeahead's placement: from the anchor's left edge, a share of its width (lib/overlaySurface.ts),
+ * `gap` px ABOVE it, and below it instead only when the room above runs out and there is more below — a
+ * composer near the top of the window (a short queue card scrolled up, the phone's composer page) would
+ * otherwise open its menu off the screen.
  */
 export function aboveAnchor(gap: number, margin = 8): Placement {
   return (anchor, size, viewport) => {
     const above = anchor.top - gap - margin
     const below = viewport.height - anchor.bottom - gap - margin
     const top = size.height <= above || above >= below ? anchor.top - gap - size.height : anchor.bottom + gap
-    return { left: anchor.left, top, width: anchor.width }
+    return { left: anchor.left, top, width: panelWidthOn(anchor.width, TYPEAHEAD_WIDEST_PX, TYPEAHEAD_NARROWEST_PX) }
   }
 }
