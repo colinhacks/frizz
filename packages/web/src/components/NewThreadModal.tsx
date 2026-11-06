@@ -226,7 +226,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         {/* The model and the marks that answer to it hold ONE line, on which the chip truncates, so a long
             model name in a 272px sidebar never strands them on a row of their own. A phone's tool row has no
             marks to keep, and its chips still wrap. */}
-        <div className={agentMarks ? `flex min-w-0 max-w-full items-center gap-x-1.5 ${showPermission ? "pr-1.5" : ""}` : "contents"}>
+        <div className={agentMarks ? "flex min-w-0 max-w-full items-center gap-x-1.5" : "contents"}>
         <ProfileGridSelector
           groups={profileGroups}
           agentSettings
@@ -257,13 +257,11 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             className="max-w-[min(14rem,40vw)] px-2 py-1"
           />
         )}
-        {agentMarks}
-        </div>
         {/* Claude only, and not on a phone, for the reasons the thread composer's picker gives
             (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop.
-            After the marks, where the thread composer has it before them. Between the chip and the marks it
-            would take its width from the name the chip truncates, down to "OP…" in a 272px sidebar. Out here
-            it drops to a row of its own instead. */}
+            Beside the model chip, as it is there: two dropdowns with a mark between them read as two
+            unrelated controls (maintainer 2026-11-06). It holds its width, so in a narrow sidebar the
+            model name is what truncates. */}
         {showPermission && (
           <Select
             variant="readout"
@@ -277,6 +275,8 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             className="shrink-0"
           />
         )}
+        {agentMarks}
+        </div>
       </div>
     )
   }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])

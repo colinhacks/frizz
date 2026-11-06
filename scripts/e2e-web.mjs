@@ -49,6 +49,7 @@ const root = path.dirname(here);
 // a guess — this script exists because a silently-not-run test is indistinguishable from a passing one.
 const NEEDS_REAL_STACK = [
   "packages/web/src/components/registeredQuestionNavigation.e2e.test.ts",
+  "packages/web/src/components/questionLetterStacking.e2e.test.ts",
   "packages/web/src/components/promptDraftTabs.e2e.test.ts",
   "packages/web/src/components/filePanelStack.e2e.test.ts",
   "packages/web/src/lib/projectSwitch.e2e.test.ts",
