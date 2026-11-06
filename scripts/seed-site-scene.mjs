@@ -31,6 +31,9 @@ daemon.unref()
 const pids = [daemon.pid]
 
 const ago = (min) => new Date(Date.now() - min * 60_000).toISOString()
+// A PR reading past five minutes draws "as of …" (githubReadingStale), and nothing renews one on a stack whose
+// scheduler is off, so a seeded reading is stamped ahead of the longest capture session.
+const POLLED = new Date(Date.now() + 6 * 3_600_000).toISOString()
 const later = (min) => new Date(Date.now() + min * 60_000).toISOString()
 const sql = (v) => (v === null || v === undefined ? "NULL" : `'${String(v).replace(/'/g, "''")}'`)
 let n = 0
@@ -331,9 +334,9 @@ async function seedFeatures() {
     records: [
       user(260, "Cap the sync retries and get it merged."),
       say(256, `${LIFE} is up. Resting until GitHub has news.\n\n${parkOnLife}`),
-      wake(["life-1", 241], prWatchWakeMessage({ target: LIFE, checks: { verdict: "failing", passed: 14, failed: 1, failing: ["lint"], skipped: 0 } })),
+      wake(["life-1", 241], prWatchWakeMessage({ target: LIFE, checks: { verdict: "failing", passed: 14, failed: 1, failing: ["lint"], skipped: 0, head: "e4b7a21c90" } })),
       say(239, `One unused import. Pushed the fix.\n\n${parkOnLife}`),
-      wake(["life-2", 224], prWatchWakeMessage({ target: LIFE, checks: { verdict: "passing", passed: 15, failed: 0, failing: [], skipped: 0 } })),
+      wake(["life-2", 224], prWatchWakeMessage({ target: LIFE, checks: { verdict: "passing", passed: 15, failed: 0, failing: [], skipped: 0, head: "9c0d3f6a18" } })),
       wake(["life-3", 120], formatGithubWakeSteer({ ref: LIFE, items: [{ label: "change request", actor: "dana-k", bot: false, at: ago(120) }], omitted: 0 })),
       say(116, `dana-k wants the cap in config. Moved it and pushed.\n\n${parkOnLife}`),
       wake(["life-4", 40], prWatchWakeMessage({ target: LIFE, changes: ["now CONFLICTS with the base branch"] })),
@@ -394,7 +397,7 @@ async function seedFeatures() {
     ],
   })
 
-  const status = (over) => ({ checks: "running", running: 0, passed: 0, failed: 0, failing: [], merge: "unknown", state: "open", polledAt: ago(1), ...over })
+  const status = (over) => ({ checks: "running", running: 0, passed: 0, failed: 0, failing: [], merge: "unknown", state: "open", polledAt: POLLED, ...over })
   execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO settings (project_id, key, value) VALUES (${sql(projects[APP].id)}, 'waker.github.status.v1', ${sql(JSON.stringify({
     "acme/mobile-app#391": status({ checks: "running", running: 3, passed: 12, merge: "blocked" }),
     "acme/mobile-app#392": status({ checks: "passing", passed: 15, merge: "mergeable" }),
@@ -505,7 +508,7 @@ if (!features) {
   })
   execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO pr_watch (project_id, id, thread_slug, owner, repo, number, state, created_at, settled_at, cursor)
     VALUES (${sql(projects[API].id)}, 'prw-hero', ${sql(slug)}, 'acme', 'acme-api', 412, 'armed', ${Date.now() - 20 * 60_000}, NULL, NULL)`])
-  execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO settings (project_id, key, value) VALUES (${sql(projects[API].id)}, 'waker.github.status.v1', ${sql(JSON.stringify({ "acme/acme-api#412": { checks: "running", running: 2, passed: 13, failed: 0, failing: [], merge: "blocked", state: "open", polledAt: ago(2) } }))})`])
+  execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, `INSERT OR REPLACE INTO settings (project_id, key, value) VALUES (${sql(projects[API].id)}, 'waker.github.status.v1', ${sql(JSON.stringify({ "acme/acme-api#412": { checks: "running", running: 2, passed: 13, failed: 0, failing: [], merge: "blocked", state: "open", polledAt: POLLED} }))})`])
   await api.mutate("upsertOwnLink", { slug, label: "API dev server", target: "http://127.0.0.1:4000/" })
   await api.mutate("upsertOwnLink", { slug, label: "Storage notes", target: join(dir, "README.md") })
   await api.mutate("upsertOwnLink", { slug, label: "Migration plan", target: join(dir, "package.json") })

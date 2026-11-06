@@ -40,9 +40,11 @@ const at = ago(3)
 const TASK_ID = "bzvtnt3ig"
 const TOOL_USE = "toolu_01SeedWatchProbe"
 
+// Stamped ahead of the session: a reading past five minutes draws "as of …" (githubReadingStale), and a seeded
+// one is not renewed.
 const status = (over) => ({
   checks: "running", running: 0, passed: 0, failed: 0, failing: [], merge: "unknown", state: "open",
-  polledAt: at, ...over,
+  polledAt: ago(-360), ...over,
 })
 
 // The book the poller publishes, keyed by ref. Written straight into `settings` because the alternative
