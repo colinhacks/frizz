@@ -323,9 +323,9 @@ test("an unregistered pr-watch line neither cards nor leaves the queue", () => {
 
 // ---- a reading goes stale (2026-11-06) ----
 //
-// Every poll misses while the Mac sleeps, so a queue rule on age would put each thread parked on running CI
-// into the queue at wake, with a desktop notification, and take it back out a poll later. The spinner is
-// what stops: it claims motion, and nobody has seen any.
+// Every poll misses while the Mac sleeps, so a queue rule on age would put each thread the running-checks
+// hold covers into the queue at wake, with a desktop notification, and take it back out a poll later. The
+// spinner is what stops: it claims motion, and nobody has seen any.
 test("a stale running reading keeps the thread out of the queue, and stops claiming the work is moving", () => {
   const running = book({ checks: "running", running: 2, passed: 1 })
   const fresh = Date.parse(LATER) + GITHUB_READING_STALE_MS

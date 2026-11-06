@@ -740,8 +740,8 @@ export function hasDeclaredWait(
 //
 // A STALE ONE STILL HOLDS (2026-11-06). The queue does not read a reading's age, though the row prints it
 // and the spinner stops (deriveWaitStatus). Every poll misses while the Mac sleeps, so queueing on age would
-// put each thread parked on running CI into the queue at wake, with a desktop notification (notifyNeedsYou
-// fires on that edge), and take it back out a poll later.
+// put each thread this rule holds into the queue at wake, with a desktop notification (notifyNeedsYou fires
+// on that edge), and take it back out a poll later.
 function heldByRunningChecks(github: GithubStatusBook, registered: ReadonlySet<string>): boolean {
   if (registered.size === 0) return false
   // ALL of them: an issue watch (never in the PR book) or a settled PR beside a running one means the
