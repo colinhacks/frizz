@@ -574,17 +574,6 @@ body {
   }
 }
 
-/* Optical centering for the dispatch-form readout values (permission / model / effort). They're
-   petite-caps — short small-capital glyphs that sit ON the baseline, so a flex items-center trigger
-   leaves the text reading ~1px LOW: below the box's vertical center and below the geometrically
-   centered caret. Lift the value onto the caret's centerline so text + chevron share one optical
-   midline and the label looks centered in the bordered box. (Scoped to the readout value span only;
-   the caret keeps its flex centering.) */
-.select-trigger-readout > span:first-child {
-  position: relative;
-  top: -1px;
-}
-
 /* THE POINTER IS FOR WHATEVER A CLICK ACTS ON. Tailwind v4's preflight drops it from buttons, so this
    gives it back to every element that is clickable by what it IS — its tag, or the ARIA role a menu,
    select, palette or tab strip puts on its rows — and a new control gets it without remembering a

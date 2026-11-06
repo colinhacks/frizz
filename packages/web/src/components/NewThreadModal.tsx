@@ -1,7 +1,7 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { useIsMutating, useMutation, useQuery } from "@tanstack/react-query"
-import { acpModelSlug, type AccountBackend, type DispatchInput } from "@frizz/shared"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { acpModelSlug, type AccountBackend, type DispatchInput, type PermissionMode, type Settings } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { useRemoteHost } from "../api/supervisorStatus.ts"
 import { RemoteNote } from "./RemoteNote.tsx"
@@ -10,10 +10,12 @@ import { Composer } from "./Composer.tsx"
 import { GithubTrigger } from "./GithubTrigger.tsx"
 import { PromptBoxActions } from "./PromptBoxActions.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
-import { SETTINGS_WRITE_KEY, settingsQuery } from "../hooks/useSettingsAutosave.tsx"
+import { SETTINGS_WRITE_KEY, settingsQuery, useSettingsAutosave } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
+import { Select } from "./ui/Select.tsx"
 import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
+import { CLAUDE_DISPATCH_PERMISSION_OPTIONS } from "../lib/options.ts"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
 import { draftKey, draftStore, useDraft, useProjectDir } from "../lib/drafts.ts"
@@ -60,6 +62,30 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
   // its credentials (a token proxy, `op run`), so "no local sign-in" says nothing — the server's
   // preflight makes the same exception (context.ts).
   const settings = useQuery(settingsQuery(project))
+  // THE PERMISSION SELECTOR: the same per-project value as the gear's Permissions, so it is remembered the
+  // way the model chip is, and the two can never disagree. It is not a choice for one thread, because the
+  // dispatch RPC ignores a client-sent mode on purpose: honoured, it would let a worker reaching the RPC
+  // over loopback start itself a bypass thread. It writes the cached copy rather than a draft seeded once,
+  // so a pick in the gear a moment ago is in the object this writes back.
+  const queryClient = useQueryClient()
+  const isMobile = useIsMobile()
+  const { state: settingsSaveState, queue: queueSettings } = useSettingsAutosave()
+  const changePermission = useCallback((permissionMode: PermissionMode) => {
+    const { queryKey } = settingsQuery(project)
+    const current = queryClient.getQueryData<Settings>(queryKey)
+    if (!current || current.permissionMode === permissionMode) return
+    const next = { ...current, permissionMode }
+    // Optimistic, like the thread composer's: a picker that snaps back for a round trip reads as a dropped click.
+    queryClient.setQueryData(queryKey, next)
+    queueSettings(next)
+  }, [project, queryClient, queueSettings])
+  useEffect(() => {
+    if (settingsSaveState !== "error") return
+    showToast("Permission change failed")
+    void queryClient.invalidateQueries({ queryKey: settingsQuery(project).queryKey })
+  }, [settingsSaveState, project, queryClient])
+  // A stored mode outside the two reads as Auto, which is exactly what would be dispatched (workerDispatchPermission).
+  const permissionMode = settings.data ? (settings.data.permissionMode === "bypassPermissions" ? "bypassPermissions" : "auto") : null
   // When submit is gated, the built dispatch is stashed here and the sign-in modal opens for this
   // backend; a successful re-check runs the stashed dispatch unchanged.
   const [signInFor, setSignInFor] = useState<AccountBackend | null>(null)
@@ -144,10 +170,8 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
     }
     const input: DispatchInput = {
       prompt: prompt.trim(),
-      // No permissionMode: the server stamps every created worker itself (workerDispatchPermission —
-      // the non-interactive floor, raised to bypass only when Settings asks). Dispatch offers no
-      // per-thread permission choice; the "Permissions" control behind the Claude Code gear in the model
-      // picker (AgentSettingsPopover) owns the default.
+      // No permissionMode: the server stamps every created worker from Settings (workerDispatchPermission),
+      // which is what the selector below and the gear's Permissions both write.
       model: resolved.model,
       backend: resolved.backend,
       // An ACP profile resolves to effort "" (no effort axis); the RPC's enum takes that as ABSENT.
@@ -167,7 +191,6 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
 
   // The profile readout lives INSIDE the box, along its bottom edge — petite caps, very quiet.
   // Not a dropdown at rest: a plain value; hover materializes the border, click opens the menu.
-  // There is no permission control: dispatch permission is fixed server-side.
   //
   // useMemo (measured in the render-perf profile): the footer used to be rebuilt inline on every
   // render, so each prompt KEYSTROKE re-rendered every picker tree — ~222 component renders per
@@ -190,9 +213,11 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
     const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
     return (
-      // gap-x-1.5 between the two pills, the same measured gap the thread composer's strip uses
+      // gap-1.5 between the pills, the same measured gap the thread composer's strip uses
       // (useThreadComposerControls): two bordered pills on `gap-x-1` read as one segmented control.
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      // The same gap down, because the Console's project chip wraps the strip onto a second row, and
+      // 2px there read as one stack beside the 6px across.
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {projectPicker}
         <ProfileGridSelector
           groups={profileGroups}
@@ -224,9 +249,24 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode) {
             className="max-w-[min(14rem,40vw)] px-2 py-1"
           />
         )}
+        {/* Claude only, and not on a phone, for the reasons the thread composer's picker gives
+            (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop. */}
+        {permissionMode && resolved.backend === "claude" && !isMobile && (
+          <Select
+            variant="readout"
+            value={permissionMode}
+            onValueChange={(mode) => changePermission(mode as PermissionMode)}
+            options={CLAUDE_DISPATCH_PERMISSION_OPTIONS}
+            ariaLabel="New thread permission mode"
+            title={permissionMode === "bypassPermissions"
+              ? "New Claude threads in this project start in Bypass: nothing is checked."
+              : "New Claude threads in this project start in Auto: a classifier reviews each action, and what it won't decide becomes an approval card."}
+            className="shrink-0"
+          />
+        )}
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker])
+  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>

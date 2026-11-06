@@ -29,7 +29,8 @@ import { threadProfileControlState } from "../lib/threadProfile.ts"
 // override speaking one vocabulary.
 //
 // CODEX IS DELIBERATELY LEFT OUT. Its axis is a sandbox rather than a permission mode, its restrictive
-// end is the one that caused the 2026-07-23 removal, and the ask was Claude-specific.
+// end is the one that caused the 2026-07-23 removal, and the ask was Claude-specific. The new-thread prompt
+// box has the same picker for the mode new threads start in, and leaves Codex out for the same reasons.
 //
 // ON A PHONE the strip is `phoneTools`: the model chip alone (it opens the phone's model sheet — the
 // ProfileGridSelector's own phone branch), with no permission picker. Permissions stay on the desktop.
@@ -232,6 +233,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
                 ? "Bypass: the worker never asks for approval. Changing this restarts the worker process; the conversation resumes from disk on the next turn."
                 : "Auto: risky actions raise an approval card here. Changing this restarts the worker process; the conversation resumes from disk on the next turn."}
             disabled={busy || permissionBlocked !== null}
+            caretSize={11}
             // NO padding override: the readout variant's own box (4px/8px, 12px type) already matches
             // the profile pill beside it exactly — measured, both 26px tall — and passing one would only
             // look like it was doing something. `shrink-0` keeps the two words whole when the profile

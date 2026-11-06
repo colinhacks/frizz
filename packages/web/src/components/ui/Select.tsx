@@ -91,6 +91,7 @@ export function Select({
   indicatorPosition = "left",
   side = "bottom",
   menuZClass = OPAQUE_PORTAL_SURFACE_Z,
+  caretSize = 13,
   className = "",
 }: {
   value: string
@@ -110,6 +111,8 @@ export function Select({
   // element resolve by CSS source order, not class order). Override only to clear a higher surface
   // the trigger lives inside, e.g. OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z inside the z-[200] Overlay.
   menuZClass?: string
+  // 11 beside a compact profile pill, whose chevron is that size (ProfileGridSelector).
+  caretSize?: number
   className?: string
 }) {
   const display = selectDisplayValue(value, options, groups, placeholder)
@@ -176,12 +179,14 @@ export function Select({
           type="button"
           aria-label={ariaLabel}
           title={title}
-          className={`group inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left text-[12px] text-fg outline-none data-[placeholder]:text-muted ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer transition-colors"} ${triggerVariant} ${variant === "readout" ? "select-trigger-readout" : ""} ${promptReadoutTypography} ${className}`}
+          // A readout sits beside the profile pill and takes its 3px gap, so a label reads the same distance
+          // from its chevron in both (2026-11-06, sans: 5.71px of ink, where gap-1.5 drew 8.71px).
+          className={`group inline-flex min-w-0 max-w-full items-center ${variant === "readout" ? "gap-[3px]" : "gap-1.5"} rounded-md border px-2 py-1 text-left text-[12px] text-fg outline-none data-[placeholder]:text-muted ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer transition-colors"} ${triggerVariant} ${promptReadoutTypography} ${className}`}
         >
           <span className={`min-w-0 flex-1 truncate text-left ${display.placeholder ? "text-muted" : ""}`}>
             {display.text}
           </span>
-          <ChevronDown className={`select-caret shrink-0 text-muted ${disabled ? "" : "transition-transform group-data-[state=open]:rotate-180"}`} size={13} />
+          <ChevronDown className={`select-caret shrink-0 text-muted ${disabled ? "" : "transition-transform group-data-[state=open]:rotate-180"}`} size={caretSize} />
         </button>
       </RadixMenu.Trigger>
       <RadixMenu.Portal>
