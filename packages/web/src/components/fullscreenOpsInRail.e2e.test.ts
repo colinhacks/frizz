@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// On /full the ops over the prompt box give way to the rail beside the column (maintainer 2026-10-02:
-// "it's already showing up in the sidebar to the right") — so the rail has to carry every row the
+// On the full-screen page (`/thread/<slug>`) the ops over the prompt box give way to the rail beside the
+// column (maintainer 2026-10-02: "it's already showing up in the sidebar to the right") — so the rail has to carry every row the
 // line of counts holds, and the line has to come back the moment the window is too narrow for the rail.
 // Real server, real tailer, real broker-row thread; only the absent launcher status probe is stubbed.
 // Boot scripts/adhoc-stack.mjs, then scripts/seed-full-rail-ops.mjs --port=<its port> --home=<its HOME>.
@@ -12,7 +12,7 @@ import test from "node:test"
 // Step 4 clears a row, so every run needs a fresh seed.
 const baseUrl = process.env.FRIZZ_FULL_RAIL_OPS_E2E_URL
 
-test("/full lists the thread's ops in its rail, and over the prompt box only once the rail is gone", { skip: !baseUrl, timeout: 120_000 }, async () => {
+test("the full-screen page lists the thread's ops in its rail, and over the prompt box only once the rail is gone", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
   try {
@@ -36,7 +36,7 @@ test("/full lists the thread's ops in its rail, and over the prompt box only onc
     assert.deepEqual(await railKinds(), ["agent", "agent", "link", "link", "shell", "shell"])
     assert.equal(await stripIn("main[data-standalone-thread]"), null, "the prompt box must not repeat the rail's rows")
 
-    // THE TWO ROWS THE RAIL USED TO DROP (until 2026-10-05), so on /full they were shown nowhere: a
+    // THE TWO ROWS THE RAIL USED TO DROP (until 2026-10-05), so on full screen they were shown nowhere: a
     // sub-agent quiet past its window, and a shell the OS reports gone. Each says what it is by its MARK
     // and its tooltip; the status is the elapsed time alone (2026-10-08). The shell's verdict lands a
     // probe tick after the first board read, so it is waited for rather than read once.
@@ -90,7 +90,7 @@ test("/full lists the thread's ops in its rail, and over the prompt box only onc
     await page.waitForFunction(() => !document.querySelector("main[data-standalone-thread] [data-queue-ops-summary]"))
 
     // 4. …and with it the strip's ×, which the rail carries under the strip's own gate (it had none until
-    // 2026-10-05, so /full wide offered no way to stop or clear a row). A stale row's × CLEARS — nothing
+    // 2026-10-05, so full screen wide offered no way to stop or clear a row). A stale row's × CLEARS — nothing
     // runs to stop — so pressing the gone shell's retires it through the real server, without opening
     // the drawer the rest of its row opens.
     assert.ok(await page.$(`${railRow("toolu_fro_agent2")} button[aria-label="Clear sub-agent: Audit the old projection"]`), "the stale child offers Clear")
