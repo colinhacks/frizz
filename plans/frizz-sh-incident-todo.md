@@ -35,6 +35,8 @@ The maintainer wants these back for everyone, after running `colin.frizz.sh` him
 
 **One name by hand.** A board's own name needs no GitHub app and no release. Create its key, save `{"hostname":"<name>.frizz.sh","claim":"<name>","serve":"relay"}` as `cloud.json`, and add the KV pair `claim:<name>` = `{"pubkey":"<key>","tunnelId":"","port":9393,"claimedAt":<ms>,"renewedAt":<ms>}` to `frizz-registrar-CLAIMS` in the dashboard. Renewals then use the key alone. No stored token can write KV, on purpose. End users never do any of this: the R pane claims through the registrar, and the wildcard record already covers every name.
 
+`colin.frizz.sh` has been served this way since 2026-11-06, on launcher 0.13.15 and server 0.15.46. Through the live name, a real session read the board and was refused `dispatch`, `addOwnCommandWatch`, minting a sign-in link and the session directory, including with headers claiming loopback. The dashboard's KV write left no audit-log event, so until § 1 step 6 pins the name, nothing alarms if its row changes.
+
 Before any name returns, including one set up by hand for a single board:
 
 - **The board runs the remote gate.** `/_frizz/control/status` reads `launcherVersion` 0.13.15 or later, and the server is 0.15.46 or later. The fix for forged relay headers is in the shell, so updating the server alone leaves it out, and only restarting `npx frizz` replaces a running launcher.
