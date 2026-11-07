@@ -115,6 +115,8 @@ class SessionStream {
   readonly usersSeen = new Set<string>()
   readonly compactionsSeen = new Set<string>()
   readonly errorsSeen = new Set<string>()
+  /** The service restarts this transcript has already said cost a command its environment (by notice id). */
+  readonly envLossNoted = new Set<string>()
   readonly enqueued = new Map<string, { type: string; text: string }>()
   readonly writer: OpencodeTranscriptWriter
   private readonly buffers = new Map<string, string>()
@@ -170,6 +172,7 @@ class SessionStream {
         case "user-message": if (asString(rec.inboxId)) this.usersSeen.add(rec.inboxId as string); break
         case "compaction": if (asString(rec.oc)) this.compactionsSeen.add(rec.oc as string); break
         case "provider-error": if (asString(rec.oc)) this.errorsSeen.add(rec.oc as string); break
+        case "opencode-note": { const oc = asString(rec.oc); if (oc?.startsWith(ENV_LOSS_KEY)) this.envLossNoted.add(oc.slice(ENV_LOSS_KEY.length)); break }
       }
     }
   }
@@ -292,7 +295,8 @@ class SessionStream {
     this.flushBuffers()
     this.lastStepStopped = false
     const text = this.hooks.onUser?.(inboxId, eventText, at) ?? eventText
-    this.writer.append({ kind: "user-message", at, text, synthetic: false, inboxId })
+    // Frizz's own word to the worker (envLossSteer) is a delivery of Frizz's, never the person's.
+    this.writer.append({ kind: "user-message", at, text, synthetic: inboxId.includes(ENV_LOSS_INBOX), inboxId })
     this.hooks.onDelivered?.(inboxId)
   }
 
@@ -306,6 +310,17 @@ class SessionStream {
 
   note(text: string): void {
     this.writer.append({ kind: "opencode-note", at: this.now(), text })
+  }
+
+  /** Say once, per service restart, which commands ran without Frizz's environment (EnvLoss). */
+  noteEnvLoss(loss: EnvLoss, toldWorker: boolean): void {
+    if (this.envLossNoted.has(loss.restartId)) return
+    this.envLossNoted.add(loss.restartId)
+    const n = loss.commands.length
+    this.writer.append({
+      kind: "opencode-note", at: this.now(), oc: ENV_LOSS_KEY + loss.restartId,
+      text: `OpenCode's service restarted and resumed this turn before Frizz could give it its environment back, so ${n === 1 ? "one shell command" : `${n} shell commands`} ran without it, and frizzctl could not reach this thread from ${n === 1 ? "it" : "them"}: ${loss.commands.map((c) => "`" + clip(c, 120) + "`").join(", ")}.${toldWorker ? " Frizz has told the worker." : ""}`,
+    })
   }
 
   /** One live event. Returns whether a turn's state moved. */
@@ -443,7 +458,11 @@ class SessionStream {
   }
 
   /** Bring the file up to date from the session's own message list. */
-  async reconcile(client: OpencodeClient, directory: string, window: () => number | undefined, findChild: (toolId: string, part: Json) => void): Promise<void> {
+  /** `envSince`: when Frizz began putting this session's environment on the current service process. A
+   *  shell command the service ran after a restart notice and before then had none (EnvLoss). */
+  async reconcile(client: OpencodeClient, directory: string, window: () => number | undefined, findChild: (toolId: string, part: Json) => void, envSince?: number): Promise<EnvLoss | undefined> {
+    let restartId: string | undefined
+    let envless: string[] = []
     const walked: Json[] = []
     let cursor: string | undefined
     for (let page = 0; page < 20; page++) {
@@ -461,6 +480,8 @@ class SessionStream {
       const id = asString(msg.id) ?? ""
       const time = asObject(msg.time)
       const at = isoFrom(time?.created, this.now())
+      // OpenCode's own notice that it resumed this turn after a restart (session/execution/restart.ts).
+      if (asObject(msg.metadata)?.notice === "restart") { restartId = id; envless = [] }
       switch (msg.type) {
         case "user":
           this.openTurn(at)
@@ -483,6 +504,10 @@ class SessionStream {
               if (status === "streaming") continue
               this.writeToolCall(toolId, asString(part.name) ?? "tool", state?.input, at)
               findChild(toolId, part)
+              const ran = asObject(part.time)?.ran
+              if (restartId && envSince !== undefined && part.name === "shell" && typeof ran === "number" && ran < envSince) {
+                envless.push(asString(asObject(state?.input)?.command) ?? "shell")
+              }
               if (status === "completed") this.writeToolResult(toolId, state?.content, asObject(state?.metadata), false, at)
               else if (status === "error") {
                 const e = errorMessage(state?.error)
@@ -510,8 +535,18 @@ class SessionStream {
           break
       }
     }
+    return restartId && envless.length > 0 && !this.envLossNoted.has(restartId) ? { restartId, commands: envless } : undefined
   }
 }
+
+/** Shell commands a restarted service ran in a resumed turn before Frizz put the session's environment
+ *  back. OpenCode keeps that environment in the service's memory only (core/src/session/environment.ts)
+ *  and resumes a claimed turn at boot whoever is connected (session/execution/restart.ts), so while Frizz
+ *  is away, or still reconnecting, those commands run on the service's own environment: no FRIZZ_*,
+ *  usually no frizzctl. Nothing in OpenCode persists it, so Frizz cannot prevent it; it says so. */
+interface EnvLoss { restartId: string; commands: string[] }
+const ENV_LOSS_KEY = "env-loss:"
+const ENV_LOSS_INBOX = "envrestored"
 
 // ---- a thread --------------------------------------------------------------------------------------
 
@@ -815,6 +850,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     if (!client) return
     const env = this.workerEnv(live.slug)
     const { cwd } = live
+    const envSince = Date.now()
     await client.putEnvironment(live.opencodeId, env, cwd)
     await this.pushContract(client, live)
     const session = await client.getSession(live.opencodeId, cwd).catch(() => undefined)
@@ -825,7 +861,7 @@ export class OpencodeBridge implements OpencodeHubListener {
       const child = asString(metadata?.sessionID)
       if (part.name === "subagent" && child) this.linkChild(live, child, toolId)
     }
-    await live.stream.reconcile(client, cwd, window, onTool)
+    const loss = await live.stream.reconcile(client, cwd, window, onTool, envSince)
 
     const children = await client.childSessions(live.opencodeId, cwd).catch(() => [] as Json[])
     for (const raw of children) {
@@ -834,8 +870,10 @@ export class OpencodeBridge implements OpencodeHubListener {
     }
     const active = await client.active()
     for (const [childId, child] of live.children) {
+      const childEnvSince = Date.now()
       await client.putEnvironment(childId, env, cwd).catch(() => {})
-      await child.stream.reconcile(client, cwd, window, () => {})
+      const childLoss = await child.stream.reconcile(client, cwd, window, () => {}, childEnvSince)
+      if (childLoss) child.stream.noteEnvLoss(childLoss, false)
       const running = active.has(childId)
       if (running && !child.stream.turnOpen) child.stream.ingest({ type: "session.execution.started", data: {} }, window)
       if (running && child.state !== "running") { child.state = "running"; delete child.finishedAt; this.writeSubAgent(live, childId, child) }
@@ -851,6 +889,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     } else if (live.stream.turnOpen) {
       this.armSettle(live, live.stream)
     }
+    if (loss) await this.reportEnvLoss(client, live, loss, active.has(live.opencodeId))
     await this.syncCards(client, live)
     live.stale = false
     this.options.onStatusChange?.()
@@ -1042,6 +1081,20 @@ export class OpencodeBridge implements OpencodeHubListener {
 
   private retireCardsOf(live: Live, ownerSessionId: string): void {
     for (const card of [...live.cards.values()]) if (card.ownerSessionId === ownerSessionId) this.retireCard(live, card.interactionId)
+  }
+
+  /** EnvLoss: a note for the person, and, while the turn still runs, a word to the worker at its next step,
+   *  so it re-runs what failed instead of concluding frizzctl is broken. A rested turn gets the note alone:
+   *  waking a worker for this is the person's call. */
+  private async reportEnvLoss(client: OpencodeClient, live: Live, loss: EnvLoss, running: boolean): Promise<void> {
+    let told = false
+    if (running) {
+      const list = loss.commands.map((c) => "`" + clip(c, 200) + "`").join(", ")
+      const text = `Frizz: OpenCode's service restarted and resumed your turn before Frizz could restore your environment, so ${loss.commands.length === 1 ? "this shell command" : "these shell commands"} ran without it, and frizzctl could not reach your thread from ${loss.commands.length === 1 ? "it" : "them"}: ${list}. The environment is back now. Re-run any of them that needed it, frizzctl included.`
+      const id = opencodeInboxId(live.sessionId, `${ENV_LOSS_INBOX}${loss.restartId}`)
+      told = await client.prompt(live.opencodeId, { id, text, delivery: "steer" }, live.cwd).then(() => true, (err) => { this.diagnostic(live.slug, `could not tell the worker its environment was lost: ${(err as Error).message}`); return false })
+    }
+    live.stream.noteEnvLoss(loss, told)
   }
 
   private async syncCards(client: OpencodeClient, live: Live): Promise<void> {

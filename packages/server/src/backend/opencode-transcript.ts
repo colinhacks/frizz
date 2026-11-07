@@ -21,7 +21,8 @@ export interface OpencodeSessionHeader {
   model?: string
   version?: string
 }
-export interface OpencodeNote { kind: "opencode-note"; at: string; text: string }
+/** `oc` keys a note Frizz writes once per OpenCode item (an `env-loss:` notice). */
+export interface OpencodeNote { kind: "opencode-note"; at: string; text: string; oc?: string }
 /** The state of one sub-agent row. The newest record per `id` wins, so a replay rebuilds the rows. */
 export interface OpencodeSubAgentRecord {
   kind: "opencode-subagent"

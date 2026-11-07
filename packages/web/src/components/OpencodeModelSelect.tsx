@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { opencodeModelRef, opencodeModelSlug, type OpencodeModels } from "@frizz/shared"
 import { scopedKey, useProjectScope, useRpc } from "../lib/projectScope.tsx"
 import { OPAQUE_PORTAL_SURFACE_Z } from "../lib/overlaySurface.ts"
+import { selectDisplayValue } from "../lib/selectLayout.ts"
 import { Select, type SelectGroup } from "./ui/Select.tsx"
 
 // THE MODEL AND VARIANT DROPDOWNS FOR OPENCODE. The list is the running service's own (`GET /api/model`),
@@ -62,6 +63,9 @@ export function OpencodeModelSelect({
   const ref = opencodeModelRef(value)
   const key = ref ? `${ref.providerID}/${ref.id}` : ""
   const current = ref ? models.data?.models.find((m) => m.providerID === ref.providerID && m.id === ref.id) : undefined
+  // The trigger's own text, for its width (selectDisplayValue reads the same groups).
+  const groups = opencodeModelGroups(models.data, value, models.isPending)
+  const shownLabel = selectDisplayValue(key, undefined, groups, models.isPending ? "Loading models…" : "Default").text
   const failure = models.isError ? (models.error as Error).message : models.data?.error
   const pick = (modelKey: string, variant?: string) => {
     const slash = modelKey.indexOf("/")
@@ -76,16 +80,17 @@ export function OpencodeModelSelect({
         side={side}
         value={key}
         onValueChange={(next) => pick(next)}
-        groups={opencodeModelGroups(models.data, value, models.isPending)}
+        groups={groups}
         placeholder={models.isPending ? "Loading models…" : "Default"}
         ariaLabel="OpenCode model"
         title={models.isPending ? "Asking OpenCode for its models" : failure ? `OpenCode did not list its models (${failure}); the thread runs on its default` : "OpenCode's model for this thread"}
         disabled={disabled || models.isPending}
         indicatorPosition="right"
         menuZClass={menuZClass}
-        // On a phone the row is too narrow for both selects and the permission beside them, so each
-        // truncates rather than the model collapsing to a bare chevron (420px, 2026-11-06).
-        className={`min-w-[5rem] ${className}`}
+        // On a phone the row is too narrow for both selects and the permission beside them, so a long
+        // name truncates to a floor rather than collapsing to a bare chevron (420px, 2026-11-06). A short
+        // one never truncates, and gets no floor: 5rem drew dead space after "Default".
+        className={`${shownLabel.length > 10 ? "min-w-[5rem]" : "shrink-0"} ${className}`}
       />
       {current && current.variants.length > 0 && (!compact || ref?.variant) && (
         <Select

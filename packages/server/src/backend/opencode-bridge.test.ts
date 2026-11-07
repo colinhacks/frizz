@@ -320,6 +320,67 @@ test("opencode-bridge: a provider sign-in failure is a provider error that says 
   } finally { await teardown(r) }
 })
 
+// OpenCode keeps a session's environment in the service's memory and resumes a claimed turn at boot,
+// whoever is connected. What a turn resumed while Frizz was away ran in the meantime is put in the
+// transcript, once; a command that ran after Frizz put the environment back is not.
+test("opencode-bridge: shell commands a restarted service ran before the environment came back are noted, once", async () => {
+  // rested: the resumed turn finished before Frizz came back. running: it is still going. control: the
+  // command ran after Frizz put the environment back.
+  for (const variant of ["rested", "running", "control"] as const) {
+    const r = await rig()
+    try {
+      const { opencodeSessionId } = await spawn(r, "[shell:echo started][wait:60000][say:never]")
+      await until(() => records(r).some((x) => x.kind === "tool-result"))
+      // The service goes down mid-turn (a shutdown keeps the claim and writes no idle message), and Frizz
+      // cannot reach it while it is away.
+      r.fake.pause(true)
+      const s = r.fake.sessions.get(opencodeSessionId)
+      s.shutdown = true
+      s.abort.abort()
+      await until(() => !s.running, 5000)
+      s.env = undefined
+      // It comes back and resumes the turn before Frizz reconnects.
+      const at = Date.now()
+      const ran = variant === "control" ? at + 60_000 : at
+      s.messages.push(
+        { id: "msg_restart", seq: 9001, type: "synthetic", metadata: { notice: "restart" }, text: "The server restarted while you were working.", time: { created: at } },
+        { id: "msg_resumed", seq: 9002, type: "assistant", agent: "build", content: [{ type: "tool", id: "call_r", name: "shell", state: { status: "completed", input: { command: "frizzctl activity" }, content: [{ type: "text", text: "zsh: command not found: frizzctl" }] }, time: { created: at, ran, completed: at } }], finish: "tool-calls", time: { created: at } },
+      )
+      if (variant === "running") s.running = true
+      else s.messages.push({ id: "msg_idle", seq: 9003, type: "idle", outcome: "succeeded", time: { created: at } })
+      r.fake.pause(false)
+      await until(() => records(r).some((x) => x.kind === "tool-call" && x.input?.command === "frizzctl activity"), 15000)
+      await new Promise((res) => setTimeout(res, 300))
+      const notes = () => records(r).filter((x) => x.kind === "opencode-note" && /without it/.test(x.text))
+      const steers = () => r.fake.requests.filter((q: any) => q.method === "POST" && /envrestored/.test(JSON.stringify(q.body ?? "")))
+      if (variant === "control") {
+        assert.equal(notes().length, 0, "a command that ran after the environment came back did not lack it")
+        assert.equal(steers().length, 0)
+        continue
+      }
+      assert.equal(notes().length, 1)
+      assert.match(notes()[0]!.text, /one shell command ran without it/)
+      assert.match(notes()[0]!.text, /`frizzctl activity`/)
+      if (variant === "running") {
+        // The worker hears it at its next step, as a steer, so it re-runs the command.
+        assert.equal(steers().length, 1)
+        assert.match(JSON.stringify(steers()[0].body), /re-run any of them that needed it|Re-run any of them that needed it/)
+        assert.match(notes()[0]!.text, /Frizz has told the worker/)
+      } else {
+        // A rested turn: the person is told; the worker is not woken for it.
+        assert.equal(steers().length, 0)
+      }
+      // Reconnecting again says nothing new, and a stream rebuilt from the file remembers it said it.
+      r.fake.dropStreams()
+      await new Promise((res) => setTimeout(res, 1500))
+      assert.equal(notes().length, 1)
+      assert.equal(steers().length, variant === "running" ? 1 : 0)
+      const again = new OpencodeSessionStream(opencodeSessionId, opencodeTranscriptPath(r.stateDir, "s1"), () => new Date().toISOString(), 10_000)
+      assert.ok(again.envLossNoted.has("msg_restart"))
+    } finally { await teardown(r) }
+  }
+})
+
 test("opencode-bridge: stop interrupts the turn and the thread takes its next message", async () => {
   const r = await rig()
   try {
