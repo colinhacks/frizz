@@ -463,6 +463,8 @@ async function runSupervisor(
       // A spent code repaints the open QR pane as stale, so nobody photographs a dead link.
       onCodeConsumed: () => accessPane?.markConsumed(),
       onDeviceSignedIn: ({ label, devices }) => activityReadout?.notice("done", "Remote", `${label} signed in · ${remoteDevicesLine(devices)}`),
+      onDeviceSignedOut: ({ label, devices }) =>
+        activityReadout?.notice("done", "Remote", label === null ? "Every remote device signed out" : `${label} signed out · ${remoteDevicesLine(devices)}`),
       sessionKey: sessions.key,
       rotateSessionKey: sessions.rotateKey,
       sessionDirectory: sessions.directory,
@@ -510,6 +512,7 @@ async function runSupervisor(
         claim: (name, signIn) =>
           establishCloudConfig(name, port, undefined, undefined, githubDeviceFlow({ onPrompt: signIn.onDeviceCode, signal: signIn.signal })),
         issueLink: () => supervisor.issueAccessLink(),
+        devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
         probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
         onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "loopback only"),
         sandbox: sandbox !== null,

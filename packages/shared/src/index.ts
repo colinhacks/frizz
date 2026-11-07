@@ -1050,8 +1050,9 @@ function restAnswerLines(hints: readonly AwaitingHint[] | undefined): { status: 
 }
 
 /** Does this fence name the HUMAN as its wait — `steps:` to perform, or `questions:` still owed an answer?
- *  Either is the answer `needs_input` by construction, whatever the answer line says. */
-function fenceWaitsOnHuman(hints: readonly AwaitingHint[] | undefined): boolean {
+ *  Either is the answer `needs_input` by construction, whatever the answer line says. It is also the one
+ *  handoff a later quiet park cannot take back (server board handoffStands). */
+export function fenceWaitsOnHuman(hints: readonly AwaitingHint[] | undefined): boolean {
   return awaitingSteps(hints).length > 0 || awaitingQuestions(hints).length > 0
 }
 

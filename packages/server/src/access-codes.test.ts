@@ -212,6 +212,14 @@ test("sign out everywhere reports how many devices it actually kicked", () => {
   assert.equal(store.verifySession(b.session), false)
 })
 
+test("signing everyone out also voids a code nobody has redeemed yet", () => {
+  const store = new AccessStore()
+  const waiting = store.issue()
+  store.signOutAll()
+  assert.deepEqual(store.redeem(waiting.code, "iPhone"), { ok: false, reason: "unknown" })
+  assert.equal(store.redeem(store.issue().code, "iPhone").ok, true, "a code minted afterwards works")
+})
+
 test("the device list names what redeemed each link, newest first", () => {
   const store = new AccessStore()
   store.redeem(store.issue().code, "iPhone")
