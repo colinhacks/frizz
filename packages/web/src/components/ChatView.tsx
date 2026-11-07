@@ -173,11 +173,12 @@ function useChildDrillSlug(): string | null {
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
 /** What the one-thread pane hands the thread view it hosts (prototype): where acting on the thread takes
- *  the human, whether the header offers full screen, and the queue's position beside the header's verbs. */
+ *  the human, whether the header offers full screen, and whether the rail stands beside it (the wide
+ *  layout, where there is no full screen to leave, so `showReturnToQueue` cannot say it). */
 export interface ThreadPaneHooks {
   exit: SurfaceExit
   expand: boolean
-  stepper?: ReactNode
+  railBeside?: boolean
 }
 
 export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
@@ -194,7 +195,7 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
     <ChatView
       slug={slug}
       phone={phone}
-      railBeside={showReturnToQueue && splitFileViewer}
+      railBeside={(showReturnToQueue || pane?.railBeside === true) && splitFileViewer}
       pane={pane}
       header={phone ? (
         <MobileThreadHeader slug={slug} onClose={onClose} />
@@ -1640,7 +1641,6 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
         {/* `gap-0.5` — the action strip's own distance (HeaderActions spaces its icons on the same one),
             so the lifecycle verbs that close the strip stand in the row's rhythm. */}
         <div className="flex shrink-0 items-center gap-0.5">
-          {pane?.stepper}
           <HeaderActions
             thread={thread}
             // The /full page is the one surface with a fullscreen to LEAVE, and it leaves through the

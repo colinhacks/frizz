@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react"
 import { flushSync } from "react-dom"
 import { proxy, subscribe } from "valtio"
 import { closeDrawersById, showInPane, store } from "../store.ts"
@@ -8,18 +9,19 @@ import { prefersReducedMotion } from "./sheet.ts"
 // height, picked by a sidebar row. Done and Snooze bring up the next thread in the queue. With nothing
 // picked the column offers the first item.
 //
-// `after send` and `fold style` are the two questions a still frame cannot answer, so the prototype lets
-// them be tried (ThreadPane.tsx PrototypeControls). They are not meant to survive it as settings.
+// `after send` is the question a still frame cannot answer, so the prototype lets it be tried
+// (ThreadPane.tsx PrototypeControls). It is not meant to survive it as a setting.
 
 export type AfterSend = "stay" | "next" | "auto"
-export type FoldStyle = "away" | "slim"
 
 const KEY = "frizz.threadPanePrototype.v1"
 
-function load(): { afterSend: AfterSend; foldStyle: FoldStyle; folded: boolean } {
-  const fallback = { afterSend: "stay" as AfterSend, foldStyle: "away" as FoldStyle, folded: false }
+function load(): { afterSend: AfterSend; folded: boolean } {
+  const fallback = { afterSend: "stay" as AfterSend, folded: false }
   try {
-    return { ...fallback, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }
+    const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<typeof fallback>
+    // Field by field, so a key an earlier build stored (the slim rail's `foldStyle`) is dropped.
+    return { afterSend: stored.afterSend ?? fallback.afterSend, folded: stored.folded ?? fallback.folded }
   } catch {
     return fallback
   }
@@ -124,13 +126,48 @@ export function sendAndNext(canSend: boolean, submit: () => void): void {
   }
 }
 
+// ── the wide layout ───────────────────────────────────────────────────────────────────────────────
+// AT 1360PX AND WIDER THE PANE IS ALWAYS THREE COLUMNS (maintainer 2026-11-06, "4C"): the sidebar's 300,
+// the thread's 720 and the rail's 340 add up to exactly 1360, so from there on nothing has to be put away
+// to show the rail, and there is no full screen to go to. Narrower, the sidebar and the rail cannot both
+// stand beside a thread, and ⌘\ trades one for the other.
+//
+// A fold stored while narrow is kept, not cleared, while the window is wide: it only has no effect there,
+// and narrowing the window again brings it back as it was.
+export const PANE_WIDE_MIN_PX = 1360
+const WIDE_QUERY = `(min-width: ${PANE_WIDE_MIN_PX}px)`
+
+// One MediaQueryList for every caller, as lib/mobile.ts keeps for the phone breakpoint.
+let wideMedia: MediaQueryList | null = null
+const wideListeners = new Set<() => void>()
+function subscribeWide(callback: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {}
+  if (!wideMedia) {
+    wideMedia = window.matchMedia(WIDE_QUERY)
+    wideMedia.addEventListener("change", () => wideListeners.forEach((l) => l()))
+  }
+  wideListeners.add(callback)
+  return () => wideListeners.delete(callback)
+}
+
+export function isPaneWide(): boolean {
+  if (wideMedia) return wideMedia.matches
+  return typeof window !== "undefined" && !!window.matchMedia?.(WIDE_QUERY).matches
+}
+
+/** Is the window wide enough for the three columns? Live: a resize across the line re-renders. */
+export function usePaneWide(): boolean {
+  return useSyncExternalStore(subscribeWide, isPaneWide, () => false)
+}
+
 // ── full screen ───────────────────────────────────────────────────────────────────────────────────
 // The same page with the sidebar put away: no navigation and no remount, so the transcript keeps its
 // place and the prompt box its draft. The thread column morphs through the view transition /full's door
 // already uses (styles.css `thread-chat`), and it is a transition rather than animated widths because
 // the column's width is a percentage of the page around it (StandaloneThreadPage LAYOUT_VARS).
 export function setPaneFolded(next: boolean): void {
-  if (paneProto.folded === next) return
+  // Wide, there is nothing to fold (above); ⌘\ and the Escape that unfolds do nothing.
+  if (paneProto.folded === next || isPaneWide()) return
   const apply = () => {
     flushSync(() => {
       paneProto.folded = next
