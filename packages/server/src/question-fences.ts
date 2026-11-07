@@ -210,7 +210,7 @@ export function syncQuestionFences(storage: QuestionFenceStorage, input: Questio
   return out
 }
 
-type QuestionFenceStorage = Pick<Storage, "listThreadQuestions" | "askThreadQuestion" | "dismissThreadQuestion" | "growThreadQuestionSpec" | "clearThreadDone" | "resetParkBumps">
+type QuestionFenceStorage = Pick<Storage, "threadQuestionsBySlug" | "askThreadQuestion" | "dismissThreadQuestion" | "growThreadQuestionSpec" | "clearThreadDone" | "resetParkBumps">
 
 interface QuestionFenceSyncInput {
   slug: string
@@ -227,10 +227,38 @@ interface QuestionFenceSyncInput {
   faultBook?: QuestionFaultBook
 }
 
+// A THREAD NOTHING HAS HAPPENED ON ANSWERS AS IT DID LAST TIME. The scheduler runs this pass over every thread with
+// a fence on record, on every tick of every project, and each pass read the thread's rows and parsed every message:
+// 6.7s of every 5 minutes on the live server, in stretches of up to 575ms (profiled 2026-11-06). What it answers is
+// a function of the arguments below and the thread's rows. Everything it writes is a row, whose new bucket misses
+// here (`threadQuestionsBySlug` keeps a thread's bucket OBJECT until that thread's rows change). A pass that threw
+// is not remembered, so the next tick is still its retry.
+interface QuestionFenceMemo {
+  sightings: readonly QuestionSighting[]
+  sightingCount: number
+  rows: readonly ThreadQuestionRow[] | undefined
+  spawnedAt: string | number | null | undefined
+  autonomousGoal: string | undefined
+  childOf: string | undefined
+  out: QuestionFenceSync
+}
+const fenceMemos = new WeakMap<QuestionFenceStorage, Map<string, QuestionFenceMemo>>()
+
 function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceSyncInput): QuestionFenceSync {
   const out: QuestionFenceSync = { registered: [], cancelled: [], attached: [], faults: [], refs: [] }
   if (!input.sightings?.length || questionFencesLive(input.spawnedAt)) return out
-  const rows = storage.listThreadQuestions(input.slug)
+  const bucket = storage.threadQuestionsBySlug().get(input.slug)
+  const childOf = input.childOf && `${input.childOf.slug}\0${input.childOf.title}`
+  let memos = fenceMemos.get(storage)
+  if (!memos) fenceMemos.set(storage, (memos = new Map()))
+  const memo = memos.get(input.slug)
+  if (
+    memo && memo.sightings === input.sightings && memo.sightingCount === input.sightings.length && memo.rows === bucket && memo.spawnedAt === input.spawnedAt
+    && memo.autonomousGoal === input.autonomousGoal && memo.childOf === childOf
+  ) return memo.out
+  memos.delete(input.slug)
+  // Copies: this pass extends the list and rewrites a grown row's spec, and the bucket is shared with the board.
+  const rows = (bucket ?? []).map((row) => ({ ...row }))
   const names = new Map<string, string[]>()
   // The newest instant each id was written as a question that HELD — registered, attached, or restated
   // as it stands. A fault on that id from an earlier message has been fixed by the worker itself.
@@ -563,6 +591,7 @@ function readQuestionFences(storage: QuestionFenceStorage, input: QuestionFenceS
   // A fault the worker has since FIXED is not news: the same id, written again later as a question that
   // held. (The scheduler's own check reads a row's root handle; a follow-up's id lives inside the tree.)
   out.faults = out.faults.filter((f) => !(f.id && (heldAt.get(f.id) ?? 0) > Date.parse(f.at)))
+  memos.set(input.slug, { sightings: input.sightings, sightingCount: input.sightings.length, rows: bucket, spawnedAt: input.spawnedAt, autonomousGoal: input.autonomousGoal, childOf, out })
   return out
 }
 
@@ -703,7 +732,7 @@ export function autonomousGoalOf(row: { recurring_on_rest?: number | null; recur
 export function createQuestionRegistrar(deps: {
   // `getSession` finds a child's parent (childOfRow); optional so a registrar test about questions alone
   // need not spell it, and absent reads as "no parent".
-  storage: Pick<Storage, "allSessions" | "listThreadQuestions" | "askThreadQuestion" | "dismissThreadQuestion" | "growThreadQuestionSpec" | "clearThreadDone" | "resetParkBumps"> & Partial<Pick<Storage, "getSession">>
+  storage: Pick<Storage, "allSessions" | "threadQuestionsBySlug" | "askThreadQuestion" | "dismissThreadQuestion" | "growThreadQuestionSpec" | "clearThreadDone" | "resetParkBumps"> & Partial<Pick<Storage, "getSession">>
   tailer: { get(slug: string): { questionSightings?: QuestionSighting[] } | undefined }
   log?: (message: string) => void
   /** The board's reading of what each thread's latest sync refused (QuestionFaultBook). */
@@ -731,7 +760,7 @@ export function createQuestionRegistrar(deps: {
         // ONE THREAD'S FAILURE IS ITS OWN. A throw here used to leave the loop, so every thread after
         // this one in the registry waited for the next change to reach it. The signature is recorded
         // first on purpose: a failure that repeats is logged once per change rather than on every poll,
-        // and the scheduler's own pass (evalQuestionFences, every tick, no memo) is the retry.
+        // and the scheduler's own pass (evalQuestionFences, every tick) is the retry.
         let sync: QuestionFenceSync
         try {
           sync = syncQuestionFences(deps.storage, {

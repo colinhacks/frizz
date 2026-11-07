@@ -25,10 +25,9 @@
 // being user-spawned rather than worker-spawned), or any process whose slug is currently live. Every
 // enumeration failure fails CLOSED (reap nothing). An age guard skips just-spawned processes.
 
-import { execFile } from "node:child_process"
+import { execFileOffThread } from "./off-thread-exec.ts"
 import { readFileSync } from "node:fs"
 import { dirname } from "node:path"
-import { promisify } from "node:util"
 import { claudeBrokerSocketPath } from "./backend/claude-broker-host.ts"
 import { sweepStaleSockets } from "./backend/stale-socket-sweep.ts"
 
@@ -200,9 +199,8 @@ export type Exec = (file: string, args: string[]) => string | Promise<string>
 // spawn held the loop for 1-8s per call, three calls a sweep, so every RPC, pin and websocket frame
 // stalled behind it — a bare health check took 42s. The tests inject a synchronous fake, which `await`
 // takes just as well.
-const execFileAsync = promisify(execFile)
 const defaultExec: Exec = async (file, args) =>
-  (await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 10_000 })).stdout
+  (await execFileOffThread(file, args, { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 })).stdout
 
 /** Reads one process's raw environment block, or null when unreadable (gone, or another user's). */
 export type ReadEnv = (pid: number) => string | null

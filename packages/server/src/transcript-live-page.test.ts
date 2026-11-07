@@ -5,12 +5,17 @@ import { syncBuiltinESMExports } from "node:module"
 import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
+import { execFileSync } from "node:child_process"
 import {
+  __clearTranscriptCacheForTests,
+  catchUpTranscriptFold,
   latestTranscriptWindow,
   latestWindowStart,
   readEarlierThreadTranscriptPage,
   readLatestThreadTranscriptPage,
+  readLatestThreadTranscriptPageWithFiles,
   projectClaudeTranscript,
+  transcriptFoldCaughtUp,
 } from "./transcript.ts"
 import { createStorage } from "./storage.ts"
 import type { Project } from "./project.ts"
@@ -128,4 +133,106 @@ test("latestTranscriptWindow given the head it would compute returns the identic
   const start = latestWindowStart(all)
   assert.ok(start > 0)
   assert.deepEqual(latestTranscriptWindow(all, start), latestTranscriptWindow(all))
+})
+
+test("a cold fold runs in slices with the event loop between them, and the read after it sees what one whole fold would", async () => {
+  const h = harness()
+  try {
+    // A record far longer than a slice, in multi-byte text, so slices cut it and cut characters.
+    const body = exchanges(0, 4000) + ASSISTANT("long", "é".repeat(300_000)) + "\n" + exchanges(4000, 100)
+    writeFileSync(h.path, body)
+    __clearTranscriptCacheForTests()
+
+    const folding = catchUpTranscriptFold(h.project, h.store, "t")
+    assert.ok(folding, "two megabytes of cold transcript is worth slicing")
+    assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), folding, "a second reader shares the fold in progress")
+
+    let turns = 0
+    let turning = true
+    const turn = () => { if (turning) { turns++; setImmediate(turn) } }
+    setImmediate(turn)
+    await folding
+    turning = false
+    assert.ok(turns >= 3, `the event loop only came round ${turns} times`)
+
+    assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), undefined, "caught up, so the read goes ahead")
+    const whole = latestTranscriptWindow(projectClaudeTranscript(body, "claude:sid"))
+    assert.deepEqual(readLatestThreadTranscriptPage(h.project, h.store, "t").messages, whole)
+
+    // What a retained fold has left to do is one appended record: nothing to slice.
+    appendFileSync(h.path, exchanges(4100, 1))
+    assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), undefined)
+
+    // A large append is sliced the same way, from where the fold had got to.
+    const appended = exchanges(4101, 2000)
+    appendFileSync(h.path, appended)
+    const more = catchUpTranscriptFold(h.project, h.store, "t")
+    assert.ok(more)
+    await more
+    assert.deepEqual(
+      readLatestThreadTranscriptPage(h.project, h.store, "t").messages,
+      latestTranscriptWindow(projectClaudeTranscript(body + exchanges(4100, 1) + appended, "claude:sid")),
+    )
+  } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("a small cold transcript, and a thread with no transcript, have nothing to wait for", () => {
+  const h = harness()
+  try {
+    assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), undefined, "no file yet")
+    assert.equal(catchUpTranscriptFold(h.project, h.store, "no-such-thread"), undefined)
+    writeFileSync(h.path, exchanges(0, 10))
+    __clearTranscriptCacheForTests()
+    assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), undefined)
+  } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("many cold threads at once all finish, whatever order they queue in", async () => {
+  const h = harness()
+  try {
+    // Terminal sessions Frizz did not start: their ids are their slugs, and no row is needed.
+    const threads = Array.from({ length: 12 }, (_, i) => `aaaaaaaa-${String(i).padStart(4, "0")}`)
+    for (const id of threads) writeFileSync(join(h.path, "..", `${id}.jsonl`), exchanges(0, 1500))
+    __clearTranscriptCacheForTests()
+    await Promise.all(threads.map((id) => transcriptFoldCaughtUp(h.project, h.store, id)))
+    for (const id of threads) assert.equal(catchUpTranscriptFold(h.project, h.store, id), undefined, id)
+  } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("only the read that asks for the rail's files pays for git, and git drops what the repository would not carry", async () => {
+  const h = harness()
+  const dir = mkdtempSync(join(tmpdir(), "frizz-page-files-"))
+  try {
+    const run = (...args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "ignore" })
+    run("init", "-q")
+    writeFileSync(join(dir, ".gitignore"), "out/\n")
+    mkdirSync(join(dir, "out"))
+    const kept = join(dir, "kept.ts")
+    const dropped = join(dir, "out", "dropped.js")
+    writeFileSync(kept, "x")
+    writeFileSync(dropped, "x")
+    const write = (id: string, file_path: string) => JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-10T18:00:01.000Z",
+      message: { id, content: [{ type: "tool_use", id: `tu-${id}`, name: "Write", input: { file_path, content: "x" } }] },
+    })
+    writeFileSync(h.path, [USER("go"), write("a", kept), write("b", dropped)].join("\n") + "\n")
+    const project = { ...h.project, dir } as Project
+    assert.equal(readLatestThreadTranscriptPage(project, h.store, "t").editedFiles, undefined)
+    const page = await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")
+    assert.deepEqual(page.editedFiles?.map((f) => f.path), [kept])
+  } finally {
+    __clearTranscriptCacheForTests()
+    rmSync(dir, { recursive: true, force: true })
+    h.cleanup()
+  }
 })

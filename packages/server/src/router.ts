@@ -197,8 +197,9 @@ import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDelive
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
 import {
   readEarlierThreadTranscriptPage,
-  readLatestThreadTranscriptPage,
+  readLatestThreadTranscriptPageWithFiles,
   readTranscript,
+  transcriptFoldCaughtUp,
   readTranscriptFile,
   readCodexTranscriptFile,
   projectTranscriptPageAgentLifecycles,
@@ -2392,7 +2393,8 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         // Registry row → its session's transcript; foreign slug (a session id) → resolved directly; else [].
         // backendFor routes a codex thread through the codex rollout reader (else it renders empty).
-        const page = readLatestThreadTranscriptPage(ctx.project, ctx.storage, input.slug, ctx.backendFor)
+        await transcriptFoldCaughtUp(ctx.project, ctx.storage, input.slug, ctx.backendFor)
+        const page = await readLatestThreadTranscriptPageWithFiles(ctx.project, ctx.storage, input.slug, ctx.backendFor)
         return retireOpsInPage(input.slug, projectTranscriptPageAgentLifecycles(page, (id) => ctx.tailer.subAgent(input.slug, id), (taskId) => ctx.tailer.subAgentByTaskId?.(input.slug, taskId), ctx.sessionPeerThread))
       },
     }),
@@ -2403,6 +2405,7 @@ export function createRouter(ctx: AppContext) {
       input: TranscriptEarlierInput,
       output: TranscriptPage,
       handler: async ({ input }) => {
+        await transcriptFoldCaughtUp(ctx.project, ctx.storage, input.slug, ctx.backendFor)
         const page = readEarlierThreadTranscriptPage(ctx.project, ctx.storage, input.slug, input.cursor, ctx.backendFor)
         return retireOpsInPage(input.slug, projectTranscriptPageAgentLifecycles(page, (id) => ctx.tailer.subAgent(input.slug, id), (taskId) => ctx.tailer.subAgentByTaskId?.(input.slug, taskId), ctx.sessionPeerThread))
       },
