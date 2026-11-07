@@ -304,7 +304,12 @@ try {
     received.length = 0;
     const config = await establishCloudConfig("e2e-user", 9393, deviceHome, origin, frizzGithubSignIn());
     check("a custom name claims through Frizz's GitHub sign-in", config.claim === "e2e-user" && config.hostname === "e2e-user.frizz.sh", JSON.stringify(config));
-    check("the claim carried the sign-in's App token and nothing else", received.length === 1 && received[0]?.github === APP, received[0]?.github ? received[0].github.slice(0, 4) : "(none)");
+    // The first try carries no token; the registrar answers github-required, and only then is it sent.
+    check(
+      "the first try carried no token, and the second only the sign-in's App token",
+      received.length === 2 && !("github" in received[0]) && received[1]?.github === APP,
+      received.map((body) => (body.github ? body.github.slice(0, 4) : "none")).join(", "),
+    );
     check("the registrar asked GitHub about that token", githubSeen.some((r) => r.path === "/user" && r.auth === `Bearer ${APP}`));
     check("GitHub was asked nothing else", githubSeen.every((r) => r.path === "/user"), githubSeen.map((r) => r.path).join(", "));
     check("the name is bound to the account id", st.rows.get("e2e-user")?.githubId === 777, String(st.rows.get("e2e-user")?.githubId));

@@ -182,12 +182,17 @@ test("a frizz.sh claim reads the file afresh, so the launcher picks up the serve
   })
 })
 
-test("a frizz.sh claim renews a token the keeper has let lapse, and refuses while signed out", async () => {
+test("a frizz.sh claim never renews the token itself, and refuses while signed out", async () => {
   await withHome(async () => {
     await assert.rejects(githubClaimToken({ now: () => 0 }), /not signed in to GitHub/)
+    // A minute left: renewing here could race the server's keeper for the single-use refresh token.
     writeGithubCredential(app({ accessExpiresAt: 60_000 }))
-    const request = async () => json({ access_token: "ghu_new", expires_in: 28800, refresh_token: "ghr_new", refresh_token_expires_in: 15897600 })
-    assert.deepEqual(await githubClaimToken({ now: () => 0, request }), { token: "ghu_new", login: "colinhacks" })
+    let requests = 0
+    const request = async () => { requests++; return json({}) }
+    await assert.rejects(githubClaimToken({ now: () => 0, request }), /due for renewal.*Try again in a minute/)
+    assert.equal(requests, 0, "nothing was asked of GitHub")
+    const stored = readGithubCredential()
+    assert.equal(stored?.kind === "app" ? stored.refreshToken : null, "ghr_old", "and the refresh token is unspent")
   })
 })
 

@@ -226,7 +226,7 @@ export async function frizzGithubToken(deps: TokenDeps = {}): Promise<string> {
   return await (refreshing ??= refreshAppToken(credential, deps).finally(() => { refreshing = undefined }))
 }
 
-/** How long a token must still have to be handed to a frizz.sh claim without renewing it first. */
+/** How long a token must still have for a frizz.sh claim to send it. */
 const CLAIM_MARGIN_MS = 2 * 60_000
 
 /**
@@ -237,9 +237,11 @@ const CLAIM_MARGIN_MS = 2 * 60_000
  * whatever that override holds, it is not what the person signed in with.
  *
  * Called from the LAUNCHER, a different process from the server whose keeper renews this credential, so
- * it reads the file afresh rather than trusting its own copy, and renews only a token the keeper has
- * evidently stopped renewing. The keeper renews ten minutes before expiry; renewing here inside that
- * window could race it, and the loser's refresh token is refused, which marks the sign-in broken.
+ * it reads the file afresh rather than trusting its own copy, and NEVER renews it. Both renewing at once
+ * would spend the single-use refresh token twice, and the server, if it lost, would stay signed out
+ * until a restart. The keeper renews ten minutes before expiry, so a token this close to the end means
+ * the keeper is between ticks (the Mac just woke) or GitHub is failing it, and a minute's wait answers
+ * both.
  */
 export async function githubClaimToken(deps: TokenDeps = {}): Promise<{ token: string; login: string | null }> {
   const now = deps.now ?? Date.now
@@ -256,9 +258,10 @@ export async function githubClaimToken(deps: TokenDeps = {}): Promise<{ token: s
   if (credential.refreshExpiresAt <= now()) {
     throw new GithubCredentialError("Frizz's GitHub sign-in expired after six months unused. Sign in again from Frizz's Settings.")
   }
-  if (credential.accessExpiresAt - CLAIM_MARGIN_MS > now()) return { token: credential.accessToken, login: credential.login }
-  const token = await (refreshing ??= refreshAppToken(credential, deps).finally(() => { refreshing = undefined }))
-  return { token, login: credential.login }
+  if (credential.accessExpiresAt - CLAIM_MARGIN_MS <= now()) {
+    throw new GithubCredentialError("Frizz's GitHub sign-in is due for renewal, which the board does by itself. Try again in a minute.")
+  }
+  return { token: credential.accessToken, login: credential.login }
 }
 
 /** Another process sharing this folder (a sandbox stack links it in) may have renewed first. A fresher

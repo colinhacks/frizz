@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { generateAnonymousClaimName, generateClaimIdentity, signClaim } from "@frizz/shared"
-import worker, { githubVerifier, kvAnonymousBudget, kvClaimStore, type KvNamespace, type RegistrarEnv } from "./worker.ts"
+import worker, { budgetAddress, githubVerifier, kvAnonymousBudget, kvClaimStore, type KvNamespace, type RegistrarEnv } from "./worker.ts"
 
 function fakeKv(seed: Record<string, string> = {}): KvNamespace & { rows: Map<string, string>; ttls: Map<string, number | undefined> } {
   const rows = new Map(Object.entries(seed))
@@ -192,6 +192,37 @@ test("custom claims from one address spend a GitHub-lookup budget, and past it G
   } finally {
     globalThis.fetch = realFetch
   }
+})
+
+test("an IPv6 address is budgeted by its /64, so rotating through the block is one budget", () => {
+  assert.equal(budgetAddress("2001:db8:1234:5678:aaaa:bbbb:cccc:dddd"), "2001:db8:1234:5678::/64")
+  assert.equal(budgetAddress("2001:0DB8:1234:5678:1::2"), "2001:db8:1234:5678::/64", "one /64 however it is written")
+  assert.equal(budgetAddress("2001:db8::1"), "2001:db8:0:0::/64")
+  assert.equal(budgetAddress("::1"), "0:0:0:0::/64")
+  assert.equal(budgetAddress("203.0.113.7"), "203.0.113.7", "IPv4 is kept whole")
+  assert.equal(budgetAddress("unknown"), "unknown")
+})
+
+test("a chunked body is cut off at the cap rather than read whole", async () => {
+  let pulled = 0
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled++
+      if (pulled > 1_000) return controller.close()
+      controller.enqueue(new Uint8Array(1_024).fill(120))
+    },
+  })
+  const response = await worker.fetch(
+    new Request("https://r.frizz.sh/claim", { method: "POST", body: stream, duplex: "half" } as RequestInit),
+    env(fakeKv())
+  )
+  assert.equal(response.status, 413)
+  assert.ok(pulled < 20, `stopped after ${pulled} chunks of 1 KiB, not 1,000`)
+})
+
+test("a GitHub answer with no readable creation date is no account, not an old one", async () => {
+  const api = fakeGithubApi(APP, "", { id: 4242, login: "ada" })
+  assert.equal(await githubVerifier(api.fetchImpl)("ghu_agentconsole"), null)
 })
 
 test("a body far bigger than a claim is refused unread", async () => {

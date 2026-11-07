@@ -77,8 +77,10 @@ export function githubVerifier(
       if (response.headers.get("x-oauth-client-id") !== appClientId) return "foreign"
       const user = (await response.json()) as { id?: unknown; login?: unknown; created_at?: unknown }
       if (typeof user.id !== "number" || typeof user.login !== "string") return null
+      // No readable creation date is no account at all, never one old enough: the age gate fails closed.
       const createdAt = typeof user.created_at === "string" ? Date.parse(user.created_at) : Number.NaN
-      return { id: user.id, login: user.login, createdAt: Number.isNaN(createdAt) ? 0 : createdAt }
+      if (Number.isNaN(createdAt)) return null
+      return { id: user.id, login: user.login, createdAt }
     } catch {
       return null
     }
@@ -90,6 +92,51 @@ const MAX_GITHUB_TOKEN_LENGTH = 512
 
 /** A claim is a few hundred bytes. Anything far past that is refused before it is parsed. */
 const MAX_CLAIM_BODY_BYTES = 8_192
+
+/** The body as text, or null once it passes `limit` bytes; whatever is left is never read. */
+async function readAtMost(request: Request, limit: number): Promise<string | null> {
+  if (Number(request.headers.get("content-length") ?? "0") > limit) return null
+  if (!request.body) return ""
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    let next: ReadableStreamReadResult<Uint8Array>
+    try {
+      next = await reader.read()
+    } catch {
+      return ""
+    }
+    if (next.done) break
+    size += next.value.byteLength
+    if (size > limit) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(next.value)
+  }
+  const joined = new Uint8Array(size)
+  let at = 0
+  for (const chunk of chunks) {
+    joined.set(chunk, at)
+    at += chunk.byteLength
+  }
+  return new TextDecoder().decode(joined)
+}
+
+/**
+ * The address a budget is kept against. An IPv6 address is cut to its /64, the block one host or one
+ * customer is handed, so rotating through it — 2^64 addresses — is one budget, not 2^64 of them.
+ */
+export function budgetAddress(address: string): string {
+  if (!address.includes(":")) return address
+  const [head = "", tail = ""] = address.toLowerCase().split("::")
+  const left = head ? head.split(":") : []
+  const right = address.includes("::") ? (tail ? tail.split(":") : []) : []
+  const groups = address.includes("::") ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left
+  if (groups.length < 4 || groups.slice(0, 4).some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return address
+  return `${groups.slice(0, 4).map((group) => group.replace(/^0+(?=.)/, "")).join(":")}::/64`
+}
 
 export interface RegistrarEnv {
   /** Zone-scoped Cloudflare token. NEVER leaves this Worker. */
@@ -311,11 +358,9 @@ export default {
 
     // A body that is not JSON is the claimant's mistake, not a crash. The handler validates
     // everything past this point, including that the thing parsed is shaped like a claim at all.
-    if (Number(request.headers.get("content-length") ?? "0") > MAX_CLAIM_BODY_BYTES) {
-      return json(413, { error: "malformed", message: "the request body was not a claim" })
-    }
-    const text = await request.text().catch(() => "")
-    if (text.length > MAX_CLAIM_BODY_BYTES) return json(413, { error: "malformed", message: "the request body was not a claim" })
+    // Counted as it streams, so a chunked body with no length cannot make this read all of it first.
+    const text = await readAtMost(request, MAX_CLAIM_BODY_BYTES)
+    if (text === null) return json(413, { error: "malformed", message: "the request body was not a claim" })
     let body: unknown = null
     try {
       body = JSON.parse(text)
@@ -324,7 +369,7 @@ export default {
     // The budget key is the connecting address, which Cloudflare stamps on every request it fronts.
     // Absent (a direct hit on the Worker in a test) the budget still exists under one shared key,
     // because an absent header must never mean an absent limit.
-    const address = request.headers.get("cf-connecting-ip") ?? "unknown"
+    const address = budgetAddress(request.headers.get("cf-connecting-ip") ?? "unknown")
     const outcome = await handleClaim(
       body,
       claimDeps(env, { anonymousBudget: kvAnonymousBudget(env.CLAIMS, address), githubBudget: kvGithubBudget(env.CLAIMS, address) })
