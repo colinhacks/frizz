@@ -1053,8 +1053,9 @@ function restAnswerLines(hints: readonly AwaitingHint[] | undefined): { status: 
 }
 
 /** Does this fence name the HUMAN as its wait — `steps:` to perform, or `questions:` still owed an answer?
- *  Either is the answer `needs_input` by construction, whatever the answer line says. */
-function fenceWaitsOnHuman(hints: readonly AwaitingHint[] | undefined): boolean {
+ *  Either is the answer `needs_input` by construction, whatever the answer line says. It is also the one
+ *  handoff a later quiet park cannot take back (server board handoffStands). */
+export function fenceWaitsOnHuman(hints: readonly AwaitingHint[] | undefined): boolean {
   return awaitingSteps(hints).length > 0 || awaitingQuestions(hints).length > 0
 }
 
@@ -3630,8 +3631,19 @@ export const SettledQuestionView = z.object({
 }).strict()
 export type SettledQuestionView = z.infer<typeof SettledQuestionView>
 
+/** A fence-asked question that closed WITHOUT an answer, with what it asked. The board's `closedQuestions`
+ *  carries only the row's id, handle and state, and the fence that asked it carries the text; but a later
+ *  `id:`-only fence that named it while it was open carries nothing, and draws a copy of the closed card
+ *  (ChatView's question-fence path). Per thread for the same reason as SettledQuestionView. */
+export const ClosedQuestionSpecView = z.object({
+  id: z.string(),
+  spec: AskedQuestionSchema,
+}).strict()
+export type ClosedQuestionSpecView = z.infer<typeof ClosedQuestionSpecView>
+
 export const ThreadSettledQuestionsResult = z.object({
   questions: z.array(SettledQuestionView),
+  closed: z.array(ClosedQuestionSpecView),
 }).strict()
 export type ThreadSettledQuestionsResult = z.infer<typeof ThreadSettledQuestionsResult>
 

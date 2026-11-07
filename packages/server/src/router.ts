@@ -164,6 +164,7 @@ import {
   ThreadSettledQuestionsResult,
   QuestionAnswerSchema,
   type SettledQuestionView,
+  type ClosedQuestionSpecView,
   AskedQuestionSchema,
   askedQuestionFaults,
   secretAnswerText,
@@ -2417,14 +2418,22 @@ export function createRouter(ctx: AppContext) {
       output: ThreadSettledQuestionsResult,
       handler: async ({ input }) => {
         const questions: SettledQuestionView[] = []
+        // …and what each fence-asked question that closed unanswered asked, for the fences that named it
+        // while it was open (ClosedQuestionSpecView). Only rows with a handle, as on the board.
+        const closed: ClosedQuestionSpecView[] = []
         for (const q of ctx.storage.listThreadQuestions(input.slug)) {
+          if ((q.state === "dismissed" || q.state === "withdrawn") && q.handle) {
+            const spec = parseQuestionSpec(q.spec)
+            if (spec) closed.push({ id: q.id, spec })
+            continue
+          }
           if (q.state !== "answered" || q.settled_at == null) continue
           const spec = parseQuestionSpec(q.spec)
           const answer = parseStoredAnswer(q.answer)
           if (!spec || !answer) continue
           questions.push({ id: q.id, spec, askedAt: new Date(q.asked_at).toISOString(), settledAt: new Date(q.settled_at).toISOString(), answer })
         }
-        return { questions }
+        return { questions, closed }
       },
     }),
 

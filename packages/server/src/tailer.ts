@@ -5,7 +5,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingNeedsInput, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { fenceWaitsOnHuman, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -2751,11 +2751,14 @@ function applyFinalText(state: FoldState, text: string): void {
   noteHandoff(state)
 }
 
-// Stamp FoldState.handoffAt when the fence just folded hands the rest to the human. Read after
-// `lastAssistantAt` is set for the same message, so the stamp is that message's own instant.
+// Stamp FoldState.handoffAt when the fence just folded names the human as its wait: `steps:` to perform
+// or `questions:` to answer (fenceWaitsOnHuman). A plain `status: needs_input` report is not stamped: what
+// the human had to read there is the worker's to re-hand-off, and its next `status:` says whether it
+// still waits on them (2026-11-06). Read after `lastAssistantAt` is set for the same message, so the
+// stamp is that message's own instant.
 function noteHandoff(state: FoldState): void {
   const fence = state.lastFence
-  if (fence?.kind === "awaiting" && awaitingNeedsInput(fence.hints) === true && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
+  if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints) && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
 }
 
 // Fold one NORMALIZED event into the backend-neutral accumulator — the codex-facing counterpart to

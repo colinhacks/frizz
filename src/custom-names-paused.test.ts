@@ -214,3 +214,36 @@ test("while custom names are paused, a board already on a custom name shows it, 
   assert.match(out.text(), /Serving https:\/\/colin\.frizz\.sh \(frizz\.sh\)/);
   assert.match(out.text(), /frizz_code=c0de/);
 });
+
+test("while custom names are paused, leaving a custom name says the menu cannot bring it back, and asks first", async () => {
+  const saved: CloudConfig = { hostname: "colin.frizz.sh", claim: "colin", serve: "relay" };
+  const { pane, out, applied } = buildPane(saved);
+  pane.open();
+  pane.key("1");
+  pane.key("\r");
+  await settle();
+  assert.deepEqual(applied, [], "a random name was claimed before anyone was asked");
+  assert.match(out.text(), /Leave colin\.frizz\.sh\?/);
+  assert.match(out.text(), /cannot bring\s+colin\.frizz\.sh\s+back/);
+  pane.key("\x1b");
+  assert.equal(menuRows(out.text()).length, 7, "escape goes back to the menu");
+  assert.match(menuRows(out.text())[0]!, /^ {2}❯ frizz\.sh subdomain/);
+
+  pane.key("6");
+  pane.key("\r");
+  assert.match(out.text(), /Leave colin\.frizz\.sh\?/);
+  assert.deepEqual(applied, []);
+  pane.key("\r");
+  await settle();
+  assert.deepEqual(applied, [null], "enter goes ahead with the switch");
+  assert.match(out.text(), /Loopback only/);
+});
+
+test("a board on a random name switches without being asked", async () => {
+  const { pane, applied } = buildPane({ hostname: "h2cioy5ilpwjdwptl7yz.frizz.sh", claim: "h2cioy5ilpwjdwptl7yz", serve: "relay" });
+  pane.open();
+  pane.key("5");
+  pane.key("\r");
+  await settle();
+  assert.deepEqual(applied, [null]);
+});

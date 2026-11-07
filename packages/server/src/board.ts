@@ -1352,12 +1352,20 @@ export function deriveNeedsYou(
 //     CI is still running used to excuse the thread on frizz's guess; the worker says so now, or it queues.
 //  3. A `done` handoff and a rest with nothing out queue as they always did.
 //
-// RULE 1 CANNOT SPEND A HANDOFF THE HUMAN HAS NOT REACHED. A `needs_input` rest put the thread in front
-// of the human, and only the human takes it out again: by typing to it (`restFromAt`, the boundary an open
-// question stands across), by snoozing it or by settling a question (handoffStands). A later quiet park
-// does not: a PR watcher's wake for news the worker had already read made it re-park `status: watching`,
-// and its "ready, unmerged" handoff sat in Snoozed with green CI (reported 2026-10-27: "it looks green to
-// me"). The thread falls through to rule 2 instead, so the card keeps its event-snooze.
+// RULE 1 CANNOT SPEND STEPS OR QUESTIONS THE HUMAN HAS NOT REACHED. A rest that handed the human
+// something to DO — `steps:` to perform, `questions:` to answer — put the thread in front of them, and only
+// the human takes it out again: by typing to it (`restFromAt`, the boundary an open question stands
+// across), by snoozing it or by settling a question (handoffStands). A later quiet park does not: a PR
+// watcher's wake for news the worker had already read made it re-park `status: watching`, and its "ready,
+// unmerged" handoff sat in Snoozed with green CI (reported 2026-10-27: "it looks green to me"). The thread
+// falls through to rule 2 instead, so the card keeps its event-snooze.
+//
+// A PLAIN `status: needs_input` REPORT IS NOT HELD (2026-11-06). It was until then, and most reports said
+// "nothing needed from you right now": each one held every CI and shell park after it in the queue until
+// the human typed, so the queue filled with threads whose card showed only a wait on CI (maintainer: "I
+// thought we had a good solution to this, where the agent got to choose"). What a report asked the human
+// to read is the worker's to hand off again, and its contract says so; the board takes its newest
+// `status:` as the answer.
 //
 // HONOUR INCLUDES THE PRS THEMSELVES (awaiting.parkWaitsOnThisSide): a park naming nothing but PRs this
 // account opened that wait only on this side is refused like a park on a dead name, and the scheduler tells

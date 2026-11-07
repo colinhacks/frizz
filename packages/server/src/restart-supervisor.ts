@@ -87,6 +87,11 @@ export interface RestartSupervisorProxyOptions {
   /** A new device just signed in: what it calls itself, and how many now hold a session. */
   onDeviceSignedIn?: (device: { label: string; devices: number }) => void
   /**
+   * A device was signed out, or every device when `label` is null, and how many still hold a session.
+   * Without it the launcher's readout announced each sign-in and never the sign-out that ended it.
+   */
+  onDeviceSignedOut?: (device: { label: string | null; devices: number }) => void
+  /**
    * Persisted HMAC key for sessions. Without one, every restart signs out every device — which made a
    * nominally year-long cookie (30 days since 2026-10-08) last only until the next artifact update.
    */
@@ -350,9 +355,25 @@ export class RestartSupervisorProxy {
       ...(options.sessionKey ? { signingKey: options.sessionKey } : {}),
       ...(options.rotateSessionKey ? { rotateSigningKey: options.rotateSessionKey } : {}),
       ...(options.sessionDirectory ? { sessions: options.sessionDirectory } : {}),
-      onSignedOut: (id) => this.dropSessionHolds(id),
+      onSignedOut: (id) => {
+        this.dropSessionHolds(id)
+        options.onDeviceSignedOut?.({
+          label: id === undefined ? null : (this.access.sessions.get(id)?.label ?? "unknown device"),
+          devices: liveSessions(this.access.sessions).length,
+        })
+      },
     })
     this.policy = this.buildPolicy()
+  }
+
+  /** How many devices hold a live session. */
+  signedInDevices(): number {
+    return liveSessions(this.access.sessions).length
+  }
+
+  /** Sign every device out, as `frizz --sign-out all` does: new key, every session and unused code gone. Returns how many. */
+  signOutAllDevices(): number {
+    return this.access.signOutAll()
   }
 
   /**

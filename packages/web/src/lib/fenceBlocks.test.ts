@@ -247,17 +247,20 @@ test("a title alone names no wait — it is a heading, not an item", () => {
 
 // ---- heldHandoffIndex ----
 
-test("the held handoff is the newest needs_input fence before the cut, wherever the quiet parks fall", () => {
+test("the held handoff is the newest steps or questions fence before the cut, wherever the quiet parks fall", () => {
   const say = (text: string) => ({ role: "assistant" as const, text })
-  const handoff = say("Ready.\n\n```awaiting\nprs: [acme/app#391]\nstatus: needs_input\nfor: 180d\ntitle: Ready, unmerged\n---\nThe merge is yours.\n```")
+  const handoff = say("Ready.\n\n```awaiting\nprs: [acme/app#391]\nfor: 180d\ntitle: Ready, unmerged\nsteps:\n  - Merge it.\n---\nThe merge is yours.\n```")
+  const report = say("Where it stands.\n\n```awaiting\nprs: [acme/app#391]\nstatus: needs_input\nfor: 180d\n---\nNothing needed from you.\n```")
   const quiet = say("```awaiting\nprs: [acme/app#391]\nstatus: watching\nfor: 180d\n```")
   const steps = say("```awaiting\ntitle: Approve the sign-in\nsteps:\n  - Approve it.\n```")
   const wake = { role: "user" as const, text: "✅ CI PASSED on acme/app#391" }
-  const rested = { role: "assistant" as const, kind: "event" as const, text: "```awaiting\nstatus: needs_input\nfor: 1h\n---\nquoted\n```" }
+  const rested = { role: "assistant" as const, kind: "event" as const, text: "```awaiting\ntitle: quoted\nsteps:\n  - Quoted.\n```" }
   const messages = [handoff, wake, quiet, rested, wake, quiet]
   assert.equal(heldHandoffIndex(messages, 5), 0, "the quiet parks and the event row are passed over")
-  assert.equal(heldHandoffIndex([steps, wake, quiet], 2), 0, "a steps: fence hands the rest to the human too")
+  assert.equal(heldHandoffIndex([steps, wake, quiet], 2), 0, "a steps: fence alone hands the rest to the human")
   assert.equal(heldHandoffIndex([handoff, wake, steps, wake, quiet], 4), 2, "the newest handoff, as the fold's handoffAt is")
+  assert.equal(heldHandoffIndex([handoff, wake, report, wake, quiet], 4), 0, "a plain needs_input report holds nothing, as the fold does not stamp it")
+  assert.equal(heldHandoffIndex([report, wake, quiet], 2), -1)
   assert.equal(heldHandoffIndex(messages, 0), -1, "nothing before the cut")
   assert.equal(heldHandoffIndex([say("```md\n" + handoff.text + "\n```"), quiet], 1), -1, "a fence quoted inside a code block is no handoff")
 })

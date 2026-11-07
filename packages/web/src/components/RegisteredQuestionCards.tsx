@@ -23,7 +23,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
 import { nameQuestionAnswer } from "@frizz/shared"
-import type { AskedQuestion, ClosedQuestionView, NamedQuestionAnswer, QuestionAnswer, RegisteredQuestionView, SettledQuestionView, ThreadView } from "@frizz/shared"
+import type { AskedQuestion, ClosedQuestionSpecView, ClosedQuestionView, NamedQuestionAnswer, QuestionAnswer, RegisteredQuestionView, SettledQuestionView, ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { draftKey, draftStore, useDraftValues, useProjectDir } from "../lib/drafts.ts"
 import { clearSteered, markAnswered, markSteered } from "../lib/steering.ts"
@@ -201,10 +201,13 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
     // wearing the "?" of a question that was just answered (lib/steering markAnswered).
     markAnswered(owner, [...ids])
     const shown = displayed(pairs)
-    queryClient.setQueryData<SettledQuestion[]>(key, (prev) => [
-      ...(prev ?? []).filter((s) => !ids.has(s.id)),
-      ...pairs.map(({ q }, i): SettledQuestion => ({ id: q.id, spec: q.spec, askedAt: q.askedAt, settledAt, pending: true, answer: shown[i] })),
-    ])
+    queryClient.setQueryData<SettledQuestionsData>(key, (prev) => ({
+      closed: prev?.closed ?? [],
+      questions: [
+        ...(prev?.questions ?? []).filter((s) => !ids.has(s.id)),
+        ...pairs.map(({ q }, i): SettledQuestion => ({ id: q.id, spec: q.spec, askedAt: q.askedAt, settledAt, pending: true, answer: shown[i] })),
+      ],
+    }))
   }
   const draftKeysOf = (owner: string, pairs: typeof stagedPairs) =>
     pairs.map(({ q }) => ({ id: q.id, keys: q.spec.secret ? [] : allPaths(q).flatMap((path) => [
@@ -311,6 +314,29 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
 export type SettledQuestion = SettledQuestionView & { pending?: true }
 const NO_SETTLED: readonly SettledQuestion[] = []
 export const settledQuestionsKey = (slug: string) => ["settledQuestions", slug] as const
+/** What the one per-thread read caches: the answered questions, and what each fence-asked question that
+ *  closed unanswered asked (shared ClosedQuestionSpecView). Two hooks select from it, one fetch. */
+interface SettledQuestionsData {
+  questions: SettledQuestion[]
+  closed: ClosedQuestionSpecView[]
+}
+const NO_CLOSED_SPECS: readonly ClosedQuestionSpecView[] = []
+const selectSettled = (data: SettledQuestionsData) => data.questions
+const selectClosed = (data: SettledQuestionsData) => data.closed
+
+function useSettledQuestionsQuery<T>(slug: string | undefined, select: (data: SettledQuestionsData) => T) {
+  return useQuery({
+    queryKey: settledQuestionsKey(slug ?? ""),
+    queryFn: async (): Promise<SettledQuestionsData> => {
+      const result = await rpc.threadSettledQuestions({ slug: slug! })
+      // `closed` is absent from a server older than this tab's code.
+      return { questions: result.questions, closed: result.closed ?? [] }
+    },
+    enabled: Boolean(slug),
+    refetchOnWindowFocus: false,
+    select,
+  })
+}
 
 /** The thread's answered questions. Read per thread rather than off the board (see the shared
  *  SettledQuestionView), and re-read on the one board event that can add to it: a question leaving the
@@ -319,12 +345,7 @@ export const settledQuestionsKey = (slug: string) => ["settledQuestions", slug] 
 export function useSettledQuestions(thread: ThreadView | undefined): readonly SettledQuestion[] {
   const slug = thread?.id
   const queryClient = useQueryClient()
-  const query = useQuery({
-    queryKey: settledQuestionsKey(slug ?? ""),
-    queryFn: async (): Promise<SettledQuestion[]> => (await rpc.threadSettledQuestions({ slug: slug! })).questions,
-    enabled: Boolean(slug),
-    refetchOnWindowFocus: false,
-  })
+  const query = useSettledQuestionsQuery(slug, selectSettled)
   const openIds = (thread?.questions ?? []).map((q) => q.id).join(" ")
   const previous = useRef(openIds)
   useEffect(() => {
@@ -335,6 +356,12 @@ export function useSettledQuestions(thread: ThreadView | undefined): readonly Se
     if (before.split(" ").some((id) => id && !now.has(id))) void queryClient.invalidateQueries({ queryKey: settledQuestionsKey(slug) })
   }, [openIds, queryClient, slug])
   return query.data ?? NO_SETTLED
+}
+
+/** What each fence-asked question of the thread that closed WITHOUT an answer asked — read beside the
+ *  answered ones, and re-read on the same event (useSettledQuestions, which every surface mounts first). */
+export function useClosedQuestionSpecs(thread: ThreadView | undefined): readonly ClosedQuestionSpecView[] {
+  return useSettledQuestionsQuery(thread?.id, selectClosed).data ?? NO_CLOSED_SPECS
 }
 
 const NO_OPEN: readonly RegisteredQuestionView[] = []
@@ -355,7 +382,7 @@ export function openQuestionsOf(thread: ThreadView | undefined, settled: readonl
 
 /** ONE answered registration, in the slot its open card filled: the same card, the same branch rule,
  *  greyed, and carrying only what was picked or typed. Read-only — the answer has been sent. */
-export function SettledQuestionCard({ s, wrap }: { s: SettledQuestion; wrap?: boolean }) {
+export function SettledQuestionCard({ s, wrap, copy }: { s: SettledQuestion; wrap?: boolean; copy?: boolean }) {
   const nodes = useMemo(() => settledQuestionNodes(s.spec, s.answer), [s.spec, s.answer])
   const card = (node: (typeof nodes)[number]) => (
     <QuestionBlockCard
@@ -373,7 +400,7 @@ export function SettledQuestionCard({ s, wrap }: { s: SettledQuestion; wrap?: bo
   )
   const branch = nodes.slice(1)
   return (
-    <article data-question-id={s.id} data-settled-question aria-label="Answered question" className="flex min-w-0 flex-col gap-2 opacity-60">
+    <article {...(copy ? { "data-question-copy": s.id } : { "data-question-id": s.id })} data-settled-question aria-label="Answered question" className="flex min-w-0 flex-col gap-2 opacity-60">
       {card(nodes[0])}
       {branch.length > 0 && (
         <div className="ml-3 flex flex-col gap-2 border-l border-border pl-3">
@@ -405,7 +432,15 @@ export function SettledQuestionStack({ questions, wrap, className = "" }: { ques
  *  compact `closedQuestions`; the fence itself carries what was asked). */
 export type FenceQuestionRow =
   | (Pick<RegisteredQuestionView, "id" | "spec"> & { closed?: undefined })
-  | { id: string; spec?: undefined; handle: string; closed: ClosedQuestionView["state"] }
+  // `asked`: what it asked (useClosedQuestionSpecs), for the copy an `id:`-only fence draws. Not `spec`,
+  // which would make every handle in its tree a name for it (lib/questionShadow questionNames).
+  | { id: string; spec?: undefined; handle: string; closed: ClosedQuestionView["state"]; asked?: AskedQuestion }
+
+/** The ANSWERED question a fence's row is, or undefined for an open or closed one: useFenceQuestions lists
+ *  the settled rows as they are, answer and all. */
+export function answeredRow(row: FenceQuestionRow): SettledQuestion | undefined {
+  return "settledAt" in row ? (row as SettledQuestion) : undefined
+}
 
 /** Every row the thread knows — open, answered, and closed without an answer — when it speaks THE QUESTION
  *  FENCE (dispatched after QUESTION_FENCE_RETIRED_AT, so `fencesLive` is false), else undefined: the legacy
@@ -416,13 +451,17 @@ export function useFenceQuestions(
   open: readonly RegisteredQuestionView[],
   settled: readonly SettledQuestion[],
   thread?: Pick<ThreadView, "closedQuestions">,
+  closedSpecs: readonly ClosedQuestionSpecView[] = NO_CLOSED_SPECS,
 ): readonly FenceQuestionRow[] | undefined {
   const pushed = thread?.closedQuestions
   // Keyed on content: the board re-sends the same closed rows on every push of this thread.
   const closedKey = pushed?.length ? pushed.map((q) => `${q.id}:${q.state}`).join(" ") : ""
   const closed = useMemo(
-    () => (pushed ?? []).map((q): FenceQuestionRow => ({ id: q.id, handle: q.handle, closed: q.state })),
-    [closedKey], // eslint-disable-line react-hooks/exhaustive-deps
+    () => {
+      const asked = new Map(closedSpecs.map((c) => [c.id, c.spec]))
+      return (pushed ?? []).map((q): FenceQuestionRow => ({ id: q.id, handle: q.handle, closed: q.state, asked: asked.get(q.id) }))
+    },
+    [closedKey, closedSpecs], // eslint-disable-line react-hooks/exhaustive-deps
   )
   return useMemo(() => (fencesLive ? undefined : [...open, ...settled, ...closed]), [fencesLive, open, settled, closed])
 }
@@ -504,15 +543,33 @@ export function UnregisteredQuestionCard({ spec, wrap }: { spec: AskedQuestion; 
  *  greyed like an answered card and headed with what happened, so it cannot be read as a question still
  *  waiting: until 2026-10-13 it drew as the read-only card a question wears for the second before it
  *  becomes answerable, and stayed that way for good. Root only, like that card. */
-export function ClosedQuestionCard({ spec, state, wrap }: { spec: AskedQuestion; state: ClosedQuestionView["state"]; wrap?: boolean }) {
+export function ClosedQuestionCard({ spec, state, wrap, copyOf }: { spec: AskedQuestion; state: ClosedQuestionView["state"]; wrap?: boolean; copyOf?: string }) {
   const question = useMemo(() => toParsedQuestion(spec).question, [spec])
   return (
-    <article data-question-fence={spec.handle} data-question-closed={state} aria-label={state === "dismissed" ? "Dismissed question" : "Withdrawn question"} className="flex min-w-0 flex-col gap-2 opacity-60">
+    <article {...(copyOf ? { "data-question-copy": copyOf } : { "data-question-fence": spec.handle })} data-question-closed={state} aria-label={state === "dismissed" ? "Dismissed question" : "Withdrawn question"} className="flex min-w-0 flex-col gap-2 opacity-60">
       <QuestionBlockCard question={question} label={state === "dismissed" ? "Question dismissed" : "Question withdrawn"} settled={NOT_ANSWERED} wrap={wrap} />
     </article>
   )
 }
 const NOT_ANSWERED = { chosenIdxs: [] }
+
+/** AN OPEN QUESTION, AT A FENCE THAT NAMED IT WHERE ITS CARD IS NOT. A question draws ONE answerable card,
+ *  in the newest message that names it (lib/questionShadow placeQuestions), so every older fence naming it
+ *  — the ask itself, and each `id:`-only reference the worker wrote at a later rest — drew nothing, and a
+ *  handoff that set a question up ("When the gateway gains HTTP:") ended on empty space once the next
+ *  handoff named it again (maintainer 2026-11-06, of five such slots in one message: "Have we started
+ *  removing the rendered versions of questions…?"). Offered a one-line row or a full copy, the maintainer
+ *  chose the full copy. So the slot draws the root card READ-ONLY and greyed, its kind line saying where
+ *  the answer goes, and carries no `data-question-id`: that names the one card focus and navigation reach.
+ *  It is always ABOVE the live card, since that card sits in the newest message naming the question. */
+export function OpenQuestionCopyCard({ q, wrap }: { q: Pick<RegisteredQuestionView, "id" | "spec">; wrap?: boolean }) {
+  const question = useMemo(() => toParsedQuestion(q.spec).question, [q.spec])
+  return (
+    <article data-question-copy={q.id} data-question-open aria-label="Open question, answered further down" className="flex min-w-0 flex-col gap-2 opacity-60">
+      <QuestionBlockCard question={question} label="Still open, answer it below" wrap={wrap} />
+    </article>
+  )
+}
 
 /** A ```question fence that asked nothing, drawn as the question it would have been: one the server
  *  REFUSED to register (lib/questionBlocks `refusedAsk`: its id was spent, its parent settled, the thread

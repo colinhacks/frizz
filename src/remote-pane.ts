@@ -1,4 +1,5 @@
 import { isAnonymousClaimName, type RelayAccess } from "@frizz/shared";
+import { remoteDevicesLine } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import type { AccessLink } from "./access-pane.ts";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, DIM, fitScreen, HIDE_CURSOR, type OptionalLine, RESET, SHOW_CURSOR } from "./access-pane.ts";
@@ -41,6 +42,8 @@ export interface RemotePaneOptions {
   claim: (name: string, signIn: ClaimSignIn) => Promise<CloudConfig>;
   /** A fresh single-use link for the origin now in force, for the done screen. */
   issueLink: () => AccessLink | null;
+  /** The devices holding a session, for the menu's last row, which signs every one of them out. */
+  devices?: { count: () => number; signOutAll: () => number };
   probes: {
     cloudflared: () => Promise<CloudflaredProbe>;
     tailscale: () => Promise<TailscaleProbe>;
@@ -59,7 +62,7 @@ export interface ClaimSignIn {
 }
 
 interface Choice {
-  kind: RemoteKind | "access";
+  kind: RemoteKind | "access" | "devices";
   title: string;
   blurb: string;
 }
@@ -89,11 +92,16 @@ const CHOICES: Choice[] = [
  * current. Choosing that row then serves the saved name again, renewed by the keypair alone; it never
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
-function choicesFor(current: CloudConfig | null): Choice[] {
-  // The last row, so a digit still picks the setup it always has, and only where there is a relay to ask about.
-  const access: Choice[] = current && isRelayConfig(current)
-    ? [{ kind: "access", title: "Device access", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
-    : [];
+function choicesFor(current: CloudConfig | null, devices?: number): Choice[] {
+  // Last, so a digit still picks the setup it always has. Device access appears only where there is a relay
+  // to ask about. Signing devices out is listed on every board, because sessions outlive a setup: a board
+  // turned Off still holds them for the next time it is reachable.
+  const access: Choice[] = [
+    ...(current && isRelayConfig(current)
+      ? [{ kind: "access" as const, title: "Device access", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
+      : []),
+    ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out devices", blurb: remoteDevicesLine(devices) }]),
+  ];
   if (customNamesOffered()) return [...CHOICES, ...access];
   if (kindOf(current) === "frizz") {
     return [
@@ -122,6 +130,8 @@ type Screen =
   /** `cancel` makes escape back out — only while waiting on something the person can abandon. */
   | { name: "busy"; message: string; detail?: string[]; cancel?: () => void }
   | { name: "done"; message: string; link: AccessLink | null; config: CloudConfig | null }
+  /** A switch that cannot be undone from this menu, said before it happens. Enter runs `then`. */
+  | { name: "confirm"; lines: string[]; then: () => void; back: Screen }
   | { name: "error"; message: string; back: Screen };
 
 interface Field {
@@ -175,7 +185,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
 
   const check = (ok: boolean, text: string) => (ok ? `${text} ✓` : text);
   // Read on every use: the current setup moves under the pane, and the custom row follows it.
-  const choices = () => choicesFor(options.current());
+  const choices = () => choicesFor(options.current(), options.devices?.count());
   /** The row for `kind`, or the first row when the menu does not list it. */
   const rowOf = (kind: Choice["kind"]) => Math.max(0, choices().findIndex((choice) => choice.kind === kind));
 
@@ -229,6 +239,10 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         return;
       }
       write([s.message, "", `${DIM}working…${RESET}`]);
+      return;
+    }
+    if (s.name === "confirm") {
+      write([...s.lines, "", `${DIM}enter switch · esc keep it${RESET}`]);
       return;
     }
     if (s.name === "done") {
@@ -475,6 +489,20 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     paint();
   };
 
+  // No question first: a device signed out by mistake signs in again with a code from L.
+  const signOutDevices = () => {
+    try {
+      const count = options.devices!.signOutAll();
+      const message = count === 0
+        ? "No device was signed in. Any sign-in code not yet used no longer works."
+        : `Signed out ${count === 1 ? "1 device" : `${count} devices`}. Each needs a new code from L to sign in again.`;
+      screen = { name: "done", message, link: null, config: options.current() };
+    } catch (error) {
+      screen = { name: "error", message: error instanceof Error ? error.message : String(error), back: { name: "menu", index: rowOf("devices") } };
+    }
+    paint();
+  };
+
   const turnOff = async () => {
     screen = { name: "busy", message: "back to loopback only…" };
     paint();
@@ -507,6 +535,13 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         return "keep";
       }
       if (s.name === "done") return "close";
+      if (s.name === "confirm") {
+        if (key === ESC) {
+          screen = s.back;
+          paint();
+        } else if (ENTER.has(key)) s.then();
+        return "keep";
+      }
       if (s.name === "error") {
         screen = s.back;
         paint();
@@ -536,15 +571,38 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           const choice = rows[Math.min(s.index, rows.length - 1)]!;
           // The relay's two setups ask what a device may do, the first time this board picks one. Picking the
           // one already in force keeps the answer, and "Device access" is the way to change it.
-          const firstPick = choice.kind !== kindOf(options.current());
-          if (choice.kind === "off") void turnOff();
-          else if (choice.kind === "access") askAccess(s, changeAccess);
-          else if (choice.kind === "private") {
-            if (firstPick) askAccess(s, (access) => void claimPrivate(access));
-            else void claimPrivate();
-          } else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
-          else if (choice.kind === "frizz" && firstPick) askAccess(s, (access) => openForm("frizz", access));
-          else openForm(choice.kind);
+          const current = options.current();
+          const firstPick = choice.kind !== kindOf(current);
+          const go = () => {
+            if (choice.kind === "off") void turnOff();
+            else if (choice.kind === "devices") signOutDevices();
+            else if (choice.kind === "access") askAccess(s, changeAccess);
+            else if (choice.kind === "private") {
+              if (firstPick) askAccess(s, (access) => void claimPrivate(access));
+              else void claimPrivate();
+            } else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
+            else if (choice.kind === "frizz" && firstPick) askAccess(s, (access) => openForm("frizz", access));
+            else openForm(choice.kind);
+          };
+          // While custom names are paused, the custom row is listed only for the board serving one, so moving
+          // to any other setup takes away the one way back to it. On 2026-11-06 the maintainer's board left
+          // colin.frizz.sh for a random name in two keystrokes, and only an edit to cloud.json undid it.
+          const strands = current && kindOf(current) === "frizz" && !customNamesOffered() && !["frizz", "access", "devices"].includes(choice.kind);
+          if (strands) {
+            screen = {
+              name: "confirm",
+              lines: [
+                `Leave ${current.hostname}?`,
+                "",
+                ...wrap(`New custom subdomains are paused, so this menu cannot bring ${current.hostname} back once the board serves something else. The name is released 30 days after this board last served it.`),
+              ],
+              then: go,
+              back: s,
+            };
+            paint();
+            return "keep";
+          }
+          go();
           return "keep";
         }
         paint();

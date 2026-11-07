@@ -22,7 +22,7 @@ npx frizz --sessions      # the devices holding a session
 npx frizz --sign-out all  # revoke them
 ```
 
-A device can sign itself out: **Sign out this device** in Settings ends that browser's session and nothing else. Signing out any other device is still `frizz --sign-out`, which runs only on the host (SSH counts), so a stolen phone cannot sign out the laptop.
+A device can sign itself out: **Sign out this device** in Settings ends that browser's session and nothing else. Signing out any other device happens on the host (SSH counts): `frizz --sign-out`, or **Sign out devices** in the **R** menu, which signs out every one. A stolen phone cannot sign out the laptop.
 
 ## What a remote session can do
 
