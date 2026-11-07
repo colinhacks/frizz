@@ -42,8 +42,12 @@ export function ThreadLifecycleActions({
   onArchived,
   onDismissCancel,
   onSnoozed,
+  rule = true,
 }: {
   thread: ThreadView
+  // The hairline that closes the header's strip before these. The tongue under the prompt box
+  // (ThreadTongue) has no strip in front of them, so it leaves the rule out.
+  rule?: boolean
   onArchived?: () => void
   // Undo an OPTIMISTIC dismissal (see StateButton): the queue passes this so a card that faded on click
   // can be un-hidden the instant the server declines to complete (needs confirmation, or errors). Absent
@@ -57,7 +61,7 @@ export function ThreadLifecycleActions({
     // A named group, as the footer this replaced was a named landmark: "Thread lifecycle actions" is
     // how a screen reader finds the verbs at the end of a header full of other icons.
     <span data-thread-lifecycle role="group" aria-label="Thread lifecycle actions" className="flex shrink-0 items-center gap-0.5">
-      <span aria-hidden data-lifecycle-rule className="mx-2.5 h-4 w-px shrink-0 bg-border" />
+      {rule && <span aria-hidden data-lifecycle-rule className="mx-2.5 h-4 w-px shrink-0 bg-border" />}
       {available.done ? (
         <DoneReadout />
       ) : (

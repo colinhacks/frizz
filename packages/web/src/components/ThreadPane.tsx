@@ -18,7 +18,7 @@ import { keyProject } from "../lib/threadKey.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import {
   advanceFrom, nextQueuedAfter, openFirstQueued, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded, stepPane, takeComposerFocus,
-  usePaneWide, type AfterSend,
+  usePaneWide, type AfterSend, type ThreadActionsAt,
 } from "../lib/threadPane.ts"
 import { store, threadBySlug } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
@@ -149,6 +149,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
   const thread = useThreadSnapshot(slug)
   const route = resolveThreadRoute(board, slug, threadBySlug)
   const queryClient = useQueryClient()
+  const actionsAt = useSnapshot(paneProto).actions
   // The rail stands beside the thread folded (from the split width up, as on /full) and always when wide.
   const railBeside = folded || wide
   const fileOpen = folded && snap.filePanels.some((panel) => !panel.closing)
@@ -201,7 +202,8 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
     // The fullscreen door only where there is something to fold: never wide.
     expand: !folded && !wide,
     railBeside: wide,
-  }), [slug, folded, wide])
+    tongue: actionsAt === "tongue",
+  }), [slug, folded, wide, actionsAt])
 
   // ONE TREE IN EVERY LAYOUT, each slot a fixed element whose classes change, so crossing the wide line
   // or folding never remounts the thread: the transcript keeps its scroll and the prompt box its focus.
@@ -292,6 +294,15 @@ function PrototypeControls() {
         Prototype
       </summary>
       <div className="absolute bottom-8 left-0 flex w-[300px] flex-col gap-3 rounded-lg border border-border bg-panel p-3 shadow-2xl">
+        <ProtoChoice<ThreadActionsAt>
+          name="Snooze and done"
+          value={proto.actions}
+          onChange={(v) => { paneProto.actions = v }}
+          options={[
+            ["tongue", "Under the prompt box", "A tongue with the live-op counts on its left"],
+            ["header", "In the header", "As on main"],
+          ]}
+        />
         <ProtoChoice<AfterSend>
           name="After a send"
           value={proto.afterSend}

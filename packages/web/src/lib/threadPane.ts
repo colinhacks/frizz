@@ -13,15 +13,19 @@ import { prefersReducedMotion } from "./sheet.ts"
 // (ThreadPane.tsx PrototypeControls). It is not meant to survive it as a setting.
 
 export type AfterSend = "stay" | "next" | "auto"
+// Where snooze and done sit: on the tongue under the prompt box, beside the live-op counts (maintainer
+// 2026-11-07: "add a tongue under the prompt box … chips left justified and action icons right
+// justified"), or in the header, as on main.
+export type ThreadActionsAt = "tongue" | "header"
 
 const KEY = "frizz.threadPanePrototype.v1"
 
-function load(): { afterSend: AfterSend; folded: boolean } {
-  const fallback = { afterSend: "stay" as AfterSend, folded: false }
+function load(): { afterSend: AfterSend; folded: boolean; actions: ThreadActionsAt } {
+  const fallback = { afterSend: "stay" as AfterSend, folded: false, actions: "tongue" as ThreadActionsAt }
   try {
     const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<typeof fallback>
     // Field by field, so a key an earlier build stored (the slim rail's `foldStyle`) is dropped.
-    return { afterSend: stored.afterSend ?? fallback.afterSend, folded: stored.folded ?? fallback.folded }
+    return { afterSend: stored.afterSend ?? fallback.afterSend, folded: stored.folded ?? fallback.folded, actions: stored.actions ?? fallback.actions }
   } catch {
     return fallback
   }

@@ -65,6 +65,7 @@ import { THREAD_HEADER_CLASS, THREAD_HEADER_CONTROLS_CLASS, THREAD_HEADER_TITLE_
 import { SheetClose } from "./ui/SheetHeader.tsx"
 import { ThreadActionBar } from "./ThreadActionBar.tsx"
 import { QueueOpsSummary } from "./QueueOpsSummary.tsx"
+import { ThreadTongue } from "./ThreadTongue.tsx"
 import type { QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { SHELL_WATCHED_NOTE, shellWatched, threadOps } from "../lib/threadOps.ts"
 import { MobileThreadHeader } from "./MobileThreadHeader.tsx"
@@ -179,6 +180,9 @@ export interface ThreadPaneHooks {
   exit: SurfaceExit
   expand: boolean
   railBeside?: boolean
+  // Snooze and done ride the tongue under the prompt box, beside the live-op counts, instead of the
+  // header (ThreadTongue).
+  tongue?: boolean
 }
 
 export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
@@ -443,7 +447,9 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           // need to show … the active shells and subagents and all of that beneath the prompt box anymore
           // 'cause it's already showing up in the sidebar to the right"). The rail (FocusRail) lists every
           // row the line counts, its saved links and Codex shells included.
-          above={phone || railBeside || !thread ? undefined : <QueueOpsSummary thread={thread} transcriptShells={transcriptShells} />}
+          above={phone || railBeside || pane?.tongue || !thread ? undefined : <QueueOpsSummary thread={thread} transcriptShells={transcriptShells} />}
+          // The pane's tongue takes the counts under the box, the rail beside it or not.
+          below={!phone && pane?.tongue && thread ? <ThreadTongue thread={thread} transcriptShells={transcriptShells} exit={pane.exit} /> : undefined}
           phoneBarOverride={phone && sheetQuestions.length > 0
             ? (api) => <PhoneAnswerBar count={sheetQuestions.length} onAnswer={() => setAnswerSheetOpen(true)} onReply={readAndAnswerHost ? undefined : api.editReply} />
             : undefined}
@@ -1658,7 +1664,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
           {/* Snooze leaves the drawer the way Mark as done does — both take the thread off the reader's
               plate, and the queue card leaves on both (maintainer 2026-10-09). The snooze left the drawer
               open until then. */}
-          <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied ?? pane?.exit.dismiss} onDismissCancel={pane?.exit.cancel} onSnoozed={onStatusApplied ?? pane?.exit.dismiss} />
+          {!pane?.tongue && <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied ?? pane?.exit.dismiss} onDismissCancel={pane?.exit.cancel} onSnoozed={onStatusApplied ?? pane?.exit.dismiss} />}
         </div>
       </div>
     </header>

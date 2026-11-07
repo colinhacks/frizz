@@ -12,7 +12,7 @@ import type { PhoneBarApi } from "./Composer.tsx"
 // Everything the two surfaces must agree on (the draft key, the `/login`/`/logout` intercept, the
 // model/effort footer, the status line) lives in that component.
 // `phoneBarOverride` passes straight through to the phone bar's answer seam (ThreadComposerBox).
-export function ThreadActionBar({ slug, above, phoneBarOverride, phoneChrome }: { slug: string; above?: ReactNode; phoneBarOverride?: (api: PhoneBarApi) => ReactNode; phoneChrome?: boolean }) {
+export function ThreadActionBar({ slug, above, below, phoneBarOverride, phoneChrome }: { slug: string; above?: ReactNode; below?: ReactNode; phoneBarOverride?: (api: PhoneBarApi) => ReactNode; phoneChrome?: boolean }) {
   const thread = useThreadSnapshot(slug)
 
   if (!thread) return null
@@ -39,6 +39,7 @@ export function ThreadActionBar({ slug, above, phoneBarOverride, phoneChrome }: 
       // drawer-composer-footer-fixture.
       className="shrink-0 px-3 py-3"
       above={above}
+      below={below}
       phoneBarOverride={phoneBarOverride}
       phoneChrome={phoneChrome}
     />
