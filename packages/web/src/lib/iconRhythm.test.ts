@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { composerRail, GOAL_GLYPH, markGlyph, MIC_GLYPH, PAPERCLIP_GLYPH, PLUG_GLYPH, SEND_SPLIT_WIDTH } from "./iconRhythm.ts"
+import { AGENT_MARKS, composerRail, GAUGE_GLYPH, GAUGE_MARK, GOAL_GLYPH, markGlyph, MIC_GLYPH, PAPERCLIP_GLYPH, PLUG_GLYPH, PLUG_MARK, SEND_SPLIT_WIDTH } from "./iconRhythm.ts"
 
 // Measured with scripts/ink-gaps.mjs (the table's comment in iconRhythm.ts).
 test("without a microphone the rail keeps its measured offsets", () => {
@@ -15,9 +15,18 @@ const painted = (glyph: { size: number; strokeWidth: number; viewBox?: string })
 
 test("every bare mark in the prompt box paints one pen", () => {
   const row14 = 2 * (14 / 24)
-  for (const glyph of [PAPERCLIP_GLYPH, GOAL_GLYPH, MIC_GLYPH, PLUG_GLYPH]) {
+  for (const glyph of [PAPERCLIP_GLYPH, GOAL_GLYPH, MIC_GLYPH, PLUG_GLYPH, GAUGE_GLYPH]) {
     assert.ok(Math.abs(painted(glyph) - row14) < 1e-9, `${JSON.stringify(glyph)} paints ${painted(glyph)}`)
   }
+})
+
+// The gauge and the plug each keep their fill while their panel is open, so both can be lit at once, and two lit
+// squares that overlap paint the overlap twice (maintainer 2026-11-07: "The fact that these overlap is weird").
+// Each square reaches its trim past the footprint the row's gap is measured between.
+test("the agent's marks' squares stand apart, so two lit at once never overlap", () => {
+  const px = (classes: string, utility: string) => Number(new RegExp(`(?:^| )${utility}\\[([\\d.]+)px\\]`).exec(classes)![1])
+  const between = px(AGENT_MARKS, "gap-") - px(GAUGE_MARK, "-mx-") - px(PLUG_MARK, "-mx-")
+  assert.ok(between >= 2, `the gauge's and the plug's squares stand ${between}px apart`)
 })
 
 test("a scaled glyph keeps an even box and its ink centred in it", () => {

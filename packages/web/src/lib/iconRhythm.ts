@@ -51,7 +51,7 @@
  *
  *    before    paperclip 13 x 14, 67.2 · Goal 13 x 13, 76.9 · mic 10 x 14, 48.4 · plug 10 x 15, 48.7
  *    now       paperclip 11 x 12, 52.0 · Goal 11 x 11, 59.4 · mic  9 x 12, 40.2
- *              plug 12 x 12, 42.9 · gauge 13 x 11.5, 39.9
+ *              plug 12 x 12, 42.9 · gauge 13 x 11.5, 39.9 (both drawn smaller since: GAUGE_GLYPH)
  *
  *  The Goal and the paperclip keep the most mass because they are drawn with the most line, and with the pen
  *  fixed a smaller size barely changes that (the paperclip at 12px: 50.8). What the five share is their height.
@@ -74,26 +74,43 @@ export const PAPERCLIP_GLYPH = markGlyph(12.5)
 export const GOAL_GLYPH = markGlyph(12.5)
 export const MIC_GLYPH = markGlyph(13)
 
-/** The usage gauge is drawn for its box, so it needs no scaling: 14px on its 2-unit pen is the one pen. */
-export const GAUGE_GLYPH_SIZE = MARK_GLYPH_BOX
-/** THE PLUG IS DIAGONAL (maintainer 2026-11-06: "I like the diagonal plug"). Upright it paints 10 x 15, a tall
- *  sliver beside the round gauge; turned 45° it paints 12 x 12. Prongs up and to the right: at -45° it read as
- *  a slashed "off" icon. Turning it leaves its ink 0.75px up and right of the box's centre, which the translate
+/** THE GAUGE AND THE PLUG ARE SIZED BY THE OUTLINE THEY ENCLOSE (maintainer 2026-11-07: "the quota gauge seems
+ *  a lot visually bigger than the microphone icon and the paperclip icon"). Matching heights left them the two
+ *  biggest marks in the box: a round dial and a diagonal plug wrap far more area than a paperclip or a
+ *  microphone of the same height. Convex-hull area of all the ink, faint included, in square px at a real 4x,
+ *  each mark isolated, the dial reading 83%:
+ *
+ *    before    gauge 125 (13 x 11.5) · plug 105 (12 x 12) · paperclip 87 (11 x 12) · mic 77 (9 x 12)
+ *    now       gauge 102 (11.75 x 10.25) · plug 89 (11 x 11.25)
+ *
+ *  The plug now encloses the paperclip's area. The dial still encloses more, but the faint track (42% opacity)
+ *  is part of that ring, and on the real footer, with a full tank lighting all of it, a dial drawn at the
+ *  paperclip's 12.5px reads as the paperclip's size; at 11.75px it read smaller than the microphone. The pen is
+ *  the one pen, so neither mark gets lighter as it shrinks. */
+export const GAUGE_GLYPH = markGlyph(12.5)
+/** THE PLUG IS DIAGONAL (maintainer 2026-11-06: "I like the diagonal plug"). Upright it paints a tall sliver
+ *  beside the round gauge; turned 45° it is as wide as it is tall. Prongs up and to the right: at -45° it read
+ *  as a slashed "off" icon. Turning it leaves its ink up and right of the box's centre, which the translate
  *  takes back. */
 export const PLUG_GLYPH = {
-  size: 16,
-  strokeWidth: (MARK_PEN * 24) / 16,
-  style: { transform: "translate(-0.75px, 0.75px) rotate(45deg)" },
+  ...markGlyph(14.5),
+  style: { transform: "translate(-0.68px, 0.68px) rotate(45deg)" },
 } as const
 
-/** THE AGENT'S MARKS beside the model chip (components/AgentMarks.tsx). Each is the paperclip's own 28px
- *  square, hover fill and tone, trimmed onto its ink so the row's one gap is a distance of ink: 11.5px of box
- *  gap draws about 12px between the gauge and the plug, the same as from the chip's border to the gauge.
- *  The two squares overlap by about 3.75px of empty padding. Only one can paint a fill at a time. */
-export const AGENT_MARKS = "ml-1.5 flex shrink-0 items-center gap-[11.5px] empty:hidden"
-const AGENT_MARK = "icon-focus-outline relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg"
-export const GAUGE_MARK = `-mx-[7.5px] ${AGENT_MARK}`
-export const PLUG_MARK = `-mx-[7.75px] ${AGENT_MARK}`
+/** THE AGENT'S MARKS beside the model chip (components/AgentMarks.tsx): the paperclip's hover fill and tone, on
+ *  a square the chip's own 22px height and 6px corner, trimmed onto its ink so the row's one gap is a distance
+ *  of ink. Measured at a real 4x (scripts/ink-gaps.mjs): 12.4px from the chip's border to the gauge, 12.6px from
+ *  the gauge to the plug.
+ *
+ *  THE SQUARES NEVER OVERLAP (maintainer 2026-11-07, of the gauge and the plug lit side by side: "The fact that
+ *  these overlap is weird"). Each mark holds its fill while its panel is open, so the pointer on one with the
+ *  other's panel open lights both. They were the rail's 28px squares until then, overlapping by 3.75px of
+ *  padding on the belief that only one could be lit at a time, and the overlap painted twice. At 22px they
+ *  stand 2.3px apart, their ink a pixel further apart than the 11.5px it kept while they overlapped. */
+export const AGENT_MARKS = "ml-[7px] flex shrink-0 items-center gap-[13px] empty:hidden"
+const AGENT_MARK = "icon-focus-outline relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg"
+export const GAUGE_MARK = `-mx-[5.2px] ${AGENT_MARK}`
+export const PLUG_MARK = `-mx-[5.5px] ${AGENT_MARK}`
 
 /** THE RAIL, right to left: send, the microphone (only where on-device dictation exists — see
  *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 28px square; any of
@@ -114,7 +131,9 @@ const RAIL_PROSE_CLEARANCE = 8
 const RAIL_BOX_GAP: Partial<Record<`${RailMark}>${RailMark}`, number>> = {
   // The paperclip's 11px of ink wears 8.5px of dead box a side, the Goal's the same and the microphone's 9.5px.
   // Painted pixels at a real 4x, 2026-11-06: paperclip→send 14.25, Goal→paperclip 14.50, paperclip→mic 14.75,
-  // mic→send 14.50. The squares overlap by empty padding where the gap is negative.
+  // mic→send 14.50. The squares overlap by empty padding where the gap is negative. That is safe on the rail
+  // alone: no rail mark keeps a fill when the pointer leaves it (the Goal's panel and the microphone's listening
+  // state paint none), so only one square is ever lit. A mark that holds its fill must not overlap (AGENT_MARKS).
   "paperclip>send": 6,
   "lead>paperclip": -3,
   "mic>send": 5,
