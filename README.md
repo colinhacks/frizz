@@ -25,7 +25,12 @@ Frizz is for you if you have any of these opinions:
 
 <h2 align="center">Getting started</h2>
 
-**Requirements.** Node 22.13+, and a [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex) subscription you are signed in to — Frizz drives the subscription you already pay for. Frizz brings its own pinned copy of each CLI (downloaded once, on first start), so the version on your PATH is yours to manage and never changes what a thread runs.
+**Requirements.** Node 22.13+, and one of these:
+
+- A [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex) subscription you are signed in to. Frizz drives the subscription you already pay for.
+- [OpenCode](https://opencode.ai) on your PATH. It needs no subscription, because OpenCode's free models work with no account.
+
+Frizz brings its own pinned copy of Claude Code and Codex, downloaded once, so the version on your PATH is yours to manage and never changes what a thread runs. The download happens on first start, or at the first thread on each one if you have OpenCode and are signed in to neither.
 
 Then run it, from anywhere.
 
@@ -55,7 +60,7 @@ Frizz is a browser tab, a queue, and the agent CLIs you already pay for. It brin
 - 🗂️ **A task queue, not a sidebar.** Every agent that comes to rest needing you becomes a card. Work the queue top to bottom instead of polling ten terminals.
 - 📁 **Projects.** Every directory you run it in gets its own board, all on one server. The home page lists them, and the project rail switches between them with each queue's count on its icon.
 - 🔌 **Headless.** Every thread's agent runs in its own detached background process. Close the tab, quit the browser, ctrl-c the server, reboot — your threads are all still there when you come back, and Frizz reconnects to the ones still running rather than replaying them from disk.
-- 🤖 **Claude Code *and* Codex.** Pick the backend per thread and run both against the same repo at once. Frizz supports Claude Code and Codex subscriptions — your sign-in, your settings, your skills, driven by a copy of each CLI that Frizz pins and provisions itself.
+- 🤖 **Claude Code, Codex and OpenCode.** Pick the agent per thread and run them against the same repo at once. Frizz supports Claude Code and Codex subscriptions — your sign-in, your settings, your skills, driven by a copy of each CLI that Frizz pins and provisions itself. OpenCode runs from your own install, and its free models need no account.
 - 😴 **Snooze.** Not everything needs an answer now. Park a card for an hour, until tomorrow morning, or until a date you pick — optionally with a follow-up prompt attached, so the thread wakes up already working on what you told it to do next.
 - 🎯 **Goals.** Give a thread a standing goal that Frizz re-sends as a prompt — every time it comes to rest, on a clock you set in minutes, or both. Good for "keep going until CI is green" without you re-asking. A scheduled one reaches the agent even mid-turn, so it can nudge a thread that never stops. Switch it off whenever, or let the agent say it's finished.
 - 🐙 **GitHub integration.** Browse your repo's issues and pull requests without leaving the composer, and turn a selection of them into threads. Workers can read issues, diffs, and CI on their own.
@@ -171,7 +176,9 @@ on. The board stays on loopback and shows a single-use sign-in link as a QR; pre
 <details>
 <summary><b>Does Frizz run its own agent or model?</b></summary>
 
-> No. It drives Claude Code or Codex under the account you are signed in to on your machine. Your subscription, your rate limits, your settings. Frizz runs its own pinned copy of each CLI — the exact build it was tested against — rather than whichever version happens to be on your PATH; set `FRIZZ_CLAUDE_BIN` or `FRIZZ_CODEX_BIN` to point it at another one.
+> No. It drives Claude Code, Codex or OpenCode on your machine, under your own account. Your subscription, your rate limits, your settings. OpenCode also works with no subscription, on OpenCode's free models.
+>
+> Frizz runs its own pinned copy of Claude Code and Codex — the exact build it was tested against — rather than whichever version happens to be on your PATH; set `FRIZZ_CLAUDE_BIN` or `FRIZZ_CODEX_BIN` to point it at another one. OpenCode is the one on your PATH.
 
 </details>
 
@@ -254,7 +261,7 @@ Frizz has its own small vocabulary. Most of it names a feature, so this doubles 
 | --- | --- |
 | **Project** | A directory you ran Frizz in. Each has its own board at `/project/<name>`; one server holds all of them. |
 | **Thread** | One effort, start to finish. Not a chat tab and not a branch. The session *is* the thread — there's no sidecar document to keep in sync, and dispatching doesn't write a file into your repo. |
-| **Worker** | The agent driving a thread: a real Claude Code or Codex process, running as *you*, with your credentials and your CLI config. |
+| **Worker** | The agent driving a thread: a real Claude Code, Codex or OpenCode process, running as *you*, with your credentials and your CLI config. |
 | **Sub-agent** | A helper a worker dispatches for an independent prong of its own task. Frizz binds each one back to its parent, so the fan-out is visible under the parent's card. |
 | **Rested** | An agent that has ended its turn and is waiting on a human. A rested thread isn't idle, it's *your move*. |
 | **The queue** | The single list of threads that need you. A thread only earns a card when it genuinely wants a human. |
