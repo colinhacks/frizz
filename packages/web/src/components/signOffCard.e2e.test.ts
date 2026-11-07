@@ -68,7 +68,7 @@ test("the newest sign-off stays on the queue card, its card drawn, past the quie
     }
 
     // The same thread on its full-screen page: every round is drawn there, and the hand-off's card with it.
-    await page.goto(`${baseUrl}/project/${first.projectSlug}/thread/signoff-buried/full`, { waitUntil: "networkidle2" })
+    await page.goto(`${baseUrl}/project/${first.projectSlug}/thread/signoff-buried`, { waitUntil: "networkidle2" })
     const full = "main[data-standalone-thread]"
     await page.waitForFunction((sel, handoff) => (document.querySelector(sel) as HTMLElement | null)?.innerText.includes(handoff), { timeout: 30_000 }, full, HANDOFF)
     assert.deepEqual((await read(full)).titles, [HANDOFF_TITLE], "the full-screen page draws the hand-off's card too")

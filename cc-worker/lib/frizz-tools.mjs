@@ -662,7 +662,7 @@ const STEER = {
         description:
           "The thread to message: its slug (`fix-queue-focus`), or any link naming it — the " +
           "`[title](/thread/<slug>)` link `frizzctl spawn-thread` prints, or a full board URL such as " +
-          "`http://localhost:9393/project/frizz/thread/<slug>/full`, whose `/project/<slug>/` also " +
+          "`http://localhost:9393/project/frizz/thread/<slug>`, whose `/project/<slug>/` also " +
           "names the thread's project.",
       },
       project: {
@@ -1018,10 +1018,13 @@ const HANDLERS = {
 }
 
 // The slug out of whatever a worker has in hand for a thread: the slug itself, the `[title](/thread/<slug>)`
-// link spawn_thread returns, or a board URL (`…/project/<p>/thread/<slug>/full`) — which also names the
-// thread's project.
-const THREAD_LINK = /\/thread\/([^/?#)\s]+)/
-const PROJECT_LINK = /\/project\/([^/?#)\s]+)\/thread\//
+// link spawn_thread returns, or a URL the human copied out of the address bar — the thread's full-screen
+// page (`…/project/<p>/thread/<slug>`, `/full` on one minted before 2026-11-07) or a board with it open in
+// the drawer (`…/project/<p>?thread=<slug>`). Both also name the thread's project.
+const THREAD_LINK = /\/thread\/([^/?#)\s]+)|[?&]thread=([^&#)\s]+)/
+const PROJECT_LINK = /\/project\/([^/?#)\s]+)(?:\/thread\/|[^?#)\s]*\?(?:[^#)\s]*&)?thread=)/
+// The Console's drawer names a thread by key, `<project>~<slug>` (`/console?thread=billing~retry`).
+const THREAD_KEY = /^([^~]+)~(.+)$/
 // The project out of any link into a board (`…/project/<p>/…`), for `spawn-thread --project`.
 const PROJECT_SEGMENT = /\/project\/([^/?#)\s]+)/
 
@@ -1032,8 +1035,11 @@ async function steer(args) {
   const message = typeof args.message === "string" ? args.message.trim() : ""
   if (!raw) throw new Error("`to` is required — the slug of the thread to message, or a link naming it")
   if (!message) throw new Error("`message` is required and must be a non-empty string")
-  const to = decodeURIComponent(THREAD_LINK.exec(raw)?.[1] ?? raw)
-  const linked = PROJECT_LINK.exec(raw)?.[1]
+  const linkedThread = THREAD_LINK.exec(raw)
+  const linkedSlug = decodeURIComponent(linkedThread?.[1] ?? linkedThread?.[2] ?? raw)
+  const keyed = linkedThread ? THREAD_KEY.exec(linkedSlug) : null
+  const to = keyed ? keyed[2] : linkedSlug
+  const linked = PROJECT_LINK.exec(raw)?.[1] ?? (keyed ? encodeURIComponent(keyed[1]) : undefined)
   const named = typeof args.project === "string" ? args.project.trim() : ""
   const project = named || (linked ? decodeURIComponent(linked) : "")
   if (named && linked && decodeURIComponent(linked) !== named) {

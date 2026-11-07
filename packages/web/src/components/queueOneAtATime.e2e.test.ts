@@ -76,7 +76,7 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
       if (r.method() === "POST" && new URL(r.url()).pathname.endsWith("/rpc/followUp")) sends.push(JSON.parse(r.postData() ?? "{}"))
     })
     const full = `main[data-standalone-thread] [data-thread-surface="${one.slug}"]`
-    await page.goto(`${baseUrl}/project/${projectSlug}/thread/${one.slug}/full`, { waitUntil: "networkidle2" })
+    await page.goto(`${baseUrl}/project/${projectSlug}/thread/${one.slug}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(`${full} [data-composer-box] textarea`)
     const split = `${full} [data-send-split]`
     const modeNow = () => page.$eval(split, (el) => el.getAttribute("data-send-mode"))
@@ -149,7 +149,7 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
     await other.setViewport({ width: 1100, height: 900, deviceScaleFactor: 2 })
     other.on("pageerror", (e) => errors.push(String(e)))
     const otherFull = `main[data-standalone-thread] [data-thread-surface="${control.slug}"]`
-    await other.goto(`${baseUrl}/project/${projectSlug}/thread/${control.slug}/full`, { waitUntil: "networkidle2" })
+    await other.goto(`${baseUrl}/project/${projectSlug}/thread/${control.slug}`, { waitUntil: "networkidle2" })
     await other.waitForSelector(`${otherFull} [data-send-split]`)
     assert.equal(await other.$eval(`${otherFull} [data-send-split]`, (el) => el.getAttribute("data-send-mode")), "queue", "another tab, on another thread, opens on the queue")
     await other.click(`${otherFull} [data-send-menu]`)

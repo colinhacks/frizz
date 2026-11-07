@@ -34,7 +34,7 @@ test("full-screen file links push readers and Escape restores the reader underne
     // run varies only the width.
     for (const width of [1440, 1200]) {
       await page.setViewport({ width, height: 900 })
-      await page.goto(`${baseUrl}/thread/file-panel-stack/full`, { waitUntil: "networkidle2" })
+      await page.goto(`${baseUrl}/thread/file-panel-stack`, { waitUntil: "networkidle2" })
       const firstLink = 'main[data-standalone-thread] [data-local-path$="/first.md"]'
       await page.waitForSelector(firstLink)
       await page.click(firstLink)
@@ -160,7 +160,7 @@ test("full-screen file links open what Frizz can show and hand the rest to the s
     const pdfViewer = (enabled: boolean) => { Object.defineProperty(Navigator.prototype, "pdfViewerEnabled", { configurable: true, get: () => enabled }) }
     await page.evaluateOnNewDocument(pdfViewer, true)
     await page.setViewport({ width: 1440, height: 900 })
-    await page.goto(`${baseUrl}/thread/file-panel-stack/full`, { waitUntil: "networkidle2" })
+    await page.goto(`${baseUrl}/thread/file-panel-stack`, { waitUntil: "networkidle2" })
     await page.evaluate(async () => {
       const path = "/src/api/rpc.ts"; const { rpc } = await import(path)
       await rpc.settingsSet({ ...(await rpc.settingsGet()), localFileOpener: "copy" })

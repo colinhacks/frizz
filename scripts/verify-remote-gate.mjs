@@ -613,7 +613,7 @@ try {
   check("a remote document says so", shell.headers["x-frame-options"] === "DENY" && shell.headers["content-security-policy"] === "frame-ancestors 'none'", `${shell.headers["x-frame-options"]} / ${shell.headers["content-security-policy"]}`)
   const local = await loop.get("/")
   check("so does a loopback one", local.headers["x-frame-options"] === "DENY" && local.headers["content-security-policy"] === "frame-ancestors 'none'")
-  const childDoc = await direct.get("/thread/anything/full")
+  const childDoc = await direct.get("/thread/anything")
   check("and the child's own", childDoc.status === 200 && childDoc.headers["x-frame-options"] === "DENY", `HTTP ${childDoc.status}`)
   const signIn = await stranger.get("/")
   check("and the page a stranger gets", signIn.headers["x-frame-options"] === "DENY", `HTTP ${signIn.status}`)
@@ -684,7 +684,7 @@ try {
   check("control: a page with no policy loads in the attacker's frame", control === `https://${EVIL}/control`, control)
   for (const [name, src] of [
     ["the signed-in board, its cookie riding along", `${ORIGIN}/`],
-    ["a thread page", `${ORIGIN}/thread/${SLUG}/full`],
+    ["a thread page", `${ORIGIN}/thread/${SLUG}`],
     ["the board from loopback", `http://${LOOP}/`],
     ["the child directly", `http://127.0.0.1:${CHILD}/`],
     ["the supervisor's own page, with the child down", `http://127.0.0.1:${PROXY + 10}/`],
@@ -694,7 +694,7 @@ try {
   }
 
   section("The page a remote session gets")
-  await page.goto(`${ORIGIN}/thread/${SLUG}/full`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${ORIGIN}/thread/${SLUG}`, { waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => document.body.innerText.includes("Check the release"), { timeout: 30_000 })
   await page.waitForFunction(() => /This has to be answered on /.test(document.body.innerText), { timeout: 20_000 }).catch(() => {})
   await sleep(2000)
@@ -728,7 +728,7 @@ try {
     mkdirSync(shots, { recursive: true })
     await page.screenshot({ path: join(shots, "read-and-answer-thread-pdf.png") })
   }
-  await page.goto(`${ORIGIN}/thread/${SLUG}/full`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${ORIGIN}/thread/${SLUG}`, { waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => document.body.innerText.includes("Check the release"), { timeout: 30_000 })
   await sleep(1500)
   if (shots) {
@@ -789,7 +789,7 @@ try {
   // The viewport and not the user agent: naming an iPhone here hides `HeadlessChrome` from the check that
   // keeps the dictation probe away from it (lib/dictation.ts), and that probe hangs the headless shell.
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
-  await page.goto(`${ORIGIN}/thread/${SLUG}/full`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${ORIGIN}/thread/${SLUG}`, { waitUntil: "domcontentloaded" })
   await sleep(3000)
   const phoneText = await page.evaluate(() => document.body.innerText)
   check("the phone says it too", /happens on (the Mac|the computer running Frizz)\./.test(phoneText))
@@ -983,7 +983,7 @@ try {
   await page.setViewport({ width: 1280, height: 860, isMobile: false, hasTouch: false, deviceScaleFactor: 1 })
   // The worker dispatched above, since a thread that only exists as seeded rows has no broker to deliver to.
   const pageCard = await showCard("verify-page-card", fullThread)
-  await page.goto(`${ORIGIN}/thread/${fullThread.slug}/full`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${ORIGIN}/thread/${fullThread.slug}`, { waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => document.querySelector("textarea:not([disabled]), [contenteditable=true]"), { timeout: 30_000 })
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Grant for turn"), { timeout: 20_000 }).catch(() => {})
   await sleep(1000)
@@ -1029,7 +1029,7 @@ try {
   if (shots) await page.screenshot({ path: join(shots, "full-control-new-thread-desktop.png") })
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
   await showCard("verify-phone-card", fullThread)
-  await page.goto(`${ORIGIN}/thread/${fullThread.slug}/full`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${ORIGIN}/thread/${fullThread.slug}`, { waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Grant for turn"), { timeout: 20_000 }).catch(() => {})
   await sleep(1000)
   check("so does the phone", !(await nothingToType()) && !(await noteShown()))
@@ -1051,7 +1051,7 @@ try {
   section("The owner says read and answer again, with the page open")
   proxy.setRelayAccess("read-and-answer")
   await page.setViewport({ width: 1280, height: 860, isMobile: false, hasTouch: false, deviceScaleFactor: 1 })
-  await page.goto(`${ORIGIN}/thread/${SLUG}/full`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${ORIGIN}/thread/${SLUG}`, { waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => /happens on (the Mac|the computer running Frizz)\./.test(document.body.innerText), { timeout: 30_000 })
   check("the page goes back to its note", await nothingToType())
   const refusedAgain = await pub.mutate("dispatch", dispatchBody)
@@ -1136,7 +1136,7 @@ try {
   viteProxy.setRelayAccess("read-and-answer")
   const viteRelay = await viteProxy.relayListener()
   const viteLoop = caller(PROXY + 1, { host: `127.0.0.1:${PROXY + 1}`, origin: `http://127.0.0.1:${PROXY + 1}` })
-  for (const path of ["/", "/index.html", "/thread/anything/full"]) {
+  for (const path of ["/", "/index.html", "/thread/anything"]) {
     const response = await viteLoop.get(path)
     check(`Vite serves ${path} locally, refusing frames`, response.status === 200 && response.headers["x-frame-options"] === "DENY" && response.headers["content-security-policy"] === "frame-ancestors 'none'", `HTTP ${response.status} ${response.headers["x-frame-options"]}`)
   }

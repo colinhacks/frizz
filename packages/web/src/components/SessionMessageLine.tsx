@@ -14,7 +14,7 @@
 //
 // The row is the INERT divider, not the clickable one, because it carries two affordances: the sender's
 // title links to the sending thread (the in-project link opens it in the drawer — thread-links.ts
-// intercepts `/thread/<slug>`; a sender in another project navigates to that board), and "Click to
+// intercepts `/thread/<slug>`; a sender in another project navigates to its full-screen page), and "Click to
 // expand" toggles the body. A whole-row button would have to nest the link, which HTML forbids.
 import { useId, useRef, useState } from "react"
 import { MessagesSquare } from "lucide-react"

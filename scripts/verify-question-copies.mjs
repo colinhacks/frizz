@@ -105,7 +105,7 @@ try {
   const page = await browser.newPage()
   page.on("pageerror", (e) => errors.push(String(e)))
   await page.setViewport({ width: 1100, height: 3200, deviceScaleFactor: 2 })
-  await page.goto(`${base}/project/${flags.slug}/thread/${slug}/full`, { waitUntil: "networkidle2" })
+  await page.goto(`${base}/project/${flags.slug}/thread/${slug}`, { waitUntil: "networkidle2" })
   // Every question card the page draws, in document order: what it is, and which question.
   const read = () => page.$$eval("article[data-question-id], article[data-question-copy], article[data-question-fence]", (cards) => cards.map((el) => {
     const what = el.hasAttribute("data-question-copy")

@@ -3,6 +3,7 @@ import type { BoardSnapshot, BoardState, ServerEvent, SocketClientMsg, SocketSer
 import { deltaAction } from "@frizz/shared"
 import { store, openThread, plainArray, plainThreads, setBoardPendingCheck, threadsWithDelta } from "../store.ts"
 import { isConsolePath, projectApiBase, projectHref } from "../lib/base-path.ts"
+import { boardThreadHref } from "../lib/router.ts"
 import { setProjectGithubRepo } from "../lib/githubAutolink.ts"
 import { localFileQueryKey } from "../lib/localFileQuery.ts"
 import { splitThreadKey, threadKey } from "../lib/threadKey.ts"
@@ -700,7 +701,7 @@ function notifyConsole(project: string, event: Extract<ServerEvent, { type: "not
   n.onclick = () => {
     window.focus()
     if (isConsolePath()) openThread(threadKey(project, event.slug))
-    else location.assign(`${projectHref(project)}/thread/${encodeURIComponent(event.slug)}`)
+    else location.assign(boardThreadHref(event.slug, project))
     n.close()
   }
 }

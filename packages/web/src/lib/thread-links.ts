@@ -15,8 +15,13 @@ import { keyProject, threadKey } from "./threadKey.ts"
 // unprefixed in-app link (see prefixedAppRoute — the raw href had to become navigable in its own
 // right, for the modified clicks this handler deliberately does not take). Opening in the drawer is
 // only right for a thread of the project already on screen, so a link naming a DIFFERENT project is
-// left to the browser. On the Console the stamped link already names its thread's KEY
-// (`/console/thread/<project>~<slug>`, prefixedAppRoute), so the optional `<project>~` is part of the match.
+// left to the browser. On the Console the stamped link names the thread's own project
+// (`/project/<project>/thread/<slug>`, prefixedAppRoute), and is opened here as that project's thread; an
+// old Console link names its KEY (`/console/thread/<project>~<slug>`), so the optional `<project>~` is
+// part of the match.
+//
+// A thread link's href is the thread's FULL-SCREEN page (lib/standaloneThreadRoute.ts), so a new tab
+// opens the thread alone; the in-place click opens the drawer, which is the board's `?thread=<slug>`.
 const THREAD_HREF = /^\/thread\/((?:[^/~]+~)?[a-z0-9][a-z0-9-]*)\/?$/
 
 export function installThreadLinkInterceptor(): () => void {

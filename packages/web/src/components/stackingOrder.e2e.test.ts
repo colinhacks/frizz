@@ -92,7 +92,7 @@ async function open(viewport: "desktop" | "phone", height = 900): Promise<{ page
 
 // A queued thread's link opens its card, so the drawer is a snoozed one's.
 async function openDrawer(page: Page): Promise<void> {
-  await page.goto(`${url}/thread/snoozed-0`, { waitUntil: "networkidle2" })
+  await page.goto(`${url}?thread=snoozed-0`, { waitUntil: "networkidle2" })
   await page.waitForSelector(".frizz-sheet-panel")
   await settle(500)
 }

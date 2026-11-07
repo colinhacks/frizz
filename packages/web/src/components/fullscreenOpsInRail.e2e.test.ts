@@ -31,7 +31,7 @@ test("/full lists the thread's ops in its rail, and over the prompt box only onc
 
     // 1. Wide enough for the rail: every row is there, and none of them is under the prompt box.
     await page.setViewport({ width: 1440, height: 900 })
-    await page.goto(`${baseUrl}/thread/full-rail-ops/full`, { waitUntil: "networkidle2" })
+    await page.goto(`${baseUrl}/thread/full-rail-ops`, { waitUntil: "networkidle2" })
     await page.waitForFunction(() => document.querySelectorAll("[data-focus-rail] [data-wait-row]").length === 6)
     assert.deepEqual(await railKinds(), ["agent", "agent", "link", "link", "shell", "shell"])
     assert.equal(await stripIn("main[data-standalone-thread]"), null, "the prompt box must not repeat the rail's rows")

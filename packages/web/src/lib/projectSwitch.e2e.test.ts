@@ -151,7 +151,7 @@ test("a project switch sends none of the old project's thread slugs to the new p
     })
 
     const shapes = [
-      { name: "phone drawer", width: 420, start: `/project/${a.slug}/thread/switch-shared`, mounted: '[role="dialog"]' },
+      { name: "phone drawer", width: 420, start: `/project/${a.slug}?thread=switch-shared`, mounted: '[role="dialog"]' },
       { name: "desktop queue", width: 1440, start: `/project/${a.slug}`, mounted: null },
     ]
     for (const shape of shapes) {

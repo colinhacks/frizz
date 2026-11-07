@@ -281,6 +281,12 @@ test("`steer` POSTs steerThread from the CALLING thread, to a slug read out of a
       "back-up-the-mac",
       "[Back up the Mac](/thread/back-up-the-mac)",
       "http://localhost:9393/project/frizz/thread/back-up-the-mac/full",
+      // The full-screen page and the drawer, as the address bar spells them since 2026-11-07.
+      "http://localhost:9393/project/frizz/thread/back-up-the-mac",
+      "http://localhost:9393/project/frizz?thread=back-up-the-mac",
+      "http://localhost:9393/project/frizz/status/active?scan=1&thread=back-up-the-mac",
+      // The Console's drawer names the thread by key, which carries its project.
+      "http://localhost:9393/console?thread=frizz~back-up-the-mac",
     ]
     for (const [i, to] of forms.entries()) {
       rpc.send({ jsonrpc: "2.0", id: 10 + i, method: "tools/call", params: { name: "steer", arguments: { to, message: "  The audit found 3 issues.  " } } })
@@ -288,7 +294,7 @@ test("`steer` POSTs steerThread from the CALLING thread, to a slug read out of a
       assert.equal(sent.result.isError, undefined, to)
       // A board URL names the thread's project as well, and that rides along; the server finds the
       // thread there even when it is not the caller's project.
-      const project = to.includes("/project/") ? { project: "frizz" } : {}
+      const project = to.includes("/project/") || to.includes("frizz~") ? { project: "frizz" } : {}
       assert.deepEqual(seen.at(-1), {
         url: "/_frizz/rpc/steerThread",
         body: { from: "fresh-archive-audit", to: "back-up-the-mac", ...project, message: "The audit found 3 issues." },

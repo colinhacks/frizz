@@ -154,7 +154,7 @@ try {
     }
     // The full-screen page: this thread is resting, so its plain link opens its queue card, whose middle
     // rounds are folded away.
-    await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}/full`, { waitUntil: "networkidle0" })
+    await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}`, { waitUntil: "networkidle0" })
     await page.waitForSelector(".frizz-bash", { timeout: 20_000 })
     // Ordinary calls fold behind an "N tool calls" band; open every one so all four cards mount.
     for (const toggle of await page.$$('button[aria-label*="tool call"]')) {

@@ -144,7 +144,7 @@ try {
   // A 404's text names no URL, and the sandbox serves no favicon and no control endpoint.
   page.on("console", (m) => { if (m.type() === "error" && !/404/.test(m.text())) pageErrors.push(m.text()) })
   await page.setViewport({ width: 1400, height: 1100, deviceScaleFactor: 2 })
-  await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}/full`, { waitUntil: "networkidle0" })
+  await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}`, { waitUntil: "networkidle0" })
   // Ordinary calls fold behind a "Ran N tool calls" toggle; open every one so all the rows mount.
   await page.waitForSelector('button[aria-label*="tool call"]', { timeout: 20_000 })
   for (const toggle of await page.$$('button[aria-label*="tool call"]')) {
@@ -371,7 +371,7 @@ try {
 
   // ---- CODEX: a different to-do protocol, the SAME card ----
   const codex = page
-  await codex.goto(`http://127.0.0.1:${port}/thread/${CODEX_SLUG}/full`, { waitUntil: "networkidle0" })
+  await codex.goto(`http://127.0.0.1:${port}/thread/${CODEX_SLUG}`, { waitUntil: "networkidle0" })
   await codex.waitForSelector('button[aria-label*="tool call"]', { timeout: 20_000 })
   for (const toggle of await codex.$$('button[aria-label*="tool call"]')) {
     if ((await toggle.evaluate((el) => el.getAttribute("aria-expanded"))) === "false") await toggle.click()

@@ -3,9 +3,17 @@ import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, takeQue
 import { innerPath, outerPath, projectHref } from "./base-path.ts"
 import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 
-// URL ⇄ state sync, SPA-style. Paths: `/` (the unified queue — the only page), `/thread/<slug>`
-// (the queue with that thread open in the drawer STACK's topmost thread layer — there is no
-// standalone thread page), `/status/<status>` (URL-only lists).
+// URL ⇄ state sync, SPA-style. A board's URL is its VIEW in the path — `/` (the unified queue) or
+// `/status/<status>` (URL-only lists) — and the thread open over it in the QUERY: `?thread=<slug>`
+// names the drawer stack's topmost thread layer (or, for a queued thread, its card). The thread's own
+// path, `/thread/<slug>`, is its full-screen page (lib/standaloneThreadRoute.ts), which is a different
+// route and not this module's to write.
+//
+// THE DRAWER IS A QUERY PARAMETER, not a path, since 2026-11-07 (maintainer: "a thread opened in a
+// drawer in a project console is indicated with a query parameter", with `/project/reylo/thread/<slug>`
+// as the full-screen view). It was `/thread/<slug>` until then, and full screen `/thread/<slug>/full`.
+// A query composes with the path the way a drawer composes with the board: the drawer sits OVER a view,
+// so a status list keeps its own path under it.
 //
 // History contract (standard SPA): opening a thread layer PUSHES an entry so the browser Back
 // button unwinds it; other transitions REPLACE so transient state never buries the back stack. One
@@ -14,15 +22,42 @@ import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 //
 // (The focus machine this used to route through was deleted — the router writes store.view directly.)
 
-function currentPath(): string {
-  const top = topThreadSlug()
-  if (top) return `/thread/${encodeURIComponent(top)}`
-  // A parked route still IS that thread's URL. Without this the address bar would flip to "/" for the
-  // frame or two before the board settles the destination, and settling it into a drawer would then
-  // push a redundant history entry for a URL the user never left.
-  if (store.routeThreadSlug) return `/thread/${encodeURIComponent(store.routeThreadSlug)}`
+/** The query parameter that names the thread open over a board. */
+export const THREAD_PARAM = "thread"
+
+/** The thread a board URL's query names, or null. */
+export function threadParam(search: string): string | null {
+  const value = new URLSearchParams(search).get(THREAD_PARAM)
+  return value ? value : null
+}
+
+/**
+ * `search` with the thread parameter set to `slug` (or removed, for null), every other parameter kept.
+ *
+ * Spelled by hand rather than through URLSearchParams' serializer, which writes `~` as `%7E`: a Console
+ * key (`billing~retry-webhooks`, lib/threadKey.ts) would read as `billing%7Eretry-webhooks` in the
+ * address bar.
+ */
+export function withThreadParam(search: string, slug: string | null): string {
+  const params = new URLSearchParams(search)
+  params.delete(THREAD_PARAM)
+  const rest = params.toString()
+  const parts = [...(slug ? [`${THREAD_PARAM}=${encodeURIComponent(slug)}`] : []), ...(rest ? [rest] : [])]
+  return parts.length ? `?${parts.join("&")}` : ""
+}
+
+/** The board view the store is showing, as an inner path. */
+function currentViewPath(): string {
   if (store.view.startsWith("status:")) return `/status/${encodeURIComponent(store.view.slice(7))}`
   return "/"
+}
+
+/** The thread the URL should name: the topmost thread layer, or a parked route still being settled. */
+function currentThread(): string | null {
+  // A parked route still IS that thread's URL. Without this the address bar would drop the parameter
+  // for the frame or two before the board settles the destination, and settling it into a drawer would
+  // then push a redundant history entry for a URL the user never left.
+  return topThreadSlug() ?? store.routeThreadSlug
 }
 
 function decodeSegment(segment: string): string | null {
@@ -52,68 +87,70 @@ export function queueDestination(inner: string, slug = store.board?.projectSlug)
   return outer === "/" && slug ? projectHref(slug) : outer
 }
 
-export function applyPath(path: string): void {
-  const thread = path.match(/^\/thread\/([^/]+)$/)
-  if (thread) {
-    const slug = decodeSegment(thread[1])
-    if (slug === null) {
-      store.routeThreadSlug = null
-      closeDrawersById(store.drawers.map((d) => d.id))
-      store.view = "todos"
-      return
-    }
-    store.view = "todos"
-    // Back/forward landed on a thread path: if that thread is somewhere in the stack, unwind ABOVE
-    // it and we're done — the surface it asks for is already up.
-    const idx = store.drawers.findIndex((d) => d.kind === "thread" && d.slug === slug && !d.closing)
-    // Unwind the layers ABOVE the matched thread through their animated closers (slide-out), not an
-    // instant splice — Back/forward must play the same exit animation as backdrop/Esc.
-    if (idx !== -1) {
-      store.routeThreadSlug = null
-      closeDrawersById(store.drawers.slice(idx + 1).map((d) => d.id))
-      return
-    }
-    // Otherwise PARK the slug: the destination depends on whether the thread is queued, which the
-    // board alone can say, and on a cold deep link no board has arrived yet. App settles it the first
-    // render the board is authoritative (store.resolveRoutedThread). Deciding here instead — the old
-    // unconditional pushDrawer — is what rendered a queued thread's panel twice on `/thread/<slug>`:
-    // its full card in the main column, plus the identical panel in a drawer half-covering it.
-    //
-    // What the destination DISPLACES is already known, though, and must go now. The commonest way here
-    // with a stack open is Back after a lateral move — thread A, then a link or a sidebar row to B: the
-    // one-drawer policy replaced A with B, so Back to A's entry finds B still on top. Leaving B up made
-    // the store→URL sync push B's URL back over A's, then resolveRoutedThread push A's over that — two
-    // new entries per Back press, flipping between the threads and never reaching the board. Closing B
-    // here is the same displacement opening A would do, a beat earlier, so the URL never disagrees.
-    closeLayersDisplacedBy({ kind: "thread", slug })
-    store.routeThreadSlug = slug
-    return
-  }
+/**
+ * The URL of a board with `slug` open over it — the drawer's own address, or the queue card's for a
+ * queued thread. THIS page's board by default; `project` names another project's.
+ */
+export function boardThreadHref(slug: string, project?: string): string {
+  const board = project ? projectHref(project) : queueDestination("/")
+  return `${board}${withThreadParam("", slug)}`
+}
+
+/** URL → store: `path` is the INNER path (the board's view), `search` the query (the open thread). */
+export function applyPath(path: string, search = ""): void {
   const status = path.match(/^\/status\/([^/]+)$/)
-  if (status) {
+  const statusName = status ? decodeSegment(status[1]) : null
+  // Everything but a status list is the queue.
+  store.view = statusName === null ? "todos" : `status:${statusName}`
+  const slug = threadParam(search)
+  if (slug === null) {
+    // No thread named: Back past the last thread layer unwinds the stack (animated).
     store.routeThreadSlug = null
     closeDrawersById(store.drawers.map((d) => d.id))
-    const statusName = decodeSegment(status[1])
-    store.view = statusName === null ? "todos" : `status:${statusName}`
     return
   }
-  // Everything else is the queue; Back past the last thread layer unwinds the stack (animated).
-  store.routeThreadSlug = null
-  closeDrawersById(store.drawers.map((d) => d.id))
-  store.view = "todos"
+  // Back/forward landed on a thread: if that thread is somewhere in the stack, unwind ABOVE it and
+  // we're done — the surface it asks for is already up.
+  const idx = store.drawers.findIndex((d) => d.kind === "thread" && d.slug === slug && !d.closing)
+  // Unwind the layers ABOVE the matched thread through their animated closers (slide-out), not an
+  // instant splice — Back/forward must play the same exit animation as backdrop/Esc.
+  if (idx !== -1) {
+    store.routeThreadSlug = null
+    closeDrawersById(store.drawers.slice(idx + 1).map((d) => d.id))
+    return
+  }
+  // Otherwise PARK the slug: the destination depends on whether the thread is queued, which the
+  // board alone can say, and on a cold deep link no board has arrived yet. App settles it the first
+  // render the board is authoritative (store.resolveRoutedThread). Deciding here instead — the old
+  // unconditional pushDrawer — is what rendered a queued thread's panel twice on its URL: its full
+  // card in the main column, plus the identical panel in a drawer half-covering it.
+  //
+  // What the destination DISPLACES is already known, though, and must go now. The commonest way here
+  // with a stack open is Back after a lateral move — thread A, then a link or a sidebar row to B: the
+  // one-drawer policy replaced A with B, so Back to A's entry finds B still on top. Leaving B up made
+  // the store→URL sync push B's URL back over A's, then resolveRoutedThread push A's over that — two
+  // new entries per Back press, flipping between the threads and never reaching the board. Closing B
+  // here is the same displacement opening A would do, a beat earlier, so the URL never disagrees.
+  closeLayersDisplacedBy({ kind: "thread", slug })
+  store.routeThreadSlug = slug
 }
 
 // Cold-load adoption is initial application state, so establish it BEFORE React's first render.
 // main.tsx primes synchronously; startRouter repeats this safely (both paths are idempotent) so
 // tests/non-main entry points retain the old self-contained contract.
 //
-// A thread path only PARKS its slug here — the destination needs the board (see applyPath). That is
+// A thread parameter only PARKS its slug here — the destination needs the board (see applyPath). That is
 // not a regression of the old opacity-0-phantom bug: the layer that bug produced was one animated in
 // AFTER mount, whereas resolveRoutedThread still pushes `routed: true` (painted open, no animation),
 // and it fires on the very render the board lands — the same render that replaces App's boot spinner
 // with the queue, so the sheet and the page behind it appear together.
-export function primeRoute(path = location.pathname): void {
-  applyPath(innerPath(path))
+export function primeRoute(path = location.pathname, search = currentSearch()): void {
+  applyPath(innerPath(path), search)
+}
+
+/** This page's query, or `""` where there is no page (a node test, a stubbed location). */
+function currentSearch(): string {
+  return typeof location === "undefined" ? "" : (location.search ?? "")
 }
 
 /**
@@ -186,16 +223,19 @@ export function startRouter(navigate: (path: string, options: { replace: boolean
     // valtio delivers this notification a microtask late: StandaloneRoute clears the drawer stack on
     // its first render (it moved there from the fullscreen door's click handler for the view
     // transition — see ExpandThreadLink), so by the time this runs the address bar already says
-    // `/thread/<slug>/full` and the board shell is on its way out — and without this guard the
+    // `/thread/<slug>` and the board shell is on its way out — and without this guard the
     // "unwind" below navigated straight back to the board (caught live, 2026-08-28: a plain click
     // on the door left the URL exactly where it was).
     if (parseStandaloneThreadPath(innerPath()) !== null) return
-    const path = queueDestination(currentPath())
-    if (path === location.pathname) return
-    // A NEW topmost thread pushes history, and so does a door dismissing the stack for a queue card;
-    // unwinding or non-thread transitions replace. `startsWith` is checked against the INNER path:
-    // under a project prefix every path starts with `/project/`.
-    const openingThread = currentPath().startsWith("/thread/")
-    navigate(path, { replace: !openingThread && !queueCardNavigation })
+    const thread = currentThread()
+    const pathname = queueDestination(currentViewPath())
+    const search = withThreadParam(currentSearch(), thread)
+    if (pathname === location.pathname && search === currentSearch()) return
+    // OPENING a thread pushes history — a URL naming a thread the address bar does not already name —
+    // and so does a door dismissing the stack for a queue card. Unwinding, non-thread transitions and a
+    // rewrite that keeps the thread (the unprefixed `/?thread=x` taking its `/project/<slug>` prefix
+    // once the board names it) replace.
+    const opening = thread !== null && thread !== threadParam(currentSearch())
+    navigate(`${pathname}${search}`, { replace: !opening && !queueCardNavigation })
   })
 }

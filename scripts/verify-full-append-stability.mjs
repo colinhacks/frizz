@@ -98,7 +98,7 @@ try {
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()) })
   page.on("pageerror", (e) => errors.push(String(e)))
   // THE SURFACE UNDER TEST: the standalone /full page, not the drawer.
-  await page.goto(new URL(`/thread/${SLUG}/full`, url).href, { waitUntil: "networkidle2", timeout: 30000 })
+  await page.goto(new URL(`/thread/${SLUG}`, url).href, { waitUntil: "networkidle2", timeout: 30000 })
   await page.waitForFunction("document.querySelector('[data-standalone-thread] [data-drawer-transcript-scroll] [data-virtualized-transcript]')", { timeout: 20000 })
 
   const settle = (ms = 1600) => page.evaluate(async (wait) => {

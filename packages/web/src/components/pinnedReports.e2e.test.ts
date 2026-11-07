@@ -181,12 +181,12 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
     await waitCards(asks, "pinned again")
 
     // 8. A DEEP LINK to a pinned report opens the drawer; there is no card for it to settle on.
-    await page.goto(`${boardUrl}/thread/${bare}`, { waitUntil: "networkidle2" })
+    await page.goto(`${boardUrl}?thread=${bare}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(drawer(bare), { timeout: 20_000 })
     await waitDot(bare, false, "a link reads it too")
 
     // 9. ITS FULL PAGE reads it as well, and draws the thread in full.
-    await page.goto(`${boardUrl}/thread/${done}/full`, { waitUntil: "networkidle2" })
+    await page.goto(`${boardUrl}/thread/${done}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(`main[data-standalone-thread] [data-thread-surface="${done}"]`, { timeout: 20_000 })
     await until("the full page recorded the read", async () => {
       const t = await thread(done)

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent as DragEvent_, type KeyboardEvent as KeyboardEvent_, type MouseEvent as MouseEvent_, type PointerEvent as PointerEvent_, type ReactNode } from "react"
 import { House, Plus } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router"
+import { threadParam } from "../lib/router.ts"
 import type { ProjectCard, ProjectRailCounts } from "@frizz/shared"
 import { activeBandThread, boardAskThread, boardQueuedThread, PROJECT_ICON_EXTENSIONS } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
@@ -583,7 +584,9 @@ export function ProjectRail() {
   const countsFor = useRailCounts(current, projects)
   // The house always goes to the grid (lib/homeView.ts), so it is the current page only there — not on
   // the Console, and not on the launching project's unprefixed board, which names no slug either.
-  const onGrid = useLocation().pathname === "/"
+  const here = useLocation()
+  // `/?thread=<slug>` is the launching project's board, not the grid (routes.tsx RootRoute).
+  const onGrid = here.pathname === "/" && threadParam(here.search) === null
 
   /**
    * Fade the band's bottom edge ONLY while something is actually below it.

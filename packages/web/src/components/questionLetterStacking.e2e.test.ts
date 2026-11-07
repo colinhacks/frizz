@@ -113,8 +113,8 @@ test("a question's free-text letter sits over its box and under the thread's sti
     await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 })
     const surfaces = {
       card: { url: boardUrl, selector: `[data-queue-card-root="${queued}"]` },
-      drawer: { url: `${boardUrl}/thread/${snoozed}`, selector: `.frizz-sheet-panel [data-thread-surface="${snoozed}"]` },
-      full: { url: `${boardUrl}/thread/${queued}/full`, selector: `main[data-standalone-thread] [data-thread-surface="${queued}"]` },
+      drawer: { url: `${boardUrl}?thread=${snoozed}`, selector: `.frizz-sheet-panel [data-thread-surface="${snoozed}"]` },
+      full: { url: `${boardUrl}/thread/${queued}`, selector: `main[data-standalone-thread] [data-thread-surface="${queued}"]` },
     }
     for (const [name, { url, selector }] of Object.entries(surfaces)) {
       await page.goto(url, { waitUntil: "networkidle2" })

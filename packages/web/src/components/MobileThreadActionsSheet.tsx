@@ -20,7 +20,7 @@ import {
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
 import { aiRenameAvailability, manualThreadTitleSeed, THREAD_TITLE_MAX_LENGTH, threadTitleToCommit } from "../lib/threadTitle.ts"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
-import { queueDestination } from "../lib/router.ts"
+import { standaloneThreadHref } from "../lib/standaloneThreadRoute.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
 import { retrySession } from "../lib/retrySession.ts"
 import { restartWorker } from "../lib/restartWorker.ts"
@@ -126,7 +126,9 @@ function ActionsList({ thread, title, setView, dismiss, onArchived }: {
   const foot = [context, modelEffort].filter(Boolean).join(" · ")
 
   const copyLink = () => {
-    const href = new URL(queueDestination(`/thread/${encodeURIComponent(thread.id)}`), location.origin).href
+    // The thread's own address, its full-screen page — the one that shows this thread wherever it is
+    // opened, rather than a board that happens to have it open.
+    const href = new URL(standaloneThreadHref(thread.id), location.origin).href
     dismiss(() => {
       copyTextToClipboard(href)
         .then(() => showToast("Link copied"))

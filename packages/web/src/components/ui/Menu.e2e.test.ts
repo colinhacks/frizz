@@ -115,7 +115,7 @@ test("Snooze menu stays non-modal and preserves anchored menu interactions", {
     await page.waitForFunction(() => !document.querySelector('[role="menu"]'))
 
     // In the modal drawer, one Escape belongs to the menu; the drawer itself stays open.
-    await page.goto(`${baseUrl}/thread/${encodeURIComponent(drawerSlug!)}`, { waitUntil: "domcontentloaded" })
+    await page.goto(`${baseUrl}?thread=${encodeURIComponent(drawerSlug!)}`, { waitUntil: "domcontentloaded" })
     await page.waitForSelector('[role="dialog"][aria-modal="true"]')
     const drawerTrigger = '[role="dialog"] button[data-snooze-menu]'
     await openMenu(drawerTrigger)

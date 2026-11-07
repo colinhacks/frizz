@@ -58,7 +58,7 @@ function prepare() {
       api,
       projectSlug,
       shells: [
-        { name: "the full-screen thread page", url: `${board}/thread/${slug}/full`, root: "main[data-standalone-thread]" },
+        { name: "the full-screen thread page", url: `${board}/thread/${slug}`, root: "main[data-standalone-thread]" },
         { name: "the board", url: board, root: "#workpane" },
       ],
     }
@@ -269,8 +269,8 @@ test("Escape does nothing while the restart overlay blocks, on either shell, and
     // block it used to take it: the tab went to the board behind the scrim.
     {
       const { page, errors, supervisor } = await open(full.name)
-      const onFull = () => page.evaluate(() => location.pathname.endsWith("/full") && document.querySelector("main[data-standalone-thread]") !== null)
-      const leftFull = (when: string) => page.waitForFunction(() => !location.pathname.endsWith("/full") && !document.querySelector("main[data-standalone-thread]"), { timeout: 10_000 })
+      const onFull = () => page.evaluate(() => /\/thread\/[^/]+$/.test(location.pathname) && document.querySelector("main[data-standalone-thread]") !== null)
+      const leftFull = (when: string) => page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname) && !document.querySelector("main[data-standalone-thread]"), { timeout: 10_000 })
         .catch((error) => { throw new Error(`${full.name}: Escape did not exit fullscreen ${when}`, { cause: error }) })
       const load = async () => {
         await page.goto(full.url, { waitUntil: "domcontentloaded" })
@@ -312,9 +312,9 @@ test("Escape does nothing while the restart overlay blocks, on either shell, and
       const { page, errors, supervisor } = await open(board.name)
       const boardPath = new URL(board.url).pathname
       const drawer = `.frizz-sheet-panel [data-thread-surface="${working}"]`
-      const drawerOpen = () => page.evaluate((selector, path) => ({ drawer: document.querySelector(selector) !== null, path: location.pathname === path }), drawer, `${boardPath}/thread/${working}`)
+      const drawerOpen = () => page.evaluate((selector, path) => ({ drawer: document.querySelector(selector) !== null, path: `${location.pathname}${location.search}` === path }), drawer, `${boardPath}?thread=${working}`)
 
-      await page.goto(`${board.url}/thread/${working}`, { waitUntil: "domcontentloaded" })
+      await page.goto(`${board.url}?thread=${working}`, { waitUntil: "domcontentloaded" })
       await page.waitForSelector(drawer, { visible: true })
       await supervisor.restart()
       await escape(page)

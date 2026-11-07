@@ -24,9 +24,9 @@ test("Escape on /full unwinds the layers above the page, then exits fullscreen",
       } else void r.continue()
     })
     await page.setViewport({ width: 1440, height: 900 })
-    const full = `${baseUrl}/thread/file-panel-stack/full`
-    const onFull = () => page.evaluate(() => location.pathname.endsWith("/full"))
-    const leftFull = () => page.waitForFunction(() => !location.pathname.endsWith("/full") && !document.querySelector("main[data-standalone-thread]"))
+    const full = `${baseUrl}/thread/file-panel-stack`
+    const onFull = () => page.evaluate(() => /\/thread\/[^/]+$/.test(location.pathname))
+    const leftFull = () => page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname) && !document.querySelector("main[data-standalone-thread]"))
     const open = async () => {
       await page.goto(full, { waitUntil: "networkidle2" })
       await page.waitForSelector('main[data-standalone-thread] [data-local-path$="/first.md"]')

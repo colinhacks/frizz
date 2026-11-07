@@ -41,7 +41,7 @@
 //                           server opens a ledger entry first (its ghost bubble, deliveryInFlight). Plain
 //                           `rpc` has none, which is how a worker's steerThread sends — a different path
 //     [--steers=1500,1900]  ms after 0 at which the page types a steer and presses Send, into the running turn
-//     [--drawer]            record the board's drawer (`/thread/<slug>`) instead of the thread page
+//     [--drawer]            record the board's drawer (`?thread=<slug>`) instead of the thread page
 //     [--message=text] [--ms=9000] [--out=/abs/dir] [--w=1400] [--h=900]
 //
 // MORE SURFACES AND ACTIONS (2026-10-14, the layout sweep). Each is recorded the same way, on the same
@@ -239,7 +239,7 @@ try {
   }, slug)
 
   const base = url.replace(/\/$/, "")
-  const route = from === "page" ? `/thread/${slug}/full` : from === "drawer" ? `/thread/${slug}` : ""
+  const route = from === "page" ? `/thread/${slug}` : from === "drawer" ? `?thread=${slug}` : ""
   await page.goto(`${base}${route}`, { waitUntil: "networkidle2", timeout: 30_000 })
   if (from === "card") {
     await page.waitForSelector(`[data-queue-card-root="${slug}"] [data-transcript-source-id]`, { timeout: 20_000 }).catch(() => {
