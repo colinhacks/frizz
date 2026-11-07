@@ -109,6 +109,17 @@ test("opencode-bridge: a dispatch creates a session with its rules and environme
   } finally { await teardown(r) }
 })
 
+test("opencode-bridge: the first dispatch to a service still activating waits for its models instead of failing no-route", async () => {
+  const r = await rig({ activatingMs: 900 })
+  try {
+    await spawn(r, "[say:ready]")
+    await until(() => ends(r) === 1)
+    assert.ok(!records(r).some((x) => x.kind === "provider-error"), JSON.stringify(records(r).filter((x) => x.kind === "provider-error")))
+    assert.equal(records(r).find((x) => x.kind === "turn-end")!.finalText, "ready")
+    assert.ok(r.fake.requests.filter((q: any) => q.path === "/api/model").length >= 1)
+  } finally { await teardown(r) }
+})
+
 test("opencode-bridge: when the instruction route is refused, the contract rides the first prompt instead", async () => {
   const r = await rig({ noInstructions: true })
   try {
@@ -180,12 +191,14 @@ test("opencode-bridge: an interrupting send leaves a foreground sub-agent runnin
 test("opencode-bridge: a permission ask is a card; allow runs the call, and deny fails only that call", async () => {
   const r = await rig()
   try {
-    await spawn(r, "[shell:rm -rf build][shell:echo after][say:finished]", "default")
+    await spawn(r, "[shell:rm -rf build && ls | wc -l][shell:echo after][say:finished]", "default")
     const scope = { projectId: "proj-1", threadSlug: "t1", sessionId: "s1" }
     const card = await until(() => r.store.listPending(scope)[0])
     assert.equal(card.provider.kind, "opencode")
     assert.equal(card.payload.kind, "command-approval")
-    assert.match((card.payload as any).command.preview, /rm -rf build/)
+    // OpenCode asks with one resource per sub-command; the card shows the command the agent wrote.
+    assert.equal((card.payload as any).command.preview, "rm -rf build && ls | wc -l")
+    assert.equal((card.payload as any).command.summary, "rm -rf build && ls | wc -l")
     assert.deepEqual(card.allowedDecisions.map((d) => d.id), ["accept", "acceptForSession", "decline"])
     assert.ok(r.bridge.ownsInteraction(scope, card.id))
     r.store.resolve(scope, { slug: "t1", sessionId: "s1", interactionId: card.id, sessionEpoch: 0, capabilityRevision: 0, expectedRecordRevision: card.recordRevision, responseId: "r1", decisionId: "decline" })
@@ -415,6 +428,14 @@ test("opencode-service: a healthy registration is used as it is; a missing one i
     // The negative control: a start that registers nothing fails, and says so.
     const none = { PATH: process.env.PATH, HOME: join(dir, "c"), XDG_STATE_HOME: join(dir, "c", "state"), FRIZZ_OPENCODE_BIN: bin }
     await assert.rejects(ensureOpencodeService(none, { waitMs: 800 }), /no healthy OpenCode service registered itself/)
+    // A start that fails says OpenCode's own reason, and is not waited out.
+    const failing = join(dir, "opencode-failing")
+    writeFileSync(failing, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "opencode v2.2.5"; exit 0; fi\necho "Error: Server process exited with code 1" >&2\necho "Error: Managed service port 49374 on 127.0.0.1 is already in use by PID 4242 (opencode serve --service)." >&2\necho "    at reap (/$bunfs/root/chunk.js:2:1159)" >&2\nexit 1\n`)
+    chmodSync(failing, 0o755)
+    const busy = { PATH: process.env.PATH, HOME: join(dir, "e"), XDG_STATE_HOME: join(dir, "e", "state"), FRIZZ_OPENCODE_BIN: failing }
+    const failedAt = Date.now()
+    await assert.rejects(ensureOpencodeService(busy, { waitMs: 10_000 }), /failed: Managed service port 49374 on 127\.0\.0\.1 is already in use by PID 4242/)
+    assert.ok(Date.now() - failedAt < 5_000, "a start that said why it failed is not waited out")
     // A wrong password is not a healthy service either.
     const wrong = writeRegistration(join(dir, "d"), { ...fake.registration, password: "nope" })
     await assert.rejects(ensureOpencodeService({ ...wrong, FRIZZ_OPENCODE_BIN: join(dir, "missing") }, { waitMs: 300 }), /not installed/)

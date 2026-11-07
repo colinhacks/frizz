@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process"
-import { existsSync, readFileSync, statSync } from "node:fs"
-import { homedir } from "node:os"
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { findOnPath } from "./acp-agents.ts"
 import { asObject, asString } from "./opencode-types.ts"
@@ -128,21 +128,46 @@ async function ensure(env: NodeJS.ProcessEnv, waitMs: number): Promise<OpencodeD
   if (existing) return checked(existing)
   const bin = resolveOpencodeBinary(env)
   if (!bin) throw new Error("OpenCode is not installed, or `opencode` is not on PATH.")
-  await new Promise<void>((resolve, reject) => {
-    // The service outlives this server, and the environment it starts with is what a session's shell falls
-    // back on, so it takes the worker's filtered environment rather than Frizz's own control plane.
-    const child = spawn(bin, ["service", "start"], { env: inheritWorkerEnvironment(env), stdio: "ignore", detached: true })
-    child.once("error", (err) => reject(new Error(`Could not start OpenCode's service (${bin}): ${err.message}`)))
-    child.once("exit", () => resolve())
-    child.unref()
-  })
+  // `service start` says why it failed on stderr (the managed port is fixed per machine, 49374 on 2.2.5, so
+  // a service under another HOME holding it is the usual reason). That goes to a file rather than a pipe:
+  // the server it starts may inherit the descriptor, and a pipe would break under it when Frizz exits.
+  const errDir = mkdtempSync(join(tmpdir(), "frizz-opencode-start-"))
+  const errPath = join(errDir, "stderr")
+  const errFd = openSync(errPath, "w")
+  let code: number | null = null
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // The service outlives this server, and the environment it starts with is what a session's shell falls
+      // back on, so it takes the worker's filtered environment rather than Frizz's own control plane.
+      const child = spawn(bin, ["service", "start"], { env: inheritWorkerEnvironment(env), stdio: ["ignore", "ignore", errFd], detached: true })
+      child.once("error", (err) => reject(new Error(`Could not start OpenCode's service (${bin}): ${err.message}`)))
+      child.once("exit", (exit) => { code = exit; resolve() })
+      child.unref()
+    })
+  } finally {
+    closeSync(errFd)
+  }
+  const reason = code ? opencodeStartError(readFileSync(errPath, "utf8")) : undefined
+  rmSync(errDir, { recursive: true, force: true })
   const deadline = Date.now() + waitMs
   while (Date.now() < deadline) {
     const found = await discoverOpencodeService(env)
     if (found) return checked(found)
+    if (reason) break
     await new Promise((r) => setTimeout(r, 300))
   }
-  throw new Error("`opencode service start` finished, but no healthy OpenCode service registered itself.")
+  throw new Error(reason
+    ? `\`opencode service start\` failed: ${reason}`
+    : "`opencode service start` finished, but no healthy OpenCode service registered itself.")
+}
+
+/** The sentence worth showing from a failed `opencode service start`: its last `Error:` line that says
+ *  something more than that a process exited. */
+export function opencodeStartError(stderr: string): string | undefined {
+  const lines = stderr.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("Error:")).map((l) => l.slice("Error:".length).trim())
+  const useful = lines.filter((l) => l && !/^Server process exited with code/.test(l))
+  const line = useful.at(-1) ?? lines.at(-1)
+  return line ? line.slice(0, 400) : undefined
 }
 
 function checked(found: OpencodeDiscovery): OpencodeDiscovery {

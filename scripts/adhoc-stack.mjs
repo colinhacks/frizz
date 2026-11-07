@@ -20,7 +20,7 @@
 // It prints ONE json line to stdout: {"url","port","home","project"} once /health is green,
 // then stays up until SIGINT/SIGTERM, deleting the temp HOME on exit (unless --keep). Run it with Bash
 // run_in_background:true, parse that json line, then drive the url with Chrome DevTools MCP or shot.mjs.
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { frizzPaths, projectStateDir } from "../packages/server/src/frizz-paths.ts"
@@ -118,6 +118,20 @@ if (creds) {
     // Its key is in the real login keychain, which the sandbox HOME can't find on its own (github-credential-seal.ts).
     const keychain = join(realHome, "Library", "Keychains", "login.keychain-db")
     if (existsSync(keychain)) process.env.FRIZZ_GITHUB_KEYCHAIN = keychain
+  }
+}
+// OpenCode's managed service listens on ONE fixed port per machine (49374 on 2.2.5, ServiceConfig.defaultPort),
+// so a sandbox service started by a native OpenCode dispatch would hold the port the operator's own service
+// needs, and two stacks could not both start one. A sandbox HOME gets a service config naming a port of
+// its own. Never written into the real HOME, nor through a `.config` that --creds linked to the real one.
+if (home !== realHome) {
+  const configHome = process.env.XDG_CONFIG_HOME?.startsWith(home) ? process.env.XDG_CONFIG_HOME : join(home, ".config")
+  let linked = false
+  try { linked = lstatSync(configHome).isSymbolicLink() } catch {}
+  const serviceConfig = join(configHome, "opencode", "service.json")
+  if (!linked && !existsSync(serviceConfig)) {
+    const servicePort = port + 10_000 <= 65_535 ? port + 10_000 : port - 10_000
+    try { mkdirSync(dirname(serviceConfig), { recursive: true }); writeFileSync(serviceConfig, JSON.stringify({ port: servicePort }) + "\n") } catch {}
   }
 }
 if (!flag("wakers")) process.env.FRIZZ_WAKERS_OFF = "1"

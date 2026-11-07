@@ -16,6 +16,7 @@ import { Select } from "../components/ui/Select.tsx"
 import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, OPENCODE_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
+import { useIsMobile } from "../lib/mobile.ts"
 
 // One control strip for every place a registered thread can be steered: the model/effort selector, and
 // — for a Claude thread — the Auto/Bypass permission picker beside it. This lives outside the component
@@ -58,6 +59,9 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const upgrade = useMutation({
     mutationFn: (sessionId: string) => rpc.upgradeThreadModel({ slug, sessionId }),
   })
+  // Below the phone breakpoint the row holds three selects, Stop and the marks on one line only if Stop
+  // drops its word and the variant shows once one is chosen (420px, 2026-11-06: the row overran the box).
+  const phone = useIsMobile()
   const stopTurn = useMutation({
     mutationFn: (sessionId: string) => rpc.stopThreadTurn({ slug, sessionId }),
   })
@@ -210,6 +214,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
       {/* Like an ACP thread, one control: the model, and its variant beside it when it has any. */}
       {backend === "opencode" && (
         <OpencodeModelSelect
+          compact={phone}
           value={optimisticProfile?.model ?? model}
           onValueChange={(slug) => changeProfile({ model: slug, effort: "" })}
           disabled={busy}
@@ -285,10 +290,14 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
               disabled={stopTurn.isPending}
               aria-label="Stop this turn"
               title="Stop this turn. The thread stays open for your next message."
-              className="flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted hover:bg-fill-hover hover:text-fg disabled:opacity-50"
+              // Ink, not boxes (optical-spacing): with no Stop the pill group's edge sits 12px of ink from the
+              // plug. The button paints 7px of dead space left and 6.66px right, so on the row's gaps it drew 13px
+              // before and 18.66px after (measured 2026-11-06, sans, dsf 4). These margins put 12px on both sides;
+              // the right one overlaps the plug's empty hover padding, and only one of them fills at a time.
+              className="-ml-px -mr-[6.5px] flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted hover:bg-fill-hover hover:text-fg disabled:opacity-50"
             >
               <Square size={8} fill="currentColor" strokeWidth={0} aria-hidden />
-              Stop
+              {!phone && "Stop"}
             </button>
           )}
           {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}

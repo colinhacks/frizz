@@ -104,6 +104,9 @@ class SessionStream {
   readonly textWritten = new Map<string, number>()
   readonly reasoningSeen = new Set<string>()
   readonly toolNames = new Map<string, string>()
+  /** A shell call's command as the agent wrote it, for its permission card: OpenCode's request lists the
+   *  command split at every pipe and `&&` (one resource per sub-command). Dropped once the call ends. */
+  readonly toolCommands = new Map<string, string>()
   readonly toolCalled = new Set<string>()
   readonly toolDone = new Set<string>()
   readonly usersSeen = new Set<string>()
@@ -159,8 +162,8 @@ class SessionStream {
           break
         }
         case "reasoning": if (asString(rec.oc)) this.reasoningSeen.add(rec.oc as string); break
-        case "tool-call": if (asString(rec.id)) { this.toolCalled.add(rec.id as string); this.toolNames.set(rec.id as string, asString(rec.name) ?? "tool") } this.finalText = ""; break
-        case "tool-result": if (asString(rec.id)) this.toolDone.add(rec.id as string); break
+        case "tool-call": if (asString(rec.id)) { this.toolCalled.add(rec.id as string); this.toolNames.set(rec.id as string, asString(rec.name) ?? "tool"); const command = asString(asObject(rec.input)?.command); if (command) this.toolCommands.set(rec.id as string, command) } this.finalText = ""; break
+        case "tool-result": if (asString(rec.id)) { this.toolDone.add(rec.id as string); this.toolCommands.delete(rec.id as string) } break
         case "user-message": if (asString(rec.inboxId)) this.usersSeen.add(rec.inboxId as string); break
         case "compaction": if (asString(rec.oc)) this.compactionsSeen.add(rec.oc as string); break
         case "provider-error": if (asString(rec.oc)) this.errorsSeen.add(rec.oc as string); break
@@ -213,12 +216,15 @@ class SessionStream {
     this.finalText = ""
     const shaped = frizzToolShape(rawName, input)
     this.toolNames.set(id, shaped.name)
+    const command = shaped.name === "Bash" ? asString(asObject(shaped.input)?.command) : undefined
+    if (command) this.toolCommands.set(id, command)
     this.writer.append({ kind: "tool-call", at, id, name: shaped.name, input: shaped.input })
   }
 
   private writeToolResult(id: string, content: unknown, metadata: Json | undefined, failed: boolean, at: string, errorText?: string, cancelled = false): void {
     if (this.toolDone.has(id) || !this.toolCalled.has(id)) return
     this.toolDone.add(id)
+    this.toolCommands.delete(id)
     this.flushBuffers()
     let text = toolContentText(content) || errorText || ""
     if (this.toolNames.get(id) === "Agent") text = subagentResultText(text)
@@ -900,7 +906,8 @@ export class OpencodeBridge implements OpencodeHubListener {
       return
     }
     const child = stream === live.stream ? undefined : live.children.get(stream.opencodeId)
-    const request = buildOpencodePermissionInteraction(data, this.owner(live, requestId), live.cwd, child?.label)
+    const callId = asString(asObject(data.source)?.id)
+    const request = buildOpencodePermissionInteraction(data, this.owner(live, requestId), live.cwd, child?.label, callId ? stream.toolCommands.get(callId) : undefined)
     if (!request) {
       this.diagnostic(live.slug, "a permission request could not be shown as a card; rejecting it")
       if (client) void client.replyPermission(stream.opencodeId, requestId, "reject", live.cwd).catch(() => {})
@@ -1015,6 +1022,7 @@ export class OpencodeBridge implements OpencodeHubListener {
   async spawnDispatch(input: OpencodeSpawnInput): Promise<{ opencodeSessionId: string; version?: string }> {
     if (this.closed) throw new Error("OpenCode bridge is closed")
     const client = await this.connect()
+    await this.locationReady(client, input.cwd, input.model)
     const agent = opencodeAgentFor(input.mode)
     const session = await client.createSession({
       directory: input.cwd,
@@ -1038,6 +1046,26 @@ export class OpencodeBridge implements OpencodeHubListener {
     return { opencodeSessionId: opencodeId, ...(version ? { version } : {}) }
   }
 
+  /** A service that has just started, or a directory it has not served yet, activates its plugins first,
+   *  and until then answers `/api/model` with 503 ("Location plugins did not finish activating") and fails a
+   *  prompt with "Model unavailable" (`provider.no-route`, measured on 2.0.27 a moment after `service
+   *  start`). So the first dispatch to a directory on each service waits for its catalogue, and for the model
+   *  it names, for up to 30s. A model still missing then is a real no-route and fails as one. */
+  private readonly readyLocations = new WeakMap<OpencodeClient, Set<string>>()
+  private async locationReady(client: OpencodeClient, cwd: string, model?: { providerID: string; id: string }): Promise<void> {
+    let ready = this.readyLocations.get(client)
+    if (!ready) { ready = new Set(); this.readyLocations.set(client, ready) }
+    if (ready.has(cwd)) return
+    const deadline = Date.now() + 30_000
+    for (;;) {
+      const models = await withStartupRetry(() => client.models(cwd)).catch(() => undefined)
+      const listed = models && (!model || models.some((m) => asString(m.providerID) === model.providerID && asString(m.id) === model.id))
+      if (listed) { ready.add(cwd); return }
+      if (Date.now() > deadline) return
+      await new Promise((r) => setTimeout(r, 500))
+    }
+  }
+
   private connect(): Promise<OpencodeClient> {
     this.attachHub()
     return this.hub.connect()
@@ -1056,6 +1084,8 @@ export class OpencodeBridge implements OpencodeHubListener {
     if (this.closed) throw new Error("OpenCode bridge is closed")
     if (!input.opencodeSessionId) throw new Error("This OpenCode thread has no session id.")
     const { client, live } = await this.attached({ threadSlug: input.threadSlug, sessionId: input.sessionId, cwd: input.cwd, opencodeSessionId: input.opencodeSessionId, mode: input.mode, ...(input.model ? { model: input.model } : {}) })
+    // After a service restart the client is new, and the directory activates again (locationReady).
+    await this.locationReady(client, live.cwd)
     const inboxId = opencodeInboxId(input.sessionId, input.deliveryId ?? randomUUID())
     live.pendingSends.set(inboxId, { recordText: input.text, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}) })
     const contract = live.contractOwed ? this.options.contractFor?.(input.threadSlug, input.sessionId) : undefined
@@ -1311,6 +1341,8 @@ export function buildOpencodePermissionInteraction(
   owner: { projectId: string; threadSlug: string; sessionId: string; turnId: string; itemId: string; sessionEpoch: number; capabilityRevision: number },
   cwd: string,
   childLabel: string | undefined,
+  /** The whole command of the shell call asking, when the bridge has seen it. */
+  command?: string,
 ): InteractionRequestType | null {
   const action = asString(data.action) ?? "tool"
   const resources = asArray(data.resources).filter((r): r is string => typeof r === "string")
@@ -1319,7 +1351,7 @@ export function buildOpencodePermissionInteraction(
   const toolId = asString(source?.id) ?? (asString(data.id) as string)
   const canAlways = asArray(data.save).length > 0
   const who = childLabel ? `Sub-agent "${childLabel}": ` : ""
-  const summary = resources.join("\n")
+  const summary = action === "shell" && command ? command : resources.join("\n")
   const preview = clip(redactCredentialSyntax(summary), 6_000)
   const label = clip(redactCredentialSyntax(summary.replace(/\s+/g, " ")), 150)
   const allowedDecisions = [APPROVAL_DECISIONS.once, ...(canAlways ? [APPROVAL_DECISIONS.always] : []), APPROVAL_DECISIONS.reject]

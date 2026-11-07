@@ -11,6 +11,7 @@
 //   [question]        the question tool: a form, answered through /form/:id/reply
 //   [sub:<label>]     the subagent tool: a child session that runs `[shell:echo $FRIZZ_THREAD_SLUG][say:child done]`
 //   [fail]            the execution fails with a `provider.auth` error
+//   (any script)      fails `provider.no-route` while the fake is still "activating" (opts.activatingMs)
 //
 // A test drives the service's own misbehaviour through the returned handle: `dropStreams()` ends every
 // event stream (events emitted while nobody listens are lost, as on the real one), `restart()` also loses
@@ -28,6 +29,10 @@ function evaluate(action, resource, rules) {
 export async function startFakeOpencode(opts = {}) {
   const password = opts.password ?? "fake-secret-password"
   const version = opts.version ?? "2.2.5"
+  // A service that has just started: until `activatingMs` has passed, `/api/model` answers 503 and a prompt
+  // fails "Model unavailable" (`provider.no-route`), as 2.0.27 did a moment after `service start`.
+  const bootedAt = Date.now()
+  const activating = () => Date.now() - bootedAt < (opts.activatingMs ?? 0)
   const sessions = new Map()
   const streams = new Set()
   const requests = []
@@ -90,6 +95,12 @@ export async function startFakeOpencode(opts = {}) {
       emit("session.step.ended", { sessionID: s.id, assistantMessageID: assistant.id, finish, tokens: assistant.tokens })
     }
     step()
+    if (activating()) {
+      const error = { type: "provider.no-route", message: "Model unavailable: opencode/big-pickle" }
+      assistant.error = error
+      emit("session.step.failed", { sessionID: s.id, assistantMessageID: assistant.id, error })
+      return { failed: error }
+    }
     let text0 = 0
     for (const [, kind, arg = ""] of tokens) {
       if (signal.aborted) return "interrupted"
@@ -128,8 +139,8 @@ export async function startFakeOpencode(opts = {}) {
         if (evaluate("shell", arg, rules) === "ask") {
           const reqId = id("per")
           const reply = await new Promise((resolve) => {
-            s.permissionsPending.set(reqId, { id: reqId, sessionID: s.id, action: "shell", resources: [arg], save: [arg.split(" ")[0] + " *"], source: { type: "tool", messageID: assistant.id, id: callId }, resolve })
-            emit("permission.asked", { id: reqId, sessionID: s.id, action: "shell", resources: [arg], save: [arg.split(" ")[0] + " *"], source: { type: "tool", messageID: assistant.id, id: callId } })
+            s.permissionsPending.set(reqId, { id: reqId, sessionID: s.id, action: "shell", resources: arg.split(/\s*(?:\||&&)\s*/), save: arg.split(/\s*(?:\||&&)\s*/).map((c) => c.split(" ")[0] + " *"), source: { type: "tool", messageID: assistant.id, id: callId }, resolve })
+            emit("permission.asked", { id: reqId, sessionID: s.id, action: "shell", resources: arg.split(/\s*(?:\||&&)\s*/), save: arg.split(/\s*(?:\||&&)\s*/).map((c) => c.split(" ")[0] + " *"), source: { type: "tool", messageID: assistant.id, id: callId } })
             signal.addEventListener("abort", () => resolve({ decision: "reject" }))
           })
           s.permissionsPending.delete(reqId)
@@ -245,6 +256,7 @@ export async function startFakeOpencode(opts = {}) {
       return
     }
     if (url.pathname === "/api/info") return json(res, 200, { version, pid: process.pid, urls: [], paths: {}, capabilities: {} })
+    if (url.pathname.startsWith("/api/model") && activating()) return json(res, 503, { message: "Location plugins did not finish activating" })
     if (url.pathname === "/api/model") return json(res, 200, { data: [
       { id: "big-pickle", providerID: "opencode", name: "Big Pickle", variants: [], limit: { context: 200000 }, enabled: true, status: "active" },
       { id: "flash", providerID: "opencode", name: "Flash", variants: [{ id: "low" }, { id: "high" }], limit: { context: 100000 }, enabled: true, status: "active" },

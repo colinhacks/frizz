@@ -37,6 +37,7 @@ export function OpencodeModelSelect({
   side = "bottom",
   menuZClass = OPAQUE_PORTAL_SURFACE_Z,
   className = "",
+  compact = false,
 }: {
   value: string | undefined
   onValueChange: (slug: string) => void
@@ -44,6 +45,8 @@ export function OpencodeModelSelect({
   side?: "top" | "bottom"
   menuZClass?: string
   className?: string
+  /** A phone's row: the variant control only once a variant is chosen. The model menu still works. */
+  compact?: boolean
 }) {
   const project = useProjectScope()
   const api = useRpc()
@@ -76,21 +79,24 @@ export function OpencodeModelSelect({
         disabled={disabled || models.isPending}
         indicatorPosition="right"
         menuZClass={menuZClass}
-        className={className}
+        // On a phone the row is too narrow for both selects and the permission beside them, so each
+        // truncates rather than the model collapsing to a bare chevron (420px, 2026-11-06).
+        className={`min-w-[5rem] ${className}`}
       />
-      {current && current.variants.length > 0 && (
+      {current && current.variants.length > 0 && (!compact || ref?.variant) && (
         <Select
           variant="readout"
           side={side}
           value={ref?.variant ?? DEFAULT_VARIANT}
           onValueChange={(next) => pick(key, next || undefined)}
-          options={[{ value: DEFAULT_VARIANT, label: "Default" }, ...current.variants.map((variant) => ({ value: variant, label: variant }))]}
+          // "Default" alone sat beside the permission pill and read as a permission mode.
+          options={[{ value: DEFAULT_VARIANT, label: "Default effort" }, ...current.variants.map((variant) => ({ value: variant, label: variant }))]}
           ariaLabel="OpenCode model variant"
           title="This model's reasoning effort, in OpenCode's words"
           disabled={disabled}
           indicatorPosition="right"
           menuZClass={menuZClass}
-          className="shrink-0"
+          className="min-w-[3.5rem]"
         />
       )}
     </>
