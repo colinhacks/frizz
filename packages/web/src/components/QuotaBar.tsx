@@ -110,7 +110,10 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
     refetchInterval: (query) => {
       const d = query.state.data
       const signedIn = queryClient.getQueryData<AuthSnapshot>(["authStatus"])
-      const degraded = !d || (["claude", "codex"] as const).some((b) => d[b].status !== "ok" && signedIn?.[b] !== "signed-out")
+      // `?.` though the schema names both providers: this runs in an effect, so one missing entry (a
+      // stubbed payload, a provider dropped from the snapshot) threw past every boundary and blanked the
+      // page under it — every queue-card fixture from 2026-11-06, when the gauge joined the prompt box.
+      const degraded = !d || (["claude", "codex"] as const).some((b) => d[b]?.status !== "ok" && signedIn?.[b] !== "signed-out")
       return degraded ? 15_000 : 30_000
     },
     staleTime: 10_000,
