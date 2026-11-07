@@ -12,17 +12,29 @@
 // agent reaching into this thread's turn — so it wears that divider's shape, and like the fired timer it
 // keeps a body one click away, because the instruction is text nobody else in the app renders.
 //
-// The row is the INERT divider, not the clickable one, because it carries two affordances: the sender's
-// title links to the sending thread (the in-project link opens it in the drawer — thread-links.ts
-// intercepts `/thread/<slug>`; a sender in another project navigates to its full-screen page), and "Click to
-// expand" toggles the body. A whole-row button would have to nest the link, which HTML forbids.
-import { useId, useRef, useState } from "react"
-import { MessagesSquare } from "lucide-react"
-import type { ThreadView, TranscriptMessage } from "@frizz/shared"
+// …THAT OPENS INTO A FRAME (maintainer 2026-11-07, choosing it from five redesigns in
+// session-message-mockups-fixture.tsx). Expanded, the hairline's rules turn down into a box and the label
+// stays on its top edge, as the box's <legend>. What it replaced, from the screenshot that asked for it:
+//   - a centred label over a flush-left body on a faint rule, so the body hung off nothing. The frame is
+//     the label's own rule, so the body plainly belongs to it — and, set apart that firmly, it can be
+//     near-full-strength text rather than another muted aside;
+//   - "Click to collapse" in words, which survived whole while the sender's title was cut to "ONE-FILE
+//     MIGRATI…". A chevron is the toggle now, and the title is the label's elastic part;
+//   - the title in petite caps, underlined AND inside guillemets. It is a name, so it keeps its own case
+//     (as identifiers on a divider do), and one underline is enough to say it is a link.
+//
+// THE WHOLE LABEL TOGGLES, except the title. The title links to the sending thread (the in-project link
+// opens it in the drawer — thread-links.ts intercepts `/thread/<slug>`; a sender in another project
+// navigates to its full-screen page), and HTML forbids a link inside a button, so the row cannot BE the
+// button. A click anywhere else on it — the rules too, collapsed — toggles from a handler on the row, and
+// the chevron is the real <button> for the keyboard and the screen reader.
+import { useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react"
+import { ChevronRight, MessagesSquare } from "lucide-react"
+import type { TranscriptMessage } from "@frizz/shared"
 import { useMermaidIslands } from "./CodexRichOutput.tsx"
 import { DIVIDER_LINK } from "./FrizzWake.tsx"
 import { QUEUE_WRAP } from "./TranscriptCard.tsx"
-import { WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
+import { WAKE_DIVIDER_GLYPH, WAKE_DIVIDER_WIDE_ONLY, WakeDivider, WakeDividerLabel } from "./WakeDivider.tsx"
 import { displayTitle } from "../groups.ts"
 import { outerPath, projectHref } from "../lib/base-path.ts"
 import { useInnerHtml } from "../lib/innerHtml.ts"
@@ -48,54 +60,96 @@ export function SessionMessageLine({ peer, text, queued, sourceId, at, wrap }: {
   // A ```mermaid fence in the message is a diagram, as it would be in the sender's own transcript.
   const bodyRef = useRef<HTMLDivElement>(null)
   const diagrams = useMermaidIslands(bodyRef, html)
+
+  // The collapsed hairline and the open frame are different elements, so the chevron is a NEW button
+  // after every toggle. A keyboard user who toggled it keeps their place on it; a mouse never focused it
+  // (the mousedown is cancelled), so nothing is moved for them.
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const refocus = useRef(false)
+  const toggle = () => {
+    refocus.current = document.activeElement === toggleRef.current
+    setOpen((v) => !v)
+  }
+  useLayoutEffect(() => {
+    if (!refocus.current) return
+    refocus.current = false
+    toggleRef.current?.focus()
+  }, [open])
+  // The row's own handler: the title is a link and the chevron handles itself.
+  const onRowClick = (e: MouseEvent) => {
+    if ((e.target as Element).closest("a, button")) return
+    toggle()
+  }
+  // Keep the reader's text selection where it was, as every transcript toggle does.
+  const keepSelection = (e: MouseEvent) => e.preventDefault()
+
+  const label = sender ? (
+    <>
+      {/* WIDE ONLY (see WAKE_DIVIDER_WIDE_ONLY): on a narrow row the glyph says a thread wrote in, and the
+          room goes to which one. The trailing space is for the text, not the layout (a flex item's edge
+          whitespace draws nothing): without the guillemets that used to separate them, the row's
+          `textContent` — find-in-page, a copy — ran "Message fromCoordinate…" together. */}
+      <span className={`shrink-0 ${WAKE_DIVIDER_WIDE_ONLY}`}>Message from </span>
+      <a href={sessionPeerHref(sender)} data-session-peer-link title="Open the thread that sent this" onMouseDown={keepSelection} className={`min-w-0 truncate [font-variant-caps:normal] ${DIVIDER_LINK}`}>
+        {title}
+      </a>
+    </>
+  ) : (
+    // Not a Frizz thread, or one that exited before Frizz could trace it: the session's own name is all
+    // there is, said as a name rather than dressed up as a link.
+    <span className="min-w-0 truncate">{peer.name ? `Message from session ${peer.name}` : "Message from another session"}</span>
+  )
+  const chevron = (
+    <button
+      ref={toggleRef}
+      type="button"
+      data-session-message-toggle
+      onClick={toggle}
+      onMouseDown={keepSelection}
+      aria-expanded={open}
+      aria-controls={bodyId}
+      aria-label={open ? "Collapse the message" : "Expand the message"}
+      className="shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+    >
+      {/* TRIMMED TO ITS INK, both sides. Lucide's chevron paints 4px of its 12px box shut and 7px open
+          (rotated), so on the label's 4px gap it stood 8.86px of ink from the age (7.36px open) where every
+          other pair in the label reads 5.1–6.1px, and its right-hand dead space put 16px of ink between it
+          and the right rule against 12.64px on the left, pulling the label's ink off centre. Measured with
+          scripts/ink-gaps.mjs at 12px, sans, dsf 4, these margins leave 5.11px to the age shut and 6.11px
+          open, and 14.41px to the right rule against 12.44px on the left — 1px of that is the label's
+          `pr-px` (WakeDividerLabel, with a trailing control), which keeps the focus ring inside its clip.
+          The margins are on the svg, so the button's box, and the ring, hug the trimmed footprint. A new
+          button mounts on each toggle, so the rotation is not animated. */}
+      <ChevronRight aria-hidden="true" size={12} className={`${WAKE_DIVIDER_GLYPH} ${open ? "-mx-[0.15em] rotate-90" : "-mx-[0.275em]"}`} />
+    </button>
+  )
+
   return (
     <div data-frizz-msg={sourceId} data-session-message className={`flex flex-col ${queued ? "opacity-50" : ""}`}>
-      <WakeDivider icon={MessagesSquare} marker="session-message" at={at}>
-        {sender ? (
-          <>
-            {/* WIDE ONLY (see WAKE_DIVIDER_WIDE_ONLY): on a narrow row the glyph says a thread wrote in,
-                and the room goes to which one. */}
-            <span className={`shrink-0 ${WAKE_DIVIDER_WIDE_ONLY}`}>Message from</span>
-            {/* Guillemets OUTSIDE the truncating element, as on the sub-agent line: a title clipped at
-                a narrow width still closes its quote, and only the title shrinks. */}
-            <span className="flex min-w-0 items-center">
-              <span className="shrink-0">«</span>
-              <a href={sessionPeerHref(sender)} data-session-peer-link title="Open the thread that sent this" onMouseDown={(e) => e.preventDefault()} className={`min-w-0 truncate ${DIVIDER_LINK}`}>
-                {title}
-              </a>
-              <span className="shrink-0">»</span>
-            </span>
-          </>
-        ) : (
-          // Not a Frizz thread, or one that exited before Frizz could trace it: the session's own name is
-          // all there is, said as a name rather than dressed up as a link.
-          <span className="min-w-0 truncate">{peer.name ? `Message from session ${peer.name}` : "Message from another session"}</span>
-        )}
-        <span aria-hidden="true" className="shrink-0 opacity-50">·</span>
-        <button
-          type="button"
-          data-session-message-toggle
-          onClick={() => setOpen((v) => !v)}
-          onMouseDown={(e) => e.preventDefault()}
-          aria-expanded={open}
-          aria-controls={bodyId}
-          className="shrink-0 rounded-sm outline-none transition-colors hover:text-fg focus-visible:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
-        >
-          {/* The toggle cannot drop out the way the other dividers' hint does — here it is the control,
-              because a row holding a link cannot itself be the button. So it shortens to the verb. */}
-          <span className={WAKE_DIVIDER_WIDE_ONLY}>Click to </span>
-          {open ? "collapse" : "expand"}
-        </button>
-      </WakeDivider>
-      {open && (
-        // The fired timer's ruled aside, flush left for the same reason (the label above is centred, so an
-        // inset would align to nothing). Markdown, unlike the timer's plain text: this is an agent's
-        // message, written as Markdown — lists and code spans — like any other agent prose. `card-md` puts
-        // md-body on the 13px scale with an inherited colour, so it reads as the quiet aside the timer's
-        // is rather than as more of the agent's own 14px prose.
-        <div id={bodyId} className="card-md mt-1.5 border-l border-border/70 pl-3 text-muted">
-          <div ref={bodyRef} className={`md-body [overflow-wrap:anywhere]${wrap ? ` ${QUEUE_WRAP}` : ""}`} dangerouslySetInnerHTML={body} />
-          {diagrams}
+      {open ? (
+        // A real <fieldset>: the legend cuts the top border itself, so the label sits ON the rule exactly
+        // where it sat collapsed, over any surface (a thread page, a drawer, a queue card's panel) with
+        // nothing painted behind it. `my-1` is the hairline's own margin, so opening it moves nothing above.
+        <fieldset className="@container/wake my-1 min-w-0 rounded-xl border border-border/70 px-4 pb-3.5 pt-1 transition-colors has-[>legend:hover]:border-border">
+          {/* The legend leaves 50px of edge either side of its gap, the floor every hairline's rule keeps, so
+              a title truncates at the same width open as shut. Its own 12px padding is the hairline's 12px
+              gap, so its box may take all but 2×50px of the border it sits on — and its percentage is of
+              the content box, 34px narrower than that border (1px border and 16px padding a side):
+              100% + 34px − 100px. */}
+          <legend onClick={onRowClick} onMouseDown={keepSelection} className="group/wake mx-auto max-w-[calc(100%-66px)] cursor-pointer px-3">
+            <WakeDividerLabel icon={MessagesSquare} at={at} trailing={chevron}>{label}</WakeDividerLabel>
+          </legend>
+          {/* Markdown, like any other agent prose: this is an agent's message, written with lists and code
+              spans. `card-md` sets it on the cards' 13px scale with an inherited colour, a step under full
+              strength, so it reads as quoted rather than as this worker's own 14px prose. */}
+          <div id={bodyId} className="card-md text-fg/85">
+            <div ref={bodyRef} className={`md-body [overflow-wrap:anywhere]${wrap ? ` ${QUEUE_WRAP}` : ""}`} dangerouslySetInnerHTML={body} />
+            {diagrams}
+          </div>
+        </fieldset>
+      ) : (
+        <div onClick={onRowClick} onMouseDown={keepSelection} className="group/wake cursor-pointer">
+          <WakeDivider icon={MessagesSquare} marker="session-message" at={at} trailing={chevron}>{label}</WakeDivider>
         </div>
       )}
     </div>

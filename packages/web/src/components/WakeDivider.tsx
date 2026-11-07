@@ -33,7 +33,9 @@ import { useNowMs } from "../lib/liveClock.ts"
 // for a moment carries one (maintainer 2026-08-29, on the review-comment line that had it alone: "Most
 // hairlines should include a duration like this"); the one that stands for a SPAN — the collapsed
 // intermediate run — has no single instant and passes none.
-type WakeDividerProps = { icon?: LucideIcon; children: ReactNode; ariaLabel?: string; marker?: string; at?: string } & (
+// `trailing` — a control drawn AFTER the age, the one thing allowed past it: the disclosure chevron of a
+// line whose title is a link, so the row cannot be the button (SessionMessageLine).
+type WakeDividerProps = { icon?: LucideIcon; children: ReactNode; ariaLabel?: string; marker?: string; at?: string; trailing?: ReactNode } & (
   | { onClick: () => void; sourceId?: never; ariaExpanded?: boolean; ariaControls?: string }
   | { onClick?: never; sourceId?: string; ariaExpanded?: never; ariaControls?: never }
 )
@@ -43,21 +45,15 @@ type WakeDividerProps = { icon?: LucideIcon; children: ReactNode; ariaLabel?: st
 // dividers wear one now (maintainer 2026-07-31, on the GitHub one: "I like it so much that I think we
 // should include a similar icon for the other hairline dividers"), and five hand-rolled copies of a
 // sub-pixel optical correction is exactly how a family drifts apart.
-export function WakeDivider({ icon: Icon, children, sourceId, ariaLabel, marker, at, onClick, ariaExpanded, ariaControls }: WakeDividerProps) {
+export function WakeDivider({ icon, children, sourceId, ariaLabel, marker, at, trailing, onClick, ariaExpanded, ariaControls }: WakeDividerProps) {
   // The chrome itself, identical in both roots. The `group-hover/wake:` variants are inert on the inert
-  // form (nothing names that group there) and are what makes the clickable form respond as ONE row —
-  // its hairlines brighten with its label, so the affordance is the whole rule rather than the words.
+  // form unless a caller's wrapper names that group, and are what makes the clickable form respond as
+  // ONE row — its hairlines brighten with its label, so the affordance is the whole rule rather than the
+  // words.
   const chrome = (
     <>
       <span aria-hidden="true" className={WAKE_DIVIDER_RULE} />
-      {/* `overflow-x-clip` is the backstop behind the rule's floor, never the mechanism: a label whose
-          rigid parts outgrow the room is cut at its own edge rather than painted across the rule. `clip`
-          and not `hidden`, which would make the other axis scroll and shave the focus ring off a link. */}
-      <span className="petite-caps flex min-w-0 items-center gap-1 overflow-x-clip break-words text-center text-[12px] text-muted-70 transition-colors group-hover/wake:text-fg">
-        {Icon && <Icon aria-hidden="true" size={12} className={WAKE_DIVIDER_ICON} />}
-        {children}
-        <DividerAge at={at} />
-      </span>
+      <WakeDividerLabel icon={icon} at={at} trailing={trailing}>{children}</WakeDividerLabel>
       <span aria-hidden="true" className={WAKE_DIVIDER_RULE} />
     </>
   )
@@ -91,6 +87,25 @@ export function WakeDivider({ icon: Icon, children, sourceId, ariaLabel, marker,
     >
       {chrome}
     </div>
+  )
+}
+
+/** The divider's LABEL without its rules — the glyph, the caller's words, the age and any trailing
+ *  control. WakeDivider draws it between two hairlines; a line that opens into a frame draws the same
+ *  label as the frame's `<legend>`, so it reads identically on the rule and on the box's top edge
+ *  (SessionMessageLine). */
+export function WakeDividerLabel({ icon: Icon, children, at, trailing }: { icon?: LucideIcon; children: ReactNode; at?: string; trailing?: ReactNode }) {
+  return (
+    // `overflow-x-clip` is the backstop behind the rule's floor, never the mechanism: a label whose
+    // rigid parts outgrow the room is cut at its own edge rather than painted across the rule. `clip`
+    // and not `hidden`, which would make the other axis scroll and shave the focus ring off a link.
+    // A trailing control ends the label, so `pr-px` keeps its 1px focus ring inside that clip.
+    <span className={`petite-caps flex min-w-0 items-center gap-1 overflow-x-clip break-words text-center text-[12px] text-muted-70 transition-colors group-hover/wake:text-fg${trailing ? " pr-px" : ""}`}>
+      {Icon && <Icon aria-hidden="true" size={12} className={WAKE_DIVIDER_GLYPH} />}
+      {children}
+      <DividerAge at={at} />
+      {trailing}
+    </span>
   )
 }
 
@@ -216,8 +231,9 @@ function DividerAge({ at }: { at?: string }) {
 // prose — the surrounding frame words are what the petite-caps treatment is for.
 export const WAKE_DIVIDER_IDENT = "[font-variant-caps:normal]"
 
-// The glyph treatment `WakeDivider` applies to its `icon`. Not exported for callers to re-apply — they
-// pass the icon and this is what happens to it. It does NOT take ICON_LABEL_NUDGE, and the reason is the
+// The glyph treatment `WakeDivider` applies to its `icon`. A caller passes the icon and this is what
+// happens to it; the one other lucide glyph on a divider, SessionMessageLine's disclosure chevron, takes
+// it by import rather than a copy, for the reason the next paragraphs give. It does NOT take ICON_LABEL_NUDGE, and the reason is the
 // petite caps: that nudge is calibrated against a NORMAL-case label, which inks from cap-top to
 // baseline, while this label inks from roughly x-height to baseline. The text's optical centre is
 // therefore ~1.2px LOWER here, so a glyph centred by `items-center` reads HIGH rather than low — the
@@ -241,4 +257,4 @@ export const WAKE_DIVIDER_IDENT = "[font-variant-caps:normal]"
 // line box the glyph is centred in, and the required correction grows ~4x rather than 2x. The `em`
 // spelling is the safer default if the scale and the leading ever move together; if either moves
 // alone, re-measure rather than trusting this number.
-const WAKE_DIVIDER_ICON = "shrink-0 translate-y-[0.04em]"
+export const WAKE_DIVIDER_GLYPH = "shrink-0 translate-y-[0.04em]"

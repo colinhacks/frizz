@@ -130,7 +130,7 @@ function Hairline({ open }: { open: boolean }) {
   )
 }
 
-// ---- 0 · today -----------------------------------------------------------------------------------
+// ---- 0 · what ships -----------------------------------------------------------------------------------
 // The real component. Its open state is its own, so the expanded copy clicks its own toggle once.
 function Current({ open }: { open: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -242,14 +242,11 @@ type Option = { key: string; letter: string; name: string; recommended?: boolean
 const OPTIONS: Option[] = [
   {
     key: "current",
-    letter: "Today",
+    letter: "Shipped",
     name: "What ships now",
     render: (open) => <Current open={open} />,
     notes: [
-      <>The title is cut to “One-file migrati…” while “Click to collapse” survives whole.</>,
-      <>Petite caps, an underline and guillemets on one name.</>,
-      <>A centred label over a flush-left body, joined by a faint rule.</>,
-      <>Collapsed, nothing says what the message is about.</>,
+      <>The live component, so it can be held against its mockup. Option B was chosen on 2026-11-07; before that this line cut the title to “One-file migrati…” while “Click to collapse” survived whole, and hung a flush-left body under a centred label.</>,
     ],
   },
   {
@@ -358,7 +355,7 @@ function Sheet() {
           <nav className="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
             {OPTIONS.map((o) => (
               <a key={o.key} href={`#${o.key}`} className="text-muted underline decoration-muted/30 underline-offset-2 hover:text-fg">
-                {o.letter === "Today" ? "Today" : `${o.letter} · ${o.name}`}
+                {o.letter === "Shipped" ? "Shipped" : `${o.letter} · ${o.name}`}
               </a>
             ))}
           </nav>
