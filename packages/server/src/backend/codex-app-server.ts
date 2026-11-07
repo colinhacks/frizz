@@ -45,6 +45,7 @@ import { CodexExecutionHealth } from "./codex-execution-health.ts"
 import { codexContextWindowConfig, type FrizzCli, type FrizzMcp } from "./types.ts"
 import { log as frizzLog } from "../logging.ts"
 import { isLinkTo } from "../project-registry.ts"
+import { ensureRuntime, isRuntimeDeferred } from "../runtime-deferral.ts"
 
 // Foundation-only bridge. It is deliberately not an AgentBackend: no current/default Codex TUI
 // session can accidentally cross this boundary. Context now wires it unconditionally
@@ -2458,6 +2459,8 @@ export class CodexAppServerBridge {
     threadSlug: string,
     sessionId: string,
   ): Promise<Array<{ name: string; description: string; source: ThreadSkillSource | undefined }>> {
+    // A typeahead is no reason to fetch a runtime still waiting for its first thread.
+    if (isRuntimeDeferred("codex")) return []
     const releaseOperation = this.beginOperation()
     try {
       const connection = await this.ensureConnected()
@@ -3075,6 +3078,7 @@ export class CodexAppServerBridge {
    * for why a genuinely unsupported codex still fails loudly instead of reforking in a loop.
    */
   private async connect(refork = false): Promise<JsonlRpcConnection> {
+    await ensureRuntime("codex")
     const authAccountId = (this.options.codexAuthAccountId ?? readCodexAccountId)()
     const attachment = await this.host({
       projectId: this.options.projectId,

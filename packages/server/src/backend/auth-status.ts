@@ -8,6 +8,7 @@ import { tokenFromCredentialsJson } from "./claude-quota.ts"
 import { defaultCodexHome } from "./codex.ts"
 import { resolveClaudeExecutableAbsolute } from "./claude-broker-host.ts"
 import { resolveCodexExecutable } from "./codex-executable.ts"
+import { isRuntimeDeferred } from "../runtime-deferral.ts"
 
 const execFileAsync = promisify(execFile)
 
@@ -72,6 +73,24 @@ export async function readClaudeAuthState(configDir = claudeConfigDir()): Promis
   if (file === "error" || keychain === "error") return "unknown"
   // Both sources cleanly reported absent/empty → genuinely signed out.
   return "signed-out"
+}
+
+// What the two readers above cannot see, and Claude Code would still sign in with: a key or a cloud route
+// in the environment, or an `apiKeyHelper` in its settings. The CLI confirmation below is what catches
+// these on a machine that has the binary. shouldDeferRuntimes runs before any binary exists, so it asks
+// here, and a machine with one of these provisions at boot.
+const CLAUDE_CREDENTIAL_ENV = [
+  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+] as const
+export function readClaudeOtherCredential(env: NodeJS.ProcessEnv = process.env, configDir = claudeConfigDir()): boolean {
+  if (CLAUDE_CREDENTIAL_ENV.some((name) => env[name])) return true
+  try {
+    return Boolean((JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { apiKeyHelper?: unknown }).apiKeyHelper)
+  } catch (err) {
+    // No settings file is the ordinary case. One that cannot be read is an answer we do not have.
+    return (err as NodeJS.ErrnoException).code !== "ENOENT"
+  }
 }
 
 // The Codex credential state, from $CODEX_HOME/auth.json (default ~/.codex/auth.json). Codex stores
@@ -238,6 +257,9 @@ export async function readClaudeAuthStatusCli(opts?: {
 export async function readClaudePreflightAuth(opts?: { claudeBin?: string; cwd?: string }): Promise<ProviderAuth> {
   const local = await readClaudeAuthState()
   if (local !== "signed-out") return local
+  // A runtime still waiting for its first thread is not started just to ask. A credential the local
+  // reader can see is the only kind this machine has (shouldDeferRuntimes).
+  if (isRuntimeDeferred("claude")) return local
   return readClaudeAuthStatusCli({ claudeBin: opts?.claudeBin, ...(opts?.cwd ? { cwd: opts.cwd } : {}) })
 }
 
@@ -364,6 +386,7 @@ export function resetClaudeCliConfirm(): void {
 }
 
 async function confirmSignedOutWithCli(opts: { claudeBin?: string; fresh?: boolean; now?: () => number }): Promise<ProviderAuth> {
+  if (isRuntimeDeferred("claude")) return "unknown"
   const bin = opts.claudeBin ?? ""
   const now = (opts.now ?? Date.now)()
   if (!opts.fresh && cliConfirm?.bin === bin && now >= cliConfirm.at && now - cliConfirm.at < CLI_CONFIRM_TTL_MS) return cliConfirm.verdict

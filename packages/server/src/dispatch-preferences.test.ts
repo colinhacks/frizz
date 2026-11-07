@@ -9,8 +9,10 @@ import { machineConfigPath } from "./machine-config.ts"
 import {
   defaultDispatchPreferences,
   getDispatchPreferences,
+  hasSavedDispatchPreferences,
   readMachineDispatchPreferences,
   setDispatchPreference,
+  withDefaultAgentProfile,
 } from "./dispatch-preferences.ts"
 
 // One sandbox HOME with as many project databases as a test wants: the record under test is
@@ -177,6 +179,40 @@ test("an unreadable machine store degrades to the project's row rather than thro
     assert.equal(readMachineDispatchPreferences(box.home), undefined)
     assert.equal(getDispatchPreferences(alpha, settings, box.home).claude.model, "sonnet")
     assert.equal(existsSync(machineConfigPath(box.home)), true, "a read never rewrites the file")
+  } finally {
+    box.done()
+  }
+})
+
+test("a computed default applies to the read and writes nothing, and the first real choice replaces it", () => {
+  const box = sandbox()
+  try {
+    const storage = box.open("a")
+    const settings = defaultSettings()
+    assert.equal(hasSavedDispatchPreferences(storage, settings, box.home), false)
+    const shown = withDefaultAgentProfile(getDispatchPreferences(storage, settings, box.home), { backend: "acp", model: "acp:opencode" })
+    assert.equal(shown.backend, "acp")
+    assert.equal(shown.acp?.model, "acp:opencode")
+    assert.equal(readMachineDispatchPreferences(box.home), undefined, "showing it stored nothing")
+    assert.equal(withDefaultAgentProfile(getDispatchPreferences(storage, settings, box.home), undefined).backend, "claude")
+
+    setDispatchPreference(storage, settings, box.home, { field: "profile", backend: "claude", model: "opus", effort: "high" })
+    assert.equal(hasSavedDispatchPreferences(storage, settings, box.home), true)
+    // On a project with its own row and on a new project alike: the machine record speaks for both.
+    assert.equal(hasSavedDispatchPreferences(box.open("b"), settings, box.home), true)
+  } finally {
+    box.done()
+  }
+})
+
+test("a project's old row or an old configured model counts as saved", () => {
+  const box = sandbox()
+  try {
+    const storage = box.open("a")
+    assert.equal(hasSavedDispatchPreferences(storage, { ...defaultSettings(), model: "opus" }, box.home), true)
+    assert.equal(hasSavedDispatchPreferences(storage, { ...defaultSettings(), backend: "codex" }, box.home), true)
+    storage.setSetting("dispatch-preferences.v1", { backend: "codex", claude: { permissionMode: "auto" }, codex: { permissionMode: "default" } })
+    assert.equal(hasSavedDispatchPreferences(storage, defaultSettings(), box.home), true)
   } finally {
     box.done()
   }

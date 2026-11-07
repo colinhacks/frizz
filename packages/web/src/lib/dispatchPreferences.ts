@@ -63,7 +63,13 @@ export function applyDispatchPreferenceUpdate(
 
 // `claudeModels` is the runtime-resolved Claude catalogue (the claudeModels RPC): the Claude rows take
 // their edition labels from it ("Opus 5.5"), exactly as the Codex rows take theirs from the codex cache.
-export function dispatchProfileGroups(codexModels: readonly CodexModel[], acpAgents: readonly AcpAgent[] = [], claudeModels: readonly ClaudeModel[] = []): ProfileGridGroup[] {
+export function dispatchProfileGroups(
+  codexModels: readonly CodexModel[],
+  acpAgents: readonly AcpAgent[] = [],
+  claudeModels: readonly ClaudeModel[] = [],
+  // The group a signed-out machine leads with (defaultAgentProfile). The rest keep their order.
+  firstGroup?: string,
+): ProfileGridGroup[] {
   // Only the agents actually on the server's PATH get a row: the catalogue lists eight, and a grid of
   // "not installed" rows would bury the two the operator has. A SAVED agent that has since gone
   // missing surfaces through resolveDispatchPreferences's `modelAvailable`, not through a row here.
@@ -74,7 +80,7 @@ export function dispatchProfileGroups(codexModels: readonly CodexModel[], acpAge
     // one "Default" cell for an option with no efforts).
     efforts: [],
   }))
-  return [
+  const groups: ProfileGridGroup[] = [
     {
       id: "claude",
       label: "Claude Code",
@@ -98,8 +104,10 @@ export function dispatchProfileGroups(codexModels: readonly CodexModel[], acpAge
         efforts: model.efforts,
       })),
     },
-    ...(acpOptions.length ? [{ id: "acp", label: "ACP agents", options: acpOptions }] : []),
+    // One agent is its own heading. "ACP agents" names the protocol, and only earns its place as a list.
+    ...(acpOptions.length ? [{ id: "acp", label: acpOptions.length === 1 ? acpOptions[0]!.label : "ACP agents", options: acpOptions }] : []),
   ]
+  return firstGroup ? [...groups.filter((group) => group.id === firstGroup), ...groups.filter((group) => group.id !== firstGroup)] : groups
 }
 
 export function resolveDispatchPreferences(

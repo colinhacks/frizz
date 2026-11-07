@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createMcpService, loopbackRedirectPort, type McpServiceDeps } from "./mcp-status.ts"
+import { deferRuntime, ensureRuntime, resetDeferredRuntimes } from "./runtime-deferral.ts"
 import type { ClaudeMcpProbe } from "./backend/claude-mcp-probe.ts"
 import type { ClaudeAgentBrokerBridge } from "./backend/claude-agent-broker-bridge.ts"
 import type { CodexAppServerBridge, CodexMcpOAuthCompleted } from "./backend/codex-app-server.ts"
@@ -126,4 +127,19 @@ test("a redirect port is read only off a loopback http redirect", () => {
   assert.equal(loopbackRedirectPort(AUTH_URL), 61234)
   assert.equal(loopbackRedirectPort("https://a.example/authorize?redirect_uri=https%3A%2F%2Fapp.example%2Fcb"), undefined)
   assert.equal(loopbackRedirectPort(undefined), undefined)
+})
+
+test("a prompt box on Codex does not fetch a runtime still waiting for its first thread", async (t) => {
+  t.after(resetDeferredRuntimes)
+  let listed = 0
+  const codex = { listMcpServers: async () => { listed++; return [] } }
+  const mcp = createMcpService(deps({ codexAppServer: codex as unknown as CodexAppServerBridge }))
+  deferRuntime("codex", async () => {})
+  const waiting = await mcp.status({ backend: "codex" })
+  assert.equal(listed, 0)
+  assert.deepEqual(waiting.servers, [])
+  assert.match(waiting.note ?? "", /first thread/u)
+  await ensureRuntime("codex")
+  assert.equal((await mcp.status({ backend: "codex" })).note, undefined)
+  assert.equal(listed, 1)
 })

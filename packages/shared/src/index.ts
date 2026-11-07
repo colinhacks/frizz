@@ -207,6 +207,7 @@ export type AcpAgent = z.infer<typeof AcpAgent>
  *  asks for one of the models the agent advertises (`session/set_config_option` on the ACP wire). The
  *  separator is `@` because agent model ids carry `/` and `:` themselves (`openai/gpt-5.5`). */
 export const ACP_MODEL_PREFIX = "acp:"
+export { defaultAgentProfile, type DefaultAgentProfile, type DefaultAgentProfileInput } from "./default-agent-profile.ts"
 export function acpModelSlug(agentId: string, modelId?: string | null): string {
   return `${ACP_MODEL_PREFIX}${agentId}${modelId ? `@${modelId}` : ""}`
 }
