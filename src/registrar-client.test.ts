@@ -166,3 +166,44 @@ test("the registrar origin is overridable, for a self-hoster or a test", () => {
   assert.equal(registrarOrigin({ FRIZZ_REGISTRAR: "  https://mine.example  " }), "https://mine.example");
   assert.equal(registrarOrigin({ FRIZZ_REGISTRAR: "  " }), DEFAULT_REGISTRAR);
 });
+
+test("a GitHub token is sent only over https, or to this machine's loopback", async () => {
+  const identity = await generateClaimIdentity();
+  let sent = 0;
+  const fetchImpl = (async () => { sent++; return new Response(JSON.stringify(ok), { status: 200 }); }) as typeof fetch;
+  for (const origin of ["http://registrar.example", "http://10.0.0.5:8787", "ftp://registrar.example", "not a url"]) {
+    await assert.rejects(
+      claimName({ name: "colin", port: 9393, identity, origin, github: "ghu_token", fetchImpl }),
+      (error: ClaimError) => error.code === "insecure-registrar" && !error.message.includes("ghu_token"),
+      origin,
+    );
+  }
+  assert.equal(sent, 0, "nothing was sent");
+  for (const origin of ["https://registrar.example", "http://127.0.0.1:8787", "http://localhost:8787", "http://[::1]:8787"]) {
+    await claimName({ name: "colin", port: 9393, identity, origin, github: "ghu_token", fetchImpl });
+  }
+  assert.equal(sent, 4);
+  // A renewal carries no token, so a self-hoster's plain-http registrar still renews.
+  await claimName({ name: "colin", port: 9393, identity, origin: "http://registrar.example", fetchImpl });
+  assert.equal(sent, 5);
+});
+
+test("a redirect from the registrar is not followed, so the token is not re-sent elsewhere", async () => {
+  const elsewhere = await registrar(() => ({ status: 200, body: ok }));
+  const redirecting: Server = createServer((_req, res) => {
+    res.writeHead(307, { location: `${elsewhere.origin}/claim` });
+    res.end();
+  });
+  redirecting.listen(0, "127.0.0.1");
+  await once(redirecting, "listening");
+  try {
+    const identity = await generateClaimIdentity();
+    const origin = `http://127.0.0.1:${(redirecting.address() as { port: number }).port}`;
+    await assert.rejects(claimName({ name: "colin", port: 9393, identity, origin, github: "ghu_token" }), (error: ClaimError) => error.code === "http-307");
+    assert.equal(elsewhere.seen.length, 0, "the redirect target never saw the claim");
+  } finally {
+    redirecting.close();
+    await once(redirecting, "close");
+    await elsewhere.close();
+  }
+});

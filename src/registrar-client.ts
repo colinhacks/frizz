@@ -16,6 +16,18 @@ export function registrarOrigin(env: NodeJS.ProcessEnv = process.env): string {
   return env.FRIZZ_REGISTRAR?.trim() || DEFAULT_REGISTRAR;
 }
 
+/** https, or plain http to this machine's own loopback. */
+export function carriesSecretsSafely(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (url.protocol === "https:") return true;
+  return url.protocol === "http:" && ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname);
+}
+
 export interface ClaimResult {
   hostname: string;
   /**
@@ -40,7 +52,9 @@ const ADVICE: Record<string, string> = {
   "name-taken": "that name is already taken — try another",
   "github-required": "claiming a custom name needs a GitHub sign-in — sign in to GitHub in the board's Settings, then try again",
   "github-rejected": "GitHub did not recognise that sign-in — try again",
-  "github-token-scoped": "the registrar does not take a GitHub CLI token — sign in to GitHub in the board's Settings, then try again",
+  "github-token-foreign": "a name is claimed with Frizz's own GitHub sign-in, and this was another kind of GitHub token — sign in to GitHub in the board's Settings, then try again",
+  // What a registrar older than 2026-11-07 answers for Frizz's sign-in, which it does not take yet.
+  "github-token-scoped": "this registrar does not take Frizz's GitHub sign-in yet — try again once frizz.sh is updated",
   "github-too-new": "that GitHub account is too new to claim a name",
   "one-name-per-account": "that GitHub account already holds a name — release it first",
   "one-name-per-key": "this machine already holds a name — release it first",
@@ -85,6 +99,11 @@ export interface ClaimOptions {
  */
 export async function claimName(options: ClaimOptions): Promise<ClaimResult> {
   const origin = (options.origin ?? registrarOrigin()).replace(/\/$/, "");
+  // A GitHub token goes only to a registrar reached over TLS. FRIZZ_REGISTRAR can point anywhere, and
+  // a plain-http one would put the token on the wire in the clear. Loopback is for tests.
+  if (options.github && !carriesSecretsSafely(origin)) {
+    throw new ClaimError(`refusing to send a GitHub sign-in to ${origin}, which is not https`, "insecure-registrar");
+  }
   const request = await signClaim(
     {
       name: options.name,
@@ -101,6 +120,8 @@ export async function claimName(options: ClaimOptions): Promise<ClaimResult> {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(request),
+      // Never followed: a 307 or 308 would send the same body, GitHub token and all, wherever it pointed.
+      redirect: "manual",
     });
   } catch (error) {
     // A registrar that is down must not read as "your name was rejected" — one is temporary and the

@@ -33,6 +33,11 @@ crons = ["17 4 * * *"]
 [vars]
 FRIZZ_ZONE = "frizz.sh"
 
+# A claim body carries a GitHub token. Off in the file, so a dashboard toggle cannot quietly start
+# recording requests; workers-drift alarms if it is ever on.
+[observability]
+enabled = false
+
 # Set with `wrangler secret put`, never here — this file is committed.
 #   wrangler secret put CF_API_TOKEN    # Tunnel:Edit + Zone DNS:Edit, and nothing else
 #   wrangler secret put CF_ACCOUNT_ID

@@ -377,20 +377,29 @@ export async function establishCloudConfig(
   }
   const name = answer === "" ? generateAnonymousClaimName() : normalizeClaimName(answer);
   const identity = await loadOrCreateClaimIdentity(home);
-  let token: string | undefined;
-  if (!anonymous) {
-    // A name is bound to a GitHub account, so say WHICH one before binding it. Someone signed in as a
-    // work account would otherwise find out only when they wanted the name somewhere else. The token is
-    // Frizz's own GitHub sign-in — never the `gh` CLI's, which can push to every repo.
-    const authorization = await github.authorize();
-    token = authorization.token;
-    if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
-  } else {
-    console.log("  claiming a frizz.sh subdomain — no account needed");
-  }
+  const claimWith = (github?: string) =>
+    claimName({ name, port, identity, ...(github ? { github } : {}), ...(origin ? { origin } : {}) });
   let result;
   try {
-    result = await claimName({ name, port, identity, ...(token ? { github: token } : {}), ...(origin ? { origin } : {}) });
+    if (anonymous) {
+      console.log("  claiming a frizz.sh subdomain — no account needed");
+      result = await claimWith();
+    } else {
+      // The GitHub token goes only where the registrar asks for it. A name this key already holds
+      // renews by the keypair alone, so re-entering it, or a launch reconciling a saved name, sends no
+      // token at all; a new name is answered `github-required` and only then gets one.
+      try {
+        result = await claimWith();
+      } catch (error) {
+        if (!(error instanceof ClaimError && error.code === "github-required")) throw error;
+        // A name is bound to a GitHub account, so say WHICH one before binding it. Someone signed in as
+        // a work account would otherwise find out only when they wanted the name somewhere else. The
+        // token is Frizz's own GitHub sign-in — never the `gh` CLI's, which can push to every repo.
+        const authorization = await github.authorize();
+        if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
+        result = await claimWith(authorization.token);
+      }
+    }
   } catch (error) {
     // A FIRST claim that cannot reach the registrar leaves the operator with nothing — unlike a
     // renewal, which falls back to its cached token. Point at the path that works without us rather
@@ -435,12 +444,26 @@ export async function resolveRunToken(
     writeTunnelToken(result.token, home);
     return result.token;
   } catch (error) {
-    if (cached && error instanceof ClaimError && error.code === "unreachable") {
-      onWarning?.(`could not reach the Frizz registrar to renew ${config.hostname}; using the token from last time`);
-      return cached;
+    // A registrar that is down, or failing on its own side, is not a refusal: the lease runs 30 days,
+    // so a relay board serves on (the relay checks its key, not the registrar), and a tunnel board runs
+    // the token from last time. Only an answer that refuses the name stops the launch.
+    if (error instanceof ClaimError && registrarFailed(error.code)) {
+      if (isRelayConfig(config)) {
+        onWarning?.(`could not renew ${config.hostname} with the Frizz registrar (${error.code}); serving it on its current lease`);
+        return null;
+      }
+      if (cached) {
+        onWarning?.(`could not reach the Frizz registrar to renew ${config.hostname}; using the token from last time`);
+        return cached;
+      }
     }
     throw error;
   }
+}
+
+/** The registrar could not answer, as opposed to answering no. */
+function registrarFailed(code: string): boolean {
+  return code === "unreachable" || code === "malformed-response" || code === "provisioning-failed" || /^http-5\d\d$/.test(code);
 }
 
 /** Where cloudflared's config for this tunnel lives, unless the operator named one. */

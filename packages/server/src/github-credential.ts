@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
+import { FRIZZ_GITHUB_APP_CLIENT_ID } from "@frizz/shared"
 import { findOnPath } from "./backend/acp-agents.ts"
 import { frizzRoots } from "./frizz-paths.ts"
 import { GithubCredentialSealError, openGithubCredential, resetGithubCredentialSeal, sealGithubCredential } from "./github-credential-seal.ts"
@@ -225,26 +226,42 @@ export async function frizzGithubToken(deps: TokenDeps = {}): Promise<string> {
   return await (refreshing ??= refreshAppToken(credential, deps).finally(() => { refreshing = undefined }))
 }
 
-/** How long a token must still have to be handed to a frizz.sh claim without renewing it first. */
+/** How long a token must still have for a frizz.sh claim to send it. */
 const CLAIM_MARGIN_MS = 2 * 60_000
 
 /**
  * The token and login a frizz.sh name claim proves its GitHub account with (src/github-claim-identity.ts).
  *
+ * ONLY THE APP SIGN-IN, read from the file. The registrar accepts nothing but a user token of Frizz's
+ * GitHub App, so a pasted token is refused here rather than sent, and FRIZZ_GITHUB_TOKEN is ignored:
+ * whatever that override holds, it is not what the person signed in with.
+ *
  * Called from the LAUNCHER, a different process from the server whose keeper renews this credential, so
- * it reads the file afresh rather than trusting its own copy, and renews only a token the keeper has
- * evidently stopped renewing. The keeper renews ten minutes before expiry; renewing here inside that
- * window could race it, and the loser's refresh token is refused, which marks the sign-in broken.
+ * it reads the file afresh rather than trusting its own copy, and NEVER renews it. Both renewing at once
+ * would spend the single-use refresh token twice, and the server, if it lost, would stay signed out
+ * until a restart. The keeper renews ten minutes before expiry, so a token this close to the end means
+ * the keeper is between ticks (the Mac just woke) or GitHub is failing it, and a minute's wait answers
+ * both.
  */
 export async function githubClaimToken(deps: TokenDeps = {}): Promise<{ token: string; login: string | null }> {
   const now = deps.now ?? Date.now
   memo = readStored()
-  const credential = memo.credential
-  if (!envToken() && !memo.problem && credential?.kind === "app" && credential.accessExpiresAt - CLAIM_MARGIN_MS > now()) {
-    return { token: credential.accessToken, login: credential.login }
+  const { credential, problem } = memo
+  if (!credential) {
+    throw new GithubCredentialError(problem
+      ? `Frizz's GitHub sign-in can't be read: ${problem} Sign in again from Frizz's Settings.`
+      : "Frizz is not signed in to GitHub. Sign in from Frizz's Settings.")
   }
-  const token = await frizzGithubToken(deps)
-  return { token, login: envToken() ? null : (current().credential?.login ?? null) }
+  if (credential.kind !== "app") {
+    throw new GithubCredentialError("Frizz's GitHub sign-in is a pasted token, which can't claim a name. Sign in with GitHub from Frizz's Settings instead.")
+  }
+  if (credential.refreshExpiresAt <= now()) {
+    throw new GithubCredentialError("Frizz's GitHub sign-in expired after six months unused. Sign in again from Frizz's Settings.")
+  }
+  if (credential.accessExpiresAt - CLAIM_MARGIN_MS <= now()) {
+    throw new GithubCredentialError("Frizz's GitHub sign-in is due for renewal, which the board does by itself. Try again in a minute.")
+  }
+  return { token: credential.accessToken, login: credential.login }
 }
 
 /** Another process sharing this folder (a sandbox stack links it in) may have renewed first. A fresher
@@ -356,10 +373,11 @@ async function refreshAppToken(credential: Extract<StoredGithubCredential, { kin
  * owned by colinhacks, registered 2026-11-04) — public by design: device flow has no secret. Its
  * permissions, all read-only: actions, checks, issues, metadata, pull_requests, statuses; no contents,
  * no webhook. `FRIZZ_GITHUB_APP_CLIENT_ID` overrides it (a test, a self-hosted fork). Its user token
- * is also what proves the GitHub account behind a frizz.sh name claim (githubClaimToken).
+ * is also what proves the GitHub account behind a frizz.sh name claim (githubClaimToken), so the id
+ * itself lives in @frizz/shared, where the registrar reads it too.
  */
 export const GITHUB_APP_CLIENT_ID_PLACEHOLDER = "frizz-github-app-client-id-not-set"
-export const FRIZZ_GITHUB_APP_CLIENT_ID: string = "Iv23licDruV3JtQIF3fI"
+export { FRIZZ_GITHUB_APP_CLIENT_ID }
 
 export function githubAppClientId(env: NodeJS.ProcessEnv = process.env): string | null {
   const id = env.FRIZZ_GITHUB_APP_CLIENT_ID?.trim() || FRIZZ_GITHUB_APP_CLIENT_ID
