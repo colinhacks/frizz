@@ -112,7 +112,7 @@ test("a REFUSAL is asked first, stores nothing, runs nothing, and names the back
     h.storage.upsertSession(row("t"))
     h.gate.refusal = "this thread runs in `default` permission mode. Run the check in a background shell instead."
     const refused = await h.router.addOwnCommandWatch.handler({ input: { slug: "t", command: NPM, every: "5m", for: "6h" } })
-    assert.match(refused.refused!, /^Frizz will not run a command watch for this thread: this thread runs in `default`/)
+    assert.match(refused.refused!, /^Frizz will not run a monitor for this thread: this thread runs in `default`/)
     assert.match(refused.refused!, /background shell instead\.$/)
     assert.equal(refused.id, undefined)
     assert.deepEqual(h.probes, [], "a refused command is never run, not even once")
@@ -255,7 +255,7 @@ test("an armed command watch is listed by `activity` under its id, and blocks `d
     assert.deepEqual(activity.activity.map((a) => [a.kind, a.id, a.label]), [["command", added.id, NPM]])
     const done = await h.router.markOwnDone.handler({ input: { slug: "t", body: "finished" } })
     assert.equal(done.done, false)
-    assert.deepEqual(done.blockingWatches.map((w) => [w.id, w.what]), [[added.id, `command watch: ${NPM}`]])
+    assert.deepEqual(done.blockingWatches.map((w) => [w.id, w.what]), [[added.id, `monitor: ${NPM}`]])
   } finally { h.close() }
 })
 

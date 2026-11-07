@@ -889,7 +889,7 @@ export function commandWatchName(command: string): string {
   return command.trim().replace(/\s+/g, " ").replace(/(^|[\s'"=])\/(?:[^\s'"/]*\/){2,}(?=[^\s'"/])/g, "$1")
 }
 
-// A MONITOR (`frizzctl watch-command add --persistent`, 2026-11-02) is a command watch row too — a script the server keeps
+// A MONITOR (`frizzctl monitor add --persistent`, 2026-11-02) is a command watch row too — a script the server keeps
 // RUNNING, every line it prints a wake — so it shares the section and the row, and differs in three
 // readings: its NAME is the worker's description when it gave one (the script is the tooltip's first
 // line), its STATUS is how many events it has printed (it has no cadence), and its MARK is a broadcast
@@ -1116,7 +1116,7 @@ function awaitingWaitGroups(thread: Pick<ThreadView, "id" | "subAgents" | "bgShe
     { head: "Issues", rows: issues.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     // Waiting on the world, as a PR is, so it reads after them — and ahead of the timers, which wait on
     // nothing but the clock.
-    { head: "Command watches", rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} slug={thread.id} now={now} />) },
+    { head: "Monitors", rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} slug={thread.id} now={now} />) },
     { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} now={now} />) },
   ].filter((g) => g.rows.length > 0)
 }

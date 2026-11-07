@@ -179,7 +179,7 @@ export function rowSecondLine(
   // A monitor the worker registered and rested on without naming it in a fence: its name is still the
   // one thing on this row a reader recognises, as the fenced one's is (hintGloss).
   const monitor = kind === "monitor" ? armedMonitorName(t) : undefined
-  if (monitor) return { text: `Watching: ${monitor}` }
+  if (monitor) return { text: `Monitor: ${monitor}` }
   if ((kind === "snoozed" || kind === "timer") && armedTimerFireAt(t, nowMs)) return { text: "Waiting on a timer" }
   return handoff() ?? (t.activity ? { text: t.activity } : null)
 }

@@ -902,7 +902,7 @@ export function fenceWatchViews(
   /** The ISSUE readings, from their own book — the twin of `github` for the rows whose subject is an
    *  issue. Defaulted empty so every caller and test that predates issues reads unchanged. */
   issueBook: GithubIssueStatusBook = {},
-  /** This thread's ARMED COMMAND WATCHES (`frizzctl watch-command`). Rows for the timers' reason: the
+  /** This thread's ARMED COMMAND WATCHES (`frizzctl monitor`). Rows for the timers' reason: the
    *  server re-runs each until it passes and then wakes the thread, so it is live work fence or no fence.
    *  A park on one alone had no row until 2026-10-13, and its card fell through to "Waiting for an
    *  external update." — true of every park and specific to none. */
@@ -934,7 +934,7 @@ export function fenceWatchViews(
       state: "armed" as const,
       createdAt: new Date(w.created_at).toISOString(),
       // The same projection as the worker's read-back (router commandWatchView), so the row and
-      // `frizzctl watch-command` name one cadence and one last check.
+      // `frizzctl monitor` name one cadence and one last check.
       command: {
         command: w.command,
         every: formatElapsed(w.every_ms),
@@ -943,7 +943,7 @@ export function fenceWatchViews(
         ...(w.last_run_at !== null && w.last_outcome
           ? { lastRun: { at: new Date(w.last_run_at).toISOString(), outcome: w.last_outcome, exitCode: w.last_exit, output: w.last_output ?? "" } }
           : {}),
-        // A MONITOR (`frizzctl watch-command add --persistent`, 2026-11-02) is a running script, not a check on a cadence: its
+        // A MONITOR (`frizzctl monitor add --persistent`, 2026-11-02) is a running script, not a check on a cadence: its
         // row reads its events instead. The same projection as the worker's read-back.
         ...(w.kind === "monitor" ? { monitor: monitorStatusOf(w) } : {}),
       },
@@ -1939,7 +1939,7 @@ function sessionThreadView(
     fireAt: new Date(t.fire_at).toISOString(),
     createdAt: new Date(t.created_at).toISOString(),
   }))
-  // …and its ARMED COMMAND WATCHES (`frizzctl watch-command`), in the same set: see isCommandWatchId for
+  // …and its ARMED COMMAND WATCHES (`frizzctl monitor`), in the same set: see isCommandWatchId for
   // why one set serves both, and where it is split back by kind.
   const armedCommandWatches = registries.commandWatches.get(row.slug) ?? []
   const armedTimerIds = new Set([...armedTimers.map((t) => t.id), ...armedCommandWatches.map((w) => w.id)])

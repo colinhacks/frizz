@@ -501,7 +501,7 @@ const UNWATCH = {
     "it blocks `done` until it is withdrawn.\n\n" +
     "You do NOT need this when the work simply finishes: frizz settles the row itself and wakes you. " +
     "`frizzctl activity` prints the id of everything you hold. A `watch-pr` / `watch-issue` id (`prw_…` / " +
-    "`isw_…`), a `timer` id (`tmr_…`) or a `watch-command` id (`cmw_…`) is withdrawn here too.",
+    "`isw_…`), a `timer` id (`tmr_…`) or a `monitor` id (`cmw_…`) is withdrawn here too.",
   inputSchema: {
     type: "object",
     properties: {
@@ -819,14 +819,36 @@ const UNLINK = {
   },
 }
 
-// A wait on an OUTSIDE condition that a command can check, run by the SERVER (2026-10-11). It exists
-// because the alternative was a polling loop in a background shell, which pins the thread's whole
-// process tree: hibernation refuses a thread holding one. See packages/server/src/command-watch.ts.
+// RETIRED (2026-11-06): `frizzctl watch-command` is `frizzctl monitor` now. The two shared a table, an id and
+// a fence key, and for an hour on 2026-11-06 they were one command under this name with `--persistent`;
+// then the maintainer named it: "I want them to be called monitors. That's a better name." It stays in the
+// tool list, in its place, as `ask` and `secret` do: a resumed worker keeps the contract it started with,
+// so it may still call this, and the refusal is the command to run instead.
+const WATCH_COMMAND_RETIRED =
+  "NOT registered — `frizzctl watch-command` is retired (2026-11-06), and nothing was armed or dropped. It is " +
+  "`frizzctl monitor` now, with the same arguments:\n\n" +
+  "  frizzctl monitor add \"<check that exits 0 once it holds>\" --every 5m --for 6h\n" +
+  "  frizzctl monitor add \"<script>\" --persistent --description \"<what it watches>\" --for 1d\n" +
+  "  frizzctl monitor list\n" +
+  "  frizzctl monitor drop <id>\n\n" +
+  "Anything you already registered keeps running under the same `cmw_…` id. Rest on it with " +
+  "`monitors: [cmw_…]`. `frizzctl monitor --help` has the rest."
 const WATCH_COMMAND = {
   name: "watch_command",
+  description: "RETIRED (2026-11-06): `watch_command` is `monitor` now, with the same arguments. This only refuses, and the refusal shows the command.",
+  inputSchema: { type: "object", properties: {} },
+}
+
+// A MONITOR (2026-10-11 as `watch-command`; one command with `--persistent` since 2026-11-06): a wait on
+// something outside the thread, run by the SERVER. It exists because the alternative was a polling loop or
+// Claude Code's own Monitor tool in the worker's session, either of which pins the thread's whole process
+// tree: hibernation refuses a thread holding one. See packages/server/src/command-watch.ts, where the rows
+// are still called command watches.
+const MONITOR = {
+  name: "monitor",
   description:
-    "WAIT ON SOMETHING OUTSIDE THE THREAD WITHOUT HOLDING A PROCESS. The SERVER runs a shell command for " +
-    "you, so nothing of yours runs meanwhile and your thread can be hibernated while it rests. A polling " +
+    "A MONITOR: WAIT ON SOMETHING OUTSIDE THE THREAD WITHOUT HOLDING A PROCESS. The SERVER runs a shell " +
+    "command for you, so nothing of yours runs meanwhile and your thread can be hibernated while it rests. A polling " +
     "loop in a background shell (`until …; do sleep 300; done`) pins your whole process tree, ~250 MB, for " +
     "as long as it loops; this is that loop without the cost. `--persistent` picks between two shapes, and " +
     "it changes what the command has to be: a check that finishes, or a script that keeps running.\n\n" +
@@ -868,7 +890,7 @@ const WATCH_COMMAND = {
     "Claude Code's sandbox off, and refuses it on Codex. The refusal says why; wait in a background shell " +
     "then.\n\n" +
     "When `--for` runs out either one is stopped and you are woken to re-decide. Name its id in your " +
-    "```awaiting fence — `commands: [cmw_…]` with `status: watching`. Registering is idempotent on the " +
+    "```awaiting fence — `monitors: [cmw_…]` with `status: watching`. Registering is idempotent on the " +
     "exact command text. `list` reads back what is armed; `drop` withdraws one and kills a running script " +
     "(so does `frizzctl unwatch <id>`). Only ever your OWN thread's.",
   inputSchema: {
@@ -878,8 +900,8 @@ const WATCH_COMMAND = {
         type: "string",
         enum: ["add", "list", "drop"],
         description:
-          "`add` registers a watch (idempotent per command); `drop` withdraws one by id; `list` reads back " +
-          "every watch armed on this thread, with its last check or its events, without changing anything.",
+          "`add` registers a monitor (idempotent per command); `drop` withdraws one by id; `list` reads back " +
+          "every monitor armed on this thread, with its last check or its events, without changing anything.",
       },
       command: {
         type: "string",
@@ -900,7 +922,7 @@ const WATCH_COMMAND = {
         type: "string",
         description:
           "Required for `add`. How long to keep it going, as a DURATION — `2h`, `1d`, `7d` (max 7d). When it " +
-          "runs out the watch is stopped and you are woken to decide what the silence means.",
+          "runs out the monitor is stopped and you are woken to decide what the silence means.",
       },
       persistent: {
         type: "boolean",
@@ -922,26 +944,6 @@ const WATCH_COMMAND = {
     },
     required: ["action"],
   },
-}
-
-// RETIRED (2026-11-06): a script the SERVER keeps running, every stdout line a wake, is `watch_command` with
-// `persistent: true`. The two already shared a table, an id, a fence key and a board row, so the second
-// command only made a worker choose between names (maintainer: "there should just be a flag"). It stays in
-// the tool list, in its place, as `ask` and `secret` do: a resumed worker keeps the contract it started
-// with, so it may still call this, and the refusal is the command to run instead. A row of kind `monitor`
-// is what `--persistent` registers; see packages/server/src/command-watch.ts.
-const MONITOR_RETIRED =
-  "NOT registered — `frizzctl monitor` is retired (2026-11-06), and nothing was started or stopped. It is a " +
-  "flag on one command now:\n\n" +
-  "  frizzctl watch-command add \"<script>\" --persistent --description \"<what it watches>\" --for 1d\n" +
-  "  frizzctl watch-command list\n" +
-  "  frizzctl watch-command drop <id>\n\n" +
-  "A script you already registered keeps running under the same `cmw_…` id. `frizzctl watch-command --help` " +
-  "has the rest."
-const MONITOR = {
-  name: "monitor",
-  description: "RETIRED (2026-11-06): a script the server keeps running is `watch_command` with `persistent: true`. This only refuses, and the refusal shows the command.",
-  inputSchema: { type: "object", properties: {} },
 }
 
 // A BOARD'S THREADS, as another agent reads them (2026-11-03). Until then a worker could message any
@@ -1978,8 +1980,8 @@ async function unwatch(args) {
   if (id.startsWith("cmw_")) {
     const dropped = (await callRpc("dropOwnCommandWatch", { slug, id }))?.result
     const head = dropped?.dropped
-      ? `Command watch ${id} dropped. Frizz will not run it again, and it will not wake you.`
-      : `No ARMED command watch ${id} on this thread — it already ended, expired or was cancelled, or the id is not one of yours.`
+      ? `Monitor ${id} dropped. Frizz will not run it again, and it will not wake you.`
+      : `No ARMED monitor ${id} on this thread — it already ended, expired or was cancelled, or the id is not one of yours.`
     return `${head}\n\n${armedCommandWatchList(dropped)}`
   }
   if (id.startsWith("tmr_")) {
@@ -2122,7 +2124,7 @@ async function done(args) {
     parts.push(
       `${watches.length} registration${watches.length === 1 ? "" : "s"} still armed:\n${watches.join("\n")}\n` +
       "A live wait means the thing you were waiting for has not happened. Wait for it, or drop the ones " +
-      "that stopped mattering (`frizzctl unwatch <id>` takes a watch, a PR or issue watcher, a timer, or a command watch).",
+      "that stopped mattering (`frizzctl unwatch <id>` takes a watch, a PR or issue watcher, a timer, or a monitor).",
     )
   }
   parts.push("There is no force flag. Resolve them and run `frizzctl done` again.")
@@ -2224,11 +2226,11 @@ async function watchIssue(args) {
   )
 }
 
-/** The command watches armed on this thread, as every `watch-command` action reads them back.
+/** The monitors armed on this thread, as every `monitor` action reads them back.
  * @param {{ watches?: Array<{id: string, command: string, every: string, expiresAt: string, runs: number, lastRun?: {outcome: string, exitCode: number|null}}> }|undefined} result */
 function armedCommandWatchList(result) {
   const watches = Array.isArray(result?.watches) ? result.watches : []
-  if (!watches.length) return "No command watches are armed on this thread — none will wake you."
+  if (!watches.length) return "No monitors are armed on this thread — none will wake you."
   const lines = watches.map((w) => {
     if (w.monitor) {
       const events = `${w.monitor.events} event${w.monitor.events === 1 ? "" : "s"} so far`
@@ -2241,7 +2243,7 @@ function armedCommandWatchList(result) {
       : `last check ${commandRunClause(w.lastRun)}`
     return `  ${w.id}  every ${w.every}, until ${w.expiresAt} — ${w.runs} check${w.runs === 1 ? "" : "s"}, ${last}\n    $ ${w.command}`
   })
-  return `Command watches on this thread now:\n${lines.join("\n")}`
+  return `Monitors on this thread now:\n${lines.join("\n")}`
 }
 
 /** One line of an event, short enough for a list. @param {string} text */
@@ -2266,9 +2268,9 @@ function outputTail(output) {
   return `Its output ended:\n${tail.split("\n").map((l) => `  ${l}`).join("\n")}`
 }
 
-/** The `watch_command` handler: register, withdraw, or read back this thread's command watches.
+/** The `monitor` handler: register, withdraw, or read back this thread's monitors.
  * @param {Record<string, unknown>} args @returns {Promise<string|Refused>} */
-async function watchCommand(args) {
+async function monitor(args) {
   const slug = threadSlug()
   const action = typeof args.action === "string" ? args.action.trim() : ""
   if (action !== "add" && action !== "list" && action !== "drop") {
@@ -2281,11 +2283,11 @@ async function watchCommand(args) {
 
   if (action === "drop") {
     const id = typeof args.id === "string" ? args.id.trim() : ""
-    if (!id) throw new Error("`id` is required to drop a command watch — take it from `add` or from `list`")
+    if (!id) throw new Error("`id` is required to drop a monitor — take it from `add` or from `list`")
     const result = (await callRpc("dropOwnCommandWatch", { slug, id }))?.result
     const head = result?.dropped
-      ? `Command watch ${id} dropped. Frizz will not run it again, and it will not wake you.`
-      : `No ARMED command watch ${id} on this thread — it already ended, expired or was cancelled, or the id is not one of yours.`
+      ? `Monitor ${id} dropped. Frizz will not run it again, and it will not wake you.`
+      : `No ARMED monitor ${id} on this thread — it already ended, expired or was cancelled, or the id is not one of yours.`
     return `${head}\n\n${armedCommandWatchList(result)}`
   }
 
@@ -2299,7 +2301,7 @@ async function watchCommand(args) {
   // THE FLAG CHANGES WHAT THE COMMAND HAS TO BE, so neither shape quietly accepts the other's argument: a
   // cadence on a script would read as if Frizz re-ran it, and a name on a check would go nowhere.
   if (persistent && every) {
-    throw new Error("`every` does not go with `persistent`: a persistent watch is one script that keeps running, not a check Frizz re-runs. Drop `every`, or drop `persistent` for a check that exits 0 once the condition holds")
+    throw new Error("`every` does not go with `persistent`: a persistent monitor is one script that keeps running, not a check Frizz re-runs. Drop `every`, or drop `persistent` for a check that exits 0 once the condition holds")
   }
   if (!persistent && description) {
     throw new Error("`description` goes with `persistent`: a check is named by its command. Drop `description`, or add `persistent` for a script that keeps running")
@@ -2344,20 +2346,20 @@ async function watchCommand(args) {
   if (result?.clamped?.for) clamps.push(`\`--for ${result.clamped.for}\` was capped at the 7d ceiling`)
   const clamped = clamps.length ? `\n\nYOUR ${clamps.join(", and ")} — what is listed below is what you hold.` : ""
   return (
-    `Watching as ${id}: Frizz runs it every ${result?.every} until it exits 0, or until ${result?.expiresAt}, and ` +
+    `Monitoring as ${id}: Frizz runs it every ${result?.every} until it exits 0, or until ${result?.expiresAt}, and ` +
     `then wakes you once with its output. Nothing of yours runs meanwhile.\n\n${first}${clamped}\n\n` +
-    `NAME IT IN YOUR \`\`\`awaiting FENCE (\`commands: [${id}]\`, \`status: watching\`) and come to rest. DROP IT ` +
-    `when it stops mattering (\`frizzctl watch-command drop ${id}\`).\n\n${armedCommandWatchList(result)}`
+    `NAME IT IN YOUR \`\`\`awaiting FENCE (\`monitors: [${id}]\`, \`status: watching\`) and come to rest. DROP IT ` +
+    `when it stops mattering (\`frizzctl monitor drop ${id}\`).\n\n${armedCommandWatchList(result)}`
   )
 }
 
-/** The `monitor` handler: RETIRED (2026-11-06). It refuses without calling Frizz, and the refusal is the command.
+/** The `watch_command` handler: RETIRED (2026-11-06). It refuses without calling Frizz, and the refusal is the command.
  * @returns {Promise<Refused>} */
-async function monitor() {
-  return new Refused(MONITOR_RETIRED)
+async function watchCommand() {
+  return new Refused(WATCH_COMMAND_RETIRED)
 }
 
-/** `watch_command add` with `persistent`: start a script the server keeps running.
+/** `monitor add` with `persistent`: start a script the server keeps running.
  * @param {string} slug @param {string} command @param {string} forValue @param {string} description
  * @returns {Promise<string|Refused>} */
 async function addPersistentWatch(slug, command, forValue, description) {
@@ -2371,7 +2373,7 @@ async function addPersistentWatch(slug, command, forValue, description) {
   }
   if (result?.exited) {
     return (
-      `NOTHING IS RUNNING: your script ${commandRunClause(result.exited)} within its first 2s, so the watch ended ` +
+      `NOTHING IS RUNNING: your script ${commandRunClause(result.exited)} within its first 2s, so the monitor ended ` +
       `as soon as it started. With \`--persistent\` the script must keep running — loop, tail, or listen. A check ` +
       `that finishes takes \`--every\` instead.${printed}\n\n${outputTail(result.exited.output)}`
     )
@@ -2387,10 +2389,10 @@ async function addPersistentWatch(slug, command, forValue, description) {
     ? `\n\nYOUR \`--for ${result.clamped.for}\` was capped at the 7d ceiling — what is listed below is what you hold.`
     : ""
   return (
-    `Watching as ${id}: Frizz keeps your script running until ${result?.expiresAt}, and every line it prints wakes ` +
+    `Monitoring as ${id}: Frizz keeps your script running until ${result?.expiresAt}, and every line it prints wakes ` +
     `you with that line. Nothing of yours runs meanwhile.${printed}${clamped}\n\n` +
-    `NAME IT IN YOUR \`\`\`awaiting FENCE (\`commands: [${id}]\`, \`status: watching\`) and come to rest. DROP IT ` +
-    `when it stops mattering (\`frizzctl watch-command drop ${id}\`).\n\n${armedCommandWatchList(result)}`
+    `NAME IT IN YOUR \`\`\`awaiting FENCE (\`monitors: [${id}]\`, \`status: watching\`) and come to rest. DROP IT ` +
+    `when it stops mattering (\`frizzctl monitor drop ${id}\`).\n\n${armedCommandWatchList(result)}`
   )
 }
 
@@ -2475,23 +2477,23 @@ const CLI = {
     then: { add: ["target"], drop: ["id"] },
     examples: ["frizzctl watch-issue add acme/app#482 --for 30d", "frizzctl watch-issue list", "frizzctl watch-issue drop isw_ab12cd34"],
   },
-  // RETIRED (2026-11-06): a script the server keeps running is `watch-command add --persistent`.
   monitor: {
-    summary: "Retired: a script the server keeps running is `watch-command add --persistent`",
-    retired: MONITOR_RETIRED,
-    examples: [],
-  },
-  watch_command: {
     group: "Waiting",
     summary: "Wake when a command the server re-runs exits 0, or with --persistent on every line a script prints",
     positional: ["action"],
     then: { add: ["command"], drop: ["id"] },
     examples: [
-      'frizzctl watch-command add "npm view frizz@0.13.12 version" --every 5m --for 6h',
-      'frizzctl watch-command add "tail -n0 -F /var/log/app.log | grep --line-buffered -E \'ERROR|FATAL\'" --persistent --description "Errors in app.log" --for 1d',
-      "frizzctl watch-command list",
-      "frizzctl watch-command drop cmw_ab12cd34ef56",
+      'frizzctl monitor add "npm view frizz@0.13.12 version" --every 5m --for 6h',
+      'frizzctl monitor add "tail -n0 -F /var/log/app.log | grep --line-buffered -E \'ERROR|FATAL\'" --persistent --description "Errors in app.log" --for 1d',
+      "frizzctl monitor list",
+      "frizzctl monitor drop cmw_ab12cd34ef56",
     ],
+  },
+  // RETIRED (2026-11-06): `watch-command` is `monitor` now.
+  watch_command: {
+    summary: "Retired: it is `frizzctl monitor` now, with the same arguments",
+    retired: WATCH_COMMAND_RETIRED,
+    examples: [],
   },
   timer: {
     group: "Waiting",

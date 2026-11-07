@@ -171,7 +171,7 @@ export function awaitingProseBlock(body: string | undefined): string | null {
  *  keyed on "has a colon" would eat it. */
 // The answer lines are machinery too: `status:` (2026-10-05) and the `needs_input:` it replaced, in both
 // spellings the parser reads.
-const FENCE_SYNTAX_KEYS = new Set<string>([...RETIRED_AWAITING_KINDS, "shells", "agents", "timers", "prs", "issues", "commands", "for", "title", "status", "needs_input", "needs-input"])
+const FENCE_SYNTAX_KEYS = new Set<string>([...RETIRED_AWAITING_KINDS, "shells", "agents", "timers", "prs", "issues", "monitors", "commands", "for", "title", "status", "needs_input", "needs-input"])
 function stripFenceSyntax(body: string): string {
   return body
     .split("\n")
@@ -203,9 +203,9 @@ function stripFenceSyntax(body: string): string {
  *  so the popover says what it knows and invents no wait.
  *
  *  `watches` is the thread's registered rows, read for one thing: a persistent command watch's description
- *  (`frizzctl watch-command add --persistent`). A lone one is NAMED by the worker's own words the way a PR
+ *  (`frizzctl monitor add --persistent`). A lone one is NAMED by the worker's own words the way a PR
  *  is named by its ref: it is the one thing on the row the reader would recognise. Any other mix is counted,
- *  because "the command watch “X” and a command watch" says less than "2 command watches". */
+ *  because "the monitor “X” and a monitor" says less than "2 monitors". */
 export function awaitingWaitClause(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[] = []): string | null {
   const count = (kind: AwaitingHint["kind"]) => hints.filter((h) => h.kind === kind && h.value.trim()).length
   const commands = count("command")
@@ -215,11 +215,11 @@ export function awaitingWaitClause(hints: readonly AwaitingHint[], watches: read
     plural(count("step"), "step from you", "steps from you"),
     plural(count("question"), "answer from you", "answers from you"),
     ...prWatchRefs(hints).map((pr) => pr.ref),
-    named ? `the command watch “${named}”` : null,
+    named ? `the monitor “${named}”` : null,
     plural(count("shell"), "background shell", "background shells"),
     plural(count("agent"), "sub-agent", "sub-agents"),
     plural(count("timer"), "timer", "timers"),
-    named ? null : plural(commands, "command watch", "command watches"),
+    named ? null : plural(commands, "monitor", "monitors"),
   ].filter((part): part is string => part !== null)
   return parts.length > 0 ? `waiting on ${joinList(parts)}` : null
 }
@@ -266,5 +266,5 @@ export function hintGloss(hints: readonly AwaitingHint[], watches: readonly Thre
   const issue = hints.find((h) => h.kind === "issue")
   if (issue) return `Issue ${issue.value}`
   const monitor = fenceMonitors(hints, watches).find((w) => w.command?.monitor?.description)
-  return monitor ? `Watching: ${monitor.command!.monitor!.description}` : null
+  return monitor ? `Monitor: ${monitor.command!.monitor!.description}` : null
 }

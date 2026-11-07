@@ -205,7 +205,7 @@ export interface AppContext {
   probePr: (ref: PrRef) => Promise<PrProbe>
   /** The issue twin, for `frizzctl watch-issue` — `probeIssueReadable` (one `gh issue view`). */
   probeIssue: (ref: PrRef) => Promise<PrProbe>
-  /** `frizzctl watch-command`'s gate and runner, bound to this project (command-watch.ts). Shared with the
+  /** `frizzctl monitor`'s gate and runner, bound to this project (command-watch.ts). Shared with the
    *  scheduler, so registration and every later check ask the same gate. */
   commandWatches: CommandWatchService
   // Per-thread permission changes. Idle standalone TUIs are reopened on the same persisted
@@ -1123,7 +1123,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     preflightCodexBinary: () => readCodexBinaryState(opts.codexBin ?? "codex"),
   })
 
-  // COMMAND WATCHES (`frizzctl watch-command`): checks run in the project root with the server's own
+  // COMMAND WATCHES (`frizzctl monitor`): checks run in the project root with the server's own
   // environment — scrubbed of the toolchain injection a provider child is scrubbed of — plus the thread's
   // Frizz identity and `frizzctl` on PATH, so a check may itself call `frizzctl`. Everything about the
   // process and the gate is in command-watch.ts.

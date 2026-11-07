@@ -96,7 +96,7 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
   shell: "Background shells running for this thread",
   pr: "Pull requests this thread is watching",
   issue: "Issues this thread is watching",
-  command: "Command watches this thread is waiting on",
+  command: "Monitors this thread is waiting on",
   timer: "Timers this thread has set",
   file: "Files saved for this thread",
   link: "Links saved for this thread",

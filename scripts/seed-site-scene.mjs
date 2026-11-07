@@ -263,7 +263,7 @@ async function seedFeatures() {
     title: "Watch production after the checkout deploy", rested: 44,
     records: [
       user(190, "Deploy the checkout worker, then keep an eye on production and fix anything that breaks."),
-      say(188, `The worker is deployed. A command watch is tailing its error log, so this thread can stop until an error wakes it.\n\n${parkOnMonitor}`),
+      say(188, `The worker is deployed. A monitor is tailing its error log, so this thread can stop until an error wakes it.\n\n${parkOnMonitor}`),
       user(46, `${monitorEventWakeMessage({ id: monitorId, label: "Errors in deploy.log", lines: ["ERROR checkout: upstream timeout after 30s (payments)"], event: 1 })}\n\n${wakeDeliveryToken("site-monitor")}`),
       say(44, `Payments ran past the worker's 30s budget, which was shorter than its retry window. I raised it to 45s in \`workers/checkout.ts\` and redeployed. Back to waiting.\n\n${parkOnMonitor}`),
     ],

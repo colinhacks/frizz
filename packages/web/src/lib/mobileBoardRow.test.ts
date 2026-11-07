@@ -101,12 +101,12 @@ test("a quiet park's line names its wait, never its YAML", () => {
   assert.deepEqual(rowSecondLine(said, "background", true), { text: "Started the bench." })
 })
 
-test("a row resting on a persistent command watch names it, fenced or not", () => {
+test("a row resting on a persistent monitor names it, fenced or not", () => {
   const monitor = { id: "command:t:cmw_1", kind: "command", target: "cmw_1", state: "armed", createdAt: ahead(0), command: { command: "tail -F app.log", every: "0s", expiresAt: ahead(86_400_000), runs: 0, monitor: { description: "Errors in app.log", events: 1 } } } as ThreadView["watches"][number]
   const fenced = thread({ watches: [monitor], lastFence: { kind: "awaiting", body: "", hints: [{ kind: "command", value: "cmw_1" }, { kind: "status", value: "watching" }, { kind: "for", value: "1d" }] }, lastAssistantLine: "```awaiting" })
-  assert.deepEqual(rowSecondLine(fenced, "snoozed", false, now), { text: "Watching: Errors in app.log" })
+  assert.deepEqual(rowSecondLine(fenced, "snoozed", false, now), { text: "Monitor: Errors in app.log" })
   const unfenced = thread({ watches: [monitor], lastAssistantLine: "Registered the watch." })
-  assert.deepEqual(rowSecondLine(unfenced, "monitor", false, now), { text: "Watching: Errors in app.log" })
+  assert.deepEqual(rowSecondLine(unfenced, "monitor", false, now), { text: "Monitor: Errors in app.log" })
 })
 
 test("a parked row says who parked it, and when it wakes", () => {

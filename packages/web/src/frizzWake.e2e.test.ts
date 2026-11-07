@@ -94,7 +94,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         const reads = (start: string) => result.hairlines.some((line) => line.reads.startsWith(start))
         const readings = width < 500
           ? ["Wait over · expand ·", "« Running the update harness against the built shell and server » finished ·", "comment #756 ·", "review comment #587 ·", "CI passed #761 · 2h ago", "PR merged #756 ·", "Watcher expired #777 ·", "Watch expired ·", "Weekly limit reset ·", "Fable 5 → Opus ·", "1 question cancelled ·", "Timer · expand ·", "Passed · expand ·", "Expired · expand ·", "Stopped · expand ·", "« Audit the auth flow » stopped ·", "« Fix the cache collision » stopped ·"]
-          : ["Wait over — its work finished · Click to expand ·", "Background task « Running the update harness against the built shell and server » finished ·", "New comment from @colinhacks on nubjs/nub#756 ·", "New review comment from @pullfrog on nubjs/nub#587 ·", "CI passed on nubjs/nub#761 · 7 checks green ·", "PR merged on nubjs/nub#756 ·", "Watcher expired on nubjs/nub#777 ·", "Watch expired on a background shell ·", "Weekly usage limit reset — resuming ·", "Fable 5 limit — switched to Opus ·", "1 question cancelled — the worker decides it itself ·", "Timer · Click to expand ·", "Watch « node screen-unlocked.mjs » passed · Click to expand ·", "Watch « gh run view 18273645 --exit-status » stopped by Frizz · Click to expand ·", "Sub-agent « Audit the auth flow » stopped by the interrupt ·", "Sub-agent « Survey the dev server readouts » stopped by the interrupt ·"]
+          : ["Wait over — its work finished · Click to expand ·", "Background task « Running the update harness against the built shell and server » finished ·", "New comment from @colinhacks on nubjs/nub#756 ·", "New review comment from @pullfrog on nubjs/nub#587 ·", "CI passed on nubjs/nub#761 · 7 checks green ·", "PR merged on nubjs/nub#756 ·", "Watcher expired on nubjs/nub#777 ·", "Watch expired on a background shell ·", "Weekly usage limit reset — resuming ·", "Fable 5 limit — switched to Opus ·", "1 question cancelled — the worker decides it itself ·", "Timer · Click to expand ·", "Monitor « node screen-unlocked.mjs » passed · Click to expand ·", "Monitor « gh run view 18273645 --exit-status » stopped by Frizz · Click to expand ·", "Sub-agent « Audit the auth flow » stopped by the interrupt ·", "Sub-agent « Survey the dev server readouts » stopped by the interrupt ·"]
         for (const reading of readings) assert.ok(reads(reading), `${width}px ${font}: no hairline reads "${reading}…", got ${result.hairlines.map((line) => line.reads).join(" | ")}`)
         // THE REPORTED DELIVERY: a park ending beside the shell that ended it. Two hairlines, in the
         // order they were queued, and none of the envelope — not its lead, not the scheduler's reason
@@ -133,7 +133,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         }))
         for (const wake of settled) {
           assert.ok(wake.divider && !wake.card, `${wake.id} is a hairline`)
-          assert.doesNotMatch(wake.text, /Your command watch|frizzctl|Carry on|wake you|background shell instead|did not return|re-dispatch|NOT RUNNING/, wake.id)
+          assert.doesNotMatch(wake.text, /Your monitor|Your command watch|frizzctl|Carry on|wake you|background shell instead|did not return|re-dispatch|NOT RUNNING/, wake.id)
         }
         const disclosed = async (id: string) => {
           await page.click(`[data-frizz-msg="${id}"] [data-wake-divider]`)
@@ -148,7 +148,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         assert.match(await disclosed("w23"), /Its last check exited 1, ending:npm error code E404/)
         assert.match(await disclosed("w24"), /Frizz stopped it: this thread runs in default permission mode\.$/)
         // A MONITOR's events and endings (2026-11-02): hairlines, none of the worker's instructions ("Drop
-        // it with frizzctl watch-command drop", "register it again"), the lines behind the disclosure; and the
+        // it with frizzctl monitor drop", "register it again"), the lines behind the disclosure; and the
         // merged pair is two hairlines, the event before the exit.
         const monitors = await page.evaluate(() => ["w27", "w28", "w29", "w30", "w31", "w32"].map((id) => {
           // A merged delivery's id is on its FIRST part only (MergedWake), so read from its container.
@@ -161,19 +161,19 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         }))
         for (const wake of monitors) {
           assert.ok(wake.lines.length > 0 && !wake.card, `${wake.id} is a hairline`)
-          assert.doesNotMatch(wake.text, /Your command watch|Your monitor|frizzctl|wakes you|register it again|Nothing about it/, wake.id)
+          assert.doesNotMatch(wake.text, /Your monitor|Your command watch|frizzctl|wakes you|register it again|Nothing about it/, wake.id)
         }
         const [event, exited, expired, flood, merged, stopped] = monitors
         // Each hairline's text carries BOTH widths' labels (one is hidden by CSS), so it is matched, not
         // anchored: the wide label names the monitor, the narrow one is the news alone.
-        assert.match(event.lines[0], /^2 linesWatch «errors in deploy\.log» 2 lines/)
-        assert.match(exited.lines[0], /^EndedWatch «CI steps on nubjs\/nub#879» ended/)
-        assert.match(expired.lines[0], /^ExpiredWatch «new comments on acme\/app#62» expired/)
-        assert.match(flood.lines[0], /^StoppedWatch «errors in app\.log» stopped by Frizz/, "named by its description, as every other persistent watch wake is")
-        assert.match(stopped.lines[0], /^StoppedWatch «Failed jobs in jobs\.ndjson» stopped by you/, "the human's own stop is theirs, not Frizz's")
+        assert.match(event.lines[0], /^2 linesMonitor «errors in deploy\.log» 2 lines/)
+        assert.match(exited.lines[0], /^EndedMonitor «CI steps on nubjs\/nub#879» ended/)
+        assert.match(expired.lines[0], /^ExpiredMonitor «new comments on acme\/app#62» expired/)
+        assert.match(flood.lines[0], /^StoppedMonitor «errors in app\.log» stopped by Frizz/, "named by its description, as every other monitor wake is")
+        assert.match(stopped.lines[0], /^StoppedMonitor «Failed jobs in jobs\.ndjson» stopped by you/, "the human's own stop is theirs, not Frizz's")
         assert.equal(merged.lines.length, 2)
-        assert.match(merged.lines[0], /^1 lineWatch «CI steps on nubjs\/nub#879» 1 line/)
-        assert.match(merged.lines[1], /^EndedWatch «CI steps on nubjs\/nub#879» ended/)
+        assert.match(merged.lines[0], /^1 lineMonitor «CI steps on nubjs\/nub#879» 1 line/)
+        assert.match(merged.lines[1], /^EndedMonitor «CI steps on nubjs\/nub#879» ended/)
         const printed = await disclosed("w27")
         assert.match(printed, /ERROR 502 from upstream api\.internal\s*ERROR retry budget exhausted/)
         assert.match(printed, /Event 3: 2 lines\./)

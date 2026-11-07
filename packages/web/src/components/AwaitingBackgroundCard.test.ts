@@ -220,7 +220,7 @@ test("a park on a command watch alone rows the command, its cadence and its last
   assert.doesNotMatch(html, /Waiting for an external update/)
   assert.match(html, /data-wait-row="cmw_12f995833a5b" data-wait-kind="command"/)
   const shown = html.replace(/<[^>]+>/g, " ")
-  assert.match(shown, /Command watches/)
+  assert.match(shown, /Monitors/)
   assert.match(shown, /node others-idle\.mjs/, "the command, its long paths cut")
   assert.doesNotMatch(shown, /\.cache\/nub/, "…not the directories")
   assert.match(shown, /every 2m/)

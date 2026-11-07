@@ -445,11 +445,11 @@ function OwnWatchExpiredDivider({ kind, sourceId, at }: { kind: "shell" | "agent
 }
 
 // ---- THE COMMAND-WATCH HAIRLINE ------------------------------------------------------------------
-// A `frizzctl watch-command` settling: a check exited 0, its `for` ran out, or Frizz stopped running it.
+// A `frizzctl monitor` settling: a check exited 0, its `for` ran out, or Frizz stopped running it.
 // The same class of event as a shell finishing, named the way the board's row names the watch — its
 // command, paths cut (commandWatchName) — under the glyph that row wears. Until 2026-10-14 it had no
 // parser and arrived as the raw-prose card, printing its closing instructions to the worker ("Carry on
-// with whatever you were waiting on it for", "register it again with `frizzctl watch-command add`") at
+// with whatever you were waiting on it for", "register it again with `frizzctl monitor add`") at
 // the operator. What the reader IS owed — the whole command, when it passed, what its check printed, why
 // Frizz stopped it — is the disclosure, the way the park divider keeps its item list.
 function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; sourceId?: string; at?: string }) {
@@ -467,7 +467,7 @@ function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; s
         onClick={() => setOpen((v) => !v)}
         ariaExpanded={open}
         ariaControls={bodyId}
-        ariaLabel={`${open ? "Collapse" : "Expand"} how this command watch ended`}
+        ariaLabel={`${open ? "Collapse" : "Expand"} how this monitor ended`}
       >
         {/* Narrow, the outcome alone — `Passed · expand · 3h ago`. Between two 50px rules on a 390px
             column the label keeps about 56px for its news once the hint and the age are drawn, which
@@ -475,7 +475,7 @@ function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; s
             the command is the disclosure's first line. */}
         <span className={`min-w-0 truncate ${WAKE_DIVIDER_NARROW_ONLY}`}>{`${outcome.charAt(0).toUpperCase()}${outcome.slice(1)}`}</span>
         <span className={`flex min-w-0 items-center gap-1 ${WAKE_DIVIDER_WIDE_ONLY}`}>
-          <DividerQuotedTitle lead="Watch" title={commandWatchName(wake.command)} tail={wake.kind === "cancelled" ? "stopped by Frizz" : outcome} />
+          <DividerQuotedTitle lead="Monitor" title={commandWatchName(wake.command)} tail={wake.kind === "cancelled" ? "stopped by Frizz" : outcome} />
         </span>
         <DividerHint open={open} />
       </WakeDivider>
@@ -493,7 +493,7 @@ function CommandWatchDivider({ wake, sourceId, at }: { wake: CommandWatchWake; s
 }
 
 // ---- THE MONITOR HAIRLINE --------------------------------------------------------------------------
-// A `frizzctl watch-command add --persistent` (2026-11-02): a script the server keeps running, every line it prints a wake. Its
+// A `frizzctl monitor add --persistent` (2026-11-02): a script the server keeps running, every line it prints a wake. Its
 // EVENTS are the news, so an event's hairline names the monitor and how many lines it printed, and the
 // lines themselves are the disclosure — the reader opens it to see what the worker was woken with. Its
 // ENDINGS (the script exited, its time ran out, Frizz or the human stopped it) read like a command watch's, under the
@@ -522,11 +522,11 @@ function MonitorDivider({ wake, sourceId, at }: { wake: MonitorWake; sourceId?: 
         onClick={() => setOpen((v) => !v)}
         ariaExpanded={open}
         ariaControls={bodyId}
-        ariaLabel={`${open ? "Collapse" : "Expand"} ${wake.kind === "event" ? "what this command watch printed" : "how this command watch ended"}`}
+        ariaLabel={`${open ? "Collapse" : "Expand"} ${wake.kind === "event" ? "what this monitor printed" : "how this monitor ended"}`}
       >
         <span className={`min-w-0 truncate ${WAKE_DIVIDER_NARROW_ONLY}`}>{outcome}</span>
         <span className={`flex min-w-0 items-center gap-1 ${WAKE_DIVIDER_WIDE_ONLY}`}>
-          <DividerQuotedTitle lead="Watch" title={wake.label ?? commandWatchName(wake.command ?? wake.id)} tail={tail} />
+          <DividerQuotedTitle lead="Monitor" title={wake.label ?? commandWatchName(wake.command ?? wake.id)} tail={tail} />
         </span>
         <DividerHint open={open} />
       </WakeDivider>

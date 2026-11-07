@@ -846,7 +846,7 @@ function registeredIssueWatchesOf(storage: Storage, slug: string): ReadonlySet<s
   return new Set(storage.listPrWatches(slug, { armedOnly: true }).filter((w) => w.kind === "issue").map((w) => `${w.owner}/${w.repo}#${w.number}`))
 }
 
-/** This thread's ARMED command watch ids (`frizzctl watch-command`) — what a `commands:` entry is
+/** This thread's ARMED command watch ids (`frizzctl monitor`) — what a `commands:` entry is
  *  checked against. Only ARMED: a watch that passed has delivered its wake, and one that expired or was
  *  cancelled will never send one, so a park naming either is waiting on nothing. */
 function armedCommandWatchIdsOf(storage: Storage, slug: string): ReadonlySet<string> {
@@ -1075,7 +1075,7 @@ function isOwnWatchExpiredFenceId(fenceId: string): boolean {
 const COMMAND_WATCH_FENCE_PREFIX = "cmdwatch"
 const COMMAND_WATCH_EXPIRED_FENCE_PREFIX = "cmdwatch-expired"
 const COMMAND_WATCH_CANCELLED_FENCE_PREFIX = "cmdwatch-cancelled"
-/** A MONITOR's wakes (`frizzctl watch-command add --persistent`, 2026-11-02): one per EVENT, keyed by the event's number so
+/** A MONITOR's wakes (`frizzctl monitor add --persistent`, 2026-11-02): one per EVENT, keyed by the event's number so
  *  each is its own piece of news, plus the three ways a monitor ends. The event prefix is not one of the
  *  wake store's quiet-window exemptions, so a burst of events merges into one turn; the three endings
  *  are, for the command watch's reason (wake-store.ts). */
@@ -1481,7 +1481,7 @@ export interface Scheduler {
    *  them without awaiting, so a two-minute check never holds up the tick). Tests await it between ticks. */
   commandRunsIdle?(): Promise<void>
   /** Start a MONITOR the router just armed, and watch it for MONITOR_REGISTRATION_WINDOW_MS: what it
-   *  printed in that window, and whether it already exited, go back in `frizzctl watch-command add --persistent`'s reply
+   *  printed in that window, and whether it already exited, go back in `frizzctl monitor add --persistent`'s reply
    *  instead of waking the thread. A monitor that exited is settled. */
   startMonitor?(id: string, windowMs?: number): Promise<MonitorStartResult>
   /** Stop a monitor's script now if its row is no longer armed (the worker dropped it), rather than at
@@ -1508,7 +1508,7 @@ export interface MonitorStartResult {
  *  cutover; the grammar the worker writes did not, so every message that quotes a fence line back at a
  *  worker has to translate — printing `i.kind` raw teaches a spelling the parser now refuses. */
 const AWAITING_KEY_OF: Record<"shell" | "agent" | "timer" | "pr" | "issue" | "command" | "thread", string> = {
-  shell: "shells", agent: "agents", timer: "timers", pr: "prs", issue: "issues", command: "commands", thread: "threads",
+  shell: "shells", agent: "agents", timer: "timers", pr: "prs", issue: "issues", command: "monitors", thread: "threads",
 }
 
 // ---- THE MID-TURN HOLD'S BOUND ------------------------------------------------------------------
@@ -2976,7 +2976,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
             ? "already ENDED — its script exited and that wake was delivered; there is nothing left to wait on"
             : "already PASSED — its wake was delivered; there is nothing left to wait on"
           : i.kind === "command" && settledCommands.has(i.value)
-          ? `no longer armed (${settledCommands.get(i.value)?.state}) — register it again with \`frizzctl watch-command add${settledCommands.get(i.value)?.kind === "monitor" ? " --persistent" : ""}\` if you still need the wait`
+          ? `no longer armed (${settledCommands.get(i.value)?.state}) — register it again with \`frizzctl monitor add${settledCommands.get(i.value)?.kind === "monitor" ? " --persistent" : ""}\` if you still need the wait`
           : finishedItem(i)
           ? "FINISHED — its result is waiting for you"
           : i.kind === "shell" && staleShellHandles.has(i.value)
@@ -2986,7 +2986,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           : i.kind === "issue"
           ? "NOT REGISTERED — register it with `frizzctl watch-issue add` first, then name it here"
           : i.kind === "command"
-          ? "NOT REGISTERED — register it with `frizzctl watch-command add` first, then name the id it gives you here"
+          ? "NOT REGISTERED — register it with `frizzctl monitor add` first, then name the id it gives you here"
           : i.kind === "thread"
           ? (children.get(row.slug)?.some((c) => c.slug === i.value)
             ? "ALREADY REPORTED — that child's latest handoff was delivered to you; read it, and steer the child if it needs more"
@@ -3027,7 +3027,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           "timers: [tmr_…]               timers from `frizzctl timer set`",
           "prs:    [owner/repo#123]      PRs registered with `frizzctl watch-pr add`",
           "issues: [owner/repo#45]       GitHub issues registered with `frizzctl watch-issue add`",
-          "commands: [cmw_…]             command watches from `frizzctl watch-command add`",
+          "monitors: [cmw_…]             monitors from `frizzctl monitor add`",
           "for:    2h                    REQUIRED — a DURATION, never an instant",
           "---",
           "your handoff prose, as much as you want",
@@ -3053,7 +3053,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           "  and the close) → `issues: [owner/repo#45]`",
           "- a wall-clock check → `frizzctl timer set` → `timers: [tmr_…]`",
           "- an outside condition a command can check (a package version, a release run, a URL coming up)",
-          "  → `frizzctl watch-command add` → `commands: [cmw_…]`",
+          "  → `frizzctl monitor add` → `monitors: [cmw_…]`",
           "- work you already launched → `shells: [<the id your runtime gave you>]` or `agents: [<id>]`",
           "",
           "The frontmatter is YAML: PLURAL keys, each taking a list, and your prose below the `---`.",
@@ -4035,7 +4035,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   }
 
   // ---- SOURCE 13: THE WORKER'S COMMAND WATCHES ------------------------------------------------------
-  // `frizzctl watch-command add` (2026-10-11): a shell command the server re-runs every `every` until it
+  // `frizzctl monitor add` (2026-10-11): a shell command the server re-runs every `every` until it
   // exits 0, so a wait on an outside condition holds nothing in the thread's own process tree and the
   // thread can hibernate under it. See command-watch.ts for the process and the gate.
   //
@@ -4108,12 +4108,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           row,
           `${COMMAND_WATCH_EXPIRED_FENCE_PREFIX}:${w.id}`,
           commandWatchExpiredWakeMessage({ id: w.id, command: w.command, lastRun: lastRunOf(w) }),
-          `command watch ${w.id} expired after ${w.runs} check(s)`,
+          `monitor ${w.id} expired after ${w.runs} check(s)`,
           nowMs,
         )
       }
       deps.storage.settleCommandWatch(w.id, "expired", nowMs)
-      log(`waker: settled ${w.thread_slug} — command watch ${w.id} expired`)
+      log(`waker: settled ${w.thread_slug} — monitor ${w.id} expired`)
     }
     const armed = deps.storage.armedCommandWatches()
     // A check whose row left `armed` under it — dropped by the worker, or the thread forgotten — is
@@ -4152,11 +4152,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           row,
           `${COMMAND_WATCH_CANCELLED_FENCE_PREFIX}:${w.id}`,
           commandWatchCancelledWakeMessage({ id: w.id, command: w.command, reason: refusal }),
-          `command watch ${w.id} cancelled: ${refusal}`,
+          `monitor ${w.id} cancelled: ${refusal}`,
           nowMs,
         )
         deps.storage.settleCommandWatch(w.id, "cancelled", nowMs)
-        log(`waker: settled ${w.thread_slug} — command watch ${w.id} cancelled: ${refusal}`)
+        log(`waker: settled ${w.thread_slug} — monitor ${w.id} cancelled: ${refusal}`)
         continue
       }
       startCommandRun(service, w)
@@ -4177,7 +4177,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (abort.signal.aborted || stopped) return
       finishCommandRun(w, result)
     })()
-      .catch((err) => log(`waker: command watch ${w.id} check failed to record: ${err instanceof Error ? err.message : String(err)}`))
+      .catch((err) => log(`waker: monitor ${w.id} check failed to record: ${err instanceof Error ? err.message : String(err)}`))
       .finally(() => { if (commandRuns.get(w.id)?.done === done) commandRuns.delete(w.id) })
     commandRuns.set(w.id, { abort, done })
   }
@@ -4203,17 +4203,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           runs: current?.runs ?? w.runs + 1,
           armedMs: Math.max(0, atMs - w.created_at),
         }),
-        `command watch ${w.id} passed`,
+        `monitor ${w.id} passed`,
         atMs,
       )
     }
     deps.storage.settleCommandWatch(w.id, "passed", atMs)
-    log(`waker: settled ${w.thread_slug} — command watch ${w.id} passed`)
+    log(`waker: settled ${w.thread_slug} — monitor ${w.id} passed`)
     kick()
   }
 
   // ---- SOURCE 13, MONITORS: ONE SCRIPT, MANY WAKES (2026-11-02) ------------------------------------
-  // `frizzctl watch-command add --persistent`: a command watch row of kind `monitor`, whose script this scheduler STARTS and
+  // `frizzctl monitor add --persistent`: a command watch row of kind `monitor`, whose script this scheduler STARTS and
   // keeps running for as long as the row is armed. Every event the script prints (command-watch.ts
   // startMonitorProcess batches its lines) is recorded on the row and queued as its own wake, keyed by the
   // event's number; the outbox's quiet window merges a burst into one turn. A monitor ends three ways, each
