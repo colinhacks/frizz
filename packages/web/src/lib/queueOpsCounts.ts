@@ -43,7 +43,7 @@ export function queueOpsCounts(
     // Parked waits, live as a PR watch is, and drawn in its hue (ChildOpRow). A persistent command watch
     // counts here too: it had a count of its own from 2026-11-03, when every surface called it a monitor,
     // and rejoined this one when the two became one command (2026-11-06). Its row tells it apart.
-    { key: "command", n: commands.length, one: "command", many: "commands", states: ["running"] },
+    { key: "command", n: commands.length, one: "monitor", many: "monitors", states: ["running"] },
     { key: "timer", n: timers.length, one: "timer", many: "timers", states: ["running"] },
     { key: "file", n: files.length, one: "file", many: "files", states: [] },
     { key: "link", n: links.length, one: "link", many: "links", states: [] },

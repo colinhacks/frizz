@@ -3929,7 +3929,7 @@ export function createRouter(ctx: AppContext) {
     }),
 
     // ---- REGISTERED COMMAND WATCHES (add / drop / list) -------------------------------------------
-    // `frizzctl watch-command`: a shell command the SERVER re-runs on a cadence until it exits 0 (scheduler
+    // `frizzctl monitor`: a shell command the SERVER re-runs on a cadence until it exits 0 (scheduler
     // SOURCE 13, command-watch.ts). Slug-only like every worker registry. The GATE runs before anything
     // else, the idempotent short-circuit included: whether Frizz may run commands for this thread at all
     // is the first question, and a thread that has lost the right must not be told its old watch stands.
@@ -3940,12 +3940,12 @@ export function createRouter(ctx: AppContext) {
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new Error(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a command watch on it")
+          throw new Error("Reopen this thread before registering a monitor on it")
         }
         const service = ctx.commandWatches
-        const refusal = service ? service.refusal(row) : `this server cannot run command watches. ${COMMAND_WATCH_FALLBACK}`
+        const refusal = service ? service.refusal(row) : `this server cannot run monitors. ${COMMAND_WATCH_FALLBACK}`
         if (refusal) {
-          return { refused: `Frizz will not run a command watch for this thread: ${refusal}`, alreadyArmed: false, passed: false, watches: armedCommandWatchViews(input.slug) }
+          return { refused: `Frizz will not run a monitor for this thread: ${refusal}`, alreadyArmed: false, passed: false, watches: armedCommandWatchViews(input.slug) }
         }
         const command = input.command.trim()
         const armed = ctx.storage.listCommandWatches(input.slug, { armedOnly: true })
@@ -3961,7 +3961,7 @@ export function createRouter(ctx: AppContext) {
           }
         }
         if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} command watches armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+          throw new Error(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
         }
         const everyAsked = parseAwaitingDurationRaw(input.every)
         if (everyAsked === null) throw new Error(`\`--every ${input.every}\` is not a duration — give one like \`5m\` or \`1h\` (min 1m, max 24h)`)
@@ -4036,7 +4036,7 @@ export function createRouter(ctx: AppContext) {
       },
     }),
 
-    // ---- THE WORKER'S MONITORS (`frizzctl watch-command add --persistent`, 2026-11-02) --------------------------------
+    // ---- THE WORKER'S MONITORS (`frizzctl monitor add --persistent`, 2026-11-02) --------------------------------
     // A script the server keeps RUNNING, each stdout line a wake (scheduler SOURCE 13, command-watch.ts).
     // A command watch row of kind `monitor`, so `drop` and `list` are the command watch's own RPCs above.
     // Same gate first, for the same reason; then the caps; then the row is armed and the script started,
@@ -4102,13 +4102,13 @@ export function createRouter(ctx: AppContext) {
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new Error(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a command watch on it")
+          throw new Error("Reopen this thread before registering a monitor on it")
         }
         const refuse = (refused: string) => ({ refused, alreadyArmed: false, running: false, events: [], watches: armedCommandWatchViews(input.slug) })
         const service = ctx.commandWatches
-        const gate = service ? service.refusal(row) : `this server cannot run persistent command watches. ${MONITOR_FALLBACK}`
-        if (gate) return refuse(`Frizz will not run a persistent command watch for this thread: ${gate.replace(COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK)}`)
-        if (!service?.startMonitor || !ctx.scheduler?.startMonitor) return refuse(`Frizz will not run a persistent command watch for this thread: this server cannot run persistent command watches. ${MONITOR_FALLBACK}`)
+        const gate = service ? service.refusal(row) : `this server cannot run persistent monitors. ${MONITOR_FALLBACK}`
+        if (gate) return refuse(`Frizz will not run a persistent monitor for this thread: ${gate.replace(COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK)}`)
+        if (!service?.startMonitor || !ctx.scheduler?.startMonitor) return refuse(`Frizz will not run a persistent monitor for this thread: this server cannot run persistent monitors. ${MONITOR_FALLBACK}`)
         const command = input.command.trim()
         const description = input.description?.trim().replace(/\s+/g, " ") || undefined
         const armed = ctx.storage.listCommandWatches(input.slug, { armedOnly: true })
@@ -4121,10 +4121,10 @@ export function createRouter(ctx: AppContext) {
           }
         }
         if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} command watches armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+          throw new Error(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
         }
         if ((service.monitorsRunning?.() ?? 0) >= MONITOR_SERVER_MAX_RUNNING) {
-          return refuse(`Frizz already runs ${MONITOR_SERVER_MAX_RUNNING} persistent command watches across every project, its limit. ${MONITOR_FALLBACK}`)
+          return refuse(`Frizz already runs ${MONITOR_SERVER_MAX_RUNNING} persistent monitors across every project, its limit. ${MONITOR_FALLBACK}`)
         }
         const forAsked = parseAwaitingDurationRaw(input.for)
         if (forAsked === null) throw new Error(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
@@ -4432,7 +4432,7 @@ export function createRouter(ctx: AppContext) {
             .map((t) => ({ id: t.id, what: `timer, fires ${new Date(t.fire_at).toISOString()}` })),
           ...ctx.storage
             .listCommandWatches(input.slug, { armedOnly: true })
-            .map((w) => ({ id: w.id, what: `command watch: ${w.command.trim().replace(/\s+/g, " ").slice(0, 120)}` })),
+            .map((w) => ({ id: w.id, what: `monitor: ${w.command.trim().replace(/\s+/g, " ").slice(0, 120)}` })),
         ]
         if (blockingQuestions.length > 0 || blockingWatches.length > 0) {
           return { done: false, blockingQuestions, blockingWatches }

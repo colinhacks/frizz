@@ -1489,7 +1489,7 @@ const hourglassMark = <StatusBox><Hourglass size={9} className="text-muted-70" /
 // (scripts/verify-rail-status-glyphs.mjs, the `user-snoozed` slot).
 const alarmMark = <StatusBox><AlarmClock size={9} className="text-muted/70" /></StatusBox>
 
-// THE ONE MARK FOR "THIS THREAD IS WAITING ON A MONITOR" (`frizzctl watch-command add --persistent`, 2026-11-03) — lucide's
+// THE ONE MARK FOR "THIS THREAD IS WAITING ON A MONITOR" (`frizzctl monitor add --persistent`, 2026-11-03) — lucide's
 // Radio, the broadcast glyph the monitor's own rows already wear on the resting card and in the ops strip
 // (AwaitingBackgroundCard CommandWatchRow), so the rail and the card name the wait with one picture. It
 // is drawn by every arm whose row is resting on an armed monitor: the queued `monitor` kind and the
@@ -1521,7 +1521,7 @@ function timerWake(t: Pick<ThreadView, "watches">, nowMs = Date.now()): string |
  *  fence — the same clause the fence would have produced, built from the registered rows. */
 function armedMonitorsClause(t: Pick<ThreadView, "watches">): string {
   const monitors = (t.watches ?? []).filter((w) => w.kind === "command" && w.state === "armed" && w.command?.monitor)
-  return awaitingWaitClause(monitors.map((w) => ({ kind: "command", value: w.target })), monitors) ?? "waiting on a command watch"
+  return awaitingWaitClause(monitors.map((w) => ({ kind: "command", value: w.target })), monitors) ?? "waiting on a monitor"
 }
 
 function sessionStateIndicatorFor(t: ThreadView): { node: ReactElement; tip: string | null } {

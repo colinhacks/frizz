@@ -323,14 +323,14 @@ exactly ONE of them.
     Same shape as `prs:`, same register-first rule. That watcher wakes you on every later comment, when a
     label moves or someone is assigned, and once more when the issue closes — the wait for a reporter's
     reproduction or a maintainer's triage. An issue has no CI and no merge, so it never says either.
-  - `commands:` — command watches you REGISTERED with `frizzctl watch-command add`, by their `cmw_…`
-    id: a shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
+  - `monitors:` — monitors you REGISTERED with `frizzctl monitor add`, by their `cmw_…` id: a
+    shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
     output, or with `--persistent` a script the server keeps running, waking you on every line it
     prints. Only in `bypassPermissions` mode with Claude Code's sandbox off; Frizz refuses it otherwise.
   - `for:` — **REQUIRED**, and a DURATION: `30s`, `15m`, `2h`, `3d`. Never an instant. When it runs
     out frizz brings you back to re-check everything; re-parking is fine and uncapped. Capped at a day,
     except on a park naming ONLY `prs:` and `issues:`, where it runs to a year, and one naming
-    `commands:` with nothing but those, where it runs to a week.
+    `monitors:` with nothing but those, where it runs to a week.
   - **A PULL REQUEST IN SOMEONE ELSE'S REPO TAKES MONTHS, SO ASK FOR MONTHS** — `for: 180d`, and give
     `frizzctl watch-pr add` the same `--for`. It moves on its maintainers' clock, not yours, so a short `for:`
     expires against a PR nothing has touched: a wake carrying no news, and a re-arm, once per expiry
@@ -402,7 +402,7 @@ exactly ONE of them.
   - **CI, RELEASES, DEPLOYS AND MERGE PROGRESSION ARE AUTOMATABLE — never ` ```awaiting ` them
     BLINDLY.** For a pull request, `frizzctl watch-pr`; for a GitHub issue, `frizzctl watch-issue`;
     for anything a shell command can check — a version published, a release run finished, a URL up —
-    `frizzctl watch-command` where Frizz allows it.
+    `frizzctl monitor` where Frizz allows it.
     For anything else stay ACTIVE: dispatch a sub-agent to own the wait (its return re-invokes you), or
     set a timer and name it here.
   - **THE PARK SURVIVES A RESTART.** Registration and fence are both durable, so frizz brings you back
@@ -558,8 +558,8 @@ sub-agent alone does not.
 - **Resting until a condition is met** (the usual CI / PR / release wait) → for a pull request,
   `frizzctl watch-pr`; for a GitHub issue, `frizzctl watch-issue`; for any other OUTSIDE condition a
   shell command can check — a package version published, a release run finished, a URL answering —
-  `frizzctl watch-command add "<check that exits 0 once it holds>" --every 5m --for 6h`, then rest on
-  its id (`commands: [cmw_…]`) with `status: watching`. Not a polling loop in a background shell
+  `frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h`, then rest on
+  its id (`monitors: [cmw_…]`) with `status: watching`. Not a polling loop in a background shell
   and not a sub-agent that owns the wait: either keeps your process tree alive (~250 MB) for the whole
   wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
   Only when Frizz REFUSES it (this thread is not in `bypassPermissions`, or Claude Code's sandbox is
@@ -570,9 +570,9 @@ sub-agent alone does not.
   tool's default, so the watcher names one sized to the wait (up to 24h) and loops until its terminal
   condition. A helper must not hand back while its own watcher is still live.
 - **Resting, but woken on EACH occurrence rather than the first** (each ERROR a log tail turns up,
-  each new row a poll finds, each message a listener receives) → `frizzctl watch-command add "<script
+  each new row a poll finds, each message a listener receives) → `frizzctl monitor add "<script
   printing one line per occurrence>" --persistent --description "<what>" --for 1d`, then rest on its id
-  (`commands: [cmw_…]`) with `status: watching`. The server keeps the script running across your
+  (`monitors: [cmw_…]`) with `status: watching`. The server keeps the script running across your
   rests, a hibernation and a restart, and each line it prints wakes you; lines printed within 5m of your
   last wake arrive together. A pull request or an issue needs none of this: `watch-pr` and
   `watch-issue` already wake you on each comment, review and check. Where Frizz refuses it (the
@@ -584,7 +584,7 @@ sub-agent alone does not.
   command to imitate the native flag: frizz's hook rejects an escaping job, because the process could
   survive without a lifecycle id or wake.
 - `Monitor` streams events INTO an active turn (`persistent: true` runs until `TaskStop` or session
-  end); it is not something to park a rest on — `frizzctl watch-command add --persistent` is. `TaskOutput` is deprecated —
+  end); it is not something to park a rest on — `frizzctl monitor add --persistent` is. `TaskOutput` is deprecated —
   use `Read` on that output path for diagnostics. `TaskStop` is only for your own monitor after its
   terminal handoff, never to cut off a sub-agent.
 

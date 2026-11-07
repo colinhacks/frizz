@@ -1,4 +1,4 @@
-// MONITORS (`frizzctl watch-command add --persistent`, 2026-11-02): one registered script, many wakes.
+// MONITORS (`frizzctl monitor add --persistent`, 2026-11-02): one registered script, many wakes.
 //
 // Three layers, each against the real thing where the real thing is cheap:
 //   - the PROCESS — a real `/bin/sh`: lines batched into events, blank lines dropped, stderr kept for the
@@ -405,7 +405,7 @@ test("add: the gate first; then the script starts, and its first lines come back
     h.storage.upsertSession(row("t"))
     h.gate.refusal = "this thread runs in `default` permission mode. Run the check in a background shell instead."
     const refused = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; sleep 30", description: "greetings", for: "1h" } })
-    assert.match(refused.refused!, /^Frizz will not run a persistent command watch for this thread: this thread runs in `default`/)
+    assert.match(refused.refused!, /^Frizz will not run a persistent monitor for this thread: this thread runs in `default`/)
     assert.match(refused.refused!, /Monitor tool, or in a background shell, instead\.$/)
     assert.deepEqual(h.storage.listCommandWatches("t"), [], "a refusal stores nothing")
 
@@ -466,7 +466,7 @@ test("a monitor's drawer reads its script and everything it printed; the human's
     await h.scheduler.tick()
     const wake = parseMonitorWake(h.resumes.at(-1) ?? "")
     assert.deepEqual([wake?.kind, wake?.by, wake?.label, wake?.summary], ["cancelled", "human", "Greetings", "You stopped it from the board after 1 event."])
-    assert.match(h.resumes.at(-1) ?? "", /^🛑 The human stopped your command watch `cmw_[a-z0-9]+` from the board after 1 event — Greetings\n\nRegister it again only if they ask for it\.\n/m, "the worker is told who stopped it, and what to do")
+    assert.match(h.resumes.at(-1) ?? "", /^🛑 The human stopped your monitor `cmw_[a-z0-9]+` from the board after 1 event — Greetings\n\nRegister it again only if they ask for it\.\n/m, "the worker is told who stopped it, and what to do")
     assert.deepEqual(await h.router.stopMonitor.handler({ input: { slug: "t", id } }), { stopped: false }, "a second stop finds nothing armed")
   } finally { await h.close() }
 })

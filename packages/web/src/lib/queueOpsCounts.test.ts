@@ -28,14 +28,14 @@ test("the counts name a command watch and a timer, each by its own kind", () => 
   assert.deepEqual(queueOpsCounts(t).map(({ key, n }) => ({ key, n })), [{ key: "command", n: 2 }, { key: "timer", n: 1 }])
 })
 
-// A persistent command watch had its own count until the two became one command (2026-11-06).
-test("the counts hold both shapes of command watch as one", () => {
+// A persistent monitor had its own count until the two became one command (2026-11-06).
+test("the counts hold both shapes of monitor as one", () => {
   const watch = (target: string, monitor: boolean) => ({
     id: `command:t:${target}`, kind: "command", target, state: "armed", createdAt: "2026-11-03T10:00:00.000Z",
     command: { command: "tail -F x.log", every: "0s", expiresAt: "2026-11-04T10:00:00.000Z", runs: 0, ...(monitor ? { monitor: { description: "Errors in x.log", events: 1 } } : {}) },
   })
   const t = (watches: unknown[]) => ({ id: "t", state: "rested", subAgents: [], links: [], bgShells: [], watches }) as unknown as ThreadView
   const read = (watches: unknown[]) => queueOpsCounts(t(watches)).map(({ key, n, one }) => ({ key, n, one }))
-  assert.deepEqual(read([watch("cmw_m", true)]), [{ key: "command", n: 1, one: "command" }])
-  assert.deepEqual(read([watch("cmw_m", true), watch("cmw_n", true), watch("cmw_c", false)]), [{ key: "command", n: 3, one: "command" }])
+  assert.deepEqual(read([watch("cmw_m", true)]), [{ key: "command", n: 1, one: "monitor" }])
+  assert.deepEqual(read([watch("cmw_m", true), watch("cmw_n", true), watch("cmw_c", false)]), [{ key: "command", n: 3, one: "monitor" }])
 })

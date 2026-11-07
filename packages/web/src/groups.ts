@@ -520,7 +520,7 @@ export function awaitingTimerWatch(t: ThreadView): boolean {
   return (t.watches ?? []).some((w) => w.kind === "timer" && w.state === "armed")
 }
 
-/** AWAITING A MONITOR (`frizzctl watch-command add --persistent`) — a thread at rest with an armed monitor: a script the server
+/** AWAITING A MONITOR (`frizzctl monitor add --persistent`) — a thread at rest with an armed monitor: a script the server
  *  keeps running, every line it prints a wake. It earns its own mark (Sidebar.tsx monitorMark) in
  *  whichever band the row sits, for the reason a PR and a timer have theirs: until 2026-11-03 a monitor
  *  park wore the hourglass in Snoozed, which promised a clock nothing had set, and the bare-rest

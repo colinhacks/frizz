@@ -554,7 +554,7 @@ sub-agent alone does not.
   a polling loop in a background shell that exits once it holds: its exit wakes you, so
   rest on it with `status: watching`, and give it an end. It keeps your process tree alive (~250 MB)
   for the whole wait, and a thread holding one can never be hibernated, so end it the moment it stops
-  mattering. `frizzctl watch-command` is refused unless this thread is in
+  mattering. `frizzctl monitor` is refused unless this thread is in
   `bypassPermissions` mode, and it did not start in that mode: the server runs its command with no
   permission check. For a wait no command can judge, dispatch a SUB-AGENT
   to own it. It runs the watcher

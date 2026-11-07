@@ -215,7 +215,7 @@ export const CHILD_DISMISS_TITLE = {
 export const CHILD_DISMISS_VERB = { running: "Stop", settled: "Clear" } as const
 // A child thread's row carries no × (it is a thread: it is stopped or archived from its own drawer, and
 // its parent steers it), so its noun is here only to keep the record total over ChildOpKind.
-export const CHILD_DISMISS_NOUN = { AGENT: "sub-agent", SHELL: "background shell", GITHUB: "PR watcher", COMMAND: "command watch", TIMER: "timer", CHILD: "child thread" } as const
+export const CHILD_DISMISS_NOUN = { AGENT: "sub-agent", SHELL: "background shell", GITHUB: "PR watcher", COMMAND: "monitor", TIMER: "timer", CHILD: "child thread" } as const
 
 // ── LIVENESS FILTERS — the surfaces' policies, in ONE place ──────────────────────────────────────
 //

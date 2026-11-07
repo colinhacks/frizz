@@ -182,7 +182,7 @@ test("expiry kills a check in flight, settles the watch and wakes the worker onc
   assert.deepEqual(wakeHead(h.resumes[0].message), { kind: "expired", id })
   assert.match(h.resumes[0].message, /Its last check exited 1, ending:/)
   assert.match(h.resumes[0].message, /npm error 404/)
-  assert.match(h.resumes[0].message, /`frizzctl watch-command add`/)
+  assert.match(h.resumes[0].message, /`frizzctl monitor add`/)
   h.clock.ms += 60_000
   await h.cycle()
   assert.equal(h.resumes.length, 1)
@@ -301,7 +301,7 @@ function parkedOn(hints: FenceView["hints"], restedAt: string): SessionTelemetry
   return tele("idle", { kind: "awaiting", body: "", hints }, { lastAssistantAt: restedAt, lastActivityAt: restedAt })
 }
 
-test("a rest on `commands:` naming an ARMED watch is honoured; an unknown id is bumped with how to register one", async () => {
+test("a rest on `monitors:` naming an ARMED monitor is honoured; an unknown id is bumped with how to register one", async () => {
   const h = harness()
   h.storage.setSetting("signoffNudge", "off")
   h.storage.upsertSession(row("t"))
@@ -314,7 +314,7 @@ test("a rest on `commands:` naming an ARMED watch is honoured; an unknown id is 
   h.tele.set("t", parkedOn([{ kind: "command", value: "cmw_000000000bad" }, { kind: "status", value: "watching" }, { kind: "for", value: "6h" }], new Date(h.clock.ms - 30_000).toISOString()))
   await h.s.tick()
   assert.equal(h.resumes.length, 1)
-  assert.match(h.resumes[0].message, /`commands: \[cmw_000000000bad\]` — NOT REGISTERED — register it with `frizzctl watch-command add` first/)
+  assert.match(h.resumes[0].message, /`monitors: \[cmw_000000000bad\]` — NOT REGISTERED — register it with `frizzctl monitor add` first/)
   // …and the correction hands back the id it should have named.
   assert.ok(h.resumes[0].message.includes(id))
   await h.s.stop()
@@ -376,7 +376,7 @@ test("a pass inside the quiet window is delivered at once, carrying what the win
   assert.equal(h.storage.getCommandWatch(id)!.state, "passed")
   assert.equal(h.resumes.length, 2, "delivered on the pass, not when the window ends")
   const sent = h.resumes[1].message
-  assert.match(sent, new RegExp(`command watch \`${id}\` PASSED`))
+  assert.match(sent, new RegExp(`monitor \`${id}\` PASSED`))
   assert.match(sent, /held 2 wakes/)
   assert.ok(sent.indexOf("Re-read the build log.") < sent.indexOf(id), "the held timer rides along, oldest first")
 
