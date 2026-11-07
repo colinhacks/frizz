@@ -584,9 +584,9 @@ test("once the pane closes on a change, it says the new setup, once; closing on 
 });
 
 test("the readout's line after a change names the address, or loopback", () => {
-  assert.equal(
-    remoteReachedLine({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }),
-    "now reached at https://ada.frizz.sh (frizz.sh) · press L for a sign-in link",
-  );
-  assert.equal(remoteReachedLine(null), "loopback only now · press R to reach this board from a phone or another machine");
+  assert.equal(remoteReachedLine({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }), "now at https://ada.frizz.sh");
+  assert.equal(remoteReachedLine(null), "loopback only now");
+  // The notice is not truncated, so a random name's line must fit 80 columns after the readout's 27.
+  const random = remoteReachedLine({ hostname: "abcdefghjkmnpqrstuvw.frizz.sh", claim: "abcdefghjkmnpqrstuvw", serve: "relay" });
+  assert.ok(27 + random.length < 80, `${27 + random.length} columns`);
 });

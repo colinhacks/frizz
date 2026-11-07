@@ -163,11 +163,13 @@ function kindOf(config: CloudConfig | null): RemoteKind {
   return "cloudflare";
 }
 
-/** What the launcher's readout says once the pane closes on a new setup (onClosedAfterChange). */
+/**
+ * What the launcher's readout says once the pane closes on a new setup (onClosedAfterChange). Short, because
+ * a notice is not truncated: after its 27 columns of mark, time and label, a random frizz.sh name's
+ * address still fits 80 columns, where a "press L for a sign-in link" tail wrapped even at 100.
+ */
 export function remoteReachedLine(config: CloudConfig | null): string {
-  return config
-    ? `now reached at https://${config.hostname} (${describeCloudConfig(config)}) · press L for a sign-in link`
-    : "loopback only now · press R to reach this board from a phone or another machine";
+  return config ? `now at https://${config.hostname}` : "loopback only now";
 }
 
 /** Where a menu row's blurb starts, after the two-column indent: the marker, a space and the title's 20. */
