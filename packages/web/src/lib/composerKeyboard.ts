@@ -1,3 +1,5 @@
+import { backendFollowUps } from "@frizz/shared"
+
 export type ComposerKeyboardEvent = {
   key: string
   altKey: boolean
@@ -77,7 +79,7 @@ export function canInterruptAndSend(
   thread: { runtime?: string; backend?: string } | undefined,
   submitOverride: boolean,
 ): boolean {
-  return !submitOverride && thread?.runtime === "running" && thread.backend !== "codex" && thread.backend !== "acp"
+  return !submitOverride && thread?.runtime === "running" && backendFollowUps(thread.backend).interrupt
 }
 
 /**

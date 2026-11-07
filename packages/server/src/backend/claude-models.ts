@@ -2,6 +2,7 @@ import { query } from "@frizz/claude-agent-sdk-runtime"
 import { claudeFamilyLabel, parseClaudeWireId, type ClaudeModel, type ClaudeModelFamily } from "@frizz/shared"
 import { sanitizeProviderChildEnvironment } from "./claude-agent-sdk.ts"
 import { resolveClaudeExecutableAbsolute } from "./claude-broker-host.ts"
+import { isRuntimeDeferred } from "../runtime-deferral.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
 
 // The Claude Code side of the model catalogue, the analogue of codex-models.ts: the picker labels a
@@ -77,6 +78,8 @@ export interface ReadClaudeModelsOptions {
 /** The Claude models for the picker (RPC-facing): resolved labels from the pinned runtime, or the bare
  *  fallback while the probe runs or when it cannot. NEVER throws. */
 export async function readClaudeModels(options: ReadClaudeModelsOptions = {}): Promise<ClaudeModel[]> {
+  // Reading the catalogue starts the runtime, and one still waiting for its first thread stays unstarted.
+  if (isRuntimeDeferred("claude")) return CLAUDE_MODELS_FALLBACK
   let executable: string
   try {
     executable = resolveClaudeExecutableAbsolute(options.claudeBin)

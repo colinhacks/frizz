@@ -1,10 +1,11 @@
 import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import type { AcpAgent, ClaudeModel, CodexModel, SetDispatchPreferenceInput } from "@frizz/shared"
+import { defaultAgentProfile, opencodeAgentProfile, type AcpAgent, type DefaultAgentProfile, type ClaudeModel, type CodexModel, type SetDispatchPreferenceInput } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { showToast } from "../store.ts"
 import { scopedKey, useProjectScope } from "../lib/projectScope.tsx"
+import { settingsQuery } from "./useSettingsAutosave.tsx"
 import {
   applyDispatchPreferenceUpdate,
   resolveDispatchPreferences,
@@ -27,6 +28,12 @@ export function useDispatchProfile(): {
   // The ACP agents the server knows, `available` for the ones on its PATH. Empty on a server too old
   // to answer, which is why neither readiness nor `loadError` waits on this query.
   acpList: readonly AcpAgent[]
+  // Whether OpenCode is on the server's PATH, which is what the sign-in modal offers it on.
+  opencodeInstalled: boolean
+  // What "OpenCode" means here: the native backend when this OpenCode can run it, ACP below 2.0.27.
+  opencodeProfile: DefaultAgentProfile
+  // The model menu's leading group on a machine that can start nothing else (defaultAgentProfile).
+  firstGroup: string | undefined
   loadError: boolean
   saveProfile: (update: SetDispatchPreferenceInput) => void
 } {
@@ -45,6 +52,19 @@ export function useDispatchProfile(): {
   const claudeList = claudeModels.data ?? []
   const acpAgents = useQuery({ queryKey: scopedKey(["acpAgents"], project), queryFn: () => api.acpAgents() })
   const acpList = acpAgents.data ?? []
+
+  // The same three facts the server read for the default profile, so the menu leads with what it opens on.
+  const authStatus = useQuery({ queryKey: ["authStatus"], queryFn: () => rpc.authStatus(), staleTime: 30_000 })
+  const settings = useQuery(settingsQuery(project))
+  const opencodeInstalled = acpList.some((agent) => agent.id === "opencode" && agent.available)
+  const opencodeNative = acpList.some((agent) => agent.id === "opencode" && agent.available && agent.native === true)
+  const opencodeProfile = opencodeAgentProfile(opencodeNative)
+  const firstGroup = defaultAgentProfile({
+    claude: settings.data?.launchPrefix?.claude?.trim() ? "unknown" : authStatus.data?.claude,
+    codex: settings.data?.launchPrefix?.codex?.trim() ? "unknown" : authStatus.data?.codex,
+    opencodeInstalled,
+    opencodeNative,
+  })?.backend
 
   const preference = useMutation({
     mutationFn: (update: SetDispatchPreferenceInput) => rpc.dispatchPreferenceSet(update),
@@ -75,6 +95,9 @@ export function useDispatchProfile(): {
     codexList,
     claudeList,
     acpList,
+    opencodeInstalled,
+    opencodeProfile,
+    firstGroup,
     loadError: preferences.isError || codexModels.isError,
     saveProfile: preference.mutate,
   }

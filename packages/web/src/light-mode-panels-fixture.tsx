@@ -51,8 +51,8 @@ createRoot(document.getElementById("root")!).render(
       <main data-panel-fixture={mode} className="mx-auto min-h-screen max-w-[760px] bg-bg p-5 text-fg">
         {mode === "cards" && <div className="flex flex-col gap-5">
           <InteractionCard record={record} />
-          <ProviderErrorCard error={{ code: "rate_limit_exceeded", message: "The provider is temporarily unavailable.", retrying: true, details: "The request will be retried without losing the transcript." }} />
-          <ProviderErrorCard error={{ code: "authentication_failed", message: "Sign in again to continue this thread." }} />
+          <ProviderErrorCard provider="Codex" error={{ code: "rate_limit_exceeded", message: "The provider is temporarily unavailable.", retrying: true, details: "The request will be retried without losing the transcript." }} />
+          <ProviderErrorCard provider="Codex" error={{ code: "authentication_failed", message: "Sign in again to continue this thread." }} />
           <ImageFrame><img className={FRAMED_IMAGE} src={picture} alt="Palette reference" /></ImageFrame>
         </div>}
         {mode === "shell" && <BackgroundShellSheet id={1} slug="theme" shellId="shell" label="Checking the theme" startedAt={new Date(Date.now() - 95000).toISOString()} depth={0} widthDepth={0} />}

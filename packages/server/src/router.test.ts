@@ -133,7 +133,7 @@ function row(slug: string): SessionRow {
   }
 }
 
-function harness(tailer: Tailer = noopTailer) {
+function harness(tailer: Tailer = noopTailer, acpBridge?: unknown) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-router-permission-"))
   const project: Project = { dir, id: "router-permission", name: "test", label: "test", stateDir: dir, cwdSlug: "test" }
   const storage = createStorage(join(dir, "ui.db"), "p")
@@ -167,6 +167,7 @@ function harness(tailer: Tailer = noopTailer) {
     storage,
     board,
     tailer,
+    ...(acpBridge ? { acpBridge } : {}),
     // followUp pushes a transcript frame the moment it opens a ledger entry (the ledger is not JSONL
     // bytes, so nothing else would). Tests only need it to exist; assertions read the ledger itself.
     transcriptChange: new Emitter<string[]>(),
@@ -2169,12 +2170,10 @@ test("Mark as done on an idle ACP thread whose agent is alive asks first, then r
   h.storage.setBackend(slug, "acp")
   h.storage.setAcpAgent(slug, "gemini")
   const released: string[] = []
-  const interrupts: string[] = []
   ;(h.ctx as { acpBridge?: unknown }).acpBridge = {
     isAgentAlive: () => released.length === 0,
     turnLiveness: () => ({ sessionLive: true, turnActive: false, queued: 0 }),
-    interruptTurn: async () => { interrupts.push(slug); return { interrupted: true } },
-    releaseSession: (s: string, sid: string, reason: string) => void released.push(`${s}/${sid}/${reason}`),
+    endSession: async (s: string, sid: string) => void released.push(`${s}/${sid}`),
   }
   try {
     const asked = await h.router.completeThread.handler({ input: { slug, sessionId: `sid-${slug}`, terminateLive: false } })
@@ -2182,9 +2181,75 @@ test("Mark as done on an idle ACP thread whose agent is alive asks first, then r
     assert.deepEqual(released, [])
     const done = await h.router.completeThread.handler({ input: { slug, sessionId: `sid-${slug}`, terminateLive: true } })
     assert.equal(done.needsConfirmation, false)
-    assert.deepEqual(interrupts, [], "nothing to interrupt on an idle turn")
-    assert.deepEqual(released, [`${slug}/sid-${slug}/session-deleted`], "the daemon and its agent are ended")
+    assert.deepEqual(released, [`${slug}/sid-${slug}`], "the daemon and its agent are ended")
     assert.equal(h.storage.getSession(slug)?.state, "archived")
+  } finally { h.storage.close() }
+})
+
+// ---- A MESSAGE WAITING ON AN ACP THREAD ----
+// ACP has no steer, so a message sent mid-turn waits, and it has to survive whatever ends that turn:
+// a stop opens the next turn on a new agent, and Mark as done leaves it visibly failed.
+function acpQueueHarness(turn: "idle" | "in-flight") {
+  const tailer = { ...noopTailer, get: () => ({ turn, subAgents: [], lastAssistantAt: "2026-01-01T00:00:00.000Z" }) as never }
+  const sent: string[] = []
+  let stranded: ((event: unknown) => void) | undefined
+  const bridge = {
+    followUp: async ({ text }: { text: string }) => { sent.push(text); return { acpSessionId: "acp-1", state: "delivered", resumed: "loaded" } },
+    onFollowUpsStranded: (listener: (event: unknown) => void) => { stranded = listener; return () => {} },
+    isEnding: () => false,
+    isAgentAlive: () => false,
+    turnLiveness: () => undefined,
+    endSession: async () => {},
+  }
+  const h = harness(tailer, bridge)
+  const slug = "acp-queued"
+  h.storage.upsertSession({ ...row(slug), exited: 0 })
+  h.storage.setBackend(slug, "acp")
+  h.storage.setAcpAgent(slug, "opencode")
+  const ledger = () => parseDeliveryLedger(h.storage.getSession(slug)?.delivery_ledger).map((item) => [item.id, item.state])
+  return { h, slug, sent, bridge, ledger, strand: (id: string, text: string) => stranded!({ threadSlug: slug, sessionId: `sid-${slug}`, followUps: [{ text, deliveryId: id }] }) }
+}
+
+test("a message sent mid-turn on an ACP thread is held by Frizz, whoever sends it, and Send now refuses to pretend", async () => {
+  const { h, slug, sent, ledger } = acpQueueHarness("in-flight")
+  try {
+    await h.router.followUp.handler({ input: { slug, sessionId: `sid-${slug}`, message: "cherry", deliveryId: "d-1" } })
+    assert.deepEqual(sent, [], "no transport has it")
+    assert.deepEqual(ledger(), [["d-1", "held"]])
+    const now = await h.router.deliverQueuedNow.handler({ input: { slug, sessionId: `sid-${slug}`, releaseOnly: true } })
+    assert.equal(now.released, undefined)
+    assert.match(now.reason ?? "", /when its turn ends/)
+    assert.deepEqual(ledger(), [["d-1", "held"]])
+  } finally { h.storage.close() }
+})
+
+test("a message the ACP bridge stranded goes out on a new agent once the thread is at rest", async () => {
+  const { h, slug, sent, ledger, strand } = acpQueueHarness("idle")
+  try {
+    appendDelivery(h.storage, slug, { id: "d-1", text: "cherry", state: "enqueued" })
+    strand("d-1", "cherry")
+    assert.deepEqual(ledger(), [["d-1", "held"]])
+    await h.router.killAgent.handler({ input: { slug } })
+    for (let i = 0; i < 50 && !sent.length; i++) await new Promise((res) => setTimeout(res, 10))
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]!, /^cherry/)
+  } finally { h.storage.close() }
+})
+
+test("Mark as done with a message waiting on an ACP thread leaves it failed with its words, and does not reopen the thread", async () => {
+  const { h, slug, sent, ledger, strand } = acpQueueHarness("idle")
+  try {
+    appendDelivery(h.storage, slug, { id: "d-1", text: "cherry", state: "enqueued" })
+    strand("d-1", "cherry")
+    const done = await h.router.completeThread.handler({ input: { slug, sessionId: `sid-${slug}`, terminateLive: true } })
+    assert.equal(done.needsConfirmation, false)
+    for (let i = 0; i < 50 && ledger()[0]?.[1] !== "failed"; i++) await new Promise((res) => setTimeout(res, 10))
+    assert.deepEqual(ledger(), [["d-1", "failed"]])
+    assert.deepEqual(sent, [], "nothing went to an agent")
+    assert.equal(h.storage.getSession(slug)?.state, "archived")
+    const item = parseDeliveryLedger(h.storage.getSession(slug)?.delivery_ledger)[0]!
+    assert.equal(item.text, "cherry")
+    assert.match(item.error ?? "", /session ended/)
   } finally { h.storage.close() }
 })
 

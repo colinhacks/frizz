@@ -80,12 +80,12 @@ test("acp-bridge: a dispatch opens a session with the frizz MCP server, runs the
     await untilIdle(r, "s1")
     const recs = records(r, "s1")
     assert.deepEqual(recs.map((x) => x.kind), [
-      "acp-session", "user-message", "turn-start", "reasoning", "tool-call", "tool-result", "assistant-text", "context-usage", "turn-end",
+      "acp-session", "user-message", "turn-start", "reasoning", "tool-call", "acp-tool-input", "tool-result", "assistant-text", "context-usage", "turn-end",
     ])
     assert.equal((recs[1] as { text?: string }).text, "Make hello.txt", "the transcript records what the human wrote, not the contract")
     assert.equal((recs[3] as { text: string }).text, "thinking about it")
-    assert.equal((recs[6] as { text: string }).text, "PONG")
-    assert.equal((recs[8] as { finalText?: string }).finalText, "PONG")
+    assert.equal((recs[7] as { text: string }).text, "PONG")
+    assert.equal((recs[9] as { finalText?: string }).finalText, "PONG")
     // The fold the tailer runs: idle, preview from the final text.
     const s = newTailState("t1", "s1", "/x")
     const backend = createAcpBackend({ stateDir: r.stateDir })
@@ -284,7 +284,7 @@ test("acp-bridge: after the session is gone, a follow-up re-opens it with sessio
     await untilIdle(r, "s1")
     const after = records(r, "s1")
     // The load's replayed history was NOT written again: the new records are exactly the follow-up turn.
-    assert.deepEqual(after.slice(before).map((x) => x.kind), ["user-message", "turn-start", "reasoning", "tool-call", "tool-result", "assistant-text", "context-usage", "turn-end"])
+    assert.deepEqual(after.slice(before).map((x) => x.kind), ["user-message", "turn-start", "reasoning", "tool-call", "acp-tool-input", "tool-result", "assistant-text", "context-usage", "turn-end"])
   } finally { await teardown(r) }
 })
 
@@ -597,5 +597,108 @@ test("acp-bridge: the contract owed to a fresh session waits behind a slash comm
     await send(r, "/review", info.acpSessionId)
     await send(r, "/Users/me/notes.md is the file")
     assert.deepEqual(promptsSent(agentLog).slice(1), ["/review", "FRIZZ-CONTRACT for t1/s1\n\n/Users/me/notes.md is the file"])
+  } finally { await teardown(r) }
+})
+
+// The frames in the fake are recorded from opencode 2.0.27: the first `tool_call` carries `{cwd}`, the
+// command arrives on an `in_progress` update, and the completing update carries no input.
+test("acp-bridge: a shell call's command arrives on a later update and reaches the row, live and on reload", async () => {
+  const r = rig()
+  try {
+    await r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", prompt: "WIRE_SHELL", userText: "WIRE_SHELL" })
+    await untilIdle(r, "s1")
+    const recs = records(r, "s1")
+    const inputs = recs.filter((x) => x.kind === "acp-tool-input" && x.id === "call_sh") as Array<{ id: string; input: unknown }>
+    assert.deepEqual(inputs.map((x) => [x.id, x.input]), [["call_sh", { command: "echo wireprobe", cwd: "/tmp/project" }]], "recorded once, though the update repeats")
+    assert.equal(recs.filter((x) => x.kind === "tool-call" && x.id === "call_sh").length, 1, "still one call")
+    const msgs = readAcpTranscriptFile(acpTranscriptPath(r.stateDir, "s1"), "s1", acpUserRecordProjector)
+    const call = msgs.flatMap((m) => m.tools).find((t) => t.name === "shell")!
+    assert.equal(call.command, "echo wireprobe")
+    assert.equal(call.detail, "echo wireprobe")
+    assert.equal(call.status, "completed")
+    assert.equal(call.output, "wireprobe\n")
+  } finally { await teardown(r) }
+})
+
+test("acp-bridge: a sub-agent's text, reasoning, title and usage stay out of the parent's message", async () => {
+  const r = rig()
+  try {
+    await r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", prompt: "WIRE_CHILD", userText: "WIRE_CHILD" })
+    await untilIdle(r, "s1")
+    const recs = records(r, "s1")
+    const written = JSON.stringify(recs.filter((x) => x.kind === "assistant-text" || x.kind === "reasoning"))
+    assert.ok(written.includes("It printed childprobe."))
+    assert.ok(!written.includes("stdout (exact)"), "the child's message is not the parent's prose")
+    assert.ok(!written.includes("spawner"), "nor its reasoning")
+    const end = recs.find((x) => x.kind === "turn-end") as { finalText?: string }
+    assert.equal(end.finalText, "It printed childprobe.")
+    assert.equal(recs.filter((x) => x.kind === "title").length, 0)
+    assert.equal(recs.filter((x) => x.kind === "context-usage").length, 0)
+    assert.ok(recs.some((x) => x.kind === "tool-call" && x.id === "ses_child:call_c"), "the child's tool row stays")
+  } finally { await teardown(r) }
+})
+
+test("acp-bridge: ending a session under a queued message sends nothing into the closing connection and hands the message back", async () => {
+  const r = rig()
+  const stranded: Array<{ threadSlug: string; followUps: Array<{ text: string; deliveryId?: string }> }> = []
+  r.bridge.onFollowUpsStranded((event) => stranded.push(event))
+  try {
+    await r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", prompt: "count SLOW", userText: "count SLOW" })
+    await new Promise((res) => setTimeout(res, 60))
+    assert.equal((await r.bridge.followUp({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", text: "second", deliveryId: "d2" })).state, "queued")
+    await r.bridge.endSession("t1", "s1")
+    assert.deepEqual(stranded.map((e) => [e.threadSlug, e.followUps]), [["t1", [{ text: "second", deliveryId: "d2" }]]])
+    const recs = records(r, "s1")
+    assert.equal(recs.filter((x) => x.kind === "provider-error").length, 0, "a stop is not a failed request")
+    assert.equal(recs.filter((x) => x.kind === "user-message").length, 1, "the queued message opened no turn")
+    assert.equal(liveAcpDaemonRecord(r.stateDir, "s1"), null, "the agent is gone")
+    assert.equal(r.bridge.isEnding("s1"), false)
+  } finally { await teardown(r) }
+})
+
+test("acp-bridge: a follow-up sent while the session is ending waits, then opens a new agent", async () => {
+  const r = rig()
+  try {
+    const opened = await r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", prompt: "count SLOW", userText: "count SLOW" })
+    await new Promise((res) => setTimeout(res, 60))
+    const ending = r.bridge.endSession("t1", "s1")
+    assert.equal(r.bridge.isEnding("s1"), true)
+    const sent = await r.bridge.followUp({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", acpSessionId: opened.acpSessionId, text: "after the stop", deliveryId: "d2" })
+    await ending
+    assert.equal(sent.resumed, "loaded")
+    assert.equal(sent.state, "delivered")
+    await untilIdle(r, "s1")
+    const recs = records(r, "s1")
+    assert.equal(recs.filter((x) => x.kind === "provider-error").length, 0)
+    const ends = recs.filter((x) => x.kind === "turn-end") as Array<{ successful?: boolean }>
+    assert.deepEqual(ends.map((e) => e.successful), [false, true])
+    assert.ok(liveAcpDaemonRecord(r.stateDir, "s1"), "the new agent is up")
+  } finally { await teardown(r) }
+})
+
+test("acp-bridge: an agent that dies under a turn hands back what was queued behind it", async () => {
+  const r = rig()
+  const stranded: string[] = []
+  r.bridge.onFollowUpsStranded((event) => stranded.push(...event.followUps.map((f) => f.text)))
+  try {
+    await r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", prompt: "count SLOW", userText: "count SLOW" })
+    await new Promise((res) => setTimeout(res, 60))
+    await r.bridge.followUp({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", text: "second", deliveryId: "d2" })
+    process.kill(liveAcpDaemonRecord(r.stateDir, "s1")!.childPid, "SIGKILL")
+    const t0 = Date.now()
+    while (!stranded.length && Date.now() - t0 < 5_000) await new Promise((res) => setTimeout(res, 20))
+    assert.deepEqual(stranded, ["second"])
+    assert.equal(records(r, "s1").filter((x) => x.kind === "user-message").length, 1, "it opened no turn")
+  } finally { await teardown(r) }
+})
+
+test("acp-bridge: a prompt the agent never read leaves a card that says so", async () => {
+  const r = rig()
+  try {
+    await r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, agentId: "fake", prompt: "DIE_UNHEARD", userText: "DIE_UNHEARD" })
+    const t0 = Date.now()
+    while (!records(r, "s1").some((x) => x.kind === "turn-end") && Date.now() - t0 < 5_000) await new Promise((res) => setTimeout(res, 20))
+    const error = records(r, "s1").find((x) => x.kind === "provider-error") as { error: { details?: string } }
+    assert.match(error.error.details ?? "", /did not read this message/)
   } finally { await teardown(r) }
 })

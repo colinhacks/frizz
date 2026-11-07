@@ -428,6 +428,7 @@ export interface Api {
   // has an input schema), and the transport posts `{}` for it.
   settingsReset(input: Record<never, never>): Promise<Settings>
   dispatchPreferencesGet(): Promise<DispatchPreferences>
+  runtimeDownloads(): Promise<{ claude?: string; codex?: string }>
   dispatchPreferenceSet(input: SetDispatchPreferenceInput): Promise<DispatchPreferences>
   // The shipped GitHub batch-dispatch prompt template — the Settings UI prefills its editor from this
   // and resets to it (an empty githubPrompt setting = the server default). One template, issues and PRs.
@@ -573,6 +574,7 @@ export const PROCEDURES = {
   settingsSet: "mutation",
   settingsReset: "mutation",
   dispatchPreferencesGet: "query",
+  runtimeDownloads: "query",
   dispatchPreferenceSet: "mutation",
   githubPromptDefaults: "query",
   githubStatus: "query",

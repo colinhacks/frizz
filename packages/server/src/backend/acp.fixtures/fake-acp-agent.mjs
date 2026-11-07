@@ -112,6 +112,31 @@ async function handle(msg) {
         }
         return reply({ stopReason: "end_turn" })
       }
+      if (text.includes("DIE_UNHEARD")) process.exit(1) // gone before saying a word, so the prompt was never read
+      // Recorded from `opencode acp` 2.0.27 (2026-11-06), paths and ids shortened. WIRE_SHELL is a shell
+      // call whose command is not on its `tool_call`; WIRE_CHILD is a sub-agent's updates, forwarded on
+      // the parent's session id under `_meta["opencode/child-session"]`.
+      if (text.includes("WIRE_SHELL")) {
+        const cwd = "/tmp/project"
+        notify(sessionId, { sessionUpdate: "tool_call", toolCallId: "call_sh", name: "shell", title: "shell", kind: "execute", status: "pending", locations: [{ path: cwd }], rawInput: { cwd } })
+        for (let i = 0; i < 2; i++) notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_sh", status: "in_progress", kind: "execute", title: "echo wireprobe", locations: [{ path: cwd }], rawInput: { command: "echo wireprobe", cwd } })
+        notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_sh", status: "completed", locations: [{ path: cwd }], content: [{ type: "content", content: { type: "text", text: "wireprobe\n" } }], rawOutput: { metadata: { status: "completed", truncated: false, exit: 0 } } })
+      }
+      if (text.includes("WIRE_CHILD")) {
+        const _meta = { "opencode/child-session": { id: "ses_child", parentID: sessionId, depth: 1, title: "Run echo childprobe" } }
+        notify(sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m_p1", content: { type: "text", text: "Handing it to a sub-agent." } })
+        notify(sessionId, { sessionUpdate: "tool_call", toolCallId: "call_sub", name: "subagent", title: "subagent", kind: "think", status: "pending", locations: [], rawInput: {} })
+        notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_sub", status: "in_progress", kind: "think", title: "subagent", locations: [], rawInput: { agent: "general", description: "Run echo childprobe", prompt: "Run echo childprobe." } })
+        notify(sessionId, { sessionUpdate: "agent_thought_chunk", messageId: "m_c1:reasoning:0", content: { type: "text", text: "The user (spawner) asks to run it." }, _meta })
+        notify(sessionId, { sessionUpdate: "tool_call", toolCallId: "ses_child:call_c", name: "shell", title: "Run echo childprobe: shell", kind: "execute", status: "pending", locations: [{ path: "/tmp/project" }], rawInput: { cwd: "/tmp/project" }, _meta })
+        notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "ses_child:call_c", status: "completed", locations: [{ path: "/tmp/project" }], content: [{ type: "content", content: { type: "text", text: "childprobe\n" } }], _meta })
+        notify(sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m_c1", content: { type: "text", text: "stdout (exact): childprobe" }, _meta })
+        notify(sessionId, { sessionUpdate: "session_info_update", title: "Run echo childprobe", _meta })
+        notify(sessionId, { sessionUpdate: "usage_update", used: 7, size: 200000, _meta })
+        notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_sub", status: "completed", locations: [], content: [{ type: "content", content: { type: "text", text: "<subagent state=\"completed\">childprobe</subagent>" } }] })
+        notify(sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m_p2", content: { type: "text", text: "It printed childprobe." } })
+        return reply({ stopReason: "end_turn" })
+      }
       notify(sessionId, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking about " }, messageId: "m1" })
       notify(sessionId, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "it" }, messageId: "m1" })
       if (mode === "shell") {

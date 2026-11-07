@@ -514,6 +514,17 @@ interface ChildSession {
   finishedAt?: string
 }
 
+/** A sub-agent the parent's `subagent` call is still waiting on. Interrupting the parent cancels that call
+ *  and the child with it (`jobs.block(…).pipe(Effect.onInterrupt(…))` in OpenCode's tool/plugin/subagent.ts),
+ *  so an interrupting send leaves its steer to the next boundary instead. A background child, whose call
+ *  has already returned, is not cancelled by it. */
+function foregroundChildRunning(live: { children: Map<string, ChildSession>; stream: SessionStream }): boolean {
+  for (const child of live.children.values()) {
+    if (child.state === "running" && (!child.toolId || !live.stream.toolDone.has(child.toolId))) return true
+  }
+  return false
+}
+
 interface Card {
   interactionId: string
   ownerSessionId: string
@@ -1055,7 +1066,7 @@ export class OpencodeBridge implements OpencodeHubListener {
       throw err
     }
     if (contract) { live.contractOwed = false; live.stream.writer.append({ kind: "acp-contract", at: this.now(), reason: "compaction" }) }
-    if (input.interrupt && live.stream.turnOpen) await client.interrupt(live.opencodeId, { resume: true, directory: live.cwd }).catch(() => {})
+    if (input.interrupt && live.stream.turnOpen && !foregroundChildRunning(live)) await client.interrupt(live.opencodeId, { resume: true, directory: live.cwd }).catch(() => {})
     const delivered = live.deliveredEarly.delete(inboxId)
     return { opencodeSessionId: live.opencodeId, state: delivered ? "delivered" : "queued" }
   }
@@ -1156,14 +1167,17 @@ export class OpencodeBridge implements OpencodeHubListener {
   }
 
   /** Promote a queued message to a steer, so it is read at the next safe boundary. */
-  async steerQueued(ref: OpencodeThreadRef, deliveryId: string, opts: { interrupt?: boolean } = {}): Promise<boolean> {
+  /** Send now: the steers waiting in OpenCode's inbox for the next step boundary are read at once, by
+   *  interrupting the running step with `resume`, which starts the execution again on them. Refused while a
+   *  foreground sub-agent runs (interrupting would cancel it) and when nothing is waiting. */
+  async pushSteers(ref: OpencodeThreadRef): Promise<"pushed" | "nothing" | "subagent"> {
     const { client, live } = await this.attached(ref)
-    const inboxId = opencodeInboxId(ref.sessionId, deliveryId)
+    if (!live.stream.turnOpen) return "nothing"
     const items = await client.inbox(live.opencodeId, live.cwd)
-    if (!items.some((item) => item.id === inboxId)) return false
-    await client.patchInbox(live.opencodeId, inboxId, "steer", live.cwd)
-    if (opts.interrupt) await client.interrupt(live.opencodeId, { resume: true, directory: live.cwd }).catch(() => {})
-    return true
+    if (!items.some((item) => asString(item.delivery) !== "queue")) return "nothing"
+    if (foregroundChildRunning(live)) return "subagent"
+    await client.interrupt(live.opencodeId, { resume: true, directory: live.cwd })
+    return "pushed"
   }
 
   /** Stop one sub-agent. */

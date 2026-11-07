@@ -7,8 +7,9 @@ export function providerErrorVisible(messages: readonly TranscriptMessage[], err
     && message.providerError?.message === error.message && message.providerError?.code === error.code)
 }
 
-export function ProviderErrorCard({ error, backend }: { error: ProviderError; backend?: string }) {
-  const provider = backend === "opencode" ? "OpenCode" : backend === "acp" ? "Agent" : "Codex"
+/** `provider` is the thread's own (providerNameFor). The error is about the agent the thread runs on, and
+ *  this read "Codex" on every backend's thread until 2026-11-06. */
+export function ProviderErrorCard({ error, provider }: { error: ProviderError; provider: string }) {
   return (
     <TranscriptCard data-codex-error={error.code ?? "unknown"} tone={error.retrying ? "caution" : "danger"} icon={TriangleAlert} label={error.retrying ? `${provider} retrying` : `${provider} request failed`}>
       {error.code && <p className={`${CARD_BODY} font-mono [overflow-wrap:anywhere]`}>{error.code}</p>}

@@ -18,6 +18,7 @@
 // reload). From another device the return trip cannot reach this machine, so the human pastes the address
 // the browser landed on and `finish` delivers it to the listener — but ONLY to the loopback port this
 // attempt's own redirect named, so the paste box can never be pointed at anything else.
+import { isRuntimeDeferred } from "./runtime-deferral.ts"
 import { randomUUID } from "node:crypto"
 import type { Backend, McpServerReading, McpSignInPollResult, McpSignInResult, McpSignInState, McpStatusResult, McpTarget } from "@frizz/shared"
 import { acpAgentIdFromModel } from "@frizz/shared"
@@ -42,6 +43,7 @@ const CODEX_UNAVAILABLE = "Codex isn’t available on this server, so its MCP se
 // page load, so throwing it made every page on a machine without a Claude login log a 500), while a
 // sign-in click still rejects with it.
 class McpUnavailable extends Error {}
+const CODEX_NOT_DOWNLOADED = "Codex downloads with its first thread, and its MCP servers can be read after that."
 
 export interface McpServiceDeps {
   getSession(slug: string): { backend?: string; claude_runtime?: string | null; session_id: string; model?: string | null } | undefined
@@ -207,6 +209,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (resolved.backend === "acp" || resolved.backend === "opencode") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
       if (resolved.backend === "codex") {
         if (!deps.codexAppServer) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_UNAVAILABLE }
+        // Every prompt box on Codex asks this on load, and answering would fetch a runtime still waiting
+        // for its first thread: 378 MB for having picked it in the menu, signed in or not.
+        if (isRuntimeDeferred("codex")) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_NOT_DOWNLOADED }
         const rows = withoutFrizz(await deps.codexAppServer.listMcpServers())
         return { backend: "codex", agent: resolved.agent, supported: true, servers: rows.map(toReading) }
       }

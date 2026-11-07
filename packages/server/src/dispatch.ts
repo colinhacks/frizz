@@ -40,6 +40,7 @@ import { claudeUltracodeFlags, resolveClaudeEffort } from "./backend/claude-effo
 import { ProviderAuthRequiredError } from "./backend/auth-status.ts"
 import { readBoard, type FrizzBoard, type FrizzThread } from "./frizz.ts"
 import { SYSTEM_PROMPT_DIR, cleanupAdoptionSessionFiles, systemPromptPath, writeMcpConfigFile } from "./session-files.ts"
+import { ensureRuntime } from "./runtime-deferral.ts"
 import {
   ADOPTION_ATTEMPT_LEASE_MS,
   abandonAdoptionAttempt,
@@ -1063,6 +1064,15 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // OpenCode is the same: its logins are its own CLI's, and a thread on a free model needs none.
       if (kind !== "acp" && kind !== "opencode" && deps.preflightAuth && (await deps.preflightAuth(kind).catch((): ProviderAuth => "unknown")) === "signed-out") {
         throw new ProviderAuthRequiredError(kind)
+      }
+      // A runtime that waited for its first thread comes down here, past the sign-in check and before
+      // any thread state, so a failed download leaves no trace and the next attempt starts clean.
+      if (kind === "claude" || kind === "codex") {
+        try {
+          await ensureRuntime(kind)
+        } catch (err) {
+          throw new Error(`Could not download ${kind === "claude" ? "Claude Code" : "Codex"}: ${err instanceof Error ? err.message : String(err)}`)
+        }
       }
       // Codex needs the `codex` executable, not just a credential. Probe it here, in the same
       // zero-trace window as the auth preflight, so a missing binary fails with an actionable message

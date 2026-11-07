@@ -9,7 +9,7 @@ import { AcpTranscriptWriter, acpContractOwed, acpTranscriptPath, type AcpContra
 import {
   ACP_ERROR_AUTH_REQUIRED, ACP_ERROR_INTERNAL, ACP_ERROR_METHOD_NOT_FOUND, ACP_PROTOCOL_VERSION,
   AcpInitializeResult, AcpLoadSessionResult, AcpNewSessionResult, AcpPromptResult, AcpRequestPermissionParams, AcpSessionNotification, AcpSetConfigOptionResult, type AcpConfigOption,
-  contentText, parseSessionUpdate,
+  contentText, isAcpChildUpdate, parseSessionUpdate,
   type AcpInitializeResult as AcpInitializeResultType, type AcpMcpServerStdio, type AcpRequestPermissionResult, type AcpToolCallUpdate,
 } from "./acp-types.ts"
 import { FRIZZ_MCP, frizzCliEnv, frizzMcpEnv, withFrizzCliOnPath, type FrizzCli, type FrizzMcp } from "./types.ts"
@@ -135,7 +135,10 @@ interface PendingPermission {
   scope: InteractionSessionScope
 }
 
-interface QueuedFollowUp { text: string; deliveryId?: string }
+export interface QueuedFollowUp { text: string; deliveryId?: string }
+
+/** Follow-ups this bridge was holding for a turn's end that can no longer go out on this session. */
+export interface StrandedFollowUps { threadSlug: string; sessionId: string; followUps: QueuedFollowUp[] }
 
 interface Turn {
   startedAt: string
@@ -148,6 +151,8 @@ interface Turn {
   thought: string
   flushTimer?: NodeJS.Timeout
   cancelRequested: boolean
+  /** The agent has said something during this turn, so the prompt reached it. */
+  heard: boolean
   done: Promise<void>
   finish: () => void
 }
@@ -155,7 +160,11 @@ interface Turn {
 /** The turn's outcome record, shared by a turn this bridge started and one it adopted after a restart. */
 type TurnOutcome = { kind: "ended"; raw: unknown } | { kind: "failed"; err: unknown }
 
-interface ToolMeta { kind?: string; title?: string; locations?: string[]; written: boolean; status?: string }
+interface ToolMeta { kind?: string; title?: string; locations?: string[]; written: boolean; status?: string; inputJson?: string }
+
+function nonEmptyInputJson(rawInput: unknown): string | undefined {
+  return rawInput && typeof rawInput === "object" && Object.keys(rawInput).length ? JSON.stringify(rawInput) : undefined
+}
 
 interface LiveSession {
   slug: string
@@ -179,6 +188,9 @@ interface LiveSession {
   /** True from `shutdown()` on: the connection is being DETACHED from a daemon that keeps running, so
    *  a rejected prompt is not the turn ending and must not be recorded as one. */
   detaching: boolean
+  /** True from the moment the session is being ended (`endSession`, `releaseSession`): its next prompt
+   *  would be written into a closing connection, so nothing more goes out on it. */
+  ending: boolean
   /** Set when the session no longer holds the worker contract; the next prompt carries it and clears it. */
   contractOwed?: AcpContractReason
 }
@@ -284,6 +296,10 @@ export class AcpBridge {
   private readonly sessions = new Map<string, LiveSession>()
   // Opens in flight, by Frizz session id. See `openOnce`.
   private readonly opening = new Map<string, ReturnType<AcpBridge["open"]>>()
+  // Sessions being ended, and daemons being stopped, by Frizz session id. See `endSession`.
+  private readonly ending = new Map<string, Promise<void>>()
+  private readonly stopping = new Map<string, Promise<void>>()
+  private readonly strandedListeners = new Set<(event: StrandedFollowUps) => void>()
   private readonly unsubscribe: (() => void) | undefined
   private closed = false
 
@@ -332,6 +348,7 @@ export class AcpBridge {
   private async open(input: { threadSlug: string; sessionId: string; cwd: string; agentId: string; modelId?: string | null; acpSessionId?: string | null; dispatch?: boolean }): Promise<{ live: LiveSession; resumed: "loaded" | "fresh" | "reattached" }> {
     const { threadSlug: slug, sessionId, cwd } = input
     const agent = this.resolveAgent(input.agentId)
+    await this.sessionEnded(sessionId)
     // An ACP agent is one detached daemon PER THREAD (acp-host.ts), so its environment can say who is
     // calling — which is all `frizzctl`, run from the agent's own shell, needs. Applied when the daemon
     // is forked; one that survived a Frizz restart keeps the environment it was born with.
@@ -387,7 +404,7 @@ export class AcpBridge {
       }))
     } catch (err) { return fail(err instanceof Error ? new Error(`${agent.label} did not complete the ACP handshake: ${err.message}`) : err) }
     const mcpServers = this.options.mountsMcp?.(slug) === false ? [] : frizzMcpServer(this.options.frizzMcp, slug)
-    live = { slug, sessionId, cwd, agent, conn, init, acpSessionId: "", writer, loading: false, queue: [], pendingPerms: new Map(), tools: new Map(), exited: false, detaching: false, ...(owedFromTranscript ? { contractOwed: "compaction" as const } : {}) }
+    live = { slug, sessionId, cwd, agent, conn, init, acpSessionId: "", writer, loading: false, queue: [], pendingPerms: new Map(), tools: new Map(), exited: false, detaching: false, ending: false, ...(owedFromTranscript ? { contractOwed: "compaction" as const } : {}) }
     void conn.exited.then(() => { if (live) this.onExit(live) })
 
     // REATTACHED to an agent that outlived a frizz restart: the session is already open (the daemon
@@ -594,6 +611,8 @@ export class AcpBridge {
    *  when a turn is running. Returns the (possibly new) ACP session id so the caller can re-pin it. */
   async followUp(input: AcpFollowUpInput): Promise<AcpFollowUpResult> {
     if (this.closed) throw new Error("ACP bridge is closed")
+    // A send that arrives while the session is being ended waits for that, then opens the session again.
+    await this.sessionEnded(input.sessionId)
     let live = this.sessions.get(input.sessionId)
     let resumed: AcpFollowUpResult["resumed"] = "live"
     if (!live || live.exited || live.conn.closed) {
@@ -613,7 +632,8 @@ export class AcpBridge {
   }
 
   /** `session/cancel`, then wait (bounded) for the prompt to return. `interrupted: false` when no turn
-   *  was running. The queue is NOT discarded — a follow-up typed during the turn still goes out. */
+   *  was running. The queue is NOT discarded — a follow-up typed during the turn still goes out on this
+   *  same agent. A stop that ends the agent as well is `endSession`, which takes the queue off first. */
   async interruptTurn(threadSlug: string, sessionId: string): Promise<{ interrupted: boolean }> {
     const live = this.sessions.get(sessionId)
     if (!live || live.slug !== threadSlug || !live.turn) return { interrupted: false }
@@ -624,6 +644,39 @@ export class AcpBridge {
     return { interrupted: true }
   }
 
+  /**
+   * STOP the worker: cancel its turn, wait for it, and end the agent. The queue comes off FIRST. A cancel
+   * returns the prompt, the prompt's return drains the queue, and the next message then went out on a
+   * connection about to be closed: `session/prompt: agent connection closed (stdin: write EPIPE)` on a
+   * message the agent never read (2026-11-06). What was queued is handed to `onFollowUpsStranded`, whose
+   * owner decides what becomes of it. Until the daemon is gone a follow-up waits (`sessionEnded`), so it
+   * opens a new agent rather than joining the old one's ending.
+   */
+  endSession(threadSlug: string, sessionId: string): Promise<void> {
+    const inflight = this.ending.get(sessionId)
+    if (inflight) return inflight
+    const live = this.sessions.get(sessionId)
+    if (live && live.slug === threadSlug) live.ending = true
+    const run = Promise.resolve().then(async () => {
+      if (live && live.slug === threadSlug) {
+        this.strand(live)
+        if (live.turn) await this.interruptTurn(threadSlug, sessionId)
+      }
+      this.releaseSession(threadSlug, sessionId, "session-deleted")
+      await this.stopping.get(sessionId)
+    }).finally(() => { if (this.ending.get(sessionId) === run) this.ending.delete(sessionId) })
+    this.ending.set(sessionId, run)
+    return run
+  }
+
+  /** Is this session on its way down? While it is, nothing should be handed to it. */
+  isEnding(sessionId: string): boolean { return this.ending.has(sessionId) || this.stopping.has(sessionId) }
+
+  private async sessionEnded(sessionId: string): Promise<void> {
+    await this.ending.get(sessionId)?.catch(() => {})
+    await this.stopping.get(sessionId)
+  }
+
   /** END the session's agent: cancel its turn, drop its cards, and stop the daemon holding it. This is
    *  the teardown for a thread that is dismissed, replaced or marked done — never for a restart, which
    *  is `shutdown()`. Inert when nothing is live AND no daemon exists for the session. */
@@ -631,13 +684,32 @@ export class AcpBridge {
     const live = this.sessions.get(sessionId)
     if (live && live.slug === threadSlug) {
       this.sessions.delete(sessionId)
-      live.queue.length = 0
+      live.ending = true
+      this.strand(live)
       this.retirePermissions(live, "provider-cancelled")
-      if (live.turn) live.conn.notify("session/cancel", { sessionId: live.acpSessionId })
+      if (live.turn) {
+        live.turn.cancelRequested = true
+        live.conn.notify("session/cancel", { sessionId: live.acpSessionId })
+      }
       void live.conn.close(3_000)
     }
     void reason
-    void stopAcpDaemon(this.options.stateDir, sessionId).catch(() => {})
+    const stopped = stopAcpDaemon(this.options.stateDir, sessionId).catch(() => {}).finally(() => { if (this.stopping.get(sessionId) === stopped) this.stopping.delete(sessionId) })
+    this.stopping.set(sessionId, stopped)
+  }
+
+  /** Hear about follow-ups that were queued on a session that can no longer send them. */
+  onFollowUpsStranded(listener: (event: StrandedFollowUps) => void): () => void {
+    this.strandedListeners.add(listener)
+    return () => { this.strandedListeners.delete(listener) }
+  }
+
+  private strand(live: LiveSession): void {
+    const followUps = live.queue.splice(0)
+    if (!followUps.length) return
+    for (const listener of this.strandedListeners) {
+      try { listener({ threadSlug: live.slug, sessionId: live.sessionId, followUps }) } catch (err) { this.diagnostic(live.slug, "queue", `stranded follow-ups: ${(err as Error).message}`) }
+    }
   }
 
   /** Boot-time reattach: every session in `rows` whose daemon is still running is re-opened NOW, so a
@@ -703,6 +775,9 @@ export class AcpBridge {
     this.sessions.clear()
     await Promise.all(all.map(async (live) => {
       live.detaching = true
+      // The queue is this process's memory: the daemon carries on with the turn, and nobody is left to
+      // send what was waiting behind it.
+      this.strand(live)
       this.dropPermissionCards(live)
       await live.conn.close(1_000)
     }))
@@ -729,7 +804,7 @@ export class AcpBridge {
   private newTurn(deliveryId: string | undefined): Turn {
     let finish!: () => void
     const done = new Promise<void>((r) => { finish = r })
-    return { startedAt: this.now(), ...(deliveryId ? { deliveryId } : {}), text: "", messageText: "", thought: "", cancelRequested: false, done, finish }
+    return { startedAt: this.now(), ...(deliveryId ? { deliveryId } : {}), text: "", messageText: "", thought: "", cancelRequested: false, heard: false, done, finish }
   }
 
   private async runTurn(live: LiveSession, sendText: string, recordText: string, deliveryId: string | undefined): Promise<void> {
@@ -781,7 +856,8 @@ export class AcpBridge {
       const finalText = this.flushText(live, true)
       const at = this.now()
       // Some agents (Gemini) answer a cancel with -32603 "aborted" instead of stopReason cancelled.
-      const abortedByUs = turn.cancelRequested && err instanceof AcpRemoteError && err.error.code === ACP_ERROR_INTERNAL
+      // Or the connection goes first, because the session is being ended under the turn.
+      const abortedByUs = turn.cancelRequested && (err instanceof AcpConnectionClosed || (err instanceof AcpRemoteError && err.error.code === ACP_ERROR_INTERNAL))
       if (abortedByUs) {
         live.writer.append({ kind: "turn-end", at, ...(finalText !== undefined ? { finalText } : {}), successful: false })
         live.writer.append({ kind: "acp-note", at, text: "Turn cancelled." })
@@ -789,7 +865,10 @@ export class AcpBridge {
         const message = err instanceof AcpRemoteError
           ? (err.error.code === ACP_ERROR_AUTH_REQUIRED ? `${AUTH_HINT}${err.error.message}` : err.error.message)
           : (err as Error).message
-        live.writer.append({ kind: "provider-error", at, error: { message: clip(message, 2_000), ...(err instanceof AcpRemoteError ? { code: String(err.error.code) } : {}) } })
+        // The prompt went into a connection that was already gone, with no word from the agent since: the
+        // bubble above this card is a message it never read, and only the card can say so.
+        const unread = err instanceof AcpConnectionClosed && !turn.heard
+        live.writer.append({ kind: "provider-error", at, error: { message: clip(message, 2_000), ...(err instanceof AcpRemoteError ? { code: String(err.error.code) } : {}), ...(unread ? { details: "The agent did not read this message. Send it again to restart the agent." } : {}) } })
         live.writer.append({ kind: "turn-end", at, ...(finalText !== undefined ? { finalText } : {}), successful: false })
       }
     } finally {
@@ -797,8 +876,11 @@ export class AcpBridge {
       if (live.turn === turn) live.turn = undefined
       turn.finish()
       this.options.onStatusChange?.()
-      const next = live.queue.shift()
-      if (next && !live.exited && !live.conn.closed) void this.runTurn(live, next.text, next.text, next.deliveryId)
+      if (live.ending || live.exited || live.conn.closed) this.strand(live)
+      else {
+        const next = live.queue.shift()
+        if (next) void this.runTurn(live, next.text, next.text, next.deliveryId)
+      }
     }
   }
 
@@ -837,6 +919,14 @@ export class AcpBridge {
     if (!parsed.success) { this.diagnostic(live.slug, "protocol", "malformed session/update"); return }
     const update = parseSessionUpdate(parsed.data.update)
     const turn = live.turn
+    // Only what a prompt produces. A session's own housekeeping (its command list) can land mid-turn too.
+    if (turn && ["agent_thought_chunk", "agent_message_chunk", "tool_call", "tool_call_update", "plan"].includes(update.sessionUpdate)) turn.heard = true
+    // A SUB-AGENT'S session, forwarded on this one. Its tool calls stay in the transcript as flat rows
+    // (the parent's `subagent` row carries its result). Everything else describes the child: its text and
+    // reasoning joined the parent's message and could become the thread's final text, and its usage,
+    // title and compaction would be read as the thread's own.
+    const child = isAcpChildUpdate(update)
+    if (child && update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") return
     switch (update.sessionUpdate) {
       case "agent_thought_chunk": {
         if (!turn) return
@@ -859,8 +949,10 @@ export class AcpBridge {
       case "tool_call": {
         this.flushThought(live)
         this.flushText(live, false)
-        if (turn) turn.messageText = "" // text before a tool call is commentary, not the answer
-        const meta: ToolMeta = { ...(update.kind ? { kind: update.kind } : {}), ...(update.title ? { title: update.title } : {}), locations: (update.locations ?? []).map((l) => l.path), written: true }
+        // Text before a tool call is commentary, not the answer. A child's call says nothing about that.
+        if (turn && !child) turn.messageText = ""
+        const inputJson = nonEmptyInputJson(update.rawInput)
+        const meta: ToolMeta = { ...(update.kind ? { kind: update.kind } : {}), ...(update.title ? { title: update.title } : {}), locations: (update.locations ?? []).map((l) => l.path), written: true, ...(inputJson ? { inputJson } : {}) }
         live.tools.set(update.toolCallId, meta)
         live.writer.append({ kind: "tool-call", at: this.now(), id: update.toolCallId, name: update.title ?? update.kind ?? "tool", input: update.rawInput ?? {}, acp: { ...(meta.kind ? { kind: meta.kind } : {}), ...(meta.title ? { title: meta.title } : {}), locations: meta.locations ?? [] } })
         if (update.status === "completed" || update.status === "failed") this.recordToolResult(live, update)
@@ -880,7 +972,16 @@ export class AcpBridge {
           this.flushThought(live)
           this.flushText(live, false)
           meta.written = true
+          const inputJson = nonEmptyInputJson(update.rawInput)
+          if (inputJson) meta.inputJson = inputJson
           live.writer.append({ kind: "tool-call", at: this.now(), id: update.toolCallId, name: meta.title ?? meta.kind ?? "tool", input: update.rawInput ?? {}, acp: { ...(meta.kind ? { kind: meta.kind } : {}), ...(meta.title ? { title: meta.title } : {}), locations: meta.locations ?? [] } })
+        }
+        // A later update can carry what the first frame did not: opencode's `tool_call` has `{cwd}`, its
+        // first `in_progress` update `{command, cwd}`, and the completing one no input at all.
+        const inputJson = nonEmptyInputJson(update.rawInput)
+        if (inputJson && inputJson !== meta.inputJson) {
+          meta.inputJson = inputJson
+          live.writer.append({ kind: "acp-tool-input", at: this.now(), id: update.toolCallId, input: update.rawInput, acp: { ...(meta.title ? { title: meta.title } : {}), ...(meta.locations ? { locations: meta.locations } : {}) } })
         }
         if (update.status === "completed" || update.status === "failed") this.recordToolResult(live, update)
         return
@@ -928,9 +1029,9 @@ export class AcpBridge {
     const meta = live.tools.get(tc.toolCallId)
     if (meta?.status === "completed" || meta?.status === "failed") return // already recorded
     if (meta) meta.status = tc.status
-    // opencode's `tool_call` carries neither `rawInput` nor `locations`; both arrive on the completing
+    // opencode 1.18's `tool_call` carried neither `rawInput` nor `locations`; both arrived on the completing
     // `tool_call_update` (live 2026-09-15). The result record carries them so the drawer's "edited N
-    // files" can name the file instead of the tool.
+    // files" can name the file instead of the tool. 2.0 sends the input earlier (`acp-tool-input`).
     const input = tc.rawInput && typeof tc.rawInput === "object" ? tc.rawInput as Record<string, unknown> : undefined
     live.writer.append({ kind: "tool-result", at: this.now(), id: tc.toolCallId, text: clip(toolResultText(tc), 20_000), acp: { ...(tc.status ? { kind: tc.status } : {}), ...(meta?.locations?.length ? { locations: meta.locations } : {}), ...(input && Object.keys(input).length ? { input } : {}) } })
   }

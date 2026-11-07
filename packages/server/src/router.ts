@@ -182,13 +182,17 @@ import {
   acpModelIdFromModel,
   OpencodeModels,
   opencodeModelRef,
+  backendFollowUps,
   AcpAgentModels,
   AcpAgentModelsInput,
 } from "@frizz/shared"
 import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
 import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command-watch.ts"
-import { listAcpAgents } from "./backend/acp-agents.ts"
+import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
+import { hasLaunchPrefix } from "./backend/launch-prefix.ts"
+import { withDefaultAgentProfile } from "./dispatch-preferences.ts"
+import { runtimeDownloads } from "./runtime-deferral.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { appServerTurnStalled, resolveLiveWatchTarget, resolveRecurringPrompt, resolveSessionTitle } from "./board.ts"
@@ -197,7 +201,7 @@ import { repairThreadFile } from "./repair.ts"
 import { reopenArchivedThreadForFollowUp, resumeThread, wakeParkedThreadForFollowUp } from "./resume.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
 import { opencodeNativeAvailable } from "./backend/opencode-service.ts"
-import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, forgetDelivery, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
+import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, failHeldDeliveries, forgetDelivery, holdStrandedDeliveries, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
 import {
   readEarlierThreadTranscriptPage,
@@ -244,7 +248,7 @@ import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
+import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
@@ -375,10 +379,9 @@ export interface OpencodeTurnTerminator {
 
 export interface AcpTurnTerminator {
   turnLiveness(threadSlug: string, sessionId: string): { turnActive: boolean } | undefined
-  interruptTurn(threadSlug: string, sessionId: string): Promise<{ interrupted: boolean }>
-  /** End the agent itself — its daemon outlives frizz (acp-host.ts), so a stop that only cancelled
-   *  the turn would leave the agent running for nobody. */
-  releaseSession(threadSlug: string, sessionId: string, reason: "session-replaced" | "session-deleted"): void
+  /** Take the queue off, cancel the turn and end the agent itself — its daemon outlives frizz
+   *  (acp-host.ts), so a stop that only cancelled the turn would leave the agent running for nobody. */
+  endSession(threadSlug: string, sessionId: string): Promise<void>
   /** Whether an agent process exists for this session at all — attached or not, mid-turn or idle. The
    *  Claude broker's `isDaemonAlive` twin: an idle daemon is still a live worker to end. */
   isAgentAlive(threadSlug: string, sessionId: string): boolean
@@ -446,14 +449,12 @@ export async function stopThreadRuntime(
     return alive ? "stopped" : "absent"
   }
   if (row.backend === "acp") {
-    // The bridge answers both questions: is a turn running, and stop it (session/cancel, then wait for
-    // the prompt to return). Then END the agent: it lives in a detached daemon that would otherwise sit
-    // idle for hours after the thread is put away. A resting thread with no daemon costs nothing here.
+    // The bridge stops the turn (session/cancel, then wait for the prompt to return) and then ENDS the
+    // agent: it lives in a detached daemon that would otherwise sit idle for hours after the thread is
+    // put away. A resting thread with no daemon costs nothing here.
     if (!acp) return "absent"
     const alive = acp.isAgentAlive(row.slug, row.session_id)
-    const turnActive = acp.turnLiveness(row.slug, row.session_id)?.turnActive === true
-    if (turnActive) await acp.interruptTurn(row.slug, row.session_id)
-    acp.releaseSession(row.slug, row.session_id, "session-deleted")
+    await acp.endSession(row.slug, row.session_id)
     return alive ? "stopped" : "absent"
   }
   if (isAppServerCodexRow(row)) {
@@ -1263,7 +1264,9 @@ export function createRouter(ctx: AppContext) {
             threadSlug: input.slug, sessionId: row.session_id, cwd: ctx.project.dir, opencodeSessionId: row.agent_session_id,
             ...(opencodeModelRef(row.model) ? { model: opencodeModelRef(row.model)! } : {}), mode: opencodeModeOf(row.permission_mode),
             text: messageForWorker, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
-            delivery: input.hold ? "queue" : "steer", ...(input.interrupt ? { interrupt: true } : {}),
+            // A message sent to the queue is Frizz's to hold until the rest (releaseHeldFollowUps), as on
+            // every backend, so what reaches OpenCode is always a steer: read at its next step boundary.
+            delivery: "steer", ...(input.interrupt ? { interrupt: true } : {}),
           })
         } catch (err) {
           if (input.deliveryId) forgetDelivery(ctx.storage, input.slug, input.deliveryId)
@@ -1681,11 +1684,12 @@ export function createRouter(ctx: AppContext) {
       if (answers.length > 0) return
       throw new Error("There is nothing to send")
     }
-    // OpenCode's inbox has a queue of its own, so a send to the queue goes straight there and `hold` says so.
-    const toOpencodeQueue = ctx.storage.getSession(input.slug)?.backend === "opencode" && input.hold === true && !input.interrupt
-    const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, hold: toOpencodeQueue ? true : undefined }
-    if (input.hold && !toOpencodeQueue && !input.interrupt && !input.freshProcess && !replay) {
-      const row = ctx.storage.getSession(input.slug)
+    const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, hold: undefined }
+    const row = ctx.storage.getSession(input.slug)
+    // A backend with no steer has nothing else to do with a message sent mid-turn, whoever is asking: a
+    // tab from before the composer knew, or `frizzctl steer`.
+    const hold = input.hold || !backendFollowUps(row?.backend).steer
+    if (hold && !input.interrupt && !input.freshProcess && !replay) {
       // Only something the server can SEE is worth waiting behind: a turn the tailer reads as running,
       // messages already held (the queue is FIFO, so a send must not overtake them on a rest), or a send
       // whose turn has not ended (the queue goes out one turn at a time). Unknown telemetry sends now: a
@@ -1726,6 +1730,19 @@ export function createRouter(ctx: AppContext) {
     if (!row) { heldSlugs.delete(slug); return 0 }
     const items = parseDeliveryLedger(row.delivery_ledger)
     if (!items.some((item) => item.state === "held")) { heldSlugs.delete(slug); return 0 }
+    if (row.backend === "acp" || row.backend === "opencode") {
+      // The session is going down, so its stop decides what this message waits for. The sweep comes back.
+      if (row.backend === "acp" && ctx.acpBridge?.isEnding?.(row.session_id)) return 0
+      // Nobody is coming to read it: the operator ended this thread with the message still waiting.
+      // Sending it would reopen what they just closed, so it stays on screen as a failed send instead.
+      if (row.state === "archived" || row.archived === 1) {
+        failHeldDeliveries(ctx.storage, slug, "The session ended before this message was sent.")
+        heldSlugs.delete(slug)
+        ctx.transcriptChange.emit([slug])
+        ctx.board.refresh()
+        return 0
+      }
+    }
     if (!opts.force && ctx.tailer.get(slug)?.turn === "in-flight") return 0
     if (hasPendingPermissionChange(row)) return 0 // the sweep comes back for it
     const item = nextHeldRelease(items, { force: opts.force })
@@ -1771,6 +1788,18 @@ export function createRouter(ctx: AppContext) {
   ctx.bus?.subscribe((event) => {
     if (event.type !== "notify" || event.kind !== "turn-done" || !heldSlugs.has(event.slug)) return
     setTimeout(() => void releaseHeldFollowUps(event.slug), 0).unref?.()
+  })
+  // A message the ACP bridge was queueing on a session that stopped, or lost its agent, under it. The
+  // ledger holds it from here, durably: the release opens the session again and delivers it once the
+  // agent is back, or fails it visibly if the thread was put away.
+  ctx.acpBridge?.onFollowUpsStranded?.(({ threadSlug, sessionId, followUps }) => {
+    const row = ctx.storage.getSession(threadSlug)
+    if (!row || row.session_id !== sessionId) return
+    const sends = followUps.map((followUp) => ({ id: followUp.deliveryId ?? randomUUID(), text: followUp.text }))
+    if (holdStrandedDeliveries(ctx.storage, threadSlug, sends) === 0) return
+    watchHeld(threadSlug)
+    ctx.transcriptChange.emit([threadSlug])
+    ctx.board.refresh()
   })
 
   // The two checks both recurring-prompt writers owe, shared so the operator's path and the worker's
@@ -3163,25 +3192,31 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const row = currentOwnedSession(input.slug, input.sessionId)
         if (!row) throw new Error("This thread is no longer the session this tab is looking at")
+        // With no steer there is nothing "now" can mean: a released message would only wait in the
+        // bridge instead of the ledger. A tab from before the composer knew can still ask.
+        if (!backendFollowUps(row.backend).steer) return { interrupted: false, reason: "This agent reads a message when its turn ends, so it can't be sent sooner" }
         // The next message Frizz was HOLDING for the rest goes to the runtime first — the operator has just
         // said not to wait — and then the interrupt below pushes the runtime's queue through, it included.
         // One message, as a rest would hand over: the queue goes out one at a time (nextHeldRelease). On a
         // runtime with no interrupt the release is the entire act, and it is a steer there, read at the
         // agent's next step.
-        // OpenCode's own queue: the oldest queued item becomes a steer, read at the next step. A send now
-        // also stops the running step so it is read at once; `resume` is what restarts the execution.
-        if (row.backend === "opencode") {
-          const bridge = ctx.opencodeBridge
-          const item = parseDeliveryLedger(row.delivery_ledger).find((d) => d.state === "enqueued")
-          if (!bridge || !row.agent_session_id || !item) return { interrupted: false, reason: "That message has already been sent" }
-          const moved = await bridge.steerQueued(opencodeRefOf(row), item.id, { interrupt: !input.releaseOnly })
-          if (!moved) return { interrupted: false, reason: "That message has already been sent" }
-          ctx.board.refresh()
-          return input.releaseOnly ? { interrupted: false, released: 1 } : { interrupted: true, released: 1 }
-        }
         const released = await releaseHeldFollowUps(input.slug, { force: true })
         if (input.releaseOnly) {
           return released > 0 ? { interrupted: false, released } : { interrupted: false, reason: "That message has already been sent" }
+        }
+        // OpenCode reads a steer at its next step boundary; send now interrupts the running step with
+        // `resume`, so the execution starts again with the message in it rather than ending.
+        if (row.backend === "opencode") {
+          const bridge = ctx.opencodeBridge
+          const pushed = bridge && row.agent_session_id ? await bridge.pushSteers(opencodeRefOf(row)) : "nothing"
+          if (pushed === "pushed") return released > 0 ? { interrupted: true, released } : { interrupted: true }
+          if (released > 0) return { interrupted: false, released }
+          return {
+            interrupted: false,
+            reason: pushed === "subagent"
+              ? "A sub-agent is running, and sending now would stop it. The message is read when it finishes"
+              : "This thread has no turn running, so nothing is ahead of that message",
+          }
         }
         if (row.backend !== "claude" || row.claude_runtime !== "broker") {
           return released > 0
@@ -3613,7 +3648,11 @@ export function createRouter(ctx: AppContext) {
         const result = await completeRegisteredThread(
           ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge,
         )
-        if (!result.needsConfirmation) ctx.board.refresh()
+        if (!result.needsConfirmation) {
+          ctx.board.refresh()
+          // Whatever an ACP thread was still holding fails now, not at the next sweep.
+          if (row.backend === "acp") void releaseHeldFollowUps(input.slug)
+        }
         return result
       },
     }),
@@ -4931,6 +4970,8 @@ export function createRouter(ctx: AppContext) {
           throw new Error("This thread resumed or was replaced while it was being stopped; the new worker was preserved")
         }
         ctx.board.refresh() // storage-only change — overlay is enough
+        // An ACP turn stopped here may have had messages waiting behind it: they go out on a new agent.
+        if (stopped.row?.backend === "acp") void releaseHeldFollowUps(input.slug)
       },
     }),
 
@@ -4951,6 +4992,12 @@ export function createRouter(ctx: AppContext) {
 
     // The ACP agents Frizz knows how to launch, with `available` for the ones on this machine's PATH.
     // The composer lists the available ones as `acp:<id>` models (plans/acp-backend.md, decision 9).
+    // What each runtime that waited for its first thread is doing while it comes down (runtime-deferral.ts).
+    // The composer polls this for as long as a dispatch call is out, and draws it in its toast.
+    runtimeDownloads: query({
+      output: z.object({ claude: z.string().optional(), codex: z.string().optional() }),
+      handler: async () => runtimeDownloads(),
+    }),
     acpAgents: query({
       output: z.array(AcpAgent),
       handler: async () => {
@@ -5410,7 +5457,19 @@ export function createRouter(ctx: AppContext) {
 
     dispatchPreferencesGet: query({
       output: DispatchPreferences,
-      handler: async () => ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion)),
+      handler: async () => {
+        const prefs = ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion))
+        if (ctx.hasSavedDispatchPreferences()) return prefs
+        const settings = ctx.getSettings()
+        const auth = await readAuthSnapshot({ claudeBin: ctx.claudeBin })
+        return withDefaultAgentProfile(prefs, defaultAgentProfile({
+          // A launch prefix may be what supplies a provider's credentials, so its "signed-out" says nothing.
+          claude: hasLaunchPrefix(settings, "claude") ? "unknown" : auth.claude,
+          codex: hasLaunchPrefix(settings, "codex") ? "unknown" : auth.codex,
+          opencodeInstalled: resolveAcpAgent("opencode", settings.acpAgents)?.bin !== undefined,
+          opencodeNative: (await opencodeNativeAvailable().catch(() => ({ available: false }))).available,
+        }))
+      },
     }),
 
     dispatchPreferenceSet: mutation({

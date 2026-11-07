@@ -843,3 +843,9 @@ test("a Windows project root shortens labels the same way, and the board's homeD
   assert.equal(toolActivityLabel(tool("Read", { detail: "D:\\other\\a.ts" }), root), "Reading D:\\other\\a.ts")
   assert.equal(toolActivityLabel(tool("Read", { detail: "C:\\Windows\\hosts" }), "C:\\"), "Reading C:\\Windows\\hosts")
 })
+
+test("an agent's own shell tool reads as running its command once the command is known", () => {
+  assert.equal(toolActivityLabel({ name: "shell" }), "Running a command")
+  assert.equal(toolActivityLabel({ name: "shell", detail: "sleep 40", command: "sleep 40" }), "Running sleep 40")
+  assert.equal(toolActivityLabel({ name: "Reading it: shell", detail: "cat hello.txt", command: "cat hello.txt" }), "Running cat hello.txt")
+})

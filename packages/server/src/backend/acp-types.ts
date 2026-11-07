@@ -181,6 +181,13 @@ export function parseSessionUpdate(raw: unknown): AcpSessionUpdate {
   return parsed.success ? parsed.data : { sessionUpdate: "unknown", raw }
 }
 
+/** `_meta["opencode/child-session"]`: this update belongs to a sub-agent's session, forwarded on the
+ *  parent's id (cli/src/acp/child.ts `project`, seen on 2.0.27 and 2.2.5). No other agent marks one yet. */
+export function isAcpChildUpdate(update: unknown): boolean {
+  const meta = (update as { _meta?: Record<string, unknown> } | undefined)?._meta
+  return meta !== null && typeof meta === "object" && meta["opencode/child-session"] != null
+}
+
 export const AcpSessionNotification = z.object({ sessionId: z.string(), update: z.unknown() }).passthrough()
 
 // ---- session/prompt ---------------------------------------------------------------------------

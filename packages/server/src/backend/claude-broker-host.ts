@@ -11,6 +11,7 @@ import { claudeBrokerDiagnosticLogPath, describeClaudeBrokerExit, readClaudeBrok
 import { endDaemonTree, type EndDaemonTreeDeps } from "./daemon-tree.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
 import type { WorkerMcpServers } from "./project-mcp-servers.ts"
+import { ensureRuntime } from "../runtime-deferral.ts"
 
 // The Claude Agent SDK REQUIRES an absolute `pathToClaudeCodeExecutable` (validateExecutablePath rejects
 // a bare name), unlike an execvp of the CLI, which resolves "claude" on PATH itself. When the dispatch layer
@@ -396,6 +397,7 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
 export async function adoptOrForkBroker(options: ForkBrokerOptions): Promise<{ record: BrokerRecord; reattached: boolean }> {
   const existing = liveBrokerRecord(claudeBrokerRecordPath(options.stateDir, options.sessionId))
   if (existing) return { record: existing, reattached: true }
+  await ensureRuntime("claude")
   return { record: await forkBroker(options), reattached: false }
 }
 

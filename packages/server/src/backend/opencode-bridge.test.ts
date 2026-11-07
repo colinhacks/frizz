@@ -144,21 +144,36 @@ test("opencode-bridge: a steer is read mid-turn, inside the same turn; a queued 
   } finally { await teardown(r) }
 })
 
-test("opencode-bridge: a queued message can be taken back until it is delivered, and promoted to a steer", async () => {
+test("opencode-bridge: a steer can be taken back until its step boundary, and send now pushes one through at once", async () => {
   const r = await rig()
   try {
-    const { opencodeSessionId } = await spawn(r, "[shell:a][wait:400][shell:b][say:done]")
-    await until(() => records(r).some((x) => x.kind === "tool-call"))
-    await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:never]", deliveryId: "d1", delivery: "queue" })
-    await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:promoted]", deliveryId: "d2", delivery: "queue" })
+    const { opencodeSessionId } = await spawn(r, "[shell:a][wait:3000][shell:b][say:never reached]")
+    await until(() => records(r).some((x) => x.kind === "tool-result"))
+    await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:never]", deliveryId: "d1", delivery: "steer" })
     assert.equal(await r.bridge.cancelQueued(ref(r, opencodeSessionId), "d1"), true)
-    assert.equal(await r.bridge.steerQueued(ref(r, opencodeSessionId), "d2"), true)
-    await until(() => ends(r) >= 1 && !r.fake.sessions.get(opencodeSessionId).running)
+    await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:read now]", deliveryId: "d2", delivery: "steer" })
+    const asked = Date.now()
+    assert.equal(await r.bridge.pushSteers(ref(r, opencodeSessionId)), "pushed")
+    await until(() => records(r).filter((x) => x.kind === "turn-end").some((x) => x.finalText === "read now"), 2500)
+    assert.ok(Date.now() - asked < 2500, "read at once, not after the 3s step")
     const texts = records(r).filter((x) => x.kind === "user-message").map((x) => x.text)
     assert.ok(!texts.includes("[say:never]"))
-    assert.ok(texts.includes("[say:promoted]"))
-    assert.equal(ends(r), 1, "a steer is read inside the running turn")
     assert.equal(await r.bridge.cancelQueued(ref(r, opencodeSessionId), "d2"), false, "too late once delivered")
+    assert.equal(await r.bridge.pushSteers(ref(r, opencodeSessionId)), "nothing")
+  } finally { await teardown(r) }
+})
+
+test("opencode-bridge: an interrupting send leaves a foreground sub-agent running and waits for its boundary", async () => {
+  const r = await rig({ childDelayMs: 600 })
+  try {
+    const { opencodeSessionId } = await spawn(r, "[sub:Slow child][say:parent done]")
+    await until(() => records(r).some((x) => x.kind === "opencode-subagent" && x.state === "running"))
+    await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:after the child]", deliveryId: "d1", delivery: "steer", interrupt: true })
+    assert.equal(await r.bridge.pushSteers(ref(r, opencodeSessionId)), "subagent")
+    await until(() => !r.fake.sessions.get(opencodeSessionId).running && ends(r) >= 1)
+    assert.ok(!r.fake.requests.some((q: any) => q.path === `/api/session/${opencodeSessionId}/interrupt`), "the parent was never interrupted")
+    assert.equal(records(r).filter((x) => x.kind === "opencode-subagent").at(-1)!.state, "completed")
+    assert.ok(records(r).some((x) => x.kind === "user-message" && x.text === "[say:after the child]"))
   } finally { await teardown(r) }
 })
 

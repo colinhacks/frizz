@@ -13,9 +13,10 @@ import { after, before, test } from "node:test"
 import { gzipSync } from "node:zlib"
 import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./backend/codex-app-server.ts"
 import {
-  CLAUDE_AGENT_SDK_VERSION, CLAUDE_CODE_VERSION, describeRuntime, extractNpmTarball, provisionRuntime, provisionedBinary,
-  resolveRuntimes, runtimeCoordinates, sweepRuntimes, type RuntimeCoordinates,
+  CLAUDE_AGENT_SDK_VERSION, CLAUDE_CODE_VERSION, describeRuntime, extractNpmTarball, pinnedBinaryPath, provisionRuntime, provisionedBinary,
+  resolveRuntimes, runtimeCoordinates, shouldDeferRuntimes, sweepRuntimes, type RuntimeCoordinates, type ShouldDeferRuntimesDeps,
 } from "./runtimes.ts"
+import { ensureRuntime, isRuntimeDeferred, resetDeferredRuntimes, runtimeDownloads } from "./runtime-deferral.ts"
 import { leaseRuntime, liveRuntimeLeases, runtimeVersionDir } from "./runtime-lease.ts"
 
 // --- a tiny tar writer, so the fixtures can carry what real tar tools refuse to write (an escaping
@@ -435,4 +436,120 @@ test("resolve: a sweep the OS refuses never discards the provisioned pin (Window
   assert.ok(log.includes(`info: runtimes: kept ${old} — in use (EBUSY)`), log.join("\n"))
   assert.ok(!log.some((line) => line.includes("could not provision claude")), log.join("\n"))
   rmSync(root, { recursive: true, force: true })
+})
+
+// --- a runtime that waits for its first thread -------------------------------------------------------
+
+const signedOutEverywhere: ShouldDeferRuntimesDeps = {
+  env: {},
+  findOpenCode: () => "/usr/local/bin/opencode",
+  readClaudeAuth: async () => "signed-out",
+  readClaudeOther: () => false,
+  readCodexAuth: () => "signed-out",
+}
+
+test("defer: only signed out of both with OpenCode on PATH", async () => {
+  assert.equal(await shouldDeferRuntimes(signedOutEverywhere), true)
+  const stays: Array<[string, ShouldDeferRuntimesDeps]> = [
+    ["no OpenCode", { findOpenCode: () => undefined }],
+    ["signed in to Claude", { readClaudeAuth: async () => "authed" }],
+    ["signed in to Codex", { readCodexAuth: () => "authed" }],
+    ["a Claude credential the readers cannot see", { readClaudeOther: () => true }],
+    ["Claude auth unreadable", { readClaudeAuth: async () => "unknown" }],
+    ["Claude auth threw", { readClaudeAuth: async () => { throw new Error("security timed out") } }],
+    ["Codex auth unreadable", { readCodexAuth: () => "unknown" }],
+    ["the test runner's FRIZZ_RUNTIMES=path", { env: { FRIZZ_RUNTIMES: "path" } }],
+  ]
+  for (const [name, change] of stays) assert.equal(await shouldDeferRuntimes({ ...signedOutEverywhere, ...change }), false, name)
+})
+
+test("defer: boot touches no registry, and the first need brings down exactly that backend at the path everyone holds", async (t) => {
+  t.after(resetDeferredRuntimes)
+  const root = scratch()
+  const claude = runtimeCoordinates("claude")!
+  const codex = runtimeCoordinates("codex")!
+  const triple = pinnedBinaryPath("codex", root, codex).split("/").at(-3)!
+  registry.set(claude.pkg, claude.packageVersion, tarball([{ name: `package/${claude.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]))
+  registry.set(codex.pkg, codex.packageVersion, tarball([{ name: `package/vendor/${triple}/bin/${codex.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]))
+  const before = registry.requests.length
+  const log: string[] = []
+  const got = await resolveRuntimes({ env: {}, root, registry: registry.url, defer: true, log: (level, message) => log.push(`${level}: ${message}`) })
+
+  assert.equal(registry.requests.length, before, "boot asked the registry for nothing")
+  assert.equal(existsSync(join(root, "claude", claude.label)), false)
+  assert.equal(got.claude.source, "deferred")
+  assert.equal(got.claude.version, claude.label, "the pin is known, so the Codex catalogue gate keeps its version")
+  assert.equal(got.claude.bin, join(root, "claude", claude.label, claude.binary))
+  assert.equal(isRuntimeDeferred("claude"), true)
+  assert.equal(isRuntimeDeferred("codex"), true)
+  assert.match(describeRuntime("claude", got.claude), /on its first thread/u)
+
+  await Promise.all([ensureRuntime("claude"), ensureRuntime("claude")])
+  assert.equal(registry.requests.filter((url) => url.includes("claude-agent-sdk") && !url.endsWith(".tgz")).length >= 1, true)
+  assert.equal(existsSync(got.claude.bin), true, "the pin landed where the consumers already point")
+  assert.equal(provisionedBinary("claude", root, claude.label), got.claude.bin)
+  assert.equal(isRuntimeDeferred("claude"), false)
+  assert.equal(isRuntimeDeferred("codex"), true, "Claude's first thread leaves Codex waiting")
+  assert.equal(existsSync(join(root, "codex", codex.label)), false)
+  assert.ok(liveRuntimeLeases(join(root, "claude", claude.label)).length > 0, "a pin in use is leased")
+
+  await ensureRuntime("codex")
+  assert.equal(existsSync(got.codex.bin), true, "the triple named at boot is the one the package carries")
+  assert.equal(provisionedBinary("codex", root, codex.label), got.codex.bin)
+  assert.ok(log.some((line) => line.startsWith("info: runtimes: provisioned codex")), log.join("\n"))
+  await ensureRuntime("codex") // no longer waiting: returns at once
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("defer: a failed download rejects, leaves the backend waiting, and the next attempt succeeds", async (t) => {
+  t.after(resetDeferredRuntimes)
+  const root = scratch()
+  const claude = runtimeCoordinates("claude")!
+  const good = tarball([{ name: `package/${claude.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }])
+  registry.set(claude.pkg, claude.packageVersion, good, integrityOf(Buffer.from("not this")))
+  await resolveRuntimes({ env: {}, root, registry: registry.url, defer: true })
+  await assert.rejects(ensureRuntime("claude"), /integrity mismatch/u)
+  assert.equal(isRuntimeDeferred("claude"), true)
+  assert.deepEqual(runtimeDownloads(), {}, "a finished attempt reports no progress")
+  registry.set(claude.pkg, claude.packageVersion, good)
+  await ensureRuntime("claude")
+  assert.equal(isRuntimeDeferred("claude"), false)
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("defer: a package laid out differently from the path the consumers hold is refused by name", async (t) => {
+  t.after(resetDeferredRuntimes)
+  const root = scratch()
+  const codex = runtimeCoordinates("codex")!
+  registry.set(codex.pkg, codex.packageVersion, tarball([{ name: `package/vendor/some-other-triple/bin/${codex.binary}`, data: Buffer.from("x"), mode: 0o755 }]))
+  await resolveRuntimes({ env: {}, root, registry: registry.url, defer: true })
+  await assert.rejects(ensureRuntime("codex"), /unpacked its binary at/u)
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("defer: a pin an earlier server left on disk is still not run until its first thread", async (t) => {
+  t.after(resetDeferredRuntimes)
+  const root = scratch()
+  const claude = runtimeCoordinates("claude")!
+  registry.set(claude.pkg, claude.packageVersion, tarball([{ name: `package/${claude.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]))
+  await provisionRuntime("claude", { root, coordinates: claude, registry: registry.url })
+  const before = registry.requests.length
+  const got = await resolveRuntimes({ env: {}, root, registry: registry.url, defer: true })
+  assert.equal(got.claude.source, "deferred")
+  assert.equal(got.claude.bin, provisionedBinary("claude", root, claude.label))
+  assert.equal(isRuntimeDeferred("claude"), true)
+  await ensureRuntime("claude")
+  assert.equal(registry.requests.length, before, "nothing to fetch")
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("the Codex triple is the package's on every published platform", () => {
+  const coords = runtimeCoordinates("codex", "linux", "x64", false)!
+  const tail = (platform: NodeJS.Platform, arch: string) => pinnedBinaryPath("codex", "/r", coords, platform, arch).split("/").slice(-3, -2)[0]
+  assert.equal(tail("darwin", "arm64"), "aarch64-apple-darwin")
+  assert.equal(tail("darwin", "x64"), "x86_64-apple-darwin")
+  assert.equal(tail("linux", "x64"), "x86_64-unknown-linux-musl")
+  assert.equal(tail("linux", "arm64"), "aarch64-unknown-linux-musl")
+  assert.equal(tail("win32", "x64"), "x86_64-pc-windows-msvc")
+  assert.equal(tail("win32", "arm64"), "aarch64-pc-windows-msvc")
 })

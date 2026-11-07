@@ -16,6 +16,7 @@ import { draftKey, mergeIntoDraft, useDraft, useProjectDir } from "../lib/drafts
 import { noteFailedDraftOrigin, takeSupersededFailure } from "../lib/failedDelivery.ts"
 import { parseAccountAlias } from "../lib/signIn.ts"
 import { useEagerFollowUp, type EagerFollowUpCallbacks } from "../lib/eagerComposerSubmission.ts"
+import { backendFollowUps } from "@frizz/shared"
 import { canInterruptAndSend } from "../lib/composerKeyboard.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
@@ -176,7 +177,10 @@ function LocalThreadComposerBox({
   // goes out one message per turn, and the agent rests for a moment between two of them.
   const held = useContext(QueuedRunContext)?.held ?? 0
   const behind = running || held > 0
-  const mode = useSendMode()
+  // A backend with no steer has one way to send, whichever row the operator keeps ticked for the others.
+  const { steer: steerable } = backendFollowUps(thread?.backend)
+  const pickedMode = useSendMode()
+  const mode = steerable ? pickedMode : "queue"
   // ONE placeholder for both surfaces, decided here from the thread — the queue card said "Reply to the
   // agent…" and the drawer "Follow up…" until 2026-10-09, and only the card said when the box was the
   // way AROUND an open question. An external session keeps its own sentence: it says what sending does,
@@ -187,7 +191,7 @@ function LocalThreadComposerBox({
   // and with the menu shut this line is also what says how the button will send (sendPlaceholder).
   const placeholder = thread?.foreign
     ? "Send a message to take over this session…"
-    : sendPlaceholder({ staged, openQuestions: Boolean(thread?.pendingQuestion) || (thread ? hasStandingQuestion(thread) : false), running: behind, mode })
+    : sendPlaceholder({ staged, openQuestions: Boolean(thread?.pendingQuestion) || (thread ? hasStandingQuestion(thread) : false), running: behind, mode, steerable })
   const projectDir = useProjectDir()
   const key = draftKey.followUp(projectDir, slug, thread?.sessionId)
   const [message, setMessage, clearMessage] = useDraft(key)
@@ -286,6 +290,7 @@ function LocalThreadComposerBox({
       // board's delivery in flight) counts too, since the queue gives each message a turn of its own;
       // the server is the judge of that one, and sends at once if nothing is ahead after all.
       ...(mode === "queue" && !interrupt && (behind || thread?.deliveryInFlight === true) ? { hold: true } : {}),
+      ...(steerable ? {} : { failureToast: (error: string) => `Send failed — ${error.slice(0, 160)}` }),
       // Re-sending words an earlier failure handed back replaces that failure's bubble — see
       // lib/failedDelivery.ts.
       supersedes: takeSupersededFailure(key, outgoing),
@@ -335,7 +340,7 @@ function LocalThreadComposerBox({
           slashSuggest={slashSuggest}
           // An external session keeps its own sentence (it says what sending does); otherwise the verb
           // is the thread's state: steering a turn in flight, or replying to one at rest.
-          placeholder={thread?.foreign ? placeholder : turnRunning ? "Steer…" : "Reply…"}
+          placeholder={thread?.foreign ? placeholder : turnRunning ? (steerable ? "Steer…" : "Queue…") : "Reply…"}
           busy={controls.busy}
           fileDrop={fileDrop}
           phone={{
@@ -383,7 +388,7 @@ function LocalThreadComposerBox({
         fileDrop={fileDrop}
         // An external session keeps the ↑: sending there takes the session over, and there is no turn
         // of Frizz's to steer or queue behind until it has.
-        send={thread?.foreign ? undefined : { mode, onMode: setSendMode, running: behind, staged }}
+        send={thread?.foreign ? undefined : { mode, onMode: setSendMode, running: behind, staged, steerable }}
       />
       {controls.status}
       {signInFor && <SignInModal backend={signInFor} onClose={() => setSignInFor(null)} onAuthed={() => setSignInFor(null)} />}
