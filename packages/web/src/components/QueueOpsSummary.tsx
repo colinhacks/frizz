@@ -103,11 +103,7 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
   link: "Links saved for this thread",
 }
 
-// `variant: "tongue"` is the one-thread pane's (ThreadTongue): the counts start at the LEFT of a strip
-// hanging under the prompt box, so the line fills the strip up to its verbs and every panel opens
-// left-aligned to it, its triangle measured from that edge. The panels still open upward, over the box.
-export function QueueOpsSummary({ thread: given, transcriptShells = [], variant = "over" }: { thread: ThreadView; transcriptShells?: readonly (BgShellView & TranscriptShellRecord)[]; variant?: "over" | "tongue" }) {
-  const fromStart = variant === "tongue"
+export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thread: ThreadView; transcriptShells?: readonly (BgShellView & TranscriptShellRecord)[] }) {
   // The counts move with the transcript's Agent rows, not ahead of them (ThreadSurface opsThread).
   const thread = useSurfaceOpsThread(given)
   // The thread's CHILD THREADS are other rows of the board, read here rather than off the thread (they
@@ -207,7 +203,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], variant 
     // 32. Measured after, sans: 11.94px above the cap band and 11.95px under the baseline, on the queue
     // card and in the drawer (queueOpsPanels.e2e.test.ts pins the pair). The size is set HERE so the
     // strut's `cap` is the counts' own.
-    <div data-queue-ops-summary ref={line} className={`flex h-8 min-w-0 items-baseline text-[11.5px] ${fromStart ? "flex-1 justify-start" : "-mt-3 justify-end"}`}>
+    <div data-queue-ops-summary ref={line} className="-mt-3 flex h-8 min-w-0 items-baseline justify-end text-[11.5px]">
       <span aria-hidden className="h-[calc(16px_+_0.5cap)] w-0 shrink-0" />
       {groups.map((group) => (
         <OpsCount
@@ -226,7 +222,6 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], variant 
           onCloseSoon={closeSoon}
           registerPanel={registerPanel}
           caretAt={caretAt}
-          fromStart={fromStart}
           // A change Radix sends for one panel (a press outside it, Escape, focus moving on) closes only
           // that panel: by then the pointer or the focus may already have opened the next count's.
           onOpenChange={(next) => (next ? openNow(group.key) : setOpenKind((current) => (current === group.key ? null : current)))}
@@ -245,7 +240,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], variant 
 }
 
 // One count and the panel it opens.
-function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoon, registerPanel, caretAt, fromStart, onOpenChange, children }: {
+function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoon, registerPanel, caretAt, onOpenChange, children }: {
   group: QueueOpsCount
   line: RefObject<HTMLDivElement | null>
   open: boolean
@@ -255,7 +250,6 @@ function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoo
   onCloseSoon: () => void
   registerPanel: (element: HTMLDivElement | null) => void
   caretAt: RefObject<number | null>
-  fromStart: boolean
   onOpenChange: (open: boolean) => void
   children: ReactNode
 }) {
@@ -327,7 +321,7 @@ function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoo
       </button>
       <PopoverContent
         side="top"
-        align={fromStart ? "start" : "end"}
+        align="end"
         sideOffset={0}
         data-queue-ops-panel={group.key}
         aria-label={PANEL_LABEL[group.key]}
@@ -364,7 +358,7 @@ function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoo
             row's fill 12px from the panel's right edge against 5px from its left. A row cut off by the edge
             is what says there is more, as it does in the prompt box. */}
         <div className="max-h-[min(20rem,50vh)] overflow-y-auto scrollbar-none">{children}</div>
-        <PanelCaret count={button} line={line} caretAt={caretAt} fromStart={fromStart} />
+        <PanelCaret count={button} line={line} caretAt={caretAt} />
       </PopoverContent>
     </Popover>
   )
@@ -376,14 +370,12 @@ function OpsCount({ group, line, open, onOpen, onHover, onHoverPanel, onCloseSoo
 // A swap mounts a new panel, each count having its own, so the slide is this: start where the last
 // triangle stood, and move to this count's place on the next frame. A panel opened from nothing starts
 // in place.
-function PanelCaret({ count, line, caretAt, fromStart }: { count: RefObject<HTMLButtonElement | null>; line: RefObject<HTMLDivElement | null>; caretAt: RefObject<number | null>; fromStart: boolean }) {
+function PanelCaret({ count, line, caretAt }: { count: RefObject<HTMLButtonElement | null>; line: RefObject<HTMLDivElement | null>; caretAt: RefObject<number | null> }) {
   const measure = () => {
     const span = line.current?.getBoundingClientRect()
     const chip = count.current?.getBoundingClientRect()
-    if (!span || !chip) return 0
-    // From the panel's aligned edge, which is the line's. The offset counts from inside the panel's 1px border.
-    const centre = chip.left + chip.width / 2
-    return (fromStart ? centre - span.left : span.right - centre) - CARET_WIDTH_PX / 2 - 1
+    // From the panel's right edge, which is the line's. `right` counts from inside the panel's 1px border.
+    return span && chip ? span.right - (chip.left + chip.width / 2) - CARET_WIDTH_PX / 2 - 1 : 0
   }
   const [right, setRight] = useState(() => caretAt.current ?? measure())
   // On every render, since a count's place on its line moves whenever the line's other counts change.
@@ -400,8 +392,8 @@ function PanelCaret({ count, line, caretAt, fromStart }: { count: RefObject<HTML
       width={CARET_WIDTH_PX}
       height={CARET_HEIGHT_PX}
       viewBox={`0 0 ${CARET_WIDTH_PX} ${CARET_HEIGHT_PX}`}
-      style={fromStart ? { left: right } : { right }}
-      className="pointer-events-none absolute top-full transition-[left,right] duration-100 ease-out motion-reduce:transition-none group-data-[side=bottom]/panel:top-auto group-data-[side=bottom]/panel:bottom-full group-data-[side=bottom]/panel:rotate-180"
+      style={{ right }}
+      className="pointer-events-none absolute top-full transition-[right] duration-100 ease-out motion-reduce:transition-none group-data-[side=bottom]/panel:top-auto group-data-[side=bottom]/panel:bottom-full group-data-[side=bottom]/panel:rotate-180"
     >
       <path d="M1 0 L6 5 L11 0 Z" className="fill-elevated" />
       <path d="M.5 .75 L5.5 5.1 Q6 5.5 6.5 5.1 L11.5 .75" fill="none" strokeLinejoin="round" className="stroke-border" />

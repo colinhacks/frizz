@@ -68,11 +68,10 @@ function fetchThreadSkills(slug: string): Promise<ThreadSkill[]> {
  * The prompt box on a read-and-answer session: nothing to type in, and the one line saying where typing happens.
  * The answers staged on the cards still leave from here, since this is where the Send they use lives.
  */
-function ReadAndAnswerComposerBox({ surface, className, above, below, phoneBarOverride, phoneChrome, readAndAnswerHost }: {
+function ReadAndAnswerComposerBox({ surface, className, above, phoneBarOverride, phoneChrome, readAndAnswerHost }: {
   surface: "queueComposer" | "chatComposer"
   className?: string
   above?: ReactNode
-  below?: ReactNode
   phoneBarOverride?: (api: PhoneBarApi) => ReactNode
   phoneChrome?: boolean
   readAndAnswerHost: string
@@ -103,7 +102,6 @@ function ReadAndAnswerComposerBox({ surface, className, above, below, phoneBarOv
           </button>
         )}
       </div>
-      {below}
     </div>
   )
 }
@@ -122,7 +120,6 @@ function LocalThreadComposerBox({
   className,
   id,
   above,
-  below,
   submitOverride,
   phoneBarOverride,
   phoneChrome,
@@ -140,8 +137,6 @@ function LocalThreadComposerBox({
   // queue card's docked box and the drawer's both carry, rather than rows hanging beneath it. Composed
   // by the caller — this component does not decide which ops a surface shows.
   above?: ReactNode
-  // Rendered right UNDER the prompt box, outside it: the one-thread pane's tongue (ThreadTongue).
-  below?: ReactNode
   // Replaces the default eager follow-up send. The queue card passes its useLiveAnswering `sendMessage`,
   // so the card's free-form reply and a reply that carries answers are literally the same send — one
   // controller, one optimistic card dissolve. Callers WITHOUT an answering controller (the drawer) omit
@@ -391,7 +386,6 @@ function LocalThreadComposerBox({
         // of Frizz's to steer or queue behind until it has.
         send={thread?.foreign ? undefined : { mode, onMode: setSendMode, running: behind, staged }}
       />
-      {below}
       {controls.status}
       {signInFor && <SignInModal backend={signInFor} onClose={() => setSignInFor(null)} onAuthed={() => setSignInFor(null)} />}
       {logoutFor && <LogoutConfirmModal backend={logoutFor} onClose={() => setLogoutFor(null)} />}
