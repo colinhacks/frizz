@@ -38,11 +38,14 @@ function harness() {
   const slug = `-tmp-frizz-live-page-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
   const logDir = join(homedir(), ".claude", "projects", slug)
   mkdirSync(logDir, { recursive: true })
+  // A session id of its own: a reader that finds no file in its bucket searches every bucket under
+  // ~/.claude/projects for one of the same name, so a shared "sid" here answers another suite's read.
+  const sid = `live-page-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
   const store = createStorage(join(mkdtempSync(join(tmpdir(), "frizz-live-page-")), "ui.db"), "p")
-  store.upsertSession({ slug: "t", session_id: "sid", thread_name: "frizz-t", spawned_at: new Date().toISOString(), last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: null, title_auto: 0, title: null, state: "open", meta: null, seen_at: null, transcript_id: null })
+  store.upsertSession({ slug: "t", session_id: sid, thread_name: "frizz-t", spawned_at: new Date().toISOString(), last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: null, title_auto: 0, title: null, state: "open", meta: null, seen_at: null, transcript_id: null })
   const project = { cwdSlug: slug } as unknown as Project
-  const path = join(logDir, "sid.jsonl")
-  return { store, project, path, cleanup: () => rmSync(logDir, { recursive: true, force: true }) }
+  const path = join(logDir, `${sid}.jsonl`)
+  return { sid, store, project, path, cleanup: () => rmSync(logDir, { recursive: true, force: true }) }
 }
 
 const cursorOf = (cursor: string) => JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { prefixDigest: string; snapshotBytes: number }
@@ -138,13 +141,14 @@ test("latestTranscriptWindow given the head it would compute returns the identic
 test("a cold fold runs in slices with the event loop between them, and the read after it sees what one whole fold would", async () => {
   const h = harness()
   try {
-    // A record far longer than a slice, in multi-byte text, so slices cut it and cut characters.
-    const body = exchanges(0, 4000) + ASSISTANT("long", "é".repeat(300_000)) + "\n" + exchanges(4000, 100)
+    // A record far longer than a slice, in multi-byte text, so slices cut it and cut characters. Eight
+    // megabytes, because a slice is a time budget: an idle machine folds two in two slices.
+    const body = exchanges(0, 16000) + ASSISTANT("long", "é".repeat(300_000)) + "\n" + exchanges(16000, 100)
     writeFileSync(h.path, body)
     __clearTranscriptCacheForTests()
 
     const folding = catchUpTranscriptFold(h.project, h.store, "t")
-    assert.ok(folding, "two megabytes of cold transcript is worth slicing")
+    assert.ok(folding, "eight megabytes of cold transcript is worth slicing")
     assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), folding, "a second reader shares the fold in progress")
 
     let turns = 0
@@ -156,22 +160,22 @@ test("a cold fold runs in slices with the event loop between them, and the read 
     assert.ok(turns >= 3, `the event loop only came round ${turns} times`)
 
     assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), undefined, "caught up, so the read goes ahead")
-    const whole = latestTranscriptWindow(projectClaudeTranscript(body, "claude:sid"))
+    const whole = latestTranscriptWindow(projectClaudeTranscript(body, `claude:${h.sid}`))
     assert.deepEqual(readLatestThreadTranscriptPage(h.project, h.store, "t").messages, whole)
 
     // What a retained fold has left to do is one appended record: nothing to slice.
-    appendFileSync(h.path, exchanges(4100, 1))
+    appendFileSync(h.path, exchanges(16100, 1))
     assert.equal(catchUpTranscriptFold(h.project, h.store, "t"), undefined)
 
     // A large append is sliced the same way, from where the fold had got to.
-    const appended = exchanges(4101, 2000)
+    const appended = exchanges(16101, 2000)
     appendFileSync(h.path, appended)
     const more = catchUpTranscriptFold(h.project, h.store, "t")
     assert.ok(more)
     await more
     assert.deepEqual(
       readLatestThreadTranscriptPage(h.project, h.store, "t").messages,
-      latestTranscriptWindow(projectClaudeTranscript(body + exchanges(4100, 1) + appended, "claude:sid")),
+      latestTranscriptWindow(projectClaudeTranscript(body + exchanges(16100, 1) + appended, `claude:${h.sid}`)),
     )
   } finally {
     __clearTranscriptCacheForTests()
