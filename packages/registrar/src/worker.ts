@@ -262,6 +262,13 @@ export function kvClaimStore(kv: KvNamespace): ClaimStore {
     async removeOwner(pubkey) {
       await kv.delete(`owner:${pubkey}`)
     },
+    async readRetired(name) {
+      return kv.get(`retired:${name}`)
+    },
+    async writeRetired(name, pubkey) {
+      // No expiry: a random name is never handed to another key.
+      await kv.put(`retired:${name}`, pubkey)
+    },
     async list() {
       // KV pages its listing, and a page boundary is invisible from one call. Following the cursor is
       // what stops the sweeper from silently only ever seeing the first 1,000 names.

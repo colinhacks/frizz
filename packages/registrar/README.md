@@ -14,12 +14,18 @@ A name belongs to whoever holds an Ed25519 private key, kept at `identity.key` u
 claiming machine. Every claim is signed; the signature covers the public key, so a request cannot be
 re-attributed by swapping it. Ownership moves between machines the way an SSH key does: copy the file.
 
-**Claiming a custom name also needs a GitHub account, and that is the only thing standing between this and a squatter.** The CLI sends the user token of Frizz's own GitHub sign-in (the Frizz Agent Console App the board already holds for its GitHub reads, read-only by its permissions) with the first claim. The registrar spends it on `api.github.com/user`, keeps the numeric id and drops the token, which it never stores or logs. One name per account, and an account younger than 30 days cannot claim. Nothing afterwards touches GitHub — the keypair alone renews the lease, so a name keeps working whether or not GitHub does. Set `REQUIRE_GITHUB=0` to lift the gate on a test deployment; never on the one anybody can reach.
+**Claiming a custom name also needs a GitHub account, and that is the only thing standing between this and a squatter.** The CLI sends the user token of Frizz's own GitHub sign-in (the Frizz Agent Console App the board already holds for its GitHub reads, read-only by its permissions) with the first claim. The registrar spends it on `api.github.com/user`, keeps the numeric id and drops the token, which it never stores or logs. The name must be the account's own username, in any case (`Ada-Lovelace` claims `ada-lovelace`), so one account has one name, and an account younger than 30 days cannot claim. Nothing afterwards touches GitHub — the keypair alone renews the lease, so a name keeps working whether or not GitHub does. Set `REQUIRE_GITHUB=0` to lift the gate on a test deployment; never on the one anybody can reach.
 
 **Only Frizz's own sign-in is accepted.** The verifier (`githubVerifier` in [`worker.ts`](src/worker.ts)) refuses, as `github-token-foreign`, any token GitHub's `/user` answer does not report in `X-OAuth-Client-Id` as issued to the Frizz Agent Console App: a `gh` CLI token (what a Frizz from before 2026-10-08 sends, and what a compromised build of this Worker collected), a personal access token, or another app's token. So a token some other app collected cannot claim in its owner's name. Until 2026-11-07 only a zero-scope OAuth token was accepted; the maintainer dropped that rule because this Worker deploys from the same workflow, token and approval as the relay, and a hijacked relay already has full control of every board serving through it. First claims of custom names from one network address get 10 GitHub lookups an hour. This Worker holds no GitHub credential.
 
 A name is a **30-day lease**, renewed on every launch. An unrenewed name is released — on demand when
 someone else asks for it, and by a daily sweep for names nobody wants.
+
+**A random name is never handed to another key.** Phones stay pointed at a name after its board has left
+it, and send it their session cookies. So when a random name lapses or is swept, the registrar keeps
+`retired:<name>` holding the key that had it, and refuses that name to any other key for good; its own
+key can still have it back. There are 32²⁰ random names, so none needs reusing. A custom name returns to
+the pool, but only its own GitHub account can claim it.
 
 ## Deploying
 

@@ -41,6 +41,9 @@ export interface ClaimStore {
   readGithubOwner(githubId: number): Promise<string | null>
   writeGithubOwner(githubId: number, name: string): Promise<void>
   removeGithubOwner(githubId: number): Promise<void>
+  /** The key that last held a released RANDOM name, which nobody else may ever claim. */
+  readRetired(name: string): Promise<string | null>
+  writeRetired(name: string, pubkey: string): Promise<void>
 }
 
 /** Who a GitHub token belongs to. Resolved once per claim, then thrown away. */
@@ -124,6 +127,7 @@ export type ClaimFailure =
   | "github-required"
   | "github-rejected"
   | "github-token-foreign"
+  | "not-your-github-username"
   | "github-too-new"
   | "one-name-per-account"
   | "namespace-full"
@@ -154,6 +158,7 @@ const MESSAGES: Record<ClaimFailure, string> = {
   "github-token-foreign":
     "a name is claimed with Frizz's own GitHub sign-in, and this was another kind of GitHub token — update Frizz, sign in to GitHub in its Settings, and try again",
   "github-too-new": "that GitHub account is too new to claim a name",
+  "not-your-github-username": "a custom frizz.sh name is the claiming account's own GitHub username, and this is not it",
   "one-name-per-account": "that GitHub account already holds a name",
   "namespace-full": "frizz.sh has no free names left — this is our limit to raise, not yours",
   "too-many-claims": "too many new names from this network just now — try again in an hour",
@@ -179,6 +184,16 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   const { name, port, pubkey } = verdict.payload
   const hostname = `${name}.${deps.zone}`
   const existing = await deps.store.read(name)
+
+  // A RANDOM NAME IS NEVER REUSED (maintainer, 2026-11-07: "there's plenty to go around"). Phones and
+  // bookmarks keep pointing at a name after its board leaves it, and they send it their session cookies;
+  // whoever held it next would collect them. So once released, a random name belongs to the key that
+  // held it, for good: that key may have it back, and every other key is told it is taken. 100 bits of
+  // name means no one ever needs a used one.
+  if (isAnonymousClaimName(name)) {
+    const holder = existing?.pubkey ?? (await deps.store.readRetired(name))
+    if (holder && holder !== pubkey) return reject("name-taken", 409)
+  }
 
   if (existing && existing.pubkey !== pubkey) {
     // A lapsed lease returns the name to the pool on demand, so a name frees up the moment someone
@@ -210,6 +225,10 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
     const who = await deps.github(verdict.payload.github)
     if (who === "foreign") return reject("github-token-foreign")
     if (!who) return reject("github-rejected")
+    // A CUSTOM NAME IS THE ACCOUNT'S OWN USERNAME (maintainer, 2026-11-07). Otherwise any account old
+    // enough could take someone else's login first, and a visitor would read it as theirs. GitHub logins
+    // are case-insensitive and claim names lowercase. A name claimed before this rule renews by its key.
+    if (name !== who.login.toLowerCase()) return reject("not-your-github-username")
     if (deps.minAccountAgeMs && now - who.createdAt < deps.minAccountAgeMs) {
       return reject("github-too-new")
     }
@@ -385,6 +404,7 @@ async function releaseQuietly(
 ): Promise<boolean> {
   if (!deps.api) {
     // Relay mode owns no Cloudflare resources for a name, so releasing it is only forgetting it.
+    await retire(deps, name, pubkey)
     await Promise.allSettled([deps.store.remove(name), forgetIndexes(deps, name, pubkey, githubId)])
     return true
   }
@@ -393,8 +413,14 @@ async function releaseQuietly(
     deps.api.deleteTunnel(tunnelId),
   ])
   if (tunnel.status !== "fulfilled") return false
+  await retire(deps, name, pubkey)
   await Promise.allSettled([deps.store.remove(name), forgetIndexes(deps, name, pubkey, githubId)])
   return true
+}
+
+/** A random name keeps its key after release (handleClaim says why). Written before the row goes. */
+async function retire(deps: ClaimDeps, name: string, pubkey: string): Promise<void> {
+  if (isAnonymousClaimName(name)) await deps.store.writeRetired(name, pubkey)
 }
 
 /**
@@ -461,6 +487,7 @@ async function release(
     await deps.api.deleteDnsRecord(hostname)
     await deps.api.deleteTunnel(tunnelId)
   }
+  await retire(deps, name, pubkey)
   await deps.store.remove(name)
   await forgetIndexes(deps, name, pubkey, githubId)
 }

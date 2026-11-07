@@ -312,7 +312,7 @@ export async function promptForCloudName(): Promise<string> {
     return (
       await rl.question(
         customNamesOffered()
-          ? "Name for this board — press enter for a random name (no account), a word claims <name>.frizz.sh (needs Frizz's GitHub sign-in), or paste a hostname you already run a tunnel for: "
+          ? "Name for this board — press enter for a random name (no account), your GitHub username claims <username>.frizz.sh (needs Frizz's GitHub sign-in), or paste a hostname you already run a tunnel for: "
           : "Name for this board — press enter for a random name (no account), or paste a hostname you already run a tunnel for: ",
       )
     ).trim();
@@ -396,6 +396,14 @@ export async function establishCloudConfig(
         // a work account would otherwise find out only when they wanted the name somewhere else. The
         // token is Frizz's own GitHub sign-in — never the `gh` CLI's, which can push to every repo.
         const authorization = await github.authorize();
+        // The registrar takes only the account's own username, so a name that is not it never carries
+        // the token at all.
+        if (authorization.login && authorization.login.toLowerCase() !== name) {
+          throw new ClaimError(
+            `a custom frizz.sh name is your own GitHub username, which is ${authorization.login} — claim ${authorization.login.toLowerCase()} instead`,
+            "not-your-github-username",
+          );
+        }
         if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
         result = await claimWith(authorization.token);
       }

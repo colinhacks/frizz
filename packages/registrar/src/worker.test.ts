@@ -336,7 +336,7 @@ test("through the worker, a foreign token is refused with advice to update, and 
       worker.fetch(
         new Request("https://r.frizz.sh/claim", {
           method: "POST",
-          body: JSON.stringify(await signClaim({ name: "colin", port: 9393, issuedAt: Date.now(), github: token }, identity)),
+          body: JSON.stringify(await signClaim({ name: "ada", port: 9393, issuedAt: Date.now(), github: token }, identity)),
         }),
         env(kv)
       )
@@ -351,8 +351,8 @@ test("through the worker, a foreign token is refused with advice to update, and 
     clientId = APP
     const accepted = await claim("ghu_agentconsole")
     assert.equal(accepted.status, 200)
-    assert.equal(JSON.parse(kv.rows.get("claim:colin")!).githubId, 4242)
-    assert.equal(kv.rows.get("gh:4242"), "colin", "the one-name-per-account index is kept")
+    assert.equal(JSON.parse(kv.rows.get("claim:ada")!).githubId, 4242)
+    assert.equal(kv.rows.get("gh:4242"), "ada", "the one-name-per-account index is kept")
     const stored = JSON.stringify([...kv.rows.entries()])
     assert.equal(stored.includes("ghu_") || stored.includes("gho_"), false, "no token is stored")
     assert.deepEqual(shown, ["Bearer gho_ghcli", "Bearer ghu_agentconsole"])

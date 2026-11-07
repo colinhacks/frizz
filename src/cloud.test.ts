@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
 import { isAnonymousClaimName } from "@frizz/shared";
+import { ClaimError } from "./registrar-client.ts";
 import {
   cloudConfigPath,
   establishCloudConfig,
@@ -40,7 +41,7 @@ process.env.FRIZZ_CUSTOM_NAMES = "1";
 // Claiming a NAME binds it to a GitHub account, which establishCloudConfig confirms through Frizz's
 // own GitHub sign-in. The claim tests hand in this stand-in for it, so no test reads a real one
 // (github-credential.test.ts covers githubClaimToken itself).
-const fakeGithub = { authorize: async () => ({ token: "ghu_testtoken", login: "tester" }) };
+const fakeGithub = { authorize: async () => ({ token: "ghu_testtoken", login: "colin" }) };
 
 /**
  * A registrar that answers every claim, so the CLI side can be driven without one deployed. Like the real
@@ -278,7 +279,7 @@ test("a name the key already holds is claimed again without a GitHub token, and 
   const home = tempHome();
   const server = await claimServer({ hostname: "colin.frizz.sh", leaseExpiresAt: 0, renewed: false });
   let asked = 0;
-  const counting = { authorize: async () => { asked++; return { token: "ghu_testtoken", login: "tester" }; } };
+  const counting = { authorize: async () => { asked++; return { token: "ghu_testtoken", login: "colin" }; } };
   try {
     await establishCloudConfig("colin", 9393, home, server.origin, counting);
     assert.equal(asked, 1);
@@ -286,6 +287,24 @@ test("a name the key already holds is claimed again without a GitHub token, and 
     await establishCloudConfig("colin", 9393, home, server.origin, counting);
     assert.equal(asked, 1, "re-entering it did not touch the sign-in");
     assert.deepEqual(server.claims.map((claim) => "github" in claim), [false], "and sent no token");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a custom name that is not the sign-in's own username is refused before the token is sent", async () => {
+  const home = tempHome();
+  const server = await claimServer({ hostname: "colin.frizz.sh", leaseExpiresAt: 0, renewed: false });
+  try {
+    const someoneElse = { authorize: async () => ({ token: "ghu_testtoken", login: "Ada-Lovelace" }) };
+    await assert.rejects(
+      establishCloudConfig("colin", 9393, home, server.origin, someoneElse),
+      (error: unknown) =>
+        error instanceof ClaimError && error.code === "not-your-github-username" && /claim ada-lovelace instead/.test(error.message),
+    );
+    assert.deepEqual(server.claims.map((claim) => "github" in claim), [false], "only the tokenless try went out");
+    assert.equal(readCloudConfig(home), null, "and nothing was saved");
   } finally {
     await server.close();
     rmSync(home, { recursive: true, force: true });
@@ -536,7 +555,7 @@ test("a named claim never runs `gh` and never sends its token", { skip: process.
     rmSync(ran, { force: true });
 
     await establishCloudConfig("colin", 9393, home, server.origin, {
-      authorize: async () => ({ token: "ghu_frizzSignInToken", login: "tester" }),
+      authorize: async () => ({ token: "ghu_frizzSignInToken", login: "colin" }),
     });
     const sent = JSON.stringify(server.claims);
     assert.equal(server.accepted[0]?.github, "ghu_frizzSignInToken", "the claim carries Frizz's sign-in");

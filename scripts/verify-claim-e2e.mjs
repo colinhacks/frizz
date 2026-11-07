@@ -77,11 +77,19 @@ function memoryStore() {
   const rows = new Map();
   const owners = new Map();
   const githubOwners = new Map();
+  const retired = new Map();
   return {
     rows,
     owners,
     githubOwners,
+    retired,
     store: {
+      async readRetired(name) {
+        return retired.get(name) ?? null;
+      },
+      async writeRetired(name, pubkey) {
+        retired.set(name, pubkey);
+      },
       async readGithubOwner(id) {
         return githubOwners.get(id) ?? null;
       },

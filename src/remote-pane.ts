@@ -35,15 +35,12 @@ export interface RemotePaneOptions {
   setRelayAccess: (access: RelayAccess) => void;
   /**
    * Claim `<name>.frizz.sh`. An empty name mints a private unguessable one with no account; a word
-   * claims that word for the GitHub account Frizz is signed in to (github-claim-identity.ts). Rejects
-   * with a message. The pane asks for a word only while custom names are offered (CUSTOM_NAMES_OFFERED
-   * in cloud.ts).
+   * claims that word, which the registrar takes only as the claiming account's own GitHub username, for
+   * the account Frizz is signed in to (github-claim-identity.ts). Rejects with a message. The pane offers
+   * the username only while custom names are offered (CUSTOM_NAMES_OFFERED in cloud.ts).
    */
   claim: (name: string) => Promise<CloudConfig>;
-  /**
-   * The GitHub login Frizz is signed in to, or null. The custom-subdomain row offers it as the name,
-   * and the form says which account the claim binds.
-   */
+  /** The GitHub login Frizz is signed in to, or null. The custom-subdomain row claims it as the name. */
   githubLogin?: () => string | null;
   /** A fresh single-use link for the origin now in force, for the done screen. */
   issueLink: () => AccessLink | null;
@@ -76,7 +73,7 @@ const accessChoice = (access: RelayAccess | undefined) => RELAY_ACCESS.find((cho
 /** Every setup, in menu order. The menu shows the subset `choicesFor` picks, never this list directly. */
 const CHOICES: Choice[] = [
   { kind: "private", title: "frizz.sh subdomain", blurb: "a random address and a one-time QR code; no account" },
-  { kind: "frizz", title: "Custom subdomain", blurb: "<name>.frizz.sh of your choosing; needs a GitHub account" },
+  { kind: "frizz", title: "Custom subdomain", blurb: "your GitHub username.frizz.sh; needs Frizz's GitHub sign-in" },
   { kind: "cloudflare", title: "Cloudflare Tunnel", blurb: "a domain you own on Cloudflare; cloudflared on this machine" },
   { kind: "tailscale", title: "Tailscale", blurb: "your tailnet; tailscale serve does the TLS" },
   { kind: "other", title: "Something else", blurb: "any proxy or tunnel you run — tell Frizz its address" },
@@ -102,12 +99,11 @@ function choicesFor(current: CloudConfig | null, devices?: number, githubLogin?:
     ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out devices", blurb: remoteDevicesLine(devices) }]),
   ];
   if (customNamesOffered()) {
-    // Signed in to GitHub, the obvious name is the account's own, so the row offers it by name.
+    // A custom name is the account's own GitHub username, so once Frizz is signed in the row names it.
     const own = claimNameForLogin(githubLogin ?? null);
+    const blurb = own ? `${own}.frizz.sh, your GitHub username` : githubLogin ? `your GitHub username, ${githubLogin}, is not a usable name` : undefined;
     return [
-      ...CHOICES.map((choice) =>
-        choice.kind === "frizz" && own ? { ...choice, blurb: `${own}.frizz.sh or another name; tied to your GitHub` } : choice,
-      ),
+      ...CHOICES.map((choice) => (choice.kind === "frizz" && blurb ? { ...choice, blurb } : choice)),
       ...access,
     ];
   }
@@ -138,7 +134,7 @@ type Screen =
   | { name: "busy"; message: string }
   | { name: "done"; message: string; link: AccessLink | null; config: CloudConfig | null }
   /** A switch that cannot be undone from this menu, said before it happens. Enter runs `then`. */
-  | { name: "confirm"; lines: string[]; then: () => void; back: Screen }
+  | { name: "confirm"; lines: string[]; then: () => void; back: Screen; keys?: string }
   | { name: "error"; message: string; back: Screen };
 
 interface Field {
@@ -149,7 +145,7 @@ interface Field {
 }
 
 /** The setups that ask for anything. "off" clears and "private" claims — neither has a form. */
-type FormKind = Exclude<RemoteKind, "off" | "private">;
+type FormKind = Exclude<RemoteKind, "off" | "private" | "frizz">;
 
 function kindOf(config: CloudConfig | null): RemoteKind {
   if (!config) return "off";
@@ -237,7 +233,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         const cursor = focused ? "█" : "";
         return `${field.label.padEnd(10)} ${shown}${cursor}`;
       });
-      write([...head, "", ...fields, ...(s.note ? ["", s.note] : []), "", `${DIM}enter ${s.kind === "frizz" ? "claim" : "save"} · tab next field · esc back${RESET}`]);
+      write([...head, "", ...fields, ...(s.note ? ["", s.note] : []), "", `${DIM}enter save · tab next field · esc back${RESET}`]);
       return;
     }
     if (s.name === "busy") {
@@ -245,7 +241,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
       return;
     }
     if (s.name === "confirm") {
-      write([...s.lines, "", `${DIM}enter switch · esc keep it${RESET}`]);
+      write([...s.lines, "", `${DIM}${s.keys ?? "enter switch · esc keep it"}${RESET}`]);
       return;
     }
     if (s.name === "done") {
@@ -278,25 +274,6 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   };
 
   const formHead = (kind: FormKind): string[] => {
-    if (kind === "frizz") {
-      const login = options.githubLogin?.() ?? null;
-      return [
-        "Custom frizz.sh subdomain",
-        "",
-        ...wrap(
-          "Claims <name>.frizz.sh of your choosing, tied to your GitHub account so names cannot be squatted. The board dials out to frizz.sh — no port, no DNS record, no tunnel binary. One name per account; a name nobody runs for 30 days is released. (A private subdomain needs none of this.)",
-        ),
-        ...(options.sandbox
-          ? ["", ...wrap("This is a sandbox, but a claim is real: it binds this machine's one name to your account, and your real board keeps it. Only the setup saved here is thrown away.")]
-          : []),
-        "",
-        ...wrap(
-          login
-            ? `The name is tied to ${login}, the GitHub account Frizz is signed in to (Settings → GitHub in the board). The registrar asks GitHub which account that is, keeps its id, and drops the token.`
-            : "Needs Frizz's GitHub sign-in: open Settings in the board, sign in under GitHub, then claim here.",
-        ),
-      ];
-    }
     if (kind === "cloudflare") {
       const cf = cloudflared === "pending" || cloudflared === null
         ? `${DIM}cloudflared   checking…${RESET}`
@@ -361,11 +338,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     const current = options.current();
     const same = kindOf(current) === kind ? current : null;
     let fields: Field[];
-    if (kind === "frizz") {
-      // The account's own name, offered dim: enter takes it, typing replaces it.
-      const own = claimNameForLogin(options.githubLogin?.() ?? null);
-      fields = [{ label: "Name", value: same?.claim ?? "", ...(own ? { placeholder: own } : {}) }];
-    } else if (kind === "cloudflare") {
+    if (kind === "cloudflare") {
       cloudflared = "pending";
       void options.probes.cloudflared().then((result) => {
         cloudflared = result;
@@ -404,16 +377,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     const back: Screen = form;
     try {
       let next: CloudConfig | null;
-      let justClaimed = false;
-      if (form.kind === "frizz") {
-        const name = valueOf(form.fields[0]!).trim();
-        if (!name) throw new Error("a name is needed");
-        screen = { name: "busy", message: `claiming ${name}.frizz.sh…` };
-        paint();
-        const claimed = await options.claim(name);
-        next = withAccess(claimed, form.relayAccess);
-        justClaimed = true;
-      } else if (form.kind === "cloudflare") {
+      if (form.kind === "cloudflare") {
         const hostname = normalizeHostname(valueOf(form.fields[0]!));
         const tunnel = valueOf(form.fields[1]!).trim();
         if (!tunnel) throw new Error("the tunnel's name is needed");
@@ -424,7 +388,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
       }
       screen = { name: "busy", message: `serving ${next.hostname}…` };
       paint();
-      await options.apply(next, { justClaimed });
+      await options.apply(next);
       options.onChanged?.(next);
       screen = { name: "done", message: `Serving https://${next.hostname} (${describeCloudConfig(next)}).`, link: options.issueLink(), config: next };
     } catch (error) {
@@ -434,12 +398,14 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   };
 
   // No form and nothing to ask: the name is minted, so choosing this IS the claim.
-  const claimPrivate = async (relayAccess?: RelayAccess) => {
-    const back: Screen = { name: "menu", index: 0 };
-    screen = { name: "busy", message: "claiming a frizz.sh subdomain…" };
+  const claimPrivate = (relayAccess?: RelayAccess) => claimAndServe("", relayAccess, { name: "menu", index: 0 });
+
+  /** Claim `name` (empty mints a random one), then serve it and show the done screen. */
+  const claimAndServe = async (name: string, relayAccess: RelayAccess | undefined, back: Screen) => {
+    screen = { name: "busy", message: name ? `claiming ${name}.frizz.sh…` : "claiming a frizz.sh subdomain…" };
     paint();
     try {
-      const next = withAccess(await options.claim(""), relayAccess);
+      const next = withAccess(await options.claim(name), relayAccess);
       screen = { name: "busy", message: `serving ${next.hostname}…` };
       paint();
       await options.apply(next, { justClaimed: true });
@@ -448,6 +414,38 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     } catch (error) {
       screen = { name: "error", message: error instanceof Error ? error.message : String(error), back };
     }
+    paint();
+  };
+
+  // A custom name is the account's own GitHub username, so there is nothing to type: the screen says
+  // which name and which account, and enter claims it.
+  const confirmUsername = (back: Screen, relayAccess?: RelayAccess) => {
+    const login = options.githubLogin?.() ?? null;
+    const own = claimNameForLogin(login);
+    if (!own) {
+      const why = login
+        ? `your GitHub username, ${login}, does not make a frizz.sh name (3 to 63 letters, digits and hyphens, and not one Frizz keeps for itself), so a custom subdomain cannot be claimed for it.`
+        : "a custom subdomain is your GitHub username, so it needs Frizz's GitHub sign-in: open Settings in the board and sign in under GitHub, then choose this again.";
+      screen = { name: "error", message: why, back };
+      paint();
+      return;
+    }
+    screen = {
+      name: "confirm",
+      lines: [
+        `Claim ${own}.frizz.sh?`,
+        "",
+        ...wrap(
+          `It is your GitHub username, and tied to ${login}, the account Frizz is signed in to (Settings → GitHub in the board). The registrar asks GitHub which account that is, keeps its id, and drops the token. The board dials out to frizz.sh — no port, no DNS record, no tunnel binary. A name nobody runs for 30 days is released.`,
+        ),
+        ...(options.sandbox
+          ? ["", ...wrap("This is a sandbox, but a claim is real: it binds this machine's one name to your account, and your real board keeps it. Only the setup saved here is thrown away.")]
+          : []),
+      ],
+      then: () => void claimAndServe(own, relayAccess, back),
+      back,
+      keys: "enter claim · esc back",
+    };
     paint();
   };
 
@@ -564,9 +562,15 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
             else if (choice.kind === "private") {
               if (firstPick) askAccess(s, (access) => void claimPrivate(access));
               else void claimPrivate();
-            } else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
-            else if (choice.kind === "frizz" && firstPick) askAccess(s, (access) => openForm("frizz", access));
-            else openForm(choice.kind);
+            } else if (choice.kind === "frizz") {
+              // The one custom name there is to claim is the account's own username: a board already
+              // serving it serves it again, and any other is asked before it claims.
+              const own = claimNameForLogin(options.githubLogin?.() ?? null);
+              if (!customNamesOffered() || (current?.claim !== undefined && current.claim === own)) void serveCurrent();
+              // With no username to claim there is nothing to ask about yet: say so before the access question.
+              else if (firstPick && own) askAccess(s, (access) => confirmUsername(s, access));
+              else confirmUsername(s);
+            } else openForm(choice.kind);
           };
           // While custom names are paused, the custom row is listed only for the board serving one, so moving
           // to any other setup takes away the one way back to it. On 2026-11-06 the maintainer's board left

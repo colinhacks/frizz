@@ -56,6 +56,7 @@ const ADVICE: Record<string, string> = {
   // What a registrar older than 2026-11-07 answers for Frizz's sign-in, which it does not take yet.
   "github-token-scoped": "this registrar does not take Frizz's GitHub sign-in yet — try again once frizz.sh is updated",
   "github-too-new": "that GitHub account is too new to claim a name",
+  "not-your-github-username": "a custom frizz.sh name is your own GitHub username, and this is not it",
   "one-name-per-account": "that GitHub account already holds a name — release it first",
   "one-name-per-key": "this machine already holds a name — release it first",
   expired: "this machine's clock is behind the registrar; fix the clock and try again",
