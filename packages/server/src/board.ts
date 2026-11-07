@@ -2092,6 +2092,8 @@ function sessionThreadView(
     answersInFlight: inFlightAnswers,
     deliveryInFlight: deliveryInFlight || undefined,
     lastUserAt: tele?.lastUserAt,
+    // The last turn ended on a person's Stop (FoldState.operatorStopped): no "Rested without a sign-off".
+    ...(tele?.operatorStopped ? { operatorStopped: true } : {}),
     // Runtime provider-auth rejection (claude-auth plan): only the typed category travels — the raw
     // error/provider text never leaves the server. Drives the trusted sign-in recovery card in ChatView.
     providerFault: tele?.authFault

@@ -6,14 +6,14 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import Database from "../sqlite.ts"
 import { createInteractionStore, type InteractionStore } from "../interaction-store.ts"
-import { newTailState } from "../tailer.ts"
+import { applyEvent, newTailState } from "../tailer.ts"
 import { opencodeToolCards } from "../transcript.ts"
 import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, opencodeFormAnswer, opencodeInboxId, type OpencodeBridge } from "./opencode-bridge.ts"
 import { OpencodeHub } from "./opencode-hub.ts"
 import { ensureOpencodeService, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { createOpencodeBackend, opencodeTranscriptPath, parseOpencodeSubAgentLine, projectOpencodeTranscript } from "./opencode-transcript.ts"
-import { opencodeSessionRules, parseOpencodeEvent } from "./opencode-types.ts"
-import { parseAcpRecord } from "./acp-transcript.ts"
+import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
+import { parseAcpLine, parseAcpRecord } from "./acp-transcript.ts"
 // @ts-expect-error a plain .mjs fixture
 import { startFakeOpencode } from "./opencode.fixtures/fake-opencode-server.mjs"
 
@@ -62,7 +62,7 @@ async function until<T>(fn: () => T | undefined | false, ms = 8000): Promise<T> 
   }
 }
 const ends = (r: Rig, sid = "s1") => records(r, sid).filter((x) => x.kind === "turn-end").length
-const spawn = (r: Rig, prompt: string, mode: "bypassPermissions" | "default" = "bypassPermissions") =>
+const spawn = (r: Rig, prompt: string, mode: "bypassPermissions" | "default" | "acceptEdits" | "settings" | "plan" = "bypassPermissions") =>
   r.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, mode, model: { providerID: "opencode", id: "big-pickle" }, prompt })
 const ref = (r: Rig, opencodeSessionId: string, mode: "bypassPermissions" | "default" = "bypassPermissions") =>
   ({ threadSlug: "t1", sessionId: "s1", cwd: r.stateDir, opencodeSessionId, mode })
@@ -99,6 +99,7 @@ test("opencode-bridge: a dispatch creates a session with its rules and environme
     assert.equal(s.turn, "idle")
     assert.equal(s.lastFence?.kind, "done")
     assert.equal(s.model, "opencode:opencode/big-pickle")
+    assert.equal(recs[0]!.version, "2.2.5", "the header carries the service's version, from /api/info")
     // The drawer: the shell call is a Bash card with its command, not its working directory.
     const msgs = projectOpencodeTranscript(readFileSync(opencodeTranscriptPath(r.stateDir, "s1"), "utf8"), "opencode:s1", opencodeToolCards)
     const tool = msgs.flatMap((m) => m.tools)[0]!
@@ -326,9 +327,20 @@ test("opencode-bridge: stop interrupts the turn and the thread takes its next me
     await until(() => records(r).some((x) => x.kind === "tool-result"))
     assert.deepEqual(await r.bridge.interruptTurn("t1", "s1"), { interrupted: true })
     await until(() => ends(r) === 1, 3000)
-    assert.equal(records(r).find((x) => x.kind === "turn-end")!.successful, false)
+    const stopped = records(r).find((x) => x.kind === "turn-end")!
+    assert.equal(stopped.successful, false)
+    // The person's Stop is written as theirs, so no sign-off reminder or bare-rest card answers it.
+    assert.equal(stopped.stoppedBy, "operator")
+    const fold = newTailState("t1", "s1", "/fixture")
+    for (const rec of records(r)) for (const ev of parseAcpLine(JSON.stringify(rec))) applyEvent(fold, ev)
+    assert.equal(fold.operatorStopped, true)
     await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:again]", delivery: "steer" })
     await until(() => ends(r) === 2)
+    // The next turn is the worker's own again.
+    assert.equal(records(r).filter((x) => x.kind === "turn-end")[1]!.stoppedBy, undefined)
+    const after = newTailState("t1", "s1", "/fixture")
+    for (const rec of records(r)) for (const ev of parseAcpLine(JSON.stringify(rec))) applyEvent(after, ev)
+    assert.equal(after.operatorStopped, undefined)
   } finally { await teardown(r) }
 })
 
@@ -452,4 +464,117 @@ test("opencode-service: a service older than the minimum is refused, not driven"
     assert.equal(opencodeVersionAtLeast("2.2.5", "2.0.27"), true)
     assert.equal(opencodeVersionAtLeast("1.14.0", "2.0.27"), false)
   } finally { await fake.close() }
+})
+
+const DENY_ME = { action: "shell", resource: "echo DENYME*", effect: "deny" as const }
+
+test("opencode-bridge: no mode lifts a deny in the person's configuration, and a mode that asks does not turn it into a card", async () => {
+  for (const mode of ["bypassPermissions", "default", "acceptEdits"] as const) {
+    const r = await rig({ configRules: [DENY_ME] })
+    try {
+      await spawn(r, "[shell:echo DENYME please][shell:echo fine][say:over]", mode)
+      const scope = { projectId: "proj-1", threadSlug: "t1", sessionId: "s1" }
+      // `echo fine` asks in the asking modes; answer it so the turn ends.
+      for (let i = 0; i < 40 && ends(r) === 0; i++) {
+        const card = r.store.listPending(scope)[0]
+        if (card) {
+          assert.doesNotMatch((card.payload as any).command.preview, /DENYME/, `${mode}: a configured deny is never a card`)
+          r.store.resolve(scope, { slug: "t1", sessionId: "s1", interactionId: card.id, sessionEpoch: 0, capabilityRevision: 0, expectedRecordRevision: card.recordRevision, responseId: `r${i}`, decisionId: "accept" })
+        }
+        await new Promise((res) => setTimeout(res, 50))
+      }
+      await until(() => ends(r) === 1)
+      const results = records(r).filter((x) => x.kind === "tool-result")
+      assert.equal(results[0]!.failed, true, `${mode}: the configured deny held`)
+      assert.equal(results[1]!.text, "ran echo fine", `${mode}: everything else still runs`)
+      const create = r.fake.requests.find((q: any) => q.method === "POST" && q.path === "/api/session")
+      assert.deepEqual(create.body.permissions.at(-1), DENY_ME, `${mode}: the person's deny comes after Frizz's rules`)
+    } finally { await teardown(r) }
+  }
+})
+
+test("opencode-bridge: an exception the person carved out of their own deny still holds in Bypass", async () => {
+  const r = await rig({ configRules: [{ action: "shell", resource: "git *", effect: "deny" }, { action: "shell", resource: "git status", effect: "allow" }] })
+  try {
+    await spawn(r, "[shell:git status][shell:git push][say:over]")
+    await until(() => ends(r) === 1)
+    const results = records(r).filter((x) => x.kind === "tool-result")
+    assert.equal(results[0]!.text, "ran git status")
+    assert.equal(results[1]!.failed, true)
+  } finally { await teardown(r) }
+})
+
+test("opencode-bridge: OpenCode settings, Frizz's auto, adds no session rules and runs the person's default agent", async () => {
+  const r = await rig({ configRules: [DENY_ME] })
+  try {
+    assert.equal(opencodeModeOf("auto"), "settings")
+    assert.equal(opencodeModeOf(undefined), "settings")
+    assert.equal(opencodeModeOf("bypassPermissions"), "bypassPermissions")
+    await spawn(r, "[shell:echo DENYME][say:over]", "settings")
+    await until(() => ends(r) === 1)
+    const create = r.fake.requests.find((q: any) => q.method === "POST" && q.path === "/api/session")
+    assert.deepEqual(create.body.permissions, [])
+    assert.equal(create.body.agent, "build")
+    assert.equal(records(r).find((x) => x.kind === "tool-result")!.failed, true)
+  } finally { await teardown(r) }
+})
+
+test("opencode-bridge: when OpenCode's agents cannot be read, a mode that adds rules adds none, and says so", async () => {
+  const r = await rig({ configRules: [DENY_ME], noAgentRoute: true })
+  try {
+    await spawn(r, "[shell:echo DENYME][say:over]")
+    await until(() => ends(r) === 1)
+    const create = r.fake.requests.find((q: any) => q.method === "POST" && q.path === "/api/session")
+    assert.deepEqual(create.body.permissions, [], "never a bare allow-all without the person's denies after it")
+    assert.equal(records(r).find((x) => x.kind === "tool-result")!.failed, true)
+    assert.ok(records(r).some((x) => x.kind === "opencode-note" && /could not read OpenCode's agents/.test(x.text)))
+  } finally { await teardown(r) }
+})
+
+test("opencode-bridge: a sub-agent gets its own agent's kept rules, the person's deny included", async () => {
+  const r = await rig({ configRules: [DENY_ME], childScript: "[shell:echo DENYME from child][say:child done]" })
+  try {
+    await spawn(r, "[sub:Child][say:parent done]")
+    await until(() => ends(r) === 1)
+    const child = [...r.fake.sessions.values()].find((x: any) => x.parentID)
+    assert.ok(child, "a child session")
+    const tail = child.permissions.slice(-3)
+    assert.deepEqual(tail, [{ action: "question", resource: "*", effect: "deny" }, { action: "subagent", resource: "*", effect: "deny" }, DENY_ME], "the general agent's denies and the person's, after Frizz's")
+    const row = parseOpencodeSubAgentLine(JSON.stringify(records(r).filter((x) => x.kind === "opencode-subagent").at(-1)))!
+    const childRecs = readFileSync(row.outputFile, "utf8").split("\n").map((l) => parseAcpRecord(l)).filter(Boolean) as Array<Record<string, any>>
+    assert.equal(childRecs.find((x) => x.kind === "tool-result")!.failed, true, "the child's shell was denied too")
+  } finally { await teardown(r) }
+})
+
+test("opencode-kept-rules: denies stay, the exceptions inside them stay, a deny lifted further down goes", () => {
+  const rules = [
+    { action: "*", resource: "*", effect: "allow" as const },
+    { action: "shell", resource: "git *", effect: "deny" as const },
+    { action: "shell", resource: "git status", effect: "allow" as const },
+    { action: "edit", resource: "*.lock", effect: "deny" as const },
+    { action: "edit", resource: "*", effect: "allow" as const },
+    { action: "webfetch", resource: "*", effect: "ask" as const },
+  ]
+  assert.deepEqual(opencodeKeptRules(rules), [rules[1], rules[2]])
+  assert.equal(opencodeWildcard("git push", "git push *"), true, "a trailing ' *' also matches the bare command")
+  assert.equal(opencodeWildcard("git pushy", "git push *"), false)
+})
+
+test("opencode-bridge: a card for a call the bridge never saw reads the whole command from the call's message, and labels the split when it cannot", async () => {
+  for (const [opts, expect] of [[{ unseenCalls: true }, "whole"], [{ unseenCalls: true, noMessageRoute: true }, "split"]] as const) {
+    const r = await rig(opts)
+    try {
+      await spawn(r, "[shell:git status --short | head -5][say:over]", "default")
+      const scope = { projectId: "proj-1", threadSlug: "t1", sessionId: "s1" }
+      const card = await until(() => r.store.listPending(scope)[0])
+      const command = (card.payload as any).command
+      if (expect === "whole") {
+        assert.equal(command.preview, "git status --short | head -5")
+        assert.equal(command.summary, "git status --short | head -5")
+      } else {
+        assert.match(command.preview, /^OpenCode split this command into 2 parts; the whole command could not be read:\ngit status --short\nhead -5$/)
+        assert.equal(command.summary, "2 commands: git status --short ; head -5")
+      }
+    } finally { await teardown(r) }
+  }
 })

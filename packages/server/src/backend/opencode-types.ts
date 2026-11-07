@@ -48,27 +48,82 @@ const ASKING_RULES: readonly OpencodeRule[] = [
 // OpenCode denies these to every agent unless a plugin says otherwise; a session's `*` must not lift it.
 const STILL_DENIED: readonly OpencodeRule[] = [rule("browser", "*", "deny"), rule("skill", "browser", "deny")]
 
-export type OpencodeMode = "bypassPermissions" | "acceptEdits" | "default" | "plan"
+/** `settings` is OpenCode's own behaviour: no session rules, so the person's `opencode.json` and the
+ *  agent's built-in rules decide, exactly as in their own `opencode`. It is what Frizz's `auto` means here. */
+export type OpencodeMode = "settings" | "bypassPermissions" | "acceptEdits" | "default" | "plan"
+
+/** OpenCode's `Wildcard.match` (core/src/util/wildcard.ts, 2.2.5): `*` and `?`, and a pattern ending in
+ *  " *" also matches without its argument (`git push *` matches `git push`). */
+export function opencodeWildcard(input: string, pattern: string): boolean {
+  const normalized = input.replaceAll("\\", "/")
+  let escaped = pattern.replaceAll("\\", "/").replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")
+  if (escaped.endsWith(" .*")) escaped = escaped.slice(0, -3) + "( .*)?"
+  return new RegExp("^" + escaped + "$", "s").test(normalized)
+}
+
+/** Whether every call `inner` matches, `outer` matches too: `inner`'s patterns read as calls. */
+function covers(outer: OpencodeRule, inner: OpencodeRule): boolean {
+  return opencodeWildcard(inner.action, outer.action) && opencodeWildcard(inner.resource, outer.resource)
+}
+
+/** The part of an agent's resolved rules that a session rule must not override: its denies, and the
+ *  exceptions the same list carves out of them.
+ *
+ *  OpenCode evaluates the agent's rules (its built-ins, then every rule in the person's `opencode.json`,
+ *  config/plugin/agent.ts) and then the session's, and the LAST match wins (`Permission.evaluate`). So a
+ *  session `* * allow` lifts a configured `shell "git push *" deny`, and a session `* * ask` turns it into a
+ *  card. Appending this after Frizz's rules puts each deny back where the person put it:
+ *
+ *  - a deny is kept unless a LATER rule of the agent's own lifts all of it (an allow or ask whose patterns
+ *    cover the deny's, the person changing their mind further down);
+ *  - an allow or ask that comes after a kept deny and sits inside it (`shell "git *" deny`, then `shell
+ *    "git status" allow`) is kept with it, in order, so the exception still holds;
+ *  - nothing else of the agent's is repeated, so Frizz's mode decides everything the person never denied. */
+export function opencodeKeptRules(agentRules: readonly OpencodeRule[]): OpencodeRule[] {
+  const keep = new Set<number>()
+  agentRules.forEach((rule, i) => {
+    if (rule.effect !== "deny") return
+    const later = agentRules.slice(i + 1)
+    if (later.some((next) => next.effect !== "deny" && covers(next, rule))) return
+    keep.add(i)
+    later.forEach((next, k) => { if (next.effect !== "deny" && covers(rule, next)) keep.add(i + 1 + k) })
+  })
+  return agentRules.filter((_, i) => keep.has(i))
+}
 
 /** The session rules a permission mode is. Applied at create and by `PATCH /api/session/:id`, which
  *  replaces them, and a child session takes its parent's at creation.
  *
- *  `plan` holds none on purpose: it is OpenCode's own `plan` agent, whose `edit` deny a session rule
- *  would override, because session rules are evaluated after an agent's. */
-export function opencodeSessionRules(mode: OpencodeMode): OpencodeRule[] {
+ *  `settings` and `plan` hold none on purpose: the first is the person's own configuration, the second
+ *  is OpenCode's `plan` agent, whose `edit` deny a session rule would override. Every other mode ends with
+ *  the agent's kept rules (`opencodeKeptRules`), read from what OpenCode resolved for the session's agent
+ *  (`GET /api/agent/:id`), so no mode lifts a deny the person or the agent set. */
+export function opencodeSessionRules(mode: OpencodeMode, agentRules: readonly OpencodeRule[] = []): OpencodeRule[] {
+  const kept = opencodeKeptRules(agentRules)
   switch (mode) {
-    case "bypassPermissions": return [rule("*", "*", "allow"), ...STILL_DENIED]
-    case "acceptEdits": return [...ASKING_RULES, rule("edit", "*", "allow"), ...STILL_DENIED]
+    case "settings":
     case "plan": return []
-    default: return [...ASKING_RULES, ...STILL_DENIED]
+    case "bypassPermissions": return [rule("*", "*", "allow"), ...STILL_DENIED, ...kept]
+    case "acceptEdits": return [...ASKING_RULES, rule("edit", "*", "allow"), ...STILL_DENIED, ...kept]
+    default: return [...ASKING_RULES, ...STILL_DENIED, ...kept]
   }
 }
 
+/** Frizz's mode for a thread, as OpenCode runs it. `auto`, the shipped default, and anything OpenCode has
+ *  no meaning for, are the person's own settings. */
 export function opencodeModeOf(mode: string | null | undefined): OpencodeMode {
-  return mode === "acceptEdits" || mode === "default" || mode === "plan" ? mode : "bypassPermissions"
+  return mode === "acceptEdits" || mode === "default" || mode === "plan" || mode === "bypassPermissions" ? mode : "settings"
 }
 
-/** The agent a mode runs under. */
+/** Rules as OpenCode lists them on an agent, dropping anything that is not one. */
+export function opencodeRulesOf(raw: unknown): OpencodeRule[] {
+  return asArray(raw).flatMap((item) => {
+    const o = asObject(item)
+    const action = asString(o?.action), resource = asString(o?.resource), effect = asString(o?.effect)
+    return action && resource && (effect === "allow" || effect === "ask" || effect === "deny") ? [{ action, resource, effect }] : []
+  })
+}
+
 export function opencodeAgentFor(mode: OpencodeMode): "build" | "plan" { return mode === "plan" ? "plan" : "build" }
 
 // ---- tools ------------------------------------------------------------------------------------------

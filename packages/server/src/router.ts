@@ -3331,7 +3331,6 @@ export function createRouter(ctx: AppContext) {
         const permRow = ctx.storage.getSession(input.slug)
         if (permRow?.backend === "acp") throw new Error("An ACP agent enforces its own permissions; Frizz has no mode to set on it")
         if (permRow?.backend === "opencode") {
-          if (input.permissionMode === "auto") throw new Error("OpenCode has no auto mode")
           const bridge = ctx.opencodeBridge
           if (!bridge || !permRow.agent_session_id) throw new Error("The OpenCode bridge is unavailable; cannot change this thread's permissions")
           // Live on the session at once, which is why the row is written after, not before: a refusal

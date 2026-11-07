@@ -41,6 +41,9 @@ export class OpencodeHub {
   }
 
   get client(): OpencodeClient | undefined { return this.currentClient }
+  /** The connected service's version, as its `/api/info` reports it. */
+  get version(): string | undefined { return this.currentVersion }
+  private currentVersion: string | undefined
 
   /** Connect now, starting the service if nothing healthy is registered, and resolve on `server.connected`. */
   async connect(): Promise<OpencodeClient> {
@@ -85,7 +88,7 @@ export class OpencodeHub {
           const found = this.anyoneNeedsService() || this.connected.length
             ? await ensureOpencodeService(this.env)
             : await discoverOpencodeService(this.env)
-          if (found) client = new OpencodeClient(found.registration)
+          if (found) { client = new OpencodeClient(found.registration); this.currentVersion = found.version }
         } catch (err) {
           log.warn("opencode", `service unavailable: ${(err as Error).message}`)
         }

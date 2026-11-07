@@ -50,6 +50,8 @@ export class OpencodeClient {
   }
 
   info(): Promise<unknown> { return this.send("GET", "/api/info") }
+  /** Every agent with its resolved rules (built-ins, then the person's configuration), the default primary one first. */
+  async agents(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/agent", { directory })).map((a) => asObject(a)).filter((a): a is Json => !!a) }
   async models(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/model", { directory })).map((m) => asObject(m)).filter((m): m is Json => !!m) }
   async defaultModel(directory: string): Promise<Json | undefined> { return asObject(await this.data("GET", "/api/model/default", { directory })) }
 
@@ -59,6 +61,8 @@ export class OpencodeClient {
     if (!asString(session?.id)) throw new Error("OpenCode created a session without an id")
     return session!
   }
+  /** One message, with its parts (a tool part carries the call's input). */
+  async message(id: string, messageId: string, directory?: string): Promise<Json | undefined> { return asObject(await this.data("GET", `/api/session/${id}/message/${encodeURIComponent(messageId)}`, { directory })) }
   async getSession(id: string, directory?: string): Promise<Json | undefined> { return asObject(await this.data("GET", `/api/session/${id}`, { directory })) }
   async childSessions(id: string, directory: string): Promise<Json[]> {
     const raw = await this.data("GET", `/api/session?parentID=${encodeURIComponent(id)}&limit=200`, { directory })

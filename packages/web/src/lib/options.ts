@@ -53,10 +53,11 @@ export const CLAUDE_DISPATCH_PERMISSION_OPTIONS: SelectOption[] = (["auto", "byp
 // An OpenCode thread's four real modes (ARCHITECTURE.md § OpenCode backend). `auto` is not one: OpenCode
 // has no classifier to give it meaning.
 export const OPENCODE_PERMISSION_OPTIONS: SelectOption[] = [
+  { value: "auto", label: "OpenCode settings", title: "Follows your OpenCode configuration (opencode.json), as OpenCode does on its own." },
   { value: "default", label: "Ask", title: "Asks before running a command, editing a file or using the web. Reads don't ask." },
   { value: "acceptEdits", label: "Accept edits", title: "Edits go through. Commands and the web still ask." },
   { value: "plan", label: "Plan", title: "Runs as OpenCode's plan agent, which doesn't edit." },
-  { value: "bypassPermissions", label: "Bypass", title: "Nothing asks." },
+  { value: "bypassPermissions", label: "Bypass", title: "Nothing asks, except what your OpenCode configuration denies." },
 ]
 
 // Claude Code-inspired permission accents for the dispatch form's mode readout. Bypass/full access

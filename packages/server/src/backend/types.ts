@@ -38,7 +38,9 @@ export type BackendKind = "claude" | "codex" | "acp" | "opencode"
 // normalized VIEW — the codex-facing seam + the unit-test surface.
 export type NormalizedEvent =
   | { kind: "turn-start"; at?: string } // a turn began (→ in-flight)
-  | { kind: "turn-end"; at?: string; finalText?: string; successful?: boolean } // a turn finished (→ idle); finalText carries the fence
+  // `stoppedBy: "operator"` when a person's Stop ended it (FoldState.operatorStopped). Only the OpenCode
+  // bridge writes it so far: its Stop ends a turn and nothing else, with no receipt in the conversation.
+  | { kind: "turn-end"; at?: string; finalText?: string; successful?: boolean; stoppedBy?: "operator" } // a turn finished (→ idle); finalText carries the fence
   | { kind: "provider-error"; at?: string; error: ProviderError }
   // `streamed` marks the text as ONE FLUSHED PIECE of a longer message rather than a whole one: the ACP
   // bridge writes an agent message's text out every second, so one message is several of these sharing a
@@ -139,6 +141,7 @@ export interface NormalizedTail {
   pendingAsk?: PendingAskData // codex: undefined
   authFault?: "authentication_rejected" // runtime provider-auth rejection (see FoldState.authFault)
   apiFault?: boolean // the turn ended in a provider failure (see FoldState.apiFault)
+  operatorStopped?: boolean // the last turn ended on a person's Stop (see FoldState.operatorStopped)
   providerError?: ProviderError
   limitFault?: LimitFault // subscription window exhausted mid-turn (see FoldState.limitFault)
   contextTokens?: number // tokens the last request carried (see FoldState.contextTokens)
@@ -168,6 +171,11 @@ export interface QuestionSighting {
 
 export interface FoldState {
   turn: TurnState // in-flight while a turn runs; idle once it brackets closed
+  // The last turn ended because a person pressed Stop (a turn-end with `stoppedBy: "operator"`), and
+  // nothing has happened since. That rest is the human's act, not the worker's: it carries no sign-off
+  // because it was not allowed to write one, so neither the sign-off reminder nor the "Rested without a
+  // sign-off" card applies to it. Cleared by the next turn, message or text.
+  operatorStopped?: boolean
   sawRecords: boolean // any substantive record folded yet (a fresh/booting session guard)
   model?: string // latest concrete backend-observed model
   effort?: string // latest concrete backend-observed reasoning effort

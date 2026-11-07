@@ -512,10 +512,11 @@ export const WORKER_DISPATCH_PERMISSION: Record<BackendKind, PermissionMode> = {
   // An ACP agent's permissions are its own (plans/acp-backend.md, decision 7): Frizz sends no mode and
   // mirrors whatever the agent asks as a card. The value here is recorded on the row and nothing else.
   acp: "auto",
-  // A new OpenCode thread runs as OpenCode's `build` agent does by default, which asks for next to
-  // nothing, and the thread's own control is how to lower it, as with Codex. `auto` is not offered:
-  // OpenCode has no classifier to give it meaning.
-  opencode: "bypassPermissions",
+  // A new OpenCode thread follows the person's own OpenCode configuration (`opencode.json`), which is
+  // what `auto` means there: Frizz adds no session rules (opencodeSessionRules "settings"). A machine
+  // whose saved default is Bypass gets Bypass (workerDispatchPermission), and no mode lifts a deny the
+  // person configured (opencodeKeptRules).
+  opencode: "auto",
 }
 
 // The permission mode a NEW worker of `kind` actually launches with, given the operator's Settings.
@@ -529,7 +530,7 @@ export const WORKER_DISPATCH_PERMISSION: Record<BackendKind, PermissionMode> = {
 // enum) coerces back to the floor rather than quietly wedging every dispatch. Codex has no equivalent
 // axis to raise — it already launches at danger-full-access.
 export function workerDispatchPermission(kind: BackendKind, settings: Pick<Settings, "permissionMode">): PermissionMode {
-  if (kind === "claude" && settings.permissionMode === "bypassPermissions") return "bypassPermissions"
+  if ((kind === "claude" || kind === "opencode") && settings.permissionMode === "bypassPermissions") return "bypassPermissions"
   return WORKER_DISPATCH_PERMISSION[kind]
 }
 
@@ -551,7 +552,7 @@ export function coldResumePermission(row: { permission_mode?: string | null }, s
 // PermissionMode storage field, so all workspace-write aliases collapse to `default`.
 export function effectivePermissionMode(kind: BackendKind, mode: PermissionMode): PermissionMode {
   if (kind === "claude") return workerPermissionMode(mode)
-  if (kind === "opencode") return mode === "acceptEdits" || mode === "default" || mode === "plan" ? mode : "bypassPermissions"
+  if (kind === "opencode") return mode === "acceptEdits" || mode === "default" || mode === "plan" || mode === "bypassPermissions" ? mode : "auto"
   if (mode === "plan" || mode === "bypassPermissions") return mode
   return "default"
 }

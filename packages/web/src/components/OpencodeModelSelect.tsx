@@ -13,10 +13,14 @@ import { Select, type SelectGroup } from "./ui/Select.tsx"
 // default. Reading the list starts the person's service, which is why only a mounted picker asks.
 const DEFAULT_VARIANT = ""
 
-export function opencodeModelGroups(models: OpencodeModels | undefined, value: string | undefined): SelectGroup[] {
-  const groups: SelectGroup[] = [{ label: "", options: [{ value: "", label: "Default", title: "The model OpenCode opens on when Frizz asks for none" }] }]
+/** `loading`: the list has not come back yet. Nothing is offered then, not even "Default": until OpenCode
+ *  answers, Frizz cannot say which model a thread would get, so the trigger shows its loading placeholder
+ *  instead of a value (a saved model still reads as itself). */
+export function opencodeModelGroups(models: OpencodeModels | undefined, value: string | undefined, loading = false): SelectGroup[] {
   const ref = opencodeModelRef(value)
   const saved = ref ? `${ref.providerID}/${ref.id}` : undefined
+  if (loading) return saved ? [{ label: "", options: [{ value: saved, label: saved }] }] : []
+  const groups: SelectGroup[] = [{ label: "", options: [{ value: "", label: "Default", title: "The model OpenCode opens on when Frizz asks for none" }] }]
   if (saved && !models?.models.some((m) => `${m.providerID}/${m.id}` === saved)) {
     groups[0]!.options.push(models && !models.error
       ? { value: saved, label: `${saved} (unavailable)`, title: "OpenCode no longer lists this model" }
@@ -72,10 +76,10 @@ export function OpencodeModelSelect({
         side={side}
         value={key}
         onValueChange={(next) => pick(next)}
-        groups={opencodeModelGroups(models.data, value)}
-        placeholder={models.isPending ? "Models…" : "Default"}
+        groups={opencodeModelGroups(models.data, value, models.isPending)}
+        placeholder={models.isPending ? "Loading models…" : "Default"}
         ariaLabel="OpenCode model"
-        title={failure ? `OpenCode did not list its models (${failure}); the thread runs on its default` : "OpenCode's model for this thread"}
+        title={models.isPending ? "Asking OpenCode for its models" : failure ? `OpenCode did not list its models (${failure}); the thread runs on its default` : "OpenCode's model for this thread"}
         disabled={disabled || models.isPending}
         indicatorPosition="right"
         menuZClass={menuZClass}

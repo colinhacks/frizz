@@ -48,6 +48,8 @@ test("every ending with a card of its own keeps this one off", () => {
   // exact render the maintainer reported (2026-09-02).
   assert.equal(showsRestedCard({ ...bare, answersInFlight: "1 question you registered was CANCELLED without an answer. Decide it yourself and carry on — say which way you went in your write-up. Do not re-ask." }, text), false)
   assert.equal(showsRestedCard({ ...bare, awaitingBackground: true }, text), false)
+  // A person's Stop ended the turn: the worker was never given the chance to sign off.
+  assert.equal(showsRestedCard({ ...bare, operatorStopped: true }, text), false)
   assert.equal(showsRestedCard({ ...bare, pendingInteraction: true }, text), false)
   assert.equal(showsRestedCard({ ...bare, limitPause: { window: "session", since: bare.lastAssistantAt! } as never }, text), false)
   // The message's own copy of the same facts: a fence or a question block in the final text.

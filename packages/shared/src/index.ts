@@ -4168,6 +4168,9 @@ export const ThreadView = z.object({
   // ISO8601 of the newest REAL user interaction (answer/steer/dispatch) — the chronological listing
   // sort key. Optional; the listing falls back to spawnedAt when absent (a dispatch IS an interaction).
   lastUserAt: z.string().optional(),
+  // The thread's last turn ended because a person pressed Stop, and nothing has happened since. Its rest
+  // is the human's act, so it is not drawn as one without a sign-off. Absent otherwise.
+  operatorStopped: z.boolean().optional(),
   // Runtime provider-auth rejection (claude-auth plan): the session's provider positively rejected
   // its credential (Claude: synthetic isApiErrorMessage 401 record, or the 401/login text on a
   // boot-failed pane). Bounded by design — only the typed category travels, never raw provider/pane

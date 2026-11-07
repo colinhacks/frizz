@@ -19,16 +19,31 @@
 
 import { createServer } from "node:http"
 
-const BUILD_RULES = [{ action: "*", resource: "*", effect: "allow" }]
+// The built-in agents' own rules, as OpenCode 2.2.5's plugin/agent.ts and schema/agent.ts set them. The
+// person's configured rules (`opts.configRules`, an opencode.json's `permissions`) are pushed onto every
+// agent after these, as config/plugin/agent.ts does.
+const AGENT_DEFAULT = [{ action: "*", resource: "*", effect: "allow" }]
+const AGENT_RULES = {
+  build: [...AGENT_DEFAULT, { action: "question", resource: "*", effect: "allow" }],
+  general: [...AGENT_DEFAULT, { action: "question", resource: "*", effect: "deny" }, { action: "subagent", resource: "*", effect: "deny" }],
+  plan: [...AGENT_DEFAULT, { action: "edit", resource: "*", effect: "deny" }],
+}
 
+// OpenCode's Wildcard.match and Permission.evaluate: the last matching rule wins, and nothing matching asks.
+function wildcard(input, pattern) {
+  let escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")
+  if (escaped.endsWith(" .*")) escaped = escaped.slice(0, -3) + "( .*)?"
+  return new RegExp("^" + escaped + "$", "s").test(input)
+}
 function evaluate(action, resource, rules) {
-  const match = (value, pattern) => new RegExp("^" + pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$").test(value)
-  return [...rules].reverse().find((r) => match(action, r.action) && match(resource, r.resource))?.effect ?? "ask"
+  return [...rules].reverse().find((r) => wildcard(action, r.action) && wildcard(resource, r.resource))?.effect ?? "ask"
 }
 
 export async function startFakeOpencode(opts = {}) {
   const password = opts.password ?? "fake-secret-password"
   const version = opts.version ?? "2.2.5"
+  const configRules = opts.configRules ?? []
+  const agentRules = (agent) => [...(AGENT_RULES[agent] ?? AGENT_DEFAULT), ...configRules]
   // A service that has just started: until `activatingMs` has passed, `/api/model` answers 503 and a prompt
   // fails "Model unavailable" (`provider.no-route`), as 2.0.27 did a moment after `service start`.
   const bootedAt = Date.now()
@@ -60,7 +75,7 @@ export async function startFakeOpencode(opts = {}) {
   }
 
   function info(s) {
-    return { id: s.id, ...(s.parentID ? { parentID: s.parentID } : {}), title: s.title, agent: s.agent, model: s.model, permissions: s.permissions, metadata: s.metadata, version }
+    return { id: s.id, ...(s.parentID ? { parentID: s.parentID } : {}), title: s.title, agent: s.agent, model: s.model, permissions: s.permissions, metadata: s.metadata }
   }
 
   function message(s, m) { m.seq = ++seq; s.messages.push(m); return m }
@@ -131,12 +146,24 @@ export async function startFakeOpencode(opts = {}) {
       const input = kind === "shell" ? { command: arg } : kind === "sub" ? { agent: "general", description: arg, prompt: "child work" } : { questions: [{ header: "Colour", question: "Which colour?", options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] }
       const part = { type: "tool", id: callId, name, state: { status: "running", input } }
       assistant.content.push(part)
-      emit("session.tool.input.started", { sessionID: s.id, assistantMessageID: assistant.id, id: callId, name })
-      emit("session.tool.called", { sessionID: s.id, assistantMessageID: assistant.id, id: callId, input })
+      // `unseenCalls`: a call Frizz never saw, as after a restart or a dropped stream, so a permission request
+      // arrives with no call before it.
+      if (!opts.unseenCalls) {
+        emit("session.tool.input.started", { sessionID: s.id, assistantMessageID: assistant.id, id: callId, name })
+        emit("session.tool.called", { sessionID: s.id, assistantMessageID: assistant.id, id: callId, input })
+      }
       let result
       if (kind === "shell") {
-        const rules = [...BUILD_RULES, ...s.permissions]
-        if (evaluate("shell", arg, rules) === "ask") {
+        // Per sub-command, as the shell tool asks: any deny blocks the call, any ask raises one request.
+        const rules = [...agentRules(s.agent), ...s.permissions]
+        const effects = arg.split(/\s*(?:\||&&)\s*/).map((c) => evaluate("shell", c, rules))
+        if (effects.includes("deny")) {
+          const error = { type: "permission.blocked", message: "The user has specified a rule which prevents you from using this specific tool call" }
+          part.state = { status: "error", input, error }
+          emit("session.tool.failed", { sessionID: s.id, assistantMessageID: assistant.id, id: callId, error })
+          endStep("tool-calls"); step(); continue
+        }
+        if (effects.includes("ask")) {
           const reqId = id("per")
           const reply = await new Promise((resolve) => {
             s.permissionsPending.set(reqId, { id: reqId, sessionID: s.id, action: "shell", resources: arg.split(/\s*(?:\||&&)\s*/), save: arg.split(/\s*(?:\||&&)\s*/).map((c) => c.split(" ")[0] + " *"), source: { type: "tool", messageID: assistant.id, id: callId }, resolve })
@@ -178,7 +205,7 @@ export async function startFakeOpencode(opts = {}) {
         const child = newSession({ parentID: s.id, title: arg, agent: "general", location: { directory: s.directory }, permissions: s.permissions })
         emit("session.tool.progress", { sessionID: s.id, assistantMessageID: assistant.id, id: callId, metadata: { sessionID: child.id, status: "running" } })
         await sleep(opts.childDelayMs ?? 50)
-        enqueue(child, { id: id("msg"), type: "user", text: "[shell:echo $FRIZZ_THREAD_SLUG][say:child done]", delivery: "steer" })
+        enqueue(child, { id: id("msg"), type: "user", text: opts.childScript ?? "[shell:echo $FRIZZ_THREAD_SLUG][say:child done]", delivery: "steer" })
         await new Promise((resolve) => { child.onIdle = resolve })
         result = `<subagent sessionID="${child.id}" state="completed">\nchild done\n</subagent>`
         part.state = { status: "completed", input, content: [{ type: "text", text: result }], metadata: { sessionID: child.id, status: "completed" } }
@@ -261,6 +288,10 @@ export async function startFakeOpencode(opts = {}) {
       { id: "big-pickle", providerID: "opencode", name: "Big Pickle", variants: [], limit: { context: 200000 }, enabled: true, status: "active" },
       { id: "flash", providerID: "opencode", name: "Flash", variants: [{ id: "low" }, { id: "high" }], limit: { context: 100000 }, enabled: true, status: "active" },
     ] })
+    if (url.pathname === "/api/agent") {
+      if (opts.noAgentRoute) return json(res, 404, { message: "no route" })
+      return json(res, 200, { data: ["build", "plan", "general"].map((id) => ({ id, name: id, mode: id === "general" ? "subagent" : "primary", hidden: false, permissions: agentRules(id) })) })
+    }
     if (url.pathname === "/api/model/default") return json(res, 200, { data: { id: "big-pickle", providerID: "opencode" } })
     if (url.pathname === "/api/session/active") return json(res, 200, { data: Object.fromEntries([...sessions.values()].filter((s) => s.running).map((s) => [s.id, { type: "running" }])) })
     if (url.pathname === "/api/session" && req.method === "POST") return json(res, 200, { data: info(newSession(body)) })
@@ -307,6 +338,11 @@ export async function startFakeOpencode(opts = {}) {
       if (url.searchParams.get("resume") === "true") s.resumeAfterInterrupt = true
       s.abort?.abort()
       return json(res, 200, { data: { interrupted: was } })
+    }
+    if (p[3] === "message" && p[4]) {
+      if (opts.noMessageRoute) return json(res, 404, { message: "no route" })
+      const m = s.messages.find((x) => x.id === p[4])
+      return m ? json(res, 200, { data: m }) : json(res, 404, { message: "no message" })
     }
     if (rest === "message") {
       const desc = [...s.messages].sort((a, b) => b.seq - a.seq)

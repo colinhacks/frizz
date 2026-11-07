@@ -11,8 +11,8 @@ import { OpencodeHub, sharedOpencodeHub, type OpencodeHubListener } from "./open
 import { OPENCODE_MIN_VERSION, opencodeNativeAvailable, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { OpencodeTranscriptWriter, opencodeChildTranscriptPath, opencodeTranscriptPath, type OpencodeSubAgentRecord } from "./opencode-transcript.ts"
 import {
-  asArray, asNumber, asObject, asString, errorMessage, eventSessionId, frizzToolShape, opencodeAgentFor, opencodeSessionRules, subagentResultText, toolContentText,
-  type Json, type OpencodeEvent, type OpencodeMode,
+  asArray, asNumber, asObject, asString, errorMessage, eventSessionId, frizzToolShape, opencodeRulesOf, opencodeSessionRules, subagentResultText, toolContentText,
+  type Json, type OpencodeEvent, type OpencodeMode, type OpencodeRule,
 } from "./opencode-types.ts"
 import { frizzCliEnv, withFrizzCliOnPath, type FrizzCli } from "./types.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
@@ -101,6 +101,9 @@ class SessionStream {
   turnOpen = false
   /** The last finished step stopped on its own: a user message delivered now starts a new turn. */
   lastStepStopped = false
+  /** A person pressed Stop on this turn (interruptTurn): the turn's end is written as theirs, which keeps
+   *  the sign-off reminder and the "Rested without a sign-off" card off it (FoldState.operatorStopped). */
+  stopRequested = false
   readonly textWritten = new Map<string, number>()
   readonly reasoningSeen = new Set<string>()
   readonly toolNames = new Map<string, string>()
@@ -256,6 +259,7 @@ class SessionStream {
     this.lastError = undefined
     this.turnOpen = true
     this.lastStepStopped = false
+    this.stopRequested = false
     this.writer.append({ kind: "turn-start", at })
   }
 
@@ -269,7 +273,9 @@ class SessionStream {
     this.finalText = ""
     this.finalMessage = undefined
     this.lastStepStopped = false
-    this.writer.append({ kind: "turn-end", at, ...(finalText ? { finalText } : {}), successful })
+    const stopped = this.stopRequested && !successful
+    this.stopRequested = false
+    this.writer.append({ kind: "turn-end", at, ...(finalText ? { finalText } : {}), successful, ...(stopped ? { stoppedBy: "operator" as const } : {}) })
     this.hooks.onTurnClosed?.(this)
   }
 
@@ -531,6 +537,13 @@ function foregroundChildRunning(live: { children: Map<string, ChildSession>; str
   return false
 }
 
+interface AgentCatalog {
+  defaultAgent: string
+  rules: Map<string, OpencodeRule[]>
+}
+
+const UNREAD_RULES_NOTE = "Frizz could not read OpenCode's agents, so this thread follows your OpenCode settings until the permission control is set again."
+
 interface Card {
   interactionId: string
   ownerSessionId: string
@@ -554,6 +567,9 @@ interface Live {
   children: Map<string, ChildSession>
   cards: Map<string, Card>
   byProviderId: Map<string, string>
+  /** Permission requests whose card waits on a read of the call's message, and those answered meanwhile. */
+  raising: Set<string>
+  raisingGone: Set<string>
   pendingSends: Map<string, { recordText: string; deliveryId?: string }>
   /** Delivered before the send's own POST returned. */
   deliveredEarly: Set<string>
@@ -672,6 +688,9 @@ export class OpencodeBridge implements OpencodeHubListener {
     // Before its first shell can run: a child does not inherit its parent's environment.
     const client = this.hub.client
     if (client) void client.putEnvironment(childId, this.workerEnv(live.slug), live.cwd).catch((err) => this.diagnostic(live.slug, `could not set a sub-agent's environment: ${(err as Error).message}`))
+    // It copied its parent's session rules, which end with the PARENT agent's kept denies. Its own agent's
+    // (a `general` sub-agent may not ask questions or start sub-agents of its own) go back on now.
+    if (client) void this.applyChildRules(client, live, childId, child).catch((err) => this.diagnostic(live.slug, `could not set a sub-agent's rules: ${(err as Error).message}`))
     return child
   }
 
@@ -740,7 +759,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     const stream: SessionStream = new SessionStream(ref.opencodeSessionId, opencodeTranscriptPath(this.options.stateDir, ref.sessionId), () => this.now(), this.options.flushMs ?? 1_000, hooks)
     const live: Live = {
       slug: ref.threadSlug, sessionId: ref.sessionId, opencodeId: ref.opencodeSessionId, cwd: ref.cwd, mode: ref.mode, ...(ref.model ? { model: ref.model } : {}),
-      stream, children: new Map(), cards: new Map(), byProviderId: new Map(), pendingSends: new Map(), deliveredEarly: new Set(), stale: true, contractInPrompt: false, contractOwed: false,
+      stream, children: new Map(), cards: new Map(), byProviderId: new Map(), raising: new Set(), raisingGone: new Set(), pendingSends: new Map(), deliveredEarly: new Set(), stale: true, contractInPrompt: false, contractOwed: false,
     }
     this.sessions.set(ref.sessionId, live)
     this.byOpencodeId.set(ref.opencodeSessionId, { live, stream })
@@ -899,15 +918,40 @@ export class OpencodeBridge implements OpencodeHubListener {
   private raisePermission(live: Live, stream: SessionStream, data: Json): void {
     const requestId = asString(data.id)
     const store = this.options.interactions
-    if (!requestId || live.byProviderId.has(requestId)) return
+    if (!requestId || live.byProviderId.has(requestId) || live.raising.has(requestId)) return
     const client = this.hub.client
     if (!store) {
       if (client) void client.replyPermission(stream.opencodeId, requestId, "reject", live.cwd).catch(() => {})
       return
     }
+    const source = asObject(data.source)
+    const callId = asString(source?.id)
+    const messageId = asString(source?.messageID)
+    const known = callId ? stream.toolCommands.get(callId) : undefined
+    // OpenCode's request lists a shell command split at every `|` and `&&`. When this bridge never saw
+    // the call (raised again by a reconcile, or asked while Frizz was down), its input is in the message.
+    if (asString(data.action) === "shell" && !known && callId && messageId && client) {
+      live.raising.add(requestId)
+      void client.message(stream.opencodeId, messageId, live.cwd)
+        .then((message) => opencodeCallCommand(message, callId))
+        .catch(() => undefined)
+        .then((command) => {
+          live.raising.delete(requestId)
+          // Answered elsewhere while the message was read: no card for a request that is gone.
+          if (live.raisingGone.delete(requestId)) return
+          this.createPermissionCard(live, stream, data, requestId, command, command === undefined)
+        })
+      return
+    }
+    this.createPermissionCard(live, stream, data, requestId, known, false)
+  }
+
+  private createPermissionCard(live: Live, stream: SessionStream, data: Json, requestId: string, command: string | undefined, split: boolean): void {
+    const store = this.options.interactions
+    if (!store || live.byProviderId.has(requestId)) return
+    const client = this.hub.client
     const child = stream === live.stream ? undefined : live.children.get(stream.opencodeId)
-    const callId = asString(asObject(data.source)?.id)
-    const request = buildOpencodePermissionInteraction(data, this.owner(live, requestId), live.cwd, child?.label, callId ? stream.toolCommands.get(callId) : undefined)
+    const request = buildOpencodePermissionInteraction(data, this.owner(live, requestId), live.cwd, child?.label, command, split)
     if (!request) {
       this.diagnostic(live.slug, "a permission request could not be shown as a card; rejecting it")
       if (client) void client.replyPermission(stream.opencodeId, requestId, "reject", live.cwd).catch(() => {})
@@ -980,6 +1024,7 @@ export class OpencodeBridge implements OpencodeHubListener {
   /** Something other than the card answered (another client, the turn ending): take the card away. */
   private retireProvider(live: Live, providerId: string | undefined): void {
     if (!providerId) return
+    if (live.raising.has(providerId)) live.raisingGone.add(providerId)
     const id = live.byProviderId.get(providerId)
     if (!id) return
     this.retireCard(live, id)
@@ -1023,18 +1068,23 @@ export class OpencodeBridge implements OpencodeHubListener {
     if (this.closed) throw new Error("OpenCode bridge is closed")
     const client = await this.connect()
     await this.locationReady(client, input.cwd, input.model)
-    const agent = opencodeAgentFor(input.mode)
+    // Read fresh at a thread's start: the person may have edited `opencode.json` since the last one.
+    const catalog = await this.agentCatalog(client, input.cwd, true)
+    const agent = this.agentFor(catalog, input.mode)
+    const { rules: permissions, unread } = this.rulesFor(catalog, input.mode, agent)
     const session = await client.createSession({
       directory: input.cwd,
       ...(input.model ? { model: input.model } : {}),
       agent,
       metadata: { frizz: { sessionId: input.sessionId, slug: input.threadSlug, projectId: this.options.projectId } },
-      permissions: opencodeSessionRules(input.mode),
+      permissions,
     })
     const opencodeId = session.id as string
-    const version = asString(session.version)
+    // A session reports no version of its own; the service's `/api/info` does.
+    const version = asString(session.version) ?? this.hub.version
     const live = this.register({ threadSlug: input.threadSlug, sessionId: input.sessionId, cwd: input.cwd, opencodeSessionId: opencodeId, mode: input.mode, ...(input.model ? { model: input.model } : {}) })
     live.stream.writer.append({ kind: "opencode-session", at: this.now(), opencodeSessionId: opencodeId, cwd: input.cwd, ...(input.model ? { model: opencodeModelSlug(input.model) } : {}), ...(version ? { version } : {}) })
+    if (unread) live.stream.note(UNREAD_RULES_NOTE)
     await client.putEnvironment(opencodeId, this.workerEnv(input.threadSlug), input.cwd)
     await this.pushContract(client, live)
     live.stale = false
@@ -1111,7 +1161,14 @@ export class OpencodeBridge implements OpencodeHubListener {
     const client = this.hub.client ?? await this.connect()
     const directory = live?.cwd ?? cwd
     const pending = await client.inbox(id, directory).catch(() => [] as Json[])
-    await client.interrupt(id, { resume: pending.length > 0, ...(directory ? { directory } : {}) })
+    // Marked before the call: the interrupted event can arrive before it returns.
+    if (live) live.stream.stopRequested = true
+    try {
+      await client.interrupt(id, { resume: pending.length > 0, ...(directory ? { directory } : {}) })
+    } catch (error) {
+      if (live) live.stream.stopRequested = false
+      throw error
+    }
     return { interrupted: true }
   }
 
@@ -1165,12 +1222,63 @@ export class OpencodeBridge implements OpencodeHubListener {
 
   async setPermission(ref: OpencodeThreadRef, mode: OpencodeMode): Promise<void> {
     const { client, live } = await this.attached(ref)
-    await client.selectAgent(live.opencodeId, opencodeAgentFor(mode), live.cwd)
-    const rules = opencodeSessionRules(mode)
+    // Read fresh on every change, for the same reason as at a thread's start.
+    const catalog = await this.agentCatalog(client, live.cwd, true)
+    const agent = this.agentFor(catalog, mode)
+    await client.selectAgent(live.opencodeId, agent, live.cwd)
+    const { rules, unread } = this.rulesFor(catalog, mode, agent)
     await client.patchSession(live.opencodeId, { permissions: rules }, live.cwd)
-    // A child took its parent's rules when it was created, and only then.
-    for (const childId of live.children.keys()) await client.patchSession(childId, { permissions: rules }, live.cwd).catch(() => {})
+    if (unread) live.stream.note(UNREAD_RULES_NOTE)
     live.mode = mode
+    // A child took its parent's rules when it was created, and only then. Each gets its OWN agent's kept
+    // rules: a sub-agent's agent (`general`, `explore`) carries denies the parent's does not.
+    for (const [childId, child] of live.children) {
+      await this.applyChildRules(client, live, childId, child, catalog).catch(() => {})
+    }
+  }
+
+  /** What OpenCode resolved for every agent in a directory, read at most every 30s unless `fresh`. */
+  private readonly catalogs = new WeakMap<OpencodeClient, Map<string, { at: number; catalog: AgentCatalog }>>()
+  private async agentCatalog(client: OpencodeClient, cwd: string, fresh = false): Promise<AgentCatalog | undefined> {
+    let byDir = this.catalogs.get(client)
+    if (!byDir) { byDir = new Map(); this.catalogs.set(client, byDir) }
+    const cached = byDir.get(cwd)
+    if (cached && !fresh && Date.now() - cached.at < 30_000) return cached.catalog
+    try {
+      const agents = await withStartupRetry(() => client.agents(cwd))
+      const rules = new Map<string, OpencodeRule[]>()
+      for (const agent of agents) { const id = asString(agent.id); if (id) rules.set(id, opencodeRulesOf(agent.permissions)) }
+      const primary = agents.find((a) => a.mode !== "subagent" && a.hidden !== true)
+      const catalog: AgentCatalog = { defaultAgent: asString(primary?.id) ?? "build", rules }
+      byDir.set(cwd, { at: Date.now(), catalog })
+      return catalog
+    } catch (err) {
+      log.warn("opencode", `could not read OpenCode's agents for ${cwd}: ${(err as Error).message}`)
+      return undefined
+    }
+  }
+
+  /** The agent a mode runs: OpenCode's `plan`, or the person's default primary agent (`build` unless their
+   *  configuration names another), which the agent list puts first. */
+  private agentFor(catalog: AgentCatalog | undefined, mode: OpencodeMode): string {
+    if (mode === "plan") return "plan"
+    return catalog?.defaultAgent ?? "build"
+  }
+
+  /** A session's rules for a mode. When OpenCode's agents could not be read, a mode that adds rules adds
+   *  NONE: without the person's denies Frizz cannot put them back, and no rules is their own behaviour. */
+  private rulesFor(catalog: AgentCatalog | undefined, mode: OpencodeMode, agent: string): { rules: OpencodeRule[]; unread: boolean } {
+    const plain = opencodeSessionRules(mode)
+    if (plain.length === 0) return { rules: [], unread: false }
+    if (!catalog) return { rules: [], unread: true }
+    return { rules: opencodeSessionRules(mode, catalog.rules.get(agent) ?? []), unread: false }
+  }
+
+  private async applyChildRules(client: OpencodeClient, live: Live, childId: string, child: ChildSession, catalog?: AgentCatalog): Promise<void> {
+    const agent = child.agent ?? asString((await client.getSession(childId, live.cwd))?.agent)
+    if (agent && !child.agent) child.agent = agent
+    const { rules } = this.rulesFor(catalog ?? await this.agentCatalog(client, live.cwd), live.mode, agent ?? "general")
+    await client.patchSession(childId, { permissions: rules }, live.cwd)
   }
 
   async compact(ref: OpencodeThreadRef): Promise<void> {
@@ -1341,8 +1449,10 @@ export function buildOpencodePermissionInteraction(
   owner: { projectId: string; threadSlug: string; sessionId: string; turnId: string; itemId: string; sessionEpoch: number; capabilityRevision: number },
   cwd: string,
   childLabel: string | undefined,
-  /** The whole command of the shell call asking, when the bridge has seen it. */
+  /** The whole command of the shell call asking, from the call itself. */
   command?: string,
+  /** The call's input could not be read: what shows is OpenCode's sub-commands, and the card says so. */
+  split = false,
 ): InteractionRequestType | null {
   const action = asString(data.action) ?? "tool"
   const resources = asArray(data.resources).filter((r): r is string => typeof r === "string")
@@ -1352,6 +1462,7 @@ export function buildOpencodePermissionInteraction(
   const canAlways = asArray(data.save).length > 0
   const who = childLabel ? `Sub-agent "${childLabel}": ` : ""
   const summary = action === "shell" && command ? command : resources.join("\n")
+  const splitNote = action === "shell" && !command && split && resources.length > 1
   const preview = clip(redactCredentialSyntax(summary), 6_000)
   const label = clip(redactCredentialSyntax(summary.replace(/\s+/g, " ")), 150)
   const allowedDecisions = [APPROVAL_DECISIONS.once, ...(canAlways ? [APPROVAL_DECISIONS.always] : []), APPROVAL_DECISIONS.reject]
@@ -1366,7 +1477,11 @@ export function buildOpencodePermissionInteraction(
   }
   let payload: unknown
   if (action === "shell") {
-    payload = { kind: "command-approval", title: clip(`${who}run a command?`, 150).replace(/^./, (c) => c.toUpperCase()), command: { summary: label || "command", preview: preview || "command", redacted: true, workingDirectoryLabel: clip(cwd, 1_000) } }
+    // Sub-commands joined with a space read as one command that was never asked for (`git status --short
+    // head -5`). When the call's own input could not be read, they show one per line under a label.
+    const shownSummary = splitNote ? clip(`${resources.length} commands: ${resources.map((r) => redactCredentialSyntax(r)).join(" ; ")}`, 150) : label
+    const shownPreview = splitNote ? clip(`OpenCode split this command into ${resources.length} parts; the whole command could not be read:\n${preview}`, 6_000) : preview
+    payload = { kind: "command-approval", title: clip(`${who}run a command?`, 150).replace(/^./, (c) => c.toUpperCase()), command: { summary: shownSummary || "command", preview: shownPreview || "command", redacted: true, workingDirectoryLabel: clip(cwd, 1_000) } }
   } else if (action === "edit" || action === "write" || action === "patch") {
     const diff = asString(metadata?.diff) ?? asString(metadata?.patch)
     payload = { kind: "file-approval", title: clip(`${who}edit a file?`, 150).replace(/^./, (c) => c.toUpperCase()), operation: "write", pathLabel: clip(redactCredentialSyntax(resources[0] ?? cwd), 1_000), ...(diff ? { diffPreview: clip(redactCredentialSyntax(diff), 6_000) } : {}) }
@@ -1377,6 +1492,18 @@ export function buildOpencodePermissionInteraction(
   }
   const parsed = InteractionRequest.safeParse({ ...base, allowedDecisions, payload })
   return parsed.success ? parsed.data : null
+}
+
+/** A shell call's command from its message's tool part. */
+export function opencodeCallCommand(message: Json | undefined, callId: string): string | undefined {
+  const parts = asArray(message?.content ?? message?.parts)
+  for (const raw of parts) {
+    const part = asObject(raw)
+    if (!part || asString(part.id) !== callId) continue
+    const input = asObject(asObject(part.state)?.input) ?? asObject(part.input)
+    return asString(input?.command)
+  }
+  return undefined
 }
 
 const QUESTION_DECISIONS = [

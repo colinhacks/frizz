@@ -1720,8 +1720,9 @@ elsewhere in this contract as \`Agent\`, \`SendMessage\` and \`Monitor\` are Cla
 
 Your permission prompts are OpenCode's, under a mode the human sets on this thread: Frizz shows each
 ask to them as a card and relays the answer, for your sub-agents' asks too. A denied call comes back as
-a failed tool call: adapt, or say what is blocked in your final message. In plan mode you run as
-OpenCode's \`plan\` agent and do not edit.
+a failed tool call: adapt, or say what is blocked in your final message. A call the human's own
+OpenCode configuration denies stays denied in every mode. In plan mode you run as OpenCode's \`plan\`
+agent and do not edit.
 
 ## Sub-agents
 

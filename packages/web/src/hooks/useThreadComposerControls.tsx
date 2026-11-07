@@ -265,7 +265,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
               <Select
                 variant="readout"
                 side="top"
-                value={permission.isPending ? (permission.variables as PermissionMode) : thread.permissionMode ?? "bypassPermissions"}
+                value={permission.isPending ? (permission.variables as PermissionMode) : thread.permissionMode ?? "auto"}
                 onValueChange={(v) => {
                   permission.mutate(v as PermissionMode, {
                     onSuccess: () => showToast("Permissions applied to the session"),
