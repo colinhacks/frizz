@@ -169,7 +169,7 @@ export function resolveDispatchPreferences(
     : backend === "codex"
       ? codexEffortOptions(codexModel, { withDefault: false })
       : []
-  const effortAvailable = backend === "acp" || baseEfforts.some((option) => option.value === effort)
+  const effortAvailable = backend === "acp" || backend === "opencode" || baseEfforts.some((option) => option.value === effort)
   const effortOptions = effort && !effortAvailable
     ? [{ value: effort, label: `${effort} (unavailable)`, title: "Saved reasoning level is not available for this model" }, ...baseEfforts]
     : baseEfforts

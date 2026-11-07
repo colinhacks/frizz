@@ -185,3 +185,15 @@ test("the group a signed-out machine leads with goes first, and one agent is its
   const two = dispatchProfileGroups(models, [opencode, { ...opencode, id: "kilo", label: "Kilo" }])
   assert.equal(two.at(-1)?.label, "ACP agents")
 })
+
+test("a native OpenCode profile is ready to send: no effort axis, so nothing to be unavailable", () => {
+  const agents = [{ id: "opencode", label: "OpenCode", command: "opencode", args: ["acp"], available: true, native: true }]
+  for (const model of ["opencode:", "opencode:opencode/glm-5.3-flash-free#high"]) {
+    const resolved = resolveDispatchPreferences({ ...preferences, backend: "opencode", opencode: { model } }, models, agents)
+    assert.equal(resolved.backend, "opencode")
+    assert.equal(resolved.effort, "")
+    assert.equal(resolved.modelAvailable, true, model)
+    // The new-thread box refuses a send while this is false ("Saved reasoning level is unavailable").
+    assert.equal(resolved.effortAvailable, true, model)
+  }
+})
