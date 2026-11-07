@@ -3620,8 +3620,19 @@ export const SettledQuestionView = z.object({
 }).strict()
 export type SettledQuestionView = z.infer<typeof SettledQuestionView>
 
+/** A fence-asked question that closed WITHOUT an answer, with what it asked. The board's `closedQuestions`
+ *  carries only the row's id, handle and state, and the fence that asked it carries the text; but a later
+ *  `id:`-only fence that named it while it was open carries nothing, and draws a copy of the closed card
+ *  (ChatView's question-fence path). Per thread for the same reason as SettledQuestionView. */
+export const ClosedQuestionSpecView = z.object({
+  id: z.string(),
+  spec: AskedQuestionSchema,
+}).strict()
+export type ClosedQuestionSpecView = z.infer<typeof ClosedQuestionSpecView>
+
 export const ThreadSettledQuestionsResult = z.object({
   questions: z.array(SettledQuestionView),
+  closed: z.array(ClosedQuestionSpecView),
 }).strict()
 export type ThreadSettledQuestionsResult = z.infer<typeof ThreadSettledQuestionsResult>
 

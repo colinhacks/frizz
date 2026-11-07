@@ -19,7 +19,7 @@ import { stepsDoneReplies } from "../lib/stepsAnswer.ts"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
-import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useClosedQuestionSpecs, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 
 // THE THREAD SURFACE — the one shell around a thread, wherever it is drawn. A thread is drawn in three
 // places: its queue card (TodosView's QueueCard), its drawer and its full-screen page (both ChatView).
@@ -282,7 +282,8 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const heldIdx = useMemo(() => (thread?.heldHandoff ? heldHandoffIndex(messages, awaitingCut) : -1), [thread?.heldHandoff, messages, awaitingCut])
   const restingShown = showsRestingCard(thread)
   const fencesLive = questionFencesLive(thread?.spawnedAt)
-  const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread)
+  const closedSpecs = useClosedQuestionSpecs(thread)
+  const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread, closedSpecs)
   const shadowedByMessage = useMemo(() => registeredStandingAt(messages, openQuestions), [messages, openQuestions])
   const placement = useMemo(() => placeQuestions(messages, openQuestions), [messages, openQuestions])
   const settledPlacement = useMemo(() => settledQuestionPositions(messages, settledQuestions), [messages, settledQuestions])
