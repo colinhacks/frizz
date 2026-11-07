@@ -3,8 +3,9 @@ import test from "node:test"
 
 // THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): at the upper left of the status row, over the prompt
 // box it points, where the house stood until 2026-11-06. Clicking a row of its menu picks the project a
-// prompt goes to. Each row's icon opens that project in a new tab, and that must not move the pick: the two
-// sit on one row, and a pick nobody meant sends the next thread to the wrong project.
+// prompt goes to. Each row's arrow, in a rail down the menu's right edge, opens that project in a new tab,
+// and that must not move the pick: the two sit on one line, and a pick nobody meant sends the next thread to
+// the wrong project.
 //
 // Real server, two projects (nothing is dispatched):
 //   nub scripts/adhoc-stack.mjs --port=<port> --project=<throwaway repo> --also-project=<another>
@@ -62,6 +63,35 @@ test("the chip leads the status row, and its menu picks a project or opens one i
       target: "_blank",
       label: await page.$eval(`[data-console-project-option="${other}"] .truncate`, (name) => `Open ${name.textContent} in a new tab`),
     })
+
+    // The layout chosen on 2026-11-06: the picked row is filled with no check, every row stands as far from
+    // the menu's left edge as from the rail's hairline, the squares sit under the chip's, and the arrows stand
+    // in a rail that runs the menu's full height.
+    const layout = await page.evaluate((chip) => {
+      const rows = [...document.querySelectorAll("[data-console-project-option]")]
+      const menu = rows[0].closest('[role="menu"]')!
+      const m = menu.getBoundingClientRect()
+      const rail = menu.querySelector(':scope > [aria-hidden="true"]')!.getBoundingClientRect()
+      const chipSquare = document.querySelector(chip)!.firstElementChild!.getBoundingClientRect()
+      const border = parseFloat(getComputedStyle(menu).borderLeftWidth)
+      return {
+        checked: rows.filter((r) => r.getAttribute("aria-checked") === "true").map((r) => r.getAttribute("data-console-project-option")),
+        marks: rows.reduce((n, r) => n + r.querySelectorAll("svg").length, 0),
+        evenSides: rows.every((r) => Math.abs(r.getBoundingClientRect().left - m.left - border - (rail.left - r.getBoundingClientRect().right)) < 0.5),
+        squaresUnderChip: rows.every((r) => Math.abs(r.firstElementChild!.getBoundingClientRect().left - chipSquare.left) < 0.5),
+        railFullHeight: Math.abs(rail.top - m.top - border) < 0.5 && Math.abs(m.bottom - border - rail.bottom) < 0.5,
+        arrowsInRail: [...document.querySelectorAll("[data-console-project-open]")].every((a) => {
+          const b = a.getBoundingClientRect()
+          return b.left >= rail.left - 0.5 && b.right <= rail.right + 0.5
+        }),
+      }
+    }, CHIP)
+    assert.deepEqual(layout, { checked: [start], marks: 0, evenSides: true, squaresUnderChip: true, railFullHeight: true, arrowsInRail: true })
+
+    // The pointer on an arrow lights the arrow alone, never its row.
+    await page.hover(link)
+    await page.waitForFunction((s) => document.querySelector(s)?.hasAttribute("data-highlighted"), { timeout: 3_000 }, link)
+    assert.equal(await page.$eval(`[data-console-project-option="${other}"]`, (row) => getComputedStyle(row).backgroundColor), "rgba(0, 0, 0, 0)")
 
     // The icon opens the other project in a new tab, closes the menu and leaves the pick alone.
     const before = new Set(browser.targets())
