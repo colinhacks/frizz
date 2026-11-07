@@ -47,8 +47,9 @@ Before any name returns, including one set up by hand for a single board:
 
 **No second GitHub app (2026-11-07).** A claim proves its account with the user token of Frizz's own GitHub sign-in, the Frizz Agent Console App the board already holds (`src/github-claim-identity.ts`), and the R pane offers the signed-in login as the name. The maintainer dropped the zero-scope rule: the registrar deploys from the same workflow, token and approval as the relay, and a hijacked relay already has full control of every board serving through it. A token with OAuth scopes, which only a Frizz from before 2026-10-08 sends, is still refused.
 
-1. **The next approved Workers deploy** ships the registrar half. Until then the live registrar refuses the App's token as `github-token-scoped`.
+1. **The next approved Workers deploy** ships the registrar half. Until then the live registrar refuses the App's token as `github-token-scoped`. It also ships the move from a random name to a custom one on the same key, which releases the random name; before it, a board on a random name is refused a custom one for that name's 30-day lease.
 2. **Then the switch:** `CUSTOM_NAMES_OFFERED = true` in [`src/cloud.ts`](../src/cloud.ts), [`scripts/verify-claim-e2e.mjs`](../scripts/verify-claim-e2e.mjs) green, and one real name claimed from the R pane on a board signed in under Settings → GitHub. The next shell release carries it to everyone.
+3. **Decide custom → random before the switch.** A key whose custom name the registrar indexed is refused a random name for that name's lease (`one-name-per-key`), and the R pane has no release. Today only hand-written rows exist, which are not indexed, so it cannot happen yet.
 
 ## 3. How the SSH key and the Cloudflare token left the Mac
 

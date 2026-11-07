@@ -230,17 +230,33 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   // zone caps at 200 records. This is a speed bump rather than a wall — keys are free, so a determined
   // squatter just makes more — and the real answer is tying a claim to an identity that costs
   // something to obtain. It closes the trivial version, which is the one that happens by accident.
+  //
+  // A RANDOM NAME GIVES WAY to a custom one claimed with the same key, so the key still holds one name.
+  // A board starts on a random name, and the R pane offers the account's own name once Frizz is signed
+  // in to GitHub; refusing that would leave the board stuck for the random name's 30-day lease, with no
+  // way to release it. A custom name does not give way: its lease is the grace for coming back to it.
   const held = await deps.store.readOwner(pubkey)
+  let givingWay: { name: string; record: ClaimRecord } | undefined
   if (held && held !== name) {
     const other = await deps.store.read(held)
     if (other && other.pubkey === pubkey && !claimLeaseExpired(other.renewedAt, now)) {
-      return reject("one-name-per-key", 409)
+      if (!isAnonymousClaimName(held) || isAnonymousClaimName(name)) return reject("one-name-per-key", 409)
+      givingWay = { name: held, record: other }
+    } else {
+      // The index outlived the name it pointed at, so it is stale rather than binding.
+      await deps.store.removeOwner(pubkey)
     }
-    // The index outlived the name it pointed at, so it is stale rather than binding.
-    await deps.store.removeOwner(pubkey)
   }
 
-  return create({ name, hostname, port, pubkey, githubId }, deps, now)
+  const outcome = await create({ name, hostname, port, pubkey, githubId }, deps, now)
+  if (outcome.status === 200 && givingWay) {
+    // Only once the new name is held, so a failed claim leaves the board on the name it had.
+    const old = givingWay
+    await releaseQuietly(deps, old.name, `${old.name}.${deps.zone}`, old.record.tunnelId, pubkey, old.record.githubId)
+    // Releasing forgets the key's index with the name; the key's one name is the new one now.
+    await deps.store.writeOwner(pubkey, name)
+  }
+  return outcome
 }
 
 interface ClaimTarget {

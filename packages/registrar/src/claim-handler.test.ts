@@ -416,6 +416,57 @@ test("one key holds ONE name — a loop of claims cannot take the namespace", as
   assert.equal((await handleClaim(await claimFor(identity, "first"), d)).status, 200)
 })
 
+test("a random name gives way to a custom one on the same key, which still holds one name", async () => {
+  // Boards start on a random name, and the R pane then offers the account's own name. Refusing that
+  // would strand the board for the random name's 30-day lease, with no way to release it.
+  for (const relay of [false, true]) {
+    const cf = fakeCloudflare()
+    const st = fakeStore()
+    const identity = await generateClaimIdentity()
+    const d = deps({ ...(relay ? { api: undefined } : { api: cf.api }), store: st.store })
+    const random = generateAnonymousClaimName()
+    assert.equal((await handleClaim(await claimFor(identity, random), d)).status, 200)
+
+    const moved = await handleClaim(await claimFor(identity, "colin"), d)
+    assert.equal(moved.status, 200, relay ? "relay" : "tunnel")
+    assert.equal(st.rows.has(random), false, "the random name is released")
+    assert.equal(st.rows.get("colin")?.pubkey, (await claimFor(identity)).pubkey)
+    assert.equal(await st.store.readOwner((await claimFor(identity)).pubkey), "colin", "the key's one name is the new one")
+    if (!relay) {
+      assert.equal(cf.tunnels.size, 1, "the random name's tunnel went with it")
+      assert.equal(cf.dns.has(`${random}.frizz.sh`), false)
+    }
+    // And the key is held to one name from there: a further name is refused.
+    assert.equal((await handleClaim(await claimFor(identity, "another"), d)).status, 409)
+  }
+})
+
+test("a custom name does not give way, and neither does a random one to another random one", async () => {
+  const st = fakeStore()
+  const identity = await generateClaimIdentity()
+  const d = deps({ api: fakeCloudflare().api, store: st.store })
+  assert.equal((await handleClaim(await claimFor(identity, "colin"), d)).status, 200)
+  assert.equal((await handleClaim(await claimFor(identity, generateAnonymousClaimName()), d)).status, 409)
+  assert.equal(st.rows.has("colin"), true, "the custom name keeps its lease, the grace for coming back")
+
+  const other = await generateClaimIdentity()
+  const first = generateAnonymousClaimName()
+  assert.equal((await handleClaim(await claimFor(other, first), d)).status, 200)
+  assert.equal((await handleClaim(await claimFor(other, generateAnonymousClaimName()), d)).status, 409)
+  assert.equal(st.rows.has(first), true)
+})
+
+test("a custom claim that fails leaves the board on its random name", async () => {
+  const st = fakeStore()
+  const identity = await generateClaimIdentity()
+  const random = generateAnonymousClaimName()
+  assert.equal((await handleClaim(await claimFor(identity, random), deps({ api: fakeCloudflare().api, store: st.store }))).status, 200)
+  const failed = await handleClaim(await claimFor(identity, "colin"), deps({ api: fakeCloudflare("createTunnel").api, store: st.store }))
+  assert.equal(failed.status, 502)
+  assert.equal(st.rows.has(random), true, "the name it had is still its own")
+  assert.equal(await st.store.readOwner((await claimFor(identity)).pubkey), random)
+})
+
 test("a key whose name lapsed may claim again", async () => {
   // The index must not outlive the name. Otherwise letting a lease go would lock the owner out of the
   // service permanently, which is a worse failure than the squatting this guards against.
