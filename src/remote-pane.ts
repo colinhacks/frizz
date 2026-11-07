@@ -130,6 +130,8 @@ type Screen =
   /** `cancel` makes escape back out — only while waiting on something the person can abandon. */
   | { name: "busy"; message: string; detail?: string[]; cancel?: () => void }
   | { name: "done"; message: string; link: AccessLink | null; config: CloudConfig | null }
+  /** A switch that cannot be undone from this menu, said before it happens. Enter runs `then`. */
+  | { name: "confirm"; lines: string[]; then: () => void; back: Screen }
   | { name: "error"; message: string; back: Screen };
 
 interface Field {
@@ -237,6 +239,10 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         return;
       }
       write([s.message, "", `${DIM}working…${RESET}`]);
+      return;
+    }
+    if (s.name === "confirm") {
+      write([...s.lines, "", `${DIM}enter switch · esc keep it${RESET}`]);
       return;
     }
     if (s.name === "done") {
@@ -529,6 +535,13 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         return "keep";
       }
       if (s.name === "done") return "close";
+      if (s.name === "confirm") {
+        if (key === ESC) {
+          screen = s.back;
+          paint();
+        } else if (ENTER.has(key)) s.then();
+        return "keep";
+      }
       if (s.name === "error") {
         screen = s.back;
         paint();
@@ -558,16 +571,38 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           const choice = rows[Math.min(s.index, rows.length - 1)]!;
           // The relay's two setups ask what a device may do, the first time this board picks one. Picking the
           // one already in force keeps the answer, and "Device access" is the way to change it.
-          const firstPick = choice.kind !== kindOf(options.current());
-          if (choice.kind === "off") void turnOff();
-          else if (choice.kind === "devices") signOutDevices();
-          else if (choice.kind === "access") askAccess(s, changeAccess);
-          else if (choice.kind === "private") {
-            if (firstPick) askAccess(s, (access) => void claimPrivate(access));
-            else void claimPrivate();
-          } else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
-          else if (choice.kind === "frizz" && firstPick) askAccess(s, (access) => openForm("frizz", access));
-          else openForm(choice.kind);
+          const current = options.current();
+          const firstPick = choice.kind !== kindOf(current);
+          const go = () => {
+            if (choice.kind === "off") void turnOff();
+            else if (choice.kind === "devices") signOutDevices();
+            else if (choice.kind === "access") askAccess(s, changeAccess);
+            else if (choice.kind === "private") {
+              if (firstPick) askAccess(s, (access) => void claimPrivate(access));
+              else void claimPrivate();
+            } else if (choice.kind === "frizz" && !customNamesOffered()) void serveCurrent();
+            else if (choice.kind === "frizz" && firstPick) askAccess(s, (access) => openForm("frizz", access));
+            else openForm(choice.kind);
+          };
+          // While custom names are paused, the custom row is listed only for the board serving one, so moving
+          // to any other setup takes away the one way back to it. On 2026-11-06 the maintainer's board left
+          // colin.frizz.sh for a random name in two keystrokes, and only an edit to cloud.json undid it.
+          const strands = current && kindOf(current) === "frizz" && !customNamesOffered() && !["frizz", "access", "devices"].includes(choice.kind);
+          if (strands) {
+            screen = {
+              name: "confirm",
+              lines: [
+                `Leave ${current.hostname}?`,
+                "",
+                ...wrap(`New custom subdomains are paused, so this menu cannot bring ${current.hostname} back once the board serves something else. The name is released 30 days after this board last served it.`),
+              ],
+              then: go,
+              back: s,
+            };
+            paint();
+            return "keep";
+          }
+          go();
           return "keep";
         }
         paint();
