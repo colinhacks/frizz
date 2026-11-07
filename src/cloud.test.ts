@@ -389,6 +389,31 @@ test("a first claim that cannot reach the registrar points at the path that work
   }
 });
 
+test("a claim's progress lines go where the caller says, and the R pane's unreachable error drops the prompt's hint", async () => {
+  // Under the R pane, a console.log lands inside the pane's paint; the pane passes its own `say`. The
+  // hint at the end of an unreachable error names the launch prompt's other answer, which the pane has
+  // as rows of its own.
+  const home = tempHome();
+  const server = await claimServer();
+  const printed: unknown[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => { printed.push(args); };
+  try {
+    const said: string[] = [];
+    await establishCloudConfig("colin", 9393, home, server.origin, fakeGithub, { say: (line) => said.push(line) });
+    assert.deepEqual(said, ["  claiming colin.frizz.sh for GitHub user colin"]);
+    assert.deepEqual(printed, [], "nothing reaches console.log");
+    await assert.rejects(
+      establishCloudConfig("colin", 9393, home, "http://127.0.0.1:1", fakeGithub, { say: () => {}, promptHint: false }),
+      (error: Error) => /could not reach the Frizz registrar/.test(error.message) && !/tunnel of your own|\n/.test(error.message),
+    );
+  } finally {
+    console.log = log;
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("the offer can be withdrawn by one constant, and a hostname never depended on it", async () => {
   // REGISTRAR_IS_LIVE is the whole gate. It is true now that the Worker is deployed; setting it back
   // to false must refuse a bare name up front rather than letting people hit a connection error.

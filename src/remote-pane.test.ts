@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CloudConfig } from "./cloud.ts";
-import { createRemotePane } from "./remote-pane.ts";
+import { createRemotePane, remoteReachedLine } from "./remote-pane.ts";
 
 // The menu lists "Custom subdomain" only while custom names are offered. They are withdrawn for now, but the
 // claim behind the row is kept, and several cases below drive it — so this file runs with the override
@@ -93,12 +93,12 @@ test("signed out of GitHub, the custom row says where to sign in, asks nothing a
   const claims: string[] = [];
   const { pane, out, applied } = build({ claim: async (name) => { claims.push(name); return { hostname: `${name}.frizz.sh`, claim: name, serve: "relay" }; } });
   pane.open();
-  assert.match(lastScreen(out.text()), /Custom subdomain\s+your GitHub username\.frizz\.sh; needs Frizz's GitHub sign-in/);
+  assert.match(prose(lastScreen(out.text())), /Custom subdomain your GitHub username\.frizz\.sh; needs Frizz's GitHub sign-in/);
   pane.key("2"); // the cursor starts on the current setup (Off), so pick the custom name explicitly
   pane.key("\r");
   await settle();
   const screen = lastScreen(out.text());
-  assert.match(screen, /needs Frizz's GitHub sign-in: open Settings in the board/, "the screen says where to sign in");
+  assert.match(prose(screen), /^A custom subdomain is your GitHub username, so it needs Frizz's GitHub sign-in: open Settings in the board/, "the screen says where to sign in, with no \"could not\" lead");
   assert.doesNotMatch(screen, QUESTION, "before any question about devices");
   assert.doesNotMatch(out.text(), /GitHub CLI|gh auth|login\/device/, "and never asks for the gh CLI or a device code");
   assert.deepEqual(claims, []);
@@ -229,7 +229,7 @@ test("escape on the username screen claims nothing, and a failed claim goes back
   await settle();
   pane.key("\r");
   await settle();
-  assert.match(lastScreen(out.text()), /Could not apply that: that name is taken/);
+  assert.match(lastScreen(out.text()), /Could not claim ada\.frizz\.sh: that name is taken/);
   assert.deepEqual(claims, ["ada"]);
   assert.deepEqual(applied, []);
   assert.equal(pane.key("x"), "keep");
@@ -261,16 +261,18 @@ test("a login that makes no usable name is not offered, and choosing the row say
       claim: async (name) => { claims.push(name); return { hostname: `${name}.frizz.sh`, claim: name, serve: "relay" }; },
     });
     pane.open();
-    assert.match(lastScreen(out.text()), new RegExp(`Custom subdomain\\s+your GitHub username, ${login}, is not a usable name`), login);
+    assert.match(prose(lastScreen(out.text())), new RegExp(`Custom subdomain your GitHub username, ${login}, is not a usable name`), login);
     pane.key("2");
     pane.key("\r");
     await settle();
-    assert.match(lastScreen(out.text()), new RegExp(`your GitHub username, ${login}, does not make a frizz\\.sh name`), login);
+    assert.match(prose(lastScreen(out.text())), new RegExp(`^Your GitHub username, ${login}, does not make a frizz\\.sh name`), login);
     assert.deepEqual(claims, [], login);
   }
 });
 
 const QUESTION = /What can a device signed in through frizz\.sh do\?/;
+/** A screen's words with every run of whitespace, line breaks and indents included, as one space. */
+const prose = (screen: string) => screen.replace(/\s+/g, " ").trim();
 /** The last paint, without escape codes. */
 const lastScreen = (text: string) => text.split("\x1b[2J\x1b[H").pop()!.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
 
@@ -370,7 +372,7 @@ test("the last row of a board on the relay says what a device may do, and change
 
   assert.equal(pane.key("x"), "close");
   pane.open();
-  assert.match(lastScreen(out.text()), /Device access\s+Read and answer: read the board and pick options on cards/);
+  assert.match(prose(lastScreen(out.text())), /Device access Read and answer: read the board and pick options on cards/);
   pane.key("7");
   pane.key("\r");
   assert.match(lastScreen(out.text()), /❯ Read and answer/, "the question opens on what is in force");
@@ -469,3 +471,122 @@ test("a pane built without devices lists no sign-out row", () => {
   assert.doesNotMatch(out.text(), /Sign out devices/);
 });
 
+
+test("in an 80x24 window a random name's done screen keeps the message, the whole code, the URL and the way back", async () => {
+  // A real random-name link: a 20-character host and a 22-character code, 72 characters. At error
+  // correction M that is a 23-row code, and the screen scrolled its message and half the code's top quiet
+  // zone off an 80x24 window. The fake in the test above is too short to need it.
+  const host = "abcdefghjkmnpqrstuvw";
+  const code = "q7Hn2xVdL0pRk4WmTz9bYa";
+  const { pane, out } = build({
+    claim: async () => ({ hostname: `${host}.frizz.sh`, claim: host, serve: "relay" }),
+    issueLink: () => ({ code, url: `https://${host}.frizz.sh/?frizz_code=${code}`, expiresAt: Date.now() + 300_000 }),
+  });
+  Object.assign(out.stream, { columns: 80, rows: 24 });
+  pane.open();
+  pane.key("1");
+  pane.key("\r");
+  pane.key("\r");
+  await settle();
+  const rows = lastScreen(out.text()).split("\n");
+  assert.ok(rows.length <= 24, `the done screen is ${rows.length} rows in a 24-row window`);
+  assert.match(rows[0]!, /^ {2}Serving https:\/\/abcdefghjkmnpqrstuvw\.frizz\.sh \(frizz\.sh\)\.$/);
+  // The code's top two rows are its quiet zone, all four modules of it: light cells, no glyph.
+  assert.ok(/^ {2} {41}$/.test(rows[1]!) && /^ {2} {41}$/.test(rows[2]!), "the code's quiet zone is whole under the message");
+  assert.ok(rows.at(-2)!.includes(`frizz_code=${code}`), "the URL fits");
+  assert.match(rows.at(-1)!, /press any key to return/, "and the way back");
+});
+
+test("a claim's progress lines go to the busy screen, not to the terminal under it", async () => {
+  let release!: () => void;
+  const { pane, out } = build({
+    githubLogin: () => "ada",
+    claim: async (name, progress) => {
+      progress(`  claiming ${name}.frizz.sh for GitHub user Ada`);
+      await new Promise<void>((resolve) => { release = resolve; });
+      return { hostname: `${name}.frizz.sh`, claim: name, serve: "relay" };
+    },
+  });
+  pane.open();
+  pane.key("2");
+  pane.key("\r");
+  pane.key("\r");
+  await settle();
+  pane.key("\r");
+  await settle();
+  const busy = lastScreen(out.text()).split("\n").map((row) => row.trim()).filter(Boolean);
+  assert.deepEqual(busy, ["claiming ada.frizz.sh for GitHub user Ada…", "working…"]);
+  release();
+  await settle();
+  assert.match(lastScreen(out.text()), /Serving https:\/\/ada\.frizz\.sh/);
+});
+
+test("a refused claim names what it could not claim, and wraps between words under its indent", async () => {
+  const refusal = "a name is claimed with Frizz's own GitHub sign-in, and this was another kind of GitHub token — sign in to GitHub in the board's Settings, then try again";
+  for (const row of ["1", "2"]) {
+    const { pane, out } = build({ githubLogin: () => "ada", claim: async () => { throw new Error(refusal); } });
+    pane.open();
+    pane.key(row);
+    pane.key("\r");
+    pane.key("\r");
+    await settle();
+    if (row === "2") {
+      pane.key("\r");
+      await settle();
+    }
+    const screen = lastScreen(out.text());
+    const lead = row === "1" ? "Could not claim a frizz.sh subdomain:" : "Could not claim ada.frizz.sh:";
+    assert.equal(prose(screen), `${lead} ${refusal} press any key to go back`, row);
+    const lines = screen.split("\n").filter((line) => line.trim());
+    assert.ok(lines.length >= 3, "the message wraps");
+    for (const line of lines) {
+      assert.match(line, /^ {2}\S/, `every line sits under the indent: ${JSON.stringify(line)}`);
+      assert.ok(line.length <= 78, `no line reaches the window's edge: ${JSON.stringify(line)}`);
+    }
+  }
+});
+
+test("at 80 columns no menu row reaches the window's edge, and a long blurb wraps under its column", () => {
+  for (const login of [null, "ada", "abcdefghjkmnpqrstuvw"]) {
+    const { pane, out } = build({ githubLogin: () => login, current: () => ({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }), devices: { count: () => 2, signOutAll: () => 2 } });
+    Object.assign(out.stream, { columns: 80, rows: 24 });
+    pane.open();
+    const screen = lastScreen(out.text());
+    for (const line of screen.split("\n")) {
+      assert.ok([...line].length < 80, `${JSON.stringify(line)} is ${[...line].length} columns`);
+      assert.match(line, /^(| {2}.*)$/, `no line starts at column 0: ${JSON.stringify(line)}`);
+    }
+    assert.match(screen, /Cloudflare Tunnel {3}a domain on Cloudflare; cloudflared on this machine/);
+  }
+});
+
+test("once the pane closes on a change, it says the new setup, once; closing on no change says nothing", async () => {
+  const told: Array<CloudConfig | null> = [];
+  const { pane } = build({ onClosedAfterChange: (config) => told.push(config) });
+  pane.open();
+  assert.equal(pane.key("\x1b"), "close");
+  pane.close();
+  assert.deepEqual(told, [], "nothing changed");
+
+  pane.open();
+  pane.key("1");
+  pane.key("\r");
+  pane.key("\r");
+  await settle();
+  assert.deepEqual(told, [], "not while the pane holds the terminal");
+  assert.equal(pane.key("x"), "close");
+  pane.close();
+  assert.equal(told.length, 1);
+  assert.equal((told[0] as CloudConfig | null)?.hostname, ".frizz.sh", "the fake claim in build() mints an empty name");
+  pane.open();
+  pane.close();
+  assert.equal(told.length, 1, "said once");
+});
+
+test("the readout's line after a change names the address, or loopback", () => {
+  assert.equal(
+    remoteReachedLine({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }),
+    "now reached at https://ada.frizz.sh (frizz.sh) · press L for a sign-in link",
+  );
+  assert.equal(remoteReachedLine(null), "loopback only now · press R to reach this board from a phone or another machine");
+});

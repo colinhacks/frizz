@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { createRequire } from "node:module"
 import qrcode from "qrcode-generator"
-import { drawsBlockElements, qrAreaOf, qrSize, qrStyleFor, qrWidth, renderQr, renderQrLines } from "./qr.ts"
+import { drawsBlockElements, qrAreaOf, qrErrorCorrectionFor, qrSize, qrStyleFor, qrWidth, renderQr, renderQrLines } from "./qr.ts"
 
 const QUIET_ZONE = 4
 const SAMPLE = "https://colin.frizz.sh/?frizz_code=pW58RJTeG4IMkc6ojgC"
@@ -297,6 +297,22 @@ test("a launch-sized code fits an 80x24 terminal", () => {
   const width = qrWidth(SAMPLE)
   assert.ok(width <= 80, `QR is ${width} columns, wider than an 80-column terminal`)
   assert.ok(renderQrLines(SAMPLE).length <= 24, "QR is taller than a 24-row terminal")
+})
+
+test("a random frizz.sh sign-in link drops to error correction L where only that fits, and still decodes", () => {
+  // 20-character random host plus a 22-character code: 72 characters, version 5 at M (23 rows), which an
+  // 80x24 done screen cannot hold under its message, URL and way back (21 rows).
+  const random = "https://abcdefghjkmnpqrstuvw.frizz.sh/?frizz_code=q7Hn2xVdL0pRk4WmTz9bYa"
+  const area = { columns: 78, rows: 21 }
+  assert.ok(qrSize(random, "half", "M").rows > area.rows, "the case this exists for: M does not fit")
+  assert.equal(qrErrorCorrectionFor(random, area), "L")
+  const lines = renderQrLines(random, { area, env: { TERM_PROGRAM: "ghostty" } })
+  assert.ok(lines.length <= area.rows, `${lines.length} rows`)
+  assert.equal(decode(paintedModules(lines, "half")), random)
+  // M wherever M fits, and with no area at all.
+  assert.equal(qrErrorCorrectionFor(SAMPLE, area), "M")
+  assert.equal(qrErrorCorrectionFor(random), "M")
+  assert.equal(qrErrorCorrectionFor(random, ROOMY), "M")
 })
 
 test("rendering refuses an empty value rather than emitting an unscannable box", () => {

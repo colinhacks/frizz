@@ -17,7 +17,7 @@ import { installPaneHost, type PaneHost } from "./pane-host.ts";
 import { createRemoteController, type RemoteController } from "./remote-controller.ts";
 import { frizzGithubLogin, frizzGithubSignIn } from "./github-claim-identity.ts";
 import { probeCloudflared, probeTailscale } from "./remote-detect.ts";
-import { createRemotePane } from "./remote-pane.ts";
+import { createRemotePane, remoteReachedLine } from "./remote-pane.ts";
 import { LOOPBACK_BIND_HOST } from "@frizz/server/local-origin";
 import {
   establishCloudConfig,
@@ -686,12 +686,14 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     current: () => remote?.current() ?? null,
     apply: (next, applyOptions) => remote!.apply(next, applyOptions),
     setRelayAccess: (access) => remote!.setRelayAccess(access),
-    claim: (name) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn()),
+    claim: (name, progress) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), { say: progress, promptHint: false }),
     githubLogin: frizzGithubLogin,
     issueLink: () => supervisor.issueAccessLink(),
     devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
     probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
     onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "loopback only"),
+    // The readout above the pane still names the setup this launch started with; say the new one under it.
+    onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
     sandbox: sandbox !== null,
   });
   paneHost = installPaneHost({ bindings: { l: accessPane, L: accessPane, r: remotePane, R: remotePane } });

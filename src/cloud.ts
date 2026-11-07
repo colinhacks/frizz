@@ -339,12 +339,26 @@ export async function promptForTunnelName(hostname: string, fallback: string): P
  * The run token is written HERE rather than returned, because the caller's job is to start a board and
  * every path out of this function has to leave the same thing on disk for the next launch to find.
  */
+export interface EstablishOptions {
+  /**
+   * Where the claim's progress lines go ("claiming ada.frizz.sh for GitHub user Ada"). console.log for the
+   * launch prompt; the R pane passes its own, since a line printed under it lands inside its paint.
+   */
+  say?: (line: string) => void;
+  /**
+   * Whether an unreachable registrar's message ends by pointing at the launch prompt's other answer, a
+   * hostname. True for the prompt; the R pane lists its tunnel setups as rows of their own.
+   */
+  promptHint?: boolean;
+}
+
 export async function establishCloudConfig(
   answer: string,
   port: number,
   home = homedir(),
   origin?: string,
   github: GithubAuthorizer = frizzGithubSignIn(),
+  { say = console.log, promptHint = true }: EstablishOptions = {},
 ): Promise<CloudConfig> {
   if (answer.includes(".")) {
     // A hostname: the operator owns the tunnel, so ASK which one. Deriving it from the hostname's
@@ -382,7 +396,7 @@ export async function establishCloudConfig(
   let result;
   try {
     if (anonymous) {
-      console.log("  claiming a frizz.sh subdomain — no account needed");
+      say("  claiming a frizz.sh subdomain — no account needed");
       result = await claimWith();
     } else {
       // The GitHub token goes only where the registrar asks for it. A name this key already holds
@@ -404,7 +418,7 @@ export async function establishCloudConfig(
             "not-your-github-username",
           );
         }
-        if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
+        if (authorization.login) say(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
         result = await claimWith(authorization.token);
       }
     }
@@ -412,7 +426,7 @@ export async function establishCloudConfig(
     // A FIRST claim that cannot reach the registrar leaves the operator with nothing — unlike a
     // renewal, which falls back to its cached token. Point at the path that works without us rather
     // than leaving them staring at a network error for a service they have never heard of.
-    if (error instanceof ClaimError && error.code === "unreachable") {
+    if (promptHint && error instanceof ClaimError && error.code === "unreachable") {
       throw new ClaimError(
         `${error.message}\n       You can still reach this board through a tunnel of your own — see docs/remote-access.md, then answer with its hostname instead of a name.`,
         error.code,
