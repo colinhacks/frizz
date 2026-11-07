@@ -377,3 +377,54 @@ test("moving a read-and-answer board to a new frizz.sh setup asks again, with it
   pane.key("\r");
   assert.match(lastScreen(out.text()), /❯ Read and answer/);
 });
+
+test("the last row signs every device out, says how many it was, and lists the count first", async () => {
+  let held = 2;
+  const signOuts: number[] = [];
+  const { pane, out } = build({
+    devices: {
+      count: () => held,
+      signOutAll: () => {
+        signOuts.push(held);
+        const was = held;
+        held = 0;
+        return was;
+      },
+    },
+  });
+  pane.open();
+  assert.match(out.text(), /Sign out devices\s.*2 remote devices signed in/);
+  // Six setups, no relay so no access row, then this one.
+  pane.key("7");
+  out.reset();
+  assert.equal(pane.key("\r"), "keep");
+  assert.deepEqual(signOuts, [2]);
+  assert.match(out.text(), /Signed out 2 devices\. Each needs a new code from L to sign in again\./);
+  assert.equal(pane.key("x"), "close");
+
+  pane.open();
+  assert.match(out.text(), /Sign out devices\s.*no remote device signed in/);
+});
+
+test("signing out with nobody signed in says so, and a failure goes back to the menu", () => {
+  const { pane, out } = build({ devices: { count: () => 0, signOutAll: () => 0 } });
+  pane.open();
+  pane.key("7");
+  pane.key("\r");
+  assert.match(out.text(), /No device was signed in\./);
+
+  const broken = build({ devices: { count: () => 1, signOutAll: () => { throw new Error("the session key could not be saved"); } } });
+  broken.pane.open();
+  broken.pane.key("7");
+  broken.pane.key("\r");
+  assert.match(broken.out.text(), /Could not apply that: the session key could not be saved/);
+  assert.equal(broken.pane.key("x"), "keep");
+  assert.match(broken.out.text(), /❯ Sign out devices/);
+});
+
+test("a pane built without devices lists no sign-out row", () => {
+  const { pane, out } = build();
+  pane.open();
+  assert.doesNotMatch(out.text(), /Sign out devices/);
+});
+

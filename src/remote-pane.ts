@@ -1,4 +1,5 @@
 import { isAnonymousClaimName, type RelayAccess } from "@frizz/shared";
+import { remoteDevicesLine } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import type { AccessLink } from "./access-pane.ts";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, DIM, fitScreen, HIDE_CURSOR, type OptionalLine, RESET, SHOW_CURSOR } from "./access-pane.ts";
@@ -41,6 +42,8 @@ export interface RemotePaneOptions {
   claim: (name: string, signIn: ClaimSignIn) => Promise<CloudConfig>;
   /** A fresh single-use link for the origin now in force, for the done screen. */
   issueLink: () => AccessLink | null;
+  /** The devices holding a session, for the menu's last row, which signs every one of them out. */
+  devices?: { count: () => number; signOutAll: () => number };
   probes: {
     cloudflared: () => Promise<CloudflaredProbe>;
     tailscale: () => Promise<TailscaleProbe>;
@@ -59,7 +62,7 @@ export interface ClaimSignIn {
 }
 
 interface Choice {
-  kind: RemoteKind | "access";
+  kind: RemoteKind | "access" | "devices";
   title: string;
   blurb: string;
 }
@@ -89,11 +92,16 @@ const CHOICES: Choice[] = [
  * current. Choosing that row then serves the saved name again, renewed by the keypair alone; it never
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
-function choicesFor(current: CloudConfig | null): Choice[] {
-  // The last row, so a digit still picks the setup it always has, and only where there is a relay to ask about.
-  const access: Choice[] = current && isRelayConfig(current)
-    ? [{ kind: "access", title: "Device access", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
-    : [];
+function choicesFor(current: CloudConfig | null, devices?: number): Choice[] {
+  // Last, so a digit still picks the setup it always has. Device access appears only where there is a relay
+  // to ask about. Signing devices out is listed on every board, because sessions outlive a setup: a board
+  // turned Off still holds them for the next time it is reachable.
+  const access: Choice[] = [
+    ...(current && isRelayConfig(current)
+      ? [{ kind: "access" as const, title: "Device access", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
+      : []),
+    ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out devices", blurb: remoteDevicesLine(devices) }]),
+  ];
   if (customNamesOffered()) return [...CHOICES, ...access];
   if (kindOf(current) === "frizz") {
     return [
@@ -175,7 +183,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
 
   const check = (ok: boolean, text: string) => (ok ? `${text} ✓` : text);
   // Read on every use: the current setup moves under the pane, and the custom row follows it.
-  const choices = () => choicesFor(options.current());
+  const choices = () => choicesFor(options.current(), options.devices?.count());
   /** The row for `kind`, or the first row when the menu does not list it. */
   const rowOf = (kind: Choice["kind"]) => Math.max(0, choices().findIndex((choice) => choice.kind === kind));
 
@@ -475,6 +483,20 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     paint();
   };
 
+  // No question first: a device signed out by mistake signs in again with a code from L.
+  const signOutDevices = () => {
+    try {
+      const count = options.devices!.signOutAll();
+      const message = count === 0
+        ? "No device was signed in. Any sign-in code not yet used no longer works."
+        : `Signed out ${count === 1 ? "1 device" : `${count} devices`}. Each needs a new code from L to sign in again.`;
+      screen = { name: "done", message, link: null, config: options.current() };
+    } catch (error) {
+      screen = { name: "error", message: error instanceof Error ? error.message : String(error), back: { name: "menu", index: rowOf("devices") } };
+    }
+    paint();
+  };
+
   const turnOff = async () => {
     screen = { name: "busy", message: "back to loopback only…" };
     paint();
@@ -538,6 +560,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           // one already in force keeps the answer, and "Device access" is the way to change it.
           const firstPick = choice.kind !== kindOf(options.current());
           if (choice.kind === "off") void turnOff();
+          else if (choice.kind === "devices") signOutDevices();
           else if (choice.kind === "access") askAccess(s, changeAccess);
           else if (choice.kind === "private") {
             if (firstPick) askAccess(s, (access) => void claimPrivate(access));

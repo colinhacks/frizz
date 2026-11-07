@@ -160,6 +160,7 @@ export function liveSessions(directory: Pick<SessionDirectory, "list">, now = Da
 
 /** What a launcher's readout says about the remote devices it holds. */
 export function remoteDevicesLine(count: number): string {
+  if (count === 0) return "no remote device signed in"
   return count === 1 ? "1 remote device signed in" : `${count} remote devices signed in`
 }
 
@@ -277,10 +278,12 @@ export class AccessStore {
    *
    * Marking every record would do it alone, since a session must have a live one. The new key is the
    * second lock, and it is what makes `session-key` worth less to anyone who copied it before now.
+   * A code not yet redeemed goes too, because one still on a screen is a sign-in waiting to happen.
    * Returns how many recorded devices that was.
    */
   signOutAll(): number {
     this.signingKey = this.rotateSigningKey()
+    this.codes.clear()
     const count = this.sessions.revokeAll()
     this.options.onSignedOut?.()
     return count

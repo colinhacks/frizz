@@ -1595,6 +1595,43 @@ test("a sign-out ends what is already open: that device's sockets and streams at
   }
 })
 
+test("the launcher can sign every device out, and its readout hears each sign-out", async () => {
+  const current = await countingChild()
+  const port = await freePort()
+  const signedOut: Array<{ label: string | null; devices: number }> = []
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, onDeviceSignedOut: (device) => signedOut.push(device), childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  const loopback = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }
+  try {
+    await proxy.listen()
+    const phone = await redeemed(port, proxy)
+    const laptop = await redeemed(port, proxy)
+    assert.equal(proxy.signedInDevices(), 2)
+    assert.equal((await proxied(port, "/", { ...publicVisitor, cookie: laptop })).status, 200)
+
+    // One device by id, the way `frizz --sign-out <id>` does it.
+    const id = phone.split("=")[1]!.split(".")[1]!
+    assert.equal((await new Promise<number>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path: SUPERVISOR_SESSIONS_PATH, method: "POST", headers: { ...loopback, "content-type": "application/json" } }, (res) => { res.resume(); resolve(res.statusCode ?? 0) })
+      req.once("error", reject)
+      req.end(JSON.stringify({ id }))
+    })), 200)
+    assert.deepEqual(signedOut, [{ label: "unknown device", devices: 1 }])
+
+    // Everyone, from the launcher itself, with a code still waiting on a screen.
+    const waiting = proxy.issueAccessCode()!.code
+    assert.equal(proxy.signOutAllDevices(), 1)
+    assert.deepEqual(signedOut.at(-1), { label: null, devices: 0 })
+    assert.equal(proxy.signedInDevices(), 0)
+    assert.equal((await proxied(port, "/", { ...publicVisitor, cookie: laptop })).status, 401, "the laptop's cookie still worked")
+    assert.equal((await proxied(port, "/", { ...publicVisitor, cookie: phone })).status, 401)
+    assert.equal((await proxied(port, `/?frizz_code=${waiting}`, publicVisitor)).status, 401, "a code minted before the sign-out still signed a device in")
+    assert.equal((await proxied(port, "/", loopback)).status, 200, "the operator's own tab was touched")
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
 test("loopback can always list and end sessions, even with no public origin declared", async () => {
   const current = await countingChild()
   const port = await freePort()
