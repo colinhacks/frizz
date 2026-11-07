@@ -10,7 +10,7 @@ import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
 import { createAccessPane, type AccessPane } from "./access-pane.ts";
 import { installPaneHost, type PaneHost } from "./pane-host.ts";
 import { createRemoteController, type RemoteController } from "./remote-controller.ts";
-import { githubDeviceFlow } from "./github-device-flow.ts";
+import { frizzGithubLogin, frizzGithubSignIn } from "./github-claim-identity.ts";
 import { probeCloudflared, probeTailscale } from "./remote-detect.ts";
 import { createRemotePane } from "./remote-pane.ts";
 import { LOOPBACK_BIND_HOST } from "@frizz/server/local-origin";
@@ -508,9 +508,8 @@ async function runSupervisor(
         current: () => remote?.current() ?? null,
         apply: (next, applyOptions) => remote!.apply(next, applyOptions),
         setRelayAccess: (access) => remote!.setRelayAccess(access),
-        // The pane shows the GitHub device code itself: a console line would land under its alternate screen.
-        claim: (name, signIn) =>
-          establishCloudConfig(name, port, undefined, undefined, githubDeviceFlow({ onPrompt: signIn.onDeviceCode, signal: signIn.signal })),
+        claim: (name) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn()),
+        githubLogin: frizzGithubLogin,
         issueLink: () => supervisor.issueAccessLink(),
         devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
         probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },

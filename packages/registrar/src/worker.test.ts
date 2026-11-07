@@ -208,20 +208,28 @@ test("the verifier refuses a token with any scope, and accepts one with none", a
   assert.equal(await githubVerifier(gh.fetchImpl)("gho_ghcli"), "scoped")
   assert.equal(await githubVerifier(fakeGithubApi("read:user").fetchImpl)("gho_x"), "scoped", "even a harmless-looking scope")
 
-  // The device-flow token from Frizz's own OAuth App: GitHub lists no scopes for it.
+  // A zero-scope OAuth token: GitHub lists no scopes for it.
   const zero = fakeGithubApi("")
   assert.deepEqual(await githubVerifier(zero.fetchImpl)("gho_zero"), { id: 4242, login: "ada", createdAt: Date.parse("2020-01-01T00:00:00Z") })
   assert.deepEqual(zero.seen, ["Bearer gho_zero"])
   assert.equal(typeof (await githubVerifier(fakeGithubApi(null).fetchImpl)("gho_zero")), "object", "an absent header is no scopes too")
 })
 
-test("a token that is not an OAuth App user token is refused before GitHub is asked anything", async () => {
-  // A classic PAT, a fine-grained one, a GitHub App token: none is what the CLI mints, and a
-  // fine-grained token's powers do not show in X-OAuth-Scopes at all — so they are never sent on.
-  for (const token of ["ghp_classic", "github_pat_11ABC_def", "ghu_app", "ghs_install", "not-a-token"]) {
+test("the user token of Frizz's GitHub App is accepted", async () => {
+  // What the board's own GitHub sign-in holds, and what a claim sends now. Asked of the real
+  // api.github.com on 2026-11-07, a `ghu_` token answered with X-OAuth-Scopes present and empty.
+  const app = fakeGithubApi("")
+  assert.deepEqual(await githubVerifier(app.fetchImpl)("ghu_agentconsole"), { id: 4242, login: "ada", createdAt: Date.parse("2020-01-01T00:00:00Z") })
+  assert.deepEqual(app.seen, ["Bearer ghu_agentconsole"])
+  // A fine-grained token answers the same way, and proves its account just as well.
+  assert.equal(typeof (await githubVerifier(fakeGithubApi(null).fetchImpl)("github_pat_11ABC_def")), "object")
+})
+
+test("a value that cannot be a token is rejected before GitHub is asked anything", async () => {
+  for (const token of ["not a token", "ghu_x\r\nx-injected: 1", ""]) {
     const api = fakeGithubApi("")
-    assert.equal(await githubVerifier(api.fetchImpl)(token), "scoped", token)
-    assert.deepEqual(api.seen, [], `${token} never reached GitHub`)
+    assert.equal(await githubVerifier(api.fetchImpl)(token), null, JSON.stringify(token))
+    assert.deepEqual(api.seen, [], `${JSON.stringify(token)} never reached GitHub`)
   }
 })
 
@@ -230,7 +238,7 @@ test("a token GitHub refuses is rejected, not refused as scoped", async () => {
   assert.equal(await githubVerifier(fetchImpl)("gho_revoked"), null)
 })
 
-test("through the worker, a scoped token is refused with advice to update, and a zero-scope one claims", async () => {
+test("through the worker, a scoped token is refused with advice to update, and the App's token claims", async () => {
   // The worker's own wiring: claimDeps hands the real verifier the global fetch, faked here as GitHub.
   const kv = fakeKv()
   const identity = await generateClaimIdentity()
@@ -255,15 +263,17 @@ test("through the worker, a scoped token is refused with advice to update, and a
     const body = (await refused.json()) as { error: string; message: string }
     assert.equal(body.error, "github-token-scoped")
     assert.match(body.message, /update Frizz/)
+    assert.match(body.message, /Settings/, "and says where the sign-in a claim takes now lives")
     assert.equal(kv.rows.size, 0, "nothing was recorded for the scoped token")
 
     scopes = ""
-    const accepted = await claim("gho_zero")
+    const accepted = await claim("ghu_agentconsole")
     assert.equal(accepted.status, 200)
     assert.equal(JSON.parse(kv.rows.get("claim:colin")!).githubId, 4242)
     assert.equal(kv.rows.get("gh:4242"), "colin", "the one-name-per-account index is kept")
-    assert.equal(JSON.stringify([...kv.rows.values()]).includes("gho_"), false, "no token is stored")
-    assert.deepEqual(shown, ["Bearer gho_ghcli", "Bearer gho_zero"])
+    const stored = JSON.stringify([...kv.rows.entries()])
+    assert.equal(stored.includes("ghu_") || stored.includes("gho_"), false, "no token is stored")
+    assert.deepEqual(shown, ["Bearer gho_ghcli", "Bearer ghu_agentconsole"])
   } finally {
     globalThis.fetch = realFetch
   }

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
 import { claimNameIsValid, generateAnonymousClaimName, isAnonymousClaimName, normalizeClaimName, type RelayAccess } from "@frizz/shared";
 import { loadOrCreateClaimIdentity } from "./identity.ts";
-import { deviceCodeMessage, githubDeviceFlow, type GithubAuthorizer } from "./github-device-flow.ts";
+import { frizzGithubSignIn, type GithubAuthorizer } from "./github-claim-identity.ts";
 import { ClaimError, claimName } from "./registrar-client.ts";
 import { connectRelay } from "./relay-connection.ts";
 
@@ -28,7 +28,7 @@ import { connectRelay } from "./relay-connection.ts";
  *
  *   (empty)            -> CLAIM a private unguessable name on frizz.sh — no account, no sign-in
  *   colin              -> CLAIM `colin.frizz.sh` from the registrar, bound to your GitHub account
- *                         through a no-permission GitHub sign-in (github-device-flow.ts). PAUSED
+ *                         through Frizz's own GitHub sign-in (github-claim-identity.ts). PAUSED
  *                         while CUSTOM_NAMES_OFFERED is false: the answer is refused up front.
  *   board.example.com  -> a tunnel you made yourself, which Frizz only runs
  *
@@ -105,15 +105,15 @@ export const REGISTRAR_IS_LIVE = true;
 /**
  * Are CUSTOM names (`colin.frizz.sh`, bound to a GitHub account) offered?
  *
- * No, as of 2026-10-08, until Frizz's GitHub OAuth app is registered: the client id in
- * github-device-flow.ts is still the placeholder, so a custom claim could only refuse with
- * "not-configured" after the person had already picked it. While this is false the R pane does not
- * list "Custom subdomain", the prompt does not mention it, and a word answer refuses before any GitHub
- * sign-in or registrar call. Private names, and every bring-your-own setup, are unaffected.
+ * No, as of 2026-10-08. A claim proves its GitHub account through Frizz's own GitHub sign-in
+ * (github-claim-identity.ts, since 2026-11-07), and the maintainer runs a name on his own board before a
+ * release turns this on for everyone. While this is false the R pane does not list "Custom subdomain",
+ * the prompt does not mention it, and a word answer refuses before GitHub or the registrar hears
+ * anything. Private names, and every bring-your-own setup, are unaffected.
  *
- * Flipping it to `true` (with a real client id) brings the whole path back — nothing behind it was
- * removed. A name already claimed keeps renewing either way: a renewal is signed by the keypair and
- * never touches GitHub (resolveRunToken).
+ * Flipping it to `true` brings the whole path back — nothing behind it was removed. A name already
+ * claimed keeps renewing either way: a renewal is signed by the keypair and never touches GitHub
+ * (resolveRunToken).
  *
  * `FRIZZ_CUSTOM_NAMES=1` turns the offer on for one process, which is how the tests and
  * scripts/verify-claim-e2e.mjs keep driving the path while it is withdrawn. Read through
@@ -178,7 +178,7 @@ export function zoneClaimLabel(hostname: string): string | null {
  * tunnel that nothing can reach is the failure this exists to end.
  *
  * While custom names are withdrawn (CUSTOM_NAMES_OFFERED), a saved custom label that still needs this
- * move refuses with a message saying so, rather than starting a GitHub sign-in at launch. A relay
+ * move refuses with a message saying so, rather than claiming again at launch. A relay
  * claim on a custom name is untouched: it returns above, and the caller renews it by keypair alone.
  */
 export async function reconcileCloudConfig(
@@ -187,9 +187,7 @@ export async function reconcileCloudConfig(
   home = homedir(),
   onNotice?: (message: string) => void,
   origin?: string,
-  // A reconcile runs at launch, before any pane is open, so the sign-in code is shown the way every
-  // other launch notice is.
-  github: GithubAuthorizer = githubDeviceFlow(onNotice ? { onPrompt: (prompt) => onNotice(deviceCodeMessage(prompt)) } : {}),
+  github: GithubAuthorizer = frizzGithubSignIn(),
 ): Promise<CloudConfig> {
   if (isRelayConfig(config)) return config;
   const label = config.claim ?? zoneClaimLabel(config.hostname);
@@ -314,7 +312,7 @@ export async function promptForCloudName(): Promise<string> {
     return (
       await rl.question(
         customNamesOffered()
-          ? "Name for this board — press enter for a random name (no account), a word claims <name>.frizz.sh (needs GitHub), or paste a hostname you already run a tunnel for: "
+          ? "Name for this board — press enter for a random name (no account), a word claims <name>.frizz.sh (needs Frizz's GitHub sign-in), or paste a hostname you already run a tunnel for: "
           : "Name for this board — press enter for a random name (no account), or paste a hostname you already run a tunnel for: ",
       )
     ).trim();
@@ -346,7 +344,7 @@ export async function establishCloudConfig(
   port: number,
   home = homedir(),
   origin?: string,
-  github: GithubAuthorizer = githubDeviceFlow(),
+  github: GithubAuthorizer = frizzGithubSignIn(),
 ): Promise<CloudConfig> {
   if (answer.includes(".")) {
     // A hostname: the operator owns the tunnel, so ASK which one. Deriving it from the hostname's
@@ -383,7 +381,7 @@ export async function establishCloudConfig(
   if (!anonymous) {
     // A name is bound to a GitHub account, so say WHICH one before binding it. Someone signed in as a
     // work account would otherwise find out only when they wanted the name somewhere else. The token is
-    // the zero-scope one the device flow mints — never the `gh` CLI's, which can push to every repo.
+    // Frizz's own GitHub sign-in — never the `gh` CLI's, which can push to every repo.
     const authorization = await github.authorize();
     token = authorization.token;
     if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);

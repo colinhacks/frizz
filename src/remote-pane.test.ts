@@ -103,8 +103,8 @@ test("a frizz.sh name is claimed through a GitHub sign-in, and a failure goes ba
   pane.key("\r");
   pane.key("\r"); // what a device may do, asked before the form
   await settle();
-  assert.match(out.text(), /github\.com\/login\/device/, "the screen says how the account is confirmed");
-  assert.doesNotMatch(out.text(), /GitHub CLI|gh auth/, "and never asks for the gh CLI");
+  assert.match(out.text(), /Needs Frizz's GitHub sign-in: open Settings in the board/, "signed out, the screen says where to sign in");
+  assert.doesNotMatch(out.text(), /GitHub CLI|gh auth|login\/device/, "and never asks for the gh CLI or a device code");
   type("taken");
   pane.key("\r");
   await settle();
@@ -195,37 +195,33 @@ test("a saved private name shows as the current setup on the private row", () =>
   assert.match(out.text(), /frizz\.sh subdomain.*\(current\)/s);
 });
 
-test("a word claim shows GitHub's device code, and escape on that screen cancels it", async () => {
-  // The code has to be painted INSIDE the pane: a console line would land under the alternate screen.
-  let signal: AbortSignal | null = null;
-  const { pane, out, applied, type } = build({
-    claim: (_name, signIn) => {
-      signal = signIn.signal;
-      signIn.onDeviceCode({ userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresAt: Date.now() + 900_000 });
-      return new Promise((_resolve, reject) => {
-        signIn.signal.addEventListener("abort", () => reject(new Error("the GitHub sign-in was cancelled")));
-      });
-    },
+test("signed in to GitHub, the custom row offers the account's own name, and enter claims it", async () => {
+  const claims: string[] = [];
+  const { pane, out, applied } = build({
+    githubLogin: () => "Ada-Lovelace",
+    claim: async (name) => { claims.push(name); return { hostname: `${name}.frizz.sh`, claim: name, serve: "relay" }; },
   });
   pane.open();
+  assert.match(lastScreen(out.text()), /Custom subdomain\s+ada-lovelace\.frizz\.sh or another name; tied to your GitHub/, "the menu row names it");
   pane.key("2");
   pane.key("\r");
   pane.key("\r");
   await settle();
-  type("ada");
+  assert.match(lastScreen(out.text()), /tied to Ada-Lovelace, the GitHub account Frizz is signed in to/);
+  assert.match(lastScreen(out.text()), /Name\s+ada-lovelace/, "the login is in the field, dim");
   pane.key("\r");
   await settle();
-  assert.match(out.text(), /Confirm your GitHub account to claim ada\.frizz\.sh/);
-  assert.match(out.text(), /Open\s+https:\/\/github\.com\/login\/device/);
-  assert.match(out.text(), /Enter\s+WDJB-MJHT/);
-  assert.match(out.text(), /esc cancel/);
-  assert.equal(pane.key("x"), "keep", "any other key is ignored while waiting");
-  assert.equal(signal!.aborted, false);
-  assert.equal(pane.key("\x1b"), "keep");
-  assert.equal(signal!.aborted, true, "escape aborts the sign-in");
-  await settle();
-  assert.match(out.text(), /Could not apply that: the GitHub sign-in was cancelled/);
-  assert.deepEqual(applied, [], "nothing was applied");
+  assert.deepEqual(claims, ["ada-lovelace"], "enter takes it as it stands");
+  assert.deepEqual(applied, [{ hostname: "ada-lovelace.frizz.sh", claim: "ada-lovelace", serve: "relay", relayAccess: "full" }]);
+});
+
+test("a login that makes no usable name is not offered", () => {
+  // Too short for a name, and a login in the random-name shape would claim with no account at all.
+  for (const login of ["ab", "abcdefghjkmnpqrstuvw"]) {
+    const { pane, out } = build({ githubLogin: () => login });
+    pane.open();
+    assert.match(lastScreen(out.text()), /Custom subdomain\s+<name>\.frizz\.sh of your choosing; needs a GitHub account/, login);
+  }
 });
 
 const QUESTION = /What can a device signed in through frizz\.sh do\?/;

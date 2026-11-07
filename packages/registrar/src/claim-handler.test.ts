@@ -441,7 +441,7 @@ function fakeGithub(accounts: Record<string, { id: number; login: string; create
 
 const ACCOUNT = { id: 4242, login: "colin", createdAt: NOW - 365 * 24 * 60 * 60_000 }
 
-test("a token that can do more than name its account is refused, and nothing is recorded", async () => {
+test("a `gh` CLI token is refused, and nothing is recorded", async () => {
   // 2026-10-08: a compromised registrar collected the `gh` tokens old clients sent. The verifier now
   // answers "scoped" for any such token; the claim must stop there, distinctly from an unknown login,
   // so an old client is told to update rather than to sign in again.

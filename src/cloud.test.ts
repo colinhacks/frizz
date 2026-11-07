@@ -36,10 +36,10 @@ for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete
 // toggle would leak into its neighbours. The shipped default is pinned in custom-names-paused.test.ts.
 process.env.FRIZZ_CUSTOM_NAMES = "1";
 
-// Claiming a NAME binds it to a GitHub account, which establishCloudConfig confirms through GitHub's
-// device flow. The claim tests hand in this stand-in for the finished sign-in, so no test waits on a
-// person entering a code at github.com (github-device-flow.test.ts drives the flow itself).
-const fakeGithub = { authorize: async () => ({ token: "gho_testtoken", login: "tester" }) };
+// Claiming a NAME binds it to a GitHub account, which establishCloudConfig confirms through Frizz's
+// own GitHub sign-in. The claim tests hand in this stand-in for it, so no test reads a real one
+// (github-credential.test.ts covers githubClaimToken itself).
+const fakeGithub = { authorize: async () => ({ token: "ghu_testtoken", login: "tester" }) };
 
 /** A registrar that answers every claim, so the CLI side can be driven without one deployed. */
 async function claimServer(
@@ -211,7 +211,7 @@ test("a claimed name stores the token at 0600, apart from the world-readable con
     assert.deepEqual(config, { hostname: "colin.frizz.sh", claim: "colin", serve: "tunnel" });
     assert.equal(readTunnelToken(home), "run-token");
     // The first claim is the one that carries the GitHub token, and it is the device-flow one.
-    assert.equal(server.claims[0]?.github, "gho_testtoken", "the claim carries the injected token");
+    assert.equal(server.claims[0]?.github, "ghu_testtoken", "the claim carries the injected token");
     // The mode bits only — the claim, the token round trip and the config separation below are asserted
     // on every platform. Windows has no POSIX permission bits (NTFS access is an ACL, `fs.chmod` sets
     // only the read-only flag, node reports 0666), so the 0o600 cloud.ts writes with is inert there.

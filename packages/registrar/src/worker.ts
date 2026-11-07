@@ -38,17 +38,19 @@ export interface KvNamespace {
  * Only the numeric id is kept. A login can be renamed and reused by someone else, so binding a name
  * to one would let the limit be laundered through a rename.
  *
- * ONLY A ZERO-SCOPE TOKEN IS ACCEPTED. Until 2026-10-08 the CLI sent its `gh` token, which can push to
- * every repository its owner can, and a compromised build of this Worker collected them. The CLI now
- * signs in through Frizz's own OAuth App, which asks for no scopes, so its token can read only the
- * public profile. Two checks hold every client to that, an old one above all:
+ * WHAT IS ACCEPTED is what Frizz sends: the user token of Frizz's own GitHub App, "Frizz Agent Console"
+ * (`ghu_…`), which the board already holds for its GitHub reads. Its powers are the App's read-only
+ * permissions. Until 2026-11-07 only a zero-scope OAuth token was accepted, so that a hijacked registrar
+ * collected nothing worth stealing (a compromised build collected `gh` tokens from 2026-09-21 to
+ * 2026-10-08). The maintainer dropped that rule (2026-11-07): this Worker deploys from the same
+ * workflow, with the same token and the same approval, as the relay, and a hijacked relay already has
+ * full control of every board that serves through it. What still protects the token: it goes to
+ * GitHub's `/user` once, only the numeric id is kept, and it is never stored or logged.
  *
- * - The shape, BEFORE GitHub is asked anything: an OAuth App user token is `gho_…`. A classic PAT
- *   (`ghp_`), a fine-grained one (`github_pat_`) or a GitHub App token (`ghu_`, `ghs_`) is not what
- *   the CLI mints, and their powers are not all visible in the header below, so they are refused unread.
- * - The scopes: GitHub lists an OAuth token's scopes in `X-OAuth-Scopes` on every API answer. Any scope
- *   at all — `gh` holds `repo`, `workflow`, `read:org`, `gist` — refuses the claim. An empty or absent
- *   header is a token with no scopes.
+ * STILL REFUSED, as "scoped": a token whose `X-OAuth-Scopes` lists a scope. That is a `gh` CLI token,
+ * which only a Frizz from before 2026-10-08 sends, and accepting it would reopen custom names to those
+ * versions ahead of the release that reopens them. A GitHub App user token and a fine-grained token
+ * answer with the header empty or absent.
  */
 export function githubVerifier(
   // Wrapped, not passed bare: workerd throws "Illegal invocation" for a `fetch` called off its global.
@@ -56,7 +58,8 @@ export function githubVerifier(
   apiOrigin = "https://api.github.com"
 ): (token: string) => Promise<GithubIdentity | null | "scoped"> {
   return async (token) => {
-    if (!/^gho_[A-Za-z0-9_]+$/.test(token)) return "scoped"
+    // Anything else cannot be a GitHub token, and must never reach a request header.
+    if (!/^[A-Za-z0-9_]+$/.test(token)) return null
     try {
       const response = await fetchImpl(`${apiOrigin}/user`, {
         headers: {

@@ -11,6 +11,7 @@ import {
   frizzGithubWorkerEnv,
   frizzWorkerGhConfigDir,
   frizzGithubToken,
+  githubClaimToken,
   githubCredentialPath,
   githubCredentialStatus,
   githubSignInState,
@@ -156,6 +157,37 @@ test("another process sharing the folder renewed first: its token is adopted, no
     writeFileSync(githubCredentialPath(), sealGithubCredential(theirs), { mode: 0o600 })
     const token = await frizzGithubToken({ now: () => 0, request: async () => { throw new Error("no refresh expected") } })
     assert.equal(token, "ghu_theirs")
+  })
+})
+
+test("a frizz.sh claim gets the App token and login, and a token inside the keeper's window is not renewed", async () => {
+  await withHome(async () => {
+    const noRequest = async () => { throw new Error("no refresh expected") }
+    writeGithubCredential(app({ accessExpiresAt: 8 * HOUR }))
+    assert.deepEqual(await githubClaimToken({ now: () => 0, request: noRequest }), { token: "ghu_old", login: "colinhacks" })
+    // Five minutes left: the server's keeper renews at ten, so renewing here too could race it.
+    writeGithubCredential(app({ accessExpiresAt: 5 * 60_000 }))
+    assert.deepEqual(await githubClaimToken({ now: () => 0, request: noRequest }), { token: "ghu_old", login: "colinhacks" })
+  })
+})
+
+test("a frizz.sh claim reads the file afresh, so the launcher picks up the server's renewal", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app({ accessExpiresAt: 8 * HOUR }))
+    assert.equal((await githubClaimToken({ now: () => 0 })).token, "ghu_old")
+    // The server's keeper renews in its own process, leaving this one's copy behind.
+    const theirs = JSON.stringify(app({ accessToken: "ghu_theirs", refreshToken: "ghr_theirs", accessExpiresAt: 16 * HOUR }))
+    writeFileSync(githubCredentialPath(), sealGithubCredential(theirs), { mode: 0o600 })
+    assert.equal((await githubClaimToken({ now: () => 0, request: async () => { throw new Error("no refresh expected") } })).token, "ghu_theirs")
+  })
+})
+
+test("a frizz.sh claim renews a token the keeper has let lapse, and refuses while signed out", async () => {
+  await withHome(async () => {
+    await assert.rejects(githubClaimToken({ now: () => 0 }), /not signed in to GitHub/)
+    writeGithubCredential(app({ accessExpiresAt: 60_000 }))
+    const request = async () => json({ access_token: "ghu_new", expires_in: 28800, refresh_token: "ghr_new", refresh_token_expires_in: 15897600 })
+    assert.deepEqual(await githubClaimToken({ now: () => 0, request }), { token: "ghu_new", login: "colinhacks" })
   })
 })
 

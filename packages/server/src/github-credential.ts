@@ -225,6 +225,28 @@ export async function frizzGithubToken(deps: TokenDeps = {}): Promise<string> {
   return await (refreshing ??= refreshAppToken(credential, deps).finally(() => { refreshing = undefined }))
 }
 
+/** How long a token must still have to be handed to a frizz.sh claim without renewing it first. */
+const CLAIM_MARGIN_MS = 2 * 60_000
+
+/**
+ * The token and login a frizz.sh name claim proves its GitHub account with (src/github-claim-identity.ts).
+ *
+ * Called from the LAUNCHER, a different process from the server whose keeper renews this credential, so
+ * it reads the file afresh rather than trusting its own copy, and renews only a token the keeper has
+ * evidently stopped renewing. The keeper renews ten minutes before expiry; renewing here inside that
+ * window could race it, and the loser's refresh token is refused, which marks the sign-in broken.
+ */
+export async function githubClaimToken(deps: TokenDeps = {}): Promise<{ token: string; login: string | null }> {
+  const now = deps.now ?? Date.now
+  memo = readStored()
+  const credential = memo.credential
+  if (!envToken() && !memo.problem && credential?.kind === "app" && credential.accessExpiresAt - CLAIM_MARGIN_MS > now()) {
+    return { token: credential.accessToken, login: credential.login }
+  }
+  const token = await frizzGithubToken(deps)
+  return { token, login: envToken() ? null : (current().credential?.login ?? null) }
+}
+
 /** Another process sharing this folder (a sandbox stack links it in) may have renewed first. A fresher
  *  App credential on disk than the one held in memory is adopted rather than refreshed again. */
 function adoptNewerFromDisk(held: Extract<StoredGithubCredential, { kind: "app" }>, now: number): StoredGithubCredential | null {
@@ -333,9 +355,8 @@ async function refreshAppToken(credential: Extract<StoredGithubCredential, { kin
  * The client id of Frizz's GitHub App, "Frizz Agent Console" (github.com/apps/frizz-agent-console,
  * owned by colinhacks, registered 2026-11-04) — public by design: device flow has no secret. Its
  * permissions, all read-only: actions, checks, issues, metadata, pull_requests, statuses; no contents,
- * no webhook. `FRIZZ_GITHUB_APP_CLIENT_ID` overrides it (a test, a self-hosted fork). This is NOT
- * the OAuth App in src/github-device-flow.ts: that one proves who claims a frizz.sh name and must
- * carry no permissions at all, and the registrar refuses a GitHub App token outright.
+ * no webhook. `FRIZZ_GITHUB_APP_CLIENT_ID` overrides it (a test, a self-hosted fork). Its user token
+ * is also what proves the GitHub account behind a frizz.sh name claim (githubClaimToken).
  */
 export const GITHUB_APP_CLIENT_ID_PLACEHOLDER = "frizz-github-app-client-id-not-set"
 export const FRIZZ_GITHUB_APP_CLIENT_ID: string = "Iv23licDruV3JtQIF3fI"

@@ -38,9 +38,9 @@ export interface ClaimResult {
  */
 const ADVICE: Record<string, string> = {
   "name-taken": "that name is already taken — try another",
-  "github-required": "claiming a custom name needs a GitHub sign-in — try again and enter the code GitHub shows",
+  "github-required": "claiming a custom name needs a GitHub sign-in — sign in to GitHub in the board's Settings, then try again",
   "github-rejected": "GitHub did not recognise that sign-in — try again",
-  "github-token-scoped": "the registrar accepts only a GitHub sign-in that grants no permissions — update Frizz and try again",
+  "github-token-scoped": "the registrar does not take a GitHub CLI token — sign in to GitHub in the board's Settings, then try again",
   "github-too-new": "that GitHub account is too new to claim a name",
   "one-name-per-account": "that GitHub account already holds a name — release it first",
   "one-name-per-key": "this machine already holds a name — release it first",
@@ -64,8 +64,8 @@ export interface ClaimOptions {
   port: number;
   identity: CryptoKeyPair;
   /**
-   * A GitHub access token, on a FIRST claim of a custom name only — the zero-scope one the device flow
-   * mints (github-device-flow.ts), never the `gh` CLI's. The registrar refuses any token with a scope.
+   * A GitHub access token, on a FIRST claim of a custom name only — the user token of Frizz's own
+   * GitHub sign-in (github-claim-identity.ts), never the `gh` CLI's, which the registrar refuses.
    *
    * Renewals deliberately omit it: the keypair already proves ownership, so a live name never depends
    * on GitHub being reachable.

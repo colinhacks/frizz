@@ -4,8 +4,8 @@ import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import type { AccessLink } from "./access-pane.ts";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, DIM, fitScreen, HIDE_CURSOR, type OptionalLine, RESET, SHOW_CURSOR } from "./access-pane.ts";
 import { type CloudConfig, customNamesOffered, describeCloudConfig, isClaimedConfig, isExternalConfig, isRelayConfig, normalizeHostname } from "./cloud.ts";
+import { claimNameForLogin } from "./github-claim-identity.ts";
 import type { Pane } from "./pane-host.ts";
-import type { DeviceCodePrompt } from "./github-device-flow.ts";
 import type { CloudflaredProbe, TailscaleProbe } from "./remote-detect.ts";
 
 /**
@@ -35,11 +35,16 @@ export interface RemotePaneOptions {
   setRelayAccess: (access: RelayAccess) => void;
   /**
    * Claim `<name>.frizz.sh`. An empty name mints a private unguessable one with no account; a word
-   * claims that word for a GitHub account, confirmed through a device code the pane shows via
-   * `signIn.onDeviceCode`. Escape on that screen aborts `signIn.signal`. Rejects with a message. The
-   * pane asks for a word only while custom names are offered (CUSTOM_NAMES_OFFERED in cloud.ts).
+   * claims that word for the GitHub account Frizz is signed in to (github-claim-identity.ts). Rejects
+   * with a message. The pane asks for a word only while custom names are offered (CUSTOM_NAMES_OFFERED
+   * in cloud.ts).
    */
-  claim: (name: string, signIn: ClaimSignIn) => Promise<CloudConfig>;
+  claim: (name: string) => Promise<CloudConfig>;
+  /**
+   * The GitHub login Frizz is signed in to, or null. The custom-subdomain row offers it as the name,
+   * and the form says which account the claim binds.
+   */
+  githubLogin?: () => string | null;
   /** A fresh single-use link for the origin now in force, for the done screen. */
   issueLink: () => AccessLink | null;
   /** The devices holding a session, for the menu's last row, which signs every one of them out. */
@@ -53,12 +58,6 @@ export interface RemotePaneOptions {
   /** Running under --sandbox: everything is throwaway EXCEPT a claim, which the frizz.sh screen must say. */
   sandbox?: boolean;
   output?: NodeJS.WriteStream;
-}
-
-/** How a word claim shows its GitHub device code, and how the person backs out of it. */
-export interface ClaimSignIn {
-  onDeviceCode: (prompt: DeviceCodePrompt) => void;
-  signal: AbortSignal;
 }
 
 interface Choice {
@@ -92,7 +91,7 @@ const CHOICES: Choice[] = [
  * current. Choosing that row then serves the saved name again, renewed by the keypair alone; it never
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
-function choicesFor(current: CloudConfig | null, devices?: number): Choice[] {
+function choicesFor(current: CloudConfig | null, devices?: number, githubLogin?: string | null): Choice[] {
   // Last, so a digit still picks the setup it always has. Device access appears only where there is a relay
   // to ask about. Signing devices out is listed on every board, because sessions outlive a setup: a board
   // turned Off still holds them for the next time it is reachable.
@@ -102,7 +101,16 @@ function choicesFor(current: CloudConfig | null, devices?: number): Choice[] {
       : []),
     ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out devices", blurb: remoteDevicesLine(devices) }]),
   ];
-  if (customNamesOffered()) return [...CHOICES, ...access];
+  if (customNamesOffered()) {
+    // Signed in to GitHub, the obvious name is the account's own, so the row offers it by name.
+    const own = claimNameForLogin(githubLogin ?? null);
+    return [
+      ...CHOICES.map((choice) =>
+        choice.kind === "frizz" && own ? { ...choice, blurb: `${own}.frizz.sh or another name; tied to your GitHub` } : choice,
+      ),
+      ...access,
+    ];
+  }
   if (kindOf(current) === "frizz") {
     return [
       ...CHOICES.map((choice) =>
@@ -127,8 +135,7 @@ type Screen =
   /** What a device signed in through the relay may do. `then` is what the answer goes to. */
   | { name: "access"; index: number; then: (access: RelayAccess) => void; back: Screen }
   | { name: "form"; kind: FormKind; fields: Field[]; focus: number; note?: string; relayAccess?: RelayAccess }
-  /** `cancel` makes escape back out — only while waiting on something the person can abandon. */
-  | { name: "busy"; message: string; detail?: string[]; cancel?: () => void }
+  | { name: "busy"; message: string }
   | { name: "done"; message: string; link: AccessLink | null; config: CloudConfig | null }
   /** A switch that cannot be undone from this menu, said before it happens. Enter runs `then`. */
   | { name: "confirm"; lines: string[]; then: () => void; back: Screen }
@@ -185,7 +192,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
 
   const check = (ok: boolean, text: string) => (ok ? `${text} ✓` : text);
   // Read on every use: the current setup moves under the pane, and the custom row follows it.
-  const choices = () => choicesFor(options.current(), options.devices?.count());
+  const choices = () => choicesFor(options.current(), options.devices?.count(), options.githubLogin?.());
   /** The row for `kind`, or the first row when the menu does not list it. */
   const rowOf = (kind: Choice["kind"]) => Math.max(0, choices().findIndex((choice) => choice.kind === kind));
 
@@ -234,10 +241,6 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
       return;
     }
     if (s.name === "busy") {
-      if (s.detail) {
-        write([s.message, "", ...s.detail, "", `${DIM}waiting for GitHub… · esc cancel${RESET}`]);
-        return;
-      }
       write([s.message, "", `${DIM}working…${RESET}`]);
       return;
     }
@@ -276,6 +279,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
 
   const formHead = (kind: FormKind): string[] => {
     if (kind === "frizz") {
+      const login = options.githubLogin?.() ?? null;
       return [
         "Custom frizz.sh subdomain",
         "",
@@ -287,7 +291,9 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           : []),
         "",
         ...wrap(
-          "When you claim, Frizz shows a code to enter at github.com/login/device. The sign-in grants Frizz no permissions: it only tells the registrar which account you are.",
+          login
+            ? `The name is tied to ${login}, the GitHub account Frizz is signed in to (Settings → GitHub in the board). The registrar asks GitHub which account that is, keeps its id, and drops the token.`
+            : "Needs Frizz's GitHub sign-in: open Settings in the board, sign in under GitHub, then claim here.",
         ),
       ];
     }
@@ -356,7 +362,9 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     const same = kindOf(current) === kind ? current : null;
     let fields: Field[];
     if (kind === "frizz") {
-      fields = [{ label: "Name", value: same?.claim ?? "" }];
+      // The account's own name, offered dim: enter takes it, typing replaces it.
+      const own = claimNameForLogin(options.githubLogin?.() ?? null);
+      fields = [{ label: "Name", value: same?.claim ?? "", ...(own ? { placeholder: own } : {}) }];
     } else if (kind === "cloudflare") {
       cloudflared = "pending";
       void options.probes.cloudflared().then((result) => {
@@ -402,24 +410,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         if (!name) throw new Error("a name is needed");
         screen = { name: "busy", message: `claiming ${name}.frizz.sh…` };
         paint();
-        const abort = new AbortController();
-        const claimed = await options.claim(name, {
-          signal: abort.signal,
-          onDeviceCode: (prompt) => {
-            screen = {
-              name: "busy",
-              message: `Confirm your GitHub account to claim ${name}.frizz.sh`,
-              detail: [
-                `Open      ${prompt.verificationUri}`,
-                `Enter     ${prompt.userCode}`,
-                "",
-                ...wrap("on this or any other device. Frizz asks GitHub for no permissions; the sign-in only names your account to the registrar."),
-              ],
-              cancel: () => abort.abort(),
-            };
-            paint();
-          },
-        });
+        const claimed = await options.claim(name);
         next = withAccess(claimed, form.relayAccess);
         justClaimed = true;
       } else if (form.kind === "cloudflare") {
@@ -448,8 +439,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     screen = { name: "busy", message: "claiming a frizz.sh subdomain…" };
     paint();
     try {
-      // A private subdomain has no GitHub step, so nothing is ever shown and nothing can be cancelled.
-      const next = withAccess(await options.claim("", { signal: new AbortController().signal, onDeviceCode: () => {} }), relayAccess);
+      const next = withAccess(await options.claim(""), relayAccess);
       screen = { name: "busy", message: `serving ${next.hostname}…` };
       paint();
       await options.apply(next, { justClaimed: true });
@@ -527,13 +517,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     },
     key(key) {
       const s = screen;
-      if (s.name === "busy") {
-        if (key === ESC && s.cancel) {
-          s.cancel();
-          s.cancel = undefined;
-        }
-        return "keep";
-      }
+      if (s.name === "busy") return "keep";
       if (s.name === "done") return "close";
       if (s.name === "confirm") {
         if (key === ESC) {

@@ -11,9 +11,10 @@
  * must be runnable by anyone, on any machine, without one. Whether cloudflare.ts speaks the real API
  * correctly is a different question, answered by running it against the real zone — done 2026-08-24.
  *
- * GitHub is faked the same way, on its own loopback port, for the last legs: the CLI runs the REAL
- * device flow against it and the registrar runs the REAL verifier against it, so the token that crosses
- * the wire is the one the flow minted, and a `gh`-style scoped token is refused by the real check.
+ * GitHub is faked the same way, on its own loopback port, for the last legs: the CLI reads a REAL sealed
+ * Frizz GitHub sign-in from a throwaway home and the registrar runs the REAL verifier against the fake,
+ * so the token that crosses the wire is the one the sign-in holds, and a `gh`-style scoped token is
+ * refused by the real check.
  */
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -23,8 +24,11 @@ import { loadOrCreateClaimIdentity } from "../src/identity.ts";
 import { claimName, ClaimError } from "../src/registrar-client.ts";
 import { githubVerifier } from "../packages/registrar/src/worker.ts";
 import { establishCloudConfig } from "../src/cloud.ts";
-import { runDeviceFlow } from "../src/github-device-flow.ts";
-import { mkdtempSync, rmSync } from "node:fs";
+import { frizzGithubSignIn } from "../src/github-claim-identity.ts";
+import { resetFrizzRoots } from "../packages/server/src/frizz-paths.ts";
+import { githubCredentialPath, resetGithubCredentialMemo, writeGithubCredential } from "../packages/server/src/github-credential.ts";
+import { resetGithubCredentialSeal } from "../packages/server/src/github-credential-seal.ts";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -122,14 +126,13 @@ let gate = null;
 const received = [];
 
 /**
- * github.com and api.github.com on one port. The device flow answers pending once, then a token with
- * no scope; `/user` answers that token with an EMPTY X-OAuth-Scopes, and the `gh`-style token with the
- * scopes the real `gh` holds.
+ * api.github.com on one port. `/user` answers the App's user token with an EMPTY X-OAuth-Scopes (what
+ * the real API answered for one on 2026-11-07), and the `gh`-style token with the scopes the real `gh`
+ * holds.
  */
-const ZERO = "gho_e2eZeroScopeDeviceToken";
+const APP = "ghu_e2eAgentConsoleUserToken";
 const GH_CLI = "gho_e2eGhCliTokenWithRepoScope";
 const githubSeen = [];
-let polls = 0;
 const github = createServer((req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
@@ -139,15 +142,9 @@ const github = createServer((req, res) => {
       res.writeHead(status, { "content-type": "application/json", ...headers });
       res.end(JSON.stringify(body));
     };
-    if (req.url === "/login/device/code") {
-      return send(200, { device_code: "dev-e2e", user_code: "E2E0-CODE", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 1 });
-    }
-    if (req.url === "/login/oauth/access_token") {
-      return send(200, polls++ === 0 ? { error: "authorization_pending" } : { access_token: ZERO, token_type: "bearer", scope: "" });
-    }
     if (req.url === "/user") {
       const user = { id: 777, login: "e2e-user", created_at: "2015-01-01T00:00:00Z" };
-      if (req.headers.authorization === `Bearer ${ZERO}`) return send(200, user, { "x-oauth-scopes": "" });
+      if (req.headers.authorization === `Bearer ${APP}`) return send(200, user, { "x-oauth-scopes": "" });
       if (req.headers.authorization === `Bearer ${GH_CLI}`) return send(200, user, { "x-oauth-scopes": "gist, read:org, repo, workflow" });
       return send(401, { message: "Bad credentials" });
     }
@@ -268,11 +265,12 @@ try {
     rmSync(anonHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 
-  // 7. A CUSTOM NAME THROUGH THE DEVICE FLOW, with the real verifier as the gate. The CLI side is the
-  // launcher's own establishCloudConfig, signing in through the real runDeviceFlow; the registrar side
-  // is the real githubVerifier, asking the fake GitHub what the token is and what scopes it holds.
-  // Custom names are withdrawn for now (CUSTOM_NAMES_OFFERED in src/cloud.ts), and establishCloudConfig
-  // refuses a word up front while they are; the override turns the kept path back on for this process.
+  // 7. A CUSTOM NAME THROUGH FRIZZ'S OWN GITHUB SIGN-IN, with the real verifier as the gate. The CLI
+  // side is the launcher's own establishCloudConfig with the authorizer the R pane uses, reading a real
+  // sealed credential from a throwaway home; the registrar side is the real githubVerifier, asking the
+  // fake GitHub what the token is and what scopes it holds. The throwaway home has no keychain, so the
+  // seal's key is a file there and nothing asks the real keychain. Custom names are withdrawn for now
+  // (CUSTOM_NAMES_OFFERED in src/cloud.ts); the override turns the kept path back on for this process.
   process.env.FRIZZ_CUSTOM_NAMES = "1";
   github.listen(0, "127.0.0.1");
   await once(github, "listening");
@@ -280,25 +278,34 @@ try {
   gate = githubVerifier(fetch, githubOrigin);
   // establishCloudConfig signs with the real clock, so the registrar's clock joins it here.
   clock = Date.now();
-  const deviceHome = mkdtempSync(join(tmpdir(), "frizz-claim-e2e-device-"));
+  const deviceHome = mkdtempSync(join(tmpdir(), "frizz-claim-e2e-signin-"));
+  const savedEnv = { HOME: process.env.HOME, XDG_DATA_HOME: process.env.XDG_DATA_HOME, FRIZZ_GITHUB_TOKEN: process.env.FRIZZ_GITHUB_TOKEN };
+  process.env.HOME = deviceHome;
+  process.env.XDG_DATA_HOME = join(deviceHome, "data");
+  delete process.env.FRIZZ_GITHUB_TOKEN;
+  resetFrizzRoots();
+  resetGithubCredentialSeal();
+  resetGithubCredentialMemo();
   try {
-    const prompts = [];
-    received.length = 0;
-    const config = await establishCloudConfig("device-word", 9393, deviceHome, origin, {
-      authorize: () =>
-        runDeviceFlow({
-          clientId: "Iv1.e2eclient",
-          githubOrigin,
-          apiOrigin: githubOrigin,
-          onPrompt: (prompt) => prompts.push(prompt),
-        }),
+    writeGithubCredential({
+      kind: "app",
+      clientId: "Iv23e2eclient",
+      accessToken: APP,
+      accessExpiresAt: Date.now() + 8 * 3600_000,
+      refreshToken: "ghr_e2eRefresh",
+      refreshExpiresAt: Date.now() + 180 * 86_400_000,
+      login: "e2e-user",
+      savedAt: Date.now(),
     });
-    check("a custom name claims through the device flow", config.claim === "device-word" && config.hostname === "device-word.frizz.sh", JSON.stringify(config));
-    check("the code was shown to the person", prompts.length === 1 && prompts[0].userCode === "E2E0-CODE");
-    check("the flow asked GitHub for no scope", githubSeen[0]?.path === "/login/device/code" && !("scope" in githubSeen[0].form), JSON.stringify(githubSeen[0]?.form));
-    check("the claim carried the device-flow token and nothing else", received.length === 1 && received[0]?.github === ZERO, received[0]?.github ?? "(none)");
-    check("the registrar asked GitHub about that token", githubSeen.some((r) => r.path === "/user" && r.auth === `Bearer ${ZERO}`));
-    check("the name is bound to the account id", st.rows.get("device-word")?.githubId === 777, String(st.rows.get("device-word")?.githubId));
+    check("the sign-in is sealed on disk, not in the clear", !readFileSync(githubCredentialPath(), "utf8").includes(APP));
+    resetGithubCredentialMemo();
+    received.length = 0;
+    const config = await establishCloudConfig("e2e-user", 9393, deviceHome, origin, frizzGithubSignIn());
+    check("a custom name claims through Frizz's GitHub sign-in", config.claim === "e2e-user" && config.hostname === "e2e-user.frizz.sh", JSON.stringify(config));
+    check("the claim carried the sign-in's App token and nothing else", received.length === 1 && received[0]?.github === APP, received[0]?.github ? received[0].github.slice(0, 4) : "(none)");
+    check("the registrar asked GitHub about that token", githubSeen.some((r) => r.path === "/user" && r.auth === `Bearer ${APP}`));
+    check("GitHub was asked nothing else", githubSeen.every((r) => r.path === "/user"), githubSeen.map((r) => r.path).join(", "));
+    check("the name is bound to the account id", st.rows.get("e2e-user")?.githubId === 777, String(st.rows.get("e2e-user")?.githubId));
 
     // 8. AN OLD CLIENT, sending what `gh auth token` prints: the real verifier reads the scopes and refuses.
     const oldHome = mkdtempSync(join(tmpdir(), "frizz-claim-e2e-old-"));
@@ -311,8 +318,8 @@ try {
         refused = error;
       }
       check(
-        "a gh-scoped token is refused, telling the person to update",
-        refused instanceof ClaimError && refused.code === "github-token-scoped" && /update Frizz/.test(refused.message),
+        "a gh-scoped token is refused, pointing the person at Frizz's own sign-in",
+        refused instanceof ClaimError && refused.code === "github-token-scoped" && /Settings/.test(refused.message),
         refused ? `${refused.code}: ${refused.message}` : "it was ALLOWED"
       );
       check("nothing was recorded for it", !st.rows.has("old-client"));
@@ -320,6 +327,13 @@ try {
       rmSync(oldHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
   } finally {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetFrizzRoots();
+    resetGithubCredentialSeal();
+    resetGithubCredentialMemo();
     rmSync(deviceHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 } catch (error) {

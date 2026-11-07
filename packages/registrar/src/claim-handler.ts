@@ -52,9 +52,9 @@ export interface GithubIdentity {
 }
 
 /**
- * Resolve a token to its account. `null` means GitHub did not accept it; `"scoped"` means it is a token
- * that can do more than name its account — a `gh` CLI token from a Frizz older than the device flow —
- * and is refused whoever it belongs to, so the registrar never again accepts one worth stealing.
+ * Resolve a token to its account. `null` means GitHub did not accept it; `"scoped"` means it carries
+ * OAuth scopes — a `gh` CLI token, which only a Frizz from before 2026-10-08 sends — and is refused
+ * whoever it belongs to (githubVerifier in worker.ts says why).
  */
 export interface GithubVerifier {
   (token: string): Promise<GithubIdentity | null | "scoped">
@@ -144,10 +144,10 @@ const MESSAGES: Record<ClaimFailure, string> = {
   "provisioning-failed": "the name could not be provisioned; nothing was left behind",
   "one-name-per-key":
     "this machine already holds a name — release it first, or claim from a different Frizz identity",
-  "github-required": "claiming a custom name needs a GitHub sign-in — update Frizz and try again",
+  "github-required": "claiming a custom name needs a GitHub sign-in — sign in to GitHub in Frizz's Settings and try again",
   "github-rejected": "GitHub did not recognise that sign-in — try again",
   "github-token-scoped":
-    "this claim carried a GitHub token with more access than a name needs; the registrar accepts only a sign-in that grants no permissions — update Frizz and try again",
+    "this claim carried a GitHub CLI token, which only an old Frizz sends — update Frizz, sign in to GitHub in its Settings, and try again",
   "github-too-new": "that GitHub account is too new to claim a name",
   "one-name-per-account": "that GitHub account already holds a name",
   "namespace-full": "frizz.sh has no free names left — this is our limit to raise, not yours",
