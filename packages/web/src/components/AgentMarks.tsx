@@ -34,7 +34,7 @@ export function NewThreadAgentMarks() {
   const gauge = useSelectedModel()
   const { resolved } = useDispatchProfile()
   const mcp: McpTarget | undefined = resolved
-    ? { backend: resolved.backend, ...(resolved.backend === "acp" ? { model: resolved.model } : {}) }
+    ? { backend: resolved.backend, ...(resolved.backend === "acp" || resolved.backend === "opencode" ? { model: resolved.model } : {}) }
     : undefined
   // Down: this box is at the top of its column, with the sidebar's rows or the dialog's own space below it.
   return <AgentMarks gauge={gauge} mcp={mcp} side="bottom" />

@@ -132,6 +132,8 @@ export const REMOTE_ACCESS = {
   threadSkills: "full",
   claudeModels: "full",
   acpAgentModels: "full",
+  opencodeModels: "full",
+  stopThreadTurn: "full",
 
   // MCP, provider and GitHub sign-ins.
   mcpStatus: "full",

@@ -2,6 +2,8 @@ import {
   acpAgentIdFromModel,
   acpModelIdFromModel,
   acpModelSlug,
+  OPENCODE_MODEL_PREFIX,
+  opencodeModelSlug,
   type AcpAgent,
   type Backend,
   type ClaudeModel,
@@ -33,6 +35,8 @@ export interface ResolvedDispatchPreferences {
   // ACP only: the agent id and the model chosen inside it (undefined = the agent's own default).
   acpAgentId?: string
   acpModelId?: string
+  // OpenCode only: its row is the bare prefix, and the model inside it is its own picker's.
+  opencodeModel?: string
   modelAvailable: boolean
   effortAvailable: boolean
   effortOptions: SelectOption[]
@@ -67,7 +71,10 @@ export function dispatchProfileGroups(codexModels: readonly CodexModel[], acpAge
   // Only the agents actually on the server's PATH get a row: the catalogue lists eight, and a grid of
   // "not installed" rows would bury the two the operator has. A SAVED agent that has since gone
   // missing surfaces through resolveDispatchPreferences's `modelAvailable`, not through a row here.
-  const acpOptions = acpAgents.filter((agent) => agent.available).map((agent) => ({
+  //
+  // An agent marked `native` runs on Frizz's own backend for it here, so it has that row instead.
+  const opencodeNative = acpAgents.some((agent) => agent.native && agent.available)
+  const acpOptions = acpAgents.filter((agent) => agent.available && !agent.native).map((agent) => ({
     model: acpModelSlug(agent.id),
     label: agent.label,
     // No effort axis: an ACP agent runs on its own CLI's model and effort (ProfileGridSelector draws
@@ -98,6 +105,7 @@ export function dispatchProfileGroups(codexModels: readonly CodexModel[], acpAge
         efforts: model.efforts,
       })),
     },
+    ...(opencodeNative ? [{ id: "opencode", label: "OpenCode", options: [{ model: OPENCODE_MODEL_PREFIX, label: "OpenCode", efforts: [] }] }] : []),
     ...(acpOptions.length ? [{ id: "acp", label: "ACP agents", options: acpOptions }] : []),
   ]
 }
@@ -107,6 +115,16 @@ export function resolveDispatchPreferences(
   codexModels: readonly CodexModel[],
   acpAgents: readonly AcpAgent[] = [],
 ): ResolvedDispatchPreferences {
+  // A profile saved when OpenCode ran over ACP becomes the native one once this machine can run that,
+  // keeping the model it named. A thread already running over ACP stays there: this is only what the
+  // next dispatch uses.
+  const savedAcpAgent = preferences.backend === "acp" ? acpAgentIdFromModel(preferences.acp?.model) : undefined
+  if (savedAcpAgent && acpAgents.some((agent) => agent.id === savedAcpAgent && agent.native)) {
+    const inner = acpModelIdFromModel(preferences.acp?.model)
+    const slash = inner?.indexOf("/") ?? -1
+    const model = inner && slash > 0 ? opencodeModelSlug({ providerID: inner.slice(0, slash), id: inner.slice(slash + 1) }) : OPENCODE_MODEL_PREFIX
+    return resolveDispatchPreferences({ ...preferences, backend: "opencode", opencode: { ...preferences.opencode, model } }, codexModels, acpAgents)
+  }
   const backend = preferences.backend
   // `acp` is optional on the record (older rows predate it), so an ACP backend with no saved profile
   // reads as an empty one and falls through to the first installed agent below.
@@ -115,25 +133,29 @@ export function resolveDispatchPreferences(
   const model = profile.model ?? (
     backend === "claude" ? "opus"
       : backend === "codex" ? codexModels[0]?.slug ?? ""
-        : firstAcpAgent ? acpModelSlug(firstAcpAgent.id) : ""
+        : backend === "opencode" ? OPENCODE_MODEL_PREFIX
+          : firstAcpAgent ? acpModelSlug(firstAcpAgent.id) : ""
   )
   const codexModel = backend === "codex"
     ? codexModels.find((candidate) => candidate.slug === model)
     : undefined
   const acpAgentId = backend === "acp" ? acpAgentIdFromModel(model) : undefined
   const acpModelId = backend === "acp" ? acpModelIdFromModel(model) : undefined
-  const pickerModel = backend === "acp" && acpAgentId ? acpModelSlug(acpAgentId) : model
+  const pickerModel = backend === "acp" && acpAgentId ? acpModelSlug(acpAgentId) : backend === "opencode" ? OPENCODE_MODEL_PREFIX : model
   // An ACP profile is available when its AGENT is installed: the model inside it is the agent's to
   // honour or refuse (the bridge notes a refusal in the transcript), never a reason to block dispatch.
   const modelAvailable = backend === "claude"
     ? CLAUDE_MODELS.some((candidate) => candidate.value === model)
     : backend === "codex"
       ? codexModels.some((candidate) => candidate.slug === model)
-      : acpAgents.some((candidate) => candidate.available && candidate.id === acpAgentId)
+      : backend === "opencode"
+        ? acpAgents.some((candidate) => candidate.native === true && candidate.available)
+        : acpAgents.some((candidate) => candidate.available && candidate.id === acpAgentId)
+  const opencodeModel = backend === "opencode" ? model : undefined
   const defaultEffort = backend === "claude" ? "high" : codexModel?.defaultEffort ?? ""
   // An ACP agent has no effort axis in Frizz — it runs on its own CLI's model and effort — so its
   // effort is "" and always "available": there is nothing to be unavailable.
-  const effort = backend === "acp" ? "" : profile.effort ?? defaultEffort
+  const effort = backend === "acp" || backend === "opencode" ? "" : profile.effort ?? defaultEffort
   const baseEfforts = backend === "claude"
     ? claudeEffortOptions(model, { withDefault: false })
     : backend === "codex"
@@ -166,7 +188,7 @@ export function dispatchModelGroups(
   const groups = modelGroups(codexModels, { withDefault: false }, claudeModels)
   if (!selectedModel || groups.some((group) => group.options.some((option) => option.value === selectedModel))) return groups
   const unavailable: SelectGroup = {
-    label: backend === "codex" ? "Saved Codex model" : backend === "acp" ? "Saved ACP agent" : "Saved Claude model",
+    label: backend === "codex" ? "Saved Codex model" : backend === "acp" ? "Saved ACP agent" : backend === "opencode" ? "Saved OpenCode model" : "Saved Claude model",
     options: [{ value: selectedModel, label: `${selectedModel} (unavailable)`, title: "This saved model is no longer in the runtime catalogue" }],
   }
   return [unavailable, ...groups]

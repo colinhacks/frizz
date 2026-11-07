@@ -55,7 +55,7 @@ export const InteractionFieldId = z.string()
 export const InteractionDecisionId = z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
 
 export const InteractionProvider = z.object({
-  kind: z.enum(["claude", "codex", "acp", "frizz"]),
+  kind: z.enum(["claude", "codex", "acp", "opencode", "frizz"]),
   name: InteractionLabel.optional(),
   version: InteractionOpaqueId.optional(),
 }).strict()

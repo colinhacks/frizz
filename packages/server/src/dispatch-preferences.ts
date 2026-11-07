@@ -60,6 +60,7 @@ export function defaultDispatchPreferences(
     // agent's own CLI decides), so there is no default worth writing, and every record written before
     // the backend existed lacks the key.
     ...(backend === "acp" ? { acp: selected } : {}),
+    ...(backend === "opencode" ? { opencode: selected } : {}),
   }
 }
 

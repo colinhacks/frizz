@@ -23,7 +23,7 @@ export interface LimitFault {
 // stay backend-blind. Phase 1 ships ClaudeBackend as the sole implementation with byte-for-byte
 // identical observable behavior; Phase 2 adds CodexBackend behind this same interface.
 
-export type BackendKind = "claude" | "codex" | "acp"
+export type BackendKind = "claude" | "codex" | "acp" | "opencode"
 
 // A backend-neutral transcript record: the vocabulary a backend's parser emits, and — for a backend
 // whose turn model maps cleanly onto it (codex's explicit task_started/task_complete brackets) — the

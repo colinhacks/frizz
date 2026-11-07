@@ -7,9 +7,10 @@ export function providerErrorVisible(messages: readonly TranscriptMessage[], err
     && message.providerError?.message === error.message && message.providerError?.code === error.code)
 }
 
-export function ProviderErrorCard({ error }: { error: ProviderError }) {
+export function ProviderErrorCard({ error, backend }: { error: ProviderError; backend?: string }) {
+  const provider = backend === "opencode" ? "OpenCode" : backend === "acp" ? "Agent" : "Codex"
   return (
-    <TranscriptCard data-codex-error={error.code ?? "unknown"} tone={error.retrying ? "caution" : "danger"} icon={TriangleAlert} label={error.retrying ? "Codex retrying" : "Codex request failed"}>
+    <TranscriptCard data-codex-error={error.code ?? "unknown"} tone={error.retrying ? "caution" : "danger"} icon={TriangleAlert} label={error.retrying ? `${provider} retrying` : `${provider} request failed`}>
       {error.code && <p className={`${CARD_BODY} font-mono [overflow-wrap:anywhere]`}>{error.code}</p>}
       <p className={`${CARD_BODY} whitespace-pre-wrap [overflow-wrap:anywhere]`}>{error.message}</p>
       {error.details && <p className={`${CARD_BODY} whitespace-pre-wrap [overflow-wrap:anywhere]`}>{error.details}</p>}

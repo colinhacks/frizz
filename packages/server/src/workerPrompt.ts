@@ -14,7 +14,7 @@
 //   - DO NOT re-add a paragraph explaining WHY a rule exists. Put the why in a comment here.
 //   - DO NOT restate a rule a hook, a command's `--help`, or agent profile already enforces.
 //   - A new rule earns its tokens only if a worker measurably gets it wrong without it.
-export type BackendKind = "claude" | "codex" | "acp"
+export type BackendKind = "claude" | "codex" | "acp" | "opencode"
 
 // COMMAND WATCHES ARE CLAUDE-ONLY, so only Claude's contract teaches them (2026-10-11). The server runs a
 // watched command with no permission check, so `commandWatchRefusal` (command-watch.ts) refuses every
@@ -88,7 +88,11 @@ const INLINE: Record<BackendKind, Record<"SESSION_KIND" | "RESUME_CMD", string>>
   "acp": {
     "SESSION_KIND": "coding-agent",
     "RESUME_CMD": "(Frizz re-opens the session over ACP)",
-  }
+  },
+  "opencode": {
+    "SESSION_KIND": "opencode",
+    "RESUME_CMD": "opencode --session",
+  },
 }
 
 /** The tokens that depend on whether this thread may register a server-run command. */
@@ -1284,7 +1288,7 @@ A human rename outranks yours, and frizz reports that rather than failing.`
 // LEGACY NAME, current behaviour. This block and `scratchpadOrientation` still say "scratchpad"; both
 // describe the scratch DIRECTORY. (`ThreadView.scratchpadPath` and the `threadScratchpad` RPC went with
 // the Doc tab on 2026-08-06 — nothing reads the directory back into the UI any more.)
-const SCRATCHPAD: Record<BackendKind, string> = {
+const SCRATCHPAD: Record<Exclude<BackendKind, "opencode">, string> = {
   claude: `## Your scratch directory
 
 \`.frizz/threads/<session-id>/\` (exact path in your session-start context) — a folder that is YOURS, for
@@ -1705,6 +1709,33 @@ Code's — use your harness's equivalent, or none.
 A message the human sends while you are working is QUEUED and delivered as your next turn the moment
 this one ends — nothing can interrupt you mid-turn except a stop. So rest promptly when a turn's work is
 done rather than idling inside it, and read the newest human message first when a turn opens.`,
+  opencode: `## Your harness, and \`frizzctl\` inside it
+
+You are an OpenCode session that Frizz drives through OpenCode's server. Your file, shell, search and
+question tools are OpenCode's. Frizz's own commands reach you as \`frizzctl\`, a program on your shell's
+PATH: wherever this contract writes \`frizzctl <command>\`, run it with your shell tool, exactly as
+written, and from a sub-agent's shell too, where it speaks for this same thread. The tools named
+elsewhere in this contract as \`Agent\`, \`SendMessage\` and \`Monitor\` are Claude Code's: use OpenCode's
+\`subagent\` tool for the first, and for the others the \`frizzctl\` commands this contract gives.
+
+Your permission prompts are OpenCode's, under a mode the human sets on this thread: Frizz shows each
+ask to them as a card and relays the answer, for your sub-agents' asks too. A denied call comes back as
+a failed tool call: adapt, or say what is blocked in your final message. In plan mode you run as
+OpenCode's \`plan\` agent and do not edit.
+
+## Sub-agents
+
+Use the \`subagent\` tool. The human sees each child as its own row on this thread, can open its
+transcript and can stop it. Pass \`background: true\` for independent work and collect the result: you are
+told when it finishes. A child's session id (\`ses_…\`) is its identity: it is what the tool returns, and
+what you write on an \`agents:\` line when you rest while one runs. Fold what each child found into your
+own write-up, since the human reads you.
+
+## Follow-ups arrive between steps
+
+A message the human sends while you are working reaches you at your next step, in the middle of your
+turn, and you should read it then and act on it. A message they queue instead arrives as a new turn
+after this one ends. Read the newest human message first.`,
 }
 
 // A TOOL CALL CUT OFF BY "SEND NOW". Claude only: the SDK interrupt is the one transport that ends a turn
@@ -1826,7 +1857,7 @@ project's. It is how you find the thread to send to, and whether one is already 
 A message wrapped in \`<thread-message>\` came from another thread, which it names: a colleague's
 message, not the human's. Act on it within your mandate, and answer it with \`frizzctl steer\` when it asks.`
 
-const THREAD_EXECUTION: Record<BackendKind, string> = {
+const THREAD_EXECUTION: Record<Exclude<BackendKind, "opencode">, string> = {
   claude: `## Thread types
 
 Recognize which KIND of effort you own and match the deliverable to it:
@@ -1933,6 +1964,8 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
   // good engineering. Codex keeps its own THREAD_EXECUTION (its bounded-delegation policy lives there)
   // and TRIVIAL_PROMPTS. See the SIZING note at the top of this file.
   const lean = kind === "claude"
+  // OpenCode has its own harness section, and its scratch directory and thread types read as ACP's do.
+  const prose = kind === "opencode" ? "acp" : kind
   const sections: (string | null)[] = [
     INTRO,
     DEFER,
@@ -1940,7 +1973,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     ACTIVITY_CAPTIONS,
     FRIZZCTL,
     SIGNALS,
-    SCRATCHPAD[kind],
+    SCRATCHPAD[prose],
     kind === "claude" ? `${WORKTREES}\n${WORKTREES_HARNESS}` : WORKTREES,
     BACKEND[kind],
     kind === "claude" ? CLAUDE_INTERRUPTED_CALL : null,
@@ -1948,7 +1981,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     SPAWN_THREAD,
     opts.childThreads ? CHILD_THREADS : null,
     STEER_THREADS,
-    lean ? null : THREAD_EXECUTION[kind],
+    lean ? null : THREAD_EXECUTION[prose],
     AGENT_COMPLETION,
     VISUAL_EVIDENCE,
     MARKDOWN_COMPONENTS,

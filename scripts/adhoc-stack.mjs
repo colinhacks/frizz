@@ -20,7 +20,7 @@
 // It prints ONE json line to stdout: {"url","port","home","project"} once /health is green,
 // then stays up until SIGINT/SIGTERM, deleting the temp HOME on exit (unless --keep). Run it with Bash
 // run_in_background:true, parse that json line, then drive the url with Chrome DevTools MCP or shot.mjs.
-import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { frizzPaths, projectStateDir } from "../packages/server/src/frizz-paths.ts"
@@ -150,6 +150,7 @@ if (flag("seed")) {
 
 let close = async () => {}
 const cleanup = () => {
+  stopSandboxOpencodeService()
   if (!keep) { try { rmSync(home, { recursive: true, force: true }) } catch {} }
   // The isolated root is this run's own even though the HOME is not, so `--home` alone (which only
   // implies --keep to protect the HOME it was handed) does not keep it; an explicit --keep does.
@@ -161,6 +162,21 @@ const stop = (code) => {
     cleanup()
     process.exit(code ?? 0)
   })()
+}
+// A dispatch to OpenCode starts OpenCode's background service, which outlives its client on purpose. This
+// one is the sandbox's: its registration is under the sandbox's state directory, never the real one, and
+// nothing else here will stop it. By the PID it registered, and only when that file is the sandbox's.
+function stopSandboxOpencodeService() {
+  if (keep) return
+  const stateDirs = [isolatedRoot && join(isolatedRoot, "state"), process.env.XDG_STATE_HOME, join(home, ".local", "state")].filter(Boolean)
+  for (const dir of stateDirs) {
+    if (!dir.startsWith(home) && !(isolatedRoot && dir.startsWith(isolatedRoot))) continue
+    const file = join(dir, "opencode", "service.json")
+    try {
+      const pid = JSON.parse(readFileSync(file, "utf8")).pid
+      if (Number.isInteger(pid) && pid > 1) process.kill(pid, "SIGTERM")
+    } catch {}
+  }
 }
 process.on("SIGINT", () => stop(0))
 process.on("SIGTERM", () => stop(0))

@@ -55,7 +55,8 @@ export function threadPermissionBlockedReason(thread: ThreadPermissionState): st
   // back to persist-only and answers "saved for the next resume".
   // An ACP thread has no permission axis at all (the agent's own CLI decides what it may do), so the
   // control never shows for it — the server refuses the RPC outright; never fence what cannot change.
-  if (thread.backend === "codex" || thread.backend === "acp") return null
+  // OpenCode's rules are the session's own and take hold at the next tool call, turn or no turn.
+  if (thread.backend === "codex" || thread.backend === "acp" || thread.backend === "opencode") return null
   const unresolvedOps = [...(thread.subAgents ?? []), ...(thread.bgShells ?? [])].filter((op) => op.state === "running" || op.state === "stale").length
   if (unresolvedOps > 0) return `Wait for ${unresolvedOps} unresolved background operation${unresolvedOps === 1 ? "" : "s"}`
   if (thread.runtime === "running" || thread.runtime === "spawning") return "Wait for the current turn to finish"

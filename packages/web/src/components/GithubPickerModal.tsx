@@ -7,6 +7,7 @@ import { showToast } from "../store.ts"
 import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
+import { OpencodeModelSelect } from "./OpencodeModelSelect.tsx"
 import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
@@ -331,6 +332,15 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
                 className="max-w-[min(21rem,60vw)]"
               />
+              {resolved?.backend === "opencode" && (
+                <OpencodeModelSelect
+                  value={resolved.opencodeModel}
+                  onValueChange={(slug) => saveProfile({ field: "model", backend: "opencode", value: slug })}
+                  side="top"
+                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
+                  className="max-w-[min(14rem,30vw)]"
+                />
+              )}
               {acpAgent && (
                 <AcpModelSelect
                   agentId={acpAgent.id}

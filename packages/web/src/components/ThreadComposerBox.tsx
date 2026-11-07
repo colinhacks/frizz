@@ -251,6 +251,10 @@ function LocalThreadComposerBox({
         showToast("An ACP agent signs in through its own CLI — Frizz holds no account for it")
         return
       }
+      if (thread?.backend === "opencode") {
+        showToast("OpenCode signs in through its own CLI: run `opencode auth login`")
+        return
+      }
       const backend: AccountBackend = thread?.backend === "codex" ? "codex" : "claude"
       if (alias === "login") setSignInFor(backend)
       else setLogoutFor(backend)

@@ -12,6 +12,7 @@ import { NewThreadAgentMarks } from "./AgentMarks.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { SETTINGS_WRITE_KEY, settingsQuery, useSettingsAutosave } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
+import { OpencodeModelSelect } from "./OpencodeModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { Select } from "./ui/Select.tsx"
 import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
@@ -156,6 +157,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         showToast("An ACP agent signs in through its own CLI — Frizz holds no account for it")
         return
       }
+      if (resolved.backend === "opencode") {
+        showToast("OpenCode signs in through its own CLI: run `opencode auth login`")
+        return
+      }
       if (alias === "login") {
         gatedInputRef.current = null // nothing to dispatch after sign-in — this is a pure account action
         setSignInFor(resolved.backend)
@@ -185,7 +190,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     // Auth gate: block ONLY on a positive "signed-out" for this dispatch's backend. Loading/unknown/
     // authed all fall through (fail open) so a flaky or slow read never blocks a logged-in user. An ACP
     // agent has no account here at all — its own CLI reports a missing login on the first prompt.
-    if (resolved.backend !== "acp" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
+    if (resolved.backend !== "acp" && resolved.backend !== "opencode" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
       gatedInputRef.current = input
       setSignInFor(resolved.backend)
       return
@@ -256,6 +261,13 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
                 // The pick becomes the profile's model slug (`acp:<agent>@<model>`); "" (the agent's own
                 // default) drops the tail.
                 onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
+                className="max-w-[min(14rem,40vw)]"
+              />
+            )}
+            {resolved.backend === "opencode" && (
+              <OpencodeModelSelect
+                value={resolved.opencodeModel}
+                onValueChange={(slug) => saveProfile({ field: "model", backend: "opencode", value: slug })}
                 className="max-w-[min(14rem,40vw)]"
               />
             )}

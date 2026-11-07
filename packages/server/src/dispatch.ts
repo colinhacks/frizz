@@ -31,8 +31,10 @@ import { buildWorkerPrompt } from "./workerPrompt.ts"
 import { codexSandbox, CODEX_FIRST_OUTPUT_TITLE_DEVELOPER_INSTRUCTIONS } from "./backend/codex.ts"
 import type { CodexAppServerBridge } from "./backend/codex-app-server.ts"
 import type { AcpBridge } from "./backend/acp-bridge.ts"
+import type { OpencodeBridge } from "./backend/opencode-bridge.ts"
+import { opencodeModeOf } from "./backend/opencode-types.ts"
 import { acpAgentIdFromModel } from "./backend/acp-agents.ts"
-import { acpModelIdFromModel } from "@frizz/shared"
+import { acpModelIdFromModel, opencodeModelRef } from "@frizz/shared"
 import { claudeBrokerBridgeEnabled, type ClaudeAgentBrokerBridge } from "./backend/claude-agent-broker-bridge.ts"
 import { claudeUltracodeFlags, resolveClaudeEffort } from "./backend/claude-effort.ts"
 import { ProviderAuthRequiredError } from "./backend/auth-status.ts"
@@ -416,6 +418,13 @@ export function acpWorkerContract(sessionId: string, projectDir: string, contrac
   return [loadWorkerPrompt("acp", contract), scratchpadOrientation(sessionId, "acp"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
+// The block an OpenCode worker's contract is. It is the same three pieces as ACP's, but it rides an
+// instruction entry on the session (`frizz.contract`), which OpenCode keeps across a compaction, and the
+// bridge puts it again on every resume, so it does not need the re-sends an ACP contract does.
+export function opencodeWorkerContract(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
+  return [loadWorkerPrompt("opencode", contract), scratchpadOrientation(sessionId, "opencode"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+}
+
 // The SYSTEM-level scratch-directory orientation (survives compaction, rebuilds on every resume).
 // Passed as extraSystemPrompt on dispatch, adopt, AND the followUp resume path.
 //
@@ -502,6 +511,10 @@ export const WORKER_DISPATCH_PERMISSION: Record<BackendKind, PermissionMode> = {
   // An ACP agent's permissions are its own (plans/acp-backend.md, decision 7): Frizz sends no mode and
   // mirrors whatever the agent asks as a card. The value here is recorded on the row and nothing else.
   acp: "auto",
+  // A new OpenCode thread runs as OpenCode's `build` agent does by default, which asks for next to
+  // nothing, and the thread's own control is how to lower it, as with Codex. `auto` is not offered:
+  // OpenCode has no classifier to give it meaning.
+  opencode: "bypassPermissions",
 }
 
 // The permission mode a NEW worker of `kind` actually launches with, given the operator's Settings.
@@ -537,6 +550,7 @@ export function coldResumePermission(row: { permission_mode?: string | null }, s
 // PermissionMode storage field, so all workspace-write aliases collapse to `default`.
 export function effectivePermissionMode(kind: BackendKind, mode: PermissionMode): PermissionMode {
   if (kind === "claude") return workerPermissionMode(mode)
+  if (kind === "opencode") return mode === "acceptEdits" || mode === "default" || mode === "plan" ? mode : "bypassPermissions"
   if (mode === "plan" || mode === "bypassPermissions") return mode
   return "default"
 }
@@ -971,6 +985,7 @@ export interface DispatchDeps {
   // The generic ACP bridge (context.ts): any Agent Client Protocol agent, one stdio child per thread.
   // Absent ⇒ an acp dispatch fails loudly.
   acpBridge?: AcpBridge
+  opencodeBridge?: OpencodeBridge
   // The Claude session-broker bridge (context.ts). Every claude dispatch runs over it — headless, in a
   // detached daemon, with no terminal and no PTY. Absent ⇒ a claude dispatch fails loudly.
   claudeBroker?: ClaudeAgentBrokerBridge
@@ -1045,7 +1060,8 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // keeps the draft and opens the sign-in modal off the sentinel message.
       // An ACP agent has no credential Frizz can read: its auth is probed by the agent itself on
       // session/new, and the bridge turns that refusal into an actionable dispatch error.
-      if (kind !== "acp" && deps.preflightAuth && (await deps.preflightAuth(kind).catch((): ProviderAuth => "unknown")) === "signed-out") {
+      // OpenCode is the same: its logins are its own CLI's, and a thread on a free model needs none.
+      if (kind !== "acp" && kind !== "opencode" && deps.preflightAuth && (await deps.preflightAuth(kind).catch((): ProviderAuth => "unknown")) === "signed-out") {
         throw new ProviderAuthRequiredError(kind)
       }
       // Codex needs the `codex` executable, not just a credential. Probe it here, in the same
@@ -1214,6 +1230,53 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             try { bridge.releaseSession(slug, sessionId, "session-deleted") } catch { /* best-effort */ }
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error(`The ACP agent could not start this thread: ${(err as Error).message}`)
+          }
+        }
+
+        // OpenCode's own server API (ARCHITECTURE.md § OpenCode backend). The session lives in the person's
+        // background service, the contract rides an instruction entry, and the row pins the session id in
+        // `agent_session_id`. The bridge writes the transcript the tailer folds, and the model slug
+        // (`opencode:<provider>/<id>#<variant>`) is the whole profile, so `effort` stays empty.
+        if (kind === "opencode") {
+          const bridge = deps.opencodeBridge
+          if (!bridge) {
+            cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
+            throw new Error("The OpenCode bridge is unavailable; cannot start this thread.")
+          }
+          const selected = opencodeModelRef(model)
+          try {
+            const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, ...(selected ? { model: selected } : {}), mode: opencodeModeOf(permissionMode), prompt })
+            deps.storage.upsertSession({
+              slug,
+              session_id: sessionId,
+              thread_name: threadIdentityName(slug),
+              spawned_at: new Date().toISOString(),
+              last_read_at: null,
+              unread: 0,
+              exited: 0,
+              archived: 0,
+              rested_at: null,
+              title_auto: input.title?.trim() ? 0 : 1,
+              title_locked: 0,
+              title: registryTitle,
+              state: "open",
+              meta: null,
+              seen_at: null,
+              transcript_id: null,
+              model: model ?? null,
+              effort: null,
+              permission_mode: permissionMode,
+            })
+            deps.storage.setBackend(slug, "opencode")
+            deps.storage.setAgentSession(slug, spawned.opencodeSessionId)
+            deps.storage.setWorkerSurface(slug, "cli")
+            if (opts?.parentSlug) deps.storage.setParentSlug(slug, opts.parentSlug)
+            void deps.board.rebuild().catch(() => {})
+            return { slug, sessionId }
+          } catch (err) {
+            try { bridge.releaseSession(slug, sessionId, "session-deleted") } catch { /* best-effort */ }
+            cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
+            throw new Error(`OpenCode could not start this thread: ${(err as Error).message}`)
           }
         }
 

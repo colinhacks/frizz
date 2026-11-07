@@ -322,7 +322,8 @@ function orphanedAgents(agents: ThreadView["subAgents"], ownerGone: boolean): Th
 }
 
 function stampStoppable(agents: ThreadView["subAgents"], row: SessionRow): ThreadView["subAgents"] {
-  if (!isBrokerClaudeRow(row)) return agents
+  // An OpenCode child is a session of its own, which takes an interrupt like any other.
+  if (!isBrokerClaudeRow(row) && row.backend !== "opencode") return agents
   return agents.map((agent) => (agent.state === "running" ? { ...agent, stoppable: true } : agent))
 }
 
@@ -1596,7 +1597,7 @@ export function resolveSessionPermission(
 ): ThreadView["permissionMode"] {
   const saved = PermissionMode.safeParse(row.permission_mode)
   const pending = PermissionMode.safeParse(row.permission_pending)
-  const normalize = (mode: PermissionModeValue) => effectivePermissionMode(row.backend === "codex" ? "codex" : "claude", mode)
+  const normalize = (mode: PermissionModeValue) => effectivePermissionMode(row.backend === "codex" ? "codex" : row.backend === "opencode" ? "opencode" : "claude", mode)
   // A successful controlled reattach stamps the exact argv mode before its transcript sidecar is
   // tailed. During that short reconciliation window the launched value is already authoritative.
   if (saved.success && pending.success && normalize(saved.data) === normalize(pending.data)) return normalize(saved.data)
@@ -2140,7 +2141,7 @@ function sessionThreadView(
     // from today's dispatch preference: unknown/migrated rows remain unmarked, while rows whose
     // database default was explicitly normalized to "claude" get the same per-thread identity as
     // Codex rows.
-    backend: row.backend === "claude" || row.backend === "codex" || row.backend === "acp" ? row.backend : undefined,
+    backend: row.backend === "claude" || row.backend === "codex" || row.backend === "acp" || row.backend === "opencode" ? row.backend : undefined,
     // Only a persisted, validated per-session value is exposed. A migrated row stays visibly unknown;
     // never label it with today's global defaults (which may not match its running process).
     permissionMode,

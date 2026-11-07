@@ -12,6 +12,7 @@ import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
 import type { Storage, SessionRow } from "./storage.ts"
 import { discoverTranscriptDir, discoverTranscriptId, mtimeOfNonEmpty, DISCOVERY_GRACE_MS } from "./discover.ts"
 import { CLAUDE_WORKER_ENV, type AgentBackend, type FoldState, type NormalizedEvent, type NormalizedTail, type QuestionSighting } from "./backend/types.ts"
+import { parseOpencodeSubAgentLine } from "./backend/opencode-transcript.ts"
 import { adoptionRuntimeBinding } from "./adoption-recovery.ts"
 import { normalizeObservedThreadModel, validateThreadProfile } from "./backend/thread-profiles.ts"
 import { dispatchProfileCell } from "./subagent-profile.ts"
@@ -809,7 +810,7 @@ interface SubAgentEntry {
   outputFile?: string // the child/shell's output path (from the launch tool_result); its mtime = liveness
   // Transcript SCHEMA of `outputFile` when it isn't Claude's own JSONL. A codex sub-agent's output file
   // is the CHILD's codex rollout, which the drill-in drawer must parse with the codex reader instead.
-  outputFormat?: "codex"
+  outputFormat?: "codex" | "opencode"
   // A `Monitor`, which is a shell op with NO output file: its ack names only a task ("Monitor started
   // (task …)"), and every event it produces arrives as a notification to the worker. Its row therefore
   // carries no drill-in — the drawer could only ever say "No output yet." for the Monitor's whole life.
@@ -897,7 +898,7 @@ interface RetiredSubAgent {
   label: string
   subagentType?: string
   outputFile?: string
-  outputFormat?: "codex" // see SubAgentEntry.outputFormat
+  outputFormat?: "codex" | "opencode" // see SubAgentEntry.outputFormat
   // ISO8601 of the DISPATCH, carried over from the live entry. A retired row is normally never rendered,
   // but one holding a live fan-out is (see the RESTED anchor in descendantSubtrees), and that row needs
   // the same honest "working for 12m" instant every other child row shows rather than a derived one.
@@ -2998,7 +2999,7 @@ function sameForeign(a: { id: string }[], b: { id: string }[]): boolean {
 
 export interface SubAgentLookup {
   outputFile?: string
-  outputFormat?: "codex"
+  outputFormat?: "codex" | "opencode"
   state: "running" | "stale" | "done"
   direct: boolean
   taskId?: string
@@ -3713,7 +3714,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     if (!path) return false
     // Only an agent's file is a Claude transcript: a shell's is its raw output, and a codex child's is
     // its rollout, which records calls in codex's own schema.
-    return quietPastWindow(path, mtimeMs(path), nowMs, e.kind === "agent" && e.outputFormat !== "codex")
+    return quietPastWindow(path, mtimeMs(path), nowMs, e.kind === "agent" && !e.outputFormat)
   }
 
   // Has a child's transcript been quiet past its window? The plain clock — SUBAGENT_STALE_MS since the
@@ -4620,7 +4621,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // now, and a broker thread's approvals arrive as typed permission requests over the control channel
     // anyway.
     // Codex and ACP approvals are typed interaction cards, never a marker file.
-    return turn === "in-flight" && row.backend !== "codex" && row.backend !== "acp" && permMarkerBlocks(state, row)
+    return turn === "in-flight" && row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && permMarkerBlocks(state, row)
   }
 
   // Write out the un-retirements the FOLD queued: an op the agent restarted under an id the operator
@@ -4925,6 +4926,34 @@ export function createTailer(deps: TailerDeps): Tailer {
     return (line: string) => tracker.onLine(line)
   }
 
+  // An OpenCode row's sub-agents, read off its own transcript: the bridge writes one record each time a
+  // child's state moves, the newest for an id wins, and a replay rebuilds the map. So unlike codex there
+  // is no tracker object and the prime cache can hold the result.
+  function opencodeSubAgentOnLine(row: SessionRow, state: TailState): ((line: string) => void) | undefined {
+    if (row.backend !== "opencode") return undefined
+    return (line: string) => {
+      const rec = parseOpencodeSubAgentLine(line)
+      if (!rec) return
+      if (rec.state === "running") {
+        state.retiredSubAgents.delete(rec.id)
+        state.subAgents.set(rec.id, {
+          kind: "agent",
+          toolUseId: rec.id,
+          label: rec.label,
+          startedAt: rec.startedAt,
+          ...(rec.agent ? { subagentType: rec.agent } : {}),
+          outputFile: rec.outputFile,
+          outputFormat: "opencode",
+          taskId: rec.childSessionId,
+        })
+        return
+      }
+      const entry: SubAgentEntry = state.subAgents.get(rec.id) ?? { kind: "agent", toolUseId: rec.id, label: rec.label, startedAt: rec.startedAt, outputFile: rec.outputFile, outputFormat: "opencode", taskId: rec.childSessionId, ...(rec.agent ? { subagentType: rec.agent } : {}) }
+      state.subAgents.set(rec.id, entry)
+      retireLive(state, entry, rec.finishedAt ?? rec.at, rec.state)
+    }
+  }
+
   // ---- durable prime cache (tail-cache.ts) ------------------------------------------------------
   // Loaded lazily on the first tick, consumed once per slug. Entries that miss their fence are simply
   // never applied: the row then folds from byte 0, exactly as it always did.
@@ -5206,7 +5235,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     const detail = isBrokerClaudeRow(row) && deps.project.stateDir
       ? `no worker terminal to capture (broker runtime). Daemon diagnostics: ${claudeBrokerDiagnosticLogPath(deps.project.stateDir, row.session_id)}`
       : isHeadlessRow(row)
-      ? `no worker terminal to capture (headless ${row.backend === "codex" ? "codex app-server" : row.backend === "acp" ? "ACP agent" : "claude broker"} runtime)`
+      ? `no worker terminal to capture (headless ${row.backend === "codex" ? "codex app-server" : row.backend === "acp" ? "ACP agent" : row.backend === "opencode" ? "OpenCode" : "claude broker"} runtime)`
       // Neither runtime above, i.e. a pre-cutover row. Nothing in this build captures anything, so the
       // old "(pane empty / unavailable)" described output that SHOULD have existed and sent the reader
       // hunting for a screen that cannot exist. Say why there is nothing instead.
@@ -5564,7 +5593,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // session/load), but the transcript is FRIZZ-written and keyed by the frizz session id
       // (acp-transcript.ts) — so its stem is always `session_id`.
       const backend = resolveBackend(row.backend)
-      const nativeId = row.backend === "acp" ? row.session_id : row.agent_session_id ?? row.transcript_id ?? row.session_id
+      const nativeId = row.backend === "acp" || row.backend === "opencode" ? row.session_id : row.agent_session_id ?? row.transcript_id ?? row.session_id
       const known = states.get(row.slug)
       const runtimeGeneration = row.runtime_generation ?? 0
       // The state this row may KEEP: same session, same native transcript stem, same runtime
@@ -5641,7 +5670,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // would wrongly flag noTranscript (a codex discovery-miss is a separate follow-up). An ACP row's
       // file is deterministic too (frizz writes it), so it takes the same exemption.
       const prevNoTranscript = state.noTranscript
-      if (row.backend !== "codex" && row.backend !== "acp" && !resolveTranscript(state, row, nowMs)) {
+      if (row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && !resolveTranscript(state, row, nowMs)) {
         unsettled = true // a discovered transcript lost its claim; the next tick decides again
         continue
       }
@@ -5668,7 +5697,7 @@ export function createTailer(deps: TailerDeps): Tailer {
         primedRows++
         const primeOffset = state.offset
         const primeLedger = ledgerFold(row, nowMs, state)
-        consume(state, backend, chainOnLine(primeLedger.onLine, codexSubAgentOnLine(row, state)))
+        consume(state, backend, chainOnLine(chainOnLine(primeLedger.onLine, codexSubAgentOnLine(row, state)), opencodeSubAgentOnLine(row, state)))
         state.codexSubAgents?.poll(nowMs)
         const primedLedger = primeLedger.finish()
         state.deliveryLedgerSeen = primedLedger.changed ? primedLedger.value : row.delivery_ledger ?? null
@@ -5744,7 +5773,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       const rowLedger = row.delivery_ledger ?? null
       const ledgerDrifted = rowLedger !== (state.deliveryLedgerSeen ?? null) // a router write with no JSONL advance
       const ledger = ledgerFold(row, nowMs, state)
-      consume(state, backend, chainOnLine(chainOnLine(ledger.onLine, codexSubAgentOnLine(row, state)), crossSessionOnLine))
+      consume(state, backend, chainOnLine(chainOnLine(chainOnLine(ledger.onLine, codexSubAgentOnLine(row, state)), opencodeSubAgentOnLine(row, state)), crossSessionOnLine))
       // Child rollouts advance on their OWN clock, so poll every tick — not only when the parent
       // appended. This is what flips a finished codex child out of the live set (and, once every
       // child is done, releases the thread from Active into the queue).

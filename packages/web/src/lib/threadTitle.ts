@@ -35,14 +35,14 @@ export interface AiRenameAvailability {
 export function aiRenameAvailability(thread: {
   kind?: "session" | "legacy"
   foreign?: boolean
-  backend?: "claude" | "codex" | "acp"
+  backend?: "claude" | "codex" | "acp" | "opencode"
   // A Claude row dispatched before the broker became the sole transport has no control channel, and
   // the RPC refuses it outright — so it gets no button rather than one that throws. Unknown (an older
   // server's board) is read as broker: the refusal is then the RPC's to make, with its own message.
   claudeRuntime?: string
   runtime: "none" | "spawning" | "running" | "perm-prompt" | "turn-idle" | "exited"
 }): AiRenameAvailability {
-  if (thread.kind !== "session" || thread.foreign || thread.backend === "codex" || thread.backend === "acp") {
+  if (thread.kind !== "session" || thread.foreign || thread.backend === "codex" || thread.backend === "acp" || thread.backend === "opencode") {
     return { show: false, enabled: false, label: "" }
   }
   if (thread.claudeRuntime !== undefined && thread.claudeRuntime !== "broker") {

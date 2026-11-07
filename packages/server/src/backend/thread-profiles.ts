@@ -90,6 +90,8 @@ export function threadProfileOptions(
   // An ACP agent's model is chosen inside the agent (its own config options); Frizz offers no profile
   // for it yet, so the picker shows nothing rather than failing the RPC.
   if (backend === "acp") return { backend, options: [] }
+  // OpenCode's picker reads the service's own list (the `opencodeModels` RPC), and a slug is not a profile.
+  if (backend === "opencode") return { backend, options: [] }
   throw new Error("This thread has an unknown backend; its runtime profile cannot be changed")
 }
 

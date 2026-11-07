@@ -1,4 +1,4 @@
-import { ACP_MODEL_PREFIX, CODEX_MODELS_FALLBACK, PermissionMode, type Backend, type ClaudeModel, type CodexModel } from "@frizz/shared"
+import { ACP_MODEL_PREFIX, CODEX_MODELS_FALLBACK, OPENCODE_MODEL_PREFIX, PermissionMode, type Backend, type ClaudeModel, type CodexModel } from "@frizz/shared"
 export { CODEX_MODELS_FALLBACK } from "@frizz/shared"
 import type { SelectOption, SelectGroup } from "../components/ui/Select.tsx"
 
@@ -49,6 +49,15 @@ export const CLAUDE_DISPATCH_PERMISSION_OPTIONS: SelectOption[] = (["auto", "byp
   label: PERMISSION_SHORT[m],
   title: PERMISSION_MODE_LABELS[m],
 }))
+
+// An OpenCode thread's four real modes (ARCHITECTURE.md § OpenCode backend). `auto` is not one: OpenCode
+// has no classifier to give it meaning.
+export const OPENCODE_PERMISSION_OPTIONS: SelectOption[] = [
+  { value: "default", label: "Ask", title: "Asks before running a command, editing a file or using the web. Reads don't ask." },
+  { value: "acceptEdits", label: "Accept edits", title: "Edits go through. Commands and the web still ask." },
+  { value: "plan", label: "Plan", title: "Runs as OpenCode's plan agent, which doesn't edit." },
+  { value: "bypassPermissions", label: "Bypass", title: "Nothing asks." },
+]
 
 // Claude Code-inspired permission accents for the dispatch form's mode readout. Bypass/full access
 // intentionally uses the ordinary readout color rather than danger-red: someone who chose it does not
@@ -105,6 +114,7 @@ const FALLBACK_CODEX_SLUGS = new Set(CODEX_MODELS_FALLBACK.map((m) => m.slug))
 export function backendForModel(model: string | undefined, codexModels?: readonly CodexModel[]): Backend {
   if (!model) return "claude"
   if (model.startsWith(ACP_MODEL_PREFIX)) return "acp"
+  if (model.startsWith(OPENCODE_MODEL_PREFIX)) return "opencode"
   if (FALLBACK_CODEX_SLUGS.has(model)) return "codex"
   return codexModels?.some((m) => m.slug === model) ? "codex" : "claude"
 }

@@ -8,6 +8,6 @@ import type { ThreadView } from "@frizz/shared"
 export function offersRestartWorker(thread: ThreadView, devBuild: boolean): boolean {
   if (!devBuild) return false
   if (thread.kind !== "session" || thread.foreign) return false
-  if (thread.backend === "codex" || thread.backend === "acp") return false
+  if (thread.backend === "codex" || thread.backend === "acp" || thread.backend === "opencode") return false
   return thread.runtime !== "exited"
 }

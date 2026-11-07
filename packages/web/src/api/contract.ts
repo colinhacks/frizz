@@ -95,6 +95,7 @@ import type {
   ClaudeModel,
   CodexModel,
   AcpAgent,
+  OpencodeModels,
   AcpAgentModels,
   AcpAgentModelsInput,
   QuotaSnapshot,
@@ -354,6 +355,7 @@ export interface Api {
   repairThread(input: { file: string }): Promise<{ slug: string }>
   archiveThread(input: { slug: string }): Promise<void>
   killAgent(input: { slug: string }): Promise<void>
+  stopThreadTurn(input: { slug: string; sessionId: string }): Promise<{ interrupted: boolean }>
   renameThread(input: RenameThreadInput): Promise<void>
   aiRenameThread(input: { slug: string }): Promise<AiRenameThreadResult>
   // The selectable Codex models + per-model effort options, read server-side from the authoritative
@@ -369,6 +371,9 @@ export interface Api {
   // The models one ACP agent advertises (a throwaway session, cached server-side). Asked only when a
   // model picker for that agent is open.
   acpAgentModels(input: AcpAgentModelsInput): Promise<AcpAgentModels>
+  // OpenCode's own model list. Answering it starts the person's OpenCode service, so only a picker
+  // showing OpenCode asks.
+  opencodeModels(input?: Record<string, never>): Promise<OpencodeModels>
   // Provider subscription quota (5h + weekly windows) for the sidebar status bar. `force` names the
   // provider whose freshness window an explicit user recheck bypasses (a bare `true` is Claude's).
   quota(input?: { force?: boolean | "claude" | "codex" }, opts?: RpcCallOpts): Promise<QuotaSnapshot>
@@ -540,12 +545,14 @@ export const PROCEDURES = {
   repairThread: "mutation",
   archiveThread: "mutation",
   killAgent: "mutation",
+  stopThreadTurn: "mutation",
   renameThread: "mutation",
   aiRenameThread: "mutation",
   codexModels: "query",
   claudeModels: "query",
   acpAgents: "query",
   acpAgentModels: "query",
+  opencodeModels: "query",
   quota: "query",
   authStatus: "query",
   accountLogout: "mutation",

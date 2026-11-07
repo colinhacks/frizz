@@ -251,7 +251,8 @@ export function workerTaughtMcp(row: Pick<SessionRow, "worker_surface"> | undefi
 export function isHeadlessRow(row: Pick<SessionRow, "backend" | "codex_runtime" | "claude_runtime">): boolean {
   return (row.backend === "codex" && row.codex_runtime === "app-server") ||
     (row.backend === "claude" && row.claude_runtime === "broker") ||
-    row.backend === "acp"
+    row.backend === "acp" ||
+    row.backend === "opencode"
 }
 
 /** A Claude row whose session lives in the detached broker daemon, not in any terminal. Stamped

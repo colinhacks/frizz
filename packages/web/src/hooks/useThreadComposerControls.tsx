@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
+import { Square } from "lucide-react"
 import { acpAgentIdFromModel, acpModelIdFromModel, acpModelSlug, type PermissionMode } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { scopedKey } from "../lib/projectScope.tsx"
@@ -9,10 +10,11 @@ import { showToast, store } from "../store.ts"
 import { useThreadSnapshot } from "../hooks.ts"
 import { ProfileGridSelector } from "../components/ProfileGridSelector.tsx"
 import { AcpModelSelect } from "../components/AcpModelSelect.tsx"
+import { OpencodeModelSelect } from "../components/OpencodeModelSelect.tsx"
 import { AgentMarks } from "../components/AgentMarks.tsx"
 import { Select } from "../components/ui/Select.tsx"
 import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
-import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
+import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, OPENCODE_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
 
 // One control strip for every place a registered thread can be steered: the model/effort selector, and
@@ -56,8 +58,11 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const upgrade = useMutation({
     mutationFn: (sessionId: string) => rpc.upgradeThreadModel({ slug, sessionId }),
   })
+  const stopTurn = useMutation({
+    mutationFn: (sessionId: string) => rpc.stopThreadTurn({ slug, sessionId }),
+  })
   const localBusy = profile.isPending || permission.isPending || upgrade.isPending
-  const backend = thread?.backend === "codex" ? "codex" : thread?.backend === "acp" ? "acp" : "claude"
+  const backend = thread?.backend === "codex" ? "codex" : thread?.backend === "acp" ? "acp" : thread?.backend === "opencode" ? "opencode" : "claude"
   // An ACP thread's model slug is `acp:<agent>[@<model>]`. The AGENT cannot be swapped under a live
   // session, so the thread's one control is the model inside it (AcpModelSelect below); the agent's
   // label only names that control. The same catalogue query the dispatch composer runs; react-query
@@ -153,7 +158,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   // the agent's model dropdown for an ACP thread.
   const profileControl = (
     <>
-      {backend !== "acp" && (
+      {(backend === "claude" || backend === "codex") && (
         <ProfileGridSelector
           groups={profileGroups}
           value={{ provider: backend, model, effort }}
@@ -202,6 +207,16 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           className="max-w-[20rem]"
         />
       )}
+      {/* Like an ACP thread, one control: the model, and its variant beside it when it has any. */}
+      {backend === "opencode" && (
+        <OpencodeModelSelect
+          value={optimisticProfile?.model ?? model}
+          onValueChange={(slug) => changeProfile({ model: slug, effort: "" })}
+          disabled={busy}
+          side="top"
+          className="max-w-[16rem]"
+        />
+      )}
     </>
   )
 
@@ -239,10 +254,46 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
                 className="shrink-0"
               />
             )}
+            {/* OpenCode's four modes are rules on the session, so a change takes at the next tool call and
+                restarts nothing. */}
+            {backend === "opencode" && (
+              <Select
+                variant="readout"
+                side="top"
+                value={permission.isPending ? (permission.variables as PermissionMode) : thread.permissionMode ?? "bypassPermissions"}
+                onValueChange={(v) => {
+                  permission.mutate(v as PermissionMode, {
+                    onSuccess: () => showToast("Permissions applied to the session"),
+                    onError: (e) => showToast(`Permission change failed: ${(e as Error).message.slice(0, 120)}`),
+                  })
+                }}
+                options={OPENCODE_PERMISSION_OPTIONS}
+                ariaLabel="Thread permission mode"
+                title="Applied to the session at once, and to its sub-agents."
+                disabled={busy}
+                className="shrink-0"
+              />
+            )}
           </PromptControlGroup>
+          {backend === "opencode" && thread.runtime === "running" && thread.sessionId && (
+            <button
+              type="button"
+              data-stop-turn
+              onClick={() => stopTurn.mutate(thread.sessionId as string, {
+                onError: (e) => showToast(`Stop failed: ${(e as Error).message.slice(0, 120)}`),
+              })}
+              disabled={stopTurn.isPending}
+              aria-label="Stop this turn"
+              title="Stop this turn. The thread stays open for your next message."
+              className="flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted hover:bg-fill-hover hover:text-fg disabled:opacity-50"
+            >
+              <Square size={8} fill="currentColor" strokeWidth={0} aria-hidden />
+              Stop
+            </button>
+          )}
           {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
           <AgentMarks
-            gauge={backend === "acp" ? undefined : { backend, model }}
+            gauge={backend === "acp" || backend === "opencode" ? undefined : { backend, model }}
             mcp={{ slug }}
             side="top"
           />

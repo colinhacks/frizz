@@ -27,6 +27,7 @@ import { createTailer, type SessionTelemetry, type Tailer } from "../tailer.ts"
 import { createClaudeBackend } from "../backend/claude.ts"
 import { createCodexBackend } from "../backend/codex.ts"
 import { createAcpBackend } from "../backend/acp-transcript.ts"
+import { createOpencodeBackend } from "../backend/opencode-transcript.ts"
 import type { AgentBackend } from "../backend/types.ts"
 import {
   createClaudeRuntimeIngest,
@@ -79,7 +80,8 @@ export function createIntegrationHarness(): IntegrationHarness {
   const claudeBackend = createClaudeBackend({ logDir })
   const codexBackend = createCodexBackend({})
   const acpBackend = createAcpBackend({ stateDir: dir })
-  const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : kind === "acp" ? acpBackend : claudeBackend)
+  const opencodeBackend = createOpencodeBackend({ stateDir: dir })
+  const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : kind === "acp" ? acpBackend : kind === "opencode" ? opencodeBackend : claudeBackend)
 
   // Late-bound exactly as context.ts binds it: the ingest is constructed before the tailer because in
   // production the broker bridge (which takes the ingest's handler) is constructed first.

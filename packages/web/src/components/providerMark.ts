@@ -70,6 +70,7 @@ function isMarkKey(key: string): key is ProviderMarkKey { return Object.hasOwn(P
 // that an ACP thread's `model` IS its agent (`acp:<id>`), which is exactly what picks its brand mark.
 export function providerMarkFor(backend: string | null | undefined, model?: string | null): ProviderMarkDefinition | undefined {
   if (backend === "claude" || backend === "codex") return PROVIDER_MARKS[backend]
+  if (backend === "opencode") return PROVIDER_MARKS["acp:opencode"]
   if (backend !== "acp") return undefined
   const agent = acpAgentIdFromModel(model)
   const key = agent ? `acp:${agent}` : "acp"

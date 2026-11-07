@@ -19,6 +19,12 @@ import { applyEvent } from "../tailer.ts"
 // text block (so several partial flushes of one agent message render as one bubble) and `acp` on a
 // tool call (its ACP `kind`, `title` and `locations`, which the drawer shows and the fold ignores).
 
+//
+// OpenCode's native backend writes the same kind of file for the same reason (opencode-transcript.ts):
+// a record whose kind starts `opencode-` is its transcript-only header, note or sub-agent row, and the
+// fold and projection below skip it the way they skip an `acp-` one. The projection takes the one thing
+// that differs, how a tool call becomes a card, as `toolCall`.
+
 export const ACP_TRANSCRIPT_DIR = "acp"
 
 export interface AcpSessionHeader {
@@ -60,14 +66,14 @@ export function parseAcpRecord(line: string): AcpRecord | undefined {
   try { raw = JSON.parse(line) } catch { return undefined }
   if (!raw || typeof raw !== "object" || typeof (raw as { kind?: unknown }).kind !== "string") return undefined
   const kind = (raw as { kind: string }).kind
-  if (kind === "acp-session" || kind === "acp-note" || kind === "acp-contract" || EVENT_KINDS.has(kind)) return raw as AcpRecord
+  if (kind === "acp-session" || kind === "acp-note" || kind === "acp-contract" || kind.startsWith("opencode-") || EVENT_KINDS.has(kind)) return raw as AcpRecord
   return undefined
 }
 
 /** The tailer's view: only the events, with the transcript-only fields stripped. */
 export function parseAcpLine(line: string): NormalizedEvent[] {
   const rec = parseAcpRecord(line)
-  if (!rec || rec.kind === "acp-session" || rec.kind === "acp-note" || rec.kind === "acp-contract") return []
+  if (!rec || rec.kind === "acp-session" || rec.kind === "acp-note" || rec.kind === "acp-contract" || rec.kind.startsWith("opencode-")) return []
   const { messageId: _m, acp: _a, ...ev } = rec as NormalizedEvent & { messageId?: string; acp?: unknown }
   return [ev as NormalizedEvent]
 }
@@ -188,8 +194,14 @@ function upgradeToolTarget(call: TranscriptToolCall, acp: AcpToolMeta | undefine
  */
 export type AcpUserRecordProjector = (out: TranscriptMessage[]) => (sourceId: string, text: string, at: string | undefined) => void
 
+/** What another writer of this file shape does differently. Absent ⇒ ACP's readings. */
+export interface WrittenTranscriptDialect {
+  toolCall?: (rec: Extract<NormalizedEvent, { kind: "tool-call" }>) => TranscriptToolCall
+  toolResult?: (call: TranscriptToolCall, rec: Extract<NormalizedEvent, { kind: "tool-result" }>) => void
+}
+
 /** The drawer's messages from the raw file. `identityPrefix` seeds `sourceId`s the client keys on. */
-export function projectAcpTranscript(raw: string, identityPrefix = "acp", userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
+export function projectAcpTranscript(raw: string, identityPrefix = "acp", userProjector?: AcpUserRecordProjector, dialect?: WrittenTranscriptDialect): TranscriptMessage[] {
   const out: TranscriptMessage[] = []
   const pushUser = userProjector?.(out)
   let current: TranscriptMessage | undefined // the open assistant message
@@ -220,7 +232,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
 
   for (let i = 0; i < lines.length; i++) {
     const rec = parseAcpRecord(lines[i]!)
-    if (!rec) continue
+    if (!rec || rec.kind.startsWith("opencode-")) continue
     switch (rec.kind) {
       case "acp-session":
       case "acp-note":
@@ -277,7 +289,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
       case "tool-call": {
         const msg = openAssistant(i, rec.at)
         currentMessageId = undefined
-        const call = toolCallFor(rec, (rec as { acp?: AcpToolMeta }).acp)
+        const call = dialect?.toolCall?.(rec) ?? toolCallFor(rec, (rec as { acp?: AcpToolMeta }).acp)
         openTools.set(rec.id, call)
         appendTool(msg, call)
         break
@@ -286,6 +298,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         const call = openTools.get(rec.id)
         if (!call) break
         openTools.delete(rec.id)
+        if (dialect?.toolResult) { dialect.toolResult(call, rec); break }
         const failed = (rec as { acp?: { status?: string } }).acp?.status === "failed" || (rec as { acp?: { kind?: string } }).acp?.kind === "failed"
         call.status = failed ? "failed" : "completed"
         upgradeToolTarget(call, (rec as { acp?: AcpToolMeta }).acp)

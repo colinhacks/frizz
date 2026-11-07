@@ -42,6 +42,7 @@ import { stripDeliveryMarkers } from "./delivery-marker.ts"
 import { RELAYED_MARKER, relayNotificationBlock } from "./completion-relay.ts"
 import { CODEX_FIRST_FINAL_TITLE_TRANSPORT, CODEX_LEGACY_FIRST_FINAL_TITLE_TRANSPORT, parseCodexLine, createCodexBackend, extractCodexFrizzTitle } from "./backend/codex.ts"
 import { projectAcpTranscript, readAcpTranscriptFile, type AcpUserRecordProjector } from "./backend/acp-transcript.ts"
+import { projectOpencodeTranscript, readOpencodeTranscriptFile, type OpencodeToolCardBuilder } from "./backend/opencode-transcript.ts"
 import { discoverTranscriptDir, discoverTranscriptId, DISCOVERY_GRACE_MS } from "./discover.ts"
 import { isClaudeAuthErrorText, isMonitorTimeoutEvent, parseSignalFence } from "./tailer.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
@@ -1831,6 +1832,14 @@ function attachToolResults(
       else if (!call.edit || status !== "completed") call.output = capRead(text)
     }
   }
+}
+
+// An OpenCode tool call is written in the vocabulary below (frizzToolShape), so it draws the same cards.
+export const opencodeToolCards: OpencodeToolCardBuilder = (block) => toolCalls(block)
+
+// A sub-agent's drill-in: its own Frizz-written file, projected like its parent's.
+export function readOpencodeChildTranscript(absPath: string): TranscriptMessage[] {
+  return readOpencodeTranscriptFile(absPath, opencodeToolCards, absPath, acpUserRecordProjector)
 }
 
 // Expand one tool_use block into transcript tool calls. Usually one, but MultiEdit fans out to one
@@ -4118,7 +4127,7 @@ interface TranscriptSourceBinding {
   slug: string
   sessionId: string
   nativeId: string
-  backend: "claude" | "codex" | "acp"
+  backend: "claude" | "codex" | "acp" | "opencode"
   runtimeGeneration: number
   path: string
 }
@@ -4141,7 +4150,7 @@ interface TranscriptCursorPayload {
   slug: string
   sessionId: string
   nativeId: string
-  backend: "claude" | "codex" | "acp"
+  backend: "claude" | "codex" | "acp" | "opencode"
   runtimeGeneration: number
   fileKey: string
   snapshotBytes: number
@@ -4157,16 +4166,16 @@ function sourceForThread(
 ): TranscriptSourceBinding | undefined {
   const row = storage.getSession(slug)
   if (row) {
-    const backend = row.backend === "codex" ? "codex" : row.backend === "acp" ? "acp" : "claude"
+    const backend = row.backend === "codex" ? "codex" : row.backend === "acp" ? "acp" : row.backend === "opencode" ? "opencode" : "claude"
     // An ACP transcript is FRIZZ-written and keyed by the frizz session id (acp-transcript.ts), so its
     // native id is the session id even though `agent_session_id` carries the agent's own.
     const nativeId = backend === "codex"
       ? row.agent_session_id ?? row.session_id
-      : backend === "acp" ? row.session_id : row.transcript_id ?? row.session_id
+      : backend === "acp" || backend === "opencode" ? row.session_id : row.transcript_id ?? row.session_id
     const path = backend === "codex"
       ? (backendFor?.("codex") ?? defaultCodexBackend()).transcriptPath(nativeId)
-      : backend === "acp"
-        ? backendFor?.("acp")?.transcriptPath(nativeId)
+      : backend === "acp" || backend === "opencode"
+        ? backendFor?.(backend)?.transcriptPath(nativeId)
         : resolveTranscriptPath(project, nativeId)
     if (!path) return undefined
     return {
@@ -4322,6 +4331,7 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   // Same whole-file shape for an ACP transcript: frizz writes it, it is small, and its records are
   // already NormalizedEvents (acp-transcript.ts), so there is no claude fold to retain.
   if (snapshot.backend === "acp") return retireStaleQueuedBubbles(projectAcpTranscript(snapshot.raw, prefix, acpUserRecordProjector))
+  if (snapshot.backend === "opencode") return retireStaleQueuedBubbles(projectOpencodeTranscript(snapshot.raw, prefix, opencodeToolCards, acpUserRecordProjector))
 
   const { entry } = retainedFoldEntry(snapshot.path, prefix, snapshot.fileKey, snapshot.size)
   // Reads ONLY the appended delta — the reason the whole-file buffer is no longer materialised.
@@ -4433,7 +4443,7 @@ function decodeTranscriptCursor(cursor: string): TranscriptCursorPayload {
   const validText = (s: unknown, max: number) => typeof s === "string" && s.length > 0 && s.length <= max && !/[\0\r\n]/.test(s)
   if (
     !p || p.v !== 1 || !validText(p.slug, 256) || !validText(p.sessionId, 256) ||
-    !validText(p.nativeId, 256) || (p.backend !== "claude" && p.backend !== "codex" && p.backend !== "acp") ||
+    !validText(p.nativeId, 256) || (p.backend !== "claude" && p.backend !== "codex" && p.backend !== "acp" && p.backend !== "opencode") ||
     !Number.isSafeInteger(p.runtimeGeneration) || (p.runtimeGeneration ?? -1) < 0 ||
     !validText(p.fileKey, 256) || !Number.isSafeInteger(p.snapshotBytes) || (p.snapshotBytes ?? -1) < 0 ||
     !validText(p.prefixDigest, 128) || !validText(p.anchorSourceId, 768)
@@ -4680,6 +4690,10 @@ export function readThreadTranscript(
       const path = backendFor?.("acp")?.transcriptPath(row.session_id)
       const acpLedger = parseDeliveryLedger(row.delivery_ledger)
       return projectDeliveryLedger(path ? readAcpTranscriptFile(path, row.session_id, acpUserRecordProjector) : [], acpLedger)
+    }
+    if (row.backend === "opencode") {
+      const path = backendFor?.("opencode")?.transcriptPath(row.session_id)
+      return projectDeliveryLedger(path ? readOpencodeTranscriptFile(path, opencodeToolCards, row.session_id, acpUserRecordProjector) : [], parseDeliveryLedger(row.delivery_ledger))
     }
     if (row.backend === "codex") {
       const backend = backendFor?.("codex") ?? defaultCodexBackend()

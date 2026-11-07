@@ -636,7 +636,7 @@ export function RuntimeStatusLadder({
     case "provider-fault":
       return <ProviderFaultCard slug={slug} sessionId={thread!.sessionId} fault={thread!.providerFault!} retryText={retryText} />
     case "provider-error":
-      return <ProviderErrorCard error={thread!.providerError!} />
+      return <ProviderErrorCard error={thread!.providerError!} backend={thread!.backend} />
     case "limit-pause":
       return <LimitPauseCard slug={slug} sessionId={thread!.sessionId} pause={thread!.limitPause!} />
     case "pending-ask":
@@ -3520,7 +3520,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
   const promptBoxSends = usePromptBoxSends()
   // An event line (a sub-agent completion) is transcript PUNCTUATION — a quiet full-width line, not a
   // bubble or a tool band. Rendered before the role branches (its role field is nominal).
-  if (m.providerError) return <ProviderErrorCard error={m.providerError} />
+  if (m.providerError) return <ProviderErrorCard error={m.providerError} backend={m.sourceId?.startsWith("opencode:") ? "opencode" : m.sourceId?.startsWith("acp:") ? "acp" : undefined} />
   if (m.kind === "event") return <EventLine text={m.text} boundary={m.boundary} sourceId={m.sourceId} at={m.at} />
   // A model-reasoning summary (Codex) — quiet punctuation like an event line, but CLICKABLE to expand
   // the full reasoning. Rendered before the role branches (its role field is nominal, like an event).
@@ -4304,7 +4304,7 @@ export function ProviderFaultCard({
 export function LimitPauseCard({ slug, sessionId, pause }: { slug: string; sessionId: string | undefined; pause: NonNullable<ThreadViewData["limitPause"]> }) {
   // Only Claude and Codex report a limit window Frizz can read; an ACP agent's limits stay inside its
   // own CLI, so a pause attributed to one is labelled generically rather than crashing on the lookup.
-  const label = pause.backend === "acp" ? "The agent" : PROVIDER_LABEL[pause.backend]
+  const label = pause.backend === "acp" ? "The agent" : pause.backend === "opencode" ? "OpenCode" : PROVIDER_LABEL[pause.backend]
   // The window is keyed "session", but it is labelled the way the provider's line above the card names
   // it: Claude Code calls it the "5-hour limit" since 2.1.312 ("session limit" before).
   const which = pause.window === "weekly" ? "weekly limit" : pause.window === "session" ? "5-hour limit" : "usage limit"

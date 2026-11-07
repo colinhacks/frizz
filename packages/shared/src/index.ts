@@ -104,8 +104,9 @@ export type RuntimeState = z.infer<typeof RuntimeState>
 // Which agent CLI a dispatch/thread runs on (Codex-support epic, Phase 3). Mirrors BackendKind in
 // server/backend/types.ts (the wire can't import it — it lives behind the server boundary). A model
 // selection drives this: a Claude model ⇒ "claude", an OpenAI/GPT model ⇒ "codex", an `acp:<agent>`
-// slug ⇒ "acp" (any Agent Client Protocol agent; plans/acp-backend.md).
-export const Backend = z.enum(["claude", "codex", "acp"])
+// slug ⇒ "acp" (any Agent Client Protocol agent; plans/acp-backend.md), an `opencode:` slug ⇒ "opencode"
+// (OpenCode 2's own server API, ARCHITECTURE.md § OpenCode backend).
+export const Backend = z.enum(["claude", "codex", "acp", "opencode"])
 export type Backend = z.infer<typeof Backend>
 
 // One selectable Codex model, derived server-side from the AUTHORITATIVE ~/.codex/models_cache.json
@@ -176,6 +177,10 @@ export const AcpAgent = z.object({
   label: z.string(),
   command: z.string(),
   available: z.boolean(),
+  // True when this agent runs on Frizz's native backend here instead (OpenCode at or above the minimum
+  // version): the composer lists it there and not among the ACP agents, and an existing `acp:<id>` thread
+  // stays on ACP and keeps its label from this entry.
+  native: z.boolean().optional(),
 })
 export type AcpAgent = z.infer<typeof AcpAgent>
 
@@ -199,6 +204,53 @@ function acpSlugParts(model: string | null | undefined): { agent: string; model?
 }
 export function acpAgentIdFromModel(model: string | null | undefined): string | undefined { return acpSlugParts(model)?.agent }
 export function acpModelIdFromModel(model: string | null | undefined): string | undefined { return acpSlugParts(model)?.model }
+
+/** The model slug of a native OpenCode thread. Model already drives backend in the web, so this prefix
+ *  means `opencode` the way `acp:` means `acp`.
+ *
+ *  `opencode:` runs on whatever OpenCode itself defaults to; `opencode:<provider>/<id>` names a model,
+ *  and `opencode:<provider>/<id>#<variant>` a variant of it. That notation is OpenCode's own
+ *  (`Model.Ref.parse`). The variant sits in the slug because it is OpenCode's effort axis and its ids are
+ *  each model's own (`minimal`, `xhigh`, `default`), which Frizz's effort enum cannot hold. */
+export const OPENCODE_MODEL_PREFIX = "opencode:"
+export function isOpencodeModel(model: string | null | undefined): boolean {
+  return typeof model === "string" && model.startsWith(OPENCODE_MODEL_PREFIX)
+}
+export function opencodeModelSlug(ref?: { providerID: string; id: string; variant?: string | null } | null): string {
+  if (!ref) return OPENCODE_MODEL_PREFIX
+  return `${OPENCODE_MODEL_PREFIX}${ref.providerID}/${ref.id}${ref.variant ? `#${ref.variant}` : ""}`
+}
+export function opencodeModelRef(model: string | null | undefined): { providerID: string; id: string; variant?: string } | undefined {
+  if (!isOpencodeModel(model)) return undefined
+  const rest = (model as string).slice(OPENCODE_MODEL_PREFIX.length)
+  const hash = rest.indexOf("#")
+  const ref = hash === -1 ? rest : rest.slice(0, hash)
+  const slash = ref.indexOf("/")
+  if (slash <= 0 || slash === ref.length - 1) return undefined
+  const variant = hash === -1 ? "" : rest.slice(hash + 1)
+  return { providerID: ref.slice(0, slash), id: ref.slice(slash + 1), ...(variant ? { variant } : {}) }
+}
+
+/** One model OpenCode offers (`GET /api/model`), as the composer's picker reads it. `variants` is the
+ *  effort axis, empty for a model with only its default. */
+export const OpencodeModel = z.object({
+  providerID: z.string(),
+  id: z.string(),
+  name: z.string(),
+  variants: z.array(z.string()),
+  context: z.number().optional(),
+})
+export type OpencodeModel = z.infer<typeof OpencodeModel>
+/** What the composer learns: whether the native backend can run on this machine at all, and its models.
+ *  `error` names why the list is empty, for the picker's own line. */
+export const OpencodeModels = z.object({
+  available: z.boolean(),
+  version: z.string().optional(),
+  defaultModel: z.string().optional(),
+  models: z.array(OpencodeModel),
+  error: z.string().optional(),
+})
+export type OpencodeModels = z.infer<typeof OpencodeModels>
 
 /** One model an ACP agent advertises, and the probe result the composer's model picker reads. */
 export const AcpAgentModel = z.object({ id: z.string(), name: z.string() })
@@ -5102,6 +5154,7 @@ export const DispatchPreferences = z.object({
   // Optional because every record written before the ACP backend existed lacks it, and a required
   // key would fail those records' parse and silently reset the operator's saved profile.
   acp: DispatchProviderPreferences.optional(),
+  opencode: DispatchProviderPreferences.optional(),
 })
 export type DispatchPreferences = z.infer<typeof DispatchPreferences>
 
@@ -5142,7 +5195,7 @@ export const SetDispatchPreferenceInput = z.discriminatedUnion("field", [
 export type SetDispatchPreferenceInput = z.infer<typeof SetDispatchPreferenceInput>
 
 function requireEffortOutsideAcp(profile: { backend: Backend; effort?: string }, ctx: z.RefinementCtx): void {
-  if (profile.backend !== "acp" && profile.effort === undefined) {
+  if (profile.backend !== "acp" && profile.backend !== "opencode" && profile.effort === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["effort"], message: `effort is required for a ${profile.backend} profile` })
   }
 }
@@ -5384,7 +5437,7 @@ export function threadCanCompact(thread: { backend?: string; claudeRuntime?: str
   if (thread.foreign) return false
   // `claudeRuntime` is set only on a Claude row, whose `backend` may itself be absent (Claude is the
   // unmarked default), so the broker marker alone identifies one.
-  return thread.backend === "codex" || thread.claudeRuntime === "broker"
+  return thread.backend === "codex" || thread.backend === "opencode" || thread.claudeRuntime === "broker"
 }
 
 export const SetThreadSnoozeInput = z.object({

@@ -87,7 +87,7 @@ export type GaugeModel = { backend: AccountBackend; model: string | undefined }
 export function useSelectedModel(): GaugeModel | undefined {
   const preferences = useQuery({ queryKey: ["dispatchPreferencesGet"], queryFn: () => rpc.dispatchPreferencesGet() })
   const data = preferences.data
-  if (!data || data.backend === "acp") return undefined
+  if (!data || data.backend === "acp" || data.backend === "opencode") return undefined
   return { backend: data.backend, model: data[data.backend]?.model ?? (data.backend === "claude" ? "opus" : undefined) }
 }
 
