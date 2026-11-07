@@ -47,7 +47,7 @@ import { discoverTranscriptDir, discoverTranscriptId, DISCOVERY_GRACE_MS } from 
 import { isClaudeAuthErrorText, isMonitorTimeoutEvent, parseSignalFence } from "./tailer.ts"
 import { projectSignOffs } from "./sign-offs.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
-import { hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
+import { BACKGROUND_JOB_REFUSAL, hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
 import { frizzTempDir, isPromptAttachmentPath } from "./frizz-paths.ts"
 import { dispatchProfileCell } from "./subagent-profile.ts"
 
@@ -1815,8 +1815,15 @@ function attachToolResults(
     // card can render it inline. `b.tool_use_id` is a verified string by the guard at the loop head.
     // A Read of the human's own prompt attachment keeps its plain header instead (PendingClaudeTool).
     const outputImage = status !== "failed" && status !== "cancelled" && !entry.promptAttachment ? persistResultImage(b.content, b.tool_use_id) : undefined
+    // A `&` job the worker's hook REFUSED never ran, so nothing is left untracked: the call is an ordinary
+    // failed Bash and folds into `Ran N tool calls` like one. Kept as `"unknown"` it drew its own red row
+    // between two digests (maintainer 2026-11-07: "Why do I sometimes see tool calls like this, even
+    // without expanding it?"), and since the hook refuses every escaping job before it runs, that refusal
+    // was the only thing the `"unknown"` card still showed on a current worker.
+    const refusedJob = failed && Boolean(text?.includes(BACKGROUND_JOB_REFUSAL))
     for (const call of entry.calls) {
       call.status = status
+      if (refusedJob && call.backgroundState === "unknown") delete call.backgroundState
       if (durationMs !== undefined) call.durationMs = durationMs
       if (outputImage) call.outputImage = outputImage
       // An AskUserQuestion's structured result carries the human's answers keyed by question text —
@@ -1882,8 +1889,9 @@ function toolCalls(block: any, turn: { turnModel?: string; turnEffort?: string }
         // A background Bash result only acknowledges that the child was launched. Keep the card live
         // until its later task-notification; no launch result can truthfully mean "done".
         // Shell job control is visible immediately, even though no lifecycle id exists. Current Frizz
-        // workers reject the attempt before execution; historical calls that escaped the guard remain
-        // honestly UNKNOWN instead of folding into an opaque "Ran N tool calls" disclosure.
+        // workers reject the attempt before execution, and the refusal clears this again (the result
+        // branch: nothing launched); a call that escaped the guard stays honestly UNKNOWN instead of
+        // folding into an opaque "Ran N tool calls" disclosure.
         backgroundState,
       }]
     }

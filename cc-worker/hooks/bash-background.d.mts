@@ -1,3 +1,4 @@
+export const BACKGROUND_JOB_REFUSAL: string
 export function hasEscapingBackgroundJob(raw: unknown): boolean
 export function evaluateBashBackgroundHook(
   input: unknown,
