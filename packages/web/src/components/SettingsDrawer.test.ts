@@ -129,8 +129,9 @@ test("the agent settings panel is modal, keyboard-reachable, and holds exactly t
 })
 
 // The GitHub picker's header: the slug is a right-justified link out to the repo with the external
-// arrow, and the gear beside it opens the triage prompt — the picker's settings, where they apply.
-test("the GitHub picker carries the repo link in its header, the prompt gear beside its Start button, and waits on settings writes", () => {
+// arrow. Its footer: the gear that opens the triage prompt stands beside the model chip, the two halves
+// of what every started thread will be, and the Start button stands alone.
+test("the GitHub picker carries the repo link in its header, the prompt gear beside its model chip, and waits on settings writes", () => {
   const header = pickerSource.slice(pickerSource.indexOf("{/* Header"), pickerSource.indexOf("{/* Controls"))
   // The row is baseline-aligned so its two glyphs can take the browser-computed cap-band correction
   // (half the glyph's box minus half the resolved cap height); the numbers behind it are in the
@@ -142,19 +143,22 @@ test("the GitHub picker carries the repo link in its header, the prompt gear bes
   assert.match(agentSource, /-mr-3 inline-flex size-5 shrink-0 translate-y-\[calc\(7px_-_0\.5cap\)\]/)
   assert.match(header, /<RepoLink nameWithOwner=\{status\.data\.nameWithOwner\} \/>/)
   assert.match(header, /\{GITHUB_PICKER_TITLE\}/)
-  // The gear moved down to the footer, the Start button's left-hand neighbour (maintainer 2026-10-26),
-  // and its panel opens upward off the modal's bottom edge.
+  // The gear lives in the footer, right of the model chip as the composer's agent marks are
+  // (maintainer 2026-11-07), and its panel opens upward and rightward off the modal's bottom-left corner.
   assert.doesNotMatch(header, /<GithubPromptPopover \/>/)
   const footer = pickerSource.slice(pickerSource.indexOf("{/* Footer"))
-  assert.match(footer, /<GithubPromptPopover \/>\s*<button\s+disabled=\{n === 0/)
-  assert.match(promptPopoverSource, /<PopoverContent side="top" align="end"/)
+  assert.match(footer, /<\/PromptControlGroup>[\s\S]*?<div className=\{AGENT_MARKS\}>\s*<GithubPromptPopover \/>\s*<\/div>\s*<\/div>\s*<button\s+disabled=\{n === 0/)
+  assert.match(promptPopoverSource, /<PopoverContent side="top" align="start"/)
+  assert.match(promptPopoverSource, /className=\{`github-prompt-trigger \$\{SETTINGS_MARK\}`\}/)
   // The slug is no longer an em-dashed suffix of the title (the dash must be gone from the MARKUP;
   // the comments above it are prose and may carry one).
   assert.doesNotMatch(header.slice(header.indexOf("<h2")), /—/)
-  const link = pickerSource.slice(pickerSource.indexOf("function RepoLink"), pickerSource.indexOf("function PagerButton"))
+  const link = pickerSource.slice(pickerSource.indexOf("function RepoLink"), pickerSource.indexOf("function Segmented"))
   assert.match(link, /href=\{`https:\/\/github\.com\/\$\{nameWithOwner\}`\}/)
   assert.match(link, /target="_blank"/)
-  assert.match(link, /<ArrowUpRight aria-hidden="true" className="-ml-\[0\.29em\] size-\[1em\] shrink-0 self-baseline translate-y-\[calc\(0\.5em_-_0\.5cap\)\]"/)
+  assert.match(link, /<ArrowUpRight aria-hidden="true" className="-mx-\[0\.29em\] size-\[1em\] shrink-0 self-baseline translate-y-\[calc\(0\.5em_-_0\.5cap\)\]"/)
+  // A chip on the tab and sort controls' own border and fill, in the fg tone: the picker's way out.
+  assert.match(link, /rounded-md border border-border bg-panel-2 .*text-fg\/85/)
   assert.match(promptPopoverSource, /<Popover modal open=\{open\} onOpenChange=\{setOpen\}>/)
   assert.match(promptPopoverSource, /<GithubPromptEditor draft=\{draft\} onChange=\{update\} rows=\{14\} \/>/)
   // A prompt edit flushed by closing the popover is still in flight when the button is pressed.
