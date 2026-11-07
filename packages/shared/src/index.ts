@@ -7071,6 +7071,7 @@ export * from "./launch-prefix.ts"
 export * from "./receipt-bus.ts"
 export * from "./relay-protocol.ts"
 export * from "./shell-writes.ts"
+export * from "./sign-off.ts"
 export * from "./thread-slug.ts"
 
 // ---- Rendered conversation (parsed mechanically from the session JSONL — no AI) ----
@@ -7422,6 +7423,18 @@ export const TranscriptMessage = z.object({
   //
   // Additive + optional: an old client ignores it and renders the fence as it did before.
   fenceRefused: z.literal(true).optional(),
+  // The agent CAME TO REST on this message, and the rest was written for the human: a ```done, a
+  // `frizzctl done`, a ```question, an ```awaiting the human is needed for (`status: needs_input`, `steps:`,
+  // or no answer at all), or no fence — everything but a quiet park (`status: working|watching`), whose
+  // whole point is that nobody is meant to read it. Set by the server's projection (sign-offs.ts) on the
+  // newest prose the agent wrote before each `rest` divider, so a surface can tell the message a turn
+  // ended on FOR THE READER from the narration around it, and keep the newest one in view after quiet
+  // rounds pile up behind it (maintainer 2026-11-06: a card read "7 more rounds" with the hand-off folded
+  // inside, under two PR-review wakes the worker had quietly parked on).
+  //
+  // Additive + optional: an old client ignores it, and an old server never sets it, so the card falls back
+  // to showing the first and last rounds only.
+  signOff: z.literal(true).optional(),
 })
 export type TranscriptMessage = z.infer<typeof TranscriptMessage>
 

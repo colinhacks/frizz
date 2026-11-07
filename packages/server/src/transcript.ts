@@ -45,6 +45,7 @@ import { CODEX_FIRST_FINAL_TITLE_TRANSPORT, CODEX_LEGACY_FIRST_FINAL_TITLE_TRANS
 import { projectAcpTranscript, readAcpTranscriptFile, type AcpUserRecordProjector } from "./backend/acp-transcript.ts"
 import { discoverTranscriptDir, discoverTranscriptId, DISCOVERY_GRACE_MS } from "./discover.ts"
 import { isClaudeAuthErrorText, isMonitorTimeoutEvent, parseSignalFence } from "./tailer.ts"
+import { projectSignOffs } from "./sign-offs.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
 import { hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
 import { frizzTempDir, isPromptAttachmentPath } from "./frizz-paths.ts"
@@ -4322,10 +4323,14 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   // It emits no queued bubbles today (codex's gray bubbles come only from the delivery ledger, which
   // ages its own out), so the backstop is a no-op here — applied anyway so the guarantee is a property
   // of the reader rather than of one backend's current parser.
-  if (snapshot.backend === "codex") return retireStaleQueuedBubbles(projectCodexTranscript(snapshot.raw, prefix))
+  //
+  // Every branch ends in projectSignOffs, over the WHOLE projection before any page is cut from it: which
+  // message a rest signed off on can depend on the rest after it (sign-offs.ts), and an earlier page must
+  // carry the same answer the latest one did.
+  if (snapshot.backend === "codex") return projectSignOffs(retireStaleQueuedBubbles(projectCodexTranscript(snapshot.raw, prefix)))
   // Same whole-file shape for an ACP transcript: frizz writes it, it is small, and its records are
   // already NormalizedEvents (acp-transcript.ts), so there is no claude fold to retain.
-  if (snapshot.backend === "acp") return retireStaleQueuedBubbles(projectAcpTranscript(snapshot.raw, prefix, acpUserRecordProjector))
+  if (snapshot.backend === "acp") return projectSignOffs(retireStaleQueuedBubbles(projectAcpTranscript(snapshot.raw, prefix, acpUserRecordProjector)))
 
   const { entry } = retainedFoldEntry(snapshot.path, prefix, snapshot.fileKey, snapshot.size)
   // Reads ONLY the appended delta — the reason the whole-file buffer is no longer materialised.
@@ -4339,7 +4344,7 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   // the array it is handed), which would otherwise pollute the RETAINED projection across reads.
   // retireStaleQueuedBubbles runs HERE rather than further down: it must see the fold's OWN bubbles and
   // not the ledger's synthetic ones, which carry their own aging (ageDeliveries) and states.
-  return retireStaleQueuedBubbles([...entry.fold.allMessages()])
+  return projectSignOffs(retireStaleQueuedBubbles([...entry.fold.allMessages()]))
 }
 
 // A COLD FOLD, A SLICE AT A TIME.

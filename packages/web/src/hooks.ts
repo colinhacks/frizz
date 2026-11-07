@@ -24,7 +24,9 @@ import { reconcileLatestPage, type PaginatedTranscriptData } from "./lib/transcr
 // never in the cache. `refusedReasons` maps each to the server's reasons, which its card shows.
 // `questionOwners`: for a question id the thread has asked more than once (a settled id asked again), the
 // row it named when this message was written (lib/questionOwners) — presentation only, the same way.
-export type ChatMessage = TranscriptMessage & { queued?: boolean; deliveryId?: string; restReply?: boolean; refusedFences?: ReadonlySet<string>; refusedReasons?: ReadonlyMap<string, readonly string[]>; questionOwners?: ReadonlyMap<string, string> }
+// `latestSignOff`: the newest sign-off since the human last spoke, on a thread at rest (lib/signOffs) — its
+// ```awaiting fence keeps its card after a later round makes it stale (ChatView renderText).
+export type ChatMessage = TranscriptMessage & { queued?: boolean; deliveryId?: string; restReply?: boolean; refusedFences?: ReadonlySet<string>; refusedReasons?: ReadonlyMap<string, readonly string[]>; questionOwners?: ReadonlyMap<string, string>; latestSignOff?: true }
 export type TranscriptData = Partial<Omit<PaginatedTranscriptData, "messages">> & { messages: ChatMessage[] }
 
 // `mergeToolRuns` stays deleted: mutating transcript truth before the ordered-parts walk hoisted tools
