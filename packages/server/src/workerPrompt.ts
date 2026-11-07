@@ -241,6 +241,13 @@ EOF
 // human types to it, snoozes it or settles one of its questions; both places that promise a quiet park
 // leaves the queue say so.
 //
+// …BUT ONLY STEPS AND QUESTIONS (2026-11-06). The hold covered every `needs_input` rest, and most of
+// those were reports that said "nothing needed from you": each one held every CI and shell park after it
+// in the queue until the human typed, 204 parks in one 36h window (maintainer: "I thought we had a good
+// solution to this, where the agent got to choose"). A worker's newest `status:` decides again, so the
+// paragraph now tells it to hand a report off again when it still needs the human. The 2026-10-27 case,
+// a merge that is the human's, is a question or `steps:` under § Questions for the human, and stays held.
+//
 // THE ANSWER IS A PLACE, NOT A YES/NO (2026-10-05). It was `needs_input: true|false` for four days, and
 // "not needed" always meant the running rows: a watcher parked for a day spun beside real work
 // (maintainer: "This doesn't need input, but that doesn't mean that it should be marked as currently
@@ -278,10 +285,12 @@ report, no prose. The thread stays out of the human's queue and nobody is meant 
 writing one costs you a turn of tokens for no reader. The moment there IS something for them — a partial
 result, a file, a server, a question — the rest is \`status: needs_input\` instead. The write-up is owed
 at the rest that DOES need them — \`status: needs_input\`, a question, or \`done\` — and it covers
-everything since their last message, the quiet stretches included. **A \`needs_input\` REST STAYS HANDED
-OFF UNTIL THE HUMAN TYPES TO THIS THREAD, ANSWERS ONE OF ITS QUESTIONS OR SNOOZES IT:** a quiet park after
-one leaves the thread in their queue on that handoff, so a wake that brings nothing new still takes the
-fence alone.
+everything since their last message, the quiet stretches included. **A QUIET PARK TAKES THE THREAD OUT OF
+THE QUEUE, EVEN RIGHT AFTER A \`needs_input\` REST:** your newest \`status:\` is the answer. So on a wake that
+brings nothing new, ask whether your last handoff still waits on the human. A report they only had to
+read does not, so park on the fence alone. A page to review or a result to try does, so rest
+\`status: needs_input\` again and restate it. Only \`steps:\` and questions stay in their queue by
+themselves, until they type to this thread, answer a question or snooze it.
 
 **ALWAYS SIGN OFF.** A bare rest — nothing said about where you stand — is not a handoff, it is an item
 nobody can triage: it says neither "answer me" nor "this is finished", so it sits in the queue meaning
@@ -475,11 +484,12 @@ exactly ONE of them.
       pinned row unread instead of drawing a queue card, so they read it when they go there. What they
       must answer or do still takes a question or \`steps:\`, which queue as always.
     It is YOUR call, and frizz does not second-guess it: no rule about which kinds of wait need the
-    human overrides what you say. The one thing a quiet answer cannot do is take back a \`needs_input\`
-    rest the human has not reached: until they type to this thread, answer one of its questions or
-    snooze it, a later \`working\` or \`watching\` park leaves the thread in their queue. A fence
-    without the line — or with any other
-    value — is not a park: the thread queues and frizz tells you which line is missing. And \`working\`
+    human overrides what you say. The one thing a quiet answer cannot do is take back \`steps:\` or a
+    question the human has not reached: until they type to this thread, answer one of its questions or
+    snooze it, a later \`working\` or \`watching\` park leaves the thread in their queue. A plain
+    \`needs_input\` report has no such hold: it is yours to hand off again while it still needs them. A
+    fence without the line — or with any other value — is not a park: the thread queues and frizz tells
+    you which line is missing. And \`working\`
     or \`watching\` holds only while every name is live and \`for:\` has not run out, so a wrong answer
     cannot hide the thread. (\`needs_input: true\` and \`needs_input: false\`, the answer before
     2026-10-05, are still read. Write \`status:\`.)
