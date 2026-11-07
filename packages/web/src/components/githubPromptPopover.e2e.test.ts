@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// Runtime coverage for the GitHub picker's header — the repo slug as a right-justified link out — and
-// the footer gear beside the Start button that opens the triage prompt in a modal popover. Drives
+// Runtime coverage for the GitHub picker's header — the repo slug as a right-justified chip linking
+// out — and the footer gear beside the model chip that opens the triage prompt in a modal popover. Drives
 // github-picker-range-fixture, which
 // records every settingsSet the popover makes. Skipped unless FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL names
 // a vite serving the fixtures (scripts/e2e-web.mjs sets it).
@@ -36,12 +36,13 @@ async function selectAllInTextarea(page: import("puppeteer").Page) {
   }, PANEL)
 }
 
-test("the header links out to the repo, right-justified; the gear sits left of the Start button", { skip: !baseUrl, timeout: 60_000 }, async () => {
+test("the header links out to the repo from a right-justified chip; the gear stands beside the model chip, the Start button alone on the right", { skip: !baseUrl, timeout: 60_000 }, async () => {
   const { browser, page, errors } = await launch()
   try {
     const header = await page.$eval("h2", (h2) => {
       const link = h2.querySelector<HTMLAnchorElement>("a.github-repo-link")!
       const title = h2.querySelector("span")!
+      const style = getComputedStyle(link)
       return {
         href: link.href,
         target: link.target,
@@ -49,10 +50,13 @@ test("the header links out to the repo, right-justified; the gear sits left of t
         title: title.textContent?.trim(),
         hasArrow: link.querySelector("svg") !== null,
         hasGear: h2.querySelector('button[aria-label="Triage prompt settings"]') !== null,
-        linkRight: link.querySelector("svg")!.getBoundingClientRect().right,
+        linkRight: link.getBoundingClientRect().right,
         h2Right: h2.getBoundingClientRect().right,
         titleRight: title.getBoundingClientRect().right,
         dash: /—/.test(h2.textContent ?? ""),
+        border: style.borderTopWidth,
+        color: style.color,
+        titleColor: getComputedStyle(title).color,
       }
     })
     assert.equal(header.href, "https://github.com/fixture/repo")
@@ -61,29 +65,43 @@ test("the header links out to the repo, right-justified; the gear sits left of t
     assert.equal(header.title, "Start threads from issues and PRs")
     assert.equal(header.hasArrow, true)
     assert.equal(header.dash, false, "the slug is no longer an em-dashed suffix of the title")
-    assert.equal(header.hasGear, false, "the gear moved down to the footer")
-    assert.ok(header.h2Right - header.linkRight < 3, "the slug ends at the header's right edge")
-    assert.ok(header.linkRight - header.titleRight > 100, "the slug is right-justified, well clear of the title")
+    assert.equal(header.hasGear, false, "the gear lives in the footer")
+    assert.ok(header.h2Right - header.linkRight < 1, "the chip ends at the header's right edge")
+    assert.ok(header.linkRight - header.titleRight > 100, "the chip is right-justified, well clear of the title")
+    assert.equal(header.border, "1px", "the link is a bordered chip, not a caption")
+    // fg at 85%: brighter than any muted tone, a step under the title's own fg.
+    const alpha = Number(/\/\s*([\d.]+)\)$/.exec(header.color)?.[1] ?? 1)
+    assert.ok(alpha > 0.8 && alpha < 0.9, `the chip is drawn in the fg tone, got ${header.color}`)
 
-    // The gear is the Start button's left-hand neighbour, on the same line: INK, not boxes, because its
-    // hover square carries the glyph's dead space.
+    // The gear is the model chip's right-hand neighbour, as the composer's marks are: INK, not boxes,
+    // because its hover square carries the glyph's dead space. The Start button stands alone.
     const footer = await page.evaluate((gearSelector) => {
       const gear = document.querySelector<HTMLButtonElement>(gearSelector)!
+      const chip = document.querySelector<HTMLElement>("[data-prompt-control-group]")!
       const start = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!
       const ink = [...gear.querySelectorAll("svg *")].map((g) => g.getBoundingClientRect())
+      const chipBox = chip.getBoundingClientRect()
       const startBox = start.getBoundingClientRect()
+      const inkTop = Math.min(...ink.map((r) => r.top))
+      const inkBottom = Math.max(...ink.map((r) => r.bottom))
       return {
-        sameParent: gear.parentElement === start.parentElement,
+        startSiblings: start.parentElement!.children.length,
+        gearInkLeft: Math.min(...ink.map((r) => r.left)),
         gearInkRight: Math.max(...ink.map((r) => r.right)),
-        gearInkMid: (Math.min(...ink.map((r) => r.top)) + Math.max(...ink.map((r) => r.bottom))) / 2,
+        gearInkMid: (inkTop + inkBottom) / 2,
+        gearInkHeight: inkBottom - inkTop,
+        chipRight: chipBox.right,
+        chipMid: (chipBox.top + chipBox.bottom) / 2,
         startLeft: startBox.left,
         startMid: (startBox.top + startBox.bottom) / 2,
       }
     }, GEAR)
-    assert.ok(footer.sameParent, "the gear and the Start button are one cluster")
-    const air = footer.startLeft - footer.gearInkRight
-    assert.ok(air > 8 && air < 24, `the gear's ink stands just left of the button, got ${air}px`)
-    assert.ok(Math.abs(footer.gearInkMid - footer.startMid) < 1, `the gear is centred on the button, off by ${footer.gearInkMid - footer.startMid}px`)
+    const air = footer.gearInkLeft - footer.chipRight
+    assert.ok(air > 10 && air < 14, `the gear's ink stands ~12px right of the model chip, as the composer's marks do, got ${air}px`)
+    assert.ok(Math.abs(footer.gearInkMid - footer.chipMid) < 0.75, `the gear is centred on the chip, off by ${footer.gearInkMid - footer.chipMid}px`)
+    assert.ok(Math.abs(footer.chipMid - footer.startMid) < 0.75, `the chip is centred on the Start button, off by ${footer.chipMid - footer.startMid}px`)
+    assert.ok(footer.startLeft - footer.gearInkRight > 200, "the Start button stands well clear of the gear, on the far right")
+    assert.equal(footer.startSiblings, 2, "the footer is two things: the chip's cluster, and the Start button")
 
     // The panel opens UPWARD from the modal's bottom edge. Polled, not read once: it slides in, and
     // its first frame stands ~290px below where it settles.
@@ -93,6 +111,10 @@ test("the header links out to the repo, right-justified; the gear sits left of t
     await page.waitForFunction((panel, gearSelector) =>
       document.querySelector(panel)!.getBoundingClientRect().bottom <= document.querySelector(gearSelector)!.getBoundingClientRect().top,
     { timeout: 2000 }, PANEL, GEAR)
+    // And rightward from the gear: it is anchored at the modal's left, so it opens over the list.
+    const [panelLeft, gearLeft] = await page.evaluate((panel, gearSelector) =>
+      [document.querySelector(panel)!.getBoundingClientRect().left, document.querySelector(gearSelector)!.getBoundingClientRect().left], PANEL, GEAR)
+    assert.ok(Math.abs(panelLeft - gearLeft) < 2, `the panel's left edge is the gear's, got ${panelLeft} vs ${gearLeft}`)
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
-import { keepPreviousData, useIsMutating, useMutation, useQuery } from "@tanstack/react-query"
-import { ArrowUpRight, Check, ChevronLeft, ChevronRight, CircleCheck, CircleDot, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Github, Inbox, Loader2, MessageSquare } from "lucide-react"
+import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation } from "@tanstack/react-query"
+import { ArrowUpRight, Check, CircleCheck, CircleDot, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Github, Inbox, Loader2, MessageSquare } from "lucide-react"
 import { acpModelSlug, type DispatchInput, type DispatchProfileSnapshot, type GithubBatchInput, type GithubItem } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
@@ -20,13 +20,20 @@ import { applyRowSelection } from "../lib/rowRangeSelection.ts"
 import { githubLabelColors } from "../lib/githubLabelColors.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { compactAge } from "../lib/activityTime.ts"
+import { AGENT_MARKS } from "../lib/iconRhythm.ts"
 
 type Kind = "issues" | "prs"
 type Sort = "recent" | "reactions"
 
-// Rows per page. The server takes this verbatim (`perPage`) and answers with the matching page plus
-// the totals the pager below renders; there is NO cap on how many pages a selection may span.
+// Rows per fetch. The list loads as it scrolls (maintainer 2026-11-07: "lazy-loaded scrolling instead of
+// pagination"): the server still answers one page at a time (`perPage`), and the next is asked for as the
+// bottom of the list comes within PREFETCH_MARGIN of view, so a steady scroll rarely meets the spinner.
 const PAGE_SIZE = 30
+const PREFETCH_MARGIN = "0px 0px 360px 0px"
+// GitHub's search serves the first 1,000 results of any query and refuses a page past them, so the server
+// stops offering pages there (`pageCountFor`). A bigger repo's list ends with a line that says so, rather
+// than at a row that looks like the last open issue.
+const SEARCH_WINDOW = 1000
 
 // THE GitHub picker: a wider anywhere-modal (reusing NewThreadModal's Overlay) that lists the repo's
 // Issues or PRs (tabs), sortable by recency or reactions, with multi-select checkboxes and the
@@ -59,41 +66,76 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
 
   const [kind, setKind] = useState<Kind>("issues")
   const [sort, setSort] = useState<Sort>("recent")
-  // 1-based page into the repo's issues/PRs. Switching tab or sort resets it — the ordering the page
-  // number indexes into is a property of {kind, sort}, so carrying it across would land the human at
-  // an arbitrary offset in a list they've never seen.
-  const [page, setPage] = useState(1)
   // Selection is a Set<number> scoped to the CURRENT tab — switching tabs CLEARS it (simplest, and it
   // dodges the issue#N-vs-pr#N number collision a shared set would hit). Documented choice per plan §6.
-  // It deliberately SURVIVES paging: batches are uncapped, so picking a dozen issues off page 1 and a
-  // dozen more off page 3 is the flow this UI exists for. The footer keeps that honest by counting
-  // everything checked, on-page or not, and offering a one-click clear.
+  // Batches are uncapped, so checking a dozen issues near the top and a dozen more a few hundred rows
+  // down is the flow this UI exists for. The footer keeps that honest by counting everything checked,
+  // scrolled out of view or not, and offering a one-click clear.
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set())
   // The shift-click anchor: the last PLAINLY clicked row's number (see lib/rowRangeSelection.ts).
   const [anchor, setAnchor] = useState<number | null>(null)
 
   // Server order is AUTHORITATIVE (the search sort) — render items exactly as returned, never re-sort
-  // client-side. The query re-keys on {kind, sort, page}, so a tab/sort/page flip refetches;
-  // keepPreviousData holds the outgoing page on screen through the next one's fetch, so paging dims
-  // rather than collapsing the list to a skeleton and jumping the modal's height.
-  const list = useQuery({
-    queryKey: ["githubList", kind, sort, page],
-    queryFn: () => rpc.githubList({ kind, sort, page, perPage: PAGE_SIZE }),
+  // client-side. The query re-keys on {kind, sort}, so a tab/sort flip starts a fresh list;
+  // keepPreviousData holds the outgoing list on screen, dimmed, through the new one's first fetch, so
+  // the switch doesn't collapse the list to a skeleton and jump the modal's height.
+  const list = useInfiniteQuery({
+    queryKey: ["githubList", kind, sort],
+    queryFn: ({ pageParam }) => rpc.githubList({ kind, sort, page: pageParam, perPage: PAGE_SIZE }),
+    initialPageParam: 1,
+    // The server reports the page it ACTUALLY served and how many it can serve (clamped to GitHub's
+    // search window), so the list stops where GitHub would refuse rather than asking past it.
+    getNextPageParam: (last) => (last.page < last.pageCount ? last.page + 1 : undefined),
     placeholderData: keepPreviousData,
+    // Dropped the moment nothing shows it. A cached infinite list refetches EVERY page it holds when it
+    // is next mounted, one GitHub search call each, and search allows about 30 a minute: reopening the
+    // picker after scrolling fifteen pages would spend half that at once. Reopened, it starts at the top.
+    gcTime: 0,
   })
-  const items = list.data?.items ?? []
-  // The server reports the page it ACTUALLY served (it clamps into GitHub's servable window), so the
-  // pager reads off that rather than local state — a page that no longer exists self-corrects.
-  const servedPage = list.data?.page ?? page
-  const pageCount = list.data?.pageCount ?? 1
-  const total = list.data?.total ?? 0
+  const pages = list.data?.pages
+  // One row per number. The pages are fetched minutes apart, and an issue opened in between shifts every
+  // later page of the "recent" order down by one, so the row at a page's end can come round again at the
+  // top of the next. The first copy keeps its place.
+  const items = useMemo(() => {
+    const seen = new Set<number>()
+    const rows: GithubItem[] = []
+    for (const p of pages ?? []) {
+      for (const it of p.items) {
+        if (seen.has(it.number)) continue
+        seen.add(it.number)
+        rows.push(it)
+      }
+    }
+    return rows
+  }, [pages])
+  // The newest page's count, so a repo that gained an issue while the list was scrolled reads it.
+  const total = pages?.at(-1)?.total ?? 0
 
-  // A new page starts at the top; without this the list keeps the previous page's scroll offset and
-  // the first rows are already scrolled past.
+  // A new list starts at the top; without this a tab or sort flip keeps the old list's scroll offset
+  // and the new list's first rows are already scrolled past.
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [page, kind, sort])
+  }, [kind, sort])
+
+  // The loader row at the list's end is the sentinel: once it comes within PREFETCH_MARGIN of the list's
+  // visible bottom, the next page is fetched. The observer is rebuilt after every page lands, because a
+  // fresh observer reports the sentinel's CURRENT state at once: a page too short to push the sentinel
+  // out of view (a tall window, or rows the de-duplication dropped) asks for the next one straight away
+  // instead of waiting for a scroll that can't happen. Nothing fetches past a failed page until Retry,
+  // and nothing fetches for the outgoing list a tab switch is still showing.
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, isPlaceholderData, fetchNextPage } = list
+  useEffect(() => {
+    const root = listRef.current
+    const target = sentinelRef.current
+    if (!root || !target || !hasNextPage || isFetchingNextPage || isFetchNextPageError || isPlaceholderData) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) void fetchNextPage()
+    }, { root, rootMargin: PREFETCH_MARGIN })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, isPlaceholderData, fetchNextPage, items.length])
 
   const dispatch = useMutation({
     mutationFn: (input: GithubBatchInput) => rpc.githubDispatchBatch(input),
@@ -110,23 +152,20 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   function switchKind(k: Kind) {
     if (k === kind) return
     setKind(k)
-    setPage(1)
     setSelected(new Set())
     setAnchor(null)
   }
   function switchSort(s: Sort) {
     if (s === sort) return
     setSort(s)
-    setPage(1)
-    // Clear on sort-switch, same as tab-switch: the whole ordering changes underneath, so the pages a
-    // selection was made across no longer mean anything. (Paging WITHIN one order keeps it — same
-    // list, different window.)
+    // Clear on sort-switch, same as tab-switch: the whole ordering changes underneath, so a range
+    // shift-clicked in the old order means nothing in the new one.
     setSelected(new Set())
     setAnchor(null)
   }
   // One entry point for every row activation (click, Enter, Space). Shift paints the whole
-  // anchor→row range with the anchor's state; a plain click toggles and re-anchors. `keys` is this
-  // PAGE's rows — a range is a span of adjacent visible rows — while `selected` spans every page.
+  // anchor→row range with the anchor's state; a plain click toggles and re-anchors. `keys` is every
+  // row loaded so far, in list order, so a range runs across the seams between fetched pages.
   function activate(n: number, shiftKey: boolean) {
     const result = applyRowSelection({
       keys: items.map((it) => it.number),
@@ -234,12 +273,15 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             list.isPlaceholderData ? "opacity-40" : ""
           }`}
         >
+          {/* The whole-list error is for a list with NOTHING loaded. A failed later page, or a background
+              refetch that fails, also sets `isError`, and must not take the rows already on screen with it:
+              the failed page says so at the list's end instead. */}
           {list.isLoading ? (
             <ListSkeleton />
-          ) : list.isError ? (
+          ) : !pages ? (
             <Centered>
               <span className="text-[12.5px] text-muted-80">Couldn't load {kind === "issues" ? "issues" : "pull requests"}.</span>
-              <span className="max-w-[80%] text-center text-[11px] text-muted-45">{(list.error as Error).message.slice(0, 140)}</span>
+              <span className="max-w-[80%] text-center text-[11px] text-muted-45">{list.error?.message.slice(0, 140)}</span>
             </Centered>
           ) : items.length === 0 ? (
             <Centered>
@@ -247,25 +289,49 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
               <span className="text-[12.5px] text-muted-60">No open {kind === "issues" ? "issues" : "pull requests"}</span>
             </Centered>
           ) : (
-            items.map((it) => (
-              <Row key={it.number} item={it} checked={selected.has(it.number)} onActivate={(shiftKey) => activate(it.number, shiftKey)} />
-            ))
+            <>
+              {items.map((it) => (
+                <Row key={it.number} item={it} checked={selected.has(it.number)} onActivate={(shiftKey) => activate(it.number, shiftKey)} />
+              ))}
+              {/* Drawn only while there is more to load, so the list's last row keeps `last:border-b-0`
+                  once it truly is the last. */}
+              {hasNextPage && (
+                <div ref={sentinelRef} data-github-list-more="" className="flex h-11 items-center justify-center gap-2 text-[11.5px] text-muted-60">
+                  {isFetchNextPageError ? (
+                    <>
+                      <span>Couldn't load more.</span>
+                      <button
+                        type="button"
+                        onClick={() => void fetchNextPage()}
+                        onMouseDown={(e) => e.preventDefault()}
+                        className="rounded text-fg/80 underline-offset-2 outline-none hover:text-fg hover:underline focus-visible:underline"
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : (
+                    <Loader2 aria-label="Loading more" size={14} className="animate-spin text-muted-45" />
+                  )}
+                </div>
+              )}
+              {!hasNextPage && total > SEARCH_WINDOW && (
+                <div className="px-3 py-3 text-center text-[11.5px] text-muted-55">
+                  GitHub's search lists the first {SEARCH_WINDOW.toLocaleString()} of these
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* Pager: the running selection on the left (it spans pages, so this is the only place the
-            full count is visible), the page controls on the right. The totals line is always worth
-            showing; the page controls appear only once there IS a second page, so a small repo
-            doesn't carry a dead "Page 1 of 1" and two disabled chevrons. */}
-        {!list.isLoading && !list.isError && (
-          // whitespace-nowrap throughout: left to wrap, this row folds into three lines at a narrow
-          // width and the totals collide with the prev-page button. The running-selection cluster and
-          // the page controls hold their size; only the repo total (the least actionable number here)
-          // truncates when the modal is squeezed.
-          <div className="mt-2.5 flex items-center justify-between gap-3 whitespace-nowrap text-[11.5px] text-muted-60">
+        {/* The running selection under the list. Checked rows can be scrolled far out of view, so this is
+            the only place the full count is always visible. */}
+        {pages && (
+          // whitespace-nowrap throughout: the running-selection cluster holds its size, and only the repo
+          // total (the least actionable number here) truncates when the modal is squeezed.
+          <div className="mt-2.5 flex items-center whitespace-nowrap text-[11.5px] text-muted-60">
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="truncate tabular-nums">
-                {total} open {kind === "issues" ? (total === 1 ? "issue" : "issues") : total === 1 ? "pull request" : "pull requests"}
+                {total.toLocaleString()} open {kind === "issues" ? (total === 1 ? "issue" : "issues") : total === 1 ? "pull request" : "pull requests"}
               </span>
               {n > 0 && (
                 <span className="flex shrink-0 items-center gap-1.5">
@@ -281,35 +347,15 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 </span>
               )}
             </div>
-            {pageCount > 1 && (
-            <div className="flex shrink-0 items-center gap-1">
-              <PagerButton label="Previous page" disabled={servedPage <= 1} onClick={() => setPage(Math.max(1, servedPage - 1))}>
-                <ChevronLeft size={14} />
-              </PagerButton>
-              {/* The label reserves the width of its WIDEST form and paints the live one over it, so
-                  stepping 9 → 10 on a 198-page repo doesn't shove the chevrons sideways. tabular-nums
-                  makes every digit the same width, which is what lets `pageCount` stand in for the
-                  longest page number. */}
-              <span className="relative px-2 text-center tabular-nums">
-                <span aria-hidden className="invisible">Page {pageCount} of {pageCount}</span>
-                <span className="absolute inset-0">
-                  Page {servedPage} of {pageCount}
-                </span>
-              </span>
-              <PagerButton label="Next page" disabled={servedPage >= pageCount} onClick={() => setPage(Math.min(pageCount, servedPage + 1))}>
-                <ChevronRight size={14} />
-              </PagerButton>
-            </div>
-            )}
           </div>
         )}
 
-        {/* Footer: the ordinary model/effort selector (bottom-left) + the batch-dispatch button. The
-            selector is the SAME control the prompt box carries and writes the same durable
-            preference, so the profile every dispatched thread gets is editable right here. Opens
-            UPWARD (side="top") — the footer sits on the modal's bottom edge. */}
-        <div className="mt-4 flex items-end justify-between gap-3">
-          <div className="min-w-0">
+        {/* Footer: what every thread this batch starts will be, bottom-left, and the act that starts
+            them, alone on the right — the prompt box's own layout. The selector is the SAME control the
+            prompt box carries and writes the same durable preference; its menu opens UPWARD
+            (side="top"), since the footer sits on the modal's bottom edge. */}
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-x-1.5">
             <PromptControlGroup>
               <ProfileGridSelector
                 groups={profileGroups}
@@ -343,27 +389,28 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 />
               )}
             </PromptControlGroup>
-            {profileError && <p className="mt-1 max-w-[430px] text-[10.5px] text-danger">{profileError}</p>}
+            {/* The gear opens the prompt every thread this batch starts will run: with the model, it is
+                the other half of WHAT starts, so it stands to the right of the model chip, where the
+                composer keeps its agent's marks (maintainer 2026-11-07: "it's weird that the model
+                selector is at the bottom left, but the settings are to the left of the button"). It
+                sat left of the Start button from 2026-10-26, and in the header's far corner before that. */}
+            <div className={AGENT_MARKS}>
+              <GithubPromptPopover />
+            </div>
           </div>
-          {/* The gear opens the prompt every thread this batch starts will run, so it sits beside the
-              button that starts them (maintainer 2026-10-26: "move the settings button for the github
-              menu down to the left of the start investigation button"). It was in the header's far
-              corner from 2026-09-19, a modal's height away from the act it configures. */}
-          <div className="flex items-center gap-2">
-            <GithubPromptPopover />
-            <button
-              disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
-              onClick={startDispatch}
-              onMouseDown={(e) => e.preventDefault()}
-              className="button-outline flex items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
-            >
-              {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
-              {/* The count is on the button because the batch is now unbounded and can span pages —
-                  "Start 47 investigations" is the last chance to notice it says 47, not 4. */}
-              {n <= 1 ? "Start investigation" : `Start ${n} investigations`}
-            </button>
-          </div>
+          <button
+            disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
+            onClick={startDispatch}
+            onMouseDown={(e) => e.preventDefault()}
+            className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
+          >
+            {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
+            {/* The count is on the button because the batch is unbounded and can run far past the rows
+                in view — "Start 47 investigations" is the last chance to notice it says 47, not 4. */}
+            {n <= 1 ? "Start investigation" : `Start ${n} investigations`}
+          </button>
         </div>
+        {profileError && <p className="mt-1 max-w-[430px] text-[10.5px] text-danger">{profileError}</p>}
       </div>
     </Overlay>
   )
@@ -373,12 +420,18 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
 // (it is an identifier); the arrow is lucide's arrow-up-right, the "opens elsewhere" mark GitHub
 // itself uses beside external links, at the slug's own `1em` so the pair reads as one link.
 //
+// Drawn as a chip in the fg tone, on the same border and `panel-2` fill as the tab and sort controls
+// below it, rather than as muted text: it is the picker's one way out to the repo, and as a grey slug in
+// the corner it read as a caption (maintainer 2026-11-07: "make the link out to the repo a little more
+// prominent"). Without the fill its hairline all but vanished against the panel.
+//
 // The arrow's ink is centred in its box (7..17 of 24), so with the link `items-baseline` the
 // documented `0.5em - 0.5cap` translate puts it exactly on the slug's cap band in either font. It
-// paints 10 of its 24 box units — 0.29em of dead space a side — so `-ml-[0.29em]` collapses the box
-// onto its ink and the `gap-1` becomes 4px of INK between the slug's last glyph and the arrow (it
-// read 8.4px before the trim), which is what makes the arrow the slug's tail rather than a mark
-// standing next to it.
+// paints 10 of its 24 box units — 0.29em of dead space a side — so `-mx-[0.29em]` collapses the box
+// onto its ink: the `gap-1` becomes 4px of INK between the slug's last glyph and the arrow (it read
+// 8.4px before the trim), which makes the arrow the slug's tail rather than a mark standing next to
+// it. The padding is uneven so the INK inside the border is even: on `px-2` the mono slug's side
+// bearing stood its first glyph 9.25px in, against the arrow's 7.5px (painted pixels at 4x, 2026-11-07).
 function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
   return (
     <a
@@ -386,40 +439,11 @@ function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
       target="_blank"
       rel="noreferrer noopener"
       title={`Open ${nameWithOwner} on GitHub`}
-      className="github-repo-link inline-flex min-w-0 items-baseline gap-1 rounded-sm font-mono-keep text-[12.5px] font-normal text-muted outline-none transition-colors hover:text-fg focus-visible:text-fg"
+      className="github-repo-link inline-flex min-w-0 items-baseline gap-1 rounded-md border border-border bg-panel-2 pl-[6.5px] pr-2 py-[3px] font-mono-keep text-[12px] font-normal leading-[18px] text-fg/85 outline-none transition-colors hover:bg-elevated hover:text-fg focus-visible:bg-elevated focus-visible:text-fg"
     >
       <span className="truncate">{nameWithOwner}</span>
-      <ArrowUpRight aria-hidden="true" className="-ml-[0.29em] size-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]" />
+      <ArrowUpRight aria-hidden="true" className="-mx-[0.29em] size-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]" />
     </a>
-  )
-}
-
-// A prev/next step in the pager — a quiet bordered square that reads as an affordance only on hover,
-// so the page controls never compete with the dispatch button for the eye. `title`+`aria-label` carry
-// the meaning the chevron alone doesn't.
-function PagerButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      onMouseDown={(e) => e.preventDefault()}
-      className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md border border-border/70 text-muted-70 outline-none transition-colors hover:bg-elevated hover:text-fg disabled:pointer-events-none disabled:opacity-30"
-    >
-      {children}
-    </button>
   )
 }
 
