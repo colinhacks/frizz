@@ -13,8 +13,8 @@
  *
  * GitHub is faked the same way, on its own loopback port, for the last legs: the CLI reads a REAL sealed
  * Frizz GitHub sign-in from a throwaway home and the registrar runs the REAL verifier against the fake,
- * so the token that crosses the wire is the one the sign-in holds, and a `gh`-style scoped token is
- * refused by the real check.
+ * so the token that crosses the wire is the one the sign-in holds, and a `gh` CLI token is refused by
+ * the real check.
  */
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -126,9 +126,9 @@ let gate = null;
 const received = [];
 
 /**
- * api.github.com on one port. `/user` answers the App's user token with an EMPTY X-OAuth-Scopes (what
- * the real API answered for one on 2026-11-07), and the `gh`-style token with the scopes the real `gh`
- * holds.
+ * api.github.com on one port. `/user` answers the App's user token naming Frizz's App in
+ * X-OAuth-Client-Id with an empty X-OAuth-Scopes (what the real API answered for one on 2026-11-07),
+ * and the `gh` token naming the `gh` CLI's OAuth app with the scopes the real `gh` holds.
  */
 const APP = "ghu_e2eAgentConsoleUserToken";
 const GH_CLI = "gho_e2eGhCliTokenWithRepoScope";
@@ -144,8 +144,10 @@ const github = createServer((req, res) => {
     };
     if (req.url === "/user") {
       const user = { id: 777, login: "e2e-user", created_at: "2015-01-01T00:00:00Z" };
-      if (req.headers.authorization === `Bearer ${APP}`) return send(200, user, { "x-oauth-scopes": "" });
-      if (req.headers.authorization === `Bearer ${GH_CLI}`) return send(200, user, { "x-oauth-scopes": "gist, read:org, repo, workflow" });
+      if (req.headers.authorization === `Bearer ${APP}`) return send(200, user, { "x-oauth-client-id": "Iv23licDruV3JtQIF3fI", "x-oauth-scopes": "" });
+      if (req.headers.authorization === `Bearer ${GH_CLI}`) {
+        return send(200, user, { "x-oauth-client-id": "178c6fc778ccc68e1d6a", "x-oauth-scopes": "gist, read:org, repo, workflow" });
+      }
       return send(401, { message: "Bad credentials" });
     }
     send(404, { message: "Not Found" });
@@ -318,8 +320,8 @@ try {
         refused = error;
       }
       check(
-        "a gh-scoped token is refused, pointing the person at Frizz's own sign-in",
-        refused instanceof ClaimError && refused.code === "github-token-scoped" && /Settings/.test(refused.message),
+        "a gh CLI token is refused, pointing the person at Frizz's own sign-in",
+        refused instanceof ClaimError && refused.code === "github-token-foreign" && /Settings/.test(refused.message),
         refused ? `${refused.code}: ${refused.message}` : "it was ALLOWED"
       );
       check("nothing was recorded for it", !st.rows.has("old-client"));

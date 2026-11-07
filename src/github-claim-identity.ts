@@ -52,10 +52,13 @@ export function frizzGithubSignIn(): GithubAuthorizer {
   };
 }
 
-/** The GitHub login of Frizz's sign-in, or null while it is signed out. Local, no network. */
+/**
+ * The GitHub login of Frizz's App sign-in, or null. Null too for a pasted token or the
+ * FRIZZ_GITHUB_TOKEN override, which cannot claim a name, so the pane never offers one. Local, no network.
+ */
 export function frizzGithubLogin(): string | null {
   const status = githubCredentialStatus();
-  return status.signedIn ? status.login : null;
+  return status.signedIn && status.source === "app" ? status.login : null;
 }
 
 /**

@@ -191,6 +191,23 @@ test("a frizz.sh claim renews a token the keeper has let lapse, and refuses whil
   })
 })
 
+test("a frizz.sh claim never sends a pasted token or the FRIZZ_GITHUB_TOKEN override", async () => {
+  await withHome(async () => {
+    // The registrar takes only the App's user token, so anything else is refused here, unsent.
+    writeGithubCredential({ kind: "token", token: "github_pat_pasted", login: "colinhacks", savedAt: 0 })
+    await assert.rejects(githubClaimToken({ now: () => 0 }), /pasted token, which can't claim a name/)
+    writeGithubCredential(app({ accessExpiresAt: 8 * HOUR }))
+    process.env.FRIZZ_GITHUB_TOKEN = "ghp_override"
+    try {
+      assert.equal((await githubClaimToken({ now: () => 0 })).token, "ghu_old", "the override is ignored")
+      clearGithubCredential()
+      await assert.rejects(githubClaimToken({ now: () => 0 }), /not signed in to GitHub/, "and is no sign-in of its own")
+    } finally {
+      delete process.env.FRIZZ_GITHUB_TOKEN
+    }
+  })
+})
+
 test("a 401 on an App token forces the next call to renew", async () => {
   await withHome(async () => {
     writeGithubCredential(app())

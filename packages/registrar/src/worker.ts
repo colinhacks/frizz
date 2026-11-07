@@ -6,6 +6,7 @@ import {
   type GithubIdentity,
 } from "./claim-handler.ts"
 import { createCloudflareApi } from "./cloudflare.ts"
+import { FRIZZ_GITHUB_APP_CLIENT_ID } from "@frizz/shared"
 
 /**
  * The registration Worker for `<name>.frizz.sh`.
@@ -38,28 +39,29 @@ export interface KvNamespace {
  * Only the numeric id is kept. A login can be renamed and reused by someone else, so binding a name
  * to one would let the limit be laundered through a rename.
  *
- * WHAT IS ACCEPTED is what Frizz sends: the user token of Frizz's own GitHub App, "Frizz Agent Console"
- * (`ghu_…`), which the board already holds for its GitHub reads. Its powers are the App's read-only
- * permissions. Until 2026-11-07 only a zero-scope OAuth token was accepted, so that a hijacked registrar
- * collected nothing worth stealing (a compromised build collected `gh` tokens from 2026-09-21 to
- * 2026-10-08). The maintainer dropped that rule (2026-11-07): this Worker deploys from the same
- * workflow, with the same token and the same approval, as the relay, and a hijacked relay already has
- * full control of every board that serves through it. What still protects the token: it goes to
- * GitHub's `/user` once, only the numeric id is kept, and it is never stored or logged.
+ * ONLY FRIZZ'S OWN GITHUB SIGN-IN IS ACCEPTED: a user token GitHub reports, in `X-OAuth-Client-Id` on
+ * that same `/user` answer, as issued to Frizz's GitHub App, "Frizz Agent Console". It is the token the
+ * board already holds for its GitHub reads, and its powers are the App's read-only permissions. A `gh`
+ * CLI token (what a Frizz from before 2026-10-08 sends), a personal access token, or a token from any
+ * other app is refused as "foreign", whoever it belongs to. So is anything GitHub does not tie to an
+ * app at all. That also means a token some other app collected cannot claim in its owner's name.
  *
- * STILL REFUSED, as "scoped": a token whose `X-OAuth-Scopes` lists a scope. That is a `gh` CLI token,
- * which only a Frizz from before 2026-10-08 sends, and accepting it would reopen custom names to those
- * versions ahead of the release that reopens them. A GitHub App user token and a fine-grained token
- * answer with the header empty or absent.
+ * Until 2026-11-07 only a zero-scope OAuth token was accepted, so that a hijacked registrar collected
+ * nothing worth stealing (a compromised build collected `gh` tokens from 2026-09-21 to 2026-10-08).
+ * The maintainer dropped that rule (2026-11-07): this Worker deploys from the same workflow, with the
+ * same token and the same approval, as the relay, and a hijacked relay already has full control of
+ * every board that serves through it. What still protects the token: it goes to GitHub's `/user` once,
+ * only the numeric id is kept, and it is never stored or logged.
  */
 export function githubVerifier(
   // Wrapped, not passed bare: workerd throws "Illegal invocation" for a `fetch` called off its global.
   fetchImpl: typeof fetch = (input, init) => fetch(input, init),
-  apiOrigin = "https://api.github.com"
-): (token: string) => Promise<GithubIdentity | null | "scoped"> {
+  apiOrigin = "https://api.github.com",
+  appClientId: string = FRIZZ_GITHUB_APP_CLIENT_ID
+): (token: string) => Promise<GithubIdentity | null | "foreign"> {
   return async (token) => {
     // Anything else cannot be a GitHub token, and must never reach a request header.
-    if (!/^[A-Za-z0-9_]+$/.test(token)) return null
+    if (token.length > MAX_GITHUB_TOKEN_LENGTH || !/^[A-Za-z0-9_]+$/.test(token)) return null
     try {
       const response = await fetchImpl(`${apiOrigin}/user`, {
         headers: {
@@ -68,9 +70,11 @@ export function githubVerifier(
           // GitHub rejects an API request with no user agent.
           "user-agent": "frizz-registrar",
         },
+        // A redirect is never followed: it would carry the token's request somewhere else.
+        redirect: "manual",
       })
       if (!response.ok) return null
-      if ((response.headers.get("x-oauth-scopes") ?? "").trim() !== "") return "scoped"
+      if (response.headers.get("x-oauth-client-id") !== appClientId) return "foreign"
       const user = (await response.json()) as { id?: unknown; login?: unknown; created_at?: unknown }
       if (typeof user.id !== "number" || typeof user.login !== "string") return null
       const createdAt = typeof user.created_at === "string" ? Date.parse(user.created_at) : Number.NaN
@@ -80,6 +84,12 @@ export function githubVerifier(
     }
   }
 }
+
+/** A real token is far shorter (a `ghu_` token is 40 characters). Keeps an absurd value out of a header. */
+const MAX_GITHUB_TOKEN_LENGTH = 512
+
+/** A claim is a few hundred bytes. Anything far past that is refused before it is parsed. */
+const MAX_CLAIM_BODY_BYTES = 8_192
 
 export interface RegistrarEnv {
   /** Zone-scoped Cloudflare token. NEVER leaves this Worker. */
@@ -111,23 +121,42 @@ const MIN_GITHUB_ACCOUNT_AGE_MS = 30 * 24 * 60 * 60_000
 const ANONYMOUS_CLAIMS_PER_HOUR = 10
 
 /**
+ * GitHub lookups one network address may set off per hour, for first claims of CUSTOM names.
+ *
+ * Every such claim sends GitHub one `/user` request, and a loop of generated keys with made-up tokens
+ * would otherwise turn this Worker into a cheap way to hammer GitHub from Cloudflare's addresses. A
+ * person claims one name per account, so ten an hour never touches them.
+ */
+const GITHUB_LOOKUPS_PER_HOUR = 10
+
+/**
  * A per-address creation budget on one KV counter per hour bucket.
  *
  * KV is eventually consistent, so two racing claims can both read the same count and one slips past —
  * this is a blunt guard against a runaway loop, not an exact quota, and an exact one would need
  * storage this Worker deliberately does not have. The row expires on its own; nothing sweeps it.
  */
-export function kvAnonymousBudget(kv: KvNamespace, address: string, now: () => number = Date.now): () => Promise<boolean> {
+function kvHourlyBudget(kv: KvNamespace, key: string, perHour: number, now: () => number): () => Promise<boolean> {
   return async () => {
     const bucket = Math.floor(now() / 3_600_000)
-    const key = `anonrl:${address}:${bucket}`
-    const used = Number((await kv.get(key)) ?? "0")
-    if (used >= ANONYMOUS_CLAIMS_PER_HOUR) return false
+    const row = `${key}:${bucket}`
+    const used = Number((await kv.get(row)) ?? "0")
+    if (used >= perHour) return false
     // TTL of two hours, not one: the row only has to outlive its own bucket, and cutting it close
     // would let a claim land in a bucket whose counter had already expired mid-hour.
-    await kv.put(key, String(used + 1), { expirationTtl: 7_200 })
+    await kv.put(row, String(used + 1), { expirationTtl: 7_200 })
     return true
   }
+}
+
+/** New anonymous names from one address (ANONYMOUS_CLAIMS_PER_HOUR). */
+export function kvAnonymousBudget(kv: KvNamespace, address: string, now: () => number = Date.now): () => Promise<boolean> {
+  return kvHourlyBudget(kv, `anonrl:${address}`, ANONYMOUS_CLAIMS_PER_HOUR, now)
+}
+
+/** GitHub lookups from one address (GITHUB_LOOKUPS_PER_HOUR). */
+export function kvGithubBudget(kv: KvNamespace, address: string, now: () => number = Date.now): () => Promise<boolean> {
+  return kvHourlyBudget(kv, `ghrl:${address}`, GITHUB_LOOKUPS_PER_HOUR, now)
 }
 
 /**
@@ -207,9 +236,9 @@ const json = (status: number, body: unknown): Response =>
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   })
 
-function claimDeps(env: RegistrarEnv, anonymousBudget?: () => Promise<boolean>) {
+function claimDeps(env: RegistrarEnv, budgets: { anonymousBudget?: () => Promise<boolean>; githubBudget?: () => Promise<boolean> } = {}) {
   return {
-    ...(anonymousBudget ? { anonymousBudget } : {}),
+    ...budgets,
     // RELAY by default: a claim records the name and nothing else, because the relay serves every
     // name off one wildcard record. `CLOUD_MODE=tunnel` restores per-name tunnel provisioning for one
     // release, so the old path can be turned back on without a rebuild.
@@ -282,13 +311,24 @@ export default {
 
     // A body that is not JSON is the claimant's mistake, not a crash. The handler validates
     // everything past this point, including that the thing parsed is shaped like a claim at all.
-    const body = await request.json().catch(() => null)
+    if (Number(request.headers.get("content-length") ?? "0") > MAX_CLAIM_BODY_BYTES) {
+      return json(413, { error: "malformed", message: "the request body was not a claim" })
+    }
+    const text = await request.text().catch(() => "")
+    if (text.length > MAX_CLAIM_BODY_BYTES) return json(413, { error: "malformed", message: "the request body was not a claim" })
+    let body: unknown = null
+    try {
+      body = JSON.parse(text)
+    } catch {}
 
     // The budget key is the connecting address, which Cloudflare stamps on every request it fronts.
     // Absent (a direct hit on the Worker in a test) the budget still exists under one shared key,
     // because an absent header must never mean an absent limit.
     const address = request.headers.get("cf-connecting-ip") ?? "unknown"
-    const outcome = await handleClaim(body, claimDeps(env, kvAnonymousBudget(env.CLAIMS, address)))
+    const outcome = await handleClaim(
+      body,
+      claimDeps(env, { anonymousBudget: kvAnonymousBudget(env.CLAIMS, address), githubBudget: kvGithubBudget(env.CLAIMS, address) })
+    )
 
     return json(outcome.status, outcome.body)
   },

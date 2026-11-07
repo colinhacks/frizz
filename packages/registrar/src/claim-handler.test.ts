@@ -494,18 +494,18 @@ const ACCOUNT = { id: 4242, login: "colin", createdAt: NOW - 365 * 24 * 60 * 60_
 
 test("a `gh` CLI token is refused, and nothing is recorded", async () => {
   // 2026-10-08: a compromised registrar collected the `gh` tokens old clients sent. The verifier now
-  // answers "scoped" for any such token; the claim must stop there, distinctly from an unknown login,
+  // answers "foreign" for any such token; the claim must stop there, distinctly from an unknown login,
   // so an old client is told to update rather than to sign in again.
   const cf = fakeCloudflare()
   const st = fakeStore()
   const identity = await generateClaimIdentity()
-  const d = deps({ api: cf.api, store: st.store, github: async (token) => (token === "gho_ghcli" ? "scoped" : ACCOUNT) })
+  const d = deps({ api: cf.api, store: st.store, github: async (token) => (token === "gho_ghcli" ? "foreign" : ACCOUNT) })
   const result = await handleClaim(
     await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "gho_ghcli" }, identity),
     d
   )
   assert.equal(result.status, 400)
-  assert.equal("error" in result.body && result.body.error, "github-token-scoped")
+  assert.equal("error" in result.body && result.body.error, "github-token-foreign")
   assert.match("message" in result.body ? result.body.message : "", /update Frizz/)
   assert.deepEqual(cf.calls, [], "nothing was provisioned")
   assert.equal(st.rows.size, 0, "nothing was recorded")

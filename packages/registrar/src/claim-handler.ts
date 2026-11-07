@@ -52,12 +52,12 @@ export interface GithubIdentity {
 }
 
 /**
- * Resolve a token to its account. `null` means GitHub did not accept it; `"scoped"` means it carries
- * OAuth scopes — a `gh` CLI token, which only a Frizz from before 2026-10-08 sends — and is refused
- * whoever it belongs to (githubVerifier in worker.ts says why).
+ * Resolve a token to its account. `null` means GitHub did not accept it; `"foreign"` means GitHub did,
+ * but not as a token issued to Frizz's own GitHub App — a `gh` CLI token, a personal access token,
+ * another app's — and it is refused whoever it belongs to (githubVerifier in worker.ts says why).
  */
 export interface GithubVerifier {
-  (token: string): Promise<GithubIdentity | null | "scoped">
+  (token: string): Promise<GithubIdentity | null | "foreign">
 }
 
 export interface CloudflareApi {
@@ -108,6 +108,11 @@ export interface ClaimDeps {
    * unlimited, which is only ever right in tests.
    */
   anonymousBudget?: () => Promise<boolean>
+  /**
+   * May this request send GitHub one more `/user` lookup right now? Consulted only for the first claim
+   * of a CUSTOM name, before GitHub is asked. Absent means unlimited, which is only ever right in tests.
+   */
+  githubBudget?: () => Promise<boolean>
 }
 
 export type ClaimFailure =
@@ -118,7 +123,7 @@ export type ClaimFailure =
   | "one-name-per-key"
   | "github-required"
   | "github-rejected"
-  | "github-token-scoped"
+  | "github-token-foreign"
   | "github-too-new"
   | "one-name-per-account"
   | "namespace-full"
@@ -146,8 +151,8 @@ const MESSAGES: Record<ClaimFailure, string> = {
     "this machine already holds a name — release it first, or claim from a different Frizz identity",
   "github-required": "claiming a custom name needs a GitHub sign-in — sign in to GitHub in Frizz's Settings and try again",
   "github-rejected": "GitHub did not recognise that sign-in — try again",
-  "github-token-scoped":
-    "this claim carried a GitHub CLI token, which only an old Frizz sends — update Frizz, sign in to GitHub in its Settings, and try again",
+  "github-token-foreign":
+    "a name is claimed with Frizz's own GitHub sign-in, and this was another kind of GitHub token — update Frizz, sign in to GitHub in its Settings, and try again",
   "github-too-new": "that GitHub account is too new to claim a name",
   "one-name-per-account": "that GitHub account already holds a name",
   "namespace-full": "frizz.sh has no free names left — this is our limit to raise, not yours",
@@ -201,8 +206,9 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
     }
   } else if (deps.github) {
     if (!verdict.payload.github) return reject("github-required")
+    if (deps.githubBudget && !(await deps.githubBudget())) return reject("too-many-claims", 429)
     const who = await deps.github(verdict.payload.github)
-    if (who === "scoped") return reject("github-token-scoped")
+    if (who === "foreign") return reject("github-token-foreign")
     if (!who) return reject("github-rejected")
     if (deps.minAccountAgeMs && now - who.createdAt < deps.minAccountAgeMs) {
       return reject("github-too-new")
