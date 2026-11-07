@@ -110,7 +110,7 @@ test("names are DNS labels, and the reserved ones are refused", async () => {
     assert.throws(() => normalizeClaimName(bad), JSON.stringify(bad))
   }
   // Handing out the ACME challenge label would let someone get a certificate for the zone.
-  for (const reserved of ["_acme-challenge", "www", "api", "admin", "mail", "registrar"]) {
+  for (const reserved of ["_acme-challenge", "www", "api", "admin", "mail", "registrar", "frizz", "relay"]) {
     assert.throws(() => normalizeClaimName(reserved), /reserved/, reserved)
   }
 })
