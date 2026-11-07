@@ -1,6 +1,6 @@
 import * as RadixDropdown from "@radix-ui/react-dropdown-menu"
 import { useMemo, type ReactNode } from "react"
-import { ArrowUpRight, Check, ChevronDown } from "lucide-react"
+import { ArrowUpRight, ChevronDown } from "lucide-react"
 import type { ProjectCard } from "@frizz/shared"
 import { projectHref } from "../lib/base-path.ts"
 import { useConsoleProjectList } from "../lib/consoleProjects.ts"
@@ -72,45 +72,69 @@ function ProjectChip({ project, projects, onPick }: { project: ProjectCard; proj
         </button>
       </RadixDropdown.Trigger>
       <RadixDropdown.Portal>
+        {/* `alignOffset` puts the menu's squares under the chip's: a row's square stands 13px inside the menu
+            (its 1px border, 6px of padding and the row's own 6px), and the chip's 6px inside the chip. The width
+            cap gives a long name the room the crumb's menu does (ProjectCrumb.tsx), plus the rail's 36px. */}
         <RadixDropdown.Content
           align="start"
+          alignOffset={-7}
           side="bottom"
           sideOffset={5}
           collisionPadding={8}
-          className={`${OPAQUE_PORTAL_SURFACE_CLASS} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] overflow-auto rounded-lg p-1.5`}
+          className={`${OPAQUE_PORTAL_SURFACE_CLASS} relative flex min-w-[200px] overflow-hidden rounded-lg ${phone ? "max-w-[280px]" : "max-w-[316px]"}`}
         >
-          {projects.map((p) => (
-            // TWO MENU ITEMS ON ONE ROW, so the arrow keys reach the link as they reach the row, and the
-            // browser opens the link on its own click, as it does the crumb's "Open on GitHub". The row lights
-            // as a whole whichever one is under the pointer, and the link lights again on top of that.
-            <div key={p.id} className="flex items-center rounded has-[[data-highlighted]]:bg-panel-2">
-              <RadixDropdown.Item
-                onSelect={() => onPick(p.slug)}
-                data-console-project-option={p.slug}
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12.5px] text-fg outline-none"
-              >
-                <ProjectSquare project={p} size={16} />
-                <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                <Check aria-hidden size={13} className={p.slug === project.slug ? "shrink-0 text-fg/70" : "invisible shrink-0"} />
-              </RadixDropdown.Item>
-              {/* Not on a phone: a small target beside the row is a mis-tap that leaves the page being typed on. */}
-              {!phone && (
-                <RadixDropdown.Item asChild textValue="">
-                  <a
-                    href={projectHref(p.slug)}
-                    target="_blank"
-                    rel="noopener"
-                    aria-label={`Open ${p.name} in a new tab`}
-                    title="Open in a new tab"
-                    data-console-project-open={p.slug}
-                    className="mr-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-70 no-underline outline-none data-[highlighted]:bg-hover-strong data-[highlighted]:text-fg"
-                  >
-                    <ArrowUpRight aria-hidden size={14} />
-                  </a>
-                </RadixDropdown.Item>
-              )}
-            </div>
-          ))}
+          {/* THE RAIL: the new-tab arrows stand in a strip of their own down the menu's right edge, past one
+              hairline from top to bottom (maintainer 2026-11-06, choosing it from fifteen treatments). With the
+              arrow at the end of each row and the row's fill running under it, every arrow read as the row's own
+              end, as if a click anywhere opened a new tab. The strip sits outside the scroller, so it spans the
+              menu however far the list scrolls. */}
+          {!phone && (
+            <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-9 border-l border-border bg-[color-mix(in_oklab,var(--color-inset)_35%,transparent)]" />
+          )}
+          {/* `[overflow-y:auto]` and not Tailwind's `overflow-y-auto`, which styles.css gives a stable scrollbar
+              gutter: 7px of empty room on the right of a list that rarely scrolls, so its rows stood 14px from the
+              right edge and 7px from the left. With the scrollbar hidden too, a long list still scrolls by wheel
+              and by the arrow keys, and the arrows stay over the rail. */}
+          <RadixDropdown.RadioGroup
+            value={project.slug}
+            onValueChange={onPick}
+            className={`scrollbar-none max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-0 flex-1 p-1.5 [overflow-y:auto] ${phone ? "" : "pr-[42px]"}`}
+          >
+            {projects.map((p) => (
+              // TWO MENU ITEMS ON ONE ROW, so the arrow keys reach the link as they reach the row, and the
+              // browser opens the link on its own click, as it does the crumb's "Open on GitHub". Each lights
+              // alone. The chosen project is the filled row, with no check: a check at the row's far end stood
+              // beside the arrow as a second unrelated mark.
+              <div key={p.id} className="group/row flex items-center">
+                <RadixDropdown.RadioItem
+                  value={p.slug}
+                  data-console-project-option={p.slug}
+                  className="flex h-[26px] min-w-0 flex-1 cursor-pointer items-center gap-2 rounded pl-1.5 pr-2 text-[12.5px] text-fg outline-none data-[highlighted]:bg-panel-2 data-[state=checked]:bg-panel-2 data-[state=checked]:font-medium"
+                >
+                  <ProjectSquare project={p} size={16} />
+                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                </RadixDropdown.RadioItem>
+                {/* Not on a phone: a small target beside the row is a mis-tap that leaves the page being typed on.
+                    The cell is the rail's width and hangs into it by a negative margin, 6px clear of the row; its
+                    lit square is drawn inside it. */}
+                {!phone && (
+                  <RadixDropdown.Item asChild textValue="">
+                    <a
+                      href={projectHref(p.slug)}
+                      target="_blank"
+                      rel="noopener"
+                      aria-label={`Open ${p.name} in a new tab`}
+                      title="Open in a new tab"
+                      data-console-project-open={p.slug}
+                      className="relative z-[1] -mr-[42px] ml-1.5 flex h-[26px] w-9 shrink-0 cursor-pointer items-center justify-center text-muted-70 no-underline outline-none before:absolute before:inset-x-[7px] before:inset-y-[3px] before:rounded before:content-[''] group-hover/row:text-muted data-[highlighted]:text-fg data-[highlighted]:before:bg-hover-strong"
+                    >
+                      <ArrowUpRight aria-hidden size={14} className="relative" />
+                    </a>
+                  </RadixDropdown.Item>
+                )}
+              </div>
+            ))}
+          </RadixDropdown.RadioGroup>
         </RadixDropdown.Content>
       </RadixDropdown.Portal>
     </RadixDropdown.Root>
