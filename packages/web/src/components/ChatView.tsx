@@ -90,7 +90,7 @@ import { ChildOpRow } from "./ChildOpRow.tsx"
 import { ThreadLinks } from "./ThreadLinks.tsx"
 import { TRANSCRIPT_META_LABEL_CLASS, transcriptMetaChevronClass } from "../lib/transcriptMetaLabels.ts"
 import { InteractionStack } from "./InteractionCards.tsx"
-import { ClosedQuestionCard, InvalidQuestionFence, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { answeredRow, ClosedQuestionCard, InvalidQuestionFence, OpenQuestionCopyCard, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 // The shared card chrome and THE question card both live in their own modules now, so every
 // surface can render them without importing the thread view. QuestionBlockCard in particular is
 // shared with the native-AskUserQuestion path, which reaches it through InteractionCards.tsx —
@@ -3723,29 +3723,43 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
           // By the row the name meant IN THIS MESSAGE: an id asked again once its question settled names a
           // newer row, and this message's fence still draws the one it asked (lib/questionOwners).
           const row = resolveQuestionName(followsUp ? followsUp.parent : seg.fence.id, fenceQuestions ?? [], m.questionOwners)
+          // EVERY FENCE NAMING A ROW DRAWS IT, ONCE PER MESSAGE: the real card where the question's card
+          // is, and a read-only COPY everywhere else (maintainer 2026-11-06, choosing the full copy over a
+          // one-line row). Until then only the card's own slot drew anything, so each handoff that named an
+          // open question again took its card and left the previous handoff's lead-in over empty space.
+          if (row && placedDrawn.has(row.id)) continue
           if (row?.closed) {
             // CLOSED WITHOUT AN ANSWER — dismissed or withdrawn. The fence that asked it draws the question
-            // closed, saying which (ClosedQuestionCard); a follow-up or a reference to it draws nothing.
-            if (seg.fence.form === "ask" && !followsUp && !placedDrawn.has(row.id)) {
+            // closed, saying which (ClosedQuestionCard), from its own spec; a reference or a follow-up that
+            // named it while it was open draws the same card from what the row asked, once the thread's
+            // read of it has landed (useClosedQuestionSpecs), and nothing before then.
+            const asking = seg.fence.form === "ask" && !followsUp ? seg.fence.spec : undefined
+            const spec = asking ?? row.asked
+            if (spec) {
               placedDrawn.add(row.id)
-              push(<ClosedQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={seg.fence.spec} state={row.closed} wrap={dense} />)
+              push(<ClosedQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={spec} state={row.closed} copyOf={asking ? undefined : row.id} wrap={dense} />)
             }
             continue
           }
           if (row) {
-            // Placed in THIS message (the newest one naming it from its claiming rest on): the live card,
-            // once. Answered here: its settled card, once. Anywhere else, the card is drawn there.
+            placedDrawn.add(row.id)
+            // Placed in THIS message (the newest one naming it from its claiming rest on): the live card.
+            // Answered here: its settled card.
             const placedHere = placed?.find((q) => q.id === row.id)
-            if (placedHere && !placedDrawn.has(placedHere.id)) {
-              placedDrawn.add(placedHere.id)
+            if (placedHere) {
               push(<RegisteredQuestionCard key={`${keyBase}-${fi}-q${si}`} q={placedHere} />)
               continue
             }
             const settledHere = settledPlaced?.find((q) => q.id === row.id)
-            if (settledHere && !placedDrawn.has(settledHere.id)) {
-              placedDrawn.add(settledHere.id)
+            if (settledHere) {
               push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
+              continue
             }
+            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing down.
+            const answered = answeredRow(row)
+            push(answered
+              ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy wrap={dense} />
+              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} wrap={dense} />)
             continue
           }
           // AN ASK WITH NO ROW YET — the server registers a second or two behind the transcript, and never

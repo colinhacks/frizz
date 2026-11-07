@@ -306,6 +306,16 @@ test("the transcript reads back the ANSWERED questions with their answers, and n
     assert.equal(questions[0].askedAt, answered.askedAt)
     assert.ok(Date.parse(questions[0].settledAt) >= Date.parse(questions[0].askedAt))
     assert.deepEqual((await h.router.threadSettledQuestions.handler({ input: { slug: "other" } })).questions, [])
+
+    // A FENCE-ASKED question that closed unanswered comes back with what it asked, for the `id:`-only
+    // fences that named it while it was open. One the `ask` RPC registered has no handle, so no fence can
+    // name it, and stays out — the dismissal and the withdrawal above.
+    const fenceSpec = simple("Which store?")
+    h.storage.askThreadQuestion({ id: "qst_fencewithdrawn", slug: "t", spec: JSON.stringify(fenceSpec), askedAtMs: Date.now(), handle: "which-store" })
+    h.storage.withdrawThreadQuestion("t", "qst_fencewithdrawn", Date.now())
+    h.storage.askThreadQuestion({ id: "qst_fencestillopen", slug: "t", spec: JSON.stringify(simple("Still asking?")), askedAtMs: Date.now(), handle: "still-asking" })
+    const { closed } = await h.router.threadSettledQuestions.handler({ input: { slug: "t" } })
+    assert.deepEqual(closed, [{ id: "qst_fencewithdrawn", spec: fenceSpec }])
   } finally { h.close() }
 })
 
