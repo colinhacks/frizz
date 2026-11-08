@@ -7,7 +7,7 @@ import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
 import { queueComposerHandlesOptionEnter } from "../lib/queueComposerKeyboard.ts"
-import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { useDictation } from "../lib/dictation.ts"
@@ -154,7 +154,7 @@ export function Composer({
   surface,
   placeholder,
   id,
-  minHeight = 44,
+  minHeight: minHeightProp,
   maxHeight = 220,
   autoFocus,
   busy,
@@ -227,6 +227,11 @@ export function Composer({
   // (a box that is not a thread's: the dispatch form, a sub-agent's steer), the box itself is the zone.
   fileDrop?: SurfaceFileDrop
 }) {
+  // ONE LINE OF TEXT, by default. Over a footer row that is 10px above the line, the 21px line and 8px below
+  // it, so the line and the row stand apart by about what stands above the line (lib/iconRhythm.ts, the prompt
+  // box's bottom row). It was 44px there, with 12px under the line; those 4px and the 5px the footer row gave
+  // back are the extra space the maintainer read on 2026-11-07.
+  const minHeight = minHeightProp ?? (footer ? 40 : 44)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const contextRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -543,6 +548,8 @@ export function Composer({
   const armed = hasContent || (send?.staged ?? 0) > 0
   // Where each rail mark sits, and the padding every text row keeps clear of the absolutely-placed rail.
   const rail = composerRail({ lead: Boolean(railLead), mic: micShown, sendWidth: send && !phone ? SEND_SPLIT_WIDTH : undefined })
+  // On the footer row's inset, or centred on the one line of a box with no footer row.
+  const railBottom = footer ? PROMPT_ROW_INSET : PROMPT_ROW_INSET_SINGLE_LINE
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     const el = e.currentTarget
@@ -961,13 +968,13 @@ export function Composer({
     // `data-composer-box` is the bordered box itself: the Goal panel spans exactly its two edges.
     <div
       data-composer-box
-      className={`group relative rounded-xl border bg-bg transition-colors focus-within:border-accent ${
+      className={`group relative ${PROMPT_BOX_CORNER} border bg-bg transition-colors focus-within:border-accent ${
         dragging ? "border-dashed border-accent" : "border-border"
       }`}
       {...(fileDrop ? {} : ownDrop.handlers)}
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg/80 text-[12px] text-muted">
+        <div className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center ${PROMPT_BOX_CORNER} bg-bg/80 text-[12px] text-muted`}>
           Drop file to attach
         </div>
       )}
@@ -982,7 +989,7 @@ export function Composer({
             ref={contextRef}
             aria-hidden
             data-composer-context-backdrop
-            className={`pointer-events-none absolute inset-0 select-none overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word] px-3.5 ${footer ? "py-2.5 pb-3" : "py-2.5"} text-[13px] leading-relaxed text-transparent`}
+            className={`pointer-events-none absolute inset-0 select-none overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word] px-3.5 ${footer ? "pt-2.5 pb-2" : "py-2.5"} text-[13px] leading-relaxed text-transparent`}
             style={footer ? undefined : { paddingRight: rail.reserve }}
           >
             {backdropSegments}
@@ -1030,7 +1037,7 @@ export function Composer({
           // out of every line). Without a footer the box is a single compact row and the right padding is
           // what keeps text from sliding under the floating paperclip/send buttons. `relative` keeps the
           // caret and text painting above the marker backdrop behind it.
-          className={`relative block w-full resize-none bg-transparent px-3.5 ${footer ? "py-2.5 pb-3" : "py-2.5"} text-[13px] leading-relaxed text-fg outline-none placeholder:text-muted scrollbar-none disabled:opacity-60`}
+          className={`relative block w-full resize-none bg-transparent px-3.5 ${footer ? "pt-2.5 pb-2" : "py-2.5"} text-[13px] leading-relaxed text-fg outline-none placeholder:text-muted scrollbar-none disabled:opacity-60`}
         />
       </div>
       {/* Attachment chips along the bottom row — one square tile per attached file (image thumbnail or
@@ -1049,16 +1056,16 @@ export function Composer({
           ))}
         </div>
       )}
-      {/* Inline footer strip along the bottom edge — always reserved below the auto-growing text.
-          min-h-9 and an 8px inset put its centre line 22px above the box's bottom edge, the centre of the
-          28px rail marks at bottom-2, so the model chip, the agent's marks, the paperclip and send are one
-          line of marks, and the chip stands off the box's corner by the 8px send does (2026-11-06). It was
-          a 6px inset that shared an arc centre with the box's corner, and left the chip 3px below the rail. */}
+      {/* Inline footer strip along the bottom edge — always reserved below the auto-growing text. Its
+          controls are 24px on the 7px inset (8px from the box's outer edge), below and to the left, and the
+          rail's marks stand on the same inset below and to the right, so the model chip and Send each sit in
+          their corner with an arc that shares the box's centre (lib/iconRhythm.ts PROMPT_ROW_INSET). The chip
+          sat 9px from the left and 12px from the bottom, and Send 9px from both, until 2026-11-07. */}
       {/* Reserve the right-side action rail. Without this, three shrinkable readouts can extend under
           the absolutely positioned paperclip/send buttons on narrow composers. */}
-      {footer && <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-1 pl-2 pb-2" style={{ paddingRight: rail.reserve }}>{footer}</div>}
+      {footer && <div className={`flex min-w-0 flex-wrap items-center gap-1 ${PROMPT_FOOTER_ROW}`} style={{ paddingRight: rail.reserve }}>{footer}</div>}
       {/* Outlined controls keep 8px between edges; prose reserves the same clearance. */}
-      {railLead && <div className="absolute bottom-2 flex items-center" style={{ right: rail.right.lead }}>{railLead}</div>}
+      {railLead && <div className="absolute flex items-center" style={{ right: rail.right.lead, bottom: railBottom }}>{railLead}</div>}
       {/* Attach: a hidden file input driven by the paperclip. Sits in the right rail LEFT of the send
           button, so it never overlaps the mode/model footer or the send
           affordance. Accept is the shared extension allowlist; the /attach route re-validates. */}
@@ -1081,8 +1088,8 @@ export function Composer({
         aria-label="Attach files"
         // With no rail action the paperclip TAKES the rail-action slot — at its OWN offset, not the
         // rail action’s, because it paints 1px less dead space on that side (lib/iconRhythm.ts).
-        style={{ right: rail.right.paperclip }}
-        className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-[color,background-color] enabled:hover:bg-hover-strong enabled:hover:text-fg disabled:opacity-50`}
+        style={{ right: rail.right.paperclip, bottom: railBottom }}
+        className={`icon-focus-outline absolute flex ${RAIL_MARK_SQUARE} items-center justify-center text-muted transition-[color,background-color] enabled:hover:bg-hover-strong enabled:hover:text-fg disabled:opacity-50`}
       >
         {uploading ? <Loader2 {...PAPERCLIP_GLYPH} className="animate-spin" /> : <Paperclip {...PAPERCLIP_GLYPH} />}
       </button>
@@ -1114,11 +1121,11 @@ export function Composer({
                   : "Dictate — transcribed on this device"
           }
           aria-label={dictation.state === "listening" ? "Stop dictation" : "Dictate"}
-          style={{ right: rail.right.mic }}
+          style={{ right: rail.right.mic, bottom: railBottom }}
           // Listening swaps the GLYPH for live level bars at full foreground, never a fill: a filled square
           // is ink edge to edge, and at this slot's box gap it would sit ~6px off the paperclip's ink
           // instead of ~14. (A red, pulsing microphone was tried first and rejected, 2026-10-08.)
-          className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg transition-[color,background-color] enabled:hover:bg-hover-strong disabled:opacity-50 ${
+          className={`icon-focus-outline absolute flex ${RAIL_MARK_SQUARE} items-center justify-center transition-[color,background-color] enabled:hover:bg-hover-strong disabled:opacity-50 ${
             dictation.state === "listening" ? "text-fg" : "text-muted enabled:hover:text-fg"
           }`}
         >
@@ -1139,6 +1146,7 @@ export function Composer({
           mode={send.mode}
           running={send.running}
           right={rail.right.send}
+          bottom={railBottom}
           onMode={send.onMode}
           onSend={submit}
           onMenuClosed={() => taRef.current?.focus({ preventScroll: true })}
@@ -1156,8 +1164,8 @@ export function Composer({
         title="Send (Enter · ⌘⏎ sends now)"
         aria-label="Send"
         // Never `transition-all`: it animates box-shadow, which holds the focus edge back (styles.css).
-        style={{ right: rail.right.send }}
-        className={`icon-focus-outline absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-lg transition-[color,background-color,opacity,scale] ${
+        style={{ right: rail.right.send, bottom: railBottom }}
+        className={`icon-focus-outline absolute flex ${RAIL_MARK_SQUARE} items-center justify-center transition-[color,background-color,opacity,scale] ${
           // Primary actions use neutral contrast; the accent marks focus.
           hasContent && !busy && !uploading
             ? "bg-fg text-bg hover:opacity-90 active:scale-95"

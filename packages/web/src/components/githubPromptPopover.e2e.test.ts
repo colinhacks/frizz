@@ -97,7 +97,7 @@ test("the header links out to the repo from a right-justified chip; the gear sta
       }
     }, GEAR)
     const air = footer.gearInkLeft - footer.chipRight
-    assert.ok(air > 10 && air < 14, `the gear's ink stands ~12px right of the model chip, as the composer's marks do, got ${air}px`)
+    assert.ok(air > 13.5 && air < 15.5, `the gear's ink stands ~14.5px right of the model chip, as the composer's marks do, got ${air}px`)
     assert.ok(Math.abs(footer.gearInkMid - footer.chipMid) < 0.75, `the gear is centred on the chip, off by ${footer.gearInkMid - footer.chipMid}px`)
     assert.ok(Math.abs(footer.chipMid - footer.startMid) < 0.75, `the chip is centred on the Start button, off by ${footer.chipMid - footer.startMid}px`)
     assert.ok(footer.startLeft - footer.gearInkRight > 200, "the Start button stands well clear of the gear, on the far right")

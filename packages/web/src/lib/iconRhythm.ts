@@ -63,7 +63,7 @@ const MARK_GLYPH_BOX = 14
 
 /** Lucide props that draw a glyph at `ink` px (the size its 24-unit grid would be drawn at) with the one
  *  pen, inside an even 14px box. The viewBox carries the scale so the box stays even: a 12.5px svg centres
- *  in a 28px square on a quarter pixel and blurs on a 1x screen. */
+ *  in a 24px square on a quarter pixel and blurs on a 1x screen. */
 export function markGlyph(ink: number): { size: number; viewBox: string; strokeWidth: number } {
   const span = (24 * MARK_GLYPH_BOX) / ink
   const inset = (24 - span) / 2
@@ -97,55 +97,81 @@ export const PLUG_GLYPH = {
   style: { transform: "translate(-0.68px, 0.68px) rotate(45deg)" },
 } as const
 
+/** THE PROMPT BOX'S BOTTOM ROW SITS IN ITS CORNERS (maintainer 2026-11-07, of the model chip's corner: "There's
+ *  clearly an unnecessary amount of space, like padding-bottom here. The buttons, the radius of the prompt box,
+ *  and the model selector button don't even slot together in a good way."). Measured on the real thread box:
+ *
+ *    before    box corner 12px · chip 22px tall, 6px corner, 9px from the left edge and 12px from the bottom
+ *              Send 28px tall, 8px corner, 9px from the right edge and the bottom · rail squares 28px
+ *    now       every control on the row 24px tall with a 6px corner, 8px from each box edge it meets
+ *              box corner 6 + 8 = 14px, so each corner control's arc shares its centre with the box's
+ *
+ *  Three heights, two insets and no shared arc became one of each, and the empty box dropped from 82px to 73px:
+ *  the text keeps one line of its own above the row (Composer's textarea), and the row keeps the 8px inset.
+ *  The chip's label lands on the prose's left edge, 15px in, as a side effect of the 8px inset.
+ *
+ *  `PROMPT_ROW_INSET` is measured from inside the box's 1px border, which is what `bottom`, `right` and
+ *  padding are measured from. A box with no footer row centres its rail on its one line instead: the
+ *  textarea's 44px with a 24px square is 10px either side, where the rail's centre has always sat. */
+export const PROMPT_ROW_INSET = 7
+export const PROMPT_ROW_INSET_SINGLE_LINE = 10
+/** The bordered box itself, and the drop hint that covers it. */
+export const PROMPT_BOX_CORNER = "rounded-[14px]"
+/** The footer row: the 24px controls on the 7px inset, below and to the left. */
+export const PROMPT_FOOTER_ROW = "min-h-[31px] pb-[7px] pl-[7px]"
+/** A rail mark's square (the Goal, the paperclip, the microphone, the plain send): the chip's height and corner. */
+export const RAIL_MARK_SQUARE = "h-6 w-6 rounded-md"
+
 /** THE AGENT'S MARKS beside the model chip (components/AgentMarks.tsx): the paperclip's hover fill and tone, on
- *  a square the chip's own 22px height and 6px corner, trimmed onto its ink so the row's one gap is a distance
- *  of ink. Measured at a real 4x (scripts/ink-gaps.mjs): 12.4px from the chip's border to the gauge, 12.6px from
- *  the gauge to the plug.
+ *  a square the chip's own 24px height and 6px corner, trimmed onto its ink so the row's one gap is a distance
+ *  of ink: the rail's ~14.5px (RAIL_BOX_GAP), so one distance runs between every mark in the box.
  *
  *  THE SQUARES NEVER OVERLAP (maintainer 2026-11-07, of the gauge and the plug lit side by side: "The fact that
  *  these overlap is weird"). Each mark holds its fill while its panel is open, so the pointer on one with the
  *  other's panel open lights both. They were the rail's 28px squares until then, overlapping by 3.75px of
- *  padding on the belief that only one could be lit at a time, and the overlap painted twice. At 22px they
- *  stand 2.3px apart, their ink a pixel further apart than the 11.5px it kept while they overlapped. */
-export const AGENT_MARKS = "ml-[7px] flex shrink-0 items-center gap-[13px] empty:hidden"
-const AGENT_MARK = "icon-focus-outline relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg"
-export const GAUGE_MARK = `-mx-[5.2px] ${AGENT_MARK}`
-export const PLUG_MARK = `-mx-[5.5px] ${AGENT_MARK}`
+ *  padding on the belief that only one could be lit at a time, and the overlap painted twice. On 22px squares
+ *  they stood 2.3px apart with 12.5px of ink between them. On 24px squares the same 2.3px puts 14.5px of ink
+ *  between them, which is the rail's distance, so the chip-to-gauge gap took it too. */
+export const AGENT_MARKS = "ml-[9px] flex shrink-0 items-center gap-[15px] empty:hidden"
+const AGENT_MARK = `icon-focus-outline relative flex ${RAIL_MARK_SQUARE} shrink-0 items-center justify-center text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg`
+export const GAUGE_MARK = `-mx-[6.2px] ${AGENT_MARK}`
+export const PLUG_MARK = `-mx-[6.5px] ${AGENT_MARK}`
 /** The GitHub picker's prompt gear (GithubPromptPopover), which stands beside that picker's model chip as these
- *  marks stand beside the composer's: the same square, tone and pen. The gear paints 11px of ink (painted pixels
- *  at 4x, 2026-11-07), 5.5px of dead square a side, and stands 13.2px of ink from the chip's border. */
+ *  marks stand beside the composer's: the same square, tone and pen. Its trim is what it paints, not its 11px of
+ *  ink by arithmetic: trimmed 6.5px a side it stood 15.2px of painted ink from the chip, so it takes 7.2px and
+ *  stands 14.5px off it, as the composer's marks do (scripts/ink-gaps.mjs at 4x, 2026-11-07). */
 export const SETTINGS_GLYPH = markGlyph(12.5)
-export const SETTINGS_MARK = `-mx-[5.5px] ${AGENT_MARK}`
+export const SETTINGS_MARK = `-mx-[7.2px] ${AGENT_MARK}`
 
 /** THE RAIL, right to left: send, the microphone (only where on-device dictation exists — see
- *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 28px square; any of
- *  the middle marks may be absent, and the marks to its left close up.
+ *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 24px square
+ *  (RAIL_MARK_SQUARE); any of the middle marks may be absent, and the marks to its left close up.
  *
  *  What is measured is the BOX GAP between each pair of neighbours — the gap that puts their INK
  *  ~14.5px apart, given the dead space each glyph wears. The Send button is filled, so its ink is its
- *  box; the bare marks carry 8–9px of empty box per side. Hover outlines do not take part in the
+ *  box; the bare marks carry 6–7px of empty box per side. Hover outlines do not take part in the
  *  resting rhythm. A pair missing from the table falls back to the paperclip→send gap; add the
  *  measurement rather than relying on it. */
 export type RailMark = "lead" | "paperclip" | "mic" | "send"
 const RAIL_ORDER: readonly RailMark[] = ["lead", "paperclip", "mic", "send"]
-const RAIL_BOX = 28
-const RAIL_SEND_RIGHT = 8
+const RAIL_BOX = 24
+const RAIL_SEND_RIGHT = PROMPT_ROW_INSET
 // Clearance the prose keeps from the leftmost mark.
 const RAIL_PROSE_CLEARANCE = 8
 
 const RAIL_BOX_GAP: Partial<Record<`${RailMark}>${RailMark}`, number>> = {
-  // The paperclip's 11px of ink wears 8.5px of dead box a side, the Goal's the same and the microphone's 9.5px.
-  // Painted pixels at a real 4x, 2026-11-06: paperclip→send 14.25, Goal→paperclip 14.50, paperclip→mic 14.75,
-  // mic→send 14.50. The squares overlap by empty padding where the gap is negative. That is safe on the rail
-  // alone: no rail mark keeps a fill when the pointer leaves it (the Goal's panel and the microphone's listening
-  // state paint none), so only one square is ever lit. A mark that holds its fill must not overlap (AGENT_MARKS).
-  "paperclip>send": 6,
-  "lead>paperclip": -3,
-  "mic>send": 5,
-  "paperclip>mic": -3,
+  // The paperclip's 11px of ink wears 6.5px of dead box a side, the Goal's the same and the microphone's 7.5px.
+  // Each gap is the 28px square's measured gap plus the 2px a side the 24px square gave back: painted pixels at
+  // a real 4x, 2026-11-06, on 28px squares, paperclip→send 14.25, Goal→paperclip 14.50, paperclip→mic 14.75,
+  // mic→send 14.50, re-measured on 24px squares in the commit that made them. No square overlaps another now,
+  // so the rule that a mark holding its fill must never overlap (AGENT_MARKS) holds on the rail too.
+  "paperclip>send": 8,
+  "lead>paperclip": 1,
+  "mic>send": 7,
+  "paperclip>mic": 1,
 }
 
-/** THE THREAD COMPOSER'S SEND IS A SPLIT BUTTON, not a 28px square: the word "Send", a hairline, and a
+/** THE THREAD COMPOSER'S SEND IS A SPLIT BUTTON, not a 24px square: the word "Send", a hairline, and a
  *  caret that opens the two ways of sending (components/SendSplitButton.tsx, which owns these three
  *  widths and the readings behind them). It is still filled edge to edge, so its ink is its box and
  *  every gap in the table above holds unchanged — only the width the marks to its left clear grows. */
@@ -155,7 +181,7 @@ export const SEND_SPLIT_CARET_WIDTH = 23
 export const SEND_SPLIT_WIDTH = SEND_SPLIT_LABEL_WIDTH + SEND_SPLIT_SEAM_WIDTH + SEND_SPLIT_CARET_WIDTH
 
 /** Where each present mark sits (its CSS `right`, px) and how much right padding the prose keeps.
- *  `sendWidth` is the Send control's own width when it is not the 28px square. A fractional one is
+ *  `sendWidth` is the Send control's own width when it is not the 24px square. A fractional one is
  *  rounded UP for the marks beside it: the button is filled and may end on a half pixel, but a bare
  *  icon placed on one draws soft on a 1x screen. */
 export function composerRail(present: { lead?: boolean; mic?: boolean; sendWidth?: number }): {

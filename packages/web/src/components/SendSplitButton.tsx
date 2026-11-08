@@ -46,6 +46,7 @@ export function SendSplitButton({
   mode,
   running,
   right,
+  bottom,
   onMode,
   onSend,
   onMenuClosed,
@@ -58,6 +59,8 @@ export function SendSplitButton({
   running: boolean
   /** The rail offset (lib/iconRhythm composerRail). */
   right: number | undefined
+  /** The rail's inset from the box's bottom edge (lib/iconRhythm PROMPT_ROW_INSET). */
+  bottom: number
   onMode: (mode: SendMode) => void
   onSend: () => void
   /** The menu closed: put the caret back in the prompt box, where the next keystroke belongs. */
@@ -81,8 +84,8 @@ export function SendSplitButton({
     <span
       data-send-split
       data-send-mode={mode}
-      className={`absolute bottom-2 flex h-7 rounded-lg transition-[color,background-color,scale] ${tone} ${armed ? "has-[[data-send]:active]:scale-95" : ""}`}
-      style={{ right, width: SEND_SPLIT_WIDTH }}
+      className={`absolute flex h-6 rounded-md transition-[color,background-color,scale] ${tone} ${armed ? "has-[[data-send]:active]:scale-95" : ""}`}
+      style={{ right, bottom, width: SEND_SPLIT_WIDTH }}
     >
       <button
         type="button"
@@ -97,7 +100,7 @@ export function SendSplitButton({
         aria-label="Send"
         style={{ width: SEND_SPLIT_LABEL_WIDTH, paddingLeft: LABEL_PAD_LEFT }}
         // Never `transition-all`: it animates box-shadow, which holds the hover edge back (styles.css).
-        className={`flex items-center rounded-l-lg text-[12px] font-medium leading-none outline-none transition-[color,background-color] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${hover}`}
+        className={`flex items-center rounded-l-md text-[12px] font-medium leading-none outline-none transition-[color,background-color] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${hover}`}
       >
         {/* The word never changes, so nothing beside the button moves when the way of sending does. */}
         {busy ? <Loader2 size={14} strokeWidth={2.5} className="animate-spin" /> : <span data-send-label>Send</span>}
@@ -118,7 +121,7 @@ export function SendSplitButton({
             data-send-menu
             aria-label="Choose how this is sent"
             style={{ width: SEND_SPLIT_CARET_WIDTH, paddingLeft: CARET_PAD_LEFT }}
-            className={`flex items-center rounded-r-lg outline-none transition-[color,background-color] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${armed ? hover : "hover:text-fg"}`}
+            className={`flex items-center rounded-r-md outline-none transition-[color,background-color] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${armed ? hover : "hover:text-fg"}`}
           >
             <ChevronDown data-send-caret size={13} strokeWidth={2.5} />
           </button>
