@@ -4470,7 +4470,7 @@ export function queuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou"
  * The queue as a project's BOARD draws it, and so as its badges count it: `queuedThread`, less a pinned
  * thread's plain report (maintainer 2026-11-06, of a pinned thread at rest: "Queue only its asks"). A pin
  * marks a standing thread the human goes back to on their own schedule, and its row is already on the
- * shelf at the top of the rail, so a report shows there as unread rather than taking a turn in the queue.
+ * shelf at the top of the rail, so a report waits there, unmarked, rather than taking a turn in the queue.
  * Its asks and its failures still card (board.derivePlainReport says which is which).
  *
  * The board's pin only. The Console's "By status" has a shelf of its own and asks its own question

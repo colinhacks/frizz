@@ -9,7 +9,7 @@ import { rpc } from "../api/rpc.ts"
 import { useBoardThreads, useChildThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
 import type { PinShelf } from "../groups.ts"
-import { unreadReport, sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
+import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
@@ -300,8 +300,10 @@ export function Sidebar() {
               band claims them, so a pinned thread stays here spinning, resting, snoozed or Done alike — and
               the band is ordered by the pin instants, oldest first, never by activity: it is an arrangement
               the human made, and nothing the threads do may shuffle it. The human rearranges it by dragging a
-              row (PinnedBand). A row resting on a plain report has no card, and carries an unread dot in its
-              gutter until the thread is opened; a row with an ask or a failure keeps its card.
+              row (PinnedBand). A row resting on a plain report has no card and no mark beyond its own status
+              glyph and rest time (maintainer 2026-11-09, of an unread dot that lived here for three days: "if
+              something comes to rest but it doesn't have anything actionable for the human, then why bother
+              giving it a dot?"); a row with an ask or a failure keeps its card.
               LABELED since 2026-09-19, like every band below it, and NOT collapsible (maintainer: the Pinned,
               Queue and Running labels "should not be collapsible") — the header is the static form of
               SectionHeader, so it lines up with the collapsible Snoozed/Done headers. */}
@@ -644,7 +646,7 @@ export function PinnedBand({ threads, railRef, activeId, onQueueNavigate, shelf 
             {/* Undated only while it SPINS: actively running and holding no queue card. A queued row with
                 live work out (an open question beside a running sub-agent) wears the queue's glyph, not a
                 spinner, and the cue would date it — so it is dated here too. */}
-            <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={onQueueNavigate} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} unread={unreadReport(t)} />
+            <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={onQueueNavigate} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} />
             <SubAgentRows t={t} />
           </div>
         )
@@ -873,11 +875,8 @@ export const ThreadRow = memo(function ThreadRow({
   restedAge = false,
   leading,
   shelf = "board",
-  unread = false,
 }: {
   t: ThreadView
-  /** A pinned row whose report the human has not read: it has no card to be seen on (groups.ts unreadReport). */
-  unread?: boolean
   legacy?: boolean
   active?: boolean
   onQueueNavigate?: (id: string) => void
@@ -939,7 +938,6 @@ export const ThreadRow = memo(function ThreadRow({
           while the fixed rail keeps it from shifting content or relying on clipped overflow. */}
       <span aria-hidden="true" data-sidebar-marker-rail className="pointer-events-none absolute inset-y-0 left-0 w-5">
         {active && <span data-sidebar-scroll-marker className="absolute inset-y-0 left-1 w-[2px] rounded-full bg-accent" />}
-        {unread && <span data-sidebar-unread className="absolute left-[8px] top-[10.5px] size-1.5 rounded-full bg-accent" />}
       </span>
       <button
         onClick={() => {
@@ -958,7 +956,6 @@ export const ThreadRow = memo(function ThreadRow({
         aria-current={active ? "location" : undefined}
         className="min-w-0 flex-1 flex items-start gap-2 pb-1 pl-5 pr-1.5 pt-1 text-left"
       >
-        {unread && <span className="sr-only">Unread report. </span>}
         {leading}
         {/* h-[19px] so the indicator centers on the title's FIRST line, not the middle of a wrapped row. */}
         <span className="w-4 h-[19px] shrink-0 flex items-center justify-center">
