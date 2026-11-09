@@ -127,13 +127,10 @@ export function sendAndNext(canSend: boolean, submit: () => void): void {
 }
 
 // ── the wide layout ───────────────────────────────────────────────────────────────────────────────
-// AT 1360PX AND WIDER THE PANE IS ALWAYS THREE COLUMNS (maintainer 2026-11-06, "4C"): the sidebar's 300,
+// AT 1360PX AND WIDER THE PANE IS THREE COLUMNS (maintainer 2026-11-06, "4C"): the sidebar's minimum 300,
 // the thread's 720 and the rail's 340 add up to exactly 1360, so from there on nothing has to be put away
-// to show the rail, and there is no full screen to go to. Narrower, the sidebar and the rail cannot both
-// stand beside a thread, and ⌘\ trades one for the other.
-//
-// A fold stored while narrow is kept, not cleared, while the window is wide: it only has no effect there,
-// and narrowing the window again brings it back as it was.
+// to show the rail. Narrower, the sidebar and the rail cannot both stand beside a thread, and only full
+// screen brings the rail back.
 export const PANE_WIDE_MIN_PX = 1360
 const WIDE_QUERY = `(min-width: ${PANE_WIDE_MIN_PX}px)`
 
@@ -161,13 +158,14 @@ export function usePaneWide(): boolean {
 }
 
 // ── full screen ───────────────────────────────────────────────────────────────────────────────────
-// The same page with the sidebar put away: no navigation and no remount, so the transcript keeps its
-// place and the prompt box its draft. The thread column morphs through the view transition /full's door
-// already uses (styles.css `thread-chat`), and it is a transition rather than animated widths because
-// the column's width is a percentage of the page around it (StandaloneThreadPage LAYOUT_VARS).
+// FOCUS MODE, AT EVERY WIDTH (maintainer 2026-11-09: "open up a specific thread in a view that drops the
+// sidebar … This is the whole idea"). The same page with the sidebar put away: no navigation and no
+// remount, so the transcript keeps its place and the prompt box its draft. The thread column morphs
+// through the view transition /full's door already uses (styles.css `thread-chat`), and it is a transition
+// rather than animated widths because the column's width is a percentage of the page around it
+// (StandaloneThreadPage LAYOUT_VARS).
 export function setPaneFolded(next: boolean): void {
-  // Wide, there is nothing to fold (above); ⌘\ and the Escape that unfolds do nothing.
-  if (paneProto.folded === next || isPaneWide()) return
+  if (paneProto.folded === next) return
   const apply = () => {
     flushSync(() => {
       paneProto.folded = next

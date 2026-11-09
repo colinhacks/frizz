@@ -225,12 +225,6 @@ body {
 :has(> [data-header-pill]:last-child) + [data-thread-lifecycle] > [data-lifecycle-rule] {
   margin-left: 17.5px;
 }
-/* With no view control before it there is nothing for the rule to hold apart: the one-thread pane's wide
-   layout (prototype) has no fullscreen door, and a header whose strip is otherwise empty began with a
-   bare hairline. */
-:empty + [data-thread-lifecycle] > [data-lifecycle-rule] {
-  display: none;
-}
 
 /* System sans-serif already centres small label icons optically: measured nudge 0px. */
 :root {

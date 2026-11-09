@@ -30,10 +30,15 @@ import { LAYOUT_VARS, SidePane } from "./StandaloneThreadPage.tsx"
 // height. The thread is the same ThreadView the drawer and /full draw; everything a queue card did about
 // scrolling and fading is simply absent, because nothing here moves but the swap of one thread for another.
 
-const SIDEBAR_W = "clamp(272px,34vw,680px)"
-// The wide layout's sidebar (lib/threadPane.ts PANE_WIDE_MIN_PX): 300 + the thread's 720 + the rail's 340
-// is the 1360 the three columns start at. Its 16px insets are the peek's, so the two read alike.
+// THE COLUMNS MEET EDGE TO EDGE, AND THE SIDEBAR TAKES THE SLACK (maintainer 2026-11-09: the rail "just
+// immediately up against the content window", "the same thing for the sidebar", and "let the sidebar
+// expand to any width that it wants" so titles do not wrap more than they must). The thread and the rail
+// hold their widths and the sidebar is whatever is left, with no upper limit. These are its minimums: 300
+// + the thread's 720 + the rail's 340 is the 1360 the three columns start at (lib/threadPane.ts
+// PANE_WIDE_MIN_PX). Its 16px insets are the peek's, so the two read alike.
 const WIDE_SIDEBAR_PX = 300
+const NARROW_SIDEBAR_PX = 272
+const THREAD_PX = 720
 
 /** The queue in the order the pane walks it: the order the queue's cards stood in. */
 export function usePaneQueue(): readonly ThreadRow[] {
@@ -58,8 +63,12 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   const queue = usePaneQueue()
   publishPaneQueue(queue.map((t) => t.id))
   const slug = snap.paneSlug
-  // With nothing selected there is nothing to be full screen about, and wide there is no full screen.
-  const folded = proto.folded && slug !== null && !wide
+  // With nothing selected there is nothing to be full screen about.
+  const folded = proto.folded && slug !== null
+  const threeColumns = wide && !folded
+  // A file wants more room than the thread's 720 leaves it, so while one is open the sidebar comes back to
+  // its minimum, and the thread and the file halve what is left (PaneThread).
+  const fileBeside = threeColumns && snap.filePanels.length > 0
   const [peek, setPeek] = useState(false)
   if (!folded && peek) setPeek(false)
   // A board's sidebar opens level with the thread's header (its 52px was the line the first queue card
@@ -98,18 +107,16 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
 
   return (
     <div
-      data-pane-layout={wide ? "wide" : folded ? "folded" : "narrow"}
-      className="flex h-dvh w-full justify-center overflow-hidden"
-      // Wide, the three columns meet edge to edge: their 1360 leaves nothing for a gap at the line itself.
-      style={{ gap: folded || wide ? 0 : "clamp(28px,3.4vw,52px)", paddingInline: folded || wide ? 0 : 20 }}
+      data-pane-layout={folded ? "folded" : wide ? "wide" : "narrow"}
+      className="flex h-dvh w-full overflow-hidden"
     >
-      {/* The sidebar never unmounts across the wide line: the same docked column, at 300px there. Folded
-          (narrow only) it waits off the left edge, and a pointer at that edge peeks it over the thread. */}
+      {/* The sidebar never unmounts across the wide line: the same docked column at every width. Full
+          screen it waits off the left edge, and a pointer at that edge peeks it over the thread. */}
       {!folded ? (
         <div
           data-pane-sidebar
-          className={`h-full shrink-0 [view-transition-name:pane-sidebar] ${boardTop} ${wide ? "px-4 [&>aside]:!w-full" : ""}`}
-          style={{ width: wide ? WIDE_SIDEBAR_PX : SIDEBAR_W }}
+          className={`h-full px-4 [view-transition-name:pane-sidebar] [&>aside]:!w-full ${boardTop}`}
+          style={{ flex: fileBeside ? `0 0 ${WIDE_SIDEBAR_PX}px` : "1 1 0", minWidth: wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX }}
         >
           {sidebar}
         </div>
@@ -133,8 +140,8 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       )}
       <main
         id="workpane"
-        className={`h-full min-w-0 ${wide ? "flex-1" : ""}`}
-        style={{ width: wide ? undefined : folded ? "100%" : "min(720px, 62vw)" }}
+        className="h-full min-w-0"
+        style={{ flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${THREAD_PX + RAIL_WIDTH}px` : `0 0 min(${THREAD_PX}px, 62vw)` }}
       >
         {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
       </main>
@@ -149,13 +156,18 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
   const thread = useThreadSnapshot(slug)
   const route = resolveThreadRoute(board, slug, threadBySlug)
   const queryClient = useQueryClient()
-  // The rail stands beside the thread folded (from the split width up, as on /full) and always when wide.
-  const railBeside = folded || wide
+  const threeColumns = wide && !folded
+  // The rail stands beside the thread full screen (from the split width up, as on /full) and in the three
+  // columns.
+  const railBeside = folded || threeColumns
   const fileOpen = folded && snap.filePanels.some((panel) => !panel.closing)
-  // Wide, a file takes room from the thread rather than sliding the row: the sidebar stays, so there is no
-  // slack beside the pair to slide into. Held through the layer's slide-out (`closing` included), so the
-  // viewer leaves at the width it came in at and the columns settle once it is gone.
-  const wideFile = wide && snap.filePanels.length > 0
+  // In the three columns a file takes room from the thread rather than sliding the row: the sidebar stays,
+  // so there is no slack beside the pair to slide into. Held through the layer's slide-out (`closing`
+  // included), so the viewer leaves at the width it came in at and the columns settle once it is gone.
+  const fileBeside = threeColumns && snap.filePanels.length > 0
+  // In the queue when it was opened, and read as a card from then on, whatever the thread goes on to do.
+  const [opensQueued, setOpensQueued] = useState<boolean | null>(thread ? queued(thread) : null)
+  if (opensQueued === null && thread) setOpensQueued(queued(thread))
 
   // Reading it counts as reading it, as in the drawer and on /full.
   const atRest = thread?.runtime === "turn-idle" || thread?.runtime === "exited" || thread?.runtime === "none"
@@ -198,41 +210,38 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
       cancel: () => reinstate(slug),
       sent: () => paneAfterSend(slug),
     },
-    // The fullscreen door only where there is something to fold: never wide.
-    expand: !folded && !wide,
-    railBeside: wide,
-  }), [slug, folded, wide])
+    // Full screen is one click from the open thread at every width: it is how one thread gets the page to
+    // itself (maintainer 2026-11-09). Already there, the header has the door's closing half instead.
+    expand: !folded,
+    railBeside: threeColumns,
+    queueWindow: opensQueued === true,
+  }), [slug, folded, threeColumns, opensQueued])
 
   // ONE TREE IN EVERY LAYOUT, each slot a fixed element whose classes change, so crossing the wide line
   // or folding never remounts the thread: the transcript keeps its scroll and the prompt box its focus.
-  //   [gutter] [thread] [wide gutter] [side pane]
-  // Folded, the first gutter is /full's centring (LAYOUT_VARS); wide, the two gutters centre the 720px
-  // thread between the sidebar and the rail, and both close while a file is open.
+  //   [gutter] [thread] [side pane]
+  // The gutter is /full's centring (LAYOUT_VARS), full screen only: in the three columns the thread
+  // stands hard against the sidebar and the rail.
   return (
     <ProjectScope project={keyProject(slug)}>
       <div
-        className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${wide ? "" : "justify-center split:justify-start"}`}
+        className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${threeColumns ? "" : "justify-center split:justify-start"}`}
         style={{
           ...LAYOUT_VARS,
-          // Wide and at rest the side pane is the rail alone; with a file it is /full's pane, the half of
-          // the room right of the sidebar that the thread (--full-thread) does not take.
-          ...(wide && !wideFile ? { "--full-pane": `${RAIL_WIDTH}px` } : null),
+          // In the three columns and at rest the side pane is the rail alone; with a file it is /full's
+          // pane, the half of the room right of the sidebar that the thread (--full-thread) does not take.
+          ...(threeColumns && !fileBeside ? { "--full-pane": `${RAIL_WIDTH}px` } : null),
           transform: fileOpen ? "translateX(calc(-1 * var(--full-gutter)))" : undefined,
         } as CSSProperties}
       >
-        {(folded || wide) && (
-          <div
-            aria-hidden="true"
-            className={wide ? (wideFile ? "hidden" : "min-w-0 flex-1") : "hidden w-[var(--full-gutter)] shrink-0 split:block"}
-          />
-        )}
+        {folded && <div aria-hidden="true" className="hidden w-[var(--full-gutter)] shrink-0 split:block" />}
         <div
           data-pane-thread
           className={`flex h-full min-w-0 flex-col overflow-hidden border-x border-border bg-panel [view-transition-name:thread-chat] ${
-            wide
+            threeColumns
               // 720 is the drawer's width (lib/sheet.ts SHEET_BASE_WIDTH), the measure every thread surface
               // keeps. It gives way only to the opt-in project rail, whose 57px the 1360 does not count.
-              ? wideFile ? "w-[var(--full-thread)] shrink-0" : "w-[720px] shrink"
+              ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "w-[720px] shrink"
               : folded ? "w-[var(--full-thread-narrow)] shrink-0 split:w-[var(--full-thread)]" : "w-full shrink-0"
           }`}
         >
@@ -244,7 +253,6 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
             <div className="flex flex-1 items-center justify-center"><span className="block h-5 w-5 animate-spin rounded-full border-2 border-muted/50 border-t-transparent" /></div>
           )}
         </div>
-        {wide && <div aria-hidden="true" className={wideFile ? "hidden" : "min-w-0 flex-1"} />}
         {railBeside && thread && <SidePane slug={slug} thread={thread} />}
       </div>
     </ProjectScope>

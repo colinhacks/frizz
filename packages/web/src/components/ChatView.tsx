@@ -28,7 +28,8 @@ import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
 import { answersNote, isAnswersMessage, parseAnswersCard, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
-import { fenceStandsFor, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
+import { fenceStandsFor, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
+import { previousUserBoundary } from "../lib/transcriptPagination.ts"
 import { FrizzWake } from "./FrizzWake.tsx"
 import { LinkifiedText } from "./LinkifiedText.tsx"
 import { parseSentContext, splitProseByTokens, tokenLabel, type SentContextItem } from "../lib/composerContext.ts"
@@ -51,7 +52,7 @@ import { useUnqueueFollowUp, useUnqueueSupported } from "../lib/unqueueFollowUp.
 import { useFailedDeliveryActions } from "../lib/failedDelivery.ts"
 import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending } from "../lib/deliverQueuedNow.ts"
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
-import { lastAskIndex, messagePresentationText } from "../lib/messagePresentation.ts"
+import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
 import { snoozePresetInstant, formatSnoozeWake } from "../lib/snooze.ts"
@@ -173,12 +174,14 @@ function useChildDrillSlug(): string | null {
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
 /** What the one-thread pane hands the thread view it hosts (prototype): where acting on the thread takes
- *  the human, whether the header offers full screen, and whether the rail stands beside it (the wide
- *  layout, where there is no full screen to leave, so `showReturnToQueue` cannot say it). */
+ *  the human, whether the header offers full screen, whether the rail stands beside it without the page
+ *  being full screen (the three columns, which `showReturnToQueue` cannot say), and whether the thread
+ *  was in the queue when it was opened, which draws it as its card does. */
 export interface ThreadPaneHooks {
   exit: SurfaceExit
   expand: boolean
   railBeside?: boolean
+  queueWindow?: boolean
 }
 
 export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
@@ -230,6 +233,17 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
     [phone, openQuestions],
   )
   const [answerSheetOpen, setAnswerSheetOpen] = useState(false)
+  // A QUEUED THREAD OPENS AS ITS CARD DOES (the one-thread pane, maintainer 2026-11-09): from the human's
+  // most recent steer on, with what is above it one click away. Decided once, when the transcript lands,
+  // and held by id for as long as the thread stays open, so a reply sent from here adds to what is on
+  // screen rather than cutting the window at itself. Undefined until then; null is the whole transcript.
+  const [windowStartId, setWindowStartId] = useState<string | null | undefined>(undefined)
+  if (pane?.queueWindow && windowStartId === undefined && messages.length > 0) {
+    const at = lastHumanTurnIndex(messages)
+    setWindowStartId(at > 0 ? messages[at]?.sourceId ?? null : null)
+  }
+  // Trimmed off the head of a long thread's live window, the anchor is gone: show everything still held.
+  const windowStart = windowStartId ? Math.max(0, messages.findIndex((m) => m.sourceId === windowStartId)) : 0
   // A read-and-answer session's sheet steps through what it may answer. The rest stay in the list, saying where.
   const readAndAnswerHost = useReadAndAnswerHost()
   const sheetQuestions = useMemo(
@@ -307,6 +321,12 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
       setLoadingEarlier(false)
     }
   }, [q, queryClient, slug])
+  // The window opens back one steer at a time, as the card's does, and only then reaches for the server.
+  const showEarlier = useCallback(() => {
+    if (windowStart === 0) return void loadEarlier()
+    const boundary = previousUserBoundary(messages, windowStart)
+    setWindowStartId(boundary !== null && boundary > 0 ? messages[boundary]?.sourceId ?? null : null)
+  }, [loadEarlier, messages, windowStart])
 
   return (
     <ThreadSurface surface={surface} className="flex-1 min-h-0 flex flex-col">
@@ -358,9 +378,12 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           beforeCursor={q.data?.beforeCursor}
           loadingEarlier={loadingEarlier}
           earlierError={earlierError}
-          loadEarlier={() => void loadEarlier()}
+          loadEarlier={showEarlier}
           jumpOverlay={jumpOverlay}
           openAtLastMessage={(phone || pane !== undefined) && !running}
+          windowStart={windowStart}
+          openAtTop={pane?.queueWindow === true}
+          sentAt={pane ? steerStamp : undefined}
         />
       ) : (
       <>
@@ -792,6 +815,9 @@ function VirtualizedThreadTranscript({
   loadEarlier,
   jumpOverlay,
   openAtLastMessage = false,
+  windowStart = 0,
+  openAtTop = false,
+  sentAt,
 }: {
   slug: string
   transcriptRef: React.RefObject<HTMLDivElement | null>
@@ -812,15 +838,27 @@ function VirtualizedThreadTranscript({
   // The phone opens a thread at rest on the START of its last message rather than the end of it — see
   // the initial-scroll effect below. Read once, when the transcript first lands.
   openAtLastMessage?: boolean
+  // The one-thread pane's queue window (prototype): the first message drawn, by index into `messages`. It
+  // reads from the top down, as the queue card does, and `sentAt` brings a reply back into view from there.
+  windowStart?: number
+  openAtTop?: boolean
+  sentAt?: number
 }) {
   // What the thread says about each message, from the surface this transcript is drawn in — the same
   // model the queue card reads. `messages` here is the presentation list, which shares its indices with
   // the list the model was built over.
   const transcript = useThreadTranscript()
-  const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, placement, settledPlacement, openQuestions } = transcript
+  const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
+  // A marker in a message above the window has no message to render in, so its card goes back to its
+  // anchor group, as on the queue card.
+  const placement = useMemo(() => placedFrom(transcript.placement, windowStart), [transcript.placement, windowStart])
   // Presentation-only coalescing: provider batching must not mint one loader per pure tool turn. Original
-  // indices ride beside the display message, so paired answers keep addressing server truth.
-  const coalescedActivityMessages = useMemo(() => coalesceToolActivityMessages(messages), [messages])
+  // indices ride beside the display message, so paired answers keep addressing server truth. Everything
+  // below draws from this list, so the window is cut here; the steer it opens on ends any run before it.
+  const coalescedActivityMessages = useMemo(() => {
+    const entries = coalesceToolActivityMessages(messages)
+    return windowStart > 0 ? entries.filter((entry) => entry.messageIndex >= windowStart) : entries
+  }, [messages, windowStart])
   // A live tool run belongs to the runtime slot, never to history; once it settles the whole run returns
   // as one `Ran N tool calls` disclosure. Then the rest hairlines that only restate their surroundings
   // drop out (isRedundantRestDivider) — LAST, so "the next thing the reader sees" is what this list
@@ -868,9 +906,9 @@ function VirtualizedThreadTranscript({
       return rowIdx
     }
     const unplaced = openQuestions.filter((q) => !placement.placedIds.has(q.id))
-    // `from: 0`: a question the human has typed past, asked above the loaded window, is not hoisted over
+    // `from`: a question the human has typed past, asked above what this draws, is not hoisted over
     // everything — it draws where its message is once that is loaded (lib/questionAnchor questionsByAnchor).
-    for (const [anchor, group] of questionsByAnchor(messages, unplaced, { from: 0 })) {
+    for (const [anchor, group] of questionsByAnchor(messages, unplaced, { from: windowStart })) {
       if (anchor >= tailAnchor) { tail.push(...group); continue }
       const rowIdx = rowOf(anchor)
       const at = byRow.get(rowIdx)
@@ -889,7 +927,7 @@ function VirtualizedThreadTranscript({
       if (!byRow.has(rowIdx)) byRow.set(rowIdx, [])
     }
     return { byRow, tail, tailSend, sendRows }
-  }, [messageRows, messages, openQuestions, placement])
+  }, [messageRows, messages, openQuestions, placement, windowStart])
   // The ANSWERED questions' anchors, keyed into `messageRows` the same way: the last row at or before
   // the anchor. No tail special case — a settled card is not an ask, so it never rides the
   // interactions row; anchored at the last message it simply follows that message's row.
@@ -911,7 +949,7 @@ function VirtualizedThreadTranscript({
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
     if (transportFallback) next.push({ key: "transport-fallback", kind: "transport-fallback" })
-    if (hasEarlier || loadingEarlier || earlierError) {
+    if (hasEarlier || loadingEarlier || earlierError || windowStart > 0) {
       next.push({ key: `earlier-history:${beforeCursor ?? "complete"}`, kind: "earlier-history" })
     }
     const before = questionGroups.byRow.get(-1)
@@ -943,7 +981,7 @@ function VirtualizedThreadTranscript({
     })
     if (previousQueued) next.push({ key: "queued-send-now", kind: "queued-send-now" })
     return next
-  }, [beforeCursor, earlierError, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, questionGroups, settledByRow, transportFallback])
+  }, [beforeCursor, earlierError, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, questionGroups, settledByRow, transportFallback, windowStart])
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
@@ -1109,13 +1147,15 @@ function VirtualizedThreadTranscript({
       ? rows.reduce((found, row, index) => (row.kind === "message" && row.messageIndex <= lastAgentIdx && row.message.role === "assistant" && row.message.kind !== "event" ? index : found), -1)
       : -1
     let frame = requestAnimationFrame(() => {
-      if (!anchor && lastMessageRow >= 0) {
+      if (!anchor && (openAtTop || lastMessageRow >= 0)) {
         // The fullscreen hand-off's two steps and its hold, aimed at a row's top instead of a remembered
         // screen height: mount the row, release tail-follow, then re-align every frame while the rows
         // around it correct from their estimates. The hold is longer than the hand-off's because nothing
         // above this row has ever been measured on a cold open; a touch on the scroller ends it at once.
-        const rowKey = rows[lastMessageRow].key
-        virtualizer.scrollToIndex(lastMessageRow, { align: "start", behavior: "instant" })
+        // The queue's window aims at the top of the list instead of a row: its opening steer, read down.
+        const rowKey = openAtTop ? null : rows[lastMessageRow].key
+        if (openAtTop) transcriptRef.current?.scrollTo({ top: 0 })
+        else virtualizer.scrollToIndex(lastMessageRow, { align: "start", behavior: "instant" })
         followingTailRef.current = false
         setAtEnd(false)
         tailReadyRef.current = true
@@ -1138,8 +1178,12 @@ function VirtualizedThreadTranscript({
             }
             return
           }
-          const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(rowKey)}"]`)
-          if (row) scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+          if (rowKey === null) {
+            scroller.scrollTop = 0
+          } else {
+            const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(rowKey)}"]`)
+            if (row) scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+          }
           openHoldFrameRef.current = requestAnimationFrame(hold)
         }
         hold()
@@ -1177,6 +1221,20 @@ function VirtualizedThreadTranscript({
     return () => cancelAnimationFrame(frame)
   }, [alignToScreenTop, rows.length, slug, transcriptKey, virtualizer])
   useEffect(() => () => cancelAnimationFrame(openHoldFrameRef.current), [])
+
+  // A reply sent from the top of the queue's window lands below everything the reader has not scrolled to,
+  // so the send takes them there. The stamp already standing when the thread opened is someone's old send.
+  const sentAtRef = useRef(sentAt)
+  useEffect(() => {
+    const changed = sentAt !== sentAtRef.current
+    sentAtRef.current = sentAt
+    const scroller = transcriptRef.current
+    if (!changed || sentAt === undefined || !scroller) return
+    anchorRestoreUntilRef.current = 0
+    followingTailRef.current = true
+    setAtEnd(true)
+    scroller.scrollTop = scroller.scrollHeight
+  }, [sentAt, transcriptRef])
 
   // Where the reader is actually looking: the first row whose box reaches the pane top, and the offset
   // it sits at.
@@ -1437,7 +1495,8 @@ function VirtualizedThreadTranscript({
         armed: nearTopLoadArmedRef.current,
         scrollTop: scroller.scrollTop,
         readerMoved: tailReadyRef.current && readerMovedRef.current,
-        hasEarlier,
+        // While the queue's window is cut, more of the thread is the reader's to ask for, as on the card.
+        hasEarlier: hasEarlier && windowStart === 0,
         loading: loadingEarlier,
       })
       nearTopLoadArmedRef.current = gate.armed
@@ -1483,7 +1542,7 @@ function VirtualizedThreadTranscript({
       scroller.removeEventListener("pointerdown", markPointerIntent)
       scroller.removeEventListener("keydown", markKeyboardIntent)
     }
-  }, [hasEarlier, loadingEarlier, requestEarlier, syncTailFollow, transcriptRef])
+  }, [hasEarlier, loadingEarlier, requestEarlier, syncTailFollow, transcriptRef, windowStart])
 
   const virtualItems = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()

@@ -16,7 +16,7 @@ import { ownedByThisPage } from "./lib/projectOwnership.ts"
 import { choseProjects, setHomeView, useHomeView, withoutProjectsChoice } from "./lib/homeView.ts"
 import { useConsoleFeedProjects } from "./lib/consoleProjects.ts"
 import { HomeSwitcher } from "./components/HomeSwitcher.tsx"
-import { paneProto, usePaneWide } from "./lib/threadPane.ts"
+import { paneProto } from "./lib/threadPane.ts"
 import { useIsMobile } from "./lib/mobile.ts"
 
 // THE ROUTE TREE — and, more to the point, the LAYOUT that outlives a navigation.
@@ -88,13 +88,12 @@ function RootLayout() {
 }
 
 // THE ONE-THREAD PANE (prototype): the pill's corner belongs to the sidebar, which full screen puts away.
-// Wide, the sidebar is the window's first 300px rather than the centred pair's (ThreadPane.tsx).
+// The sidebar stands at the window's left edge rather than in the centred pair (ThreadPane.tsx).
 function ConsoleHomeSwitcher({ railVisible }: { railVisible: boolean }) {
   const { folded } = useSnapshot(paneProto)
   const { paneSlug } = useSnapshot(store)
-  const wide = usePaneWide()
-  if (folded && paneSlug && !wide) return null
-  return <HomeSwitcher railVisible={railVisible} sidebarInsetPx={wide ? 16 : undefined} />
+  if (folded && paneSlug) return null
+  return <HomeSwitcher railVisible={railVisible} sidebarInsetPx={16} />
 }
 
 /**
