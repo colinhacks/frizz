@@ -139,12 +139,6 @@ export const AGENT_MARKS = "ml-[9px] flex shrink-0 items-center gap-[15px] empty
 const AGENT_MARK = "icon-focus-outline relative flex h-6 w-7 rounded-md shrink-0 items-center justify-center text-muted outline-none transition-[color] not-data-[quiet]:hover:bg-hover-strong not-data-[quiet]:hover:text-fg not-data-[quiet]:hover:transition-[color,background-color] aria-expanded:bg-hover-strong aria-expanded:text-fg aria-expanded:transition-[color,background-color]"
 export const GAUGE_MARK = `-mx-[8.2px] ${AGENT_MARK}`
 export const PLUG_MARK = `-mx-[8.5px] ${AGENT_MARK}`
-/** The GitHub picker's prompt gear (GithubPromptPopover), which stands beside that picker's model chip as these
- *  marks stand beside the composer's: the same square, tone and pen. Its trim is what it paints, not its 11px of
- *  ink by arithmetic: trimmed 8.5px a side it stood 15.2px of painted ink from the chip, so it takes 9.2px and
- *  stands 14.5px off it, as the composer's marks do (scripts/ink-gaps.mjs at 4x, 2026-11-07). */
-export const SETTINGS_GLYPH = markGlyph(12.5)
-export const SETTINGS_MARK = `-mx-[9.2px] ${AGENT_MARK}`
 
 /** THE RAIL, right to left: send, the microphone (only where on-device dictation exists — see
  *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 24px square

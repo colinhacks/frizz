@@ -7,12 +7,11 @@ import { showToast } from "../store.ts"
 import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
-import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
 import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
-import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z } from "../lib/overlaySurface.ts"
+import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z, OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z } from "../lib/overlaySurface.ts"
 import { buildGithubBatchInput, dispatchProfileError } from "../lib/githubDispatch.ts"
 import { GITHUB_PICKER_TITLE, useGithubStatus } from "./GithubTrigger.tsx"
 import { GithubSignInSheet } from "./GithubSignInSheet.tsx"
@@ -20,7 +19,6 @@ import { applyRowSelection } from "../lib/rowRangeSelection.ts"
 import { githubLabelColors } from "../lib/githubLabelColors.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { compactAge } from "../lib/activityTime.ts"
-import { AGENT_MARKS } from "../lib/iconRhythm.ts"
 
 type Kind = "issues" | "prs"
 type Sort = "recent" | "reactions"
@@ -36,9 +34,9 @@ const PREFETCH_MARGIN = "0px 0px 360px 0px"
 const SEARCH_WINDOW = 1000
 
 // THE GitHub picker: a wider anywhere-modal (reusing NewThreadModal's Overlay) that lists the repo's
-// Issues or PRs (tabs), sortable by recency or reactions, with multi-select checkboxes and the
-// ordinary model/effort selector in its bottom-left corner. "Dispatch N thread(s)" spins up one frizz
-// thread per checked item
+// Issues or PRs (tabs), sortable by recency or reactions, with multi-select checkboxes, and the
+// ordinary model/effort selector in the settings panel behind its footer gear. "Dispatch N thread(s)"
+// spins up one frizz thread per checked item
 // (each ISSUE an investigate/reproduce/recommend thread, each PR a review thread) via
 // rpc.githubDispatchBatch — the server hydrates + templates each fresh, reusing the normal dispatch
 // flow; the new sidebar rows paint via the board SSE. The trigger that opens this is auth-gated, so
@@ -60,7 +58,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   // picker-local copy that silently diverges). A Codex cache refresh can invalidate the saved pair
   // while the picker is open; the final revalidation below then fails closed rather than downgrading.
   const { resolved, codexList, claudeList, acpList, loadError, saveProfile } = useDispatchProfile()
-  // A settings write still in flight — the triage prompt just edited in the header popover, a
+  // A settings write still in flight — the triage prompt just edited in the settings panel, a
   // compaction window picked in the selector — must land before a batch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
 
@@ -328,19 +326,26 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* The running selection under the list. Checked rows can be scrolled far out of view, so this is
-            the only place the full count is always visible. */}
-        {pages && (
-          // whitespace-nowrap throughout: the running-selection cluster holds its size, and only the repo
-          // total (the least actionable number here) truncates when the modal is squeezed.
-          <div className="mt-2.5 flex items-center whitespace-nowrap text-[11.5px] text-muted-60">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate tabular-nums">
+        {/* Footer: the running selection on the left, and on the right the gear and the Start button. One
+            row: the totals line, the model chip and the button were three bands of chrome under the list
+            (maintainer 2026-11-09: "It still feels kind of insane. Let's just combine the model and effort
+            selector inside of the settings popover and just have a single settings icon immediately to
+            the left of the Start Investigation button").
+            12px above and below, like the app's other panel footers. The bottom 12 is the modal's own
+            `pb-3`, so a model error under this row keeps its margin.
+            whitespace-nowrap: the running-selection cluster holds its size, and only the repo total (the
+            least actionable number here, and the one that goes on a phone once anything is checked)
+            gives way. Checked rows can be scrolled far out of view, so this is the only place the full
+            count is always visible. */}
+        <div className="-mx-5 mt-3 flex items-center gap-3 border-t border-border/60 px-5 pt-3">
+          {pages && (
+            <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-60">
+              <span className={`truncate tabular-nums ${n > 0 ? "max-sm:hidden" : ""}`}>
                 {total.toLocaleString()} open {kind === "issues" ? (total === 1 ? "issue" : "issues") : total === 1 ? "pull request" : "pull requests"}
               </span>
               {n > 0 && (
                 <span className="flex shrink-0 items-center gap-1.5">
-                  <span className="text-muted-30">·</span>
+                  <span className="text-muted-30 max-sm:hidden">·</span>
                   <span className="tabular-nums text-fg/70">{n} selected</span>
                   <button
                     onClick={clearSelection}
@@ -352,19 +357,12 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 </span>
               )}
             </div>
-          </div>
-        )}
-
-        {/* Footer: what every thread this batch starts will be, bottom-left, and the act that starts
-            them, alone on the right — the prompt box's own layout. The selector is the SAME control the
-            prompt box carries and writes the same durable preference; its menu opens UPWARD
-            (side="top"), since the footer sits on the modal's bottom edge. 12px above and below, like the
-            app's other panel footers, and about the height of the heading's band: at 20px each it was
-            the tallest thing on the picker (maintainer 2026-11-09: "way too much vertical spacing"). The
-            bottom 12 is the modal's own `pb-3`, so a model error under this row keeps its margin. */}
-        <div className="-mx-5 mt-2.5 flex items-center justify-between gap-3 border-t border-border/60 px-5 pt-3">
-          <div className="flex min-w-0 items-center gap-x-1.5">
-            <PromptControlGroup>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {/* What every thread this batch starts will be: the model and effort, and the prompt. The
+                selector is the SAME control the prompt box carries and writes the same durable preference.
+                The picker keeps its state, because the batch dispatches with it; only the control moved. */}
+            <GithubPromptPopover>
               <ProfileGridSelector
                 groups={profileGroups}
                 agentSettings
@@ -379,9 +377,10 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 ariaLabel="Model and effort"
                 title={dispatchBlocked ?? "Model and reasoning effort for every thread this batch starts"}
                 disabled={!resolved}
-                side="top"
-                // The picker's Overlay is z-[200]; the default z-[110] portal would paint the menu
-                // beneath its frosted backdrop.
+                // The popover layer, the one the panel holding it is on, and not the selector-in-popover
+                // layer above: each runtime's gear in this menu opens a panel on the popover layer, which
+                // has to land over the menu. On one layer the later-opened paints on top, and these only
+                // ever open in that order (githubPromptPopover.e2e pins all three).
                 menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
                 className="max-w-[min(21rem,60vw)]"
               />
@@ -391,32 +390,23 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                   agentLabel={acpAgent.label}
                   modelId={resolved?.acpModelId}
                   onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
-                  side="top"
-                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
+                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z}
                   className="max-w-[min(14rem,30vw)]"
                 />
               )}
-            </PromptControlGroup>
-            {/* The gear opens the prompt every thread this batch starts will run: with the model, it is
-                the other half of WHAT starts, so it stands to the right of the model chip, where the
-                composer keeps its agent's marks (maintainer 2026-11-07: "it's weird that the model
-                selector is at the bottom left, but the settings are to the left of the button"). It
-                sat left of the Start button from 2026-10-26, and in the header's far corner before that. */}
-            <div className={AGENT_MARKS}>
-              <GithubPromptPopover />
-            </div>
+            </GithubPromptPopover>
+            <button
+              disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
+              onClick={startDispatch}
+              onMouseDown={(e) => e.preventDefault()}
+              className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
+            >
+              {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
+              {/* The count is on the button because the batch is unbounded and can run far past the rows
+                  in view — "Start 47 investigations" is the last chance to notice it says 47, not 4. */}
+              {n <= 1 ? "Start investigation" : `Start ${n} investigations`}
+            </button>
           </div>
-          <button
-            disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
-            onClick={startDispatch}
-            onMouseDown={(e) => e.preventDefault()}
-            className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
-          >
-            {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
-            {/* The count is on the button because the batch is unbounded and can run far past the rows
-                in view — "Start 47 investigations" is the last chance to notice it says 47, not 4. */}
-            {n <= 1 ? "Start investigation" : `Start ${n} investigations`}
-          </button>
         </div>
         {profileError && <p className="mt-1 max-w-[430px] text-[10.5px] text-danger">{profileError}</p>}
       </div>

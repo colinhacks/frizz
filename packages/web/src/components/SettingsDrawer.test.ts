@@ -129,9 +129,9 @@ test("the agent settings panel is modal, keyboard-reachable, and holds exactly t
 })
 
 // The GitHub picker's header: the slug is a right-justified link out to the repo with the external
-// arrow. Its footer: the gear that opens the triage prompt stands beside the model chip, the two halves
-// of what every started thread will be, and the Start button stands alone.
-test("the GitHub picker carries the repo link in its header, the prompt gear beside its model chip, and waits on settings writes", () => {
+// arrow. Its footer: the running count, then one gear beside the Start button, and the gear's panel holds
+// the model selector and the prompt, the two halves of what every started thread will be.
+test("the GitHub picker carries the repo link in its header, one settings gear beside its Start button with the model inside, and waits on settings writes", () => {
   const header = pickerSource.slice(pickerSource.indexOf("{/* Header"), pickerSource.indexOf("{/* Controls"))
   // The row is baseline-aligned so its two glyphs can take the browser-computed cap-band correction
   // (half the glyph's box minus half the resolved cap height); the numbers behind it are in the
@@ -142,13 +142,14 @@ test("the GitHub picker carries the repo link in its header, the prompt gear bes
   assert.match(agentSource, /-mr-3 inline-flex size-5 shrink-0 translate-y-\[calc\(7px_-_0\.5cap\)\]/)
   assert.match(header, /<RepoLink nameWithOwner=\{status\.data\.nameWithOwner\} \/>/)
   assert.match(header, /\{GITHUB_PICKER_TITLE\}/)
-  // The gear lives in the footer, right of the model chip as the composer's agent marks are
-  // (maintainer 2026-11-07), and its panel opens upward and rightward off the modal's bottom-left corner.
-  assert.doesNotMatch(header, /<GithubPromptPopover \/>/)
+  // The gear lives in the footer, the Start button's left-hand neighbour, its panel opening upward off
+  // the modal's bottom-right corner, with the model selector inside it (maintainer 2026-11-09).
+  assert.doesNotMatch(header, /<GithubPromptPopover\b/)
   const footer = pickerSource.slice(pickerSource.indexOf("{/* Footer"))
-  assert.match(footer, /<\/PromptControlGroup>[\s\S]*?<div className=\{AGENT_MARKS\}>\s*<GithubPromptPopover \/>\s*<\/div>\s*<\/div>\s*<button\s+disabled=\{n === 0/)
-  assert.match(promptPopoverSource, /<PopoverContent side="top" align="start"/)
-  assert.match(promptPopoverSource, /className=\{`github-prompt-trigger \$\{SETTINGS_MARK\}`\}/)
+  assert.match(footer, /<GithubPromptPopover>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<ProfileGridSelector\b[\s\S]*?<\/GithubPromptPopover>\s*<button\s+disabled=\{n === 0/)
+  assert.doesNotMatch(pickerSource, /PromptControlGroup/)
+  assert.match(promptPopoverSource, /<PopoverContent\s+side="top"\s+align="end"/)
+  assert.match(promptPopoverSource, /<SettingsField label="Model and effort"/)
   // The slug is no longer an em-dashed suffix of the title (the dash must be gone from the MARKUP;
   // the comments above it are prose and may carry one).
   assert.doesNotMatch(header.slice(header.indexOf("<h2")), /—/)

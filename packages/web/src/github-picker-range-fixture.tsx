@@ -64,6 +64,9 @@ const preferences: DispatchPreferences = {
 } as DispatchPreferences
 
 const dispatched: unknown[] = []
+// Every model or effort the picker's selector saved, so a test can prove the control still writes from
+// inside the settings panel.
+const preferenceWrites: unknown[] = []
 // The project settings the header gear edits (GithubPromptPopover): every settingsSet is recorded so
 // a test can prove a typing burst writes ONCE, and `?settingsDelay=N` holds each write for N ms to
 // drive the dispatch gate.
@@ -81,9 +84,9 @@ const drift = params.get("drift") === "1"
 const searchTotal = Number(params.get("searchTotal") ?? 0)
 
 declare global {
-  interface Window { githubPickerRangeFixture?: { dispatched: unknown[]; settingsWrites: Record<string, unknown>[]; listRequests: number[] } }
+  interface Window { githubPickerRangeFixture?: { dispatched: unknown[]; settingsWrites: Record<string, unknown>[]; listRequests: number[]; preferenceWrites: unknown[] } }
 }
-window.githubPickerRangeFixture = { dispatched, settingsWrites, listRequests }
+window.githubPickerRangeFixture = { dispatched, settingsWrites, listRequests, preferenceWrites }
 
 const nativeFetch = window.fetch.bind(window)
 window.fetch = async (input, init) => {
@@ -110,6 +113,10 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/_frizz/rpc/codexModels") return json(codexModels)
   if (url.pathname === "/_frizz/rpc/acpAgents") return json([])
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json(preferences)
+  if (url.pathname === "/_frizz/rpc/dispatchPreferenceSet") {
+    preferenceWrites.push(JSON.parse(String(init?.body ?? "{}")))
+    return json(preferences)
+  }
   if (url.pathname === "/_frizz/rpc/settingsGet") return json(settings)
   if (url.pathname === "/_frizz/rpc/githubPromptDefaults") return json({ prompt: "Triage {repo}#{n}: {title}\n{url}\n\nRead the whole thread and say what you actually checked." })
   if (url.pathname === "/_frizz/rpc/settingsSet") {

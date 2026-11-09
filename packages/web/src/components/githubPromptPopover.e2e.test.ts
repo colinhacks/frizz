@@ -2,14 +2,14 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 // Runtime coverage for the GitHub picker's header — the repo slug as right-justified text linking
-// out — and the footer gear beside the model chip that opens the triage prompt in a modal popover. Drives
+// out — and the footer gear beside the Start button, whose modal panel holds the model and the prompt. Drives
 // github-picker-range-fixture, which
 // records every settingsSet the popover makes. Skipped unless FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL names
 // a vite serving the fixtures (scripts/e2e-web.mjs sets it).
 const baseUrl = process.env.FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL
 
-type Fixture = { settingsWrites: Record<string, unknown>[]; dispatched: unknown[] }
-const GEAR = 'button[aria-label="Triage prompt settings"]'
+type Fixture = { settingsWrites: Record<string, unknown>[]; dispatched: unknown[]; preferenceWrites: unknown[] }
+const GEAR = 'button[aria-label="Picker settings"]'
 const PANEL = "[data-github-prompt-menu]"
 
 async function launch(query = "?rows=5") {
@@ -36,7 +36,7 @@ async function selectAllInTextarea(page: import("puppeteer").Page) {
   }, PANEL)
 }
 
-test("the header links out to the repo as right-justified text, rules frame the body, the gear stands beside the model chip, the Start button alone on the right", { skip: !baseUrl, timeout: 60_000 }, async () => {
+test("the header links out to the repo as right-justified text, rules frame the body, and the footer is the running count, the gear and the Start button", { skip: !baseUrl, timeout: 60_000 }, async () => {
   const { browser, page, errors } = await launch()
   try {
     const header = await page.$eval("h2", (h2) => {
@@ -50,7 +50,7 @@ test("the header links out to the repo as right-justified text, rules frame the 
         title: title.textContent?.trim(),
         glyphs: link.querySelectorAll("svg").length,
         titleGlyphs: title.querySelectorAll("svg").length + (h2.firstElementChild?.tagName === "svg" ? 1 : 0),
-        hasGear: h2.querySelector('button[aria-label="Triage prompt settings"]') !== null,
+        hasGear: h2.querySelector('button[aria-label="Picker settings"]') !== null,
         linkRight: link.getBoundingClientRect().right,
         listRight: document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect().right,
         titleRight: title.getBoundingClientRect().right,
@@ -80,19 +80,19 @@ test("the header links out to the repo as right-justified text, rules frame the 
     const rules = await page.evaluate(() => {
       const h2 = document.querySelector("h2")!
       const modal = h2.parentElement!
-      const footer = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!.parentElement!
+      const startButton = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!
+      const footer = startButton.parentElement!.parentElement!
       const inner = modal.getBoundingClientRect()
       const read = (el: Element, side: "Top" | "Bottom") => {
         const box = el.getBoundingClientRect()
         const style = getComputedStyle(el)
         return { width: style[`border${side}Width`], color: style[`border${side}Color`], left: box.left - inner.left, right: inner.right - box.right }
       }
-      const start = footer.querySelector(":scope > button")!.getBoundingClientRect()
-      const ruleTop = footer.getBoundingClientRect().top
+      const start = startButton.getBoundingClientRect()
       return {
         heading: read(h2, "Bottom"),
         footer: read(footer, "Top"),
-        aboveStart: start.top - ruleTop - 1,
+        aboveStart: start.top - footer.getBoundingClientRect().top - 1,
         belowStart: inner.bottom - 1 - start.bottom,
       }
     })
@@ -105,35 +105,32 @@ test("the header links out to the repo as right-justified text, rules frame the 
       assert.ok(rule.left <= 1 && rule.right <= 1, `the rule runs edge to edge, got ${rule.left} / ${rule.right} of inset`)
     }
 
-    // The gear is the model chip's right-hand neighbour, as the composer's marks are: INK, not boxes,
-    // because its hover square carries the glyph's dead space. The Start button stands alone.
+    // The footer is one row. The gear is the Start button's left-hand neighbour: INK, not boxes, because
+    // its hover square carries the glyph's dead space. The model selector is not on it.
     const footer = await page.evaluate((gearSelector) => {
       const gear = document.querySelector<HTMLButtonElement>(gearSelector)!
-      const chip = document.querySelector<HTMLElement>("[data-prompt-control-group]")!
       const start = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!
       const ink = [...gear.querySelectorAll("svg *")].map((g) => g.getBoundingClientRect())
-      const chipBox = chip.getBoundingClientRect()
       const startBox = start.getBoundingClientRect()
-      const inkTop = Math.min(...ink.map((r) => r.top))
-      const inkBottom = Math.max(...ink.map((r) => r.bottom))
+      const row = start.parentElement!.parentElement!
       return {
-        startSiblings: start.parentElement!.children.length,
-        gearInkLeft: Math.min(...ink.map((r) => r.left)),
+        sameCluster: gear.parentElement === start.parentElement,
         gearInkRight: Math.max(...ink.map((r) => r.right)),
-        gearInkMid: (inkTop + inkBottom) / 2,
-        gearInkHeight: inkBottom - inkTop,
-        chipRight: chipBox.right,
-        chipMid: (chipBox.top + chipBox.bottom) / 2,
+        gearInkMid: (Math.min(...ink.map((r) => r.top)) + Math.max(...ink.map((r) => r.bottom))) / 2,
         startLeft: startBox.left,
         startMid: (startBox.top + startBox.bottom) / 2,
+        rowText: row.textContent ?? "",
+        modelSelector: document.querySelector('[aria-label="Model and effort"]') !== null,
+        rowAboveRule: row.previousElementSibling === document.querySelector("[data-row-number]")!.parentElement,
       }
     }, GEAR)
-    const air = footer.gearInkLeft - footer.chipRight
-    assert.ok(air > 13.5 && air < 15.5, `the gear's ink stands ~14.5px right of the model chip, as the composer's marks do, got ${air}px`)
-    assert.ok(Math.abs(footer.gearInkMid - footer.chipMid) < 0.75, `the gear is centred on the chip, off by ${footer.gearInkMid - footer.chipMid}px`)
-    assert.ok(Math.abs(footer.chipMid - footer.startMid) < 0.75, `the chip is centred on the Start button, off by ${footer.chipMid - footer.startMid}px`)
-    assert.ok(footer.startLeft - footer.gearInkRight > 200, "the Start button stands well clear of the gear, on the far right")
-    assert.equal(footer.startSiblings, 2, "the footer is two things: the chip's cluster, and the Start button")
+    assert.ok(footer.sameCluster, "the gear and the Start button are one cluster")
+    const air = footer.startLeft - footer.gearInkRight
+    assert.ok(air > 12 && air < 17, `the gear's ink stands ~14.5px left of the button, got ${air}px`)
+    assert.ok(Math.abs(footer.gearInkMid - footer.startMid) < 0.75, `the gear is centred on the button, off by ${footer.gearInkMid - footer.startMid}px`)
+    assert.match(footer.rowText, /5 open issues/, "the running count shares the footer's row")
+    assert.equal(footer.rowAboveRule, true, "nothing stands between the list and the footer")
+    assert.equal(footer.modelSelector, false, "the model selector is in the panel, not on the footer")
 
     // The panel opens UPWARD from the modal's bottom edge. Polled, not read once: it slides in, and
     // its first frame stands ~290px below where it settles.
@@ -143,10 +140,73 @@ test("the header links out to the repo as right-justified text, rules frame the 
     await page.waitForFunction((panel, gearSelector) =>
       document.querySelector(panel)!.getBoundingClientRect().bottom <= document.querySelector(gearSelector)!.getBoundingClientRect().top,
     { timeout: 2000 }, PANEL, GEAR)
-    // And rightward from the gear: it is anchored at the modal's left, so it opens over the list.
-    const [panelLeft, gearLeft] = await page.evaluate((panel, gearSelector) =>
-      [document.querySelector(panel)!.getBoundingClientRect().left, document.querySelector(gearSelector)!.getBoundingClientRect().left], PANEL, GEAR)
-    assert.ok(Math.abs(panelLeft - gearLeft) < 2, `the panel's left edge is the gear's, got ${panelLeft} vs ${gearLeft}`)
+    // And back across the picker from the gear, which sits at its right.
+    const [panelRight, gearRight] = await page.evaluate((panel, gearSelector) =>
+      [document.querySelector(panel)!.getBoundingClientRect().right, document.querySelector(gearSelector)!.getBoundingClientRect().right], PANEL, GEAR)
+    assert.ok(Math.abs(panelRight - gearRight) < 2, `the panel's right edge is the gear's, got ${panelRight} vs ${gearRight}`)
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+// The grid is a menu inside a modal popover, and its per-runtime gear opens a panel from inside that menu:
+// three layers, each portaled to <body>. What only a real browser settles is who paints on top, who gets
+// the click, and that one Escape unwinds one layer.
+test("the model selector works from inside the settings panel: its menu and the runtime panel paint on top, a pick saves, and Escape unwinds one layer at a time", { skip: !baseUrl, timeout: 90_000 }, async () => {
+  const { browser, page, errors } = await launch()
+  const SELECTOR = `${PANEL} [aria-label="Model and effort"]`
+  const MENU = ".profile-grid-menu"
+  const RUNTIME_PANEL = "[data-agent-settings-menu]"
+  const onTop = (selector: string) => page.evaluate((sel) => {
+    const el = document.querySelector(sel)!
+    const box = el.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return el.contains(hit)
+  }, selector)
+  const settled = (selector: string) => page.waitForFunction((sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return false
+    const box = el.getBoundingClientRect()
+    return box.width > 0 && el.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))
+  }, { timeout: 4000 }, selector)
+  const gone = (selector: string) => page.waitForFunction((sel) => !document.querySelector(sel), { timeout: 3000 }, selector)
+  const preferenceWrites = () => page.evaluate(() => (window as unknown as { githubPickerRangeFixture: Fixture }).githubPickerRangeFixture.preferenceWrites.length)
+  try {
+    await page.click(GEAR)
+    await page.waitForSelector(SELECTOR)
+
+    // Opening focuses the panel: on the first control, a help glyph, its tooltip would cover the prompt.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(await page.evaluate((panel) => document.activeElement === document.querySelector(panel), PANEL), true, "the panel holds the focus")
+    assert.doesNotMatch(await page.$eval("body", (b) => b.innerText), /same choice as the new-thread/, "and no help tooltip has opened")
+
+    // The menu paints over the panel it opened from, and a pick lands without closing the panel.
+    await page.click(SELECTOR)
+    await settled(MENU)
+    assert.equal(await onTop(MENU), true, "the model menu paints over the settings panel")
+    await page.click(`${MENU} [role="menuitemradio"][aria-checked="false"]`)
+    await gone(MENU)
+    assert.equal(await preferenceWrites(), 1, "the pick saved")
+    assert.ok(await page.$(PANEL), "picking a model leaves the settings panel open")
+
+    // The runtime gear's panel lands over the menu that opened it.
+    await page.click(SELECTOR)
+    await settled(MENU)
+    await page.click(`${MENU} .agent-settings-trigger`)
+    await settled(RUNTIME_PANEL)
+    assert.equal(await onTop(RUNTIME_PANEL), true, "the runtime settings panel paints over the model menu")
+
+    // One Escape, one layer: the runtime panel, the menu, the settings panel, and the picker stays.
+    await page.keyboard.press("Escape")
+    await gone(RUNTIME_PANEL)
+    assert.ok(await page.$(MENU), "the first Escape closed only the runtime panel")
+    await page.keyboard.press("Escape")
+    await gone(MENU)
+    assert.ok(await page.$(PANEL), "the second Escape closed only the menu")
+    await page.keyboard.press("Escape")
+    await gone(PANEL)
+    assert.ok(await page.$("h2"), "the third closed the settings panel, and the picker is still open")
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
@@ -170,6 +230,22 @@ test("on a phone the header and the controls stay inside the picker's content ed
     })
     assert.ok(edges.sortRight <= edges.listRight + 0.5, `the sort control stays inside the list's edge, got ${edges.sortRight} vs ${edges.listRight}`)
     assert.ok(Math.abs(edges.linkRight - edges.listRight) < 1, `the repo link ends on the list's edge, got ${edges.linkRight} vs ${edges.listRight}`)
+
+    // Once something is checked the running count takes the footer's left side from the repo total.
+    await page.click("[data-row-number]", { offset: { x: 14, y: 14 } })
+    await page.waitForFunction(() => /1 selected/.test(document.body.innerText), { timeout: 3000 })
+    assert.doesNotMatch(await page.$eval("body", (b) => b.innerText), /open issues/, "the total gives way on a phone")
+
+    // The phone's model control is a bottom sheet, and it has to open over the settings panel.
+    await page.click(GEAR)
+    await page.waitForSelector(`${PANEL} [aria-label="Model and effort"]`)
+    await page.click(`${PANEL} [aria-label="Model and effort"]`)
+    await page.waitForFunction((panel) => {
+      const sheet = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((el) => !el.matches(panel))
+      if (!sheet) return false
+      const box = sheet.getBoundingClientRect()
+      return box.height > 0 && sheet.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))
+    }, { timeout: 4000 }, PANEL)
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
