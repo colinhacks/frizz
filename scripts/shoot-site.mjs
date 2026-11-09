@@ -21,7 +21,8 @@ const base = `http://127.0.0.1:${stack.port}`
 const API = "acme-api", APP = "mobile-app"
 /** Wide enough that a thread's column sits in the window with the page showing on both sides. */
 const THREAD_W = 880
-const thread = (project, slug, suffix = "") => `${base}/project/${project}/thread/${slug}${suffix}`
+/** A thread on its board (in the drawer, or its queue card), or with `full` its full-screen page. */
+const thread = (project, slug, full = false) => full ? `${base}/project/${project}/thread/${slug}` : `${base}/project/${project}?thread=${slug}`
 const settle = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // A pointing hand, original artwork, drawn with its fingertip on the real mouse position: everything a shot
@@ -117,7 +118,7 @@ const HERO = {
     await settle(1200)
   } },
   "f-full": { w: 1440, h: 860, stage: async (page) => {
-    await page.goto(thread(API, "settings-store", "/full"), { waitUntil: "networkidle2" })
+    await page.goto(thread(API, "settings-store", true), { waitUntil: "networkidle2" })
     await need(page, "[data-focus-rail]")
     await settle(1800)
     await hideLoadEarlier(page)
@@ -234,7 +235,7 @@ const HERO = {
 // Each opens on the thread's own full page, where no other card can scroll in over the one being shot. The
 // shot is the whole window, so the thread keeps its header, the messages above and the page on either side.
 const open = async (page, slug, selector) => {
-  await page.goto(thread(APP, slug, "/full"), { waitUntil: "networkidle2" })
+  await page.goto(thread(APP, slug, true), { waitUntil: "networkidle2" })
   await need(page, selector ?? "[data-composer-box]", 20_000)
   await settle(1800)
   await hideLoadEarlier(page)

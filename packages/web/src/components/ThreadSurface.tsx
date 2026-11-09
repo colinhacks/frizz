@@ -8,6 +8,7 @@ import type { TranscriptShellRecord } from "../lib/childOps.ts"
 import { heldHandoffIndex } from "../lib/fenceBlocks.ts"
 import { useFileDropZone, useFileIntakeHandle, type FileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
+import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
 import { useOpsHeldForTranscript } from "../lib/opsAhead.ts"
 import { placeQuestions, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
 import { useTranscriptHeldForBoard } from "../lib/restAhead.ts"
@@ -15,11 +16,12 @@ import { queuedRunOf, type QueuedRun } from "../lib/restReply.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
+import { latestSignOffs } from "../lib/signOffs.ts"
 import { stepsDoneReplies } from "../lib/stepsAnswer.ts"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
-import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useClosedQuestionSpecs, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 
 // THE THREAD SURFACE — the one shell around a thread, wherever it is drawn. A thread is drawn in three
 // places: its queue card (TodosView's QueueCard), its drawer and its full-screen page (both ChatView).
@@ -80,7 +82,8 @@ export interface ThreadSurfaceSource {
  *   3. the registered questions it draws: an open one once the message that asked it has arrived
  *      (useArrivedQuestions), an answered one where its card stood (useSettledQuestions);
  *   4. with every question fence the server refused marked on its message (useRefusedFences), and every
- *      id the thread asked more than once resolved to the row it meant in each message (useQuestionOwners).
+ *      id the thread asked more than once resolved to the row it meant in each message (useQuestionOwners);
+ *   5. with the newest sign-off since the human last spoke marked on a thread at rest (useLatestSignOff).
  *
  *  What a surface does on top of this is its own: the queue card freezes the list it loaded while it
  *  leaves (before this), and the thread view draws a send that ends a rest where it will land (after). */
@@ -99,8 +102,25 @@ export function useThreadMessages(thread: ThreadView | undefined, loaded: ChatMe
   const shown = useMemo(() => withoutLiveTranscriptBackgroundTools(held), [held])
   const openQuestions = useArrivedQuestions(boardQuestions, held)
   const refused = useRefusedFences(shown, thread, openQuestions, settledQuestions)
-  const messages = useQuestionOwners(refused, thread, openQuestions, settledQuestions)
+  const owned = useQuestionOwners(refused, thread, openQuestions, settledQuestions)
+  const messages = useLatestSignOff(owned, thread)
   return { messages, openQuestions, settledQuestions, transcriptShells }
+}
+
+/** Step 5: the newest sign-off since the human last spoke, marked `latestSignOff` on a thread AT REST, so
+ *  its ```awaiting card is still drawn after a later quiet round has made the fence stale (lib/signOffs).
+ *  Not while the thread runs: a spinning thread is resting on nothing, and no awaiting card is drawn then
+ *  (maintainer 2026-09-24: "When the agent is running, an awaiting card should never be shown at all"). */
+function useLatestSignOff(messages: ChatMessage[], thread: ThreadView | undefined): ChatMessage[] {
+  const running = thread?.runtime === "running" || thread?.runtime === "spawning"
+  return useMemo(() => {
+    if (running) return messages
+    const keep = latestSignOffs(messages, lastHumanTurnIndex(messages))
+    if (keep.length === 0) return messages
+    const out = [...messages]
+    for (const i of keep) out[i] = { ...out[i], latestSignOff: true }
+    return out
+  }, [messages, running])
 }
 
 export interface ThreadSurfaceOptions {
@@ -282,7 +302,8 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const heldIdx = useMemo(() => (thread?.heldHandoff ? heldHandoffIndex(messages, awaitingCut) : -1), [thread?.heldHandoff, messages, awaitingCut])
   const restingShown = showsRestingCard(thread)
   const fencesLive = questionFencesLive(thread?.spawnedAt)
-  const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread)
+  const closedSpecs = useClosedQuestionSpecs(thread)
+  const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread, closedSpecs)
   const shadowedByMessage = useMemo(() => registeredStandingAt(messages, openQuestions), [messages, openQuestions])
   const placement = useMemo(() => placeQuestions(messages, openQuestions), [messages, openQuestions])
   const settledPlacement = useMemo(() => settledQuestionPositions(messages, settledQuestions), [messages, settledQuestions])

@@ -91,7 +91,7 @@ import { ChildOpRow } from "./ChildOpRow.tsx"
 import { ThreadLinks } from "./ThreadLinks.tsx"
 import { TRANSCRIPT_META_LABEL_CLASS, transcriptMetaChevronClass } from "../lib/transcriptMetaLabels.ts"
 import { InteractionStack } from "./InteractionCards.tsx"
-import { ClosedQuestionCard, InvalidQuestionFence, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { answeredRow, ClosedQuestionCard, InvalidQuestionFence, OpenQuestionCopyCard, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 // The shared card chrome and THE question card both live in their own modules now, so every
 // surface can render them without importing the thread view. QuestionBlockCard in particular is
 // shared with the native-AskUserQuestion path, which reaches it through InteractionCards.tsx —
@@ -1860,12 +1860,17 @@ function blankText(m: ChatMessage, text: string, staleAwaiting?: boolean, restin
   }
   // splitFenceBlocks already drops whitespace-only prose runs, so "every segment is an awaiting fence"
   // is the whole test. A ```done fence still draws its card and keeps the message visible.
-  return splitFenceBlocks(text).every((s) => s.kind === "fence" && s.fenceKind === "awaiting" && (m.fenceRefused || restingCardShown || !settledFenceDraws(s.hints)))
+  return splitFenceBlocks(text).every((s) => s.kind === "fence" && s.fenceKind === "awaiting" && (m.fenceRefused || restingCardShown || !(settledFenceDraws(s.hints) || signOffFenceDraws(m, s))))
 }
 // Does a SETTLED ```awaiting fence still draw its card? Only one that handed the human steps — they are a
 // record of what the human did, not a wait (renderText).
 function settledFenceDraws(hints: readonly AwaitingHint[]): boolean {
   return awaitingSteps(hints).length > 0
+}
+// …or the newest sign-off's, which draws its card, or only its prose where it names questions (renderText).
+function signOffFenceDraws(m: ChatMessage, fence: { hints: readonly AwaitingHint[]; body: string }): boolean {
+  if (!m.latestSignOff) return false
+  return !awaitingDefersToQuestions(fence.hints) || awaitingProseBlock(fence.body) !== null
 }
 // Would this message render anything under `textOnly` (tool bands dropped)? Mirrors messageRendersNothing
 // but counts ONLY text parts — the queue card uses it to decide whether a first/last agent message that
@@ -3673,6 +3678,20 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
           push(<AwaitingBackgroundCard key={`${keyBase}-f${fi}`} fence={{ body: fseg.body, hints: fseg.hints }} stepsDone={stepsDone} />)
           continue
         }
+        // …AND THE NEWEST SIGN-OFF (2026-11-06, maintainer: "make sure that at least the most recent sign-off
+        // block is made visible"). A worker that hands off `status: needs_input` and is then woken by a PR
+        // review parks quietly on the next rest, and the hand-off it is still standing on went with the
+        // settled fences. The newest one since the human last spoke keeps its card, stated with no thread
+        // as the steps card above is — no live rows, no verb — while the thread is at rest
+        // (ChatMessage.latestSignOff, lib/signOffs). A fence that names questions keeps only its prose,
+        // which is all it draws when it is live.
+        if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && m.latestSignOff) {
+          if (awaitingDefersToQuestions(fseg.hints)) {
+            const prose = awaitingProseBlock(fseg.body)
+            if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} wrap={dense} />)
+          } else push(<AwaitingBackgroundCard key={`${keyBase}-f${fi}`} fence={{ body: fseg.body, hints: fseg.hints }} />)
+          continue
+        }
         if (fseg.fenceKind === "awaiting" && (m.fenceRefused || staleAwaiting || restingCardShown)) continue
         // A FENCE THAT NAMES QUESTIONS DRAWS NO CARD — the question cards after this rest are its ending
         // (lib/awaitingPresentation awaitingDefersToQuestions). Its prose is the worker's handoff, so it
@@ -3750,29 +3769,43 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
           // By the row the name meant IN THIS MESSAGE: an id asked again once its question settled names a
           // newer row, and this message's fence still draws the one it asked (lib/questionOwners).
           const row = resolveQuestionName(followsUp ? followsUp.parent : seg.fence.id, fenceQuestions ?? [], m.questionOwners)
+          // EVERY FENCE NAMING A ROW DRAWS IT, ONCE PER MESSAGE: the real card where the question's card
+          // is, and a read-only COPY everywhere else (maintainer 2026-11-06, choosing the full copy over a
+          // one-line row). Until then only the card's own slot drew anything, so each handoff that named an
+          // open question again took its card and left the previous handoff's lead-in over empty space.
+          if (row && placedDrawn.has(row.id)) continue
           if (row?.closed) {
             // CLOSED WITHOUT AN ANSWER — dismissed or withdrawn. The fence that asked it draws the question
-            // closed, saying which (ClosedQuestionCard); a follow-up or a reference to it draws nothing.
-            if (seg.fence.form === "ask" && !followsUp && !placedDrawn.has(row.id)) {
+            // closed, saying which (ClosedQuestionCard), from its own spec; a reference or a follow-up that
+            // named it while it was open draws the same card from what the row asked, once the thread's
+            // read of it has landed (useClosedQuestionSpecs), and nothing before then.
+            const asking = seg.fence.form === "ask" && !followsUp ? seg.fence.spec : undefined
+            const spec = asking ?? row.asked
+            if (spec) {
               placedDrawn.add(row.id)
-              push(<ClosedQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={seg.fence.spec} state={row.closed} wrap={dense} />)
+              push(<ClosedQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={spec} state={row.closed} copyOf={asking ? undefined : row.id} wrap={dense} />)
             }
             continue
           }
           if (row) {
-            // Placed in THIS message (the newest one naming it from its claiming rest on): the live card,
-            // once. Answered here: its settled card, once. Anywhere else, the card is drawn there.
+            placedDrawn.add(row.id)
+            // Placed in THIS message (the newest one naming it from its claiming rest on): the live card.
+            // Answered here: its settled card.
             const placedHere = placed?.find((q) => q.id === row.id)
-            if (placedHere && !placedDrawn.has(placedHere.id)) {
-              placedDrawn.add(placedHere.id)
+            if (placedHere) {
               push(<RegisteredQuestionCard key={`${keyBase}-${fi}-q${si}`} q={placedHere} />)
               continue
             }
             const settledHere = settledPlaced?.find((q) => q.id === row.id)
-            if (settledHere && !placedDrawn.has(settledHere.id)) {
-              placedDrawn.add(settledHere.id)
+            if (settledHere) {
               push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
+              continue
             }
+            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing down.
+            const answered = answeredRow(row)
+            push(answered
+              ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy wrap={dense} />
+              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} wrap={dense} />)
             continue
           }
           // AN ASK WITH NO ROW YET — the server registers a second or two behind the transcript, and never
@@ -4436,7 +4469,7 @@ export function BackgroundOpsStrip({
   // kinds are the counts' own (lib/queueOpsCounts.ts), split by the same tests, so a count and the
   // panel it opens cannot disagree. Absent ⇒ every row, the reading the sub-agent drawer's strip wants.
   // The command watches' and timers' panels draw their rows themselves (QueueOpsSummary WaitPanelRows).
-  only?: Exclude<QueueOpsKind, "agent" | "command" | "monitor" | "timer">
+  only?: Exclude<QueueOpsKind, "agent" | "command" | "timer">
   // Codex deliberate background execs are transcript-native; its board telemetry is still empty. A
   // CLAUDE shell shows up here AND in the board's telemetry — `launchId` is what lets the two rows
   // reconcile into one (see mergeBackgroundShells).

@@ -41,6 +41,9 @@ export interface ClaimStore {
   readGithubOwner(githubId: number): Promise<string | null>
   writeGithubOwner(githubId: number, name: string): Promise<void>
   removeGithubOwner(githubId: number): Promise<void>
+  /** The key that last held a released RANDOM name, which nobody else may ever claim. */
+  readRetired(name: string): Promise<string | null>
+  writeRetired(name: string, pubkey: string): Promise<void>
 }
 
 /** Who a GitHub token belongs to. Resolved once per claim, then thrown away. */
@@ -52,12 +55,12 @@ export interface GithubIdentity {
 }
 
 /**
- * Resolve a token to its account. `null` means GitHub did not accept it; `"scoped"` means it is a token
- * that can do more than name its account — a `gh` CLI token from a Frizz older than the device flow —
- * and is refused whoever it belongs to, so the registrar never again accepts one worth stealing.
+ * Resolve a token to its account. `null` means GitHub did not accept it; `"foreign"` means GitHub did,
+ * but not as a token issued to Frizz's own GitHub App — a `gh` CLI token, a personal access token,
+ * another app's — and it is refused whoever it belongs to (githubVerifier in worker.ts says why).
  */
 export interface GithubVerifier {
-  (token: string): Promise<GithubIdentity | null | "scoped">
+  (token: string): Promise<GithubIdentity | null | "foreign">
 }
 
 export interface CloudflareApi {
@@ -108,6 +111,11 @@ export interface ClaimDeps {
    * unlimited, which is only ever right in tests.
    */
   anonymousBudget?: () => Promise<boolean>
+  /**
+   * May this request send GitHub one more `/user` lookup right now? Consulted only for the first claim
+   * of a CUSTOM name, before GitHub is asked. Absent means unlimited, which is only ever right in tests.
+   */
+  githubBudget?: () => Promise<boolean>
 }
 
 export type ClaimFailure =
@@ -118,7 +126,8 @@ export type ClaimFailure =
   | "one-name-per-key"
   | "github-required"
   | "github-rejected"
-  | "github-token-scoped"
+  | "github-token-foreign"
+  | "not-your-github-username"
   | "github-too-new"
   | "one-name-per-account"
   | "namespace-full"
@@ -144,11 +153,12 @@ const MESSAGES: Record<ClaimFailure, string> = {
   "provisioning-failed": "the name could not be provisioned; nothing was left behind",
   "one-name-per-key":
     "this machine already holds a name — release it first, or claim from a different Frizz identity",
-  "github-required": "claiming a custom name needs a GitHub sign-in — update Frizz and try again",
+  "github-required": "claiming a custom name needs a GitHub sign-in — sign in to GitHub in Frizz's Settings and try again",
   "github-rejected": "GitHub did not recognise that sign-in — try again",
-  "github-token-scoped":
-    "this claim carried a GitHub token with more access than a name needs; the registrar accepts only a sign-in that grants no permissions — update Frizz and try again",
+  "github-token-foreign":
+    "a name is claimed with Frizz's own GitHub sign-in, and this was another kind of GitHub token — update Frizz, sign in to GitHub in its Settings, and try again",
   "github-too-new": "that GitHub account is too new to claim a name",
+  "not-your-github-username": "a custom frizz.sh name is the claiming account's own GitHub username, and this is not it",
   "one-name-per-account": "that GitHub account already holds a name",
   "namespace-full": "frizz.sh has no free names left — this is our limit to raise, not yours",
   "too-many-claims": "too many new names from this network just now — try again in an hour",
@@ -174,6 +184,16 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   const { name, port, pubkey } = verdict.payload
   const hostname = `${name}.${deps.zone}`
   const existing = await deps.store.read(name)
+
+  // A RANDOM NAME IS NEVER REUSED (maintainer, 2026-11-07: "there's plenty to go around"). Phones and
+  // bookmarks keep pointing at a name after its board leaves it, and they send it their session cookies;
+  // whoever held it next would collect them. So once released, a random name belongs to the key that
+  // held it, for good: that key may have it back, and every other key is told it is taken. 100 bits of
+  // name means no one ever needs a used one.
+  if (isAnonymousClaimName(name)) {
+    const holder = existing?.pubkey ?? (await deps.store.readRetired(name))
+    if (holder && holder !== pubkey) return reject("name-taken", 409)
+  }
 
   if (existing && existing.pubkey !== pubkey) {
     // A lapsed lease returns the name to the pool on demand, so a name frees up the moment someone
@@ -201,9 +221,14 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
     }
   } else if (deps.github) {
     if (!verdict.payload.github) return reject("github-required")
+    if (deps.githubBudget && !(await deps.githubBudget())) return reject("too-many-claims", 429)
     const who = await deps.github(verdict.payload.github)
-    if (who === "scoped") return reject("github-token-scoped")
+    if (who === "foreign") return reject("github-token-foreign")
     if (!who) return reject("github-rejected")
+    // A CUSTOM NAME IS THE ACCOUNT'S OWN USERNAME (maintainer, 2026-11-07). Otherwise any account old
+    // enough could take someone else's login first, and a visitor would read it as theirs. GitHub logins
+    // are case-insensitive and claim names lowercase. A name claimed before this rule renews by its key.
+    if (name !== who.login.toLowerCase()) return reject("not-your-github-username")
     if (deps.minAccountAgeMs && now - who.createdAt < deps.minAccountAgeMs) {
       return reject("github-too-new")
     }
@@ -230,14 +255,26 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   // zone caps at 200 records. This is a speed bump rather than a wall — keys are free, so a determined
   // squatter just makes more — and the real answer is tying a claim to an identity that costs
   // something to obtain. It closes the trivial version, which is the one that happens by accident.
+  //
+  // A RANDOM NAME GIVES WAY to a custom one claimed with the same key. A board starts on a random name,
+  // and the R pane offers the account's own name once Frizz is signed in to GitHub; refusing that would
+  // leave the board stuck for the random name's 30-day lease, with no way to release it. A custom name
+  // does not give way: its lease is the grace for coming back to it.
+  //
+  // The random name is NOT released, only stepped off: its row keeps this key until its lease lapses
+  // (the board no longer renews it), exactly as if the board had moved away without claiming. Freeing it
+  // at once would hand it to whoever claimed it next, and the phones still bookmarked on it would send
+  // that stranger their session cookies, which the board would still honour on its new name.
   const held = await deps.store.readOwner(pubkey)
   if (held && held !== name) {
     const other = await deps.store.read(held)
     if (other && other.pubkey === pubkey && !claimLeaseExpired(other.renewedAt, now)) {
-      return reject("one-name-per-key", 409)
+      // Stepping off the random name is create() pointing the key's index at the new one.
+      if (!isAnonymousClaimName(held) || isAnonymousClaimName(name)) return reject("one-name-per-key", 409)
+    } else {
+      // The index outlived the name it pointed at, so it is stale rather than binding.
+      await deps.store.removeOwner(pubkey)
     }
-    // The index outlived the name it pointed at, so it is stale rather than binding.
-    await deps.store.removeOwner(pubkey)
   }
 
   return create({ name, hostname, port, pubkey, githubId }, deps, now)
@@ -367,11 +404,8 @@ async function releaseQuietly(
 ): Promise<boolean> {
   if (!deps.api) {
     // Relay mode owns no Cloudflare resources for a name, so releasing it is only forgetting it.
-    await Promise.allSettled([
-      deps.store.remove(name),
-      deps.store.removeOwner(pubkey),
-      ...(githubId !== undefined ? [deps.store.removeGithubOwner(githubId)] : []),
-    ])
+    await retire(deps, name, pubkey)
+    await Promise.allSettled([deps.store.remove(name), forgetIndexes(deps, name, pubkey, githubId)])
     return true
   }
   const [, tunnel] = await Promise.allSettled([
@@ -379,12 +413,24 @@ async function releaseQuietly(
     deps.api.deleteTunnel(tunnelId),
   ])
   if (tunnel.status !== "fulfilled") return false
-  await Promise.allSettled([
-    deps.store.remove(name),
-    deps.store.removeOwner(pubkey),
-    ...(githubId !== undefined ? [deps.store.removeGithubOwner(githubId)] : []),
-  ])
+  await retire(deps, name, pubkey)
+  await Promise.allSettled([deps.store.remove(name), forgetIndexes(deps, name, pubkey, githubId)])
   return true
+}
+
+/** A random name keeps its key after release (handleClaim says why). Written before the row goes. */
+async function retire(deps: ClaimDeps, name: string, pubkey: string): Promise<void> {
+  if (isAnonymousClaimName(name)) await deps.store.writeRetired(name, pubkey)
+}
+
+/**
+ * Drop the key's and the account's index entries for a released name, but only where they still point
+ * at it. A key or account that has since moved to another name keeps that index: deleting it would
+ * lift its one-name limit, so the next claim would leave it holding two names.
+ */
+async function forgetIndexes(deps: ClaimDeps, name: string, pubkey: string, githubId?: number | undefined): Promise<void> {
+  if ((await deps.store.readOwner(pubkey)) === name) await deps.store.removeOwner(pubkey)
+  if (githubId !== undefined && (await deps.store.readGithubOwner(githubId)) === name) await deps.store.removeGithubOwner(githubId)
 }
 
 /**
@@ -441,7 +487,7 @@ async function release(
     await deps.api.deleteDnsRecord(hostname)
     await deps.api.deleteTunnel(tunnelId)
   }
+  await retire(deps, name, pubkey)
   await deps.store.remove(name)
-  await deps.store.removeOwner(pubkey)
-  if (githubId !== undefined) await deps.store.removeGithubOwner(githubId)
+  await forgetIndexes(deps, name, pubkey, githubId)
 }

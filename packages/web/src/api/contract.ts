@@ -284,12 +284,12 @@ export interface Api {
   addOwnPrWatch(input: AddOwnPrWatchInput): Promise<AddOwnPrWatchResult>
   dropOwnPrWatch(input: DropOwnPrWatchInput): Promise<DropOwnPrWatchResult>
   listOwnPrWatches(input: ListOwnPrWatchesInput): Promise<OwnPrWatchesResult>
-  // THE COMMAND WATCHES, called by `frizzctl watch-command`. Declared for the drift gate, like the PR
+  // THE COMMAND WATCHES, called by `frizzctl monitor`. Declared for the drift gate, like the PR
   // watchers above; no browser call site uses them.
   addOwnCommandWatch(input: AddOwnCommandWatchInput): Promise<AddOwnCommandWatchResult>
   dropOwnCommandWatch(input: DropOwnCommandWatchInput): Promise<DropOwnCommandWatchResult>
   listOwnCommandWatches(input: ListOwnCommandWatchesInput): Promise<OwnCommandWatchesResult>
-  // THE MONITORS, called by `frizzctl monitor add` (its drop and list are the command watch's own).
+  // THE MONITORS, called by `frizzctl monitor add --persistent` (its drop and list are the command watch's own).
   addOwnMonitor(input: AddOwnMonitorInput): Promise<AddOwnMonitorResult>
   // THE WORKER'S OWN WATCHES on its own running work, called by `frizzctl watch` / `unwatch`. Same
   // story as the PR watchers above: declared for the drift gate, never called from the browser.

@@ -100,7 +100,7 @@ try {
     first.messages.length >= 300 && first.hasEarlier === true,
     `messages=${first.messages.length} hasEarlier=${first.hasEarlier} beforeCursor=${first.beforeCursor}`)
 
-  await page.goto(new URL(`/thread/${SLUG}/full`, url).href, { waitUntil: "networkidle2", timeout: 60000 })
+  await page.goto(new URL(`/thread/${SLUG}`, url).href, { waitUntil: "networkidle2", timeout: 60000 })
   await page.waitForFunction("document.querySelector('[data-standalone-thread] [data-drawer-transcript-scroll] [data-virtualized-transcript]')", { timeout: 40000 })
 
   const settle = (ms) => page.evaluate(async (wait) => {

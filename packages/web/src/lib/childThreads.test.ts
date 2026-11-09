@@ -89,7 +89,7 @@ test("a child drawn under its parent is in no band, no count and no pin, on any 
   }
   assert.deepEqual(ids(sections.active), ["parent"])
   assert.deepEqual(ids(phoneQueue(board, "fifo")), ["parent"], "the phone board rows the parent alone")
-  assert.deepEqual(ids(consoleQueue(board, "fifo")), [])
+  assert.deepEqual(ids(consoleQueue(board, "fifo", "project")), [])
   assert.deepEqual(ids(consoleRunning(board)), ["parent"])
   assert.deepEqual(ids(consolePinned(board)), [])
   assert.deepEqual(ids(consoleSnoozed(board)), [])
@@ -102,7 +102,7 @@ test("a child at a hard gate queues as a card of its own, and counts as the ask 
   assert.equal(sectionOf(gated), "active")
   assert.equal(threadBandAt(gated, NOW), "rested")
   assert.deepEqual(ids(sectionThreads(board).active).sort(), ["c-perm-prompt", "parent"])
-  assert.deepEqual(ids(consoleQueue(board, "fifo")), ["c-perm-prompt"])
+  assert.deepEqual(ids(consoleQueue(board, "fifo", "project")), ["c-perm-prompt"])
 })
 
 test("childThreadIndex lists a parent's open children, oldest dispatch first, and skips the archived", () => {

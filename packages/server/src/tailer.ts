@@ -1,11 +1,13 @@
 import { statSync, openSync, readSync, closeSync, readdirSync, realpathSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { execFile } from "node:child_process"
+import { takeLoopTurn } from "./loop-turns.ts"
+import { execFileOffThread } from "./off-thread-exec.ts"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingNeedsInput, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { fenceWaitsOnHuman, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -344,6 +346,9 @@ export function shellProbeTtlMs(ageMs: number): number {
 }
 
 const execFileAsync = promisify(execFile)
+// Asked once per tick from every project, so where it starts matters (off-thread-exec.ts). The cast is the
+// overloads of a promisified `execFile`, which this answers the utf8 one of.
+const shellProbeExec = execFileOffThread as unknown as typeof execFileAsync
 
 // ASKED OFF THE EVENT LOOP, AND ASKED ONCE FOR EVERY SHELL AT ONCE. `lsof <path>` has to walk every
 // process's open-file table on the machine to answer, so it costs the same whether you ask about one
@@ -398,7 +403,7 @@ export async function probeShellVerdicts(
   opts: { platform?: NodeJS.Platform; exec?: typeof execFileAsync; env?: NodeJS.ProcessEnv; nowMs?: number } = {},
 ): Promise<Map<string, ShellVerdict>> {
   const platform = opts.platform ?? process.platform
-  const exec = opts.exec ?? execFileAsync
+  const exec = opts.exec ?? shellProbeExec
   const launches = shells.map((s) => (typeof s === "string" ? { outputFile: s } : s))
   const outputFiles = launches.map((l) => l.outputFile)
   const verdicts = new Map<string, ShellVerdict>()
@@ -532,7 +537,7 @@ async function findShellProcessPids(
   shells: readonly ShellLaunch[],
   opts: { exec?: typeof execFileAsync; nowMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<Map<string, number[] | undefined>> {
-  const exec = opts.exec ?? execFileAsync
+  const exec = opts.exec ?? shellProbeExec
   const nowMs = opts.nowMs ?? Date.now()
   const verdicts = new Map<string, number[] | undefined>()
   // C locale, so `lstart` is the fixed English `Mon Oct  5 15:42:11 2026` the parser below reads, and the
@@ -2752,11 +2757,14 @@ function applyFinalText(state: FoldState, text: string): void {
   noteHandoff(state)
 }
 
-// Stamp FoldState.handoffAt when the fence just folded hands the rest to the human. Read after
-// `lastAssistantAt` is set for the same message, so the stamp is that message's own instant.
+// Stamp FoldState.handoffAt when the fence just folded names the human as its wait: `steps:` to perform
+// or `questions:` to answer (fenceWaitsOnHuman). A plain `status: needs_input` report is not stamped: what
+// the human had to read there is the worker's to re-hand-off, and its next `status:` says whether it
+// still waits on them (2026-11-06). Read after `lastAssistantAt` is set for the same message, so the
+// stamp is that message's own instant.
 function noteHandoff(state: FoldState): void {
   const fence = state.lastFence
-  if (fence?.kind === "awaiting" && awaitingNeedsInput(fence.hints) === true && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
+  if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints) && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
 }
 
 // What ends FoldState.operatorStopped: the thread moving again.
@@ -6158,13 +6166,18 @@ export function createTailer(deps: TailerDeps): Tailer {
       : Math.min(MAX_POLL_MS, Math.max(POLL_MS, Math.round(lastTickMs)))
     timer = setTimeout(() => {
       timer = null
-      // RE-ARM EVEN IF THE TICK THREW. tickWithBudget is try/finally, not try/catch, so an exception
-      // out of tick() used to escape a timer callback — which in node means an uncaughtException and,
-      // with no process-level handler anywhere in this server, the whole frizz process. The tailer is
-      // the only source of turn/liveness telemetry: it must degrade to a logged bad tick, never take
-      // the server (or its own loop) down with it.
-      try { poll() } catch (error) { reportTickFailure(error) }
-      if (!stopped) scheduleTick()
+      // Behind the other projects' ticks, with the sockets between them (loop-turns.ts). Skipped if a nudge
+      // got there first and re-armed the cadence: this job re-arming it too would leave two loops running.
+      takeLoopTurn(() => {
+        if (stopped || timer) return
+        // RE-ARM EVEN IF THE TICK THREW. tickWithBudget is try/finally, not try/catch, so an exception
+        // out of tick() used to escape a timer callback — which in node means an uncaughtException and,
+        // with no process-level handler anywhere in this server, the whole frizz process. The tailer is
+        // the only source of turn/liveness telemetry: it must degrade to a logged bad tick, never take
+        // the server (or its own loop) down with it.
+        try { poll() } catch (error) { reportTickFailure(error) }
+        if (!stopped) scheduleTick()
+      })
     }, delay)
     timer.unref?.()
   }
@@ -6194,19 +6207,22 @@ export function createTailer(deps: TailerDeps): Tailer {
     nudgeTimer = setTimeout(() => {
       nudgeTimer = null
       if (stopped) return
-      // Take over the poll's slot rather than running alongside it: clear the pending scheduled tick,
-      // run now, then restart the regular cadence from this moment.
-      if (timer) { clearTimeout(timer); timer = null }
-      // Strictly more dangerous than the poll callback above: this one destroys the poll timer FIRST,
-      // so a throwing tick would leave BOTH timers null and the tailer permanently dead — a frozen
-      // board with a healthy-looking server. Proven against a real createTailer with an injected
-      // storage error: 4 ticks/1.2s before, 0 ticks in the 3s after, revived only by a later nudge.
-      //
-      // A nudge is about a thread in motion, and a turn sends them in bursts, so it is the tick that
-      // gains most from leaving the dormant rows alone: they are swept on their own clock, here or in
-      // `poll`, whichever tick is running when it comes due.
-      try { tickWithBudget({ sweep: monotonicNow() - lastSweepAt >= DORMANT_SWEEP_MS }) } catch (error) { reportTickFailure(error) }
-      if (!stopped) scheduleTick()
+      takeLoopTurn(() => {
+        if (stopped) return
+        // Take over the poll's slot rather than running alongside it: clear the pending scheduled tick,
+        // run now, then restart the regular cadence from this moment.
+        if (timer) { clearTimeout(timer); timer = null }
+        // Strictly more dangerous than the poll callback above: this one destroys the poll timer FIRST,
+        // so a throwing tick would leave BOTH timers null and the tailer permanently dead — a frozen
+        // board with a healthy-looking server. Proven against a real createTailer with an injected
+        // storage error: 4 ticks/1.2s before, 0 ticks in the 3s after, revived only by a later nudge.
+        //
+        // A nudge is about a thread in motion, and a turn sends them in bursts, so it is the tick that
+        // gains most from leaving the dormant rows alone: they are swept on their own clock, here or in
+        // `poll`, whichever tick is running when it comes due.
+        try { tickWithBudget({ sweep: monotonicNow() - lastSweepAt >= DORMANT_SWEEP_MS }) } catch (error) { reportTickFailure(error) }
+        if (!stopped) scheduleTick()
+      })
     }, delay)
     nudgeTimer.unref?.()
   }

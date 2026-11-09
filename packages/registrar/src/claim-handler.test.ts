@@ -67,11 +67,13 @@ function fakeStore(seed: Record<string, ClaimRecord> = {}) {
   const rows = new Map<string, ClaimRecord>(Object.entries(seed))
   const owners = new Map<string, string>()
   const githubOwners = new Map<number, string>()
+  const retired = new Map<string, string>()
   for (const [name, record] of rows) owners.set(record.pubkey, name)
   return {
     rows,
     owners,
     githubOwners,
+    retired,
     store: {
       async read(name: string) {
         return rows.get(name) ?? null
@@ -102,6 +104,12 @@ function fakeStore(seed: Record<string, ClaimRecord> = {}) {
       },
       async removeGithubOwner(id: number) {
         githubOwners.delete(id)
+      },
+      async readRetired(name: string) {
+        return retired.get(name) ?? null
+      },
+      async writeRetired(name: string, pubkey: string) {
+        retired.set(name, pubkey)
       },
     },
   }
@@ -416,6 +424,125 @@ test("one key holds ONE name — a loop of claims cannot take the namespace", as
   assert.equal((await handleClaim(await claimFor(identity, "first"), d)).status, 200)
 })
 
+test("a random name gives way to a custom one on the same key, and stays the key's until it lapses", async () => {
+  // Boards start on a random name, and the R pane then offers the account's own name. Refusing that
+  // would strand the board for the random name's 30-day lease, with no way to release it.
+  for (const relay of [false, true]) {
+    const cf = fakeCloudflare()
+    const st = fakeStore()
+    const identity = await generateClaimIdentity()
+    const pubkey = (await claimFor(identity)).pubkey
+    const d = deps({ ...(relay ? { api: undefined } : { api: cf.api }), store: st.store })
+    const random = generateAnonymousClaimName()
+    assert.equal((await handleClaim(await claimFor(identity, random), d)).status, 200)
+
+    const moved = await handleClaim(await claimFor(identity, "colin"), d)
+    assert.equal(moved.status, 200, relay ? "relay" : "tunnel")
+    assert.equal(st.rows.get("colin")?.pubkey, pubkey)
+    assert.equal(await st.store.readOwner(pubkey), "colin", "the key's one name is the new one")
+    // NOT released: phones still bookmarked on it would hand whoever claimed it next their sessions.
+    assert.equal(st.rows.get(random)?.pubkey, pubkey, "the random name stays the key's")
+    const stranger = await generateClaimIdentity()
+    assert.equal((await handleClaim(await claimFor(stranger, random), d)).status, 409, "and nobody else can take it")
+    // And the key is held to one name from there: a further name is refused.
+    assert.equal((await handleClaim(await claimFor(identity, "another"), d)).status, 409)
+
+    // Unrenewed, it lapses like any name, and the sweep leaves the key's index on the custom one.
+    const later = NOW + CLAIM_LEASE_MS + 1
+    await handleClaim(await claimFor(identity, "colin", 9393, later), deps({ ...(relay ? { api: undefined } : { api: cf.api }), store: st.store, now: () => later }))
+    const swept = await sweepExpiredClaims(deps({ ...(relay ? { api: undefined } : { api: cf.api }), store: st.store, now: () => later }))
+    assert.deepEqual(swept.released, [random])
+    assert.equal(await st.store.readOwner(pubkey), "colin", "releasing the random name kept the key's index")
+    if (!relay) assert.equal(cf.dns.has(`${random}.frizz.sh`), false, "its DNS record went with it")
+  }
+})
+
+test("releasing a lapsed name leaves an account's index alone once it points at another name", async () => {
+  // Account 42's name lapses; the account claims another; then the old one is released. Deleting the
+  // account's index then would let it claim a third name while still holding the second.
+  const st = fakeStore()
+  // One account, renamed on GitHub between claims: each name is its username at the time.
+  const year = NOW - 365 * 86_400_000
+  const github = fakeGithub({
+    "ghu_old": { id: 42, login: "old", createdAt: year },
+    "ghu_new": { id: 42, login: "new", createdAt: year },
+    "ghu_third": { id: 42, login: "third", createdAt: year },
+  })
+  const first = await generateClaimIdentity()
+  const second = await generateClaimIdentity()
+  const third = await generateClaimIdentity()
+  const at = (now: number) => deps({ api: undefined, store: st.store, github, now: () => now })
+  assert.equal((await handleClaim(await signClaim({ name: "old", port: 9393, issuedAt: NOW, github: "ghu_old" }, first), at(NOW))).status, 200)
+  const later = NOW + CLAIM_LEASE_MS + 1
+  assert.equal((await handleClaim(await signClaim({ name: "new", port: 9393, issuedAt: later, github: "ghu_new" }, second), at(later))).status, 200)
+  assert.equal(st.githubOwners.get(42), "new")
+  assert.deepEqual((await sweepExpiredClaims(at(later))).released, ["old"])
+  assert.equal(st.githubOwners.get(42), "new", "the account's index still names its live name")
+  const third_ = await handleClaim(await signClaim({ name: "third", port: 9393, issuedAt: later, github: "ghu_third" }, third), at(later))
+  assert.equal(third_.status, 409, "so the account still holds one name")
+})
+
+test("a custom name does not give way, and neither does a random one to another random one", async () => {
+  const st = fakeStore()
+  const identity = await generateClaimIdentity()
+  const d = deps({ api: fakeCloudflare().api, store: st.store })
+  assert.equal((await handleClaim(await claimFor(identity, "colin"), d)).status, 200)
+  assert.equal((await handleClaim(await claimFor(identity, generateAnonymousClaimName()), d)).status, 409)
+  assert.equal(st.rows.has("colin"), true, "the custom name keeps its lease, the grace for coming back")
+
+  const other = await generateClaimIdentity()
+  const first = generateAnonymousClaimName()
+  assert.equal((await handleClaim(await claimFor(other, first), d)).status, 200)
+  assert.equal((await handleClaim(await claimFor(other, generateAnonymousClaimName()), d)).status, 409)
+  assert.equal(st.rows.has(first), true)
+})
+
+test("a random name is never handed to another key, lapsed or swept, and its own key may have it back", async () => {
+  // Phones keep pointing at a random name after its board leaves it, and send it their sessions.
+  for (const relay of [false, true]) {
+    const cf = fakeCloudflare()
+    const st = fakeStore()
+    const owner = await generateClaimIdentity()
+    const stranger = await generateClaimIdentity()
+    const random = generateAnonymousClaimName()
+    const at = (now: number) => deps({ ...(relay ? { api: undefined } : { api: cf.api }), store: st.store, now: () => now })
+    assert.equal((await handleClaim(await claimFor(owner, random), at(NOW))).status, 200)
+
+    const later = NOW + CLAIM_LEASE_MS + 1
+    const lapsed = await handleClaim(await claimFor(stranger, random, 9393, later), at(later))
+    assert.equal(lapsed.status, 409, "a lapsed random name is not up for grabs")
+    assert.equal("error" in lapsed.body && lapsed.body.error, "name-taken")
+    assert.equal(st.rows.get(random)?.pubkey, (await claimFor(owner)).pubkey, "and the attempt released nothing")
+
+    assert.deepEqual((await sweepExpiredClaims(at(later))).released, [random])
+    assert.equal(st.rows.has(random), false, "the sweep releases it")
+    assert.equal(st.retired.get(random), (await claimFor(owner)).pubkey, "but keeps whose it was")
+    assert.equal((await handleClaim(await claimFor(stranger, random, 9393, later), at(later))).status, 409, "so a stranger still cannot")
+    assert.equal((await handleClaim(await claimFor(owner, random, 9393, later), at(later))).status, 200, "and its own key can")
+  }
+})
+
+test("a custom name, unlike a random one, returns to the pool when it lapses", async () => {
+  const st = fakeStore()
+  const owner = await generateClaimIdentity()
+  const newcomer = await generateClaimIdentity()
+  assert.equal((await handleClaim(await claimFor(owner, "colin"), deps({ api: undefined, store: st.store }))).status, 200)
+  const later = NOW + CLAIM_LEASE_MS + 1
+  assert.equal((await handleClaim(await claimFor(newcomer, "colin", 9393, later), deps({ api: undefined, store: st.store, now: () => later }))).status, 200)
+  assert.equal(st.retired.size, 0)
+})
+
+test("a custom claim that fails leaves the board on its random name", async () => {
+  const st = fakeStore()
+  const identity = await generateClaimIdentity()
+  const random = generateAnonymousClaimName()
+  assert.equal((await handleClaim(await claimFor(identity, random), deps({ api: fakeCloudflare().api, store: st.store }))).status, 200)
+  const failed = await handleClaim(await claimFor(identity, "colin"), deps({ api: fakeCloudflare("createTunnel").api, store: st.store }))
+  assert.equal(failed.status, 502)
+  assert.equal(st.rows.has(random), true, "the name it had is still its own")
+  assert.equal(await st.store.readOwner((await claimFor(identity)).pubkey), random)
+})
+
 test("a key whose name lapsed may claim again", async () => {
   // The index must not outlive the name. Otherwise letting a lease go would lock the owner out of the
   // service permanently, which is a worse failure than the squatting this guards against.
@@ -441,20 +568,20 @@ function fakeGithub(accounts: Record<string, { id: number; login: string; create
 
 const ACCOUNT = { id: 4242, login: "colin", createdAt: NOW - 365 * 24 * 60 * 60_000 }
 
-test("a token that can do more than name its account is refused, and nothing is recorded", async () => {
+test("a `gh` CLI token is refused, and nothing is recorded", async () => {
   // 2026-10-08: a compromised registrar collected the `gh` tokens old clients sent. The verifier now
-  // answers "scoped" for any such token; the claim must stop there, distinctly from an unknown login,
+  // answers "foreign" for any such token; the claim must stop there, distinctly from an unknown login,
   // so an old client is told to update rather than to sign in again.
   const cf = fakeCloudflare()
   const st = fakeStore()
   const identity = await generateClaimIdentity()
-  const d = deps({ api: cf.api, store: st.store, github: async (token) => (token === "gho_ghcli" ? "scoped" : ACCOUNT) })
+  const d = deps({ api: cf.api, store: st.store, github: async (token) => (token === "gho_ghcli" ? "foreign" : ACCOUNT) })
   const result = await handleClaim(
     await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "gho_ghcli" }, identity),
     d
   )
   assert.equal(result.status, 400)
-  assert.equal("error" in result.body && result.body.error, "github-token-scoped")
+  assert.equal("error" in result.body && result.body.error, "github-token-foreign")
   assert.match("message" in result.body ? result.body.message : "", /update Frizz/)
   assert.deepEqual(cf.calls, [], "nothing was provisioned")
   assert.equal(st.rows.size, 0, "nothing was recorded")
@@ -492,18 +619,20 @@ test("one name per GITHUB ACCOUNT — the limit a fresh keypair cannot walk arou
   // something to obtain is the point of the whole gate.
   const cf = fakeCloudflare()
   const st = fakeStore()
-  const d = deps({ api: cf.api, store: st.store, github: fakeGithub({ "gho_ok": ACCOUNT }) })
+  // A name is the account's own username, so a second name for one account takes a rename on GitHub.
+  const renamed = { ...ACCOUNT, login: "colin2" }
+  const d = deps({ api: cf.api, store: st.store, github: fakeGithub({ "gho_ok": ACCOUNT, "gho_renamed": renamed }) })
 
   const first = await generateClaimIdentity()
   assert.equal(
-    (await handleClaim(await signClaim({ name: "one", port: 9393, issuedAt: NOW, github: "gho_ok" }, first), d)).status,
+    (await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "gho_ok" }, first), d)).status,
     200
   )
 
   // A BRAND NEW keypair, same GitHub account: the per-key check cannot see it, the per-account one can.
   const second = await generateClaimIdentity()
   const blocked = await handleClaim(
-    await signClaim({ name: "two", port: 9393, issuedAt: NOW, github: "gho_ok" }, second),
+    await signClaim({ name: "colin2", port: 9393, issuedAt: NOW, github: "gho_renamed" }, second),
     d
   )
   assert.equal(blocked.status, 409)
@@ -511,12 +640,26 @@ test("one name per GITHUB ACCOUNT — the limit a fresh keypair cannot walk arou
   assert.equal(cf.tunnels.size, 1)
 })
 
+test("a custom name is the claiming account's own GitHub username, whatever its case", async () => {
+  const st = fakeStore()
+  const github = fakeGithub({ "ghu_ada": { id: 7, login: "Ada-Lovelace", createdAt: NOW - 365 * 86_400_000 } })
+  const d = deps({ api: undefined, store: st.store, github })
+  const identity = await generateClaimIdentity()
+  const other = await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "ghu_ada" }, identity), d)
+  assert.equal(other.status, 400)
+  assert.equal("error" in other.body && other.body.error, "not-your-github-username")
+  assert.equal(st.rows.size, 0, "nothing was recorded")
+  const own = await handleClaim(await signClaim({ name: "ada-lovelace", port: 9393, issuedAt: NOW, github: "ghu_ada" }, identity), d)
+  assert.equal(own.status, 200)
+  assert.equal(st.rows.get("ada-lovelace")?.githubId, 7)
+})
+
 test("a brand-new GitHub account cannot claim", async () => {
   const st = fakeStore()
   const identity = await generateClaimIdentity()
   const fresh = { id: 99, login: "throwaway", createdAt: NOW - 60_000 }
   const result = await handleClaim(
-    await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "gho_new" }, identity),
+    await signClaim({ name: "throwaway", port: 9393, issuedAt: NOW, github: "gho_new" }, identity),
     deps({
       store: st.store,
       github: fakeGithub({ "gho_new": fresh }),

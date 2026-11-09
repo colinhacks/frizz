@@ -1,5 +1,4 @@
 import { FRIZZ_ROUTE_PREFIX } from "@frizz/shared"
-import { threadKey } from "./threadKey.ts"
 
 // WHICH PROJECT THIS PAGE IS SHOWING, taken from its own URL.
 //
@@ -10,7 +9,7 @@ import { threadKey } from "./threadKey.ts"
 // the shape considered and rejected; see PROJECT_SEGMENT below for why it cost too much.)
 //
 // AN EMPTY BASE IS A SUPPORTED STATE, not a bug: the launching project is still served unprefixed at
-// `/thread/<slug>` and `/status/<name>`, which is what lets the server land slug routing without a
+// `/status/<name>` (and its threads' full-screen pages at `/thread/<slug>`), which is what lets the server land slug routing without a
 // lockstep rewrite of this file, and what keeps every pre-singleton bookmark resolving. It is a legacy
 // INBOUND alias, not a shape to MINT — see `outerPath`/`projectHref`. Note it does NOT include `/`,
 // which is the all-projects GRID; the launching project's queue reaches its board through
@@ -67,8 +66,8 @@ export function projectSlug(pathname?: string): string | undefined {
  * It names NO project, and that is the one way it differs from the unprefixed launching project, which
  * also names none: the launching project's page talks to `/_frizz` and means it, while a Console page
  * that reaches `/_frizz` for a thread or a project has forgotten to say which one. So the Console is a
- * base of its own — the router's inner paths (`/thread/<key>`) work under it exactly as under a project
- * — and api/rpc.ts refuses, on this page, any call that would fall back to the launching project.
+ * base of its own — the router's paths (`/status/<name>`, and `?thread=<key>`) work under it exactly as
+ * under a project — and api/rpc.ts refuses, on this page, any call that would fall back to the launching project.
  * Its threads are named by key (lib/threadKey.ts).
  */
 const CONSOLE_SEGMENT = "console"
@@ -119,26 +118,22 @@ export function outerPath(inner: string, pathname?: string): string {
  * `/` is deliberately NOT rewritten: it is the all-projects grid, which is the same page everywhere.
  *
  * ON THE CONSOLE a thread link needs `project` — the project the prose belongs to (its surface's
- * <ProjectScope>). The Console names no project, so `/console/thread/<slug>` would leave the browser to
+ * <ProjectScope>). The Console names no project, so a thread link there would leave the browser to
  * guess among every project's threads of that name: one that opens it in a new tab, or any link the
  * click interceptor (lib/thread-links.ts) cannot place, landed on whichever project happened to have the
- * slug, or on the launching project's. With a project the link names the thread's key
- * (`/console/thread/<project>~<slug>`), and a deeper page (`…/full`) goes to that project's own page,
- * which is where it lives. With none, the link is left exactly as written.
+ * slug, or on the launching project's. With a project the link goes to that project's own page for the
+ * thread (`/project/<project>/thread/<slug>`, its full-screen page), which is where it lives; a plain
+ * click still opens it on the Console. With none, the link is left exactly as written.
  */
 export function prefixedAppRoute(href: string | null | undefined, pathname?: string, project?: string): string | null {
   if (!href || !href.startsWith("/") || href.startsWith("//")) return null
   const bare = href.replace(/[?#].*$/u, "")
   if (projectSlug(bare)) return null // already names its project
-  const [, first = "", slug = "", ...deeper] = bare.split("/")
+  const [, first = "", slug = ""] = bare.split("/")
   if (!APP_ROUTE_SEGMENTS.has(first)) return null
   if (first === "thread" && isConsolePath(pathname)) {
     if (!project || !CONSOLE_KEYABLE_SLUG.test(slug)) return null
-    const tail = href.slice(bare.length)
-    const rest = deeper.filter(Boolean)
-    return rest.length > 0
-      ? `${projectHref(project)}${bare}${tail}`
-      : `${CONSOLE_PATH}/thread/${threadKey(project, slug)}${tail}`
+    return `${projectHref(project)}${href}`
   }
   const outer = outerPath(href, pathname)
   return outer === href ? null : outer

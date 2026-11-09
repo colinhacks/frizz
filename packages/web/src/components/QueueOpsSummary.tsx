@@ -6,7 +6,7 @@ import { useNowMs } from "../lib/liveClock.ts"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
 import { panelWidthOn } from "../lib/overlaySurface.ts"
 import { extendTrail, trailHeadingInto, type PointerSample } from "../lib/pointerAim.ts"
-import { isMonitorWatch, queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
+import { queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
 import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
@@ -96,8 +96,7 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
   shell: "Background shells running for this thread",
   pr: "Pull requests this thread is watching",
   issue: "Issues this thread is watching",
-  command: "Command watches this thread is waiting on",
-  monitor: "Monitors this thread is waiting on",
+  command: "Monitors this thread is waiting on",
   timer: "Timers this thread has set",
   file: "Files saved for this thread",
   link: "Links saved for this thread",
@@ -230,7 +229,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
             ? <QueueSubAgentLines slug={thread.id} subAgents={thread.subAgents ?? []} className="" density="panel" />
             : group.key === "child"
             ? <div data-queue-child-threads className="flex min-w-0 flex-col"><ChildThreadRows parent={thread.id} childThreads={childThreads} density="panel" /></div>
-            : group.key === "command" || group.key === "monitor" || group.key === "timer"
+            : group.key === "command" || group.key === "timer"
             ? <WaitPanelRows thread={thread} kind={group.key} />
             : <BackgroundOpsStrip slug={thread.id} includeAgents={false} only={group.key} transcriptShells={transcriptShells} className="" density="panel" />}
         </OpsCount>
@@ -409,7 +408,6 @@ function CountMark({ kind, states }: { kind: QueueOpsKind; states: readonly (str
     case "pr":
     case "issue": return <Dot hue="github" states={states} />
     case "command":
-    case "monitor":
     case "timer": return <Dot hue="github" states={states} />
     case "file": return <FileText aria-hidden className="h-[1em] w-[1em] text-muted-45" />
     case "link": return <ExternalLink aria-hidden className="h-[1em] w-[1em] text-muted-45" />
@@ -425,16 +423,16 @@ function Dot({ hue, states }: { hue: "agent" | "shell" | "github"; states: reado
 // panel on the line speaks one row. Their readings are the awaiting card's (CommandWatchRow, TimerRow):
 // a command watch's cadence beside how long it has watched, as a PR row's check count sits beside its
 // age, and a timer's countdown alone — beside it, the time since it was set would read as a second clock.
-// A MONITOR's row opens its drawer (MonitorSheet), as a shell's does — its stop lives there, beside what
+// A persistent watch's row opens its drawer (MonitorSheet), as a shell's does — its stop lives there, beside what
 // it printed. A plain command watch and a timer have no drawer, so their rows are not buttons, and none
 // carries a ×.
-function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" | "monitor" | "timer" }) {
+function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" | "timer" }) {
   const now = useNowMs()
   const { commands, timers } = threadOps(thread)
   return (
     <div className="flex flex-col">
       {kind !== "timer"
-        ? commands.filter((watch) => isMonitorWatch(watch) === (kind === "monitor")).map((watch) => (
+        ? commands.map((watch) => (
             <ChildOpRow
               key={watch.id}
               kind="COMMAND"

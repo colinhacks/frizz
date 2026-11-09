@@ -86,13 +86,14 @@ test("the Console is a base that names no project", () => {
 // Review finding 9 (2026-10-11): on the Console a worker's `/thread/<slug>` was stamped `/console/thread/<slug>`,
 // which names no project — a new-tab open (and any click the interceptor could not place) then resolved the
 // bare slug across EVERY project, landing on whichever had it, or on the launching project's thread of that
-// name. The prose's own project (its surface's ProjectScope) now goes into the link as the thread's key.
-test("on the Console a thread link names its thread's key, and only when the prose's project is known", () => {
+// name. The prose's own project (its surface's ProjectScope) now goes into the link. Since 2026-11-07 the
+// link is that project's page for the thread — its full-screen page; a plain click still opens it here.
+test("on the Console a thread link names its thread's project, and only when the prose's project is known", () => {
   const page = "/console"
-  assert.equal(prefixedAppRoute("/thread/fix-auth", page, "billing"), "/console/thread/billing~fix-auth")
-  assert.equal(prefixedAppRoute("/thread/fix-auth/", "/console/thread/acme~x", "billing"), "/console/thread/billing~fix-auth")
-  assert.equal(prefixedAppRoute("/thread/fix-auth?x=1#y", page, "billing"), "/console/thread/billing~fix-auth?x=1#y")
-  // A deeper page is the project's own — the Console has no `/full` of its own.
+  assert.equal(prefixedAppRoute("/thread/fix-auth", page, "billing"), "/project/billing/thread/fix-auth")
+  assert.equal(prefixedAppRoute("/thread/fix-auth/", "/console", "billing"), "/project/billing/thread/fix-auth/")
+  assert.equal(prefixedAppRoute("/thread/fix-auth?x=1#y", page, "billing"), "/project/billing/thread/fix-auth?x=1#y")
+  // An old `/full` link goes to the same project, where routes.tsx drops the suffix.
   assert.equal(prefixedAppRoute("/thread/fix-auth/full", page, "billing"), "/project/billing/thread/fix-auth/full")
   // No project to name: left exactly as written rather than turned into a bare Console link.
   assert.equal(prefixedAppRoute("/thread/fix-auth", page), null)
@@ -102,5 +103,5 @@ test("on the Console a thread link names its thread's key, and only when the pro
   assert.equal(prefixedAppRoute("/project/acme/thread/fix-auth", page, "billing"), null)
   assert.equal(prefixedAppRoute("/status/active", page, "billing"), "/console/status/active")
   // A project page ignores the argument: its own prefix is the project (and ProjectScope is never set there).
-  assert.equal(prefixedAppRoute("/thread/other", "/project/nub/thread/fix-auth", "billing"), "/project/nub/thread/other")
+  assert.equal(prefixedAppRoute("/thread/other", "/project/nub", "billing"), "/project/nub/thread/other")
 })

@@ -85,7 +85,7 @@ test("nothing paints over the update popover or its failure card", { skip: !url,
     await page.goto(url!, { waitUntil: "networkidle2" })
     await page.waitForSelector("[data-sidebar-item]")
     await popoverOver("a project board")
-    await page.goto(`${url!.replace(/\/$/, "")}/thread/snoozed-0`, { waitUntil: "networkidle2" })
+    await page.goto(`${url!.replace(/\/$/, "")}?thread=snoozed-0`, { waitUntil: "networkidle2" })
     await page.waitForSelector(".frizz-sheet-panel")
     await popoverOver("a thread drawer")
 

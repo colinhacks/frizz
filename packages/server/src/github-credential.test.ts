@@ -11,6 +11,7 @@ import {
   frizzGithubWorkerEnv,
   frizzWorkerGhConfigDir,
   frizzGithubToken,
+  githubClaimToken,
   githubCredentialPath,
   githubCredentialStatus,
   githubSignInState,
@@ -156,6 +157,59 @@ test("another process sharing the folder renewed first: its token is adopted, no
     writeFileSync(githubCredentialPath(), sealGithubCredential(theirs), { mode: 0o600 })
     const token = await frizzGithubToken({ now: () => 0, request: async () => { throw new Error("no refresh expected") } })
     assert.equal(token, "ghu_theirs")
+  })
+})
+
+test("a frizz.sh claim gets the App token and login, and a token inside the keeper's window is not renewed", async () => {
+  await withHome(async () => {
+    const noRequest = async () => { throw new Error("no refresh expected") }
+    writeGithubCredential(app({ accessExpiresAt: 8 * HOUR }))
+    assert.deepEqual(await githubClaimToken({ now: () => 0, request: noRequest }), { token: "ghu_old", login: "colinhacks" })
+    // Five minutes left: the server's keeper renews at ten, so renewing here too could race it.
+    writeGithubCredential(app({ accessExpiresAt: 5 * 60_000 }))
+    assert.deepEqual(await githubClaimToken({ now: () => 0, request: noRequest }), { token: "ghu_old", login: "colinhacks" })
+  })
+})
+
+test("a frizz.sh claim reads the file afresh, so the launcher picks up the server's renewal", async () => {
+  await withHome(async () => {
+    writeGithubCredential(app({ accessExpiresAt: 8 * HOUR }))
+    assert.equal((await githubClaimToken({ now: () => 0 })).token, "ghu_old")
+    // The server's keeper renews in its own process, leaving this one's copy behind.
+    const theirs = JSON.stringify(app({ accessToken: "ghu_theirs", refreshToken: "ghr_theirs", accessExpiresAt: 16 * HOUR }))
+    writeFileSync(githubCredentialPath(), sealGithubCredential(theirs), { mode: 0o600 })
+    assert.equal((await githubClaimToken({ now: () => 0, request: async () => { throw new Error("no refresh expected") } })).token, "ghu_theirs")
+  })
+})
+
+test("a frizz.sh claim never renews the token itself, and refuses while signed out", async () => {
+  await withHome(async () => {
+    await assert.rejects(githubClaimToken({ now: () => 0 }), /not signed in to GitHub/)
+    // A minute left: renewing here could race the server's keeper for the single-use refresh token.
+    writeGithubCredential(app({ accessExpiresAt: 60_000 }))
+    let requests = 0
+    const request = async () => { requests++; return json({}) }
+    await assert.rejects(githubClaimToken({ now: () => 0, request }), /due for renewal.*Try again in a minute/)
+    assert.equal(requests, 0, "nothing was asked of GitHub")
+    const stored = readGithubCredential()
+    assert.equal(stored?.kind === "app" ? stored.refreshToken : null, "ghr_old", "and the refresh token is unspent")
+  })
+})
+
+test("a frizz.sh claim never sends a pasted token or the FRIZZ_GITHUB_TOKEN override", async () => {
+  await withHome(async () => {
+    // The registrar takes only the App's user token, so anything else is refused here, unsent.
+    writeGithubCredential({ kind: "token", token: "github_pat_pasted", login: "colinhacks", savedAt: 0 })
+    await assert.rejects(githubClaimToken({ now: () => 0 }), /pasted token, which can't claim a name/)
+    writeGithubCredential(app({ accessExpiresAt: 8 * HOUR }))
+    process.env.FRIZZ_GITHUB_TOKEN = "ghp_override"
+    try {
+      assert.equal((await githubClaimToken({ now: () => 0 })).token, "ghu_old", "the override is ignored")
+      clearGithubCredential()
+      await assert.rejects(githubClaimToken({ now: () => 0 }), /not signed in to GitHub/, "and is no sign-in of its own")
+    } finally {
+      delete process.env.FRIZZ_GITHUB_TOKEN
+    }
   })
 })
 

@@ -70,6 +70,8 @@ const NEEDS_REAL_STACK = [
   "packages/web/src/components/homeSwitcher.e2e.test.ts",
   "packages/web/src/components/stackingOrder.e2e.test.ts",
   "packages/web/src/components/updatePopoverStacking.e2e.test.ts",
+  "packages/web/src/components/pinnedReports.e2e.test.ts",
+  "packages/web/src/components/signOffCard.e2e.test.ts",
 ];
 
 const args = process.argv.slice(2);

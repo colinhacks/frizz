@@ -79,7 +79,7 @@ try {
     else if (m.type() === "warning" || m.type() === "warn") notes.push(m.text())
   })
   page.on("pageerror", (e) => errors.push(String(e)))
-  await page.goto(`${url}/thread/${slug}`, { waitUntil: "networkidle2", timeout: 30000 })
+  await page.goto(`${url}?thread=${slug}`, { waitUntil: "networkidle2", timeout: 30000 })
   await page.waitForSelector('textarea[placeholder*="Follow up"]', { timeout: 15000 })
 
   const send = async (text) => {

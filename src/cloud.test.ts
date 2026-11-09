@@ -7,6 +7,8 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
+import { isAnonymousClaimName } from "@frizz/shared";
+import { ClaimError } from "./registrar-client.ts";
 import {
   cloudConfigPath,
   establishCloudConfig,
@@ -36,22 +38,41 @@ for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete
 // toggle would leak into its neighbours. The shipped default is pinned in custom-names-paused.test.ts.
 process.env.FRIZZ_CUSTOM_NAMES = "1";
 
-// Claiming a NAME binds it to a GitHub account, which establishCloudConfig confirms through GitHub's
-// device flow. The claim tests hand in this stand-in for the finished sign-in, so no test waits on a
-// person entering a code at github.com (github-device-flow.test.ts drives the flow itself).
-const fakeGithub = { authorize: async () => ({ token: "gho_testtoken", login: "tester" }) };
+// Claiming a NAME binds it to a GitHub account, which establishCloudConfig confirms through Frizz's
+// own GitHub sign-in. The claim tests hand in this stand-in for it, so no test reads a real one
+// (github-credential.test.ts covers githubClaimToken itself).
+const fakeGithub = { authorize: async () => ({ token: "ghu_testtoken", login: "colin" }) };
 
-/** A registrar that answers every claim, so the CLI side can be driven without one deployed. */
+/**
+ * A registrar that answers every claim, so the CLI side can be driven without one deployed. Like the real
+ * one, it asks for GitHub (`github-required`) on the first claim of a custom name that carries no token,
+ * and renews a name its key already holds without one. `status` makes every answer that error instead.
+ */
 async function claimServer(
   reply: unknown = { hostname: "colin.frizz.sh", token: "run-token", leaseExpiresAt: 0, renewed: false },
+  status?: number,
 ) {
   const claims: Array<Record<string, unknown>> = [];
+  const accepted: Array<Record<string, unknown>> = [];
+  const held = new Map<string, unknown>();
   const server: Server = createServer((req, res) => {
     let body = "";
     req.setEncoding("utf8");
     req.on("data", (chunk: string) => (body += chunk));
     req.on("end", () => {
-      claims.push(JSON.parse(body));
+      const claim = JSON.parse(body) as Record<string, unknown>;
+      claims.push(claim);
+      const name = String(claim.name);
+      if (status) {
+        res.writeHead(status, { "content-type": "text/plain" });
+        return res.end("worker threw");
+      }
+      if (!isAnonymousClaimName(name) && !claim.github && held.get(name) !== claim.pubkey) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: "github-required", message: "needs GitHub" }));
+      }
+      held.set(name, claim.pubkey);
+      accepted.push(claim);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(reply));
     });
@@ -63,6 +84,8 @@ async function claimServer(
     origin: `http://127.0.0.1:${port}`,
     /** Every claim body the registrar was sent, in order. */
     claims,
+    /** The ones it answered 200. */
+    accepted,
     async close() {
       server.close();
       await once(server, "close");
@@ -210,8 +233,9 @@ test("a claimed name stores the token at 0600, apart from the world-readable con
     const config = await establishCloudConfig("colin", 9393, home, server.origin, fakeGithub);
     assert.deepEqual(config, { hostname: "colin.frizz.sh", claim: "colin", serve: "tunnel" });
     assert.equal(readTunnelToken(home), "run-token");
-    // The first claim is the one that carries the GitHub token, and it is the device-flow one.
-    assert.equal(server.claims[0]?.github, "gho_testtoken", "the claim carries the injected token");
+    // A first try carries no token; the registrar asks for GitHub, and the second carries Frizz's sign-in.
+    assert.equal("github" in server.claims[0]!, false, "the first try carries no token");
+    assert.equal(server.accepted[0]?.github, "ghu_testtoken", "the claim carries the injected token");
     // The mode bits only — the claim, the token round trip and the config separation below are asserted
     // on every platform. Windows has no POSIX permission bits (NTFS access is an ACL, `fs.chmod` sets
     // only the read-only flag, node reports 0666), so the 0o600 cloud.ts writes with is inert there.
@@ -247,6 +271,68 @@ test("a launch renews the lease, and falls back to the cached token when the reg
     assert.match(warnings[0]!, /could not reach the Frizz registrar/);
   } finally {
     await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a name the key already holds is claimed again without a GitHub token, and GitHub is not asked", async () => {
+  const home = tempHome();
+  const server = await claimServer({ hostname: "colin.frizz.sh", leaseExpiresAt: 0, renewed: false });
+  let asked = 0;
+  const counting = { authorize: async () => { asked++; return { token: "ghu_testtoken", login: "colin" }; } };
+  try {
+    await establishCloudConfig("colin", 9393, home, server.origin, counting);
+    assert.equal(asked, 1);
+    server.claims.length = 0;
+    await establishCloudConfig("colin", 9393, home, server.origin, counting);
+    assert.equal(asked, 1, "re-entering it did not touch the sign-in");
+    assert.deepEqual(server.claims.map((claim) => "github" in claim), [false], "and sent no token");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a custom name that is not the sign-in's own username is refused before the token is sent", async () => {
+  const home = tempHome();
+  const server = await claimServer({ hostname: "colin.frizz.sh", leaseExpiresAt: 0, renewed: false });
+  try {
+    const someoneElse = { authorize: async () => ({ token: "ghu_testtoken", login: "Ada-Lovelace" }) };
+    await assert.rejects(
+      establishCloudConfig("colin", 9393, home, server.origin, someoneElse),
+      (error: unknown) =>
+        error instanceof ClaimError && error.code === "not-your-github-username" && /claim ada-lovelace instead/.test(error.message),
+    );
+    assert.deepEqual(server.claims.map((claim) => "github" in claim), [false], "only the tokenless try went out");
+    assert.equal(readCloudConfig(home), null, "and nothing was saved");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a registrar failing on its own side does not stop a relay board's launch, and a refusal does", async () => {
+  const home = tempHome();
+  const relay = { hostname: "colin.frizz.sh", claim: "colin", serve: "relay" as const };
+  for (const status of [500, 503]) {
+    const server = await claimServer(undefined, status);
+    try {
+      const warnings: string[] = [];
+      assert.equal(await resolveRunToken(relay, 9393, home, (m) => warnings.push(m), server.origin), null, String(status));
+      assert.match(warnings[0] ?? "", new RegExp(`serving it on its current lease`));
+    } finally {
+      await server.close();
+    }
+  }
+  const warnings: string[] = [];
+  assert.equal(await resolveRunToken(relay, 9393, home, (m) => warnings.push(m), "http://127.0.0.1:1"), null, "unreachable too");
+  // An answer that refuses (here, asking for GitHub, as it does for a name this key does not hold) is
+  // not a failure, and the launch must hear it.
+  const taken = await claimServer({ hostname: "colin.frizz.sh", leaseExpiresAt: 0, renewed: true });
+  try {
+    await assert.rejects(resolveRunToken({ ...relay, claim: "colin" }, 9393, home, undefined, taken.origin), /needs GitHub|github/i);
+  } finally {
+    await taken.close();
     rmSync(home, { recursive: true, force: true });
   }
 });
@@ -299,6 +385,31 @@ test("a first claim that cannot reach the registrar points at the path that work
       /could not reach the Frizz registrar[\s\S]*tunnel of your own/,
     );
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a claim's progress lines go where the caller says, and the R pane's unreachable error drops the prompt's hint", async () => {
+  // Under the R pane, a console.log lands inside the pane's paint; the pane passes its own `say`. The
+  // hint at the end of an unreachable error names the launch prompt's other answer, which the pane has
+  // as rows of its own.
+  const home = tempHome();
+  const server = await claimServer();
+  const printed: unknown[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => { printed.push(args); };
+  try {
+    const said: string[] = [];
+    await establishCloudConfig("colin", 9393, home, server.origin, fakeGithub, { say: (line) => said.push(line) });
+    assert.deepEqual(said, ["  claiming colin.frizz.sh for GitHub user colin"]);
+    assert.deepEqual(printed, [], "nothing reaches console.log");
+    await assert.rejects(
+      establishCloudConfig("colin", 9393, home, "http://127.0.0.1:1", fakeGithub, { say: () => {}, promptHint: false }),
+      (error: Error) => /could not reach the Frizz registrar/.test(error.message) && !/tunnel of your own|\n/.test(error.message),
+    );
+  } finally {
+    console.log = log;
+    await server.close();
     rmSync(home, { recursive: true, force: true });
   }
 });
@@ -374,8 +485,8 @@ test("up claims a zone hostname that was saved as a hand-made tunnel, and serves
     const stale = { hostname: "colin.frizz.sh", tunnel: "colin", config: "/x/frizz.yml" };
     const config = await reconcileCloudConfig(stale, 9393, home, (m) => notices.push(m), server.origin, fakeGithub);
     assert.deepEqual(config, { hostname: "colin.frizz.sh", claim: "colin", serve: "relay" });
-    assert.equal(server.claims.length, 1, "the label is claimed through the same call a first launch makes");
-    assert.equal(server.claims[0]!.name, "colin");
+    assert.equal(server.accepted.length, 1, "the label is claimed through the same call a first launch makes");
+    assert.equal(server.accepted[0]!.name, "colin");
     assert.ok(notices.some((m) => m.includes("claiming colin")), notices.join("\n"));
   } finally {
     await server.close();
@@ -454,7 +565,7 @@ test("a name that already HAS the anonymous shape re-claims without GitHub too",
 // 2026-10-08: a compromised registrar collected the `gh auth token` every named claim sent — a token
 // that can push to every repository its owner can. The claim path no longer runs `gh` at all. This
 // puts a `gh` on PATH that would hand over a secret and record being run, then claims a name: the body
-// carries only the device-flow token, and the `gh` was never touched.
+// carries only Frizz's own sign-in, and the `gh` was never touched.
 test("a named claim never runs `gh` and never sends its token", { skip: process.platform === "win32" && "a shell-script gh needs a POSIX shell" }, async () => {
   const home = tempHome();
   const bin = mkdtempSync(join(tmpdir(), "frizz-fake-gh-"));
@@ -469,10 +580,10 @@ test("a named claim never runs `gh` and never sends its token", { skip: process.
     rmSync(ran, { force: true });
 
     await establishCloudConfig("colin", 9393, home, server.origin, {
-      authorize: async () => ({ token: "gho_zeroScopeDeviceToken", login: "tester" }),
+      authorize: async () => ({ token: "ghu_frizzSignInToken", login: "colin" }),
     });
     const sent = JSON.stringify(server.claims);
-    assert.equal(server.claims[0]?.github, "gho_zeroScopeDeviceToken", "the claim carries the device-flow token");
+    assert.equal(server.accepted[0]?.github, "ghu_frizzSignInToken", "the claim carries Frizz's sign-in");
     assert.equal(sent.includes("gho_SECRET_FROM_GH_CLI"), false, "the gh token never reaches the registrar");
     assert.equal(existsSync(ran), false, "the claim path never ran gh");
   } finally {

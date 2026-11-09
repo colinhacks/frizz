@@ -52,7 +52,7 @@ try {
   const errors = []
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()) })
   page.on("pageerror", (e) => errors.push(String(e)))
-  await page.goto(`${url}/thread/${slug}`, { waitUntil: "networkidle2", timeout: 30000 })
+  await page.goto(`${url}?thread=${slug}`, { waitUntil: "networkidle2", timeout: 30000 })
 
   const button = await page.waitForSelector('[aria-label="Confirm snooze"]', { timeout: 15000 })
   check("the awaiting card offers the park button for a future timer hint", Boolean(button))

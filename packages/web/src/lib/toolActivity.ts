@@ -112,8 +112,9 @@ export function isToolActivityException(tool: Pick<
  * says what happened to it — so the call is history like any other and folds into the run.
  *
  * `"background"` only. The `"unknown"` state is a job frizz could not track, so no completion ever
- * arrives to settle it; a settled `"unknown"` call is the launch's own result (the hook refusing the `&`
- * job, say), not the process ending, and the card stays.
+ * arrives to settle it; a settled `"unknown"` call is the launch's own result, not the process ending, and
+ * the card stays. A call the worker's hook REFUSED never arrives as `"unknown"`: nothing launched, so the
+ * transcript parser clears the state and it folds like any failed call.
  */
 function finishedBackgroundOp(tool: Pick<TranscriptToolCall, "backgroundState" | "status">): boolean {
   return tool.backgroundState === "background" && settledToolCall(tool)

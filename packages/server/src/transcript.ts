@@ -37,6 +37,7 @@ import type { Storage } from "./storage.ts"
 import { CLAUDE_WORKER_ENV, type AgentBackend, type NormalizedEvent } from "./backend/types.ts"
 import { parseDeliveryLedger, projectDeliveryLedger, suppressCancelledDeliveries, attachmentPromptText, isPromptDeliveryAttachment } from "./delivery-ledger.ts"
 import { editedFilesOf } from "./edited-files.ts"
+import { takeLoopTurn } from "./loop-turns.ts"
 import { repoCarriedEditedFiles } from "./repo-files.ts"
 import { stripDeliveryMarkers } from "./delivery-marker.ts"
 import { RELAYED_MARKER, relayNotificationBlock } from "./completion-relay.ts"
@@ -45,8 +46,9 @@ import { projectAcpTranscript, readAcpTranscriptFile, type AcpUserRecordProjecto
 import { projectOpencodeTranscript, readOpencodeTranscriptFile, type OpencodeToolCardBuilder } from "./backend/opencode-transcript.ts"
 import { discoverTranscriptDir, discoverTranscriptId, DISCOVERY_GRACE_MS } from "./discover.ts"
 import { isClaudeAuthErrorText, isMonitorTimeoutEvent, parseSignalFence } from "./tailer.ts"
+import { projectSignOffs } from "./sign-offs.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
-import { hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
+import { BACKGROUND_JOB_REFUSAL, hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
 import { frizzTempDir, isPromptAttachmentPath } from "./frizz-paths.ts"
 import { dispatchProfileCell } from "./subagent-profile.ts"
 
@@ -1254,6 +1256,9 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
   // it stays buffered for the next ingest. Returns true iff consumed (so the caller advances past it).
   function tryConsumePartial(text: string, at: number): boolean {
     if (!text.trim()) return false
+    // Every record is an object, so nothing else can be a whole one. Parsing to find that out would cost a
+    // record cut across many slices of a cold fold (foldInSlices) a full scan per slice.
+    if (!text.trimEnd().endsWith("}")) return false
     try {
       JSON.parse(text)
     } catch {
@@ -1811,8 +1816,15 @@ function attachToolResults(
     // card can render it inline. `b.tool_use_id` is a verified string by the guard at the loop head.
     // A Read of the human's own prompt attachment keeps its plain header instead (PendingClaudeTool).
     const outputImage = status !== "failed" && status !== "cancelled" && !entry.promptAttachment ? persistResultImage(b.content, b.tool_use_id) : undefined
+    // A `&` job the worker's hook REFUSED never ran, so nothing is left untracked: the call is an ordinary
+    // failed Bash and folds into `Ran N tool calls` like one. Kept as `"unknown"` it drew its own red row
+    // between two digests (maintainer 2026-11-07: "Why do I sometimes see tool calls like this, even
+    // without expanding it?"), and since the hook refuses every escaping job before it runs, that refusal
+    // was the only thing the `"unknown"` card still showed on a current worker.
+    const refusedJob = failed && Boolean(text?.includes(BACKGROUND_JOB_REFUSAL))
     for (const call of entry.calls) {
       call.status = status
+      if (refusedJob && call.backgroundState === "unknown") delete call.backgroundState
       if (durationMs !== undefined) call.durationMs = durationMs
       if (outputImage) call.outputImage = outputImage
       // An AskUserQuestion's structured result carries the human's answers keyed by question text —
@@ -1886,8 +1898,9 @@ function toolCalls(block: any, turn: { turnModel?: string; turnEffort?: string }
         // A background Bash result only acknowledges that the child was launched. Keep the card live
         // until its later task-notification; no launch result can truthfully mean "done".
         // Shell job control is visible immediately, even though no lifecycle id exists. Current Frizz
-        // workers reject the attempt before execution; historical calls that escaped the guard remain
-        // honestly UNKNOWN instead of folding into an opaque "Ran N tool calls" disclosure.
+        // workers reject the attempt before execution, and the refusal clears this again (the result
+        // branch: nothing launched); a call that escaped the guard stays honestly UNKNOWN instead of
+        // folding into an opaque "Ran N tool calls" disclosure.
         backgroundState,
       }]
     }
@@ -4327,11 +4340,15 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   // It emits no queued bubbles today (codex's gray bubbles come only from the delivery ledger, which
   // ages its own out), so the backstop is a no-op here — applied anyway so the guarantee is a property
   // of the reader rather than of one backend's current parser.
-  if (snapshot.backend === "codex") return retireStaleQueuedBubbles(projectCodexTranscript(snapshot.raw, prefix))
+  //
+  // Every branch ends in projectSignOffs, over the WHOLE projection before any page is cut from it: which
+  // message a rest signed off on can depend on the rest after it (sign-offs.ts), and an earlier page must
+  // carry the same answer the latest one did.
+  if (snapshot.backend === "codex") return projectSignOffs(retireStaleQueuedBubbles(projectCodexTranscript(snapshot.raw, prefix)))
   // Same whole-file shape for an ACP transcript: frizz writes it, it is small, and its records are
   // already NormalizedEvents (acp-transcript.ts), so there is no claude fold to retain.
-  if (snapshot.backend === "acp") return retireStaleQueuedBubbles(projectAcpTranscript(snapshot.raw, prefix, acpUserRecordProjector))
-  if (snapshot.backend === "opencode") return retireStaleQueuedBubbles(projectOpencodeTranscript(snapshot.raw, prefix, opencodeToolCards, acpUserRecordProjector))
+  if (snapshot.backend === "acp") return projectSignOffs(retireStaleQueuedBubbles(projectAcpTranscript(snapshot.raw, prefix, acpUserRecordProjector)))
+  if (snapshot.backend === "opencode") return projectSignOffs(retireStaleQueuedBubbles(projectOpencodeTranscript(snapshot.raw, prefix, opencodeToolCards, acpUserRecordProjector)))
 
   const { entry } = retainedFoldEntry(snapshot.path, prefix, snapshot.fileKey, snapshot.size)
   // Reads ONLY the appended delta — the reason the whole-file buffer is no longer materialised.
@@ -4345,7 +4362,111 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   // the array it is handed), which would otherwise pollute the RETAINED projection across reads.
   // retireStaleQueuedBubbles runs HERE rather than further down: it must see the fold's OWN bubbles and
   // not the ledger's synthetic ones, which carry their own aging (ageDeliveries) and states.
-  return retireStaleQueuedBubbles([...entry.fold.allMessages()])
+  return projectSignOffs(retireStaleQueuedBubbles([...entry.fold.allMessages()]))
+}
+
+// A COLD FOLD, A SLICE AT A TIME.
+//
+// A retained fold only pays for appended bytes, but one that is not retained pays for the whole file, on the one
+// thread that serves every project: 11.4s of every 5 minutes on the live server, in stretches of up to 1.1s
+// (profiled 2026-11-06, 83 open threads against the 16 folds the cache keeps). Every upload, board push and RPC
+// sent in that time waits for it. The fold is synchronous and its callers are too, so this runs BEFORE them:
+// the same fold, the same retained entry, fed in slices with the event loop's whole cycle between them, so the
+// read that follows finds it caught up and pays for almost nothing. A fold costs as much CPU as ever. What
+// goes away is everyone else waiting for all of it at once.
+//
+// Reads that find a fold behind by less than this go straight ahead: one slice of work has nothing to split.
+const COLD_FOLD_BYTES = 256 * 1024
+const FOLD_SLICE_BYTES = 64 * 1024
+const FOLD_SLICE_MS = 8
+// A page of cold cards takes turns, a few at a time. Far under TRANSCRIPT_CACHE_CAP, so the folds in progress
+// cannot evict each other, and a fold touches its entry each slice to stay recent.
+const COLD_FOLD_CONCURRENCY = 3
+const coldFolds = new Map<string, Promise<void>>()
+let coldFoldsRunning = 0
+const coldFoldQueue: Array<() => void> = []
+
+/** One slice of a cold fold. True while there is more of the file to fold. */
+function foldSlice(snapshot: FixedTranscriptSnapshot): boolean {
+  const { entry } = retainedFoldEntry(snapshot.path, `${snapshot.backend}:${snapshot.nativeId}`, snapshot.fileKey, snapshot.size)
+  if (entry.bytesRead >= snapshot.size) return false
+  const until = performance.now() + FOLD_SLICE_MS
+  do {
+    const from = entry.bytesRead
+    ingestBounded(entry, Math.min(from + FOLD_SLICE_BYTES, snapshot.size), snapshot.readRange)
+    if (entry.bytesRead === from) return false // the file ended short of its stat; the read that follows reports it
+  } while (entry.bytesRead < snapshot.size && performance.now() < until)
+  return entry.bytesRead < snapshot.size
+}
+
+async function foldInSlices(snapshot: FixedTranscriptSnapshot): Promise<void> {
+  if (coldFoldsRunning >= COLD_FOLD_CONCURRENCY) await new Promise<void>((go) => coldFoldQueue.push(go))
+  else coldFoldsRunning++
+  try {
+    let more = true
+    while (more) {
+      // One slice for each pass of the loop, whoever's it is, in line with the projects' ticks (loop-turns.ts).
+      more = await new Promise<boolean>((resolve, reject) => {
+        takeLoopTurn(() => {
+          try {
+            resolve(foldSlice(snapshot))
+          } catch (error) {
+            reject(error)
+          }
+        })
+      })
+    }
+  } finally {
+    const next = coldFoldQueue.shift()
+    if (next) next()
+    else coldFoldsRunning--
+  }
+}
+
+/**
+ * Start folding this thread's transcript in slices if a read of it now would mean a long synchronous fold.
+ * Undefined means there is nothing to wait for and the read can go ahead. The promise never rejects: whatever went
+ * wrong, the read that follows meets it again and answers it the way it always has.
+ *
+ * Claude transcripts only. The other two projectors parse a whole file on every read and retain nothing.
+ */
+export function catchUpTranscriptFold(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor?: (kind?: string) => AgentBackend,
+): Promise<void> | undefined {
+  let snapshot: FixedTranscriptSnapshot | undefined
+  try {
+    const source = sourceForThread(project, storage, slug, backendFor)
+    snapshot = source && fixedSnapshot(source)
+  } catch {
+    return undefined
+  }
+  if (!snapshot || snapshot.backend !== "claude") return undefined
+  const running = coldFolds.get(snapshot.path)
+  if (running) return running
+  const retained = transcriptCache.get(snapshot.path)
+  const current = retained && retained.identityPrefix === `${snapshot.backend}:${snapshot.nativeId}` && retained.fileId === snapshot.fileKey && snapshot.size >= retained.bytesRead
+  if (snapshot.size - (current ? retained.bytesRead : 0) < COLD_FOLD_BYTES) return undefined
+  const { path } = snapshot
+  const folding = foldInSlices(snapshot).catch(() => undefined).finally(() => { coldFolds.delete(path) })
+  coldFolds.set(path, folding)
+  return folding
+}
+
+/** Wait out `catchUpTranscriptFold`. Twice at most: a file still that far behind after that is being written faster than it is read. */
+export async function transcriptFoldCaughtUp(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor?: (kind?: string) => AgentBackend,
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const folding = catchUpTranscriptFold(project, storage, slug, backendFor)
+    if (!folding) return
+    await folding
+  }
 }
 
 // sha256 over the whole snapshot, kept as a RUNNING hash per file identity. Cursor minting hashes the
@@ -4539,24 +4660,51 @@ function emptyLatestTranscriptPage(storage: Storage, slug: string, source?: Tran
   return row ? { ...page, messages: projectDeliveryLedger([], parseDeliveryLedger(row.delivery_ledger)) } : page
 }
 
+/**
+ * The latest page, without the rail's edited-files reading. This is what the /ws push producer reads: it
+ * re-reads on every byte-advance of every subscribed thread, and that reading is a scan of the whole projection
+ * plus git processes (repo-files.ts) — a price the RPC pays once per open, not one the push should pay per
+ * keystroke of the worker. The reader keeps its HTTP copy.
+ */
 export function readLatestThreadTranscriptPage(
   project: Project,
   storage: Storage,
   slug: string,
   backendFor?: (kind?: string) => AgentBackend,
-  // `editedFiles: false` leaves the rail's edited-files reading out of the page. The /ws push producer
-  // asks for that: it re-reads on every byte-advance of every subscribed thread, and the reading is a
-  // scan of the whole projection plus two git spawns (repo-files.ts) — a price the RPC pays once per
-  // open, not one the push should pay per keystroke of the worker. The reader keeps its HTTP copy.
-  opts: { editedFiles?: boolean } = {},
 ): TranscriptPage {
+  return latestThreadPage(project, storage, slug, backendFor).page
+}
+
+/**
+ * The latest page with the rail's edited files, over the WHOLE projection, not the window — see EditedFile in
+ * @frizz/shared. The project dir is what scopes the SHELL-write reading: a redirect names any path the worker
+ * felt like, and only the ones inside this checkout belong on the rail (edited-files.ts). Then git drops whatever
+ * the repository would not carry — scratch, build output — leaving the rail an account of repo work (repo-files.ts).
+ */
+export async function readLatestThreadTranscriptPageWithFiles(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor?: (kind?: string) => AgentBackend,
+): Promise<TranscriptPage> {
+  const { page, projected } = latestThreadPage(project, storage, slug, backendFor)
+  if (!projected) return page
+  return { ...page, editedFiles: await repoCarriedEditedFiles(project.dir, editedFilesOf(projected, project.dir)) }
+}
+
+function latestThreadPage(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor?: (kind?: string) => AgentBackend,
+): { page: TranscriptPage; projected?: readonly TranscriptMessage[] } {
   let source = sourceForThread(project, storage, slug, backendFor)
-  if (!source) return emptyLatestTranscriptPage(storage, slug)
+  if (!source) return { page: emptyLatestTranscriptPage(storage, slug) }
   let snapshot = fixedSnapshot(source)
   if (!snapshot) {
     const discovered = discoveredClaudeSource(project, storage, slug)
     const discoveredSnapshot = discovered ? fixedSnapshot(discovered) : undefined
-    if (!discoveredSnapshot) return emptyLatestTranscriptPage(storage, slug, source)
+    if (!discoveredSnapshot) return { page: emptyLatestTranscriptPage(storage, slug, source) }
     source = discovered!
     snapshot = discoveredSnapshot
   }
@@ -4589,19 +4737,14 @@ export function readLatestThreadTranscriptPage(
     ? projectDeliveryLedger(latest, parseDeliveryLedger(row.delivery_ledger))
     : latest
   return {
-    messages: pageMessages,
-    beforeCursor: canonicalStart > 0 ? encodeTranscriptCursor(snapshot, projected[canonicalStart].sourceId!) : null,
-    hasEarlier: canonicalStart > 0,
-    reachedTurnBoundary: true,
-    transcriptKey: snapshot.transcriptKey,
-    // Over the WHOLE projection, not the window — see EditedFile in @frizz/shared. The project dir is
-    // what scopes the SHELL-write reading: a redirect names any path the worker felt like, and only the
-    // ones inside this checkout belong on the rail (edited-files.ts). Then git drops whatever the
-    // repository would not carry — scratch, build output — leaving the rail an account of repo work
-    // (repo-files.ts).
-    ...(opts.editedFiles === false
-      ? {}
-      : { editedFiles: repoCarriedEditedFiles(project.dir, editedFilesOf(projected, project.dir)) }),
+    projected,
+    page: {
+      messages: pageMessages,
+      beforeCursor: canonicalStart > 0 ? encodeTranscriptCursor(snapshot, projected[canonicalStart].sourceId!) : null,
+      hasEarlier: canonicalStart > 0,
+      reachedTurnBoundary: true,
+      transcriptKey: snapshot.transcriptKey,
+    },
   }
 }
 

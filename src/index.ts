@@ -10,9 +10,9 @@ import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
 import { createAccessPane, type AccessPane } from "./access-pane.ts";
 import { installPaneHost, type PaneHost } from "./pane-host.ts";
 import { createRemoteController, type RemoteController } from "./remote-controller.ts";
-import { githubDeviceFlow } from "./github-device-flow.ts";
+import { frizzGithubLogin, frizzGithubSignIn } from "./github-claim-identity.ts";
 import { probeCloudflared, probeTailscale } from "./remote-detect.ts";
-import { createRemotePane } from "./remote-pane.ts";
+import { createRemotePane, remoteReachedLine } from "./remote-pane.ts";
 import { LOOPBACK_BIND_HOST } from "@frizz/server/local-origin";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -463,6 +463,8 @@ async function runSupervisor(
       // A spent code repaints the open QR pane as stale, so nobody photographs a dead link.
       onCodeConsumed: () => accessPane?.markConsumed(),
       onDeviceSignedIn: ({ label, devices }) => activityReadout?.notice("done", "Remote", `${label} signed in · ${remoteDevicesLine(devices)}`),
+      onDeviceSignedOut: ({ label, devices }) =>
+        activityReadout?.notice("done", "Remote", label === null ? "Every remote device signed out" : `${label} signed out · ${remoteDevicesLine(devices)}`),
       sessionKey: sessions.key,
       rotateSessionKey: sessions.rotateKey,
       sessionDirectory: sessions.directory,
@@ -506,12 +508,14 @@ async function runSupervisor(
         current: () => remote?.current() ?? null,
         apply: (next, applyOptions) => remote!.apply(next, applyOptions),
         setRelayAccess: (access) => remote!.setRelayAccess(access),
-        // The pane shows the GitHub device code itself: a console line would land under its alternate screen.
-        claim: (name, signIn) =>
-          establishCloudConfig(name, port, undefined, undefined, githubDeviceFlow({ onPrompt: signIn.onDeviceCode, signal: signIn.signal })),
+        claim: (name, progress) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), { say: progress, promptHint: false }),
+        githubLogin: frizzGithubLogin,
         issueLink: () => supervisor.issueAccessLink(),
+        devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
         probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
         onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "loopback only"),
+        // The readout above the pane still names the setup this launch started with; say the new one under it.
+        onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
         sandbox: sandbox !== null,
       });
       paneHost = installPaneHost({ bindings: { l: accessPane, L: accessPane, r: remotePane, R: remotePane } });

@@ -127,4 +127,4 @@ for (let i = 0; i < 40; i++) {
   if (branch.length >= 7) break
   await new Promise((r) => setTimeout(r, 500))
 }
-console.log(JSON.stringify({ slug: SLUG, url: `http://127.0.0.1:${port}/thread/${SLUG}/full`, branch: branch.map((a) => [a.label, a.state, a.depth ?? 1]) }, null, 1))
+console.log(JSON.stringify({ slug: SLUG, url: `http://127.0.0.1:${port}/thread/${SLUG}`, branch: branch.map((a) => [a.label, a.state, a.depth ?? 1]) }, null, 1))

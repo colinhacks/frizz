@@ -81,7 +81,7 @@ sql(`INSERT INTO session (${sessionCols}slug, session_id, thread_name, spawned_a
      VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${t(0)}', 'Ask card placement probe', 'claude', 'opus', 'xhigh', 'auto', 'open')`)
 
 if (!withAsk) {
-  console.log(JSON.stringify({ slug, sessionId, projectId, ask: false, url: `http://127.0.0.1:${port}/thread/${slug}/full` }))
+  console.log(JSON.stringify({ slug, sessionId, projectId, ask: false, url: `http://127.0.0.1:${port}/thread/${slug}` }))
   process.exit(0)
 }
 
@@ -119,4 +119,4 @@ sql(`INSERT INTO interaction_journal (id, schema_version, project_id, thread_slu
      VALUES ('${interactionId}', 1, '${projectId}', '${slug}', '${sessionId}', 0, 0, 'claude', 'probe-turn-1',
        'agent-question', '${JSON.stringify(request).replaceAll("'", "''")}', 'pending', '${t(0)}', '${t(0)}')`)
 
-console.log(JSON.stringify({ slug, sessionId, projectId, url: `http://127.0.0.1:${port}/thread/${slug}/full` }))
+console.log(JSON.stringify({ slug, sessionId, projectId, url: `http://127.0.0.1:${port}/thread/${slug}` }))

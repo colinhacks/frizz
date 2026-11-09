@@ -94,7 +94,7 @@ try {
   page.on("pageerror", (e) => pageErrors.push(String(e)))
   page.on("console", (m) => { if (m.type() === "error") pageErrors.push(m.text()) })
   await page.setViewport({ width: 1400, height: 1000, deviceScaleFactor: 1 })
-  await page.goto(`http://127.0.0.1:${port}/thread/${SLUG}`, { waitUntil: "networkidle0" })
+  await page.goto(`http://127.0.0.1:${port}/?thread=${SLUG}`, { waitUntil: "networkidle0" })
   await page.waitForSelector("img[data-local-image]", { timeout: 20_000 })
 
   const seen = await page.evaluate(() => {

@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent as DragEvent_, type KeyboardEvent as KeyboardEvent_, type MouseEvent as MouseEvent_, type PointerEvent as PointerEvent_, type ReactNode } from "react"
 import { House, Plus } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router"
+import { threadParam } from "../lib/router.ts"
 import type { ProjectCard, ProjectRailCounts } from "@frizz/shared"
-import { activeBandThread, boardAskThread, PROJECT_ICON_EXTENSIONS } from "@frizz/shared"
+import { activeBandThread, boardAskThread, boardQueuedThread, PROJECT_ICON_EXTENSIONS } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
-import { queued } from "../groups.ts"
 import { useBoardLoaded, useBoardThreads } from "../hooks.ts"
 import { showToast } from "../store.ts"
 import { projectHref, projectSlug } from "../lib/base-path.ts"
@@ -519,7 +519,7 @@ function useRailCounts(currentSlug: string | undefined, projects: readonly Proje
   // while the sidebar had already moved. Hooks cannot be conditional, hence the empty list.
   const overlaid = useOptimisticallyArchived(useOptimisticallySteered(all))
   const threads = currentSlug !== undefined && board ? overlaid : undefined
-  const live = threads && { queued: threads.filter(queued).length, running: threads.filter(activeBandThread).length, asks: threads.filter(boardAskThread).length }
+  const live = threads && { queued: threads.filter(boardQueuedThread).length, running: threads.filter(activeBandThread).length, asks: threads.filter(boardAskThread).length }
   const currentId = currentSlug === undefined ? undefined : projects.find((project) => project.slug === currentSlug)?.id
   return (project) => (project.id === currentId && live ? live : polled.data?.[project.id])
 }
@@ -584,7 +584,9 @@ export function ProjectRail() {
   const countsFor = useRailCounts(current, projects)
   // The house always goes to the grid (lib/homeView.ts), so it is the current page only there — not on
   // the Console, and not on the launching project's unprefixed board, which names no slug either.
-  const onGrid = useLocation().pathname === "/"
+  const here = useLocation()
+  // `/?thread=<slug>` is the launching project's board, not the grid (routes.tsx RootRoute).
+  const onGrid = here.pathname === "/" && threadParam(here.search) === null
 
   /**
    * Fade the band's bottom edge ONLY while something is actually below it.

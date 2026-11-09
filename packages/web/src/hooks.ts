@@ -6,6 +6,7 @@ import { boardThreadsNow, store, threadBySlug, threadSnapshotBySlug } from "./st
 import { queued } from "./groups.ts"
 import { partitionBoard } from "./lib/boardPartition.ts"
 import { childThreadsOf } from "./lib/childThreads.ts"
+import { holdsCardHere, useConsoleGroup } from "./lib/consoleBoard.ts"
 import { rpc } from "./api/rpc.ts"
 import { retryTranscriptSocket, subscribeFile, subscribeTranscript, unsubscribeFile, unsubscribeTranscript } from "./api/socket.ts"
 import { mergeOptimistic, preserveMessageIdentity, isTranscriptStale, newestRenderedAt } from "./lib/transcript-sync.ts"
@@ -23,7 +24,9 @@ import { reconcileLatestPage, type PaginatedTranscriptData } from "./lib/transcr
 // never in the cache. `refusedReasons` maps each to the server's reasons, which its card shows.
 // `questionOwners`: for a question id the thread has asked more than once (a settled id asked again), the
 // row it named when this message was written (lib/questionOwners) — presentation only, the same way.
-export type ChatMessage = TranscriptMessage & { queued?: boolean; deliveryId?: string; restReply?: boolean; refusedFences?: ReadonlySet<string>; refusedReasons?: ReadonlyMap<string, readonly string[]>; questionOwners?: ReadonlyMap<string, string> }
+// `latestSignOff`: the newest sign-off since the human last spoke, on a thread at rest (lib/signOffs) — its
+// ```awaiting fence keeps its card after a later round makes it stale (ChatView renderText).
+export type ChatMessage = TranscriptMessage & { queued?: boolean; deliveryId?: string; restReply?: boolean; refusedFences?: ReadonlySet<string>; refusedReasons?: ReadonlyMap<string, readonly string[]>; questionOwners?: ReadonlyMap<string, string>; latestSignOff?: true }
 export type TranscriptData = Partial<Omit<PaginatedTranscriptData, "messages">> & { messages: ChatMessage[] }
 
 // `mergeToolRuns` stays deleted: mutating transcript truth before the ordered-parts walk hoisted tools
@@ -130,6 +133,14 @@ export function queuedThreadsNow(): readonly ThreadView[] {
 /** The threads waiting on the human (groups.queued), as plain snapshots, in board order. */
 export function useQueuedThreads(): readonly ThreadView[] {
   return useSyncExternalStore(onStoreChange, queuedThreadsNow)
+}
+
+/** The threads drawing a queue card on the page on screen: the queue, less the pinned reports a shelf on
+ *  this page shows instead (lib/consoleBoard holdsCardHere). Stable until the queue or the grouping moves. */
+export function useQueueCards(): readonly ThreadView[] {
+  const queuedThreads = useQueuedThreads()
+  const group = useConsoleGroup()
+  return useMemo(() => queuedThreads.filter((t) => holdsCardHere(t, group)), [queuedThreads, group])
 }
 
 // A THREAD'S CHILD THREADS (lib/childThreads), untracked like the queue above. The SAME array until one

@@ -399,6 +399,7 @@ function SubAgentSteerFooter({
   )
 }
 
+// The model chip's 24px and 6px corner, so it sits in the prompt box's corner as the chip does (lib/iconRhythm.ts).
 function SubAgentProfileReadout({ subagentType }: { subagentType?: string }) {
   const label = subAgentProfileLabel(subagentType)
   return (
@@ -406,7 +407,7 @@ function SubAgentProfileReadout({ subagentType }: { subagentType?: string }) {
       data-subagent-profile
       aria-label={`Sub-agent profile: ${label}`}
       title={subagentType?.trim() || "The provider did not report this sub-agent's model and effort"}
-      className={`inline-flex min-w-0 max-w-[min(72%,20rem)] items-center rounded-md border border-border/50 bg-transparent px-1.5 py-0.5 text-muted ${PROMPT_CONTROL_TYPOGRAPHY_CLASS}`}
+      className={`inline-flex h-6 min-w-0 max-w-[min(72%,20rem)] items-center rounded-md border border-border/50 bg-transparent px-1.5 text-muted ${PROMPT_CONTROL_TYPOGRAPHY_CLASS}`}
     >
       <span className="profile-grid-value relative -top-px min-w-0 truncate">{label}</span>
     </span>

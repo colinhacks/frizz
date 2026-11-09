@@ -196,6 +196,12 @@ export function hasEscapingBackgroundJob(raw, depth = 0) {
   return false;
 }
 
+/**
+ * The opening of every refusal below. The transcript parser reads it back out of the tool result to
+ * tell a call this hook stopped, which launched nothing, from a `&` job that really escaped.
+ */
+export const BACKGROUND_JOB_REFUSAL = 'Frizz blocked an untracked shell background job';
+
 export function evaluateBashBackgroundHook(input, env = process.env) {
   if (!String(env.FRIZZ_THREAD ?? '').trim()) return {};
   const command = input && typeof input === 'object'
@@ -209,8 +215,8 @@ export function evaluateBashBackgroundHook(input, env = process.env) {
       permissionDecision: 'deny',
       permissionDecisionReason:
         codex
-          ? 'Frizz blocked an untracked shell background job (`&`). Shell job control can return without a Codex lifecycle handle, so Frizz cannot report completion or wake this agent. For work that must continue while you do something else, remove `&` and use the managed unified exec pattern: start `tools.exec_command(...)`, call `yield_control()`, then await and fully drain that same process. A returned `session_id` alone is only foreground continuation. For bounded parallel work inside one shell call, finish with `wait` (after `kill`, if used) or own cleanup with an EXIT trap.'
-          : 'Frizz blocked an untracked shell background job (`&`). Shell job control can return from Bash without a Claude task ID, so Frizz cannot report completion or wake this agent. For a long-running local command, remove `&` and call Bash with `run_in_background:true`. For bounded parallel work inside one Bash call, finish with `wait` (after `kill`, if used) or own cleanup with an EXIT trap.',
+          ? BACKGROUND_JOB_REFUSAL + ' (`&`). Shell job control can return without a Codex lifecycle handle, so Frizz cannot report completion or wake this agent. For work that must continue while you do something else, remove `&` and use the managed unified exec pattern: start `tools.exec_command(...)`, call `yield_control()`, then await and fully drain that same process. A returned `session_id` alone is only foreground continuation. For bounded parallel work inside one shell call, finish with `wait` (after `kill`, if used) or own cleanup with an EXIT trap.'
+          : BACKGROUND_JOB_REFUSAL + ' (`&`). Shell job control can return from Bash without a Claude task ID, so Frizz cannot report completion or wake this agent. For a long-running local command, remove `&` and call Bash with `run_in_background:true`. For bounded parallel work inside one Bash call, finish with `wait` (after `kill`, if used) or own cleanup with an EXIT trap.',
     },
   };
 }

@@ -112,14 +112,14 @@ test("the model and the selector are one pill: one hairline, one baseline, no ch
     const [pill, selector] = [await read(PROFILE), await read(SELECTOR)]
     for (const cell of [pill, selector]) {
       assert.equal(cell.group, "", "a direct child of the group")
-      assert.equal(cell.height, 20, "20px inside the group's hairlines")
+      assert.equal(cell.height, 22, "22px inside the group's hairlines")
       assert.equal(cell.ownBorder, "0px", "the group draws the outline")
       assert.equal(cell.marks, 0, "no chevron")
     }
     assert.equal(selector.labelBottom, pill.labelBottom, "one baseline across the pill")
     assert.equal(selector.left, pill.right, "the two touch")
     const group = await page.$eval("[data-prompt-control-group]", (el) => ({ height: el.getBoundingClientRect().height, divider: getComputedStyle(el.lastElementChild!).borderLeftWidth }))
-    assert.deepEqual(group, { height: 22, divider: "1px" })
+    assert.deepEqual(group, { height: 24, divider: "1px" })
   } finally {
     await browser.close()
   }

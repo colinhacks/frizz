@@ -4,6 +4,7 @@
 import { request as requestHttp, createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { connect } from "node:net"
+import { homedir } from "node:os"
 import { pipeline } from "node:stream"
 import {
   AccessStore,
@@ -26,7 +27,10 @@ import {
   rejectWebSocketUpgrade,
   type LocalAuthorityPolicy,
 } from "./local-origin.ts"
+import { ATTACHMENT_BAD_PAYLOAD, ATTACHMENT_INVALID_JSON, ATTACHMENT_MAX_BODY_BYTES, storeAttachment } from "./attachment-intake.ts"
+import { projectStateDir } from "./frizz-paths.ts"
 import { localImageHeaders, localImageStream, resolveLocalImage } from "./local-image.ts"
+import { findProjectBySegment } from "./project-registry.ts"
 import { recoveryPage, unauthorizedPage, unlistedHostPage } from "./supervisor-pages.ts"
 import { CALLER_HEADER, encodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog, type CallerVia } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
@@ -83,6 +87,11 @@ export interface RestartSupervisorProxyOptions {
   /** A new device just signed in: what it calls itself, and how many now hold a session. */
   onDeviceSignedIn?: (device: { label: string; devices: number }) => void
   /**
+   * A device was signed out, or every device when `label` is null, and how many still hold a session.
+   * Without it the launcher's readout announced each sign-in and never the sign-out that ended it.
+   */
+  onDeviceSignedOut?: (device: { label: string | null; devices: number }) => void
+  /**
    * Persisted HMAC key for sessions. Without one, every restart signs out every device — which made a
    * nominally year-long cookie (30 days since 2026-10-08) last only until the next artifact update.
    */
@@ -99,6 +108,8 @@ export interface RestartSupervisorProxyOptions {
   sessionDirectory?: SessionDirectory
   /** Where a remote caller's refusals here are written, beside the application server's own. */
   audit?: AuditLog
+  /** Test seam for the attachment intake: the home whose registry names the projects. */
+  registryHome?: string
   /** The current disposable child. Undefined means it is starting, stopped, or failed. */
   childPort: () => number | undefined
   /** Must coalesce work itself or return the same in-flight promise for repeat requests. */
@@ -252,6 +263,24 @@ function isLocalImageRequest(req: IncomingMessage): boolean {
 // that happens to end in the same segment.
 const LOCAL_IMAGE_PATH = new RegExp(`^${FRIZZ_ROUTE_PREFIX}(?:/[^/]+)?/local-image$`)
 
+// `/_frizz/<project>/attach`, on the raw request target. The unprefixed spelling names the launching
+// project, which only the child knows, so it stays the child's to answer.
+const ATTACH_PATH = new RegExp(`^${FRIZZ_ROUTE_PREFIX}/([^/?#]+)/attach(?:\\?.*)?$`, "u")
+
+/**
+ * The whole of an upload's body, or null past `limit`. The rest of an oversized body is read and dropped, not
+ * cut off: closing the socket mid-request loses the answer, and the prompt box would read a network failure.
+ */
+async function readCappedBody(req: IncomingMessage, limit: number): Promise<Buffer | null> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).byteLength
+    if (size <= limit) chunks.push(chunk as Buffer)
+  }
+  return size <= limit ? Buffer.concat(chunks) : null
+}
+
 /**
  * Read a small JSON control body.
  *
@@ -326,9 +355,25 @@ export class RestartSupervisorProxy {
       ...(options.sessionKey ? { signingKey: options.sessionKey } : {}),
       ...(options.rotateSessionKey ? { rotateSigningKey: options.rotateSessionKey } : {}),
       ...(options.sessionDirectory ? { sessions: options.sessionDirectory } : {}),
-      onSignedOut: (id) => this.dropSessionHolds(id),
+      onSignedOut: (id) => {
+        this.dropSessionHolds(id)
+        options.onDeviceSignedOut?.({
+          label: id === undefined ? null : (this.access.sessions.get(id)?.label ?? "unknown device"),
+          devices: liveSessions(this.access.sessions).length,
+        })
+      },
     })
     this.policy = this.buildPolicy()
+  }
+
+  /** How many devices hold a live session. */
+  signedInDevices(): number {
+    return liveSessions(this.access.sessions).length
+  }
+
+  /** Sign every device out, as `frizz --sign-out all` does: new key, every session and unused code gone. Returns how many. */
+  signOutAllDevices(): number {
+    return this.access.signOutAll()
   }
 
   /**
@@ -705,14 +750,57 @@ export class RestartSupervisorProxy {
     responseJson(res, result.state === "ready" ? 202 : 503, { protocol: SUPERVISOR_CONTROL_PROTOCOL, ...result })
   }
 
-  private handleLocalImage(req: IncomingMessage, res: ServerResponse): void {
+  /**
+   * The child's own origin rule, for a route this proxy answers itself. handle() has only applied the weaker
+   * gate (authorityAccepted), which leaves a missing Origin for the child to judge, and the child never sees
+   * this request.
+   */
+  private refuseUnlessSameOrigin(req: IncomingMessage, res: ServerResponse): boolean {
     const allowMissingOrigin = req.headers.origin === undefined
       && (req.headers["sec-fetch-site"] === "same-origin" || this.vouchesSameOrigin(req))
-    if (!this.authorityAccepted(req, allowMissingOrigin)) {
-      res.writeHead(403, { "content-type": "text/plain; charset=UTF-8" })
-      res.end("Forbidden")
-      return
+    if (this.authorityAccepted(req, allowMissingOrigin)) return false
+    res.writeHead(403, { "content-type": "text/plain; charset=UTF-8" })
+    res.end("Forbidden")
+    return true
+  }
+
+  /**
+   * Who answers this upload. A state directory means this proxy does, undefined means it goes to the child: a
+   * project the registry cannot name, and anyone who may not upload, whose refusal the child writes to the audit
+   * trail. Asked before the body is read, so the child still receives a request it is passed intact.
+   */
+  private attachmentStateDir(req: IncomingMessage): string | undefined {
+    if (req.method !== "POST") return undefined
+    const segment = ATTACH_PATH.exec(req.url ?? "")?.[1]
+    if (!segment) return undefined
+    if (this.callerVia(req) !== "loopback" && this.remoteAccess(req) !== "full") return undefined
+    const home = this.options.registryHome ?? homedir()
+    const project = findProjectBySegment(segment, home)
+    return project && projectStateDir(project.id, home)
+  }
+
+  private async handleAttach(req: IncomingMessage, res: ServerResponse, stateDir: string): Promise<void> {
+    if (this.refuseUnlessSameOrigin(req, res)) return
+    try {
+      const raw = await readCappedBody(req, ATTACHMENT_MAX_BODY_BYTES)
+      if (!raw) return responseJson(res, 400, { error: ATTACHMENT_BAD_PAYLOAD })
+      let body: unknown
+      try {
+        body = JSON.parse(raw.toString("utf8"))
+      } catch {
+        return responseJson(res, 400, { error: ATTACHMENT_INVALID_JSON })
+      }
+      const result = await storeAttachment(stateDir, body)
+      responseJson(res, result.status, result.status === 200 ? { path: result.path } : { error: result.error })
+    } catch {
+      // The client went away mid-body, or the disk refused the write.
+      if (res.headersSent) return void res.destroy()
+      responseJson(res, 500, { error: "attachment not stored" })
     }
+  }
+
+  private handleLocalImage(req: IncomingMessage, res: ServerResponse): void {
+    if (this.refuseUnlessSameOrigin(req, res)) return
 
     const url = new URL(req.url ?? "/", "http://frizz.invalid")
     const result = resolveLocalImage(url.searchParams.get("path") ?? undefined, req.headers.range)
@@ -916,6 +1004,14 @@ export class RestartSupervisorProxy {
   }
 
   private handle(req: IncomingMessage, res: ServerResponse): void {
+    // First, and before any session is asked for, because everything below parses this target. `GET //` is one
+    // the URL parser refuses, the throw leaves the request listener, and this process has no handler for that:
+    // one raw request, from anyone who could reach the port, ended the launcher.
+    if (!URL.canParse(req.url ?? "/", "http://frizz.invalid")) {
+      res.writeHead(400, { "content-type": "text/plain; charset=UTF-8" })
+      res.end("Bad Request")
+      return
+    }
     if (isControlRequest(req)) {
       void this.handleControl(req, res)
       return
@@ -945,6 +1041,13 @@ export class RestartSupervisorProxy {
     // child's to judge (remote-reads.ts).
     if (isLocalImageRequest(req) && (this.callerVia(req) === "loopback" || this.remoteAccess(req) === "full")) {
       this.handleLocalImage(req, res)
+      return
+    }
+    // Same reason, and the prompt box's spinner is the one who pays: an upload is one small write that has no
+    // need of the child's thread, and it finishes through a stall or a restart this way (attachment-intake.ts).
+    const attachmentStateDir = this.attachmentStateDir(req)
+    if (attachmentStateDir) {
+      void this.handleAttach(req, res, attachmentStateDir)
       return
     }
     const childPort = this.options.childPort()

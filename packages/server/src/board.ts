@@ -593,6 +593,13 @@ export function answerAwaitingDelivery(rows: readonly ThreadQuestionRow[], recei
   )
 }
 
+/** When the human last settled one of this thread's questions, by answering or dismissing it. A withdrawal
+ *  is the worker's own act and says nothing about the human. Read by handoffStands. */
+export function questionSettledByHumanAt(rows: readonly ThreadQuestionRow[]): number | undefined {
+  const settled = rows.flatMap((q) => ((q.state === "answered" || q.state === "dismissed") && q.settled_at != null ? [q.settled_at] : []))
+  return settled.length > 0 ? Math.max(...settled) : undefined
+}
+
 /** One armed `thread_watch` row, as the board reads it — the registry half of a wait, where
  *  `declaredWaitIds` is the fence half. */
 export interface RegisteredWatch {
@@ -896,7 +903,7 @@ export function fenceWatchViews(
   /** The ISSUE readings, from their own book — the twin of `github` for the rows whose subject is an
    *  issue. Defaulted empty so every caller and test that predates issues reads unchanged. */
   issueBook: GithubIssueStatusBook = {},
-  /** This thread's ARMED COMMAND WATCHES (`frizzctl watch-command`). Rows for the timers' reason: the
+  /** This thread's ARMED COMMAND WATCHES (`frizzctl monitor`). Rows for the timers' reason: the
    *  server re-runs each until it passes and then wakes the thread, so it is live work fence or no fence.
    *  A park on one alone had no row until 2026-10-13, and its card fell through to "Waiting for an
    *  external update." — true of every park and specific to none. */
@@ -928,7 +935,7 @@ export function fenceWatchViews(
       state: "armed" as const,
       createdAt: new Date(w.created_at).toISOString(),
       // The same projection as the worker's read-back (router commandWatchView), so the row and
-      // `frizzctl watch-command` name one cadence and one last check.
+      // `frizzctl monitor` name one cadence and one last check.
       command: {
         command: w.command,
         every: formatElapsed(w.every_ms),
@@ -937,7 +944,7 @@ export function fenceWatchViews(
         ...(w.last_run_at !== null && w.last_outcome
           ? { lastRun: { at: new Date(w.last_run_at).toISOString(), outcome: w.last_outcome, exitCode: w.last_exit, output: w.last_output ?? "" } }
           : {}),
-        // A MONITOR (`frizzctl monitor`, 2026-11-02) is a running script, not a check on a cadence: its
+        // A MONITOR (`frizzctl monitor add --persistent`, 2026-11-02) is a running script, not a check on a cadence: its
         // row reads its events instead. The same projection as the worker's read-back.
         ...(w.kind === "monitor" ? { monitor: monitorStatusOf(w) } : {}),
       },
@@ -1087,6 +1094,38 @@ export function deriveChildHandoff(input: {
   return true
 }
 
+/**
+ * A PLAIN REPORT: did this rest queue the thread while asking the human for nothing? A pinned thread's
+ * report draws no card (shared boardQueuedThread; maintainer 2026-11-06), so this is the line between what
+ * a pin may quieten and what it may not. ASKS and FAILURES are the two halves of "may not", because the
+ * human can only settle them, and a worker promised a question or `steps:` puts the thread in the queue
+ * without knowing whether it is pinned:
+ *
+ *   asks      a typed interaction, a permission prompt, a native ask, a fenced or registered question that
+ *             still stands, a `steps:` list
+ *   failures  a crash, a usage-limit stop, a provider error it is not retrying
+ *
+ * What is left is a bare rest, a `status: needs_input` handoff, a resting shell or a `done`.
+ */
+export function derivePlainReport(input: {
+  needsYou: boolean
+  runtime: RuntimeState
+  actionableInteraction: boolean
+  pendingAsk: boolean
+  pendingQuestion: boolean
+  standingQuestions: number
+  humanSteps: boolean
+  crashed: boolean
+  limitPause: boolean
+  providerError: boolean
+}): boolean {
+  if (!input.needsYou) return false
+  if (input.actionableInteraction || input.runtime === "perm-prompt" || input.pendingAsk) return false
+  if (input.pendingQuestion || input.standingQuestions > 0 || input.humanSteps) return false
+  if (input.crashed || input.limitPause || input.providerError) return false
+  return true
+}
+
 export function deriveNeedsYou(
   row: SessionRow,
   tele: SessionTelemetry | undefined,
@@ -1125,6 +1164,9 @@ export function deriveNeedsYou(
   // CHILD THREADS this thread may still be waiting on (child-threads.ts liveChildThreads), for a park
   // that names them under `threads:`. The caller's because only it holds every row.
   liveChildren: ReadonlySet<string> = new Set(),
+  // When the human last settled a registered question (questionSettledByHumanAt), which reaches a standing
+  // handoff (handoffStands). The caller's for the same reason `openQuestions` is.
+  questionSettledAt?: number,
 ): boolean {
   // Snooze is explicit operator lifecycle state. It must be checked before provider/question/crash
   // gates so choosing Snooze from any queue card actually parks that card until its exact deadline.
@@ -1211,7 +1253,7 @@ export function deriveNeedsYou(
   // the legacy park rule would have excused it. The cut decides only whether the answer is REQUIRED.
   const answered = tele?.lastFence?.kind === "awaiting" && awaitingNeedsInput(tele.lastFence.hints) !== null
   if (answered || needsInputRequired(row.spawned_at)) {
-    return needsInputQueues(row, tele, runtime, nowMs, excuseLiveOwnWork, registeredPrWatches, armedTimerIds, github, queuedBy, liveChildren)
+    return needsInputQueues(row, tele, runtime, nowMs, excuseLiveOwnWork, registeredPrWatches, armedTimerIds, github, queuedBy, liveChildren, questionSettledAt)
   }
   // Declared parks are STRONGER excusals than the awaiting-background card below, so they are checked
   // first: a worker that declared an awaiting-human fence stays held even if a child of its is still
@@ -1311,12 +1353,20 @@ export function deriveNeedsYou(
 //     CI is still running used to excuse the thread on frizz's guess; the worker says so now, or it queues.
 //  3. A `done` handoff and a rest with nothing out queue as they always did.
 //
-// RULE 1 CANNOT SPEND A HANDOFF THE HUMAN HAS NOT REACHED. A `needs_input` rest put the thread in front
-// of the human, and only the human takes it out again: by typing to it (`restFromAt`, the boundary an open
-// question stands across) or by snoozing it (handoffStands). A later quiet park does not: a PR watcher's
-// wake for news the worker had already read made it re-park `status: watching`, and its "ready, unmerged"
-// handoff sat in Snoozed with green CI (reported 2026-10-27: "it looks green to me"). The thread falls
-// through to rule 2 instead, so the card keeps its event-snooze.
+// RULE 1 CANNOT SPEND STEPS OR QUESTIONS THE HUMAN HAS NOT REACHED. A rest that handed the human
+// something to DO — `steps:` to perform, `questions:` to answer — put the thread in front of them, and only
+// the human takes it out again: by typing to it (`restFromAt`, the boundary an open question stands
+// across), by snoozing it or by settling a question (handoffStands). A later quiet park does not: a PR
+// watcher's wake for news the worker had already read made it re-park `status: watching`, and its "ready,
+// unmerged" handoff sat in Snoozed with green CI (reported 2026-10-27: "it looks green to me"). The thread
+// falls through to rule 2 instead, so the card keeps its event-snooze.
+//
+// A PLAIN `status: needs_input` REPORT IS NOT HELD (2026-11-06). It was until then, and most reports said
+// "nothing needed from you right now": each one held every CI and shell park after it in the queue until
+// the human typed, so the queue filled with threads whose card showed only a wait on CI (maintainer: "I
+// thought we had a good solution to this, where the agent got to choose"). What a report asked the human
+// to read is the worker's to hand off again, and its contract says so; the board takes its newest
+// `status:` as the answer.
 //
 // HONOUR INCLUDES THE PRS THEMSELVES (awaiting.parkWaitsOnThisSide): a park naming nothing but PRs this
 // account opened that wait only on this side is refused like a park on a dead name, and the scheduler tells
@@ -1339,9 +1389,10 @@ function needsInputQueues(
   github: GithubStatusBook,
   queuedBy?: QueuedBy,
   liveChildren: ReadonlySet<string> = new Set(),
+  questionSettledAt?: number,
 ): boolean {
   const holds = excuseLiveOwnWork && quietParkHolds(tele, runtime, nowMs, registeredPrWatches, armedTimerIds, github, liveChildren)
-  const held = holds && handoffStands(row, tele)
+  const held = holds && handoffStands(row, tele, questionSettledAt)
   if (holds && !held) return false
   const queued = runtime !== "exited" && tele?.lastFence?.kind !== "done" && (hasLiveOwnWork(tele, registeredPrWatches) || hasParkedTimerWatch(tele, armedTimerIds))
     ? !bgSnoozeArmed(row)
@@ -1381,18 +1432,27 @@ function quietParkHolds(
     )
 }
 
-// Whether the newest handoff is still unreached: the human has neither typed to the thread since it
-// (`restFromAt`) nor snoozed a rest at or after it (`bg_snooze_rested_at`, stamped by the resting card's
-// Snooze and the header's "Until activity"). The snooze counts because it is the human's own answer to the
-// card. Without it, a snooze pressed on the handoff lasted one rest (bgSnoozeArmed), and the next no-news
-// park put the card straight back, on every wake after it, until the human typed something. Opening the
-// thread does not count (router threadSeen: viewing a resting handoff never acknowledges it), and nor does
-// a wall-clock snooze, whose point is to bring the card back when it ends.
-function handoffStands(row: Pick<SessionRow, "bg_snooze_rested_at">, tele: SessionTelemetry | undefined): boolean {
+// Whether the newest handoff is still unreached: the human has not typed to the thread since it
+// (`restFromAt`), snoozed a rest at or after it (`bg_snooze_rested_at`, stamped by the resting card's
+// Snooze and the header's "Until activity") or settled a question since it (`questionSettledAt`).
+//
+// The snooze counts because it is the human's own answer to the card. Without it, a snooze pressed on the
+// handoff lasted one rest (bgSnoozeArmed), and the next no-news park put the card straight back, on every
+// wake after it, until the human typed something.
+//
+// A settled question counts for the same reason. `restFromAt` cannot say so, because an answer must not
+// retire the OTHER questions that stand beside it (shared isHumanTypedMessage). This rule can, since a
+// question still standing queues the thread by itself, ahead of this one. Without it, answering the
+// question a handoff asked set the worker off on the answer, and every quiet park of that new work put a
+// card with nothing on it back in the queue (reported 2026-11-06: "there's nothing actionable for me").
+//
+// Opening the thread does not count (router threadSeen: viewing a resting handoff never acknowledges it),
+// and nor does a wall-clock snooze, whose point is to bring the card back when it ends.
+function handoffStands(row: Pick<SessionRow, "bg_snooze_rested_at">, tele: SessionTelemetry | undefined, questionSettledAt?: number): boolean {
   const handoffMs = Date.parse(tele?.handoffAt ?? "")
   if (!Number.isFinite(handoffMs)) return false
   const reached = [tele?.restFromAt ?? tele?.lastUserAt, row.bg_snooze_rested_at].map((at) => Date.parse(at ?? ""))
-  return !reached.some((ms) => ms >= handoffMs)
+  return ![...reached, questionSettledAt ?? Number.NaN].some((ms) => ms >= handoffMs)
 }
 
 // Whether a thread is resting while its own background work is still live — the signal the client keys
@@ -1880,7 +1940,7 @@ function sessionThreadView(
     fireAt: new Date(t.fire_at).toISOString(),
     createdAt: new Date(t.created_at).toISOString(),
   }))
-  // …and its ARMED COMMAND WATCHES (`frizzctl watch-command`), in the same set: see isCommandWatchId for
+  // …and its ARMED COMMAND WATCHES (`frizzctl monitor`), in the same set: see isCommandWatchId for
   // why one set serves both, and where it is split back by kind.
   const armedCommandWatches = registries.commandWatches.get(row.slug) ?? []
   const armedTimerIds = new Set([...armedTimers.map((t) => t.id), ...armedCommandWatches.map((w) => w.id)])
@@ -2007,7 +2067,7 @@ function sessionThreadView(
   // Only the questions STANDING at this rest queue the thread (`standingIds`, above).
   const standingCount = standingIds.size
   const queuedBy: QueuedBy = {}
-  const queuesForHuman = archived ? false : deriveNeedsYou(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, true, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches, standingCount, answerInFlight, queuedBy, liveChildren)
+  const queuesForHuman = archived ? false : deriveNeedsYou(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, true, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches, standingCount, answerInFlight, queuedBy, liveChildren, questionSettledByHumanAt(questionRows))
   // CHILD THREADS: a rest that would have queued a child for the human is its PARENT's to read instead —
   // see deriveChildHandoff. Everything below reads the result, so a child handing off is out of the
   // queue on every surface and in every count, the same way a quiet park is.
@@ -2039,6 +2099,18 @@ function sessionThreadView(
   // carded as a stall and then silently become an ordinary bare rest — same lost work, no longer
   // mentioned. See hasUnretiredOwnAgents.
   const crashed = runtime === "exited" && (tele?.turn === "in-flight" || hasLiveBackgroundWork(tele) || headlessLostWork)
+  const plainReport = derivePlainReport({
+    needsYou,
+    runtime,
+    actionableInteraction: interactionPresence.needsUser,
+    pendingAsk: Boolean(tele?.pendingAsk),
+    pendingQuestion: Boolean(tele?.pendingQuestion),
+    standingQuestions: standingCount,
+    humanSteps: hasHumanSteps(tele),
+    crashed,
+    limitPause: Boolean(limitPause),
+    providerError: Boolean(tele?.providerError && !tele.providerError.retrying),
+  })
   const snoozedUntil = futureSnooze(row, nowMs)
   const profile = resolveSessionProfile(row, tele)
   // The Claude EDITION behind the family word — see ThreadView.runningModelLabel. Only when the observed
@@ -2137,6 +2209,7 @@ function sessionThreadView(
     awaitingBackground,
     waitStatus,
     crashed,
+    plainReport: plainReport || undefined,
     pendingInteraction: interactionPresence.pending,
     actionableInteraction: interactionPresence.needsUser,
     // Preserve only a durable, canonical backend identity. In particular, Claude is not inferred

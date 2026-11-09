@@ -14,6 +14,13 @@
 export const CLAIM_PROTOCOL_VERSION = 2
 
 /**
+ * The client id of Frizz's GitHub App, "Frizz Agent Console" (github.com/apps/frizz-agent-console).
+ * Public by design. The board signs in to GitHub through it, and the registrar accepts a custom-name
+ * claim only with a user token GitHub reports as issued to it (`X-OAuth-Client-Id` on `/user`).
+ */
+export const FRIZZ_GITHUB_APP_CLIENT_ID: string = "Iv23licDruV3JtQIF3fI"
+
+/**
  * How far a claim's own timestamp may sit from the verifier's clock, in either direction.
  *
  * This is a REPLAY WINDOW, not a security boundary: inside it a captured request can be replayed. That
@@ -46,6 +53,7 @@ export const RESERVED_CLAIM_NAMES: ReadonlySet<string> = new Set([
   "cdn",
   "dashboard",
   "docs",
+  "frizz",
   "ftp",
   "help",
   "localhost",
@@ -55,6 +63,7 @@ export const RESERVED_CLAIM_NAMES: ReadonlySet<string> = new Set([
   "ns1",
   "ns2",
   "registrar",
+  "relay",
   "root",
   "smtp",
   "ssl",

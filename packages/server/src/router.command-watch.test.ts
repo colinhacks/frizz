@@ -112,7 +112,7 @@ test("a REFUSAL is asked first, stores nothing, runs nothing, and names the back
     h.storage.upsertSession(row("t"))
     h.gate.refusal = "this thread runs in `default` permission mode. Run the check in a background shell instead."
     const refused = await h.router.addOwnCommandWatch.handler({ input: { slug: "t", command: NPM, every: "5m", for: "6h" } })
-    assert.match(refused.refused!, /^Frizz will not run a command watch for this thread: this thread runs in `default`/)
+    assert.match(refused.refused!, /^Frizz will not run a monitor for this thread: this thread runs in `default`/)
     assert.match(refused.refused!, /background shell instead\.$/)
     assert.equal(refused.id, undefined)
     assert.deepEqual(h.probes, [], "a refused command is never run, not even once")
@@ -196,6 +196,18 @@ test("every and for are clamped, never refused, and the clamp is REPORTED", asyn
   } finally { h.close() }
 })
 
+test("the same text as a check and as a persistent watch are two waits", async () => {
+  const h = harness()
+  try {
+    h.storage.upsertSession(row("t"))
+    h.storage.armMonitor({ id: "cmw_persistent", slug: "t", command: NPM, description: "x", createdAtMs: Date.now(), expiresAtMs: Date.now() + 3_600_000 })
+    const check = await h.router.addOwnCommandWatch.handler({ input: { slug: "t", command: NPM, every: "5m", for: "6h" } })
+    assert.equal(check.alreadyArmed, false)
+    assert.notEqual(check.id, "cmw_persistent")
+    assert.equal(check.every, "5m", "not the persistent watch's absent cadence")
+  } finally { h.close() }
+})
+
 test("registering is idempotent on the exact command, and capped per thread", async () => {
   const h = harness()
   try {
@@ -243,7 +255,7 @@ test("an armed command watch is listed by `activity` under its id, and blocks `d
     assert.deepEqual(activity.activity.map((a) => [a.kind, a.id, a.label]), [["command", added.id, NPM]])
     const done = await h.router.markOwnDone.handler({ input: { slug: "t", body: "finished" } })
     assert.equal(done.done, false)
-    assert.deepEqual(done.blockingWatches.map((w) => [w.id, w.what]), [[added.id, `command watch: ${NPM}`]])
+    assert.deepEqual(done.blockingWatches.map((w) => [w.id, w.what]), [[added.id, `monitor: ${NPM}`]])
   } finally { h.close() }
 })
 

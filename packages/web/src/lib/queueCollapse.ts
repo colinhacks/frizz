@@ -9,6 +9,7 @@
 // Pure string/shape logic, no DOM and no schema import: the predicates take the structural minimum so
 // they stay unit-testable, mirroring answering.ts's AskMsgLike.
 
+import { carriesDoneRegistration } from "@frizz/shared"
 import { hasQuestionBlock, splitQuestionBlocks } from "./questionBlocks.ts"
 
 // The minimal message shape these walks need.
@@ -34,33 +35,9 @@ export interface CollapseMsgLike {
   providerError?: unknown
 }
 
-// A shell command that runs `frizzctl done`, at its start or after anything that begins a new command
-// (a newline, `;`, `&&`, `||`, `|`, a subshell). The transcript projects every backend's shell call as
-// `Bash`, so one pattern reads Claude, Codex and ACP alike. Not a parse and not meant to be: it answers
-// "did this message sign off", where a false positive keeps one extra message unfolded.
-const RUNS_FRIZZCTL_DONE = /(?:^|[\n;&|(])\s*frizzctl\s+done(?=\s|$)/
-
-// The message that REGISTERED the thread's completion — a successful `frizzctl done`, or, on a thread
-// started before the command line (2026-10-11), a successful `mcp__frizz__done` tool call. Its prose
-// IS the handoff: a worker writes the conclusive write-up and calls the verb in the same breath, so the
-// projection coalesces both into one message. That message used to fold whenever ANY prose followed it,
-// because the run's closing anchor is simply the last prose in the run — and workers routinely append a
-// short pointer note after registering ("the report is in the message above…"), which stole the anchor
-// and buried the write-up it points at (maintainer 2026-09-02, pullfrog `if-you-were-going-to-migrate`:
-// a 340-char afterword anchored the run while the 2,329-char conclusion collapsed by default).
-//
-// Completed only. A REFUSED registration (`status: "failed"` — the command exits 2 when the gate holds,
-// which a shell call reports as a failure) did not stand — the worker re-signs-off,
-// and that later message is the one carrying the handoff. `ask`/`watch` deliberately do NOT
-// count: neither ends the turn (a worker keeps working past both), and the ask already renders its own
-// answerable card at the rest it was asked at (questionAnchors), so the prose around them is mid-run
-// narration the fold is right to carry.
-export function carriesDoneRegistration(m: CollapseMsgLike): boolean {
-  return (m.tools ?? []).some((t) =>
-    t.status === "completed" &&
-    (t.name === "mcp__frizz__done" || (t.name === "Bash" && RUNS_FRIZZCTL_DONE.test(t.command ?? t.detail ?? ""))),
-  )
-}
+// The message that REGISTERED the thread's completion — a successful `frizzctl done`. Shared with the
+// server, which reads the same registration when it stamps a rest's sign-off (server sign-offs.ts).
+export { carriesDoneRegistration }
 
 // A message's ```question fences, normalized — its identity as an ASK. The surrounding prose is
 // deliberately excluded: an agent restating its open questions rewords the lead paragraph every time,
@@ -350,7 +327,10 @@ export function segmentFolds(seg: CollapseSegment): boolean {
  *  the question itself sat behind "9 more rounds · click to expand" (2026-10-15, an open-knowledge thread
  *  whose ask landed in its 6th of 8 runs: "I have to click a bunch of buttons to expand previous tool
  *  calls … The question should come to me in the queue"). Such a run is KEPT like the first and the last,
- *  folding only its own calls, and the runs on either side of it collapse into a divider each. */
+ *  folding only its own calls, and the runs on either side of it collapse into a divider each.
+ *
+ *  AND THE RUN HOLDING THE NEWEST SIGN-OFF (2026-11-06), for the same reason: a hand-off followed by two
+ *  quiet parks on PR reviews sat in the middle, and the card ended on the last park. */
 export interface MiddleCollapse {
   /** Inclusive index range this swallows — every message in it renders nothing but the one divider. */
   start: number
@@ -366,8 +346,9 @@ export interface MiddleCollapse {
  *  fewer than three runs — and the card then behaves exactly as it did before.
  *
  *  `pinned` is the message indices that must stay on screen: where each open question is drawn (the
- *  message whose fence places it, or the rest it is anchored to). A middle run holding one is kept, and
- *  splits the middle into one divider on each side of it. A rest record belongs to the run it closed. */
+ *  message whose fence places it, or the rest it is anchored to), and the newest sign-off (lib/signOffs).
+ *  A middle run holding one is kept, and splits the middle into one divider on each side of it. A rest
+ *  record belongs to the run it closed. */
 export function collapseMiddleRuns(
   segments: readonly CollapseSegment[],
   pinned: Iterable<number> = [],

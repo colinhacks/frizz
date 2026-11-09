@@ -878,3 +878,46 @@ test("a reference to an ANSWERED question is a no-op; one to a withdrawn or dism
     assert.equal(answered.storage.getSession("t")?.park_bumps ?? 0, 0)
   } finally { answered.close() }
 })
+
+test("a thread nothing has happened on answers from memory, and any change to its rows or messages asks again", () => {
+  const h = storageHarness()
+  try {
+    h.storage.upsertSession(row("t"))
+    const sightings = [{ at: at(0), text: choice("stay") }]
+    assert.equal(sync(h.storage, sightings).registered.length, 1)
+    // The pass that registered wrote a row, so the next one reads it. That one has nothing to do and is remembered.
+    const settled = sync(h.storage, sightings)
+    assert.equal(settled.registered.length, 0)
+    assert.equal(sync(h.storage, sightings), settled, "the third pass did the work again")
+
+    // The human settles the question: new rows, a new pass.
+    const [q] = h.storage.listThreadQuestions("t")
+    h.storage.answerThreadQuestion(q!.id, "A", Date.parse(at(1)))
+    assert.notEqual(sync(h.storage, sightings), settled)
+
+    // A new message: a new array from the fold, a new pass, and that message's fence registers.
+    const more = [...sightings, { at: at(2), text: choice("next") }]
+    assert.equal(sync(h.storage, more).registered.length, 1)
+    assert.equal(h.storage.listThreadQuestions("t").length, 2)
+
+    // Another thread's rows leave this one's memory alone.
+    const quiet = sync(h.storage, more)
+    h.storage.askThreadQuestion({ id: "qst_other", slug: "other", spec: JSON.stringify({ question: "q", kind: "text" }), askedAtMs: Date.parse(at(3)) })
+    assert.equal(sync(h.storage, more), quiet)
+  } finally { h.close() }
+})
+
+test("a pass cannot change the rows the board holds, even the one that grows a question's tree", () => {
+  const h = storageHarness()
+  try {
+    h.storage.upsertSession(row("t"))
+    const asked = { at: at(0), text: choice("grows") }
+    sync(h.storage, [asked])
+    const held = h.storage.threadQuestionsBySlug().get("t")
+    const spec = held?.[0]?.spec
+    const grown = sync(h.storage, [asked, { at: at(1), text: fence("id: follow\nkind: text\nwhen: grows = SQLite\nquestion: Where?") }])
+    assert.equal(grown.attached.length, 1, "the follow-up attached")
+    assert.equal(held?.[0]?.spec, spec, "the bucket the board holds was written to")
+    assert.notEqual(h.storage.threadQuestionsBySlug().get("t")?.[0]?.spec, spec, "and the row itself did grow")
+  } finally { h.close() }
+})

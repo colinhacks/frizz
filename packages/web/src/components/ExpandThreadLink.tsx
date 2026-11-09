@@ -11,7 +11,7 @@ import { HEADER_ICON_CLASS } from "../lib/headerIcon.ts"
 import { Tooltip } from "./Tooltip.tsx"
 
 // THE FULLSCREEN DOOR — one affordance, three surfaces (the sidebar row on hover, the queue card's
-// action strip, the drawer header), all opening the thread's `/full` page. It replaced the ↗
+// action strip, the drawer header), all opening the thread's full-screen page, `…/thread/<slug>`. It replaced the ↗
 // "Open in new tab" arrow on 2026-08-28: the maintainer wants the fullscreen view to be the ordinary
 // way to focus on a thread, in THIS tab, with the address bar following — and a new tab only on the
 // gestures a browser already reserves for that.
@@ -43,9 +43,10 @@ export function ExpandThreadLink({ slug, size = 14, className, label = "Open ful
     const surface = event.currentTarget.closest<HTMLElement>("[data-vt-chat]")
     // Where they are in it, for /full to restore instead of jumping to the tail (lib/fullscreenHandoff).
     captureFullscreenEnterAnchor(surface, slug)
-    // And the address they are at, so the way OUT of /full leads back to this same surface rather than
-    // to the board root — which for a drawer-read thread mounts nothing to morph back into.
-    if (typeof location !== "undefined") rememberFullscreenOrigin(slug, location.pathname)
+    // And the address they are at, so the way OUT of full screen leads back to this same surface rather
+    // than to the board root — which for a drawer-read thread mounts nothing to morph back into. The
+    // QUERY is the drawer (`?thread=<slug>`, lib/router.ts), so it is part of the address.
+    if (typeof location !== "undefined") rememberFullscreenOrigin(slug, `${location.pathname}${location.search}`)
     // A door on a surface already showing the thread has its transcript cached and goes at once. A
     // sidebar row's door usually does not: the page would mount on "Loading…", and the view transition
     // would cross-fade that frame in and then cut to the transcript. So it waits for the transcript, a

@@ -77,7 +77,7 @@ test("Escape unwinds nested subagent drawers without dismissing their session", 
     })
     for (const [width, font] of [[1440, "sans"], [390, "sans"], [1440, "mono"], [390, "mono"]] as const) {
       await page.setViewport({ width, height: 900 })
-      await page.goto(`${baseUrl}/thread/${nestedThreadSlug}`, { waitUntil: "domcontentloaded" })
+      await page.goto(`${baseUrl}?thread=${nestedThreadSlug}`, { waitUntil: "domcontentloaded" })
       // Wait for the board to have drawn this thread with its live children. The desktop rail lists
       // each sub-agent as its own row (`data-subagent-parent`); the PHONE board (MobileBoard, below
       // MOBILE_MAX_PX) deliberately draws no sub-agent rows — one row per thread, a "· N agents" count
@@ -108,7 +108,7 @@ test("Escape unwinds nested subagent drawers without dismissing their session", 
       })
       assert.deepEqual(await drawers(), [{ kind: "thread", closing: false }], "one Escape leaves the session drawer open")
       assert.ok(await page.$('[role="dialog"]'))
-      assert.ok(new URL(page.url()).pathname.endsWith(`/thread/${nestedThreadSlug}`))
+      assert.equal(new URL(page.url()).searchParams.get("thread"), nestedThreadSlug)
       if (process.env.FRIZZ_OVERLAY_E2E_SHOTS) {
         await page.screenshot({ path: `${process.env.FRIZZ_OVERLAY_E2E_SHOTS}/escape-${width}-${font}.png` })
       }
@@ -182,7 +182,7 @@ test("dialog portals, nested Select Escape, and thread sheets keep their keyboar
     return page.$eval("[role=dialog]", (dialog) => ({
       label: document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent?.trim(),
       modal: dialog.getAttribute("aria-modal"),
-      path: location.pathname,
+      path: `${location.pathname}${location.search}`,
     }))
   }
 
@@ -229,15 +229,15 @@ test("dialog portals, nested Select Escape, and thread sheets keep their keyboar
     )
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("title")), "Settings")
 
-    // A cold /thread route must create the thread sheet immediately, labelled and holding focus. On a
+    // A cold `?thread=` route must create the thread sheet immediately, labelled and holding focus. On a
     // desktop the sheet is deliberately NON-modal (ThreadSheet: `modal={narrow}`) so the rail beside it
     // stays live; at or below 800px it is a modal sheet (asserted at 390px below). The sheet's
     // Chat|Doc tab strip — and with it the tablist/tabpanel contract this test once pinned here — was
     // removed on 2026-08-06 (6d00c75e) when the Doc tab lost its only destination; the sheet has one
     // surface and no tabs, so there is no arrow-key or tab-persistence contract left to drive.
-    await page.goto(`${baseUrl}/thread/${encodeURIComponent(threadSlug)}`, { waitUntil: "domcontentloaded" })
+    await page.goto(`${baseUrl}?thread=${encodeURIComponent(threadSlug)}`, { waitUntil: "domcontentloaded" })
     const desktopSheet = await threadSheet()
-    assert.deepEqual(desktopSheet, { label: "Thread: Overlay E2E", modal: null, path: `${boardPath}/thread/${threadSlug}` })
+    assert.deepEqual(desktopSheet, { label: "Thread: Overlay E2E", modal: null, path: `${boardPath}?thread=${threadSlug}` })
     await expectFocusInsideDialog()
 
     // The same cold route survives a real hard reload: the sheet comes back, labelled, holding focus.
@@ -254,13 +254,13 @@ test("dialog portals, nested Select Escape, and thread sheets keep their keyboar
     await page.waitForSelector("[role=menu]")
     assert.ok(await page.$("[role=dialog]"), "opening a portaled menu must leave its parent sheet mounted")
     await dismissMenuThenDialog("Thread model and effort")
-    await page.waitForFunction((path) => location.pathname === path, {}, boardPath)
+    await page.waitForFunction((path) => location.pathname === path && location.search === "", {}, boardPath)
 
     // Repeat the essential portal/focus checks at the requested compact viewport, where the sheet is
     // modal.
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
-    await page.goto(`${baseUrl}/thread/${encodeURIComponent(threadSlug)}`, { waitUntil: "domcontentloaded" })
-    assert.deepEqual(await threadSheet(), { label: "Thread: Overlay E2E", modal: "true", path: `${boardPath}/thread/${threadSlug}` })
+    await page.goto(`${baseUrl}?thread=${encodeURIComponent(threadSlug)}`, { waitUntil: "domcontentloaded" })
+    assert.deepEqual(await threadSheet(), { label: "Thread: Overlay E2E", modal: "true", path: `${boardPath}?thread=${threadSlug}` })
     await expectFocusInsideDialog()
     const mobileGeometry = await page.$eval('[role="dialog"]', (dialog) => {
       const rect = dialog.getBoundingClientRect()

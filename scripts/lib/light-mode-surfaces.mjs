@@ -59,7 +59,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
     await page.keyboard.press('Escape')
     await page.waitForSelector('[role="dialog"]', { hidden: true })
     // Rested deep links intentionally reveal the queue card; a running thread opens the sheet.
-    await page.goto(`${url}/thread/theme-running`, { waitUntil: 'networkidle2' })
+    await page.goto(`${url}?thread=theme-running`, { waitUntil: 'networkidle2' })
     await page.waitForSelector('[data-thread-header]')
     await contrast(`thread-sheet-${width}`)
     await shot(`thread-sheet-${width}`)
@@ -130,7 +130,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   for (const width of [1440, 390]) {
     await page.setViewport({ width, height: 1000, deviceScaleFactor: 1 })
     for (const surface of ['queue', 'full']) {
-      await page.goto(surface === 'queue' ? url : `${url}/thread/theme-question/full`, { waitUntil: 'networkidle2' })
+      await page.goto(surface === 'queue' ? url : `${url}/thread/theme-question`, { waitUntil: 'networkidle2' })
       if (surface === 'queue') {
         const item = width === 390 ? '[data-mobile-thread-row="theme-question"]' : '[data-sidebar-item="theme-question"]'
         await page.waitForSelector(item)
@@ -173,7 +173,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   check(`${name} queue and fullscreen title focus, rename and cancel at desktop and phone widths`)
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 })
 
-  await page.goto(`${url}/thread/theme-question/full`, { waitUntil: "networkidle2" })
+  await page.goto(`${url}/thread/theme-question`, { waitUntil: "networkidle2" })
   await page.click("[data-question-option] > button")
   // A staged answer arms the prompt box's Send, which is what sends it: the cards draw no "Send answers"
   // of their own beside a prompt box (2026-10-11).
@@ -353,7 +353,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   await page.click('[aria-label="More actions for theme-project"]')
   await page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].find(el => el.textContent.includes('Delete')).click())
   await inspectDestructive('delete-project')
-  await page.goto(`${url}/thread/theme-rich/full`, { waitUntil: 'networkidle2' })
+  await page.goto(`${url}/thread/theme-rich`, { waitUntil: 'networkidle2' })
   // The alias trims whitespace; skip skill discovery against the transcript-only fixture.
   await page.type('textarea', ' /logout')
   await page.keyboard.down('Meta')
@@ -362,7 +362,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   await inspectDestructive('sign-out')
   check(`${name} destructive confirmation labels in normal and pointer-hover states, without submitting either action`)
 
-  await page.goto(`${url}/thread/theme-rich/full`, { waitUntil: "networkidle2" })
+  await page.goto(`${url}/thread/theme-rich`, { waitUntil: "networkidle2" })
   await page.evaluate(() => [...document.querySelectorAll('button[aria-expanded="false"]')].find(el => el.textContent.includes("Ran 3 tool calls"))?.click())
   await page.waitForSelector(".frizz-diff")
   await page.$eval('[data-drawer-transcript-scroll]', el => { el.scrollTop = 0 })
@@ -462,7 +462,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
     await contrast(`phone-${band}`)
     await shot(`phone-${band}`)
   }
-  await page.goto(`${url}/thread/theme-question/full`, { waitUntil: 'networkidle2' })
+  await page.goto(`${url}/thread/theme-question`, { waitUntil: 'networkidle2' })
   await page.waitForSelector('[data-question-option]')
   await contrast('phone-question')
   await shot('phone-question')

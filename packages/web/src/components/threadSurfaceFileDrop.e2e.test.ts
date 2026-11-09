@@ -111,7 +111,7 @@ test("a file dropped anywhere on a thread's queue card, drawer or full-screen pa
 
     // 2. THE DRAWER, in the middle of its transcript and then on its header. The queue is still mounted
     // under it, so the hint has to say which SURFACE is under the pointer.
-    await page.goto(`${boardUrl}/thread/${working}`, { waitUntil: "networkidle2" })
+    await page.goto(`${boardUrl}?thread=${working}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(`${drawer} [data-composer-box]`)
     await page.waitForSelector(`${drawer}[data-drawer-scroll-ready="true"], ${drawer} [data-drawer-scroll-ready="true"]`)
     const inTranscript = await point(`${drawer} [data-drawer-transcript-scroll]`, (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 3 }))
@@ -132,7 +132,7 @@ test("a file dropped anywhere on a thread's queue card, drawer or full-screen pa
     assert.deepEqual(await chips(card), ["On the card.txt"], "…and nothing went to the other thread's card")
 
     // 3. THE FULL-SCREEN PAGE of the rested thread, in the middle of its transcript.
-    await page.goto(`${boardUrl}/thread/${slug}/full`, { waitUntil: "networkidle2" })
+    await page.goto(`${boardUrl}/thread/${slug}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(`${full} [data-composer-box]`)
     await waitForChips(full, 1)
     await dropAt(await point(`${full} [data-drawer-transcript-scroll]`, (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 3 })), full, onFull)

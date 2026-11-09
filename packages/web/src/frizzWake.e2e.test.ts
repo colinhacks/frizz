@@ -94,7 +94,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         const reads = (start: string) => result.hairlines.some((line) => line.reads.startsWith(start))
         const readings = width < 500
           ? ["Wait over · expand ·", "« Running the update harness against the built shell and server » finished ·", "comment #756 ·", "review comment #587 ·", "CI passed #761 · 2h ago", "PR merged #756 ·", "Watcher expired #777 ·", "Watch expired ·", "Weekly limit reset ·", "Fable 5 → Opus ·", "1 question cancelled ·", "Timer · expand ·", "Passed · expand ·", "Expired · expand ·", "Stopped · expand ·", "« Audit the auth flow » stopped ·", "« Fix the cache collision » stopped ·"]
-          : ["Wait over — its work finished · Click to expand ·", "Background task « Running the update harness against the built shell and server » finished ·", "New comment from @colinhacks on nubjs/nub#756 ·", "New review comment from @pullfrog on nubjs/nub#587 ·", "CI passed on nubjs/nub#761 · 7 checks green ·", "PR merged on nubjs/nub#756 ·", "Watcher expired on nubjs/nub#777 ·", "Watch expired on a background shell ·", "Weekly usage limit reset — resuming ·", "Fable 5 limit — switched to Opus ·", "1 question cancelled — the worker decides it itself ·", "Timer · Click to expand ·", "Watch « node screen-unlocked.mjs » passed · Click to expand ·", "Watch « gh run view 18273645 --exit-status » stopped by Frizz · Click to expand ·", "Sub-agent « Audit the auth flow » stopped by the interrupt ·", "Sub-agent « Survey the dev server readouts » stopped by the interrupt ·"]
+          : ["Wait over — its work finished · Click to expand ·", "Background task « Running the update harness against the built shell and server » finished ·", "New comment from @colinhacks on nubjs/nub#756 ·", "New review comment from @pullfrog on nubjs/nub#587 ·", "CI passed on nubjs/nub#761 · 7 checks green ·", "PR merged on nubjs/nub#756 ·", "Watcher expired on nubjs/nub#777 ·", "Watch expired on a background shell ·", "Weekly usage limit reset — resuming ·", "Fable 5 limit — switched to Opus ·", "1 question cancelled — the worker decides it itself ·", "Timer · Click to expand ·", "Monitor « node screen-unlocked.mjs » passed · Click to expand ·", "Monitor « gh run view 18273645 --exit-status » stopped by Frizz · Click to expand ·", "Sub-agent « Audit the auth flow » stopped by the interrupt ·", "Sub-agent « Survey the dev server readouts » stopped by the interrupt ·"]
         for (const reading of readings) assert.ok(reads(reading), `${width}px ${font}: no hairline reads "${reading}…", got ${result.hairlines.map((line) => line.reads).join(" | ")}`)
         // THE REPORTED DELIVERY: a park ending beside the shell that ended it. Two hairlines, in the
         // order they were queued, and none of the envelope — not its lead, not the scheduler's reason
@@ -133,7 +133,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         }))
         for (const wake of settled) {
           assert.ok(wake.divider && !wake.card, `${wake.id} is a hairline`)
-          assert.doesNotMatch(wake.text, /Your command watch|frizzctl|Carry on|wake you|background shell instead|did not return|re-dispatch|NOT RUNNING/, wake.id)
+          assert.doesNotMatch(wake.text, /Your monitor|Your command watch|frizzctl|Carry on|wake you|background shell instead|did not return|re-dispatch|NOT RUNNING/, wake.id)
         }
         const disclosed = async (id: string) => {
           await page.click(`[data-frizz-msg="${id}"] [data-wake-divider]`)
@@ -161,7 +161,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
         }))
         for (const wake of monitors) {
           assert.ok(wake.lines.length > 0 && !wake.card, `${wake.id} is a hairline`)
-          assert.doesNotMatch(wake.text, /Your monitor|frizzctl|wakes you|register it again|Nothing about it/, wake.id)
+          assert.doesNotMatch(wake.text, /Your monitor|Your command watch|frizzctl|wakes you|register it again|Nothing about it/, wake.id)
         }
         const [event, exited, expired, flood, merged, stopped] = monitors
         // Each hairline's text carries BOTH widths' labels (one is hidden by CSS), so it is matched, not

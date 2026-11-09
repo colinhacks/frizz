@@ -164,6 +164,7 @@ import {
   ThreadSettledQuestionsResult,
   QuestionAnswerSchema,
   type SettledQuestionView,
+  type ClosedQuestionSpecView,
   AskedQuestionSchema,
   askedQuestionFaults,
   secretAnswerText,
@@ -205,8 +206,9 @@ import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDelive
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
 import {
   readEarlierThreadTranscriptPage,
-  readLatestThreadTranscriptPage,
+  readLatestThreadTranscriptPageWithFiles,
   readTranscript,
+  transcriptFoldCaughtUp,
   readTranscriptFile,
   readCodexTranscriptFile,
   readOpencodeChildTranscript,
@@ -248,7 +250,7 @@ import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, queuedThread } from "@frizz/shared"
+import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, boardQueuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
@@ -2511,7 +2513,8 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         // Registry row → its session's transcript; foreign slug (a session id) → resolved directly; else [].
         // backendFor routes a codex thread through the codex rollout reader (else it renders empty).
-        const page = readLatestThreadTranscriptPage(ctx.project, ctx.storage, input.slug, ctx.backendFor)
+        await transcriptFoldCaughtUp(ctx.project, ctx.storage, input.slug, ctx.backendFor)
+        const page = await readLatestThreadTranscriptPageWithFiles(ctx.project, ctx.storage, input.slug, ctx.backendFor)
         return retireOpsInPage(input.slug, projectTranscriptPageAgentLifecycles(page, (id) => ctx.tailer.subAgent(input.slug, id), (taskId) => ctx.tailer.subAgentByTaskId?.(input.slug, taskId), ctx.sessionPeerThread))
       },
     }),
@@ -2522,6 +2525,7 @@ export function createRouter(ctx: AppContext) {
       input: TranscriptEarlierInput,
       output: TranscriptPage,
       handler: async ({ input }) => {
+        await transcriptFoldCaughtUp(ctx.project, ctx.storage, input.slug, ctx.backendFor)
         const page = readEarlierThreadTranscriptPage(ctx.project, ctx.storage, input.slug, input.cursor, ctx.backendFor)
         return retireOpsInPage(input.slug, projectTranscriptPageAgentLifecycles(page, (id) => ctx.tailer.subAgent(input.slug, id), (taskId) => ctx.tailer.subAgentByTaskId?.(input.slug, taskId), ctx.sessionPeerThread))
       },
@@ -2536,14 +2540,22 @@ export function createRouter(ctx: AppContext) {
       output: ThreadSettledQuestionsResult,
       handler: async ({ input }) => {
         const questions: SettledQuestionView[] = []
+        // …and what each fence-asked question that closed unanswered asked, for the fences that named it
+        // while it was open (ClosedQuestionSpecView). Only rows with a handle, as on the board.
+        const closed: ClosedQuestionSpecView[] = []
         for (const q of ctx.storage.listThreadQuestions(input.slug)) {
+          if ((q.state === "dismissed" || q.state === "withdrawn") && q.handle) {
+            const spec = parseQuestionSpec(q.spec)
+            if (spec) closed.push({ id: q.id, spec })
+            continue
+          }
           if (q.state !== "answered" || q.settled_at == null) continue
           const spec = parseQuestionSpec(q.spec)
           const answer = parseStoredAnswer(q.answer)
           if (!spec || !answer) continue
           questions.push({ id: q.id, spec, askedAt: new Date(q.asked_at).toISOString(), settledAt: new Date(q.settled_at).toISOString(), answer })
         }
-        return { questions }
+        return { questions, closed }
       },
     }),
 
@@ -4120,7 +4132,7 @@ export function createRouter(ctx: AppContext) {
     }),
 
     // ---- REGISTERED COMMAND WATCHES (add / drop / list) -------------------------------------------
-    // `frizzctl watch-command`: a shell command the SERVER re-runs on a cadence until it exits 0 (scheduler
+    // `frizzctl monitor`: a shell command the SERVER re-runs on a cadence until it exits 0 (scheduler
     // SOURCE 13, command-watch.ts). Slug-only like every worker registry. The GATE runs before anything
     // else, the idempotent short-circuit included: whether Frizz may run commands for this thread at all
     // is the first question, and a thread that has lost the right must not be told its old watch stands.
@@ -4131,18 +4143,19 @@ export function createRouter(ctx: AppContext) {
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new Error(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a command watch on it")
+          throw new Error("Reopen this thread before registering a monitor on it")
         }
         const service = ctx.commandWatches
-        const refusal = service ? service.refusal(row) : `this server cannot run command watches. ${COMMAND_WATCH_FALLBACK}`
+        const refusal = service ? service.refusal(row) : `this server cannot run monitors. ${COMMAND_WATCH_FALLBACK}`
         if (refusal) {
-          return { refused: `Frizz will not run a command watch for this thread: ${refusal}`, alreadyArmed: false, passed: false, watches: armedCommandWatchViews(input.slug) }
+          return { refused: `Frizz will not run a monitor for this thread: ${refusal}`, alreadyArmed: false, passed: false, watches: armedCommandWatchViews(input.slug) }
         }
         const command = input.command.trim()
         const armed = ctx.storage.listCommandWatches(input.slug, { armedOnly: true })
         // IDEMPOTENT ON THE COMMAND TEXT, for the PR watcher's reason: re-registering after a compaction
-        // is the careful case, and a second row would run the same check twice and wake twice.
-        const existing = armed.find((w) => w.command === command)
+        // is the careful case, and a second row would run the same check twice and wake twice. Among
+        // checks only: the same text under `--persistent` is a different wait, and has no cadence to report.
+        const existing = armed.find((w) => w.kind === "check" && w.command === command)
         if (existing) {
           return {
             id: existing.id, alreadyArmed: true, passed: false,
@@ -4151,7 +4164,7 @@ export function createRouter(ctx: AppContext) {
           }
         }
         if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} command watches armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+          throw new Error(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
         }
         const everyAsked = parseAwaitingDurationRaw(input.every)
         if (everyAsked === null) throw new Error(`\`--every ${input.every}\` is not a duration — give one like \`5m\` or \`1h\` (min 1m, max 24h)`)
@@ -4226,7 +4239,7 @@ export function createRouter(ctx: AppContext) {
       },
     }),
 
-    // ---- THE WORKER'S MONITORS (`frizzctl monitor add`, 2026-11-02) --------------------------------
+    // ---- THE WORKER'S MONITORS (`frizzctl monitor add --persistent`, 2026-11-02) --------------------------------
     // A script the server keeps RUNNING, each stdout line a wake (scheduler SOURCE 13, command-watch.ts).
     // A command watch row of kind `monitor`, so `drop` and `list` are the command watch's own RPCs above.
     // Same gate first, for the same reason; then the caps; then the row is armed and the script started,
@@ -4296,9 +4309,9 @@ export function createRouter(ctx: AppContext) {
         }
         const refuse = (refused: string) => ({ refused, alreadyArmed: false, running: false, events: [], watches: armedCommandWatchViews(input.slug) })
         const service = ctx.commandWatches
-        const gate = service ? service.refusal(row) : `this server cannot run monitors. ${MONITOR_FALLBACK}`
-        if (gate) return refuse(`Frizz will not run a monitor for this thread: ${gate.replace(COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK)}`)
-        if (!service?.startMonitor || !ctx.scheduler?.startMonitor) return refuse(`Frizz will not run a monitor for this thread: this server cannot run monitors. ${MONITOR_FALLBACK}`)
+        const gate = service ? service.refusal(row) : `this server cannot run persistent monitors. ${MONITOR_FALLBACK}`
+        if (gate) return refuse(`Frizz will not run a persistent monitor for this thread: ${gate.replace(COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK)}`)
+        if (!service?.startMonitor || !ctx.scheduler?.startMonitor) return refuse(`Frizz will not run a persistent monitor for this thread: this server cannot run persistent monitors. ${MONITOR_FALLBACK}`)
         const command = input.command.trim()
         const description = input.description?.trim().replace(/\s+/g, " ") || undefined
         const armed = ctx.storage.listCommandWatches(input.slug, { armedOnly: true })
@@ -4311,10 +4324,10 @@ export function createRouter(ctx: AppContext) {
           }
         }
         if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} command watches and monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+          throw new Error(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
         }
         if ((service.monitorsRunning?.() ?? 0) >= MONITOR_SERVER_MAX_RUNNING) {
-          return refuse(`Frizz already runs ${MONITOR_SERVER_MAX_RUNNING} monitors across every project, its limit. ${MONITOR_FALLBACK}`)
+          return refuse(`Frizz already runs ${MONITOR_SERVER_MAX_RUNNING} persistent monitors across every project, its limit. ${MONITOR_FALLBACK}`)
         }
         const forAsked = parseAwaitingDurationRaw(input.for)
         if (forAsked === null) throw new Error(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
@@ -4335,7 +4348,7 @@ export function createRouter(ctx: AppContext) {
         if (started.refused) {
           ctx.storage.settleCommandWatch(id, "cancelled", Date.now())
           ctx.board.refresh()
-          return refuse(`Frizz could not start your monitor: ${started.refused}. ${MONITOR_FALLBACK}`)
+          return refuse(`Frizz could not start your script: ${started.refused}. ${MONITOR_FALLBACK}`)
         }
         if (started.exited) {
           // ENDED INSIDE THE WINDOW. 127 and 126 are the shell's "not found" / "not executable", almost
@@ -4622,7 +4635,7 @@ export function createRouter(ctx: AppContext) {
             .map((t) => ({ id: t.id, what: `timer, fires ${new Date(t.fire_at).toISOString()}` })),
           ...ctx.storage
             .listCommandWatches(input.slug, { armedOnly: true })
-            .map((w) => ({ id: w.id, what: `command watch: ${w.command.trim().replace(/\s+/g, " ").slice(0, 120)}` })),
+            .map((w) => ({ id: w.id, what: `monitor: ${w.command.trim().replace(/\s+/g, " ").slice(0, 120)}` })),
         ]
         if (blockingQuestions.length > 0 || blockingWatches.length > 0) {
           return { done: false, blockingQuestions, blockingWatches }
@@ -5114,7 +5127,7 @@ export function createRouter(ctx: AppContext) {
           try {
             const { threads } = await board.snapshot()
             counts[project.id] = {
-              queued: threads.filter(queuedThread).length,
+              queued: threads.filter(boardQueuedThread).length,
               running: threads.filter(activeBandThread).length,
               asks: threads.filter(boardAskThread).length,
             }

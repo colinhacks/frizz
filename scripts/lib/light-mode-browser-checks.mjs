@@ -136,7 +136,7 @@ export async function checkThemePreferences({ browser, url, check }) {
     await resolved(peer, "dark")
     check("Storage removal and clear restore System in the other tab")
     await set("light")
-    for (const route of [new URL("/", url).href, new URL("/project/second-project", url).href, `${url}/thread/theme-rich/full`, url]) {
+    for (const route of [new URL("/", url).href, new URL("/project/second-project", url).href, `${url}/thread/theme-rich`, url]) {
       await page.goto(route, { waitUntil: "networkidle2" })
       await resolved(page, "light")
     }
@@ -152,7 +152,7 @@ export async function checkThemePreferences({ browser, url, check }) {
 }
 
 export async function checkRichRendererState({ page, url, check }) {
-  await page.goto(`${url}/thread/theme-rich/full`, { waitUntil: "networkidle2" })
+  await page.goto(`${url}/thread/theme-rich`, { waitUntil: "networkidle2" })
   await page.waitForSelector('[data-mermaid-state="ready"]')
   const iframe = await page.waitForSelector('iframe[title="theme counter"]')
   const frame = await iframe.contentFrame()
@@ -184,7 +184,7 @@ export async function checkRichRendererState({ page, url, check }) {
   await frame.evaluate(() => { const el = document.createElement("div"); el.style.height = "500px"; document.body.append(el) })
   await page.waitForFunction(initialHeight => document.querySelector('iframe[title="theme counter"]').getBoundingClientRect().height > initialHeight, {}, initialHeight)
   check("Iframe natural height still updates after theme application")
-  await page.goto(`${url}/thread/theme-invalid/full`, { waitUntil: "networkidle2" })
+  await page.goto(`${url}/thread/theme-invalid`, { waitUntil: "networkidle2" })
   await page.waitForSelector('[data-mermaid-state="error"]')
   await page.waitForSelector('[data-mermaid-state="ready"]')
   await page.evaluate(async () => {
@@ -224,7 +224,7 @@ export async function checkIframeFirstPaint({ browser, url, check }) {
           } else await req.continue()
         })
       }
-      await page.goto(`${url}/thread/theme-rich/full`, { waitUntil: "networkidle2" })
+      await page.goto(`${url}/thread/theme-rich`, { waitUntil: "networkidle2" })
       const iframe = await page.waitForSelector('iframe[title="theme counter"]')
       if (suppressAck) {
         assert.equal(await iframe.evaluate(el => getComputedStyle(el).visibility), "hidden")

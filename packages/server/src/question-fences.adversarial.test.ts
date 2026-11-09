@@ -273,6 +273,7 @@ test("one thread's failing sweep neither stops the other threads' nor is retried
       clearThreadDone: (slug: string) => h.storage.clearThreadDone(slug),
       resetParkBumps: (slug: string) => h.storage.resetParkBumps(slug),
       growThreadQuestionSpec: (slug: string, id: string, spec: string) => h.storage.growThreadQuestionSpec(slug, id, spec),
+      threadQuestionsBySlug: () => h.storage.threadQuestionsBySlug(),
       dismissThreadQuestion: (id: string, atMs: number) => h.storage.dismissThreadQuestion(id, atMs),
       askThreadQuestion: (q: Parameters<typeof h.storage.askThreadQuestion>[0]) => {
         asks++

@@ -23,25 +23,41 @@ The commands are in that script's header. In order:
 3. `--only=drift`, then `gh workflow enable workers-drift.yml`, push `main`, and dispatch it. This first run must fail, naming the 2026-10-08 versions, which is the proof it can.
 4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both`. The maintainer approves it within the hour.
 5. `--revoke-deploy`, then `nub scripts/verify-relay-live.mjs`.
-6. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
+6. If `BASELINE.claims` in `scripts/workers-drift.mjs` lacks a custom name a board serves, add its key and push; the registrar's `GET /claim/<name>` that drift reads it through shipped on 2026-11-07. None is pinned today: the maintainer dropped `colin.frizz.sh` that day and will claim `colinhacks.frizz.sh` from the R pane once a release carries it, so pin that one then.
+7. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
    - **The sitting's own changes.** Any change in the audit log that CI would not make fails the check until it is two hours old, including removing a member or turning on DNSSEC.
    - **Something CI's own run does.** Add it to `JUDGED_BY_VERSION` only if `checkAccount` already compares what that action can change.
-7. The maintainer deletes the token from step 1.
+8. The maintainer deletes the token from step 1.
 
-## 2. Bring custom names back (optional)
+## 2. Bring custom names back
 
-Only when custom names are wanted again.
+The maintainer wants these back for everyone, after running `colin.frizz.sh` himself for a while (2026-11-06). Until they work for end users, no page or doc mentions them.
+
+**One name by hand.** A board's own name needs no GitHub app and no release. Create its key, save `{"hostname":"<name>.frizz.sh","claim":"<name>","serve":"relay"}` as `cloud.json`, and add the KV pair `claim:<name>` = `{"pubkey":"<key>","tunnelId":"","port":9393,"claimedAt":<ms>,"renewedAt":<ms>}` to `frizz-registrar-CLAIMS` in the dashboard. Renewals then use the key alone. No stored token can write KV, on purpose. End users never do any of this: the R pane claims through the registrar, and the wildcard record already covers every name.
+
+`colin.frizz.sh` was served this way from 2026-11-06 until the next day, on launcher 0.13.15 and server 0.15.46. **The maintainer dropped it on 2026-11-07**: his board had moved to a random name from the R menu, and he will take `colinhacks.frizz.sh` through Frizz's GitHub sign-in once a release carries it. Its row renews no more, lapses on 2026-12-07, and the daily sweep then releases it. Through the live name, a real session read the board and was refused `dispatch`, `addOwnCommandWatch`, minting a sign-in link and the session directory, including with headers claiming loopback. The dashboard's KV write left no audit-log event, so until § 1 step 6 pins the name, nothing alarms if its row changes.
 
 Before any name returns, including one set up by hand for a single board:
 
 - **The board runs the remote gate.** `/_frizz/control/status` reads `launcherVersion` 0.13.15 or later, and the server is 0.15.46 or later. The fix for forged relay headers is in the shell, so updating the server alone leaves it out, and only restarting `npx frizz` replaces a running launcher.
 - **Old sessions are gone.** `frizz --sign-out all` rotates the `session-key`.
 - **The browser is clean.** The maintainer clears `frizz.sh` site data right before the name returns, which removes any service worker an earlier relay build left.
-- **The name is free, and is claimed in the same sitting.** The registrar has no client binding, so any zero-scope GitHub token from an account over 30 days old can claim it.
+- **The name is free, and is claimed in the same sitting.** Once the registrar takes only a username's own account (below), only that account can claim it; before that deploy, any GitHub sign-in from an account over 30 days old can.
 - **The gate holds through the live relay.** With a real session and from outside the Mac, a forged frame is refused, and so are minting a sign-in link and the session directory, at both access levels. Under read and answer, `dispatch` through the name answers 403 `remote_refused`. Under full control, the default since `58aebc5f`, it starts a thread. A server without that commit keeps every session at read and answer, whatever `cloud.json` says. The local verifiers test the Worker and the gate separately, so this is the first run through both.
 
-1. Open [new GitHub OAuth app](https://github.com/settings/applications/new). Application name `Frizz`, Homepage URL `https://frizz.sh`, description `Confirms which GitHub account claims a frizz.sh name. Requests no permissions.`, Authorization callback URL `https://frizz.sh`. Tick **Enable Device Flow**, click **Register application**, copy the **Client ID**. Do not generate a client secret.
-2. Set `FRIZZ_GITHUB_CLIENT_ID` in [`src/github-device-flow.ts`](../src/github-device-flow.ts) to that id, and `CUSTOM_NAMES_OFFERED = true` in [`src/cloud.ts`](../src/cloud.ts). Run [`scripts/verify-claim-e2e.mjs`](../scripts/verify-claim-e2e.mjs) (its header gives the invocation) and claim one real name by hand from the R pane, then cut a shell release ([CLAUDE.md § Cutting a release](../CLAUDE.md)).
+**No second GitHub app (2026-11-07).** A claim proves its account with the user token of Frizz's own GitHub sign-in, the Frizz Agent Console App the board already holds (`src/github-claim-identity.ts`), and the R pane offers the signed-in login as the name. The maintainer dropped the zero-scope rule: the registrar deploys from the same workflow, token and approval as the relay, and a hijacked relay already has full control of every board serving through it. The registrar accepts only a token GitHub reports as issued to that App (`X-OAuth-Client-Id`), so a `gh` CLI token, a personal access token or another app's token cannot claim.
+
+**A custom name is the account's own GitHub username, and nothing else (maintainer, 2026-11-07).** The registrar refuses any other name as `not-your-github-username`, and the R pane has no name to type: it offers the signed-in login and claims it on enter. A hand-written row keeps renewing by its key while its board serves it. Once `colin.frizz.sh` lapses (above), only the GitHub account `colin` (id 950, not the maintainer's) can claim it. **Random names are never reused (2026-11-07):** a lapsed or swept random name keeps `retired:<name>` → its key, and every other key is refused it.
+
+1. **The next approved Workers deploy** ships the registrar half. Until then the live registrar refuses the App's token as `github-token-scoped`, which a new launcher explains as the registrar not taking Frizz's sign-in yet. It also ships the move from a random name to a custom one on the same key, which steps off the random name (its row stays with the key until it lapses, and is then retired); before it, a board on a random name is refused a custom one for that name's 30-day lease. And it ships the username-only rule and the never-reused random names.
+2. **Then the switch:** `CUSTOM_NAMES_OFFERED = true` in [`src/cloud.ts`](../src/cloud.ts), [`scripts/verify-claim-e2e.mjs`](../scripts/verify-claim-e2e.mjs) green, and one real name claimed from the R pane on a board signed in under Settings → GitHub. The next shell release carries it to everyone.
+3. **Decide custom → random before the switch.** A key whose custom name the registrar indexed is refused a random name for that name's lease (`one-name-per-key`), and the R pane has no release. Today only hand-written rows exist, which are not indexed, so it cannot happen yet.
+4. **Close what the 2026-11-07 review found the registrar's storage cannot enforce** ([`frizz-sh-claim-review-2026-11-07.md`](frizz-sh-claim-review-2026-11-07.md) has the proofs):
+   - **The one-per limits race.** KV has no compare-and-set, so ten claims sent at once from one GitHub account and ten keys all won. Two keys can also both win one free name. One Durable Object that every claim passes through, or D1 with unique keys on the name and the account id, fixes all of these.
+   - **IPv6 budgets are per /64 now,** but there is still no overall hourly ceiling on new names, and every new claim lists the whole namespace to count it. Keep a counter.
+   - **A random name can be chosen.** Any 20 characters from `a-z2-7` counts as random and skips GitHub, so `colinhacksfrizzboard` claims with no account. Derive a new random name from the key, or have the registrar pick it; existing names keep renewing.
+   - **A leaked App token binds its account for good.** Whoever holds one for 8 hours can claim a name on that account and renew it forever, and the account's owner then gets `one-name-per-account`. The token sits in the clear in the workers' `gh` folder. Give the account a way to take its binding back.
+   - **Sessions are not tied to the name that issued them.** A custom name that lapses and is claimed by its username's account collects the cookies of phones still bookmarked on it, which the board honours on its new name. Random names are never reused, so this is custom names only. Put the hostname in the signed session.
 
 ## 3. How the SSH key and the Cloudflare token left the Mac
 

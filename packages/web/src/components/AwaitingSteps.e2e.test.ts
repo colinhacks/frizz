@@ -83,7 +83,8 @@ test("a steps card's one box stages an answer the prompt box sends", {
     assert.equal(busy.rows, 0, "no wait rows on the card")
     assert.equal(busy.next, true, "the box sits right under the steps it confirms")
     assert.doesNotMatch(busy.text, /acme\/app#39|npm view|Re-check the release/, "nothing the thread is waiting on is named on the card")
-    assert.deepEqual(busy.counts, ["agent", "shell", "pr", "command", "monitor", "timer"], "every wait is counted over the prompt box instead")
+    // A monitor is counted with the command watches (`e4148cfe`): one count, its rows telling the shapes apart.
+    assert.deepEqual(busy.counts, ["agent", "shell", "pr", "command", "timer"], "every wait is counted over the prompt box instead")
     for (const [kind, row] of [["command", /npm view acme@4\.2\.0 version[\s\S]*every 5m/], ["timer", /Re-check the release run/]] as const) {
       await page.hover(`[data-ops-count="${kind}"]`)
       await page.waitForSelector(`[data-queue-ops-panel="${kind}"]`)

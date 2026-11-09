@@ -22,13 +22,15 @@ import { ProjectSquare } from "./ProjectRail.tsx"
 // middle-click and "Open link in new tab" all work. A project whose directory is gone is left out: the
 // grid is where one of those is reopened or forgotten, and a switch into it would land on nothing.
 //
-// The menu is the Console project chip's (ConsoleProjectChip.tsx) — the same surface, row and check —
-// so the app's two project menus read as one control. They are never on one screen: the Console's status
-// row draws the chip in this crumb's place (StatusRow.tsx).
+// The menu is the Console project chip's (ConsoleProjectChip.tsx) — the same surface and row — so the app's
+// two project menus read as one control. They are never on one screen: the Console's status row draws the
+// chip in this crumb's place (StatusRow.tsx). The chip marks its project with a filled row because its rows
+// carry a new-tab arrow beside them, which a check stood next to as a second mark; this menu has no such
+// arrow, and keeps the check.
 
 /** One menu row: the chip's own row, so the two project menus match. The tone is each row's own. */
 const ROW =
-  "flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12.5px] outline-none no-underline data-[highlighted]:bg-panel-2"
+  "flex h-[26px] cursor-pointer items-center gap-2 rounded px-1.5 text-[12.5px] outline-none no-underline data-[highlighted]:bg-panel-2"
 
 export function ProjectCrumb({
   name,
@@ -84,7 +86,9 @@ export function ProjectCrumb({
           sideOffset={6}
           collisionPadding={8}
           data-project-crumb-menu=""
-          className={`${OPAQUE_PORTAL_SURFACE_CLASS} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] max-w-[280px] overflow-auto rounded-lg p-1.5`}
+          // `[overflow-y:auto]`, not `overflow-auto`: styles.css reserves a 7px scrollbar gutter on the latter,
+          // which left the rows 7px further from the right edge than the left. ConsoleProjectChip.tsx has the same.
+          className={`${OPAQUE_PORTAL_SURFACE_CLASS} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-[200px] max-w-[280px] scrollbar-none rounded-lg p-1.5 [overflow-y:auto]`}
         >
           {projects.map((project) => (
             <RadixDropdown.Item key={project.id} asChild>

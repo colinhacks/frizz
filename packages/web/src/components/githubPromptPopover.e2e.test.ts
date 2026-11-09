@@ -1,15 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// Runtime coverage for the GitHub picker's header — the repo slug as a right-justified link out — and
-// the footer gear beside the Start button that opens the triage prompt in a modal popover. Drives
+// Runtime coverage for the GitHub picker's header — the repo slug as right-justified text linking
+// out — and the footer gear beside the Start button, whose modal panel holds the model and the prompt. Drives
 // github-picker-range-fixture, which
 // records every settingsSet the popover makes. Skipped unless FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL names
 // a vite serving the fixtures (scripts/e2e-web.mjs sets it).
 const baseUrl = process.env.FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL
 
-type Fixture = { settingsWrites: Record<string, unknown>[]; dispatched: unknown[] }
-const GEAR = 'button[aria-label="Triage prompt settings"]'
+type Fixture = { settingsWrites: Record<string, unknown>[]; dispatched: unknown[]; preferenceWrites: unknown[] }
+const GEAR = 'button[aria-label="Picker settings"]'
 const PANEL = "[data-github-prompt-menu]"
 
 async function launch(query = "?rows=5") {
@@ -36,54 +36,101 @@ async function selectAllInTextarea(page: import("puppeteer").Page) {
   }, PANEL)
 }
 
-test("the header links out to the repo, right-justified; the gear sits left of the Start button", { skip: !baseUrl, timeout: 60_000 }, async () => {
+test("the header links out to the repo as right-justified text, rules frame the body, and the footer is the running count, the gear and the Start button", { skip: !baseUrl, timeout: 60_000 }, async () => {
   const { browser, page, errors } = await launch()
   try {
     const header = await page.$eval("h2", (h2) => {
       const link = h2.querySelector<HTMLAnchorElement>("a.github-repo-link")!
       const title = h2.querySelector("span")!
+      const style = getComputedStyle(link)
       return {
         href: link.href,
         target: link.target,
         text: link.textContent?.trim(),
         title: title.textContent?.trim(),
-        hasArrow: link.querySelector("svg") !== null,
-        hasGear: h2.querySelector('button[aria-label="Triage prompt settings"]') !== null,
-        linkRight: link.querySelector("svg")!.getBoundingClientRect().right,
-        h2Right: h2.getBoundingClientRect().right,
+        glyphs: link.querySelectorAll("svg").length,
+        titleGlyphs: title.querySelectorAll("svg").length + (h2.firstElementChild?.tagName === "svg" ? 1 : 0),
+        hasGear: h2.querySelector('button[aria-label="Picker settings"]') !== null,
+        linkRight: link.getBoundingClientRect().right,
+        listRight: document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect().right,
         titleRight: title.getBoundingClientRect().right,
         dash: /—/.test(h2.textContent ?? ""),
+        border: style.borderTopWidth,
+        background: style.backgroundColor,
+        color: style.color,
       }
     })
     assert.equal(header.href, "https://github.com/fixture/repo")
     assert.equal(header.target, "_blank")
     assert.equal(header.text, "fixture/repo")
     assert.equal(header.title, "Start threads from issues and PRs")
-    assert.equal(header.hasArrow, true)
+    assert.equal(header.glyphs, 2, "the GitHub mark and the external arrow are both the link's")
+    assert.equal(header.titleGlyphs, 0, "the mark moved off the title")
     assert.equal(header.dash, false, "the slug is no longer an em-dashed suffix of the title")
-    assert.equal(header.hasGear, false, "the gear moved down to the footer")
-    assert.ok(header.h2Right - header.linkRight < 3, "the slug ends at the header's right edge")
-    assert.ok(header.linkRight - header.titleRight > 100, "the slug is right-justified, well clear of the title")
+    assert.equal(header.hasGear, false, "the gear lives in the footer")
+    assert.ok(Math.abs(header.listRight - header.linkRight) < 1, `the link ends on the list's right edge, got ${header.linkRight} vs ${header.listRight}`)
+    assert.ok(header.linkRight - header.titleRight > 100, "the link is right-justified, well clear of the title")
+    assert.equal(header.border, "0px", "the link is text, not a box stacked on the sort control")
+    assert.equal(header.background, "rgba(0, 0, 0, 0)", "and has no fill")
+    // fg at 85%: brighter than any muted tone, a step under the title's own fg.
+    const alpha = Number(/\/\s*([\d.]+)\)$/.exec(header.color)?.[1] ?? 1)
+    assert.ok(alpha > 0.8 && alpha < 0.9, `the link is drawn in the fg tone, got ${header.color}`)
 
-    // The gear is the Start button's left-hand neighbour, on the same line: INK, not boxes, because its
-    // hover square carries the glyph's dead space.
+    // One rule under the heading and one over the footer, each edge to edge across the modal.
+    const rules = await page.evaluate(() => {
+      const h2 = document.querySelector("h2")!
+      const modal = h2.parentElement!
+      const startButton = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!
+      const footer = startButton.parentElement!.parentElement!
+      const inner = modal.getBoundingClientRect()
+      const read = (el: Element, side: "Top" | "Bottom") => {
+        const box = el.getBoundingClientRect()
+        const style = getComputedStyle(el)
+        return { width: style[`border${side}Width`], color: style[`border${side}Color`], left: box.left - inner.left, right: inner.right - box.right }
+      }
+      const start = startButton.getBoundingClientRect()
+      return {
+        heading: read(h2, "Bottom"),
+        footer: read(footer, "Top"),
+        aboveStart: start.top - footer.getBoundingClientRect().top - 1,
+        belowStart: inner.bottom - 1 - start.bottom,
+      }
+    })
+    assert.equal(rules.heading.width, "1px", "a rule under the heading")
+    assert.equal(rules.footer.width, "1px", "a rule above the footer")
+    assert.equal(rules.heading.color, rules.footer.color, "the two rules are one tone")
+    assert.equal(rules.aboveStart, 12, "12px between the footer's rule and the Start button")
+    assert.equal(rules.belowStart, 12, "and 12px between the button and the modal's bottom edge")
+    for (const rule of [rules.heading, rules.footer]) {
+      assert.ok(rule.left <= 1 && rule.right <= 1, `the rule runs edge to edge, got ${rule.left} / ${rule.right} of inset`)
+    }
+
+    // The footer is one row. The gear is the Start button's left-hand neighbour: INK, not boxes, because
+    // its hover square carries the glyph's dead space. The model selector is not on it.
     const footer = await page.evaluate((gearSelector) => {
       const gear = document.querySelector<HTMLButtonElement>(gearSelector)!
       const start = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!
       const ink = [...gear.querySelectorAll("svg *")].map((g) => g.getBoundingClientRect())
       const startBox = start.getBoundingClientRect()
+      const row = start.parentElement!.parentElement!
       return {
-        sameParent: gear.parentElement === start.parentElement,
+        sameCluster: gear.parentElement === start.parentElement,
         gearInkRight: Math.max(...ink.map((r) => r.right)),
         gearInkMid: (Math.min(...ink.map((r) => r.top)) + Math.max(...ink.map((r) => r.bottom))) / 2,
         startLeft: startBox.left,
         startMid: (startBox.top + startBox.bottom) / 2,
+        rowText: row.textContent ?? "",
+        modelSelector: document.querySelector('[aria-label="Model and effort"]') !== null,
+        rowAboveRule: row.previousElementSibling === document.querySelector("[data-row-number]")!.parentElement,
       }
     }, GEAR)
-    assert.ok(footer.sameParent, "the gear and the Start button are one cluster")
+    assert.ok(footer.sameCluster, "the gear and the Start button are one cluster")
     const air = footer.startLeft - footer.gearInkRight
-    assert.ok(air > 8 && air < 24, `the gear's ink stands just left of the button, got ${air}px`)
-    assert.ok(Math.abs(footer.gearInkMid - footer.startMid) < 1, `the gear is centred on the button, off by ${footer.gearInkMid - footer.startMid}px`)
+    assert.ok(air > 12 && air < 17, `the gear's ink stands ~14.5px left of the button, got ${air}px`)
+    assert.ok(Math.abs(footer.gearInkMid - footer.startMid) < 0.75, `the gear is centred on the button, off by ${footer.gearInkMid - footer.startMid}px`)
+    assert.match(footer.rowText, /5 open issues/, "the running count shares the footer's row")
+    assert.equal(footer.rowAboveRule, true, "nothing stands between the list and the footer")
+    assert.equal(footer.modelSelector, false, "the model selector is in the panel, not on the footer")
 
     // The panel opens UPWARD from the modal's bottom edge. Polled, not read once: it slides in, and
     // its first frame stands ~290px below where it settles.
@@ -93,6 +140,112 @@ test("the header links out to the repo, right-justified; the gear sits left of t
     await page.waitForFunction((panel, gearSelector) =>
       document.querySelector(panel)!.getBoundingClientRect().bottom <= document.querySelector(gearSelector)!.getBoundingClientRect().top,
     { timeout: 2000 }, PANEL, GEAR)
+    // And back across the picker from the gear, which sits at its right.
+    const [panelRight, gearRight] = await page.evaluate((panel, gearSelector) =>
+      [document.querySelector(panel)!.getBoundingClientRect().right, document.querySelector(gearSelector)!.getBoundingClientRect().right], PANEL, GEAR)
+    assert.ok(Math.abs(panelRight - gearRight) < 2, `the panel's right edge is the gear's, got ${panelRight} vs ${gearRight}`)
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+// The grid is a menu inside a modal popover, and its per-runtime gear opens a panel from inside that menu:
+// three layers, each portaled to <body>. What only a real browser settles is who paints on top, who gets
+// the click, and that one Escape unwinds one layer.
+test("the model selector works from inside the settings panel: its menu and the runtime panel paint on top, a pick saves, and Escape unwinds one layer at a time", { skip: !baseUrl, timeout: 90_000 }, async () => {
+  const { browser, page, errors } = await launch()
+  const SELECTOR = `${PANEL} [aria-label="Model and effort"]`
+  const MENU = ".profile-grid-menu"
+  const RUNTIME_PANEL = "[data-agent-settings-menu]"
+  const onTop = (selector: string) => page.evaluate((sel) => {
+    const el = document.querySelector(sel)!
+    const box = el.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return el.contains(hit)
+  }, selector)
+  const settled = (selector: string) => page.waitForFunction((sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return false
+    const box = el.getBoundingClientRect()
+    return box.width > 0 && el.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))
+  }, { timeout: 4000 }, selector)
+  const gone = (selector: string) => page.waitForFunction((sel) => !document.querySelector(sel), { timeout: 3000 }, selector)
+  const preferenceWrites = () => page.evaluate(() => (window as unknown as { githubPickerRangeFixture: Fixture }).githubPickerRangeFixture.preferenceWrites.length)
+  try {
+    await page.click(GEAR)
+    await page.waitForSelector(SELECTOR)
+
+    // Opening focuses the panel: on the first control, a help glyph, its tooltip would cover the prompt.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(await page.evaluate((panel) => document.activeElement === document.querySelector(panel), PANEL), true, "the panel holds the focus")
+    assert.doesNotMatch(await page.$eval("body", (b) => b.innerText), /same choice as the new-thread/, "and no help tooltip has opened")
+
+    // The menu paints over the panel it opened from, and a pick lands without closing the panel.
+    await page.click(SELECTOR)
+    await settled(MENU)
+    assert.equal(await onTop(MENU), true, "the model menu paints over the settings panel")
+    await page.click(`${MENU} [role="menuitemradio"][aria-checked="false"]`)
+    await gone(MENU)
+    assert.equal(await preferenceWrites(), 1, "the pick saved")
+    assert.ok(await page.$(PANEL), "picking a model leaves the settings panel open")
+
+    // The runtime gear's panel lands over the menu that opened it.
+    await page.click(SELECTOR)
+    await settled(MENU)
+    await page.click(`${MENU} .agent-settings-trigger`)
+    await settled(RUNTIME_PANEL)
+    assert.equal(await onTop(RUNTIME_PANEL), true, "the runtime settings panel paints over the model menu")
+
+    // One Escape, one layer: the runtime panel, the menu, the settings panel, and the picker stays.
+    await page.keyboard.press("Escape")
+    await gone(RUNTIME_PANEL)
+    assert.ok(await page.$(MENU), "the first Escape closed only the runtime panel")
+    await page.keyboard.press("Escape")
+    await gone(MENU)
+    assert.ok(await page.$(PANEL), "the second Escape closed only the menu")
+    await page.keyboard.press("Escape")
+    await gone(PANEL)
+    assert.ok(await page.$("h2"), "the third closed the settings panel, and the picker is still open")
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+test("on a phone the header and the controls stay inside the picker's content edges", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch()
+  try {
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
+    await page.waitForFunction(() => {
+      const label = [...document.querySelectorAll("span")].find((s) => s.textContent?.trim() === "Sort")
+      return !label || getComputedStyle(label).display === "none"
+    }, { timeout: 5000 })
+    const edges = await page.evaluate(() => {
+      const list = document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect()
+      const pressed = [...document.querySelectorAll('button[aria-pressed]')].filter((b) => !(b as HTMLElement).dataset.rowNumber)
+      const sort = pressed.find((b) => b.textContent?.trim() === "Recent")!.parentElement!.getBoundingClientRect()
+      const link = document.querySelector("a.github-repo-link")!.getBoundingClientRect()
+      return { listRight: list.right, sortRight: sort.right, linkRight: link.right }
+    })
+    assert.ok(edges.sortRight <= edges.listRight + 0.5, `the sort control stays inside the list's edge, got ${edges.sortRight} vs ${edges.listRight}`)
+    assert.ok(Math.abs(edges.linkRight - edges.listRight) < 1, `the repo link ends on the list's edge, got ${edges.linkRight} vs ${edges.listRight}`)
+
+    // Once something is checked the running count takes the footer's left side from the repo total.
+    await page.click("[data-row-number]", { offset: { x: 14, y: 14 } })
+    await page.waitForFunction(() => /1 selected/.test(document.body.innerText), { timeout: 3000 })
+    assert.doesNotMatch(await page.$eval("body", (b) => b.innerText), /open issues/, "the total gives way on a phone")
+
+    // The phone's model control is a bottom sheet, and it has to open over the settings panel.
+    await page.click(GEAR)
+    await page.waitForSelector(`${PANEL} [aria-label="Model and effort"]`)
+    await page.click(`${PANEL} [aria-label="Model and effort"]`)
+    await page.waitForFunction((panel) => {
+      const sheet = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((el) => !el.matches(panel))
+      if (!sheet) return false
+      const box = sheet.getBoundingClientRect()
+      return box.height > 0 && sheet.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))
+    }, { timeout: 4000 }, PANEL)
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()

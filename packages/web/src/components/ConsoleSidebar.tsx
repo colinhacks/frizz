@@ -89,7 +89,7 @@ export function ConsoleSidebar() {
   const group = useConsoleGroup()
   const { projects, bySlug } = useConsoleProjectList()
   const order = useMemo(() => projects.map((project) => project.slug), [projects])
-  const waiting = consoleCardOrder(consoleQueue(all, direction), group, order)
+  const waiting = consoleCardOrder(consoleQueue(all, direction, group), group, order)
   const running = consoleRunning(all)
   // "By status" lifts the Console's own pins out of Queue and Running into the Pinned band above them.
   // The card order already leads with the pinned rows' cards (consoleCardOrder), so `waiting` stays the
@@ -152,12 +152,12 @@ export function ConsoleSidebar() {
             reaches 7px past the column, its scrollbar standing in the gap beside it, and the rows take the
             7px back. */}
         <div ref={railRef} data-sidebar-rail className="-mt-5 -mr-[var(--sbw)] min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-10 pt-5 max-[800px]:mr-0 max-[800px]:overflow-y-visible">
-          <RailViewChips group={group} />
+          <RailViewChips group={group} queued={queueRows.length > 0} />
           {/* The rows keep the column's measure, out of the scrollbar's gutter (above). */}
           <div className="mr-[var(--sbw)] max-[800px]:mr-0">
             {group === "status" ? (
               <>
-                {nothingOpen ? <NothingOpen /> : (
+                {!nothingOpen && (
                   <>
                     {/* PINNED — the Console's own shelf, the project board's band in every respect but whose it
                         is: out of Queue and Running whatever its rows' state, ordered by the pins, dragged to
@@ -187,13 +187,11 @@ export function ConsoleSidebar() {
                   </>
                 )}
                 {/* SNOOZED and DONE — collapsed until opened, then a page at a time (lib/consoleBoard.ts). Each
-                    draws its own rule, as on a project's board; neither has queue cards, so neither row is
-                    ever the scroll marker. */}
-                <FoldedBand band="snoozed" label="Snoozed" threads={snoozed} render={(t) => row(t, { square: true, waiting: false, dated: true })} />
-                <FoldedBand band="done" label="Done" threads={done} render={(t) => row(t, { square: true, waiting: false })} />
+                    draws its own rule when a band stands above it, as on a project's board; neither has
+                    queue cards, so neither row is ever the scroll marker. */}
+                <FoldedBand band="snoozed" label="Snoozed" rule={!nothingOpen} threads={snoozed} render={(t) => row(t, { square: true, waiting: false, dated: true })} />
+                <FoldedBand band="done" label="Done" rule={!nothingOpen || snoozed.length > 0} threads={done} render={(t) => row(t, { square: true, waiting: false })} />
               </>
-            ) : nothingOpen ? (
-              <NothingOpen />
             ) : (
               projectBlocks(waiting, running, order, starting).map((block, i) => (
                 <section key={block.project} aria-label={bySlug.get(block.project)?.name ?? block.project} data-console-project={block.project}>
@@ -334,22 +332,17 @@ function ShowMoreButton({ less = false, leading, ...rest }: { less?: boolean; le
   )
 }
 
-/** Stands in for Pinned, Queue and Running when all three are empty. */
-function NothingOpen() {
-  return <div className="py-1 pl-5 pr-1.5 text-[11.5px] text-muted-50">Nothing waiting or running</div>
-}
-
 /**
  * "By status"'s Snoozed or Done band: absent when empty, collapsed until its header is clicked, and then
  * BAND_PAGE rows at a time, each "Show more" adding the next page (lib/consoleBoard.ts). Collapsing it
  * again starts it over at one page.
  */
-function FoldedBand({ band, label, threads, render }: { band: ConsoleFoldedBand; label: string; threads: readonly ThreadView[]; render: (t: ThreadView) => ReactNode }) {
+function FoldedBand({ band, label, rule, threads, render }: { band: ConsoleFoldedBand; label: string; rule: boolean; threads: readonly ThreadView[]; render: (t: ThreadView) => ReactNode }) {
   const shown = useBandShown(band)
   if (threads.length === 0) return null
   return (
     <section aria-label={label} data-console-band={band}>
-      <hr className="my-3 border-border/50" />
+      {rule && <hr className="my-3 border-border/50" />}
       <SectionHeader label={label} count={threads.length} collapsed={shown === 0} onToggle={() => toggleBand(band)} />
       {shown > 0 ? threads.slice(0, shown).map(render) : null}
       {shown > 0 && threads.length > shown ? (

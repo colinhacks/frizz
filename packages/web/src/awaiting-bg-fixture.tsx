@@ -22,7 +22,7 @@ import "./styles.css"
 // The SAME card renders in the drawer and on the full-screen page WITHOUT the Snooze — that pair is
 // server-derived (board.awaitingBackground), so it is verified against a real stack rather than here:
 // `nub scripts/seed-resting-thread.mjs --home=… --socket=…` against an adhoc stack seeds a thread at
-// rest with live children, then /thread/<slug> and /thread/<slug>/full show the button-less card.
+// rest with live children, then ?thread=<slug> and /thread/<slug> show the button-less card.
 
 const SLUG = "awaiting-bg-demo"
 const params = new URLSearchParams(location.search)
