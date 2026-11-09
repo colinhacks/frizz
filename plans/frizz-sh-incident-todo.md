@@ -18,7 +18,7 @@ The workflows exist ([`workers-deploy.yml`](../.github/workflows/workers-deploy.
 
 The commands are in that script's header. In order:
 
-1. The maintainer makes a token from [this prefilled form](https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22account_api_tokens%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=frizz%20one-day%20sitting), signed in as `colin@pullfrog.com`: Account API Tokens Edit, Account Settings Read and Zone Read. The form can't preselect an account or an expiry, so set Account Resources to the Frizz account and the expiry to the next day by hand. It's handed over on a `kind: secret` card and goes into the environment only. The **Create Additional Tokens** template doesn't work here, because it has no access to any account.
+1. Sign in: `env -u NODE_COMPAT nub scripts/cloudflare-oauth.mjs --job=deploy <dir>` in a background shell prints a link, and the maintainer picks the Frizz account and selects Authorize (2026-11-09). Each step below is then a verb written to `<dir>/verbs`. Only if the OAuth client is unusable: the maintainer makes a token from [this prefilled form](https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22account_api_tokens%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=frizz%20one-day%20sitting), signed in as `colin@pullfrog.com`: Account API Tokens Edit, Account Settings Read and Zone Read. The form can't preselect an account or an expiry, so set Account Resources to the Frizz account and the expiry to the next day by hand. It's handed over on a `kind: secret` card and goes into the environment only. The **Create Additional Tokens** template doesn't work here, because it has no access to any account.
 2. `--audit --out=<dir>`: read what it saved, including the `CLAIMS` keys, against the previous snapshot. A finding stops here. `--dry-run` lists the account's Workers permission groups, in case the deploy token can be narrowed to the two scripts.
 3. `--only=drift`, then `gh workflow enable workers-drift.yml`, push `main`, and dispatch it. This first run must fail, naming the 2026-10-08 versions, which is the proof it can.
 4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both`. The maintainer approves it within the hour.
@@ -27,7 +27,7 @@ The commands are in that script's header. In order:
 7. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
    - **The sitting's own changes.** Any change in the audit log that CI would not make fails the check until it is two hours old, including removing a member or turning on DNSSEC.
    - **Something CI's own run does.** Add it to `JUDGED_BY_VERSION` only if `checkAccount` already compares what that action can change.
-8. The maintainer deletes the token from step 1.
+8. `exit`, which revokes the sign-in. A dashboard-made token from step 1 is deleted by the maintainer instead.
 
 ## 2. Bring custom names back
 

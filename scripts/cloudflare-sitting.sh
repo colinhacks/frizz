@@ -18,6 +18,7 @@ PIPE=$1
 DIR=$2
 KIND=${3:-}
 EXPIRES=${4:-}
+SCOPES=${5:-}
 SCRIPT=$(cd "$(dirname "$0")" && pwd)/cloudflare-tokens.mjs
 umask 077
 cd "$(dirname "$SCRIPT")/.." || exit 2
@@ -27,7 +28,7 @@ if [ "$PIPE" = "-" ]; then IFS= read -r T; else T=$(cat "$PIPE"); fi
 [ -n "$T" ] || { echo "no credential arrived"; exit 2; }
 echo "holding a credential of ${#T} characters; verbs: audit plan drift deploy revoke exit"
 
-run() { CLOUDFLARE_FRIZZ_MINTER="$T" CLOUDFLARE_FRIZZ_MINTER_KIND="$KIND" CLOUDFLARE_FRIZZ_MINTER_EXPIRES="$EXPIRES" env -u NODE_COMPAT nub "$SCRIPT" "$@"; }
+run() { CLOUDFLARE_FRIZZ_MINTER="$T" CLOUDFLARE_FRIZZ_MINTER_KIND="$KIND" CLOUDFLARE_FRIZZ_MINTER_EXPIRES="$EXPIRES" CLOUDFLARE_FRIZZ_MINTER_SCOPES="$SCOPES" env -u NODE_COMPAT nub "$SCRIPT" "$@"; }
 
 while true; do
   IFS= read -r verb < "$DIR/verbs" || continue

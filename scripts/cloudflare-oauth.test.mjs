@@ -1,14 +1,17 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import test from "node:test"
-import { SCOPES, authorizeUrl, exchangeCode, listenForCode, missingScopes, pkcePair, revokeToken } from "./cloudflare-oauth.mjs"
+import { authorizeUrl, exchangeCode, listenForCode, missingScopes, pkcePair, revokeToken } from "./cloudflare-oauth.mjs"
+import { scopesForJob } from "./cloudflare-tokens.mjs"
+
+const SCOPES = scopesForJob("deploy")
 
 const callback = (port, query) => fetch(`http://127.0.0.1:${port}/callback?${query}`)
 
-test("the link asks for exactly the three scopes, with PKCE, and never for a refresh token", () => {
+test("the link asks for exactly the job's scopes, with PKCE, and never for a refresh token", () => {
   const { verifier, challenge } = pkcePair()
   assert.equal(challenge, createHash("sha256").update(verifier).digest("base64url"))
-  const url = new URL(authorizeUrl({ clientId: "client", state: "st", challenge }))
+  const url = new URL(authorizeUrl({ clientId: "client", state: "st", challenge, scopes: SCOPES }))
   assert.equal(url.origin + url.pathname, "https://dash.cloudflare.com/oauth2/auth")
   assert.equal(url.searchParams.get("code_challenge_method"), "S256")
   assert.equal(url.searchParams.get("code_challenge"), challenge)
@@ -62,9 +65,9 @@ test("the code is exchanged with its verifier, and a refusal carries neither", a
 })
 
 test("a sign-in missing a scope is caught, and one that reports none is left to the API to judge", () => {
-  assert.deepEqual(missingScopes(SCOPES), [])
-  assert.deepEqual(missingScopes(["zone.read"]), ["account-api-tokens.write", "account-settings.read"])
-  assert.deepEqual(missingScopes([]), [])
+  assert.deepEqual(missingScopes(SCOPES, SCOPES), [])
+  assert.deepEqual(missingScopes(["zone.read"], ["account-api-tokens.write", "zone.read"]), ["account-api-tokens.write"])
+  assert.deepEqual(missingScopes([], SCOPES), [])
 })
 
 test("revoking posts the token to Cloudflare's revoke endpoint", async () => {
