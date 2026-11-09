@@ -148,6 +148,81 @@ export const SNAPSHOT_TOKEN = {
 }
 const SNAPSHOT_TOKEN_DAYS = 1 / 24
 
+// THE OAUTH SCOPE OF EACH PERMISSION GROUP the specs above name, from GET /oauth/scopes on 2026-11-09.
+// Under an OAuth sign-in (scripts/cloudflare-oauth.mjs), Cloudflare refuses to mint a token holding any
+// group the sign-in was not granted: "The OAuth session does not include the scopes required for the
+// requested permission groups". So a job's sign-in asks for the scope of every group it mints, and a
+// group with no scope (null) can never be minted under one, which only optional groups may be. A test
+// fails if a spec names a group missing here.
+export const OAUTH_SCOPES = {
+  "Access: Apps and Policies Read": "zone-access.read",
+  "Access: Service Tokens Read": "access-service-token.read",
+  "Account API Tokens Write": "account-api-tokens.write",
+  "Account Analytics Read": "account-analytics.read",
+  "Account Custom Pages Read": "account-custom-pages.read",
+  "Account Rulesets Read": "account-rulesets.read",
+  "Account Settings Read": "account-settings.read",
+  "Cache Settings Read": "cache-settings.read",
+  "Cloudflare Tunnel Read": "argotunnel.read",
+  "Config Settings Read": "config-settings.read",
+  "Custom Pages Read": "custom-pages.read",
+  "D1 Read": "d1.read",
+  "DNS Read": "dns.read",
+  "Dynamic URL Redirects Read": "dynamic-redirect.read",
+  "Email Routing Rules Read": "email-routing-rule.read",
+  "Load Balancers Read": "load-balancers.read",
+  "Notifications Read": "notifications.read",
+  "Origin Read": "origin.read",
+  "Page Rules Read": "page-rules.read",
+  "Page Shield Read": "page-shield.read",
+  "Pages Read": "page.read",
+  "Queues Read": "queues.read",
+  "SSL and Certificates Read": "ssl-and-certificates.read",
+  "Snippets Read": "snippets.read",
+  "Transform Rules Read": "transform-rules.read",
+  "Waiting Room Read": null,
+  "Workers CI Read": "workers-ci.read",
+  "Workers KV Storage Read": "workers-kv-storage.read",
+  "Workers R2 Storage Read": "workers-r2.read",
+  "Workers Routes Read": "workers-routes.read",
+  "Workers Scripts Read": "workers-scripts.read",
+  "Workers Scripts Write": "workers-scripts.write",
+  "Workers for Platforms Read": null,
+  "Zaraz Read": "zaraz.read",
+  "Zone Read": "zone.read",
+  "Zone WAF Read": "zone-waf.read",
+}
+
+/** What this script itself does with its credential: list and mint the account's tokens, find the zone. */
+export const MINTER_SCOPES = ["account-api-tokens.write", "account-settings.read", "zone.read"]
+
+/** Each sitting a sign-in can be for, by the tokens it mints. Every sitting starts with the audit snapshot. */
+export const JOBS = {
+  deploy: () => [SNAPSHOT_TOKEN, TOKENS.find((t) => t.key === "deploy")],
+  drift: () => [SNAPSHOT_TOKEN, TOKENS.find((t) => t.key === "drift")],
+  audit: () => [SNAPSHOT_TOKEN],
+}
+
+/** The OAuth scopes a sitting for `job` asks for: the minter's own, plus every group its tokens hold. */
+export function scopesForJob(job) {
+  const specs = JOBS[job]?.()
+  if (!specs) throw new Error(`no such sitting: ${job} (one of ${Object.keys(JOBS).join(", ")})`)
+  const scopes = new Set(MINTER_SCOPES)
+  for (const spec of specs) {
+    for (const raw of [...spec.account, ...spec.zone]) {
+      const scope = OAUTH_SCOPES[raw.replace(/\?$/, "")]
+      if (scope) scopes.add(scope)
+    }
+  }
+  return [...scopes]
+}
+
+/** The scopes an OAuth sign-in was granted, or null for an API token, which has no such limit. */
+function grantedScopes() {
+  if (process.env.CLOUDFLARE_FRIZZ_MINTER_KIND !== "oauth") return null
+  return new Set(String(process.env.CLOUDFLARE_FRIZZ_MINTER_SCOPES ?? "").split(" ").filter(Boolean))
+}
+
 /**
  * The permission group called `wanted` at `scope`, from the account's list. Cloudflare names a write
  * group "… Write" in the API and "… Edit" in the dashboard, so either spelling finds it.
@@ -166,7 +241,7 @@ export function findGroup(groups, wanted, scope) {
  * The policies for one token spec, plus the required groups the account does not have. Account groups
  * apply to this account, zone groups to the one zone.
  */
-export function planToken(spec, { groups, accountId, zoneId }) {
+export function planToken(spec, { groups, accountId, zoneId, granted = null }) {
   const missing = []
   const skipped = []
   const account = `${ACCOUNT_SCOPE}.${accountId}`
@@ -179,7 +254,8 @@ export function planToken(spec, { groups, accountId, zoneId }) {
       const optional = raw.endsWith("?")
       const name = optional ? raw.slice(0, -1) : raw
       const group = findGroup(groups, name, scope)
-      if (group) return [group]
+      // Under a sign-in, a group whose scope it was not granted cannot be minted, so it counts as absent.
+      if (group && (!granted || granted.has(OAUTH_SCOPES[name]))) return [group]
       ;(optional ? skipped : missing).push(name)
       return []
     })
@@ -473,7 +549,7 @@ async function withSnapshotToken(cf, use) {
   const groups = await cf("GET", `/accounts/${ACCOUNT_ID}/tokens/permission_groups`)
   const zones = await cf("GET", `/zones?name=${ZONE}&account.id=${ACCOUNT_ID}`)
   if (zones.length !== 1) throw new Error(`expected one zone named ${ZONE} in account ${ACCOUNT_ID}, found ${zones.length}`)
-  const { policies, missing, skipped } = planToken(SNAPSHOT_TOKEN, { groups, accountId: ACCOUNT_ID, zoneId: zones[0].id })
+  const { policies, missing, skipped } = planToken(SNAPSHOT_TOKEN, { groups, accountId: ACCOUNT_ID, zoneId: zones[0].id, granted: grantedScopes() })
   if (missing.length) throw new Error(`permission groups not found, nothing minted: ${missing.join(", ")}`)
   if (skipped.length) console.log(`\nsnapshot token: not offered, so skipped: ${skipped.join(", ")}`)
   const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: SNAPSHOT_TOKEN.name, policies, expires_on: expiresOn(Date.now(), SNAPSHOT_TOKEN_DAYS) })
@@ -560,7 +636,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const zones = await cf("GET", `/zones?name=${ZONE}&account.id=${ACCOUNT_ID}`)
     if (zones.length !== 1) throw new Error(`expected one zone named ${ZONE} in account ${ACCOUNT_ID}, found ${zones.length}`)
     const specs = TOKENS.filter((t) => !only || only.includes(t.key))
-    const plans = specs.map((spec) => ({ spec, ...planToken(spec, { groups, accountId: ACCOUNT_ID, zoneId: zones[0].id }) }))
+    const plans = specs.map((spec) => ({ spec, ...planToken(spec, { groups, accountId: ACCOUNT_ID, zoneId: zones[0].id, granted: grantedScopes() }) }))
     const missing = plans.flatMap((p) => p.missing.map((m) => `${p.spec.name}: ${m}`))
     if (missing.length) {
       const near = groups.filter((g) => /Workers|Zone|DNS|Account Settings|API Tokens/.test(g.name)).map((g) => g.name)
