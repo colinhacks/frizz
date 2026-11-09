@@ -57,7 +57,7 @@ test("no second liveness glyph exists — the left-hand mark is the only one", (
   assert.doesNotMatch(css, /@keyframes frizz-tool-spin\b/, "…along with its animation")
   assert.doesNotMatch(css, /^\.frizz-live-dot-done/m, "a completed op is marked by the ABSENCE of a mark")
   // The genuinely-live glyph remains: pulsing for running.
-  assert.match(css, /\.frizz-live-dot \{[^}]*animation: frizz-live-pulse/)
+  assert.match(css, /\.frizz-live-dot \{[^}]*animation: frizz-live-fade/)
   // …and NOTHING breathes for a shell any more. The only shell that is not running is one the OS has
   // confirmed gone (tailer `shellIsGone`), and the breathing mark drew that dead process as a live one
   // on the card, the drawer and the transcript, titled "running — no recent output", until 2026-10-05.
@@ -112,7 +112,26 @@ test("reduced motion keeps live work visible as a static ring in its own hue", (
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
   // The static ring is recolored through the same --live-dot variable as the animated dot, so a
   // reduced-motion shell keeps its blue ring and a sub-agent its accent-yellow one.
-  assert.match(css, /\.frizz-live-dot \{ animation: none; background: transparent; border: 2px solid var\(--live-dot\); box-shadow: none; \}/)
+  assert.match(css, /\.frizz-live-dot \{ animation: none; background: transparent; border: 2px solid var\(--live-dot\); \}/)
+  // …and its two pulse rings go with the motion, so the static ring is the only ring.
+  assert.match(css, /\.frizz-live-dot::before,\s*\.frizz-live-dot::after \{ display: none; \}/)
+})
+
+// Chrome runs an opacity animation on the GPU and a box-shadow one on the page's main thread, a style and
+// paint pass per dot per frame whether the dot is on screen or not. Twenty dots below the Console's fold
+// held a settled page at 37% of a core (2026-11-09). Every keyframe the live dot runs animates opacity.
+test("the live dot's pulse animates nothing but opacity", () => {
+  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8")
+  const animated = [...css.matchAll(/\.frizz-live-dot(?:::before|::after)? \{[^}]*animation: ([\w-]+)/g)].map((m) => m[1]).filter((name) => name !== "none")
+  assert.deepEqual(animated.sort(), ["frizz-live-fade", "frizz-live-ring-halo", "frizz-live-ring-rest"])
+  for (const name of animated) {
+    const body = css.match(new RegExp(`@keyframes ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1]
+    assert.ok(body, `${name} is defined`)
+    const properties = [...body.matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1])
+    assert.deepEqual([...new Set(properties)], ["opacity"], `${name} animates only opacity`)
+    // Both ends stated: left implicit, Chrome kept most of the Console's pulses on the main thread.
+    assert.match(body, /0%, 100% \{ opacity: [\d.]+; \}/, `${name} states its 0% and 100% keyframes`)
+  }
 })
 
 test("running shells pulse blue and running sub-agents pulse the accent-yellow", () => {
