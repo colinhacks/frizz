@@ -228,13 +228,17 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             is the picker's one way OUT to the repo.
             The title says what the picker DOES. It read "Investigate this issue and make
             recommendations" until 2026-10-26 — the lead line of the prompt each issue thread is sent,
-            heading a list of many issues and PRs (maintainer: "this title doesnt make sense"). */}
-        {/* `items-baseline`, not `items-center`: the two glyphs on this row (the GitHub mark and the
-            link's arrow) are each put on the title's CAP BAND by a browser-computed translate — half
-            the glyph's box minus half the resolved cap height — which needs a shared baseline to work
-            from (measured 2026-09-19: 0.0px residual in both type families). */}
-        <h2 className="mb-4 flex items-baseline gap-2 text-[14px] font-medium">
-          <Github size={15} aria-hidden="true" className="shrink-0 self-baseline translate-y-[calc(7.5px_-_0.5cap)] text-muted" />
+            heading a list of many issues and PRs (maintainer: "this title doesnt make sense").
+            The rule under it, and its twin above the footer, run edge to edge in the tone of the app's
+            other panel rules (maintainer 2026-11-09: "a little more Frizz-like"): a heading, a body, and
+            what the body starts. */}
+        {/* `items-baseline`, not `items-center`: the link's two glyphs are each put on its CAP BAND by a
+            browser-computed translate — half the glyph's box minus half the resolved cap height — which
+            needs a shared baseline to work from (measured 2026-09-19: 0.0px residual in both type
+            families). `-mt-1.5` centres the title's INK between the modal's top edge and the rule, 21.1px
+            above its capitals and 21.8px below its baseline: the line box's own leading stood it 27.1px
+            down on the modal's `p-5` alone. */}
+        <h2 className="-mx-5 -mt-1.5 mb-4 flex items-baseline gap-2 border-b border-border/60 px-5 pb-4 text-[14px] font-medium">
           <span className="min-w-0 truncate">{GITHUB_PICKER_TITLE}</span>
           {status.data?.nameWithOwner && (
             <span className="ml-auto flex shrink-0 items-baseline">
@@ -254,7 +258,8 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             ]}
           />
           <div className="flex items-center gap-2">
-            <span className="petite-caps text-[11px] text-muted-70">Sort</span>
+            {/* Gone on a narrow screen, where the two controls and this label overran the row by 7px at 390. */}
+            <span className="petite-caps text-[11px] text-muted-70 max-sm:hidden">Sort</span>
             <Segmented
               value={sort}
               onChange={switchSort}
@@ -353,8 +358,9 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
         {/* Footer: what every thread this batch starts will be, bottom-left, and the act that starts
             them, alone on the right — the prompt box's own layout. The selector is the SAME control the
             prompt box carries and writes the same durable preference; its menu opens UPWARD
-            (side="top"), since the footer sits on the modal's bottom edge. */}
-        <div className="mt-4 flex items-center justify-between gap-3">
+            (side="top"), since the footer sits on the modal's bottom edge. `pt-5` is the modal's own
+            padding, so the row is centred in its band and the Start button's corner is inset evenly. */}
+        <div className="-mx-5 mt-3 flex items-center justify-between gap-3 border-t border-border/60 px-5 pt-5">
           <div className="flex min-w-0 items-center gap-x-1.5">
             <PromptControlGroup>
               <ProfileGridSelector
@@ -416,22 +422,20 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   )
 }
 
-// The repo slug as a link OUT to github.com, in the picker header's far corner. Mono for the slug
-// (it is an identifier); the arrow is lucide's arrow-up-right, the "opens elsewhere" mark GitHub
-// itself uses beside external links, at the slug's own `1em` so the pair reads as one link.
+// The repo as a link OUT to github.com, in the picker header's far corner: the GitHub mark, the slug and
+// lucide's arrow-up-right, the "opens elsewhere" mark GitHub itself uses beside external links, at the
+// slug's own `1em` so the three read as one link.
 //
-// Drawn as a chip in the fg tone, on the same border and `panel-2` fill as the tab and sort controls
-// below it, rather than as muted text: it is the picker's one way out to the repo, and as a grey slug in
-// the corner it read as a caption (maintainer 2026-11-07: "make the link out to the repo a little more
-// prominent"). Without the fill its hairline all but vanished against the panel.
+// TEXT, NOT A BUTTON, on purpose. As muted text it read as a caption (maintainer 2026-11-07: "make the link
+// out to the repo a little more prominent"), and as a bordered chip, 2026-11-07 to 2026-11-09, it was one
+// box stacked on the sort control's (maintainer: "I really don't like the repo button in such close
+// proximity to the tab switcher"). The fg tone and the mark carry the prominence, and the header's rule
+// keeps it from reading as part of the controls.
 //
-// The arrow's ink is centred in its box (7..17 of 24), so with the link `items-baseline` the
-// documented `0.5em - 0.5cap` translate puts it exactly on the slug's cap band in either font. It
-// paints 10 of its 24 box units — 0.29em of dead space a side — so `-mx-[0.29em]` collapses the box
-// onto its ink: the `gap-1` becomes 4px of INK between the slug's last glyph and the arrow (it read
-// 8.4px before the trim), which makes the arrow the slug's tail rather than a mark standing next to
-// it. The padding is uneven so the INK inside the border is even: on `px-2` the mono slug's side
-// bearing stood its first glyph 9.25px in, against the arrow's 7.5px (painted pixels at 4x, 2026-11-07).
+// Each glyph goes on the slug's cap band by the documented translate, half its box minus half the cap
+// height. The arrow's ink is centred in its box (7..17 of 24) and paints 10 of 24 units, 0.29em of dead
+// space a side, so `-mx-[0.29em]` collapses the box onto its ink: the `gap-1` is 4px of INK from the slug
+// to the arrow, and the arrow's tip stands on the right edge the sort control and the list end on.
 function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
   return (
     <a
@@ -439,9 +443,10 @@ function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
       target="_blank"
       rel="noreferrer noopener"
       title={`Open ${nameWithOwner} on GitHub`}
-      className="github-repo-link inline-flex min-w-0 items-baseline gap-1 rounded-md border border-border bg-panel-2 pl-[6.5px] pr-2 py-[3px] font-mono-keep text-[12px] font-normal leading-[18px] text-fg/85 outline-none transition-colors hover:bg-elevated hover:text-fg focus-visible:bg-elevated focus-visible:text-fg"
+      className="github-repo-link group inline-flex min-w-0 items-baseline gap-1 rounded-sm text-[12.5px] font-normal text-fg/85 outline-none transition-colors hover:text-fg focus-visible:text-fg"
     >
-      <span className="truncate">{nameWithOwner}</span>
+      <Github aria-hidden="true" className="mr-0.5 size-[13px] shrink-0 self-baseline translate-y-[calc(6.5px_-_0.5cap)]" />
+      <span className="truncate underline-offset-2 group-hover:underline group-focus-visible:underline">{nameWithOwner}</span>
       <ArrowUpRight aria-hidden="true" className="-mx-[0.29em] size-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]" />
     </a>
   )

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// Runtime coverage for the GitHub picker's header — the repo slug as a right-justified chip linking
+// Runtime coverage for the GitHub picker's header — the repo slug as right-justified text linking
 // out — and the footer gear beside the model chip that opens the triage prompt in a modal popover. Drives
 // github-picker-range-fixture, which
 // records every settingsSet the popover makes. Skipped unless FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL names
@@ -36,7 +36,7 @@ async function selectAllInTextarea(page: import("puppeteer").Page) {
   }, PANEL)
 }
 
-test("the header links out to the repo from a right-justified chip; the gear stands beside the model chip, the Start button alone on the right", { skip: !baseUrl, timeout: 60_000 }, async () => {
+test("the header links out to the repo as right-justified text, rules frame the body, the gear stands beside the model chip, the Start button alone on the right", { skip: !baseUrl, timeout: 60_000 }, async () => {
   const { browser, page, errors } = await launch()
   try {
     const header = await page.$eval("h2", (h2) => {
@@ -48,30 +48,53 @@ test("the header links out to the repo from a right-justified chip; the gear sta
         target: link.target,
         text: link.textContent?.trim(),
         title: title.textContent?.trim(),
-        hasArrow: link.querySelector("svg") !== null,
+        glyphs: link.querySelectorAll("svg").length,
+        titleGlyphs: title.querySelectorAll("svg").length + (h2.firstElementChild?.tagName === "svg" ? 1 : 0),
         hasGear: h2.querySelector('button[aria-label="Triage prompt settings"]') !== null,
         linkRight: link.getBoundingClientRect().right,
-        h2Right: h2.getBoundingClientRect().right,
+        listRight: document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect().right,
         titleRight: title.getBoundingClientRect().right,
         dash: /—/.test(h2.textContent ?? ""),
         border: style.borderTopWidth,
+        background: style.backgroundColor,
         color: style.color,
-        titleColor: getComputedStyle(title).color,
       }
     })
     assert.equal(header.href, "https://github.com/fixture/repo")
     assert.equal(header.target, "_blank")
     assert.equal(header.text, "fixture/repo")
     assert.equal(header.title, "Start threads from issues and PRs")
-    assert.equal(header.hasArrow, true)
+    assert.equal(header.glyphs, 2, "the GitHub mark and the external arrow are both the link's")
+    assert.equal(header.titleGlyphs, 0, "the mark moved off the title")
     assert.equal(header.dash, false, "the slug is no longer an em-dashed suffix of the title")
     assert.equal(header.hasGear, false, "the gear lives in the footer")
-    assert.ok(header.h2Right - header.linkRight < 1, "the chip ends at the header's right edge")
-    assert.ok(header.linkRight - header.titleRight > 100, "the chip is right-justified, well clear of the title")
-    assert.equal(header.border, "1px", "the link is a bordered chip, not a caption")
+    assert.ok(Math.abs(header.listRight - header.linkRight) < 1, `the link ends on the list's right edge, got ${header.linkRight} vs ${header.listRight}`)
+    assert.ok(header.linkRight - header.titleRight > 100, "the link is right-justified, well clear of the title")
+    assert.equal(header.border, "0px", "the link is text, not a box stacked on the sort control")
+    assert.equal(header.background, "rgba(0, 0, 0, 0)", "and has no fill")
     // fg at 85%: brighter than any muted tone, a step under the title's own fg.
     const alpha = Number(/\/\s*([\d.]+)\)$/.exec(header.color)?.[1] ?? 1)
-    assert.ok(alpha > 0.8 && alpha < 0.9, `the chip is drawn in the fg tone, got ${header.color}`)
+    assert.ok(alpha > 0.8 && alpha < 0.9, `the link is drawn in the fg tone, got ${header.color}`)
+
+    // One rule under the heading and one over the footer, each edge to edge across the modal.
+    const rules = await page.evaluate(() => {
+      const h2 = document.querySelector("h2")!
+      const modal = h2.parentElement!
+      const footer = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!.parentElement!
+      const inner = modal.getBoundingClientRect()
+      const read = (el: Element, side: "Top" | "Bottom") => {
+        const box = el.getBoundingClientRect()
+        const style = getComputedStyle(el)
+        return { width: style[`border${side}Width`], color: style[`border${side}Color`], left: box.left - inner.left, right: inner.right - box.right }
+      }
+      return { heading: read(h2, "Bottom"), footer: read(footer, "Top") }
+    })
+    assert.equal(rules.heading.width, "1px", "a rule under the heading")
+    assert.equal(rules.footer.width, "1px", "a rule above the footer")
+    assert.equal(rules.heading.color, rules.footer.color, "the two rules are one tone")
+    for (const rule of [rules.heading, rules.footer]) {
+      assert.ok(rule.left <= 1 && rule.right <= 1, `the rule runs edge to edge, got ${rule.left} / ${rule.right} of inset`)
+    }
 
     // The gear is the model chip's right-hand neighbour, as the composer's marks are: INK, not boxes,
     // because its hover square carries the glyph's dead space. The Start button stands alone.
@@ -115,6 +138,29 @@ test("the header links out to the repo from a right-justified chip; the gear sta
     const [panelLeft, gearLeft] = await page.evaluate((panel, gearSelector) =>
       [document.querySelector(panel)!.getBoundingClientRect().left, document.querySelector(gearSelector)!.getBoundingClientRect().left], PANEL, GEAR)
     assert.ok(Math.abs(panelLeft - gearLeft) < 2, `the panel's left edge is the gear's, got ${panelLeft} vs ${gearLeft}`)
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+test("on a phone the header and the controls stay inside the picker's content edges", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch()
+  try {
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
+    await page.waitForFunction(() => {
+      const label = [...document.querySelectorAll("span")].find((s) => s.textContent?.trim() === "Sort")
+      return !label || getComputedStyle(label).display === "none"
+    }, { timeout: 5000 })
+    const edges = await page.evaluate(() => {
+      const list = document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect()
+      const pressed = [...document.querySelectorAll('button[aria-pressed]')].filter((b) => !(b as HTMLElement).dataset.rowNumber)
+      const sort = pressed.find((b) => b.textContent?.trim() === "Recent")!.parentElement!.getBoundingClientRect()
+      const link = document.querySelector("a.github-repo-link")!.getBoundingClientRect()
+      return { listRight: list.right, sortRight: sort.right, linkRight: link.right }
+    })
+    assert.ok(edges.sortRight <= edges.listRight + 0.5, `the sort control stays inside the list's edge, got ${edges.sortRight} vs ${edges.listRight}`)
+    assert.ok(Math.abs(edges.linkRight - edges.listRight) < 1, `the repo link ends on the list's edge, got ${edges.linkRight} vs ${edges.listRight}`)
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
