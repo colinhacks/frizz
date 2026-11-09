@@ -1118,6 +1118,17 @@ a[href] {
 .frizz-todo[data-done="true"] .frizz-todo-text {
   color: color-mix(in srgb, var(--color-muted) 85%, transparent);
 }
+/* A step's body (StepBody): the Markdown under its title, in the title's column, at the prose's own size
+   and rhythm. Quieter than the title, which is the act; the body is how to do it. */
+.md-body .frizz-todo-body {
+  margin-top: 4px;
+  color: var(--color-muted);
+}
+/* A row with a body is a paragraph group, so it is set off from the next step by the prose's own
+   paragraph break rather than the bare rows' 8px, or its last body line reads as the next title's. */
+.md-body .frizz-todo:has(> div > .frizz-todo-body):not(:last-child) {
+  padding-bottom: var(--md-step);
+}
 /* Links and local-file actions wear ONE treatment on both prose surfaces — the block body and the
    inline-only run (an answer chip, the recommendation caption). The inline run used to get a bare
    underline with no colour, from the days it only ever held a link the sanitizer had flattened. */

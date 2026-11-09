@@ -157,6 +157,36 @@ test("a steps card's checklist stages an answer the prompt box sends", {
       await record()
     }
 
+    // ---- a step is a title and a Markdown body under it (2026-11-09) ----
+    // A body's own list is not a step: the steps are the `[data-human-todo]` rows.
+    await page.goto(`${baseUrl}/awaiting-bg-fixture.html?steps=body`, { waitUntil: "networkidle0" })
+    await page.waitForSelector(`${LIST} li[data-human-todo]`)
+    await record()
+    const bodies = await page.$$eval(`${LIST} li[data-human-todo]`, (rows) => rows.map((row) => {
+      const title = row.querySelector(".frizz-todo-text")!.getBoundingClientRect()
+      const body = row.querySelector(".frizz-todo-body")
+      const box = row.querySelector("button[role=checkbox]")!
+      return {
+        label: document.getElementById(box.getAttribute("aria-labelledby") ?? "")?.textContent?.trim(),
+        blocks: body ? [...body.querySelectorAll(":scope > p, :scope pre, :scope > ul")].map((el) => el.tagName.toLowerCase()) : null,
+        code: body?.querySelector("pre code")?.textContent?.trim() ?? null,
+        // The body sits in the title's column, under it.
+        aligned: body ? Math.abs(body.getBoundingClientRect().left - title.left) < 0.5 && body.getBoundingClientRect().top >= title.bottom : null,
+      }
+    }))
+    assert.deepEqual(bodies, [
+      { label: "Sign in to npm with the acme-bot account", blocks: ["p", "pre", "ul"], code: "npm login --auth-type=web", aligned: true },
+      { label: "Publish the draft release", blocks: ["p"], code: null, aligned: true },
+      { label: "Reply once npm whoami prints acme-bot", blocks: null, code: null, aligned: null },
+    ], "each body renders as Markdown under its title, and the title alone names the box")
+    await page.click(`${LIST} li[data-human-todo]:first-child button[role=checkbox]`)
+    assert.equal(await page.$eval(`${LIST} li[data-human-todo]:first-child`, (row) => !!row.querySelector(".frizz-todo-body")), true, "a tick not yet sent keeps the body, so nothing moves under the pointer")
+    await page.focus(COMPOSER)
+    await page.keyboard.press("Enter")
+    await sends()
+    assert.equal((await rpcs("followUp"))[0].body.message, "Done 1 of 3:\n- [x] Sign in to npm with the **acme-bot** account\n- [ ] Publish the [draft release](https://github.com/acme/app/releases)\n- [ ] Reply once `npm whoami` prints `acme-bot`", "a report recites the titles alone")
+    await page.goto(`${baseUrl}/awaiting-bg-fixture.html?steps=titled`, { waitUntil: "networkidle0" })
+
     // ---- once the board has caught up it outranks this tab's copy: a step listed again reopens at once ----
     // (2026-11-09: the tab's copy of a sent tick outlived the report by 5s, so a worker re-listing a step
     // within that window left the box ticked and "1 to-do" with nothing open under it.)

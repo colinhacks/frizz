@@ -8,7 +8,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingSteps, fenceWaitsOnHuman, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingStepItems, fenceWaitsOnHuman, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -1341,7 +1341,9 @@ export function hasQuestionBlock(text: string | undefined): boolean {
 // CRLF-tolerant (normalized before matching).
 // ONE implementation so the grammar lives in a single place (mirrors QUESTION_BLOCK_RE's spirit). The
 // ```question fence keeps its own separate machinery (hasQuestionBlock) — it is NOT a signal fence.
-const SIGNAL_FENCE_RE = /^```(done|awaiting)[ \t]*\n([\s\S]*?)\n```[ \t]*$/gm
+// Any run of three or more backticks opens one, and only a run at least as long closes it, as in CommonMark:
+// a fence whose steps carry a code block in their bodies opens with four (2026-11-09).
+const SIGNAL_FENCE_RE = /^(`{3,})(done|awaiting)[ \t]*\n([\s\S]*?)\n\1`*[ \t]*$/gm
 // An awaiting-body hint line: `<kind>: <value>`. Kind is case-insensitive (lowercased on output); the
 // value must start with a non-space char (a bare `pr:` with nothing after is prose, not a hint).
 // THREE PLACES SPELL THE VOCABULARY and they must move together: this regex, FenceView["hints"]'s
@@ -1376,8 +1378,8 @@ export function parseSignalFence(text: string | undefined): FenceView | undefine
   let end = 0
   let m: RegExpExecArray | null
   while ((m = SIGNAL_FENCE_RE.exec(norm)) !== null) {
-    kind = m[1] as "done" | "awaiting" // last-fence-wins: keep overwriting
-    raw = m[2]
+    kind = m[2] as "done" | "awaiting" // last-fence-wins: keep overwriting
+    raw = m[3]
     end = m.index + m[0].length
   }
   if (!kind) return undefined
@@ -2774,11 +2776,11 @@ function noteHandoff(state: FoldState): void {
 // and not where the fence is parsed, because a later assistant message replaces a fence that was not the
 // thread's last word, and that fence never rested on anything.
 function settleHumanSteps(state: FoldState, replyText: string): void {
-  const steps = state.lastFence?.kind === "awaiting" ? awaitingSteps(state.lastFence.hints) : []
+  const steps = state.lastFence?.kind === "awaiting" ? awaitingStepItems(state.lastFence.hints) : []
   const atMs = Date.parse(state.handoffAt ?? "")
   if (steps.length === 0 || !Number.isFinite(atMs)) return
   const listed = foldHumanSteps(state.humanSteps ?? [], steps, atMs)
-  state.humanSteps = repliesStepsDone(replyText) ? closeHumanSteps(listed, steps, atMs) : listed
+  state.humanSteps = repliesStepsDone(replyText) ? closeHumanSteps(listed, steps.map((step) => step.text), atMs) : listed
 }
 
 // The list with the fence the thread is resting on now, which has not settled yet. One value per fence
@@ -2787,7 +2789,7 @@ const humanStepsAtRest = new WeakMap<FenceView, { base: HumanStep[] | undefined;
 
 function humanStepsOf(state: FoldState): HumanStep[] | undefined {
   const fence = state.turn === "idle" && state.lastFence?.kind === "awaiting" ? state.lastFence : undefined
-  const steps = fence ? awaitingSteps(fence.hints) : []
+  const steps = fence ? awaitingStepItems(fence.hints) : []
   const atMs = Date.parse(state.handoffAt ?? "")
   if (!fence || steps.length === 0 || !Number.isFinite(atMs)) return state.humanSteps
   const memo = humanStepsAtRest.get(fence)

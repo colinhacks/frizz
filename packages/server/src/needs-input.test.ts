@@ -4,7 +4,7 @@
 // declared-park.test.ts for the scheduler's correction of a fence that gives no answer.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { AWAITING_QUESTIONS_MAX, AWAITING_STEP_VALUE_MAX, AWAITING_STEPS_MAX, awaitingNeedsInput, awaitingQuestions, awaitingSteps, NEEDS_INPUT_REQUIRED_AT, needsInputRequired, RETIRED_AWAITING_REPLACEMENT, splitAwaitingFrontmatter, type AwaitingHint } from "@frizz/shared"
+import { AWAITING_QUESTIONS_MAX, AWAITING_STEP_BODY_MAX, AWAITING_STEP_VALUE_MAX, AWAITING_STEPS_MAX, awaitingNeedsInput, awaitingQuestions, awaitingStepItems, awaitingSteps, NEEDS_INPUT_REQUIRED_AT, needsInputRequired, RETIRED_AWAITING_REPLACEMENT, splitAwaitingFrontmatter, type AwaitingHint } from "@frizz/shared"
 import { deriveAwaitingBackground, deriveNeedsYou, hasDeclaredWait, type RegisteredWatch } from "./board.ts"
 import type { GithubStatusBook } from "./awaiting.ts"
 import type { SessionRow } from "./storage.ts"
@@ -171,6 +171,58 @@ test("steps are read verbatim: code, colons and #refs survive, and the lookups b
   assert.deepEqual(hints.filter((h) => h.kind === "pr"), [{ kind: "pr", value: "acme/app#391" }])
   assert.deepEqual(hints.filter((h) => h.kind === "for"), [{ kind: "for", value: "2d" }])
   assert.equal(body, "The publish step runs as the maintainer.")
+})
+
+// A step is a Markdown list item (2026-11-09): its first paragraph is the title, and what follows a blank
+// line, indented under it, is a Markdown body drawn beneath it.
+test("a step's first paragraph is its title, and what is indented under it after a blank line is its body", () => {
+  const { hints, body } = splitAwaitingFrontmatter([
+    "title: Publish the release",
+    "steps:",
+    "  - Sign in to npm",
+    "    with the maintainer account",
+    "",
+    "    Run this in a terminal on **this** machine:",
+    "",
+    "    ```sh",
+    "    npm login --auth-type=web",
+    "",
+    "    npm whoami",
+    "    ```",
+    "",
+    "    ---",
+    "",
+    "    - If the page says the code expired, request a new one.",
+    "      - Then approve again.",
+    "  - Publish the [draft release](https://github.com/acme/app/releases)",
+    "  - Reply here",
+    "    ```",
+    "    Done",
+    "    ```",
+    "prs: [acme/app#391]",
+    "---",
+    "The publish waits on the sign-in.",
+  ].join("\n"))
+  assert.deepEqual(awaitingStepItems(hints), [
+    {
+      text: "Sign in to npm with the maintainer account",
+      body: "Run this in a terminal on **this** machine:\n\n```sh\nnpm login --auth-type=web\n\nnpm whoami\n```\n\n---\n\n- If the page says the code expired, request a new one.\n  - Then approve again.",
+    },
+    { text: "Publish the [draft release](https://github.com/acme/app/releases)" },
+    { text: "Reply here", body: "```\nDone\n```" },
+  ], "a `---` and a list inside a body are the body's own, and a code block can open one straight under its title")
+  assert.deepEqual(awaitingSteps(hints), ["Sign in to npm with the maintainer account", "Publish the [draft release](https://github.com/acme/app/releases)", "Reply here"], "the titles alone")
+  assert.deepEqual(hints.filter((h) => h.kind === "pr"), [{ kind: "pr", value: "acme/app#391" }], "the keys after the steps still read")
+  assert.equal(body, "The publish waits on the sign-in.", "and the `---` after them still ends the frontmatter")
+})
+
+test("a body cannot swallow the fence: a `---` at the item's own indent ends the frontmatter, and a runaway body is cut", () => {
+  const { hints, body } = splitAwaitingFrontmatter(["steps:", "  - Sign in", "", "    Use the bot account.", "  ---", "The handoff."].join("\n"))
+  assert.deepEqual(awaitingStepItems(hints), [{ text: "Sign in", body: "Use the bot account." }])
+  assert.equal(body, "The handoff.")
+  const long = awaitingStepItems(splitAwaitingFrontmatter(`steps:\n  - Sign in\n\n    ${"z".repeat(AWAITING_STEP_BODY_MAX + 50)}`).hints)[0]
+  assert.equal(long.body, `${"z".repeat(AWAITING_STEP_BODY_MAX)}…`)
+  assert.deepEqual(awaitingStepItems(splitAwaitingFrontmatter("steps:\n  - Sign in\n\n\n  - Approve").hints), [{ text: "Sign in" }, { text: "Approve" }], "blank lines alone are no body")
 })
 
 test("a step on the key line is one step; a flow list YAML can read is a list, and one it cannot stays one step", () => {

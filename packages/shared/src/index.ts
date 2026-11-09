@@ -662,6 +662,8 @@ export function parseAskUserQuestionAnswers(result: unknown, questions: readonly
 export const AwaitingHint = z.object({
   kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command", "thread", "for", "title", "status", "needs_input", "step", "question"]),
   value: z.string(),
+  /** A step's Markdown body, drawn under its title (splitAwaitingFrontmatter). No other kind has one. */
+  body: z.string().optional(),
 })
 export type AwaitingHint = z.infer<typeof AwaitingHint>
 
@@ -792,6 +794,10 @@ const AWAITING_SCALAR_KINDS: ReadonlySet<AwaitingHint["kind"]> = new Set(["for",
  *  ellipsis rather than mid-word in silence. */
 export const AWAITING_STEPS_MAX = 12
 export const AWAITING_STEP_VALUE_MAX = 2_000
+/** A step's body is the detail its title cannot hold — what to paste, what the page shows, what to do when
+ *  it fails — so it gets room for a code block or two. Defensive for the same reason as the title's cap:
+ *  every thread's last fence rides the board. */
+export const AWAITING_STEP_BODY_MAX = 4_000
 
 /** `questions:` rides after the capped hints for the same reason `steps:` does: a thread carrying many
  *  open questions must still be able to name every one of them — the park is refused for any it leaves
@@ -834,6 +840,9 @@ export function trimAwaitingTitle(raw: string): string {
 
 /** The `---` line that closes a fence's frontmatter. One spelling for both fence kinds. */
 const FENCE_DELIMITER_RE = /^\s*---+\s*$/
+/** A code fence's opening or closing line inside a step's body. */
+const STEP_CODE_FENCE_RE = /^\s*(`{3,}|~{3,})(.*)$/
+const indentOf = (line: string) => line.length - line.trimStart().length
 
 /** Split an ```awaiting fence body into its hints and its prose.
  *
@@ -859,17 +868,25 @@ const FENCE_DELIMITER_RE = /^\s*---+\s*$/
  *  instruction is the prose most likely to carry what YAML cannot hold. `- Run \`npm login\`` is a parse
  *  error outright (a backtick may not open a plain scalar), `- Approve it: use the org account` silently
  *  becomes a one-key mapping, and either failure would cost the fence every lookup beside it. So each
- *  `- ` item under the key is taken as written, an indented line continues the item above it, and a
- *  value on the key line itself is one step — or, written `[a, b]`, a flow list YAML is allowed to try. */
+ *  `- ` item under the key is taken as written, and a value on the key line itself is one step — or,
+ *  written `[a, b]`, a flow list YAML is allowed to try.
+ *
+ *  A STEP IS A MARKDOWN LIST ITEM: A TITLE, AND A BODY UNDER IT (maintainer 2026-11-09: "It should be able
+ *  to have a full Markdown body that renders underneath each item"). Its first paragraph is the title —
+ *  the `- ` line and any indented line straight after it, joined, which is how every step written before
+ *  bodies existed still reads. A blank line, or a code fence or list that opens the item's second line,
+ *  starts the BODY: every line indented past the item's dash, kept as written and dedented, up to the next
+ *  item, the next key or the `---`. Inside a body a `---` is a rule, not the delimiter, and a code block
+ *  is carried whole. Only an outer fence longer than the code fences inside it can hold one (the signal
+ *  fence scanners take any run of three or more backticks). */
 export function splitAwaitingFrontmatter(raw: string): { body: string; hints: AwaitingHint[] } {
   const lines = raw.split("\n").map((l) => l.replace(/\r$/, ""))
-  const delimiter = lines.findIndex((l) => FENCE_DELIMITER_RE.test(l))
-  const frontmatter = delimiter === -1 ? lines : lines.slice(0, delimiter)
-  const after = delimiter === -1 ? [] : lines.slice(delimiter + 1)
   const rest: string[] = []
   const yamlLines: string[] = []
   const titleLines: string[] = []
-  const steps: string[] = []
+  /** The steps as written: the title's lines, the body's lines, the item's dash column, and the run of the
+   *  body's open code fence. */
+  const steps: { title: string[]; body: string[] | undefined; dash: number; fence: string | undefined }[] = []
   // `structural` tracks whether the line we are on belongs to the YAML document. A block sequence's items
   // and any indented continuation belong to the KEY ABOVE THEM, so they follow that key's fate — which is
   // what keeps a retired `pr:` with its list underneath from orphaning a bare sequence into the parser.
@@ -878,7 +895,17 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   let structural = true
   let inTitle = false
   let inSteps = false
-  for (const line of frontmatter) {
+  let delimiter = -1
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const step = inSteps ? steps.at(-1) : undefined
+    // A body holds its own `---` (a rule) and its own code blocks: only a line outside every body ends the
+    // frontmatter.
+    const inBody = step?.body !== undefined && (step.fence !== undefined || (line.trim() !== "" && indentOf(line) > step.dash))
+    if (!inBody && FENCE_DELIMITER_RE.test(line)) {
+      delimiter = i
+      break
+    }
     const m = line.match(AWAITING_KEY_RE)
     const key = m?.[1].toLowerCase()
     if (m && key) {
@@ -896,15 +923,12 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
     }
     if (inTitle) titleLines.push(m && key === "title" ? (m[2] ?? "") : line)
     else if (inSteps) {
-      if (m && key === "steps") steps.push(...inlineSteps(m[2] ?? ""))
-      else {
-        const item = /^\s*-\s+(.*)$/.exec(line)
-        if (item) steps.push(item[1])
-        else if (line.trim() && steps.length > 0) steps[steps.length - 1] += ` ${line.trim()}`
-      }
+      if (m && key === "steps") steps.push(...inlineSteps(m[2] ?? "").map((title) => ({ title: [title], body: undefined, dash: Number.POSITIVE_INFINITY, fence: undefined })))
+      else readStepLine(steps, line)
     }
     else (structural ? yamlLines : rest).push(line)
   }
+  const after = delimiter === -1 ? [] : lines.slice(delimiter + 1)
   const parsed = parseAwaitingYaml(yamlLines.join("\n"))
   // Unparsed lines go to the BODY rather than being dropped: the worker has to be able to see what it
   // wrote, or the correction it gets is about a fence it can no longer read.
@@ -915,15 +939,60 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   const title = trimAwaitingTitle(titleLines.join(" "))
   if (title) parsed.hints.push({ kind: "title", value: title })
   const stepHints: AwaitingHint[] = steps
-    .map(readStep)
-    .filter(Boolean)
+    .map((step) => ({ value: readStep(step.title.join(" ")), body: readStepBody(step.body) }))
+    .filter((step) => step.value)
     .slice(0, AWAITING_STEPS_MAX)
-    .map((step) => ({ kind: "step", value: step }))
+    .map(({ value, body }) => (body ? { kind: "step", value, body } : { kind: "step", value }))
   const questionHints = parsed.hints.filter((h) => h.kind === "question").slice(0, AWAITING_QUESTIONS_MAX)
   // The cap counts named items alone (see AWAITING_HINT_MAX); every scalar survives it, in written order.
   let items = 0
   const capped = parsed.hints.filter((h) => h.kind !== "question" && (AWAITING_SCALAR_KINDS.has(h.kind) || items++ < AWAITING_HINT_MAX))
   return { body: rest.join("\n").trim(), hints: [...capped, ...questionHints, ...stepHints] }
+}
+
+/** One line under `steps:`, onto the list of steps as written (splitAwaitingFrontmatter has the grammar). */
+function readStepLine(steps: { title: string[]; body: string[] | undefined; dash: number; fence: string | undefined }[], line: string): void {
+  const step = steps.at(-1)
+  const indent = indentOf(line)
+  if (step?.fence !== undefined) {
+    step.body!.push(line)
+    const close = STEP_CODE_FENCE_RE.exec(line)
+    if (close && !close[2].trim() && close[1][0] === step.fence[0] && close[1].length >= step.fence.length) step.fence = undefined
+    return
+  }
+  const item = /^(\s*)-\s+(.*)$/.exec(line)
+  if (item && (!step || indent <= step.dash)) {
+    steps.push({ title: [item[2]], body: undefined, dash: indent, fence: undefined })
+    return
+  }
+  if (!step) return
+  if (!line.trim()) {
+    // The blank line after the title is what opens the body; inside one it is the body's own.
+    if (step.body) step.body.push("")
+    else step.body = []
+    return
+  }
+  const opens = STEP_CODE_FENCE_RE.exec(line)
+  // A code block or a list straight under the title cannot be the title's words: CommonMark lets either
+  // interrupt a paragraph, so it opens the body.
+  if (!step.body && (opens || (item && indent > step.dash))) step.body = []
+  if (!step.body) {
+    step.title.push(line.trim())
+    return
+  }
+  step.body.push(line)
+  if (opens) step.fence = opens[1]
+}
+
+/** A step's body as it will RENDER: dedented to its least-indented line, blank lines trimmed off both
+ *  ends, and capped where the cut shows. Undefined when there is nothing in it. */
+function readStepBody(lines: readonly string[] | undefined): string | undefined {
+  if (!lines) return undefined
+  const filled = lines.filter((line) => line.trim())
+  if (filled.length === 0) return undefined
+  const cut = Math.min(...filled.map(indentOf))
+  const body = lines.map((line) => line.slice(Math.min(cut, indentOf(line)))).join("\n").replace(/^\n+|\s+$/g, "")
+  return body.length > AWAITING_STEP_BODY_MAX ? `${body.slice(0, AWAITING_STEP_BODY_MAX).trimEnd()}…` : body
 }
 
 /** The steps written ON the `steps:` line: none, one, or a flow list. A flow list YAML cannot read — a
@@ -966,6 +1035,17 @@ function readStep(raw: string): string {
  *  one, which is how every reader tells the two shapes apart. */
 export function awaitingSteps(hints: readonly AwaitingHint[] | undefined): string[] {
   return (hints ?? []).filter((h) => h.kind === "step").map((h) => h.value)
+}
+
+/** A step as the human reads it: the title they tick, and the Markdown under it. */
+export interface AwaitingStep {
+  text: string
+  body?: string
+}
+
+/** The fence's steps with their bodies, in the order written. */
+export function awaitingStepItems(hints: readonly AwaitingHint[] | undefined): AwaitingStep[] {
+  return (hints ?? []).filter((h) => h.kind === "step").map((h) => (h.body ? { text: h.value, body: h.body } : { text: h.value }))
 }
 
 /** The registered questions the fence says it is still waiting on, as lowercased ids in the order
@@ -2047,7 +2127,8 @@ function signoffNudgeText(needsInput: boolean): string {
   "- `` ```awaiting `` with `steps:` — the human must PERFORM something you cannot: sign in, approve,",
   "  merge, press a button you may not. List each step as a `- ` line under `steps:`, written to be",
   "  followed cold: a real Markdown link to every page and file it names, every command in a code span,",
-  "  every value the act needs written in. Frizz reads them verbatim. Steps name the HUMAN as the wait,",
+  "  every value the act needs written in. Frizz reads them verbatim. Detail the line cannot hold goes in",
+  "  a Markdown body indented under it after a blank line. Steps name the HUMAN as the wait,",
   "  so the fence needs no other name and no `for:`, and the thread goes into their queue. Their Done",
   "  comes back to you as their reply; anything else they need to say comes as a message of their own.",
   "- A question you asked at an EARLIER rest, whose answer you still need: write a ```question fence",
@@ -4079,7 +4160,10 @@ export type ThreadLinkView = z.infer<typeof ThreadLinkView>
 export const HumanTodo = z.object({
   /** Stable across rests: the step's own text, hashed, so handing the same step over again is the same item. */
   id: z.string(),
+  /** The title: the step's own first paragraph, and the words a report recites. */
   text: z.string(),
+  /** The Markdown under the title, as the newest fence listing the step wrote it. */
+  body: z.string().optional(),
   done: z.boolean(),
   /** The tick differs from what the worker was last told, so the next send reports it. */
   staged: z.boolean(),

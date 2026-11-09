@@ -21,7 +21,9 @@ export type FenceSegment =
 // spaces). The `m` flag anchors ^/$ to line boundaries; an unterminated opener never matches, so a
 // half-written fence degrades to ordinary prose (markdown renders it as a plain code block). ```question
 // can't match the (done|awaiting) alternation, so question blocks are left entirely to questionBlocks.ts.
-const FENCE_BLOCK = /^```(done|awaiting)[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm
+// Any run of three or more backticks opens one, and only a run at least as long closes it (the tailer's
+// SIGNAL_FENCE_RE, which this must match): a fence whose steps carry code blocks opens with four.
+const FENCE_BLOCK = /^(`{3,})(done|awaiting)[ \t]*\r?\n([\s\S]*?)\r?\n\1`*[ \t]*$/gm
 
 // Split the body of a fence into its prose (hint lines removed) and its parsed hints. A `done` fence
 // carries one hint at most — an optional leading `title:`, the card's heading (2026-10-13) — and the
@@ -64,8 +66,8 @@ export function splitFenceBlocks(text: string): FenceSegment[] {
     }
     const prose = text.slice(lastIndex, m.index)
     if (prose.trim()) segments.push({ kind: "prose", text: prose })
-    const fenceKind = m[1] as FenceKind
-    const { body, hints } = parseFenceBody(m[2], fenceKind)
+    const fenceKind = m[2] as FenceKind
+    const { body, hints } = parseFenceBody(m[3], fenceKind)
     segments.push({ kind: "fence", fenceKind, body, hints })
     lastIndex = m.index + m[0].length
   }

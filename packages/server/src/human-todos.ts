@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { HumanTodo } from "@frizz/shared"
+import type { AwaitingStep, HumanTodo } from "@frizz/shared"
 
 // THE HUMAN'S TO-DO LIST (2026-11-09, maintainer: "a single, coherent, human-facing to-do list for the
 // entire session. That's maintained by Frizz").
@@ -15,7 +15,8 @@ import type { HumanTodo } from "@frizz/shared"
 //
 // THE RULES THAT MAKE IT ONE LIST
 //
-//   · A step is its own text. The same text in a later fence is the same item, and keeps its box.
+//   · A step is its own text: its title, the first paragraph of its `- ` item. The same title in a later
+//     fence is the same item and keeps its box, and the body under it is whatever that fence wrote.
 //   · The newest `steps:` says what is still owed. An unticked item it leaves out has been dropped by the
 //     worker and leaves the list; a ticked one stays, as the record of what was done.
 //   · A rest with no `steps:` says nothing about the list. Handing over the first of three acts and then
@@ -27,6 +28,8 @@ import type { HumanTodo } from "@frizz/shared"
 export interface HumanStep {
   id: string
   text: string
+  /** The Markdown under the title, as the newest fence listing the step wrote it. */
+  body?: string
   /** When a fence last listed this step, in ms. */
   listedAt: number
   /** Did the newest fence with `steps:` list it? */
@@ -53,16 +56,16 @@ export function humanStepId(text: string): string {
 
 /** The list after a fence listing `steps` landed at `atMs`. Pure: the fold's state is cached as JSON, and
  *  the board reads a fence that has not ended its rest yet through this same function. */
-export function foldHumanSteps(list: readonly HumanStep[], steps: readonly string[], atMs: number): HumanStep[] {
-  const named = new Map(steps.map((text) => [humanStepId(text), text]))
+export function foldHumanSteps(list: readonly HumanStep[], steps: readonly AwaitingStep[], atMs: number): HumanStep[] {
+  const named = new Map(steps.map((step) => [humanStepId(step.text), step]))
   const next = list.map((step): HumanStep => {
-    const text = named.get(step.id)
-    if (text === undefined) return { ...step, listed: false }
+    const listed = named.get(step.id)
+    if (listed === undefined) return { ...step, listed: false }
     named.delete(step.id)
-    const { closedAt: _closed, ...open } = step
-    return { ...open, text, listedAt: atMs, listed: true }
+    const { closedAt: _closed, body: _body, ...open } = step
+    return { ...open, text: listed.text, ...(listed.body ? { body: listed.body } : {}), listedAt: atMs, listed: true }
   })
-  for (const [id, text] of named) next.push({ id, text, listedAt: atMs, listed: true })
+  for (const [id, { text, body }] of named) next.push({ id, text, ...(body ? { body } : {}), listedAt: atMs, listed: true })
   while (next.length > HUMAN_STEPS_MAX) {
     const oldest = next.findIndex((step) => !step.listed)
     next.splice(oldest === -1 ? 0 : oldest, 1)
@@ -95,7 +98,7 @@ export function humanTodoView(
     const reportedAt = stale ? null : tick?.reported_at ?? null
     const done = tick ? doneAt !== null : step.closedAt !== undefined
     if (!done && (!step.listed || options.finished)) continue
-    todos.push({ id: step.id, text: step.text, done, staged: tick ? done !== (reportedAt !== null) : false })
+    todos.push({ id: step.id, text: step.text, ...(step.body ? { body: step.body } : {}), done, staged: tick ? done !== (reportedAt !== null) : false })
   }
   return todos
 }

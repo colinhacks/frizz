@@ -266,7 +266,9 @@ exactly ONE of them.
   title: Approve the npm sign-in so the release can publish
   steps:
     - Open [the npm sign-in this thread started](https://www.npmjs.com/login?next=/login/cli/9f3c2a71) and sign in with the maintainer account.
-    - Approve the request with that account's security key or one-time code, and wait for the page to say the CLI is signed in.
+    - Approve the request with that account's security key or one-time code.
+
+      The page says the CLI is signed in once it lands. A code it refuses has expired: take the next one.
   ---
   `npm login --auth-type=web` is running in this thread and waiting on that approval. The publish follows as soon as it lands.
   ```
@@ -354,7 +356,12 @@ exactly ONE of them.
     true of every park and specific to none.
   - `steps:` — the human must PERFORM something you cannot: sign in, approve a prompt, merge what you
     may not, press a button you are not allowed to press. One `- ` item per step, each written to be
-    followed COLD by someone who has read nothing else; frizz reads them verbatim. Steps NAME THE HUMAN
+    followed COLD by someone who has read nothing else; frizz reads them verbatim. **A STEP IS A MARKDOWN
+    LIST ITEM: A TITLE, AND A BODY UNDER IT.** The `- ` line is the title the human ticks and the words
+    reported back. After a blank line, everything indented under it is a full Markdown body drawn beneath
+    the title — paragraphs, a list, a table, a code block to paste — for the detail one line cannot hold.
+    A body with a code block needs the fence itself opened and closed with FOUR backticks, or the code
+    block's closing line ends your fence there. Steps NAME THE HUMAN
     as the wait, so the fence needs no other name and no `for:` (add one only if you want to be woken
     to re-check), and it always puts the thread in their queue — `status:` may be left out.
     **FRIZZ KEEPS ONE TO-DO LIST FOR THE HUMAN PER THREAD, AND EVERY `steps:` LANDS ON IT.** A step is its

@@ -52,6 +52,15 @@ const wantWatch = wantAll || watchMode !== null
 // the card's prompt box is what sends it.
 const stepsMode = params.get("steps")
 const LATEST_STEP = "Publish the release from the [GitHub releases page](https://github.com/acme/app/releases)."
+// ?steps=body — steps with Markdown bodies under their titles (2026-11-09).
+const BODY_STEPS = [
+  {
+    text: "Sign in to npm with the **acme-bot** account",
+    body: "Run this in a terminal on this machine, then approve the browser prompt:\n\n```sh\nnpm login --auth-type=web\n```\n\n- The prompt opens in your default browser.\n- A code it refuses has expired: take the next one.",
+  },
+  { text: "Publish the [draft release](https://github.com/acme/app/releases)", body: "The **Publish release** button is at the bottom of the draft." },
+  { text: "Reply once `npm whoami` prints `acme-bot`" },
+]
 const LONG_STEPS = [
   "Open [Cloudflare → R2 → API tokens](https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/r2/api-tokens). If the list shows only names, click a token to see its Access Key ID.",
   "Delete the token with Access Key ID `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (the old `acme-uploads-prod` key).",
@@ -193,6 +202,9 @@ const thread = {
         ...(stepsMode === "long" ? [
           { kind: "title", value: "Delete the three leaked R2 tokens" },
           ...LONG_STEPS.map((value) => ({ kind: "step", value })),
+        ] : stepsMode === "body" ? [
+          { kind: "title", value: "Sign in to npm so the acme 4.2.0 release can publish" },
+          ...BODY_STEPS.map((step) => ({ kind: "step", value: step.text, ...(step.body ? { body: step.body } : {}) })),
         ] : stepsMode === "earlier" ? [
           { kind: "step", value: LATEST_STEP },
         ] : [
@@ -210,6 +222,8 @@ const thread = {
         ]
       : stepsMode === "long"
       ? fixtureTodos(LONG_STEPS)
+      : stepsMode === "body"
+      ? BODY_STEPS.map((step, i) => ({ id: `step-${i}`, ...step, done: false, staged: false }))
       : fixtureTodos(["Run `npm login --auth-type=web` in a terminal on this machine.", "Approve the browser prompt with the **acme-bot** account.", "Reply here once `npm whoami` prints `acme-bot`."]),
   } : declaredTitle === null ? {} : {
     lastFence: {

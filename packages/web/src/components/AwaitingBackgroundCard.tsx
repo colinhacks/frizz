@@ -28,7 +28,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, Radio, RefreshCw, TerminalSquare, X } from "lucide-react"
 import { githubReadingStale, shortCommit, type AwaitingHint, type GithubIssueStatus, type GithubWatchStatus, type ThreadView, type ThreadWatchView } from "@frizz/shared"
-import { awaitingFenceTitle, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingStepItems, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
@@ -1447,7 +1447,7 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
         : null}
       {steps.length > 0 && (stepsLive
         ? <LiveSteps thread={thread} onReplied={onReplied} onReplyFailed={onReplyFailed} />
-        : <StepsList steps={steps} done={stepsDone} />)}
+        : <StepsList steps={awaitingStepItems(hints)} done={stepsDone} />)}
       {unrowed.length > 0 && (
         // A WATCHED PR THE TABLE DOES NOT ROW goes here, under the prose, whether there is one or several.
         // ONE used to ride the head's far right, in the slot the GitHub wake card's ref takes, and there it

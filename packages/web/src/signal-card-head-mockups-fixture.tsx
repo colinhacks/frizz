@@ -195,7 +195,7 @@ function Body({ s, ruled, pr }: { s: Scenario; ruled: boolean; pr: PrPlace }) {
       )}
       {s.rows === "steps" && (
         <>
-          <StepsList steps={["Run `npm login --auth-type=web` in a terminal on this machine.", "Approve the browser prompt with the **acme-bot** account."]} />
+          <StepsList steps={[{ text: "Run `npm login --auth-type=web` in a terminal on this machine." }, { text: "Approve the browser prompt with the **acme-bot** account." }]} />
           <StepsBox />
         </>
       )}

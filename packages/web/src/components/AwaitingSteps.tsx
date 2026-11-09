@@ -11,7 +11,7 @@
 // settled card's record of one past rest, whose boxes are not controls (StepsList).
 import { useContext, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react"
 import { Check } from "lucide-react"
-import type { HumanTodo } from "@frizz/shared"
+import type { AwaitingStep, HumanTodo } from "@frizz/shared"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { useEagerFollowUp } from "../lib/eagerComposerSubmission.ts"
 import { SendScopeContext, usePromptBoxSends } from "../lib/sendScope.tsx"
@@ -29,25 +29,38 @@ type TodoThread = { readonly id: string; readonly humanTodos?: readonly HumanTod
 const LIST_FRAME = `md-body ${QUEUE_WRAP} mt-[var(--md-step)] first:mt-0`
 
 /** The record of one past rest: the steps as that rest listed them, ticked as its reply said. */
-export function StepsList({ steps, done }: { steps: readonly string[]; done?: StepsReply | null }) {
+export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; done?: StepsReply | null }) {
   return (
     <div data-awaiting-steps className={LIST_FRAME}>
       <ul className="frizz-todos">
-        {steps.map((step, i) => <RecordRow key={i} md={step} done={done === "all" || done?.has(step) === true} />)}
+        {steps.map((step, i) => <RecordRow key={i} step={step} done={done === "all" || done?.has(step.text) === true} />)}
       </ul>
     </div>
   )
 }
 
-function RecordRow({ md, done }: { md: string; done: boolean }) {
+// A STEP'S BODY (2026-11-09, maintainer: "a full Markdown body that renders underneath each item"), in the
+// title's column. It is how to do the act, so it stays while the act is owed or its tick is still the
+// human's to send — a tick never moves the rows under the pointer — and folds once the worker has heard
+// it was done, leaving the title as the record.
+function StepBody({ md }: { md: string }) {
   const html = useMarkdownHtml(md)
+  return <LinkedHtml className="md-body frizz-todo-body" html={html} />
+}
+
+function RecordRow({ step, done }: { step: AwaitingStep; done: boolean }) {
+  const html = useMarkdownHtml(step.text)
   const labelId = useId()
   return (
     <li data-human-todo data-done={done} className="frizz-todo">
       <span role="checkbox" aria-checked={done} aria-disabled="true" aria-labelledby={labelId} className={boxClass(done, false)}>
         {done && <BoxCheck />}
       </span>
-      <div id={labelId} className="min-w-0"><LinkedHtml className="md-body frizz-todo-text" html={html} /></div>
+      <div className="min-w-0">
+        {/* The title alone labels the box: the body is how to do it, not its name. */}
+        <div id={labelId}><LinkedHtml className="md-body frizz-todo-text" html={html} /></div>
+        {step.body && !done && <StepBody md={step.body} />}
+      </div>
     </li>
   )
 }
@@ -74,7 +87,10 @@ function TodoRow({ slug, todo, onTicked }: { slug: string; todo: HumanTodo; onTi
           className="absolute -inset-[5px] rounded-md outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
         />
       </span>
-      <div id={labelId} className="min-w-0"><LinkedHtml className="md-body frizz-todo-text" html={html} /></div>
+      <div className="min-w-0">
+        <div id={labelId}><LinkedHtml className="md-body frizz-todo-text" html={html} /></div>
+        {todo.body && (!todo.done || todo.staged) && <StepBody md={todo.body} />}
+      </div>
     </li>
   )
 }
