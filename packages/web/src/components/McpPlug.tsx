@@ -9,6 +9,7 @@ import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { PLUG_GLYPH, PLUG_MARK } from "../lib/iconRhythm.ts"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
+import type { MarkPanel } from "./AgentMarks.tsx"
 
 // THE PLUG: the MCP servers of the agent a prompt box talks to, and their sign-ins. It stands beside that
 // box's model chip (AgentMarks.tsx), since the servers it lists are the selected agent's.
@@ -37,13 +38,13 @@ export function mcpTargetKey(target: McpTarget): string {
 
 const ignoreKey = (backend: string, server: string) => `${backend}:${server}`
 
-export function McpPlug(props: { target: McpTarget; side: "top" | "bottom" }) {
+export function McpPlug(props: { target: McpTarget; side: "top" | "bottom"; panel: MarkPanel }) {
   // Its readings can start a probe and its sign-ins are this machine's, so a read-and-answer session has no plug.
   return useReadAndAnswerHost() ? null : <LocalMcpPlug {...props} />
 }
 
-function LocalMcpPlug({ target, side }: { target: McpTarget; side: "top" | "bottom" }) {
-  const [open, setOpen] = useState(false)
+function LocalMcpPlug({ target, side, panel }: { target: McpTarget; side: "top" | "bottom"; panel: MarkPanel }) {
+  const { open, setOpen, shutNeighbour } = panel
   const key = mcpTargetKey(target)
   const status = useQuery({
     queryKey: ["mcpStatus", key],
@@ -80,9 +81,11 @@ function LocalMcpPlug({ target, side }: { target: McpTarget; side: "top" | "bott
           title={attention ? "MCP servers · needs sign-in" : "MCP servers"}
           aria-haspopup="dialog"
           aria-expanded={open}
-          onClick={() => setOpen((was) => !was)}
-          // The paperclip's hover fill and tone, on a square the chip's height (lib/iconRhythm.ts AGENT_MARKS),
-          // held in its hover state while the menu is open, like a pressed toolbar button.
+          onClick={() => setOpen(!open)}
+          // The pointer on the plug is off the gauge, whose panel would otherwise wait out its grace, lit.
+          onPointerEnter={shutNeighbour}
+          // The paperclip's hover fill and tone at the chip's height (lib/iconRhythm.ts AGENT_MARKS), held in its
+          // hover state while the menu is open, like a pressed toolbar button.
           className={PLUG_MARK}
         >
           <Plug {...PLUG_GLYPH} aria-hidden />

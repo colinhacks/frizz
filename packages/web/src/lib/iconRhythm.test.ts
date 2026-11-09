@@ -37,13 +37,15 @@ test("every bare mark in the prompt box paints one pen", () => {
   }
 })
 
-// The gauge and the plug each keep their fill while their panel is open, so both can be lit at once, and two lit
-// squares that overlap paint the overlap twice (maintainer 2026-11-07: "The fact that these overlap is weird").
-// Each square reaches its trim past the footprint the row's gap is measured between.
-test("the agent's marks' squares stand apart, so two lit at once never overlap", () => {
+// Every pixel between the gauge and the plug belongs to one of them, so neither target gives up width to a gap
+// (maintainer 2026-11-09: "there's a gap between them, which means that the tap target is just unnecessarily
+// small"). "A little" is pinned too: each square reaches its trim past the footprint the row's gap is measured
+// between. That only one is lit at a time is agentMarksOneLit.e2e.test.ts's to prove.
+test("the agent's marks overlap a little, so there is no dead gap between their tap targets", () => {
   const px = (classes: string, utility: string) => Number(new RegExp(`(?:^| )${utility}\\[([\\d.]+)px\\]`).exec(classes)![1])
   const between = px(AGENT_MARKS, "gap-") - px(GAUGE_MARK, "-mx-") - px(PLUG_MARK, "-mx-")
-  assert.ok(between >= 2, `the gauge's and the plug's squares stand ${between}px apart`)
+  assert.ok(between <= 0, `the gauge's and the plug's squares stand ${between}px apart`)
+  assert.ok(between >= -4, `the gauge's and the plug's squares overlap by ${-between}px`)
 })
 
 test("a scaled glyph keeps an even box and its ink centred in it", () => {
