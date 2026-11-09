@@ -3470,6 +3470,8 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
       placed={t.placement.placed.get(index)}
       settledPlaced={t.settledPlacement.placed.get(index)}
       fenceQuestions={t.fenceQuestions}
+      index={index}
+      questionHomes={t.questionHomes}
       thread={t.thread}
     />
   )
@@ -3511,7 +3513,7 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
 // yet draws read-only from its own bytes. One array per surface, memoized, so the memo boundary holds.
 // `stepsDone` — what the human's reply to this message's rest on steps said was done (lib/stepsAnswer
 // stepsDoneReplies), which its settled steps card draws ticked. Absent on every other row.
-type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; thread?: ThreadViewData; restingCardShown?: boolean; stepsDone?: StepsReply }
+type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; index?: number; questionHomes?: ReadonlyMap<string, number>; thread?: ThreadViewData; restingCardShown?: boolean; stepsDone?: StepsReply }
 // EVERY MESSAGE SAYS WHEN IT WAS SAID ON HOVER — `Today at 8:33 AM` as the browser's own tooltip
 // (lib/messageTime). Here, around every branch of the body, so a bubble, a prose turn, a tool run and a
 // hairline all carry it on every surface, the sub-agent sheet's included. `contents` keeps the wrapper
@@ -3541,7 +3543,7 @@ function ThreadProviderErrorCard({ error }: { error: ProviderError }) {
   return <ProviderErrorCard error={error} provider={provider} />
 }
 
-function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, thread, restingCardShown, stepsDone }: MessageProps) {
+function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, index, questionHomes, thread, restingCardShown, stepsDone }: MessageProps) {
   // ANSWERING ON A PHONE happens in a sheet, one question at a time (MobileAnswerSheet) — the cards in
   // the transcript stay READ-ONLY there, so the questions are still visible in the context that
   // produced them but a 44pt-thumb answer never has to land on a 24pt chip inside a scrolling message.
@@ -3801,11 +3803,14 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
               push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
               continue
             }
-            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing down.
+            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing at
+            // the card: down from a write-up the human has since replied past, up from a recap the worker
+            // wrote after a wake (lib/questionShadow placeQuestions).
             const answered = answeredRow(row)
+            const home = questionHomes?.get(row.id)
             push(answered
               ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy wrap={dense} />
-              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} wrap={dense} />)
+              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} above={home !== undefined && index !== undefined && home < index} wrap={dense} />)
             continue
           }
           // AN ASK WITH NO ROW YET — the server registers a second or two behind the transcript, and never

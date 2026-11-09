@@ -163,3 +163,18 @@ test("the answer's own optimistic bubble cannot pull the card it answers out of 
   )
   assert.deepEqual([...plain.anchored.keys()], [1])
 })
+
+// A recap the worker wrote after a wake, before the human's next turn, never took the open card from the
+// write-up (lib/questionShadow placeQuestions), so the answered card stays there too.
+test("a question answered after a wake-driven recap stays in the write-up that asked it", () => {
+  const ask = "```question\nid: store\nkind: choice\nquestion: SQLite or JSON?\noptions:\n  - SQLite\n  - JSON\n```"
+  const messages = [
+    msg("user", "2026-11-09T20:20:00.000Z", "Design the store."),
+    msg("assistant", "2026-11-09T21:57:00.000Z", `The write-up.\n\n${ask}\n\nMore prose.`),
+    { role: "user", at: "2026-11-09T22:27:00.000Z", text: "<thread-message from-thread=\"docs\">x</thread-message>", sessionPeer: { name: "Docs" } },
+    msg("assistant", "2026-11-09T22:29:00.000Z", "These are open:\n\n```question\nid: store\n```"),
+    { role: "user", at: "2026-11-09T22:40:00.000Z", wake: true as const, text: "Answers to earlier questions:\n1. `store` “SQLite or JSON?” → SQLite" },
+  ]
+  const row = { ...settled("qst_store", "2026-11-09T21:57:00.000Z", "2026-11-09T22:39:00.000Z"), spec: { handle: "store", question: "SQLite or JSON?", kind: "question" as const, options: [{ label: "SQLite" }, { label: "JSON" }] } }
+  assert.deepEqual([...settledQuestionPositions(messages, [row]).placed.keys()], [1])
+})

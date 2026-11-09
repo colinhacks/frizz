@@ -28,7 +28,8 @@
 // `questions:` or withdraws it (server scheduler.evalSignoffNudges / evalParkIntegrity). So the newest
 // rest never reads as a bare stop with an ask hidden above it, and this file only has to honour what the
 // worker said: a card stays where it was asked until a later rest claims it, and a claim moves it to the
-// end of that rest — under the fence that named it.
+// end of that rest — under the fence that named it. A rest claims it only past a turn the human put in
+// (2026-11-09, questionClaims): a recap the worker writes after a wake leaves the card where it was.
 //
 // WHETHER A QUESTION IS STILL THE THREAD'S ASK IS NOT DECIDED HERE. The server decides it — an open
 // question stands from when it was asked or last referenced until the human next TYPES to the thread
@@ -38,13 +39,15 @@
 
 import { type AskedQuestion, awaitingQuestions, questionHandles } from "@frizz/shared"
 import { splitFenceBlocks } from "./fenceBlocks.ts"
+import { isHumanTurn, type HumanTurnLike } from "./messagePresentation.ts"
 import { questionFenceIdsIn } from "./questionBlocks.ts"
 
-export interface AnchorMessage {
+export interface AnchorMessage extends HumanTurnLike {
   role: string
   kind?: string
   at?: string
-  /** The message's markdown, read only for an ```awaiting fence's `questions:` claim. */
+  /** The message's markdown, read for an ```awaiting fence's `questions:` claim and a ```question fence's
+   *  id, and on a user turn for whether the human wrote it (lib/messagePresentation isHumanTurn). */
   text?: string
   /** The ids of this message's question fences the server REFUSED (lib/questionFaults): they name no
    *  question, so they neither claim a card nor place one. */
@@ -102,20 +105,33 @@ export function questionAnchorIndex(messages: readonly AnchorMessage[], askedAt:
   return end < 0 ? tail : end
 }
 
-/** The newest worker message that CLAIMS each question, keyed by the lowercased name it used: an
- *  ```awaiting fence naming it under `questions:` (a `qst_…` id — the key is still read for workers whose
- *  contract predates the question fence, though no longer taught), or a ```question fence carrying its
- *  `id:` — a reference, or the ask restated (2026-10-13: the `id:`-only fence replaced `questions:` as the
- *  way a worker says it still needs an answer at this rest). A name is a row id or a handle; questionsByAnchor
- *  matches both. A message with neither fence costs two substring tests. */
+/** The worker message that CLAIMS each question, keyed by the lowercased name it used: an ```awaiting
+ *  fence naming it under `questions:` (a `qst_…` id — the key is still read for workers whose contract
+ *  predates the question fence, though no longer taught), or a ```question fence carrying its `id:` — a
+ *  reference, or the ask restated (2026-10-13: the `id:`-only fence replaced `questions:` as the way a
+ *  worker says it still needs an answer at this rest). A name is a row id or a handle; questionsByAnchor
+ *  matches both. A message with neither fence costs two substring tests.
+ *
+ *  THE CLAIM IS THE FIRST NAMING SINCE THE HUMAN'S LAST TURN BEFORE THE NEWEST ONE (2026-11-09), not the
+ *  newest naming. A later message names a question for one of two reasons: the human has come back since
+ *  and the worker is asking again in a newer handoff, which is the one the human will read; or nothing the
+ *  human did has happened in between — a steer, a sub-agent, a correction woke the worker, and it re-listed
+ *  what is open. The second is a recap of a write-up the human has not read yet, and taking the card from
+ *  that write-up hollowed it out (lib/questionShadow placeQuestions has the report). So a naming moves the
+ *  claim only past a turn the human put in (lib/messagePresentation isHumanTurn), the same turn the queue
+ *  card's window opens on. */
 export function questionClaims(messages: readonly AnchorMessage[]): Map<string, number> {
   const claims = new Map<string, number>()
+  let humanAt = -1
   messages.forEach((m, i) => {
+    if (isHumanTurn(m)) humanAt = i
     if (m.role !== "assistant" || !m.text) return
     // A name this message records as meaning one row of several is that row's claim alone (ownedClaim).
     const claim = (name: string) => {
       const owner = m.questionOwners?.get(name)
-      claims.set(owner === undefined ? name : ownedClaim(name, owner), i)
+      const key = owner === undefined ? name : ownedClaim(name, owner)
+      const held = claims.get(key)
+      if (held === undefined || held < humanAt) claims.set(key, i)
     }
     if (m.text.includes("```awaiting")) {
       for (const seg of splitFenceBlocks(m.text)) {

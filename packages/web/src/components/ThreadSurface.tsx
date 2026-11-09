@@ -10,7 +10,7 @@ import { useFileDropZone, useFileIntakeHandle, type FileDropZone, type SurfaceFi
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
 import { useOpsHeldForTranscript } from "../lib/opsAhead.ts"
-import { placeQuestions, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
+import { placeQuestions, questionHomes, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
 import { useTranscriptHeldForBoard } from "../lib/restAhead.ts"
 import { queuedRunOf, type QueuedRun } from "../lib/restReply.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
@@ -176,6 +176,9 @@ export interface ThreadTranscript {
    *  names each one. A placed card renders in that slot and leaves its anchor group. Over the whole
    *  list — a surface that draws only a window of it narrows this with `placedFrom`. */
   placement: QuestionPlacement<RegisteredQuestionView>
+  /** The message each open question's answerable card draws in or under, by row id (lib/questionShadow
+   *  questionHomes), so a read-only copy elsewhere can say whether to look above it or below it. */
+  questionHomes: ReadonlyMap<string, number>
   /** Where each ANSWERED question's card stood when it was answered (lib/settledQuestions). */
   settledPlacement: SettledPlacement<SettledQuestion>
   /** Question↔answer pairing for "Answers:" user messages, over the whole list because the lookback
@@ -306,6 +309,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread, closedSpecs)
   const shadowedByMessage = useMemo(() => registeredStandingAt(messages, openQuestions), [messages, openQuestions])
   const placement = useMemo(() => placeQuestions(messages, openQuestions), [messages, openQuestions])
+  const homes = useMemo(() => questionHomes(messages, openQuestions, placement), [messages, openQuestions, placement])
   const settledPlacement = useMemo(() => settledQuestionPositions(messages, settledQuestions), [messages, settledQuestions])
   const paired = useMemo(() => pairAllAnswers(messages), [messages])
   const stepsDone = useMemo(() => stepsDoneReplies(messages), [messages])
@@ -329,13 +333,14 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       fenceQuestions,
       shadowedByMessage,
       placement,
+      questionHomes: homes,
       settledPlacement,
       paired,
       inFlightAnswers,
       answeringForMessage,
       opsThread,
     }),
-    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
+    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, homes, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
   )
 
   // The surface is the zone and its prompt box the intake (lib/fileDrop). Files given while no box is

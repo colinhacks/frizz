@@ -21,6 +21,7 @@
 // fence wraps `code` and [links](…) that the registration's plain string cannot carry) and about
 // trailing prose (the worker appends a parenthetical), and strict about the question itself.
 import { type AskedQuestion, mayHoldQuestionFence, questionHandles, type RegisteredQuestionView } from "@frizz/shared"
+import { isHumanTurn } from "./messagePresentation.ts"
 import { type AnchorMessage, questionsByAnchor, restEnd } from "./questionAnchor.ts"
 import { type MessageSegment, parseQuestionBlock, questionFenceIdsIn, splitQuestionBlocks } from "./questionBlocks.ts"
 
@@ -160,6 +161,7 @@ export function allFencesShadowed(
 // fence whose `id:` is its own handle for the question (shared question-fence.ts); the server registers
 // that fence as a row, and a later fence carrying `id:` alone references the row. Both name the row, so
 // both place it, by the same rule as the empty marker: the newest message naming it from its claiming rest
+// (since 2026-11-09, the first one after the human's last turn before that newest one — placeQuestions)
 // on is where its card draws, answerable, with the rest's one Send. The name is matched against the row's
 // minted id and every handle in its tree (questionNames) — a follow-up's handle names the whole card.
 //
@@ -247,10 +249,21 @@ export function markerIdsIn(text: string): string[] {
 }
 
 /** Where each registered question renders, given what the messages from its claiming rest onward
- *  actually wrote: the LAST message (the newest handoff — an older placement is history) from that rest
- *  onward whose empty marker names its id. A question no loaded message names is absent from `placed`
- *  and renders at its anchor. Human turns never place anything — a wake carries no marker of the
- *  worker's. */
+ *  actually wrote: the FIRST message naming it since the human's last turn before the newest message
+ *  naming it. A question no loaded message names is absent from `placed` and renders at its anchor. Human
+ *  turns never place anything — a wake carries no marker of the worker's.
+ *
+ *  Until 2026-11-09 it was simply the LAST message naming it — the newest handoff, on the reading that an
+ *  older placement is history. It is not history while the human has not come back since: the worker had
+ *  written a write-up with six questions each under the paragraph it decided, another thread's steer woke
+ *  it before the human read any of it, and it rested again on a two-line note re-listing all six as `id:`
+ *  references (the maintainer's own instructions ask for every open question at every rest). Every card
+ *  left the write-up for the foot of that note, stacked with no lead-in, and the write-up drew read-only
+ *  copies in its slots (maintainer 2026-11-09: "I had a perfect write-up with a bunch of nicely
+ *  interleaved questions … then it just kind of tacked all those same questions on at the end, in no
+ *  particular order and with no preamble or lead-up"). Now a later naming takes the card only past a turn
+ *  the human put in (lib/messagePresentation isHumanTurn): an answer, or anything they typed. Short of
+ *  that, the later fence is a recap, and draws a copy pointing up at the card (questionHomes). */
 export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { askedAt: string; spec?: AskedQuestion }>(
   messages: readonly AnchorMessage[],
   questions: readonly Q[],
@@ -273,9 +286,13 @@ export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { 
     for (const q of group) {
       const names = questionNames(q)
       let placedAt = -1
+      let humanSince = false
       for (let i = restStart(messages, anchor); i < messages.length; i++) {
+        if (isHumanTurn(messages[i])) humanSince = true
         if (isTurn(messages[i])) continue
-        if (markersOf(i).some((n) => names.includes(n) && nameMeans(messages[i], n, q.id))) placedAt = i
+        if (!markersOf(i).some((n) => names.includes(n) && nameMeans(messages[i], n, q.id))) continue
+        if (placedAt < 0 || humanSince) placedAt = i
+        humanSince = false
       }
       if (placedAt < 0) continue
       const at = placed.get(placedAt)
@@ -285,6 +302,22 @@ export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { 
     }
   }
   return { placed, placedIds }
+}
+
+/** The message each OPEN question's answerable card draws in (its placement) or under (its anchor), by
+ *  row id — what a read-only copy elsewhere compares its own message against, to say whether the card is
+ *  above it or below it. A surface drawing a window draws a card placed above it at the window's top, so
+ *  "above" still holds there. */
+export function questionHomes<Q extends Pick<RegisteredQuestionView, "id"> & { askedAt: string; spec?: AskedQuestion }>(
+  messages: readonly AnchorMessage[],
+  questions: readonly Q[],
+  placement: QuestionPlacement<Q>,
+): Map<string, number> {
+  const homes = new Map<string, number>()
+  for (const [at, group] of placement.placed) for (const q of group) homes.set(q.id, at)
+  const unplaced = questions.filter((q) => !placement.placedIds.has(q.id))
+  for (const [anchor, group] of questionsByAnchor(messages, unplaced)) for (const q of group) homes.set(q.id, anchor)
+  return homes
 }
 
 /** The placement as a surface that draws messages from `start` onward can honour it: a card placed by a
