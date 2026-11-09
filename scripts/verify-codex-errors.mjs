@@ -127,7 +127,7 @@ try {
     console.log(`Capturing ${name}: ${JSON.stringify(clip)}`)
     await page.screenshot({ path: join(shots, name), clip, captureBeyondViewport: false })
   }
-  const url = `${api.origin}/project/${projectSlug}/thread/policy-failure`
+  const url = `${api.origin}/project/${projectSlug}?thread=policy-failure`
   for (const font of ["sans", "mono"]) {
     await api.mutate("settingsSet", { ...await api.query("settingsGet"), font })
     await page.evaluateOnNewDocument((font) => { localStorage.setItem("frizz-font", font) }, font)

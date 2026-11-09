@@ -3,14 +3,14 @@ import { useSnapshot } from "valtio"
 import { store } from "../store.ts"
 import { useBoard, useThreadSnapshot } from "../hooks.ts"
 import { rpc } from "../api/rpc.ts"
-import { displayTitle, queued } from "../groups.ts"
+import { displayTitle } from "../groups.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { projectHref } from "../lib/base-path.ts"
 import { standaloneThreadHref } from "../lib/standaloneThreadRoute.ts"
 import { setFaviconBadge } from "../lib/faviconBadge.ts"
 import { SHEET_BASE_WIDTH, SPLIT_MIN_PX } from "../lib/sheet.ts"
 import { trackQueueDock } from "../lib/queueDockInset.ts"
-import type { ThreadView } from "@frizz/shared"
+import { boardQueuedThread, type ThreadView } from "@frizz/shared"
 import { ThreadView as ThreadViewSurface } from "./ChatView.tsx"
 import { DrawerStack } from "./DrawerStack.tsx"
 import { FileViewerPanel } from "./FileViewerPanel.tsx"
@@ -123,10 +123,10 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
   }, [board?.projectLabel, board?.projectName, slug, thread])
 
   // THE TAB'S REST MARK: a dot on the favicon while this thread is in the queue, so a strip of /full
-  // tabs says which ones are waiting without any being opened. Keyed on `queued` — the board's own
+  // tabs says which ones are waiting without any being opened. Keyed on `boardQueuedThread` — the board's own
   // definition of Rested — rather than on `atRest` above, which is the PROCESS being off-turn: a
   // thread parked on CI or snoozed is off-turn too, and it is waiting on nothing the human can do.
-  const rested = thread !== undefined && queued(thread)
+  const rested = thread !== undefined && boardQueuedThread(thread)
   useEffect(() => {
     setFaviconBadge(rested)
     return () => setFaviconBadge(false)

@@ -143,9 +143,10 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     // because the only correct answer is "everything you have running", and a worker that has lost its
     // ids cannot be trusted to name them.
     assert.equal(list.result.tools.length, 20)
-    // `monitor` (2026-11-02) — `action` alone is required, and no thread parameter, like every registry.
+    // `monitor` (2026-10-11 as `watch_command`) — `action` alone is required, and NO thread parameter: the
+    // command runs for the calling thread only, under that thread's own permission gate.
     assert.deepEqual(list.result.tools[17].inputSchema.required, ["action"])
-    assert.deepEqual(Object.keys(list.result.tools[17].inputSchema.properties), ["action", "command", "description", "for", "id"])
+    assert.deepEqual(Object.keys(list.result.tools[17].inputSchema.properties), ["action", "command", "every", "for", "persistent", "description", "id"])
     // `threads` (2026-11-03) — a READ of any board, so nothing is required, and no caller parameter at all.
     assert.equal(list.result.tools[18].name, "threads")
     assert.deepEqual(list.result.tools[18].inputSchema.required, [])
@@ -163,10 +164,9 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     // so the sender comes from the env alone.
     assert.deepEqual(list.result.tools[15].inputSchema.required, ["to", "message"])
     assert.deepEqual(Object.keys(list.result.tools[15].inputSchema.properties), ["to", "project", "message"])
-    // `watch_command` — the server-run check (2026-10-11). `action` alone is required, and NO thread
-    // parameter: the command runs for the calling thread only, under that thread's own permission gate.
-    assert.deepEqual(list.result.tools[16].inputSchema.required, ["action"])
-    assert.deepEqual(Object.keys(list.result.tools[16].inputSchema.properties), ["action", "command", "every", "for", "id"])
+    // `watch_command` — RETIRED (2026-11-06): it is `monitor` now, with the same arguments.
+    assert.deepEqual(Object.keys(list.result.tools[16].inputSchema.properties), [])
+    assert.match(list.result.tools[16].description, /^RETIRED \(2026-11-06\).*`monitor`/)
 
     // An unregistered name is a protocol error, not a crash — the registry routes by name now.
     rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "spawn_frizz_thread", arguments: {} } })
@@ -281,6 +281,12 @@ test("`steer` POSTs steerThread from the CALLING thread, to a slug read out of a
       "back-up-the-mac",
       "[Back up the Mac](/thread/back-up-the-mac)",
       "http://localhost:9393/project/frizz/thread/back-up-the-mac/full",
+      // The full-screen page and the drawer, as the address bar spells them since 2026-11-07.
+      "http://localhost:9393/project/frizz/thread/back-up-the-mac",
+      "http://localhost:9393/project/frizz?thread=back-up-the-mac",
+      "http://localhost:9393/project/frizz/status/active?scan=1&thread=back-up-the-mac",
+      // The Console's drawer names the thread by key, which carries its project.
+      "http://localhost:9393/console?thread=frizz~back-up-the-mac",
     ]
     for (const [i, to] of forms.entries()) {
       rpc.send({ jsonrpc: "2.0", id: 10 + i, method: "tools/call", params: { name: "steer", arguments: { to, message: "  The audit found 3 issues.  " } } })
@@ -288,7 +294,7 @@ test("`steer` POSTs steerThread from the CALLING thread, to a slug read out of a
       assert.equal(sent.result.isError, undefined, to)
       // A board URL names the thread's project as well, and that rides along; the server finds the
       // thread there even when it is not the caller's project.
-      const project = to.includes("/project/") ? { project: "frizz" } : {}
+      const project = to.includes("/project/") || to.includes("frizz~") ? { project: "frizz" } : {}
       assert.deepEqual(seen.at(-1), {
         url: "/_frizz/rpc/steerThread",
         body: { from: "fresh-archive-audit", to: "back-up-the-mac", ...project, message: "The audit found 3 issues." },

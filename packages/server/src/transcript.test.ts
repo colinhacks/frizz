@@ -461,7 +461,7 @@ test("short `a; b` Bash also ships a command block", () => {
   assert.equal(call.detail, "a; b")
 })
 
-test("a shell-backgrounded Bash attempt is visible immediately and remains identified after denial", () => {
+test("a shell-backgrounded Bash attempt is visible immediately; the hook's refusal folds it, an escaped job stays identified", () => {
   const launch = JSON.stringify({
     type: "assistant",
     timestamp: "2026-07-01T00:00:00.000Z",
@@ -490,14 +490,25 @@ test("a shell-backgrounded Bash attempt is visible immediately and remains ident
         type: "tool_result",
         tool_use_id: "bash-shell-job",
         is_error: true,
-        content: "Frizz blocked an untracked shell background job (`&`). Remove `&` and use Bash run_in_background:true.",
+        // The runtime prefixes the hook's own reason (cc-worker/hooks/bash-background.mjs).
+        content: "PreToolUse:Bash hook error: Frizz blocked an untracked shell background job (`&`). Remove `&` and use Bash run_in_background:true.",
       }],
     },
   })
   const blocked = parseTranscript([launch, denied].join("\n"))[0].tools[0]
   assert.equal(blocked.status, "failed")
-  assert.equal(blocked.backgroundState, "unknown", "the failed card remains exempt from ordinary tool collapse")
+  assert.equal(blocked.backgroundState, undefined, "a refused job launched nothing, so it folds like any failed call")
   assert.match(blocked.output ?? "", /blocked an untracked shell background job/)
+
+  // A job that got PAST the hook and then failed may still have left its child running: it keeps the mark.
+  const exited = JSON.stringify({
+    type: "user",
+    timestamp: "2026-07-01T00:00:00.100Z",
+    message: { content: [{ type: "tool_result", tool_use_id: "bash-shell-job", is_error: true, content: "Exit code 1\nbuild started" }] },
+  })
+  const escaped = parseTranscript([launch, exited].join("\n"))[0].tools[0]
+  assert.equal(escaped.status, "failed")
+  assert.equal(escaped.backgroundState, "unknown", "an escaped job stays exempt from ordinary tool collapse")
 })
 
 test("background Bash launch stays running through its acknowledgement and only task-notification ends it", () => {

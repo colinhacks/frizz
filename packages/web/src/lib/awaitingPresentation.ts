@@ -171,7 +171,7 @@ export function awaitingProseBlock(body: string | undefined): string | null {
  *  keyed on "has a colon" would eat it. */
 // The answer lines are machinery too: `status:` (2026-10-05) and the `needs_input:` it replaced, in both
 // spellings the parser reads.
-const FENCE_SYNTAX_KEYS = new Set<string>([...RETIRED_AWAITING_KINDS, "shells", "agents", "timers", "prs", "issues", "commands", "for", "title", "status", "needs_input", "needs-input"])
+const FENCE_SYNTAX_KEYS = new Set<string>([...RETIRED_AWAITING_KINDS, "shells", "agents", "timers", "prs", "issues", "monitors", "commands", "for", "title", "status", "needs_input", "needs-input"])
 function stripFenceSyntax(body: string): string {
   return body
     .split("\n")
@@ -202,32 +202,30 @@ function stripFenceSyntax(body: string): string {
  *  same things read identically. Null when the fence names nothing — a park the server refuses anyway,
  *  so the popover says what it knows and invents no wait.
  *
- *  `watches` is the thread's registered rows, read for one thing: which `commands:` entries are MONITORS
- *  (`frizzctl monitor`). A fence names a monitor by its `cmw_…` id, exactly as it names a command watch,
- *  and the two are different waits — one check that passes once against a script whose every line is a
- *  wake — so the clause tells them apart, and a lone monitor is NAMED by the worker's own description the
- *  way a PR is named by its ref: it is the one thing on the row the reader would recognise. */
+ *  `watches` is the thread's registered rows, read for one thing: a persistent command watch's description
+ *  (`frizzctl monitor add --persistent`). A lone one is NAMED by the worker's own words the way a PR
+ *  is named by its ref: it is the one thing on the row the reader would recognise. Any other mix is counted,
+ *  because "the monitor “X” and a monitor" says less than "2 monitors". */
 export function awaitingWaitClause(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[] = []): string | null {
   const count = (kind: AwaitingHint["kind"]) => hints.filter((h) => h.kind === kind && h.value.trim()).length
-  const monitors = fenceMonitors(hints, watches)
+  const commands = count("command")
+  const named = commands === 1 ? fenceMonitors(hints, watches)[0]?.command?.monitor?.description : undefined
   const parts = [
     // Steps first: the reader is the one being waited on, which outranks anything frizz is watching.
     plural(count("step"), "step from you", "steps from you"),
     plural(count("question"), "answer from you", "answers from you"),
     ...prWatchRefs(hints).map((pr) => pr.ref),
-    monitors.length === 1 && monitors[0]!.command?.monitor?.description
-      ? `the monitor “${monitors[0]!.command.monitor.description}”`
-      : plural(monitors.length, "monitor", "monitors"),
+    named ? `the monitor “${named}”` : null,
     plural(count("shell"), "background shell", "background shells"),
     plural(count("agent"), "sub-agent", "sub-agents"),
     plural(count("timer"), "timer", "timers"),
-    plural(count("command") - monitors.length, "command watch", "command watches"),
+    named ? null : plural(commands, "monitor", "monitors"),
   ].filter((part): part is string => part !== null)
   return parts.length > 0 ? `waiting on ${joinList(parts)}` : null
 }
 
-/** The armed MONITORS a fence's `commands:` entries name, in fence order, deduped. An id that names a
- *  plain command watch, or nothing the board knows, is not one — it stays a counted command watch. */
+/** The armed PERSISTENT command watches a fence's `commands:` entries name, in fence order, deduped. An id
+ *  that names a check, or nothing the board knows, is not one. */
 function fenceMonitors(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[]): ThreadWatchView[] {
   const byId = new Map(watches.filter((w) => w.kind === "command" && w.state === "armed" && w.command?.monitor).map((w) => [w.target, w]))
   const seen = new Set<string>()
@@ -258,10 +256,10 @@ function joinList(parts: readonly string[]): string {
  *  The desktop rail dropped its subtitle entirely (maintainer 2026-08-19) and moved every fence detail
  *  into the row's hover popover. A phone has no hover, so the mobile row keeps the one fragment worth a
  *  line without one: a PR ref names a THING rather than describing a wait, and it exists nowhere else on
- *  that row. A MONITOR's description is the same kind of name (2026-11-03) — the worker's words for what
+ *  that row. A persistent command watch's description is the same kind of name (2026-11-03) — the worker's words for what
  *  it watches, which is required at registration so there is always one to show. Everything else the
  *  fence carries — the ids, the duration, the worker's own prose — stays off it, exactly as it does on
- *  the rail. `watches` is read only to tell a monitor's `cmw_…` id from a command watch's. */
+ *  the rail. `watches` is read only to find that description by its `cmw_…` id. */
 export function hintGloss(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[] = []): string | null {
   const pr = hints.find((h) => h.kind === "pr")
   if (pr) return `PR ${pr.value}`

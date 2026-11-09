@@ -7,7 +7,7 @@ import { ProviderMark } from "./ProviderMark.tsx"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { CLAUDE_MODELS } from "../lib/options.ts"
-import { GAUGE_GLYPH_SIZE, GAUGE_MARK } from "../lib/iconRhythm.ts"
+import { GAUGE_GLYPH, GAUGE_MARK } from "../lib/iconRhythm.ts"
 import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent } from "../lib/quotaGauge.ts"
 
 // THE FUEL GAUGE — the quota readout beside the prompt box's model chip (AgentMarks.tsx): ONE gauge for the
@@ -110,7 +110,10 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
     refetchInterval: (query) => {
       const d = query.state.data
       const signedIn = queryClient.getQueryData<AuthSnapshot>(["authStatus"])
-      const degraded = !d || (["claude", "codex"] as const).some((b) => d[b].status !== "ok" && signedIn?.[b] !== "signed-out")
+      // `?.` though the schema names both providers: this runs in an effect, so one missing entry (a
+      // stubbed payload, a provider dropped from the snapshot) threw past every boundary and blanked the
+      // page under it — every queue-card fixture from 2026-11-06, when the gauge joined the prompt box.
+      const degraded = !d || (["claude", "codex"] as const).some((b) => d[b]?.status !== "ok" && signedIn?.[b] !== "signed-out")
       return degraded ? 15_000 : 30_000
     },
     staleTime: 10_000,
@@ -176,7 +179,7 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
     // opens, clicking opens and rechecks, leaving (or Escape, or a click elsewhere) shuts.
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        {/* The paperclip's square, so it hovers like the marks in the rail across from it, and stays lit
+        {/* The paperclip's hover fill, on a square the chip's height (lib/iconRhythm.ts AGENT_MARKS), lit
             while its panel is open. No `title`: the panel is the hover's answer, and a native tooltip
             would arrive a second later on top of it. */}
         <button
@@ -236,17 +239,19 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
  * chip spent it — amber in the warn zone, the danger colour when nearly empty — and a healthy tank takes
  * the mark's own icon tone from the button around it, so it hovers to full fg like its neighbours.
  */
-export function FuelGauge({ remaining, size = GAUGE_GLYPH_SIZE }: { remaining: number; size?: number }) {
+export function FuelGauge({ remaining }: { remaining: number }) {
   const level = gaugeAngle(remaining)
   const tone = remaining <= 8 ? "text-danger" : remaining <= HEALTHY_MIN ? "text-accent" : undefined
   return (
+    // The paperclip's scale and pen (lib/iconRhythm.ts GAUGE_GLYPH): the viewBox draws the 24-unit dial smaller
+    // inside an even box.
     <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
+      viewBox={GAUGE_GLYPH.viewBox}
+      width={GAUGE_GLYPH.size}
+      height={GAUGE_GLYPH.size}
       fill="none"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={GAUGE_GLYPH.strokeWidth}
       strokeLinecap="round"
       aria-hidden="true"
       data-fuel-gauge=""

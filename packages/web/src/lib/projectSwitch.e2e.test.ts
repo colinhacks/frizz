@@ -151,7 +151,7 @@ test("a project switch sends none of the old project's thread slugs to the new p
     })
 
     const shapes = [
-      { name: "phone drawer", width: 420, start: `/project/${a.slug}/thread/switch-shared`, mounted: '[role="dialog"]' },
+      { name: "phone drawer", width: 420, start: `/project/${a.slug}?thread=switch-shared`, mounted: '[role="dialog"]' },
       { name: "desktop queue", width: 1440, start: `/project/${a.slug}`, mounted: null },
     ]
     for (const shape of shapes) {
@@ -160,7 +160,11 @@ test("a project switch sends none of the old project's thread slugs to the new p
       await page.goto(`${baseUrl}${shape.start}`, { waitUntil: "networkidle2" })
       await page.waitForSelector(`a[href="/project/${b.slug}"]`, { timeout: 15_000 })
       // The precondition: the old project's thread is mounted and talking to its own project.
-      if (shape.mounted) await page.waitForSelector(shape.mounted, { timeout: 15_000 })
+      if (shape.mounted) {
+        await page.waitForSelector(shape.mounted, { timeout: 15_000 })
+        assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("thread")), "switch-shared",
+          `${shape.name}: the drawer is open through ?thread= before the switch`)
+      }
       await page.waitForFunction(() => document.body.innerText.includes("switch-only-a"), { timeout: 15_000 })
         .catch(() => assert.fail(`${shape.name}: ${a.slug}'s board never rendered its threads`))
 
@@ -172,6 +176,14 @@ test("a project switch sends none of the old project's thread slugs to the new p
       await page.waitForFunction(() => document.body.innerText.includes("switch-only-b"), { timeout: 15_000 })
         .catch(() => assert.fail(`${shape.name}: ${b.slug}'s board never rendered after the switch`))
       await new Promise((r) => setTimeout(r, 1500))
+      // The drawer belongs to the project it was opened in. The rail's link names a bare board, so the
+      // switch drops `?thread=`, and b's same-slug thread must not open in a drawer of its own.
+      if (shape.mounted) {
+        assert.deepEqual(await page.evaluate(() => ({
+          search: location.search,
+          drawer: Boolean(document.querySelector('[role="dialog"]')),
+        })), { search: "", drawer: false }, `${shape.name}: the drawer followed the switch into ${b.slug}`)
+      }
 
       const toB = sent.filter((r) => r.phase === shape.name && r.path.startsWith(`/_frizz/${b.slug}/rpc/`))
       const leaked = toB.filter((r) => r.input.includes("switch-only-a") || r.path.endsWith("/threadSeen"))

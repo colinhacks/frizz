@@ -25,7 +25,7 @@ export function usePromptControlCell(): boolean {
 }
 
 /**
- * A cell's box. `items-stretch` on the group gives it the height, 20px inside the hairlines of 22. The right
+ * A cell's box. `items-stretch` on the group gives it the height, 22px inside the hairlines of 24. The right
  * side is half a pixel short of the left because petite caps carry their 0.54px of tracking after the last letter.
  */
 export const PROMPT_CONTROL_CELL = "pl-1.5 pr-[5.5px]"
@@ -37,7 +37,7 @@ export function PromptControlGroup({ children }: { children: ReactNode }) {
     <InPromptControlGroup.Provider value>
       <div
         data-prompt-control-group=""
-        className="inline-flex h-[22px] min-w-0 max-w-full items-stretch overflow-hidden rounded-md border border-border/50 [&>button+button]:border-l [&>button+button]:border-border/50"
+        className="inline-flex h-6 min-w-0 max-w-full items-stretch overflow-hidden rounded-md border border-border/50 [&>button+button]:border-l [&>button+button]:border-border/50"
       >
         {children}
       </div>

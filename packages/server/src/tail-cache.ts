@@ -99,11 +99,12 @@ let foldSchemaMemo: string | null = null
  * That shape is every PUBLISHED server: `frizz-server` ships an esbuild bundle and no .ts, so this is
  * the constant there and the bump below is the only thing that re-derives a cached tail after an
  * upgrade. v2 (2026-10-28): FoldState.handoffAt, without which a thread already parked on a handoff the
- * human never saw stays in Snoozed (board handoffStands).
+ * human never saw stays in Snoozed (board handoffStands). v3 (2026-11-06): handoffAt narrowed to steps
+ * and questions, without which a cached plain report goes on holding its thread in the queue.
  */
 export function foldSchemaDigest(dir = import.meta.dirname): string {
   if (foldSchemaMemo) return foldSchemaMemo
-  const hash = createHash("sha256").update("frizz-tail-state-v2\0")
+  const hash = createHash("sha256").update("frizz-tail-state-v3\0")
   let read = 0
   for (const name of FOLD_SOURCES) {
     try {
@@ -114,7 +115,7 @@ export function foldSchemaDigest(dir = import.meta.dirname): string {
       hash.update(name).update("\0missing\0")
     }
   }
-  foldSchemaMemo = read === 0 ? "frizz-tail-state-v2-unreadable" : hash.digest("hex").slice(0, 32)
+  foldSchemaMemo = read === 0 ? "frizz-tail-state-v3-unreadable" : hash.digest("hex").slice(0, 32)
   return foldSchemaMemo
 }
 

@@ -221,23 +221,23 @@ test("the contract teaches steps: as the wait on a human's act, and routes to it
 // also say why a polling shell is the wrong wait, and where the loop goes when Frizz refuses.
 test("a Claude thread that starts in auto is told to use a background shell, in words a later switch cannot make false", () => {
   const claude = buildWorkerPrompt("claude")
-  assert.doesNotMatch(claude, /watch-command add|monitor add|commands:|cmw_/)
+  assert.doesNotMatch(claude, /monitor add|--persistent|monitors:|cmw_/)
   assert.match(claude, /a polling loop in a background shell that exits once it holds/)
   assert.match(claude, /refused unless this thread is in\s+`bypassPermissions` mode, and it did not start in that mode/)
   assert.doesNotMatch(claude, /\{\{FRIZZ_/)
 })
 
-test("only a bypass Claude contract teaches command watches, and it routes outside-condition waits to them", () => {
+test("only a bypass Claude contract teaches monitors, and it routes outside-condition waits to them", () => {
   const claude = buildWorkerPrompt("claude", { commandWatches: true })
-  assert.match(claude, /`commands:` — command watches you REGISTERED with `frizzctl watch-command add`/)
-  assert.match(claude, /`commands:` with nothing but those, where it runs to a week/)
-  assert.match(claude, /`frizzctl watch-command add "<check that exits 0 once it holds>" --every 5m --for 6h`/)
+  assert.match(claude, /`monitors:` — monitors you REGISTERED with `frizzctl monitor add`/)
+  assert.match(claude, /`monitors:` with nothing but those, where it runs to a week/)
+  assert.match(claude, /`frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h`/)
   assert.match(claude, /Not a polling loop in a background shell/)
   assert.match(claude, /can never be hibernated/)
   assert.match(claude, /Only when Frizz REFUSES it[\s\S]{0,140}does the loop go in a background shell/)
   for (const backend of ["codex", "acp"] as const) {
     const prompt = buildWorkerPrompt(backend)
-    assert.doesNotMatch(prompt, /watch-command|commands:|cmw_/, backend)
+    assert.doesNotMatch(prompt, /frizzctl monitor|monitors:|cmw_/, backend)
     assert.doesNotMatch(prompt, /\{\{FRIZZ_/, backend)
     assert.match(prompt, /where it runs to a year\.\n/, backend)
     assert.match(prompt, /`frizzctl watch-issue`\.\n    For anything else stay ACTIVE/, backend)

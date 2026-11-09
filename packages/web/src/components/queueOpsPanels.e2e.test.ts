@@ -313,7 +313,7 @@ test("the op counts stand midway between the dock's rule and the prompt box", { 
         let ruled: HTMLElement = bar
         while (parseFloat(getComputedStyle(ruled).borderTopWidth) === 0) ruled = ruled.parentElement!
         const rule = ruled.getBoundingClientRect().top + parseFloat(getComputedStyle(ruled).borderTopWidth)
-        const box = bar.querySelector<HTMLElement>(".group.relative.rounded-xl")!.getBoundingClientRect().top
+        const box = bar.querySelector<HTMLElement>("[data-composer-box]")!.getBoundingClientRect().top
         return [...summary.querySelectorAll<HTMLElement>("[data-ops-count]")].map((count) => {
           const label = count.lastElementChild as HTMLElement
           // A zero-size inline-block's bottom edge is the baseline of the inline context it sits in.

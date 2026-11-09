@@ -1552,3 +1552,58 @@ test("file topic: a malformed file frame is rejected like any other", async () =
     await h.close()
   }
 })
+
+test("a transcript too cold to read at once is caught up first: no read, no frame, then the push", async () => {
+  let reads = 0
+  let folding: Promise<void> | undefined
+  const h = await startHarness({
+    catchUpTranscript: () => folding,
+    readTranscript: () => {
+      reads++
+      return { messages: [msg(`read-${reads}`)] }
+    },
+  })
+  const deferred = () => {
+    let settle!: () => void
+    folding = new Promise<void>((r) => { settle = () => { folding = undefined; r() } })
+    return settle
+  }
+  try {
+    // A subscribe: the fold runs first, and the push follows it.
+    let finish = deferred()
+    const client = await connectClient(h.port)
+    await client.next()
+    client.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "cold" }))
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal(reads, 0, "the read ran before the fold had caught up")
+    finish()
+    const first = await client.next()
+    assert.equal(first.t, "transcript")
+    assert.equal(reads, 1)
+
+    // A change on a subscribed thread that has fallen far behind: the same, and changes meanwhile share one read.
+    finish = deferred()
+    h.transcriptChange.emit(["cold"])
+    await new Promise((r) => setTimeout(r, 20))
+    h.transcriptChange.emit(["cold"])
+    await new Promise((r) => setTimeout(r, 20))
+    assert.equal(reads, 1, "a change read a transcript still folding")
+    finish()
+    const second = await client.next()
+    assert.equal(second.t, "transcript")
+    assert.equal(reads, 2)
+
+    // Unsubscribed before the fold finished: nothing is read for nobody.
+    finish = deferred()
+    client.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "gone" }))
+    await new Promise((r) => setTimeout(r, 20))
+    client.ws.send(JSON.stringify({ t: "unsub", topic: "transcript", slug: "gone" }))
+    await new Promise((r) => setTimeout(r, 20))
+    finish()
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal(reads, 2)
+    client.ws.close()
+  } finally {
+    await h.close()
+  }
+})

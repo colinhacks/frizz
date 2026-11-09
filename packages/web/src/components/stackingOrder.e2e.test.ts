@@ -67,7 +67,7 @@ function coveredPoints(selector: string) {
   }
 }
 
-async function open(viewport: "desktop" | "phone", height = 900): Promise<{ page: Page; errors: string[] }> {
+async function open(viewport: "desktop" | "phone", height = 900, width = viewport === "phone" ? 700 : 1440): Promise<{ page: Page; errors: string[] }> {
   const page = await browser!.newPage()
   page.setDefaultTimeout(20_000)
   const errors: string[] = []
@@ -85,14 +85,14 @@ async function open(viewport: "desktop" | "phone", height = 900): Promise<{ page
     }
     return void request.continue()
   })
-  if (viewport === "phone") await page.setViewport({ width: 700, height, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
-  else await page.setViewport({ width: 1440, height, deviceScaleFactor: 1 })
+  if (viewport === "phone") await page.setViewport({ width, height, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
+  else await page.setViewport({ width, height, deviceScaleFactor: 1 })
   return { page, errors }
 }
 
 // A queued thread's link opens its card, so the drawer is a snoozed one's.
 async function openDrawer(page: Page): Promise<void> {
-  await page.goto(`${url}/thread/snoozed-0`, { waitUntil: "networkidle2" })
+  await page.goto(`${url}?thread=snoozed-0`, { waitUntil: "networkidle2" })
   await page.waitForSelector(".frizz-sheet-panel")
   await settle(500)
 }
@@ -191,8 +191,13 @@ test("the project rail sits under the Settings scrim", { skip: !url, timeout: 12
 
 test("the composer's skills menu is drawn over the drawer's jump-to-latest pill", { skip: !url, timeout: 120_000 }, async () => {
   // A short window, so the drawer's transcript scrolls and its pill shows: bottom-right over the
-  // transcript, where the menu opens above the composer.
-  const { page, errors } = await open("desktop", 420)
+  // transcript, where the menu opens above the composer. And a phone's width, the one layout where the
+  // two still meet: the menu takes 70% of the prompt box from its left edge, 340px at the least
+  // (lib/overlaySurface.ts `panelWidthOn`, since 2026-11-06), and the pill hugs the right edge. A
+  // desktop drawer is never narrower than 80% of a 701px window, which leaves the pill clear of the menu
+  // (at 1440x420 the menu ended at x 1220 and the pill began at 1303). At 390px the 340px floor reaches
+  // well past the pill's left edge.
+  const { page, errors } = await open("phone", 420, 390)
   try {
     await openDrawer(page)
     // A READER's scroll (a wheel): the transcript snaps a programmatic one back to its tail.

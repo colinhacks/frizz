@@ -7,6 +7,21 @@ import test from "node:test"
 // NON-queued session thread, deep-linked to raise the modal thread drawer. They must differ, because a
 // queued thread deliberately has no drawer at all: its `/thread/<slug>` route scrolls to the card, and
 // the card's arrow is now a new-tab LINK to the standalone page rather than a drawer trigger.
+//
+// Recipe. The URL is the stack's project board (its json line's "url"), not the bare origin, which is
+// the project grid and has no cards. seed-overlay-e2e.mjs seeds the snoozed drawer thread; the queued
+// one is the same row unsnoozed under another slug and session. Keep the project rail off (a fresh
+// stack's default; projectSwitch.e2e turns it on): the rail covers the bottom-left corner where the
+// outside-click probe sits, so the probe never receives the click.
+//   nub scripts/adhoc-stack.mjs --port=45790 --project=/abs/throwaway-repo > /tmp/stack.log 2>&1 &
+//   nub scripts/seed-overlay-e2e.mjs --home=<home> --cwd=/abs/throwaway-repo
+//   D=$(ls -d <home>/.claude/projects/*); S=0ae7e2e0-0000-4000-8000-00000000000
+//   sed "s/${S}1/${S}2/g" "$D/${S}1.jsonl" > "$D/${S}2.jsonl"
+//   sqlite3 <home>/.frizz/ui.db "CREATE TEMP TABLE t AS SELECT * FROM session WHERE slug='overlay-e2e';
+//     UPDATE t SET slug='menu-queued', session_id='${S}2', thread_name='frizz-menu-queued', snoozed_until=NULL;
+//     INSERT INTO session SELECT * FROM t;"
+//   FRIZZ_MENU_E2E_URL=http://127.0.0.1:45790/project/<slug> FRIZZ_MENU_E2E_SLUG=menu-queued \
+//     FRIZZ_MENU_E2E_DRAWER_SLUG=overlay-e2e nub run test packages/web/src/components/ui/Menu.e2e.test.ts
 const baseUrl = process.env.FRIZZ_MENU_E2E_URL
 const threadSlug = process.env.FRIZZ_MENU_E2E_SLUG
 const drawerSlug = process.env.FRIZZ_MENU_E2E_DRAWER_SLUG
@@ -115,7 +130,7 @@ test("Snooze menu stays non-modal and preserves anchored menu interactions", {
     await page.waitForFunction(() => !document.querySelector('[role="menu"]'))
 
     // In the modal drawer, one Escape belongs to the menu; the drawer itself stays open.
-    await page.goto(`${baseUrl}/thread/${encodeURIComponent(drawerSlug!)}`, { waitUntil: "domcontentloaded" })
+    await page.goto(`${baseUrl}?thread=${encodeURIComponent(drawerSlug!)}`, { waitUntil: "domcontentloaded" })
     await page.waitForSelector('[role="dialog"][aria-modal="true"]')
     const drawerTrigger = '[role="dialog"] button[data-snooze-menu]'
     await openMenu(drawerTrigger)

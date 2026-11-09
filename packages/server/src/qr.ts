@@ -66,7 +66,10 @@ export interface QrArea {
 }
 
 export interface QrRenderOptions {
-  /** Error correction. "M" tolerates ~15% damage, which covers a slightly out-of-focus phone camera. */
+  /**
+   * Error correction. "M" tolerates ~15% damage, which covers a slightly out-of-focus phone camera. Left
+   * unset, it is "M", or "L" where only that fits `area` (qrErrorCorrectionFor).
+   */
   errorCorrection?: QrErrorCorrection
   /** Emit plain `#`/space instead of ANSI colour, for tests and non-TTY sinks. */
   plain?: boolean
@@ -211,12 +214,29 @@ function paintLines(size: number, at: ModuleAt, plain: boolean): string[] {
 }
 
 /**
+ * The strongest error correction whose `half` code fits `area`: "M", or "L" where M needs a larger QR
+ * version than the area holds and L does not. Without an area, "M".
+ *
+ * L tolerates ~7% damage rather than ~15%, which a phone reading a sharp screen does not need; a code
+ * whose top rows scroll off the window is unreadable at any level. The case that needed it: a random
+ * frizz.sh sign-in link (72 characters) is version 5 at M, 23 rows, and an 80x24 done screen has room
+ * for 21 under its message, URL and way back; at L it is version 4, 21 rows.
+ */
+export function qrErrorCorrectionFor(value: string, area?: QrArea): QrErrorCorrection {
+  if (!area) return "M"
+  const fits = (size: QrArea) => size.columns <= area.columns && size.rows <= area.rows
+  const medium = qrSize(value, "half", "M")
+  if (fits(medium)) return "M"
+  return qrSize(value, "half", "L").rows < medium.rows ? "L" : "M"
+}
+
+/**
  * The code as terminal lines, quiet zone included. Returns lines rather than a blob so a caller can
  * centre it, box it, or repaint a region without re-encoding.
  */
 export function renderQrLines(value: string, options: QrRenderOptions = {}): string[] {
   if (!value) throw new Error("renderQr requires a value")
-  const errorCorrection = options.errorCorrection ?? "M"
+  const errorCorrection = options.errorCorrection ?? qrErrorCorrectionFor(value, options.area)
   const { size, at } = encode(value, errorCorrection)
   const style = options.style ?? qrStyleFor(value, { area: options.area, env: options.env, errorCorrection })
   return style === "paint" ? paintLines(size, at, options.plain ?? false) : halfLines(size, at, options.plain ?? false)

@@ -1,4 +1,4 @@
-// MONITORS (`frizzctl monitor`, 2026-11-02): one registered script, many wakes.
+// MONITORS (`frizzctl monitor add --persistent`, 2026-11-02): one registered script, many wakes.
 //
 // Three layers, each against the real thing where the real thing is cheap:
 //   - the PROCESS — a real `/bin/sh`: lines batched into events, blank lines dropped, stderr kept for the
@@ -405,7 +405,7 @@ test("add: the gate first; then the script starts, and its first lines come back
     h.storage.upsertSession(row("t"))
     h.gate.refusal = "this thread runs in `default` permission mode. Run the check in a background shell instead."
     const refused = await h.router.addOwnMonitor.handler({ input: { slug: "t", command: "echo hi; sleep 30", description: "greetings", for: "1h" } })
-    assert.match(refused.refused!, /^Frizz will not run a monitor for this thread: this thread runs in `default`/)
+    assert.match(refused.refused!, /^Frizz will not run a persistent monitor for this thread: this thread runs in `default`/)
     assert.match(refused.refused!, /Monitor tool, or in a background shell, instead\.$/)
     assert.deepEqual(h.storage.listCommandWatches("t"), [], "a refusal stores nothing")
 

@@ -667,7 +667,7 @@ const AWAITING_KEY_RE = /^([a-z][a-z_-]*):\s*(\S.*)?$/i
  *  recognised here so they never fall to the body, but are read verbatim rather than as YAML (see
  *  splitAwaitingFrontmatter). Anything else falls through to the body. `needs-input` is the same key
  *  spelled the way the other hyphenated kinds are. */
-const AWAITING_YAML_KEYS = new Set(["shells", "agents", "timers", "prs", "issues", "commands", "threads", "questions", "for", "title", "steps", "status", "needs_input", "needs-input"])
+const AWAITING_YAML_KEYS = new Set(["shells", "agents", "timers", "prs", "issues", "monitors", "commands", "threads", "questions", "for", "title", "steps", "status", "needs_input", "needs-input"])
 
 /** Which singular hint kind each plural sequence key produces. The WIRE SHAPE is unchanged by the
  *  2026-08-24 cutover — every consumer still reads a flat `{kind, value}` list with SINGULAR kinds — so
@@ -681,8 +681,11 @@ const AWAITING_SEQUENCE_KEYS: { [key: string]: AwaitingItemKind | undefined } = 
   // rather than a second spelling under `prs:`, because the two are different registrations: an issue
   // has no CI and no merge, and the correction for an unregistered one names a different command.
   issues: "issue",
-  // `commands:` (2026-10-11) names a command watch registered with `frizzctl watch-command`, by its
-  // `cmw_…` id. Checked like a timer: the row must be armed on THIS thread.
+  // `monitors:` names a monitor registered with `frizzctl monitor`, by its `cmw_…` id. Checked like a
+  // timer: the row must be armed on THIS thread. It was `commands:` from 2026-10-11, when the command was
+  // `frizzctl monitor`, until the name became "monitor" on 2026-11-06; a resumed worker keeps the
+  // contract it started with, so `commands:` is still read, as the same kind.
+  monitors: "command",
   commands: "command",
   // `threads:` (2026-11-04, CHILD THREADS) names a child thread this thread started with `frizzctl
   // spawn-child`, by its slug. Live while the child is working or has not yet reported its rest.
@@ -1050,8 +1053,9 @@ function restAnswerLines(hints: readonly AwaitingHint[] | undefined): { status: 
 }
 
 /** Does this fence name the HUMAN as its wait — `steps:` to perform, or `questions:` still owed an answer?
- *  Either is the answer `needs_input` by construction, whatever the answer line says. */
-function fenceWaitsOnHuman(hints: readonly AwaitingHint[] | undefined): boolean {
+ *  Either is the answer `needs_input` by construction, whatever the answer line says. It is also the one
+ *  handoff a later quiet park cannot take back (server board handoffStands). */
+export function fenceWaitsOnHuman(hints: readonly AwaitingHint[] | undefined): boolean {
   return awaitingSteps(hints).length > 0 || awaitingQuestions(hints).length > 0
 }
 
@@ -1847,7 +1851,7 @@ export function liveOpsLines(ops?: SignoffLiveOps, needsInput = false): string[]
   section("Timers you have armed:", "timers", ops?.timers ?? [])
   section("Pull requests you registered:", "prs", ops?.prs ?? [])
   section("Issues you registered:", "issues", ops?.issues ?? [])
-  section("Command watches you registered:", "commands", ops?.commands ?? [])
+  section("Monitors you registered:", "monitors", ops?.commands ?? [])
   return lines
 }
 
@@ -2478,7 +2482,7 @@ export const CommandWatchRun = z.object({
 }).strict()
 export type CommandWatchRun = z.infer<typeof CommandWatchRun>
 
-/** A MONITOR's reading (`frizzctl monitor`, 2026-11-02): a script the server keeps running, whose every
+/** A MONITOR's reading (`frizzctl monitor add --persistent`, 2026-11-02): a script the server keeps running, whose every
  *  line on stdout is an event that wakes the thread. Carried on a command watch's read-back and on its
  *  board row in place of a cadence, which a monitor does not have. */
 export const MonitorStatus = z.object({
@@ -2524,7 +2528,7 @@ export const ThreadWatchView = z.object({
     expiresAt: z.string(),
     runs: z.number().int().nonnegative(),
     lastRun: CommandWatchRun.optional(),
-    /** A MONITOR's own reading (`frizzctl monitor`), and present on nothing else: the row is a running
+    /** A MONITOR's own reading (`frizzctl monitor add --persistent`), and present on nothing else: the row is a running
      *  script, so its status is how many events it has printed, not a cadence. */
     monitor: MonitorStatus.optional(),
   }).strict().optional(),
@@ -2718,7 +2722,7 @@ export type DropOwnWatchResult = z.infer<typeof DropOwnWatchResult>
 export const OWN_WATCH_MAX_ARMED = 24
 
 // ---- THE WORKER'S COMMAND WATCHES (2026-10-11) -------------------------------------------------------
-// `frizzctl watch-command`. A wait on an OUTSIDE condition a shell command can check — a package version
+// `frizzctl monitor`. A wait on an OUTSIDE condition a shell command can check — a package version
 // appearing on npm, a release run finishing, a URL coming up — run by the SERVER on a cadence, so the
 // wait holds nothing in the thread's own process tree and a resting thread can hibernate under it.
 //
@@ -2767,7 +2771,7 @@ export const CommandWatchView = z.object({
   /** How many checks have run since it was armed, the registration's own first check included. */
   runs: z.number().int().nonnegative(),
   lastRun: CommandWatchRun.optional(),
-  /** Present on a MONITOR (`frizzctl monitor`) and nothing else: a script the server keeps RUNNING, whose
+  /** Present on a MONITOR (`frizzctl monitor add --persistent`) and nothing else: a script the server keeps RUNNING, whose
    *  every printed line is a wake. A monitor has no cadence and no checks, so `every` reads `0s` and
    *  `runs` 0 on one; read this instead. */
   monitor: MonitorStatus.optional(),
@@ -2850,26 +2854,33 @@ export function commandRunClause(run: Pick<CommandWatchRun, "outcome" | "exitCod
  *  carries its reason): the one thing the worker should do instead. */
 export const COMMAND_WATCH_FALLBACK = "Run the check in a background shell instead."
 
-const COMMAND_WATCH_PASSED_HEAD = /^✅ Your command watch `(cmw_[a-z0-9]+)` PASSED — its command exited 0 on check (\d+) \(\d+ checks? over ([^)]+)\):/
-const COMMAND_WATCH_EXPIRED_HEAD = /^⏰ Your command watch `(cmw_[a-z0-9]+)` has expired and is no longer armed\b/
-const COMMAND_WATCH_CANCELLED_HEAD = /^⚠️ Frizz cancelled your command watch `(cmw_[a-z0-9]+)` and will not run it again: (.*)$/m
+const COMMAND_WATCH_PASSED_HEAD = /^✅ Your (?:monitor|command watch) `(cmw_[a-z0-9]+)` PASSED — its command exited 0 on check (\d+) \(\d+ checks? over ([^)]+)\):/
+const COMMAND_WATCH_EXPIRED_HEAD = /^⏰ Your (?:monitor|command watch) `(cmw_[a-z0-9]+)` has expired and is no longer armed\b/
+const COMMAND_WATCH_CANCELLED_HEAD = /^⚠️ Frizz cancelled your (?:monitor|command watch) `(cmw_[a-z0-9]+)` and will not run it again: (.*)$/m
 
 // Each wake's closing paragraph is addressed to the worker about its own registration — carry on, register
 // it again, run it in a shell — so the chat leaves it out. Named once here so the parser cuts exactly what
 // the composer wrote.
-const COMMAND_WATCH_PASSED_TRAILER = "The watch is settled and runs no more. Carry on with whatever you were waiting on it for."
+const COMMAND_WATCH_PASSED_TRAILER = "The monitor is settled and runs no more. Carry on with whatever you were waiting on it for."
 const COMMAND_WATCH_EXPIRED_TRAILER =
-  "If you still mean to wait, find out why it never passed, then register it again with `frizzctl watch-command add` " +
+  "If you still mean to wait, find out why it never passed, then register it again with `frizzctl monitor add` " +
   "and a fresh `--for`. If you do not, and it was the only thing you were waiting on, end in a proper terminal " +
   "state instead of parking on it again."
 const COMMAND_WATCH_CANCELLED_TRAILER = "Nothing about it will wake you now. If you still need the wait, run the check in a background shell instead."
+// The trailers a wake carried before the name became "monitor" (2026-11-06), still cut from the transcripts
+// that hold them, so the chat never draws an instruction addressed to the worker.
+const COMMAND_WATCH_TRAILERS_PASSED = [COMMAND_WATCH_PASSED_TRAILER, "The watch is settled and runs no more. Carry on with whatever you were waiting on it for."]
+const COMMAND_WATCH_TRAILERS_EXPIRED = [
+  COMMAND_WATCH_EXPIRED_TRAILER,
+  COMMAND_WATCH_EXPIRED_TRAILER.replace("`frizzctl monitor add`", "`frizzctl monitor add`"),
+]
 
 /** The wake a command watch sends when a check exits 0 — the one piece of news it exists to deliver. */
 export function commandWatchPassedWakeMessage(input: { id: string; command: string; output: string; runs: number; armedMs: number }): string {
   const checks = `${input.runs} check${input.runs === 1 ? "" : "s"}`
   const output = input.output.trim()
   return [
-    `✅ Your command watch \`${input.id}\` PASSED — its command exited 0 on check ${input.runs} (${checks} over ${formatElapsed(input.armedMs)}):`,
+    `✅ Your monitor \`${input.id}\` PASSED — its command exited 0 on check ${input.runs} (${checks} over ${formatElapsed(input.armedMs)}):`,
     "",
     codeBlock(input.command, "sh"),
     "",
@@ -2884,7 +2895,7 @@ export function commandWatchExpiredWakeMessage(input: { id: string; command: str
   const last = input.lastRun
   const tail = last?.output.trim()
   return [
-    `⏰ Your command watch \`${input.id}\` has expired and is no longer armed — its command never exited 0, and nothing about it will wake you now:`,
+    `⏰ Your monitor \`${input.id}\` has expired and is no longer armed — its command never exited 0, and nothing about it will wake you now:`,
     "",
     codeBlock(input.command, "sh"),
     "",
@@ -2900,7 +2911,7 @@ export function commandWatchExpiredWakeMessage(input: { id: string; command: str
  *  permission mode or sandbox changed under it, so the server may no longer run the command for it. */
 export function commandWatchCancelledWakeMessage(input: { id: string; command: string; reason: string }): string {
   return [
-    `⚠️ Frizz cancelled your command watch \`${input.id}\` and will not run it again: ${input.reason}`,
+    `⚠️ Frizz cancelled your monitor \`${input.id}\` and will not run it again: ${input.reason}`,
     "",
     codeBlock(input.command, "sh"),
     "",
@@ -2943,8 +2954,8 @@ export function parseCommandWatchWake(text: string): CommandWatchWake | null {
     return { kind: "cancelled", id: cancelled[1], command, summary: `Frizz stopped it: ${unfence(reason).replace(/\.$/, "")}.` }
   }
   let rest = t.slice(block.index + block[0].length).trim()
-  const trailer = passed ? COMMAND_WATCH_PASSED_TRAILER : COMMAND_WATCH_EXPIRED_TRAILER
-  if (rest.endsWith(trailer)) rest = rest.slice(0, -trailer.length).trim()
+  const trailer = (passed ? COMMAND_WATCH_TRAILERS_PASSED : COMMAND_WATCH_TRAILERS_EXPIRED).find((t) => rest.endsWith(t))
+  if (trailer) rest = rest.slice(0, -trailer.length).trim()
   // What the check printed is the fenced block the sentence before it introduces ("Its output ended:").
   const printed = /\n\n(`{3,})\n([\s\S]*?)\n\1$/.exec(rest)
   const said = (printed ? rest.slice(0, printed.index) : rest).trim()
@@ -2959,7 +2970,7 @@ function unfence(text: string): string {
 }
 
 // ---- THE WORKER'S MONITORS (2026-11-02) ------------------------------------------------------------
-// `frizzctl monitor`. ONE registration, MANY wakes: a script the SERVER keeps running for the thread, and
+// `frizzctl monitor add --persistent`. ONE registration, MANY wakes: a script the SERVER keeps running for the thread, and
 // every line it prints on stdout is an event that wakes the thread — a log tail filtered to its errors, a
 // loop that prints each new row a query returns, a listener on a socket (a PR or an issue needs none:
 // its watcher already wakes on each comment). The command watch above wakes ONCE, when a
@@ -2994,7 +3005,7 @@ export const MONITOR_EVENT_MAX_LINES = 40
 export const MONITOR_FLOOD_MAX_EVENTS = 30
 export const MONITOR_FLOOD_WINDOW_MS = 10 * 60_000
 /** How long registration watches the new script before answering. A typo, a binary missing from the
- *  server's PATH, or a script that prints its first event at once is reported in `frizzctl monitor add`'s
+ *  server's PATH, or a script that prints its first event at once is reported in `frizzctl monitor add --persistent`'s
  *  own reply, while the worker is still there to read it, instead of as a wake after it rested. */
 export const MONITOR_REGISTRATION_WINDOW_MS = 2_000
 /** The longest description accepted. It is one line: the board row's name and every wake's label. */
@@ -3049,10 +3060,12 @@ export function monitorLabel(input: { command: string; description?: string | nu
   return command.length > 80 ? `${command.slice(0, 79)}…` : command
 }
 
-const MONITOR_EVENT_HEAD = /^📟 Your monitor `(cmw_[a-z0-9]+)` printed (\d+) lines? \(event (\d+)\) — (.+)$/m
-const MONITOR_EXITED_HEAD = /^⏹️ Your monitor `(cmw_[a-z0-9]+)` (exited \d+|was killed by a signal|could not be started) after (\d+) events? and is no longer armed — (.+)$/m
-const MONITOR_EXPIRED_HEAD = /^⏰ Your monitor `(cmw_[a-z0-9]+)` ran out its `for` after (\d+) events? and was stopped — (.+)$/m
-const MONITOR_CANCELLED_HEAD = /^(⚠️ Frizz|🛑 The human) stopped your monitor `(cmw_[a-z0-9]+)`(?: from the board)? after (\d+) events? — (.+)$/m
+// For an hour on 2026-11-06 these heads said "command watch". A transcript keeps the wakes it was sent, so
+// both are read back.
+const MONITOR_EVENT_HEAD = /^📟 Your (?:command watch|monitor) `(cmw_[a-z0-9]+)` printed (\d+) lines? \(event (\d+)\) — (.+)$/m
+const MONITOR_EXITED_HEAD = /^⏹️ Your (?:command watch|monitor) `(cmw_[a-z0-9]+)` (exited \d+|was killed by a signal|could not be started) after (\d+) events? and is no longer armed — (.+)$/m
+const MONITOR_EXPIRED_HEAD = /^⏰ Your (?:command watch|monitor) `(cmw_[a-z0-9]+)` ran out its `for` after (\d+) events? and was stopped — (.+)$/m
+const MONITOR_CANCELLED_HEAD = /^(⚠️ Frizz|🛑 The human) stopped your (?:command watch|monitor) `(cmw_[a-z0-9]+)`(?: from the board)? after (\d+) events? — (.+)$/m
 // The head frizz-server 0.15.42 wrote: no label, the reason after a colon, and only Frizz could stop one.
 const MONITOR_CANCELLED_HEAD_0_15_42 = /^⚠️ Frizz stopped your monitor `(cmw_[a-z0-9]+)` after (\d+) events?: (.*)$/m
 
@@ -3061,9 +3074,9 @@ const MONITOR_CANCELLED_HEAD_0_15_42 = /^⚠️ Frizz stopped your monitor `(cmw
 const MONITOR_EVENT_TRAILER =
   "The monitor is still running and wakes you again on its next line. Drop it with `frizzctl monitor drop <id>` once you no longer need it."
 const MONITOR_EXITED_TRAILER =
-  "Its script ended, so nothing more will come from it. If you still need the watch, find out why it stopped and register it again with `frizzctl monitor add`."
+  "Its script ended, so nothing more will come from it. If you still need the monitor, find out why it stopped and register it again with `frizzctl monitor add --persistent`."
 const MONITOR_EXPIRED_TRAILER =
-  "If you still need the watch, register it again with `frizzctl monitor add` and a fresh `--for`. If it was the only thing you were waiting on, end in a proper terminal state instead of parking on it again."
+  "If you still need the monitor, register it again with `frizzctl monitor add --persistent` and a fresh `--for`. If it was the only thing you were waiting on, end in a proper terminal state instead of parking on it again."
 const MONITOR_CANCELLED_TRAILER = "Nothing about it will wake you now."
 
 /** The wake one event sends: the lines a monitor printed, in one batch. */
@@ -3618,8 +3631,19 @@ export const SettledQuestionView = z.object({
 }).strict()
 export type SettledQuestionView = z.infer<typeof SettledQuestionView>
 
+/** A fence-asked question that closed WITHOUT an answer, with what it asked. The board's `closedQuestions`
+ *  carries only the row's id, handle and state, and the fence that asked it carries the text; but a later
+ *  `id:`-only fence that named it while it was open carries nothing, and draws a copy of the closed card
+ *  (ChatView's question-fence path). Per thread for the same reason as SettledQuestionView. */
+export const ClosedQuestionSpecView = z.object({
+  id: z.string(),
+  spec: AskedQuestionSchema,
+}).strict()
+export type ClosedQuestionSpecView = z.infer<typeof ClosedQuestionSpecView>
+
 export const ThreadSettledQuestionsResult = z.object({
   questions: z.array(SettledQuestionView),
+  closed: z.array(ClosedQuestionSpecView),
 }).strict()
 export type ThreadSettledQuestionsResult = z.infer<typeof ThreadSettledQuestionsResult>
 
@@ -4198,6 +4222,13 @@ export const ThreadView = z.object({
   // Once every ordinary rest also queues, runtime=exited + needsYou is no longer enough for clients
   // to distinguish a failed worker from a clean completed process.
   crashed: z.boolean().optional(),
+  // SERVER-DERIVED (board.derivePlainReport): this rest queued the thread and asks the human for nothing.
+  // No question, no `steps:`, no permission prompt, no failure; the worker said what happened, or signed
+  // off. On a pinned thread it draws no card where the pinned row can show it instead (boardQueuedThread).
+  // `needsYou` stays set, because the rest is still waiting to be read: the row's band, its mark and the
+  // thread's resting card all read it as the handoff it is. Absent from an older server, which reads as
+  // every rest carding, today's behaviour on a pin before 2026-11-06.
+  plainReport: z.boolean().optional(),
   // The queued reason is "resting while its OWN background work (sub-agents / shells) is still live,
   // with no human ask": the agent came to rest awaiting results it dispatched, not awaiting the human.
   // The card renders the informational awaiting-background banner + an event-Snooze that hides it until
@@ -4304,6 +4335,20 @@ export type ThreadView = z.infer<typeof ThreadView>
  */
 export function queuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou" | "state">): boolean {
   return t.kind === "session" && t.foreign !== true && t.needsYou === true && t.state !== "archived"
+}
+
+/**
+ * The queue as a project's BOARD draws it, and so as its badges count it: `queuedThread`, less a pinned
+ * thread's plain report (maintainer 2026-11-06, of a pinned thread at rest: "Queue only its asks"). A pin
+ * marks a standing thread the human goes back to on their own schedule, and its row is already on the
+ * shelf at the top of the rail, so a report shows there as unread rather than taking a turn in the queue.
+ * Its asks and its failures still card (board.derivePlainReport says which is which).
+ *
+ * The board's pin only. The Console's "By status" has a shelf of its own and asks its own question
+ * (lib/consoleBoard holdsCardOnConsole), because a report loses its card only where a pinned row shows it.
+ */
+export function boardQueuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou" | "state" | "plainReport" | "pinnedAt">): boolean {
+  return queuedThread(t) && !(t.plainReport === true && typeof t.pinnedAt === "string")
 }
 
 // ── CHILD THREADS ──────────────────────────────────────────────────────────────────────────────────
@@ -7026,6 +7071,7 @@ export * from "./launch-prefix.ts"
 export * from "./receipt-bus.ts"
 export * from "./relay-protocol.ts"
 export * from "./shell-writes.ts"
+export * from "./sign-off.ts"
 export * from "./thread-slug.ts"
 
 // ---- Rendered conversation (parsed mechanically from the session JSONL — no AI) ----
@@ -7377,6 +7423,18 @@ export const TranscriptMessage = z.object({
   //
   // Additive + optional: an old client ignores it and renders the fence as it did before.
   fenceRefused: z.literal(true).optional(),
+  // The agent CAME TO REST on this message, and the rest was written for the human: a ```done, a
+  // `frizzctl done`, a ```question, an ```awaiting the human is needed for (`status: needs_input`, `steps:`,
+  // or no answer at all), or no fence — everything but a quiet park (`status: working|watching`), whose
+  // whole point is that nobody is meant to read it. Set by the server's projection (sign-offs.ts) on the
+  // newest prose the agent wrote before each `rest` divider, so a surface can tell the message a turn
+  // ended on FOR THE READER from the narration around it, and keep the newest one in view after quiet
+  // rounds pile up behind it (maintainer 2026-11-06: a card read "7 more rounds" with the hand-off folded
+  // inside, under two PR-review wakes the worker had quietly parked on).
+  //
+  // Additive + optional: an old client ignores it, and an old server never sets it, so the card falls back
+  // to showing the first and last rounds only.
+  signOff: z.literal(true).optional(),
 })
 export type TranscriptMessage = z.infer<typeof TranscriptMessage>
 

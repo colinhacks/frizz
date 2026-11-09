@@ -21,10 +21,10 @@ test("mobile thread Back returns direct/reloaded links to their project and pops
     page.on("pageerror", error => errors.push(String(error)))
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
     const boardPath = new URL(url!).pathname
-    const threadUrl = `${url}/thread/done-thread`
+    const threadUrl = `${url}?thread=done-thread`
     const outside = "data:text/html,<h1>Outside Frizz</h1>"
     const waitForThread = async (slug = "done-thread") => {
-      await page.waitForFunction(s => location.pathname.endsWith(`/thread/${s}`), {}, slug)
+      await page.waitForFunction(s => new URLSearchParams(location.search).get("thread") === s, {}, slug)
       await page.waitForSelector("[data-mobile-thread-back]", { visible: true })
       await page.waitForFunction(() => {
         const panel = document.querySelector("[data-mobile-thread-back]")?.closest("[role='dialog']")
@@ -42,7 +42,7 @@ test("mobile thread Back returns direct/reloaded links to their project and pops
     }
     const backToBoard = async () => {
       await page.click("[data-mobile-thread-back]")
-      await page.waitForFunction(path => location.pathname === path && !document.querySelector("[data-mobile-thread-back]"), {}, boardPath)
+      await page.waitForFunction(path => location.pathname === path && location.search === "" && !document.querySelector("[data-mobile-thread-back]"), {}, boardPath)
       assert.ok(await page.$("[data-mobile-board]"))
     }
     const openFromBoard = async () => {

@@ -17,6 +17,7 @@ ContextStartupError,
 import { createApp, type AppOptions } from "./app.ts"
 import { compress, negotiateEncoding, shouldCompress, type ContentEncoding } from "./compression.ts"
 import { createAppSocketServer, makeTranscriptReader } from "./app-socket.ts"
+import { catchUpTranscriptFold } from "./transcript.ts"
 import {
   createRetryableCleanup,
   createShutdownBarrier,
@@ -745,6 +746,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
       (slug) => c.tailer.ownerGone?.(slug) ?? false,
       c.sessionPeerThread,
     ),
+    catchUpTranscript: (slug: string) => catchUpTranscriptFold(c.project, c.storage, slug, c.backendFor),
     // A reader's live watch on the file it shows. Gated as the read is (one set of openable roots for
     // both readers, plus the Markdown reader's canonical-extension check) and watched by CANONICAL
     // path, so a symlinked `.md` and its target are one watch.

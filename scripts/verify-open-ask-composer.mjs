@@ -145,7 +145,7 @@ try {
   await page.screenshot({ path: `${shots}/card-after-freetext-send.png` })
   // The steer must land in the THREAD as the user's own message, with the ask never answered. The card
   // is gone from the board by now, so read the thread's own page rather than the (empty) queue.
-  await page.goto(`${url}/thread/${slug}`, { waitUntil: "networkidle2", timeout: 30000 })
+  await page.goto(`${url}?thread=${slug}`, { waitUntil: "networkidle2", timeout: 30000 })
   await settle(2500)
   const thread = await page.evaluate(`({
     text: document.body.innerText,

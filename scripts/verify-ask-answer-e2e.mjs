@@ -40,7 +40,7 @@ if (mode === "dispatch") {
     if (Date.now() > deadline) throw new Error("TIMEOUT: no question card appeared")
     await sleep(3_000)
   }
-  console.log(JSON.stringify({ slug, sessionId, url: `http://127.0.0.1:${port}/thread/${slug}/full` }))
+  console.log(JSON.stringify({ slug, sessionId, url: `http://127.0.0.1:${port}/thread/${slug}` }))
 } else {
   const sessionId = arg
   if (!sessionId) throw new Error("usage: verify <sessionId>")

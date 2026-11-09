@@ -156,7 +156,7 @@ const messages: ChatMessage[] = [
   wake("w22", commandWatchPassedWakeMessage({ id: "cmw_3d480448ae89", command: "/Users/colin/.local/share/nub/node/26.11.1/bin/node /Users/colin/Documents/frizz/.frizz/threads/a74bbfc8/screen-unlocked.mjs", output: "newest: keywardd: screen unlocked", runs: 49, armedMs: 8_040_000 })),
   wake("w23", commandWatchExpiredWakeMessage({ id: "cmw_6197f27a1cb0", command: "npm view frizz-server@0.13.14 version", lastRun: { outcome: "exit", exitCode: 1, output: "npm error code E404\nnpm error 404 No match found for version 0.13.14" } })),
   wake("w24", commandWatchCancelledWakeMessage({ id: "cmw_a1b2c3d4e5f6", command: "gh run view 18273645 --exit-status", reason: `this thread runs in \`default\` permission mode. ${COMMAND_WATCH_FALLBACK}` })),
-  // A MONITOR (`frizzctl monitor`, 2026-11-02): one hairline per EVENT, named by the worker's
+  // A MONITOR (`frizzctl watch-command add --persistent`, 2026-11-02): one hairline per EVENT, named by the worker's
   // description, the lines it printed behind the disclosure; then the three ways one ends. The last pair
   // went out MERGED — the script's final line and its exit, which the scheduler queues together — and
   // must draw exactly the two hairlines it would apart.

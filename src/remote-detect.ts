@@ -4,8 +4,8 @@
  * Each probe is best-effort and bounded: a missing binary, a signed-out CLI or a hung daemon must
  * turn into a line on the screen ("cloudflared: not found"), never a pane that does not open. Nothing
  * here is trusted for anything but display — a tunnel that is not really there fails where it fails
- * today, at launch. There is no GitHub probe: a custom-name claim signs in through its own device flow
- * (github-device-flow.ts) and never reads the `gh` CLI.
+ * today, at launch. There is no GitHub probe: a custom-name claim uses Frizz's own GitHub sign-in
+ * (github-claim-identity.ts) and never reads the `gh` CLI.
  */
 import { execFile } from "node:child_process";
 

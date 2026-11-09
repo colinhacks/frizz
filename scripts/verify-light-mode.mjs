@@ -124,7 +124,7 @@ try {
         await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 })
       }
       await closeSettings()
-      await page.goto(`${stack.url}/thread/theme-rich/full`, { waitUntil: "networkidle2" })
+      await page.goto(`${stack.url}/thread/theme-rich`, { waitUntil: "networkidle2" })
       await page.waitForSelector('[data-mermaid-state="ready"]', { timeout: 45_000 })
       assert.equal(await page.$$eval('[data-mermaid-state="ready"]', nodes => nodes.length), 2)
       await page.waitForSelector('iframe[title="theme counter"]', { timeout: 20_000 })

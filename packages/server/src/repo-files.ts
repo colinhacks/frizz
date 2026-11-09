@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process"
 import { realpathSync } from "node:fs"
 import path from "node:path"
+import { execFileOffThread, type OffThreadExecError } from "./off-thread-exec.ts"
 
 // WHICH OF A THREAD'S WRITTEN FILES BELONG ON THE RAIL: the ones git would carry, and nothing else.
 //
@@ -34,22 +34,27 @@ import path from "node:path"
 // Enough for a whole effort's writes; a thread naming more than this is pathological and the tail is not
 // worth a second git process.
 const MAX_PROBE = 512
-// The rail is recomputed on every transcript read, and reads are polled. One `check-ignore` is ~20-50ms,
-// which is not free at poll rates, and a `.gitignore` changes far more slowly than a board polls.
+// The rail is recomputed on every transcript read, and reads are polled. One `check-ignore` is ~20-50ms on a
+// quiet machine and 225ms for a whole probe on this one under load (profiled 2026-11-06), and a `.gitignore`
+// changes far more slowly than a board polls.
 const CACHE_TTL_MS = 15_000
 
-type CacheEntry = { at: number; ignored: Set<string> }
+// Promises, so a burst of reads for one write-set shares one probe, and a failed one is settled like any other.
+type CacheEntry = { at: number; ignored: Promise<Set<string>> }
 const cache = new Map<string, CacheEntry>()
+// One listing per project, not per write-set: the key above changes with every file a worker writes, and
+// where the project's checkouts are does not.
+type CheckoutEntry = { at: number; checkouts: Promise<string[] | undefined> }
+const checkoutCache = new Map<string, CheckoutEntry>()
 
-function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    stdio: ["pipe", "pipe", "pipe"],
-    maxBuffer: 8 << 20,
-  })
-}
+// OFF THIS THREAD (off-thread-exec.ts). These ran as `execFileSync` on every drawer open, which held the one
+// thread that serves all of Frizz for 6s out of every 5 minutes on the live server, up to 489ms at a time.
+const git = (args: string[], cwd: string, input?: string) => execFileOffThread("git", args, {
+  cwd,
+  env: { ...process.env, LC_ALL: "C" },
+  maxBuffer: 8 << 20,
+  ...(input === undefined ? {} : { input }),
+})
 
 /**
  * The subset of `paths` the repository would carry — absolute paths in, absolute paths out.
@@ -59,7 +64,7 @@ function git(args: string[], cwd: string): string {
  * repository filters nothing, for the same reason — there is no ignore list to consult, so every write
  * is repo work by default rather than invisible by default.
  */
-export function repoCarriedFiles(projectDir: string, paths: readonly string[]): string[] {
+export async function repoCarriedFiles(projectDir: string, paths: readonly string[]): Promise<string[]> {
   if (paths.length === 0) return []
   const inside: string[] = []
   for (const p of paths) {
@@ -71,7 +76,7 @@ export function repoCarriedFiles(projectDir: string, paths: readonly string[]): 
   const key = `${projectDir}\0${inside.join("\0")}`
   const now = Date.now()
   const hit = cache.get(key)
-  let ignored: Set<string>
+  let ignored: Promise<Set<string>>
   if (hit && now - hit.at < CACHE_TTL_MS) {
     ignored = hit.ignored
   } else {
@@ -81,13 +86,14 @@ export function repoCarriedFiles(projectDir: string, paths: readonly string[]): 
     // per distinct thread-and-write-set. Cheap bound: drop the oldest once it grows past a few boards.
     if (cache.size > 256) for (const k of [...cache.keys()].slice(0, 64)) cache.delete(k)
   }
-  return paths.filter((p) => !ignored.has(p))
+  const verdict = await ignored
+  return paths.filter((p) => !verdict.has(p))
 }
 
 /** `repoCarriedFiles` over the rail's own rows, preserving their order and their diffstats. */
-export function repoCarriedEditedFiles<T extends { path: string }>(projectDir: string, files: readonly T[]): T[] {
+export async function repoCarriedEditedFiles<T extends { path: string }>(projectDir: string, files: readonly T[]): Promise<T[]> {
   if (files.length === 0) return []
-  const kept = new Set(repoCarriedFiles(projectDir, files.map((f) => f.path)))
+  const kept = new Set(await repoCarriedFiles(projectDir, files.map((f) => f.path)))
   return files.filter((f) => kept.has(f.path))
 }
 
@@ -125,12 +131,21 @@ function realLocation(p: string): string {
  * Every checkout that could hold one of the project's files — the linked worktrees INSIDE `projectDir`,
  * deepest first, then the project itself — as real paths. Undefined when it is not a git checkout.
  */
-function checkoutsWithin(projectDir: string): string[] | undefined {
+function checkoutsWithin(projectDir: string): Promise<string[] | undefined> {
+  const now = Date.now()
+  const hit = checkoutCache.get(projectDir)
+  if (hit && now - hit.at < CACHE_TTL_MS) return hit.checkouts
+  const checkouts = listCheckouts(projectDir)
+  checkoutCache.set(projectDir, { at: now, checkouts })
+  return checkouts
+}
+
+async function listCheckouts(projectDir: string): Promise<string[] | undefined> {
   let listing: string
   try {
-    // Throws outside a repository, which is the case that filters nothing. It replaced a bare
+    // Rejects outside a repository, which is the case that filters nothing. It replaced a bare
     // `rev-parse --is-inside-work-tree` here, so asking costs no process the probe did not already spend.
-    listing = git(["worktree", "list", "--porcelain"], projectDir)
+    listing = (await git(["worktree", "list", "--porcelain"], projectDir)).stdout
   } catch {
     return undefined
   }
@@ -143,8 +158,8 @@ function checkoutsWithin(projectDir: string): string[] | undefined {
   return [...nested.sort((a, b) => b.length - a.length), project]
 }
 
-function probeIgnored(projectDir: string, inside: readonly string[]): Set<string> {
-  const checkouts = checkoutsWithin(projectDir)
+async function probeIgnored(projectDir: string, inside: readonly string[]): Promise<Set<string>> {
+  const checkouts = await checkoutsWithin(projectDir)
   if (!checkouts) return new Set()
   // checkout → real path → every spelling the caller used for it. Git is asked about real paths and
   // answers in them; the rail's rows carry the worker's spelling, so the verdict is mapped back.
@@ -161,35 +176,28 @@ function probeIgnored(projectDir: string, inside: readonly string[]): Set<string
     else byReal.set(real, [p])
   }
   const ignored = new Set<string>()
-  for (const [checkout, byReal] of asked) {
-    for (const real of ignoredIn(checkout, [...byReal.keys()])) {
+  const verdicts = await Promise.all([...asked].map(async ([checkout, byReal]) => ({ byReal, reals: await ignoredIn(checkout, [...byReal.keys()]) })))
+  for (const { byReal, reals } of verdicts) {
+    for (const real of reals) {
       for (const spelling of byReal.get(real) ?? []) ignored.add(spelling)
     }
   }
   return ignored
 }
 
-function ignoredIn(checkout: string, paths: readonly string[]): Set<string> {
+async function ignoredIn(checkout: string, paths: readonly string[]): Promise<Set<string>> {
   // `check-ignore -z --stdin` prints the paths it IS ignoring, NUL-separated. INDEX-AWARE, i.e. WITHOUT
   // `--no-index`: a file force-added under an ignored directory (`git add -f secret/kept.txt`) is one
   // the repository genuinely carries, and the default mode says so while `--no-index` calls it ignored
   // and would drop it from the rail. Verified against `git ls-files` as ground truth, 2026-09-04.
   try {
-    const out = execFileSync("git", ["check-ignore", "-z", "--stdin"], {
-      cwd: checkout,
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C" },
-      input: paths.join("\0"),
-      stdio: ["pipe", "pipe", "pipe"],
-      maxBuffer: 8 << 20,
-    })
-    return new Set(out.split("\0").filter(Boolean))
+    const { stdout } = await git(["check-ignore", "-z", "--stdin"], checkout, paths.join("\0"))
+    return new Set(stdout.split("\0").filter(Boolean))
   } catch (error) {
-    // Exit 1 means "nothing here is ignored" and arrives as a thrown error with an empty stdout — a
-    // verdict, not a failure. Anything else (git missing, a broken repo) filters nothing.
-    const status = (error as { status?: number }).status
-    const stdout = (error as { stdout?: string }).stdout
-    if (status === 1) return new Set((stdout ?? "").split("\0").filter(Boolean))
+    // Exit 1 means "nothing here is ignored" and arrives as a rejection with an empty stdout — a verdict,
+    // not a failure. Anything else (git missing, a broken repo) filters nothing.
+    const { code, stdout } = error as OffThreadExecError
+    if (code === 1) return new Set((stdout ?? "").split("\0").filter(Boolean))
     return new Set()
   }
 }

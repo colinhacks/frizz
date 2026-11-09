@@ -83,7 +83,7 @@ test("a notification click opens the thread in the project it was raised for, no
     notify(event)
     here.pathname = "/project/beta"
     raised.at(-1)!.onclick!()
-    assert.deepEqual(assigned, ["/project/alpha/thread/fix-auth"], "the click follows the notification's own project")
+    assert.deepEqual(assigned, ["/project/alpha?thread=fix-auth"], "the click follows the notification's own project, to the thread on its board")
     assert.equal(store.drawers.length, 0, "and opens nothing on the project that happens to be showing")
   } finally {
     store.drawers = []

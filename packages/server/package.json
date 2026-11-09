@@ -16,6 +16,7 @@
     "./project-serving": "./src/project-serving.ts",
     "./local-origin": "./src/local-origin.ts",
     "./access-codes": "./src/access-codes.ts",
+    "./github-credential": "./src/github-credential.ts",
     "./qr": "./src/qr.ts",
     "./restart-supervisor": "./src/restart-supervisor.ts",
     "./dev-supervisor": "./src/dev-supervisor.ts",

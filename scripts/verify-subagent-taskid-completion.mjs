@@ -92,7 +92,7 @@ const row = board.threads?.find((t) => t.id === SLUG)
 if (!row) throw new Error(`fixture thread ${SLUG} never reached the board`)
 const live = (row.subAgents ?? []).map((s) => `${s.label} [${s.state}]`)
 
-console.log(`URL   http://127.0.0.1:${port}/thread/${SLUG}/full`)
+console.log(`URL   http://127.0.0.1:${port}/thread/${SLUG}`)
 console.log(`SLUG  ${SLUG}`)
 console.log(`LIVE  ${JSON.stringify(live)}`)
 

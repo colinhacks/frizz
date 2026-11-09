@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
 import { claimNameIsValid, generateAnonymousClaimName, isAnonymousClaimName, normalizeClaimName, type RelayAccess } from "@frizz/shared";
 import { loadOrCreateClaimIdentity } from "./identity.ts";
-import { deviceCodeMessage, githubDeviceFlow, type GithubAuthorizer } from "./github-device-flow.ts";
+import { frizzGithubSignIn, type GithubAuthorizer } from "./github-claim-identity.ts";
 import { ClaimError, claimName } from "./registrar-client.ts";
 import { connectRelay } from "./relay-connection.ts";
 
@@ -28,7 +28,7 @@ import { connectRelay } from "./relay-connection.ts";
  *
  *   (empty)            -> CLAIM a private unguessable name on frizz.sh — no account, no sign-in
  *   colin              -> CLAIM `colin.frizz.sh` from the registrar, bound to your GitHub account
- *                         through a no-permission GitHub sign-in (github-device-flow.ts). PAUSED
+ *                         through Frizz's own GitHub sign-in (github-claim-identity.ts). PAUSED
  *                         while CUSTOM_NAMES_OFFERED is false: the answer is refused up front.
  *   board.example.com  -> a tunnel you made yourself, which Frizz only runs
  *
@@ -105,15 +105,15 @@ export const REGISTRAR_IS_LIVE = true;
 /**
  * Are CUSTOM names (`colin.frizz.sh`, bound to a GitHub account) offered?
  *
- * No, as of 2026-10-08, until Frizz's GitHub OAuth app is registered: the client id in
- * github-device-flow.ts is still the placeholder, so a custom claim could only refuse with
- * "not-configured" after the person had already picked it. While this is false the R pane does not
- * list "Custom subdomain", the prompt does not mention it, and a word answer refuses before any GitHub
- * sign-in or registrar call. Private names, and every bring-your-own setup, are unaffected.
+ * No, as of 2026-10-08. A claim proves its GitHub account through Frizz's own GitHub sign-in
+ * (github-claim-identity.ts, since 2026-11-07), and the maintainer runs a name on his own board before a
+ * release turns this on for everyone. While this is false the R pane does not list "Custom subdomain",
+ * the prompt does not mention it, and a word answer refuses before GitHub or the registrar hears
+ * anything. Private names, and every bring-your-own setup, are unaffected.
  *
- * Flipping it to `true` (with a real client id) brings the whole path back — nothing behind it was
- * removed. A name already claimed keeps renewing either way: a renewal is signed by the keypair and
- * never touches GitHub (resolveRunToken).
+ * Flipping it to `true` brings the whole path back — nothing behind it was removed. A name already
+ * claimed keeps renewing either way: a renewal is signed by the keypair and never touches GitHub
+ * (resolveRunToken).
  *
  * `FRIZZ_CUSTOM_NAMES=1` turns the offer on for one process, which is how the tests and
  * scripts/verify-claim-e2e.mjs keep driving the path while it is withdrawn. Read through
@@ -178,7 +178,7 @@ export function zoneClaimLabel(hostname: string): string | null {
  * tunnel that nothing can reach is the failure this exists to end.
  *
  * While custom names are withdrawn (CUSTOM_NAMES_OFFERED), a saved custom label that still needs this
- * move refuses with a message saying so, rather than starting a GitHub sign-in at launch. A relay
+ * move refuses with a message saying so, rather than claiming again at launch. A relay
  * claim on a custom name is untouched: it returns above, and the caller renews it by keypair alone.
  */
 export async function reconcileCloudConfig(
@@ -187,9 +187,7 @@ export async function reconcileCloudConfig(
   home = homedir(),
   onNotice?: (message: string) => void,
   origin?: string,
-  // A reconcile runs at launch, before any pane is open, so the sign-in code is shown the way every
-  // other launch notice is.
-  github: GithubAuthorizer = githubDeviceFlow(onNotice ? { onPrompt: (prompt) => onNotice(deviceCodeMessage(prompt)) } : {}),
+  github: GithubAuthorizer = frizzGithubSignIn(),
 ): Promise<CloudConfig> {
   if (isRelayConfig(config)) return config;
   const label = config.claim ?? zoneClaimLabel(config.hostname);
@@ -314,7 +312,7 @@ export async function promptForCloudName(): Promise<string> {
     return (
       await rl.question(
         customNamesOffered()
-          ? "Name for this board — press enter for a random name (no account), a word claims <name>.frizz.sh (needs GitHub), or paste a hostname you already run a tunnel for: "
+          ? "Name for this board — press enter for a random name (no account), your GitHub username claims <username>.frizz.sh (needs Frizz's GitHub sign-in), or paste a hostname you already run a tunnel for: "
           : "Name for this board — press enter for a random name (no account), or paste a hostname you already run a tunnel for: ",
       )
     ).trim();
@@ -341,12 +339,26 @@ export async function promptForTunnelName(hostname: string, fallback: string): P
  * The run token is written HERE rather than returned, because the caller's job is to start a board and
  * every path out of this function has to leave the same thing on disk for the next launch to find.
  */
+export interface EstablishOptions {
+  /**
+   * Where the claim's progress lines go ("claiming ada.frizz.sh for GitHub user Ada"). console.log for the
+   * launch prompt; the R pane passes its own, since a line printed under it lands inside its paint.
+   */
+  say?: (line: string) => void;
+  /**
+   * Whether an unreachable registrar's message ends by pointing at the launch prompt's other answer, a
+   * hostname. True for the prompt; the R pane lists its tunnel setups as rows of their own.
+   */
+  promptHint?: boolean;
+}
+
 export async function establishCloudConfig(
   answer: string,
   port: number,
   home = homedir(),
   origin?: string,
-  github: GithubAuthorizer = githubDeviceFlow(),
+  github: GithubAuthorizer = frizzGithubSignIn(),
+  { say = console.log, promptHint = true }: EstablishOptions = {},
 ): Promise<CloudConfig> {
   if (answer.includes(".")) {
     // A hostname: the operator owns the tunnel, so ASK which one. Deriving it from the hostname's
@@ -379,25 +391,42 @@ export async function establishCloudConfig(
   }
   const name = answer === "" ? generateAnonymousClaimName() : normalizeClaimName(answer);
   const identity = await loadOrCreateClaimIdentity(home);
-  let token: string | undefined;
-  if (!anonymous) {
-    // A name is bound to a GitHub account, so say WHICH one before binding it. Someone signed in as a
-    // work account would otherwise find out only when they wanted the name somewhere else. The token is
-    // the zero-scope one the device flow mints — never the `gh` CLI's, which can push to every repo.
-    const authorization = await github.authorize();
-    token = authorization.token;
-    if (authorization.login) console.log(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
-  } else {
-    console.log("  claiming a frizz.sh subdomain — no account needed");
-  }
+  const claimWith = (github?: string) =>
+    claimName({ name, port, identity, ...(github ? { github } : {}), ...(origin ? { origin } : {}) });
   let result;
   try {
-    result = await claimName({ name, port, identity, ...(token ? { github: token } : {}), ...(origin ? { origin } : {}) });
+    if (anonymous) {
+      say("  claiming a frizz.sh subdomain — no account needed");
+      result = await claimWith();
+    } else {
+      // The GitHub token goes only where the registrar asks for it. A name this key already holds
+      // renews by the keypair alone, so re-entering it, or a launch reconciling a saved name, sends no
+      // token at all; a new name is answered `github-required` and only then gets one.
+      try {
+        result = await claimWith();
+      } catch (error) {
+        if (!(error instanceof ClaimError && error.code === "github-required")) throw error;
+        // A name is bound to a GitHub account, so say WHICH one before binding it. Someone signed in as
+        // a work account would otherwise find out only when they wanted the name somewhere else. The
+        // token is Frizz's own GitHub sign-in — never the `gh` CLI's, which can push to every repo.
+        const authorization = await github.authorize();
+        // The registrar takes only the account's own username, so a name that is not it never carries
+        // the token at all.
+        if (authorization.login && authorization.login.toLowerCase() !== name) {
+          throw new ClaimError(
+            `a custom frizz.sh name is your own GitHub username, which is ${authorization.login} — claim ${authorization.login.toLowerCase()} instead`,
+            "not-your-github-username",
+          );
+        }
+        if (authorization.login) say(`  claiming ${name}.frizz.sh for GitHub user ${authorization.login}`);
+        result = await claimWith(authorization.token);
+      }
+    }
   } catch (error) {
     // A FIRST claim that cannot reach the registrar leaves the operator with nothing — unlike a
     // renewal, which falls back to its cached token. Point at the path that works without us rather
     // than leaving them staring at a network error for a service they have never heard of.
-    if (error instanceof ClaimError && error.code === "unreachable") {
+    if (promptHint && error instanceof ClaimError && error.code === "unreachable") {
       throw new ClaimError(
         `${error.message}\n       You can still reach this board through a tunnel of your own — see docs/remote-access.md, then answer with its hostname instead of a name.`,
         error.code,
@@ -437,12 +466,26 @@ export async function resolveRunToken(
     writeTunnelToken(result.token, home);
     return result.token;
   } catch (error) {
-    if (cached && error instanceof ClaimError && error.code === "unreachable") {
-      onWarning?.(`could not reach the Frizz registrar to renew ${config.hostname}; using the token from last time`);
-      return cached;
+    // A registrar that is down, or failing on its own side, is not a refusal: the lease runs 30 days,
+    // so a relay board serves on (the relay checks its key, not the registrar), and a tunnel board runs
+    // the token from last time. Only an answer that refuses the name stops the launch.
+    if (error instanceof ClaimError && registrarFailed(error.code)) {
+      if (isRelayConfig(config)) {
+        onWarning?.(`could not renew ${config.hostname} with the Frizz registrar (${error.code}); serving it on its current lease`);
+        return null;
+      }
+      if (cached) {
+        onWarning?.(`could not reach the Frizz registrar to renew ${config.hostname}; using the token from last time`);
+        return cached;
+      }
     }
     throw error;
   }
+}
+
+/** The registrar could not answer, as opposed to answering no. */
+function registrarFailed(code: string): boolean {
+  return code === "unreachable" || code === "malformed-response" || code === "provisioning-failed" || /^http-5\d\d$/.test(code);
 }
 
 /** Where cloudflared's config for this tunnel lives, unless the operator named one. */

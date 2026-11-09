@@ -1,11 +1,11 @@
-// A MONITOR, end to end (`frizzctl monitor`, 2026-11-02): one registered script, a wake per line it
-// prints — driven through the real path. A worker runs `frizzctl monitor add` as a real Bash tool call; the
+// A MONITOR, end to end (`frizzctl monitor add --persistent`, 2026-11-02): one registered script, a wake per line it
+// prints — driven through the real path. A worker runs `frizzctl monitor add --persistent` as a real Bash tool call; the
 // RPC starts the script on the server; each line it prints is recorded, queued in the outbox, claimed by
 // the scheduler, handed to the broker daemon and written into the worker's transcript as a user record,
 // which the worker answers. Only the model is replaced: the worker is scripts/scripted-claude.mjs.
 //
 // What it pins, on the running server and in the worker's own transcript:
-//   A. The worker's own `frizzctl monitor add` registers it (the tool result names a `cmw_…` id). The
+//   A. The worker's own `frizzctl monitor add --persistent` registers it (the tool result names a `cmw_…` id). The
 //      script's first line reaches the worker as ONE wake. Its second and third lines and its exit arrive
 //      as ONE merged delivery: the lines are held by the outbox's five-minute quiet window, and the exit
 //      ends the watch, so it is not held and carries them with it — in order, each line in its own part.
@@ -13,7 +13,7 @@
 //      process group, and no wake is delivered twice.
 //   B. The board and a drop. A second monitor registered through the same RPC shows on the board as a
 //      `command` watch row with its description and its events; dropping it kills its script at once.
-//   C. The worker RESTS ON ITS MONITOR, the way the contract tells it to: `commands: [cmw_…]` with
+//   C. The worker RESTS ON ITS MONITOR, the way the contract tells it to: `monitors: [cmw_…]` with
 //      `status: watching`. The thread sits in Snoozed, out of the queue. A line wakes it; it rests again.
 //      Its idle daemon is hibernated while the script keeps running on the server, and the next lines
 //      cold-resume it.
@@ -149,7 +149,7 @@ writeFileSync(turns, JSON.stringify({
   think: 200,
   // SINGLE-quoted, as a worker must: the tool runs through a shell, which would expand `$i` inside double
   // quotes before `frizzctl` ever saw the script (the first run of this file did exactly that).
-  turns: [{ name: "registers", tools: [{ command: `frizzctl monitor add '${SCRIPT.replaceAll("'", "'\\''")}' --description "verify ticks" --for 1h`, description: "Registering a monitor" }], text: REST }],
+  turns: [{ name: "registers", tools: [{ command: `frizzctl monitor add '${SCRIPT.replaceAll("'", "'\\''")}' --persistent --description "verify ticks" --for 1h`, description: "Registering a monitor" }], text: REST }],
   otherwise: { text: REST },
 }, null, 2))
 
@@ -158,7 +158,7 @@ console.log(`dispatched ${slug} (${sessionId})`)
 const path = join(jsonlDir, `${sessionId}.jsonl`)
 
 // ---- A: the worker's own registration, then a wake per line and the exit -------------------------
-const registered = await until("the worker's `frizzctl monitor add` result", () => toolResult(path, /Monitoring as cmw_|NOT registered|NOTHING IS RUNNING/), 30_000)
+const registered = await until("the worker's `frizzctl monitor add --persistent` result", () => toolResult(path, /Monitoring as cmw_|NOT registered|NOTHING IS RUNNING/), 30_000)
 const id = /Monitoring as (cmw_[0-9a-f]{12})/.exec(registered)?.[1]
 check(!!id, `A. the worker's frizzctl registered the monitor${id ? ` as ${id}` : `: ${registered.slice(0, 300)}`}`)
 if (!id) process.exit(1)
@@ -217,10 +217,10 @@ const restFile = join(scratch, "rest.md")
 // it was handed, and every later turn (each wake) rests on the same fence again.
 const TAIL = `tail -n0 -F ${events}`
 const REGISTER = [
-  `out=$(frizzctl monitor add '${TAIL}' --description "verify park" --for 1h 2>&1)`,
+  `out=$(frizzctl monitor add '${TAIL}' --persistent --description "verify park" --for 1h 2>&1)`,
   `echo "$out"`,
   `id=$(printf '%s' "$out" | grep -oE 'cmw_[0-9a-f]{12}' | head -n 1)`,
-  `printf '%s\\n' 'Watching the log.' '' '\`\`\`awaiting' "commands: [$id]" 'status: watching' 'for: 1h' '\`\`\`' > ${restFile}`,
+  `printf '%s\\n' 'Watching the log.' '' '\`\`\`awaiting' "monitors: [$id]" 'status: watching' 'for: 1h' '\`\`\`' > ${restFile}`,
 ].join("; ")
 const parkTurns = join(scratch, "park-turns.json")
 writeFileSync(parkTurns, JSON.stringify({
@@ -231,14 +231,14 @@ writeFileSync(parkTurns, JSON.stringify({
 const parked = await api.mutate("dispatch", { prompt: `[script file=${parkTurns}] Rest on a monitor.`, backend: "claude", title: "Monitor park" })
 console.log(`\n[${stamp()}] dispatched ${parked.slug} (${parked.sessionId})`)
 const parkPath = join(jsonlDir, `${parked.sessionId}.jsonl`)
-const rests = () => records(parkPath).filter((r) => r.type === "assistant" && JSON.stringify(r.message?.content ?? "").includes("commands: [cmw_")).length
+const rests = () => records(parkPath).filter((r) => r.type === "assistant" && JSON.stringify(r.message?.content ?? "").includes("monitors: [cmw_")).length
 
-const parkResult = await until("the resting worker's `frizzctl monitor add` result", () => toolResult(parkPath, /Monitoring as cmw_|NOT registered|NOTHING IS RUNNING/), 30_000)
+const parkResult = await until("the resting worker's `frizzctl monitor add --persistent` result", () => toolResult(parkPath, /Monitoring as cmw_|NOT registered|NOTHING IS RUNNING/), 30_000)
 const parkId = /Monitoring as (cmw_[0-9a-f]{12})/.exec(parkResult)?.[1]
 check(!!parkId, `C. the worker registered a tail of the log${parkId ? ` as ${parkId}` : `: ${parkResult.slice(0, 300)}`}`)
 if (!parkId) process.exit(1)
 await until("the worker's first rest", () => rests() >= 1, 30_000)
-check(readFileSync(restFile, "utf8").includes(`commands: [${parkId}]`), "C. it rests on `commands:` naming that monitor, `status: watching`")
+check(readFileSync(restFile, "utf8").includes(`monitors: [${parkId}]`), "C. it rests on `monitors:` naming that monitor, `status: watching`")
 check(await until("the thread in Snoozed", async () => (await sectionNow(parked.slug)) === "snoozed", 30_000), "C. the rest parks the thread in Snoozed, out of the queue")
 const rowPid = () => sql(`SELECT pid FROM command_watch WHERE id = '${parkId}'`)[0]?.pid
 

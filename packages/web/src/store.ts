@@ -12,6 +12,7 @@ import { parseStandaloneThreadPath, standaloneThreadHref } from "./lib/standalon
 import { ownedByThisPage } from "./lib/projectOwnership.ts"
 import { innerPath, isConsolePath } from "./lib/base-path.ts"
 import { isMobileViewport } from "./lib/mobile.ts"
+import { holdsCardHere } from "./lib/consoleBoard.ts"
 import { CONSOLE_TOP_PX } from "./lib/homeView.ts"
 import { bareSlug, splitThreadKey } from "./lib/threadKey.ts"
 import { setGithubRepo } from "./lib/githubAutolink.ts"
@@ -174,11 +175,11 @@ export const store = proxy({
   // manually refreshable. All reset on reload. (The board has none: it never rides the socket whole, so
   // nothing about its size can downgrade it — see api/board-resume.ts.)
   socketTranscriptFallbacks: {} as Record<string, SocketTranscriptFallback>,
-  // A `/thread/<slug>` URL whose destination is not settled yet. The router cannot decide it alone:
+  // A `?thread=<slug>` URL whose destination is not settled yet. The router cannot decide it alone:
   // a QUEUED thread already has its full card in the main column, so the URL belongs to that card,
   // not to a drawer over it — and on a cold load the board hasn't arrived, so `needsYou` is unknown.
   // The router parks the slug here and App resolves it the first render the board is authoritative
-  // (see resolveRoutedThread). Snoozed slugs keep the address bar on /thread/<slug> meanwhile.
+  // (see resolveRoutedThread). Snoozed slugs keep the address bar on ?thread=<slug> meanwhile.
   routeThreadSlug: null as string | null,
   // THE ONE-THREAD PANE (prototype): the thread the board's right-hand column shows, chosen by a sidebar
   // row or by moving through the queue. Null is the prompt to open the first item (ThreadPane.tsx).
@@ -341,7 +342,8 @@ export function pushDrawer(kind: "thread" | "doc", slug: string, opts?: { routed
 // so a link there still opens a drawer.
 export function paneEnabled(): boolean {
   if (typeof location === "undefined" || typeof window === "undefined") return false
-  return !isMobileViewport() && parseStandaloneThreadPath(innerPath()) === null
+  // A status list has no pane to show a thread in, so a thread there opens in a drawer as on main.
+  return !isMobileViewport() && store.view === "todos" && parseStandaloneThreadPath(innerPath()) === null
 }
 
 export function showInPane(slug: string, via: "direct" | "queue" = "direct"): void {
@@ -390,7 +392,7 @@ export function openThread(slugOrKey: string): void {
   const slug = consoleThreadKey(slugOrKey)
   // A bare slug the Console cannot place: its own project's full page finds it (MissingThread).
   if (slug === null) {
-    if (typeof location !== "undefined") location.assign(`/thread/${encodeURIComponent(slugOrKey)}/full`)
+    if (typeof location !== "undefined") location.assign(standaloneThreadHref(slugOrKey))
     return
   }
   const t = store.board?.threads.find((x) => x.id === slug)
@@ -407,7 +409,7 @@ export function setBoardPendingCheck(check: (project?: string) => boolean): void
   boardPending = check
 }
 
-// Settle a parked `/thread/<slug>` URL, now that the board can say whether the thread is queued.
+// Settle a parked `?thread=<slug>` URL, now that the board can say whether the thread is queued.
 // A deep link deliberately asks for the CHAT surface even for a session-less thread (unlike
 // openThread's doc-routing), so this pushes the thread layer rather than delegating — but it obeys
 // the same queue-card rule: a needsYou thread renders its whole panel inline in the main column, and
@@ -424,22 +426,21 @@ export function resolveRoutedThread(): void {
   // unprefixed full page, whose MissingThread asks the server which project owns it.
   const slug = consoleThreadKey(routed)
   if (slug === null) {
-    if (typeof location !== "undefined") location.replace(`/thread/${encodeURIComponent(routed)}/full`)
+    if (typeof location !== "undefined") location.replace(standaloneThreadHref(routed))
     return
   }
   const route = resolveThreadRoute(store.board, slug, threadBySlug)
   // A slug THIS project does not have. Since one server started serving every project that is usually
-  // a thread another project has — and `/thread/<slug>` is the exact shape every pre-singleton
-  // bookmark and every agent-written cross-reference uses, so it is not a rare typo. Pushing the
-  // drawer anyway opened an empty sheet over the board that said nothing and offered nothing.
-  // The `/full` page already knows how to recover: <MissingThread> asks `threadLocate` which project
+  // a thread another project has — a link a worker wrote names its slug alone, so it is not a rare
+  // typo. Pushing the drawer anyway opened an empty sheet over the board that said nothing and offered
+  // nothing. The full-screen page already knows how to recover: <MissingThread> asks `threadLocate` which project
   // owns the slug and relocates there. Hand it over rather than growing a second copy of that.
   if (route.kind === "missing") {
     if (typeof location !== "undefined") location.replace(standaloneThreadHref(slug))
     return
   }
   // `settlingRoute`: the address bar already holds this thread's entry, so the board URL that follows
-  // REPLACES it — a push would leave `/thread/<slug>` and the board behind each other as two entries.
+  // REPLACES it — a push would leave `?thread=<slug>` and the board behind each other as two entries.
   if (route.kind === "found" && route.thread.needsYou && scrollToQueueCard(slug, { settlingRoute: true })) return
   pushDrawer("thread", slug, { routed: true })
 }
@@ -482,7 +483,7 @@ export function primeFullscreenReturn(routedSlug: string | undefined): void {
   // actually reads; applyPath then finds the layer already present and leaves it be.
   if (routedSlug !== slug || !store.board) return
   const route = resolveThreadRoute(store.board, slug, threadBySlug)
-  if (route.kind !== "found" || route.thread.needsYou) return
+  if (route.kind !== "found" || holdsCardHere(route.thread)) return
   if (store.drawers.some((d) => d.kind === "thread" && d.slug === slug && !d.closing)) return
   pushDrawer("thread", slug, { routed: true })
 }
@@ -502,9 +503,9 @@ export function primeFullscreenReturn(routedSlug: string | undefined): void {
 //
 // And that dismissal is a NAVIGATION, so it PUSHES history (takeQueueCardNavigation). Every other
 // drawer close replaces — the router's rule — and this one used to as well: A's drawer, a link to queued
-// B, and A's `/thread/a` entry was rewritten to the board, sitting on top of the board it was opened
+// B, and A's `?thread=a` entry was rewritten to the board, sitting on top of the board it was opened
 // from. Back then did nothing visible and A was gone (desktop, 2026-10-08). Pushed, Back returns to A.
-// A routed `/thread/<slug>` settling here (resolveRoutedThread) is the exception: that entry already
+// A routed `?thread=<slug>` settling here (resolveRoutedThread) is the exception: that entry already
 // names this thread, and the board replaces it.
 export function scrollToQueueCard(slug: string, opts?: { settlingRoute?: boolean }): boolean {
   const root = queueCardRoot(slug)
@@ -529,7 +530,7 @@ export function scrollToQueueCard(slug: string, opts?: { settlingRoute?: boolean
     else if (Math.abs(window.scrollY - targetY) > 0.5) window.scrollTo({ top: targetY, left: 0, behavior: "auto" })
   }
   // And KEEP it there while the queue above is still settling, until the reader scrolls for themselves
-  // (lib/queueLandingHold). A cold `/thread/<slug>` deep link lands before the cards above it have
+  // (lib/queueLandingHold). A cold `?thread=<slug>` deep link lands before the cards above it have
   // their transcripts or pictures, and those then pushed the routed card ~1,400px out of view
   // (2026-10-05). Armed for every door, not only the deep link: a sidebar click into a queue whose
   // pictures are still decoding has the same race, just a smaller one.

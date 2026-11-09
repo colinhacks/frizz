@@ -96,7 +96,7 @@ try {
   await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 })
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()) })
   page.on("pageerror", (e) => errors.push(String(e)))
-  await page.goto(new URL(`/thread/${SLUG}/full`, url).href, { waitUntil: "networkidle2", timeout: 60000 })
+  await page.goto(new URL(`/thread/${SLUG}`, url).href, { waitUntil: "networkidle2", timeout: 60000 })
   await page.waitForFunction("document.querySelector('[data-standalone-thread] [data-drawer-transcript-scroll] [data-virtualized-transcript]')", { timeout: 40000 })
 
   const settle = (ms) => page.evaluate(async (wait) => {

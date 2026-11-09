@@ -1,6 +1,6 @@
 // COMMAND WATCHES — a worker's wait on an outside condition, checked by the SERVER (2026-10-11).
 //
-// `frizzctl watch-command add --command "npm view frizz@0.13.12 version" --every 5m --for 6h` stores a
+// `frizzctl monitor add --command "npm view frizz@0.13.12 version" --every 5m --for 6h` stores a
 // row (storage.ts `command_watch`); scheduler SOURCE 13 re-runs the command on that cadence until it
 // exits 0, then settles the row and wakes the thread once with the command and the tail of its output.
 // This module is everything about RUNNING one: the process, the gates that decide whether Frizz may run
@@ -27,7 +27,7 @@
 // `auto` STAYS REFUSED, and it became the default on 2026-11-06. Auto mode's classifier reviews what a
 // worker runs, and a registration is a way past that review: in a real run under Claude Code 2.1.318 the same
 // exfiltrating `curl` was denied when run directly, and reached Frizz unreviewed inside
-// `frizzctl watch-command add`, because `Bash(frizzctl:*)` is pre-approved. So opening this gate to `auto`
+// `frizzctl monitor add`, because `Bash(frizzctl:*)` is pre-approved. So opening this gate to `auto`
 // would be one call around the check that mode offers. The cost is memory: an `auto` thread's wait is a
 // background shell, which pins its daemon tree. The worker contract says so per mode (claudeContractOptions),
 // so an `auto` worker is not told to try this first.
@@ -269,7 +269,7 @@ function sandboxInSettings(raw: string, file: string): string | undefined {
     const enabled = (sandbox as Record<string, unknown>).enabled
     if (enabled === undefined || enabled === false) return undefined
   }
-  return `Claude Code's sandbox is on for this thread (\`sandbox\` in \`${file}\`), and a command watch would run your command outside it`
+  return `Claude Code's sandbox is on for this thread (\`sandbox\` in \`${file}\`), and a monitor would run your command outside it`
 }
 
 /** Every settings file that can turn Claude Code's sandbox on for a thread in `cwd`: managed, local,
@@ -347,12 +347,12 @@ export function commandWatchRefusal(
 ): string | undefined {
   const refuse = (reason: string) => `${reason}. ${COMMAND_WATCH_FALLBACK}`
   if ((opts.platform ?? process.platform) === "win32") {
-    return refuse("command watches run under `/bin/sh`, which this machine does not have")
+    return refuse("monitors run under `/bin/sh`, which this machine does not have")
   }
   const backend = row.backend ?? "claude"
   if (backend !== "claude") {
     return refuse(
-      `command watches are for Claude threads only, and this one runs on ${backend === "codex" ? "Codex" : "an ACP agent"}: ` +
+      `monitors are for Claude threads only, and this one runs on ${backend === "codex" ? "Codex" : "an ACP agent"}: ` +
         "Frizz cannot tell whether your thread's own sandbox would have let the command run",
     )
   }
@@ -372,7 +372,7 @@ export function commandWatchRefusal(
 }
 
 // ---- MONITORS: ONE SCRIPT, MANY WAKES (2026-11-02) --------------------------------------------------
-// `frizzctl monitor`. Where a check above is a question asked on a cadence, a monitor is a script the
+// `frizzctl monitor add --persistent`. Where a check above is a question asked on a cadence, a monitor is a script the
 // server STARTS ONCE and keeps running for as long as it is armed; every line it prints on stdout is an
 // event the scheduler turns into a wake (SOURCE 13, scheduler.ts). Same shell, same gate, same group-kill
 // discipline as a check — and the same reason to exist: run here, the script holds nothing of the

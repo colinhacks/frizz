@@ -117,7 +117,7 @@ try {
   check("the transcript is long enough to scroll back through",
     projected.messages.length >= 140, `messages=${projected.messages.length}`)
 
-  await page.goto(new URL(`/thread/${SLUG}/full`, url).href, { waitUntil: "networkidle2", timeout: 60000 })
+  await page.goto(new URL(`/thread/${SLUG}`, url).href, { waitUntil: "networkidle2", timeout: 60000 })
   await page.waitForFunction("document.querySelector('[data-standalone-thread] [data-drawer-transcript-scroll] [data-virtualized-transcript]')", { timeout: 40000 })
   await page.evaluate(async () => {
     const raf = () => new Promise((r) => requestAnimationFrame(r))

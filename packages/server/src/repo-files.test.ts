@@ -28,9 +28,9 @@ function repo(): string {
   return dir
 }
 
-test("the rail keeps repo work and drops what git ignores", () => {
+test("the rail keeps repo work and drops what git ignores", async () => {
   const dir = repo()
-  const kept = repoCarriedFiles(dir, [
+  const kept = await repoCarriedFiles(dir, [
     join(dir, "src/app.ts"),
     join(dir, ".frizz/notes.md"),
     join(dir, "build.log"),
@@ -38,24 +38,24 @@ test("the rail keeps repo work and drops what git ignores", () => {
   assert.deepEqual(kept, [join(dir, "src/app.ts")])
 })
 
-test("a file created but never `git add`ed still counts — the index is not the test", () => {
+test("a file created but never `git add`ed still counts — the index is not the test", async () => {
   const dir = repo()
   writeFileSync(join(dir, "src", "brand-new.ts"), "export {}\n")
-  const kept = repoCarriedFiles(dir, [join(dir, "src/brand-new.ts")])
+  const kept = await repoCarriedFiles(dir, [join(dir, "src/brand-new.ts")])
   assert.deepEqual(kept, [join(dir, "src/brand-new.ts")], "new work must be visible before it is committed")
 })
 
-test("a force-added file the repository really carries is kept, ignore rule notwithstanding", () => {
+test("a force-added file the repository really carries is kept, ignore rule notwithstanding", async () => {
   const dir = repo()
   // `git add -f forced.log` against a `*.log` rule: `git ls-files` carries it, so the rail must too.
-  const kept = repoCarriedFiles(dir, [join(dir, "forced.log"), join(dir, "build.log")])
+  const kept = await repoCarriedFiles(dir, [join(dir, "forced.log"), join(dir, "build.log")])
   assert.deepEqual(kept, [join(dir, "forced.log")])
 })
 
-test("a path outside the project is passed through — git has no opinion on another checkout", () => {
+test("a path outside the project is passed through — git has no opinion on another checkout", async () => {
   const dir = repo()
   const outside = join(tmpdir(), "somewhere-else", "x.ts")
-  assert.deepEqual(repoCarriedFiles(dir, [outside]), [outside])
+  assert.deepEqual(await repoCarriedFiles(dir, [outside]), [outside])
 })
 
 // THE WORKER CONTRACT'S OWN WORKTREE LOCATION, in the shape a real project has it: no top-level rule
@@ -69,11 +69,11 @@ function repoWithWorktree(): { dir: string; worktree: string } {
   return { dir, worktree }
 }
 
-test("a file in a worktree inside the project is judged by that worktree's own ignore rules", () => {
+test("a file in a worktree inside the project is judged by that worktree's own ignore rules", async () => {
   const { dir, worktree } = repoWithWorktree()
   writeFileSync(join(worktree, "src", "new.ts"), "export {}\n")
   writeFileSync(join(worktree, "build.log"), "noise\n")
-  const kept = repoCarriedFiles(dir, [
+  const kept = await repoCarriedFiles(dir, [
     join(worktree, "src/app.ts"),
     join(worktree, "src/new.ts"),
     join(worktree, "build.log"),
@@ -83,21 +83,21 @@ test("a file in a worktree inside the project is judged by that worktree's own i
   assert.deepEqual(kept, [join(worktree, "src/app.ts"), join(worktree, "src/new.ts"), join(dir, "src/app.ts")])
 })
 
-test("a plain directory under .frizz/worktrees is still scratch — only a registered worktree answers for itself", () => {
+test("a plain directory under .frizz/worktrees is still scratch — only a registered worktree answers for itself", async () => {
   const { dir } = repoWithWorktree()
   mkdirSync(join(dir, ".frizz", "worktrees", "not-a-checkout"), { recursive: true })
   writeFileSync(join(dir, ".frizz", "worktrees", "not-a-checkout", "a.ts"), "export {}\n")
-  assert.deepEqual(repoCarriedFiles(dir, [join(dir, ".frizz/worktrees/not-a-checkout/a.ts")]), [])
+  assert.deepEqual(await repoCarriedFiles(dir, [join(dir, ".frizz/worktrees/not-a-checkout/a.ts")]), [])
 })
 
 // Git will not judge a path spelled through a symlinked directory, and it fails the whole batch rather
 // than the one path — so before this, one write through a link (this repo's `.claude/skills/<name>` is
 // one) left every ignored row on the rail.
-test("a path through a symlinked directory is judged where the file really is, and does not silence the rest", () => {
+test("a path through a symlinked directory is judged where the file really is, and does not silence the rest", async () => {
   const dir = repo()
   symlinkSync("src", join(dir, "linked-src"))
   symlinkSync(".frizz", join(dir, "linked-scratch"))
-  const kept = repoCarriedFiles(dir, [
+  const kept = await repoCarriedFiles(dir, [
     join(dir, "linked-src/app.ts"),
     join(dir, "linked-scratch/notes.md"),
     join(dir, "build.log"),
@@ -105,23 +105,23 @@ test("a path through a symlinked directory is judged where the file really is, a
   assert.deepEqual(kept, [join(dir, "linked-src/app.ts")])
 })
 
-test("a project that is not a git repository filters nothing", () => {
+test("a project that is not a git repository filters nothing", async () => {
   const plain = mkdtempSync(join(tmpdir(), "frizz-not-a-repo-"))
   writeFileSync(join(plain, "a.ts"), "export {}\n")
-  assert.deepEqual(repoCarriedFiles(plain, [join(plain, "a.ts")]), [join(plain, "a.ts")])
+  assert.deepEqual(await repoCarriedFiles(plain, [join(plain, "a.ts")]), [join(plain, "a.ts")])
 })
 
-test("row order and diffstats survive the filter", () => {
+test("row order and diffstats survive the filter", async () => {
   const dir = repo()
   const rows = [
     { path: join(dir, ".frizz/notes.md"), edits: 1 },
     { path: join(dir, "src/app.ts"), edits: 2, added: 7, removed: 1 },
     { path: join(dir, "build.log"), edits: 1 },
   ]
-  assert.deepEqual(repoCarriedEditedFiles(dir, rows), [{ path: join(dir, "src/app.ts"), edits: 2, added: 7, removed: 1 }])
+  assert.deepEqual(await repoCarriedEditedFiles(dir, rows), [{ path: join(dir, "src/app.ts"), edits: 2, added: 7, removed: 1 }])
 })
 
-test("nothing in, nothing out", () => {
-  assert.deepEqual(repoCarriedFiles(repo(), []), [])
-  assert.deepEqual(repoCarriedEditedFiles(repo(), []), [])
+test("nothing in, nothing out", async () => {
+  assert.deepEqual(await repoCarriedFiles(repo(), []), [])
+  assert.deepEqual(await repoCarriedEditedFiles(repo(), []), [])
 })

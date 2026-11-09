@@ -17,6 +17,9 @@
 // and clears it. A module-level slot rather than the valtio store for that reason, and the same shape
 // `primeFullscreenReturn` already uses for the reverse leg.
 
+import { innerPath } from "./base-path.ts"
+import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
+
 export interface FullscreenAnchorCandidate {
   sourceId: string
   /** Where this message's top edge sat in the WINDOW when the door was pressed. Restoring to the same
@@ -131,7 +134,7 @@ export function clearFullscreenEnterAnchor(): void {
 // fixture at seven widths from 767 to 2560: the morph was skipped at every one, and the reader was
 // dropped on a board with their thread nowhere on it.
 //
-// The fix is not a new mechanism: `/thread/<slug>` is the drawer's OWN url, and BoardRoute already
+// The fix is not a new mechanism: `?thread=<slug>` is the drawer's OWN url, and BoardRoute already
 // re-mounts and names that surface when it is routed to (primeFullscreenReturn — the path built for
 // the browser Back button, which is why Back always morphed correctly while the button beside it did
 // not). So the door just has to remember the address it was pressed at and hand it back.
@@ -141,11 +144,14 @@ export function clearFullscreenEnterAnchor(): void {
 // scroll hand-off deliberately — a reader may sit on /full for an hour before collapsing it.
 let origin: { slug: string; path: string } | null = null
 
-/** Note the address the fullscreen door was pressed at, so the way out can lead back to it. */
+/**
+ * Note the address the fullscreen door was pressed at, so the way out can lead back to it. `path` is
+ * the whole address, query included: a drawer's is its board's path plus `?thread=<slug>`.
+ */
 export function rememberFullscreenOrigin(slug: string, path: string): void {
-  // Never remember a /full address: that would make the way out a loop. In practice the door is never
-  // rendered on /full, so this is a guard against a future surface, not a case that happens today.
-  if (/\/full\/?$/.test(path)) return
+  // Never remember a full-screen address: that would make the way out a loop. In practice the door is
+  // never rendered there, so this is a guard against a future surface, not a case that happens today.
+  if (parseStandaloneThreadPath(innerPath(path.replace(/[?#].*$/u, ""))) !== null) return
   origin = { slug, path }
 }
 

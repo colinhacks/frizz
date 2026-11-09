@@ -7,7 +7,7 @@ import { ProjectRail, RAIL_INSET_CLASS } from "./components/ProjectRail.tsx"
 import { StandaloneThreadPage } from "./components/StandaloneThreadPage.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { PageHosts } from "./components/PageHosts.tsx"
-import { applyPath, registerNavigate } from "./lib/router.ts"
+import { applyPath, registerNavigate, threadParam, withThreadParam } from "./lib/router.ts"
 import { CONSOLE_PATH, innerPath, isConsolePath } from "./lib/base-path.ts"
 import { bindConsole, feedIsBoundTo, feedIsConsole, leaveConsole, rebindProject } from "./api/socket.ts"
 import { noteStandaloneThreadRender, primeFullscreenReturn, resetProjectState, store } from "./store.ts"
@@ -54,11 +54,12 @@ function RootLayout() {
   // 57px lane of nothing down the left of every board. A hidden rail has to be gone from the layout,
   // not merely invisible in it.
   const railOn = useProjectRailVisible()
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   // THE GRID IS THE RAIL, LARGER: every project's square with its queue badge (ProjectGrid). A column of
   // the same squares beside it says everything twice, so on `/` the rail is hidden — mounted still, so
-  // leaving the grid does not rebuild it — and the page takes no inset for it.
-  const onGrid = pathname === "/"
+  // leaving the grid does not rebuild it — and the page takes no inset for it. (`/?thread=<slug>` is the
+  // launching project's board, not the grid: RootRoute.)
+  const onGrid = pathname === "/" && threadParam(search) === null
   const railVisible = railOn && !onGrid
   const isMobile = useIsMobile()
   return (
@@ -156,22 +157,39 @@ function useProjectBinding(slug: string | undefined): boolean {
  * A board, for the project the URL names.
  *
  * `slug` is undefined on the unprefixed routes, which remain a supported state: the launching project
- * is still served at `/thread/<slug>` and `/status/<name>` with no `/project/<slug>` in front of it,
- * and `apiBase()` answers `/_frizz` for exactly that case.
+ * is still served at `/status/<name>` (and its threads' full-screen pages at `/thread/<slug>`) with no
+ * `/project/<slug>` in front of it, and `apiBase()` answers `/_frizz` for exactly that case.
  */
 function BoardRoute() {
-  const { slug, thread } = useParams()
+  const { slug } = useParams()
+  const thread = threadParam(useLocation().search) ?? undefined
   const ready = useProjectBinding(slug)
   useRouteToStore()
-  // Returning from /full plays the fullscreen door's view transition in REVERSE (react-router re-arms
+  // Returning from full screen plays the fullscreen door's view transition in REVERSE (react-router re-arms
   // it for the POP; the collapse icon opts in). The reverse morph needs the thread's board surface
   // mounted and named in THIS first commit — the one the transition's new-state snapshot reads — so
   // the priming is render-phase, the mirror of StandaloneRoute's render-phase drawer clear. A no-op
-  // unless the previous render really was a /full page (see primeFullscreenReturn).
+  // unless the previous render really was a full-screen page (see primeFullscreenReturn).
   useState(() => primeFullscreenReturn(thread))
   // Nothing renders against another project's state — see useProjectBinding.
   if (!ready) return null
   return <App key={slug ?? "__launching__"} />
+}
+
+/**
+ * `/`: the all-projects grid — or, with `?thread=<slug>`, the LAUNCHING project's board with that thread
+ * open over it.
+ *
+ * That second reading is the unprefixed launching project's drawer, the one address its old
+ * `/thread/<slug>` had that nothing else can now say (that path is the thread's full-screen page since
+ * 2026-11-07). It is an inbound alias, like the rest of the unprefixed shapes: once the board names its
+ * slug the router writes `/project/<slug>?thread=<slug>` over it (lib/router.ts queueDestination). Two
+ * component types rather than one that branches, so a switch between them remounts instead of changing
+ * a component's hooks between renders.
+ */
+function RootRoute() {
+  const { search } = useLocation()
+  return threadParam(search) === null ? <GridRoute /> : <BoardRoute />
 }
 
 /**
@@ -268,14 +286,15 @@ function ConsoleRoute() {
  * The drawer stack is valtio state, not route state, because a drawer is a stack with its own
  * animated unwind and several ways to open — so the URL is one input to it rather than its owner.
  * This is the direction react-router does not do for us: it resolves the path, and `applyPath` turns
- * that into "which thread is open, and is it a drawer or a queue card". The other direction (store →
- * URL) lives in lib/router.ts, which now navigates rather than calling history directly.
+ * the path and its `?thread=` into "which view, which thread is open, and is it a drawer or a queue
+ * card". The other direction (store → URL) lives in lib/router.ts, which now navigates rather than
+ * calling history directly.
  */
 function useRouteToStore() {
   const location = useLocation()
   useEffect(() => {
-    applyPath(innerPath(location.pathname))
-  }, [location.pathname])
+    applyPath(innerPath(location.pathname), location.search)
+  }, [location.pathname, location.search])
 }
 
 // Hands react-router's navigate to lib/router's module-level `spaNavigate`, for the leaves that must
@@ -321,31 +340,56 @@ function StandaloneRoute() {
 
 const boardChildren = [
   { index: true, element: <BoardRoute /> },
-  { path: "thread/:thread", element: <BoardRoute /> },
   { path: "status/:status", element: <BoardRoute /> },
 ]
 
+/**
+ * `…/thread/<slug>/full`, the full-screen page's address until 2026-11-07, put on the current shape.
+ *
+ * Every link minted before then carries it — a bookmark, an open tab, a URL a worker pasted into a
+ * handoff — so it keeps resolving. REPLACED rather than pushed, so Back never returns to an address
+ * that only forwards.
+ */
+function DropFullSuffix() {
+  const { pathname, search, hash } = useLocation()
+  return <Navigate to={{ pathname: pathname.replace(/\/full\/?$/, ""), search, hash }} replace />
+}
+
+/**
+ * `/console/thread/<key>`, the Console's drawer address until 2026-11-07, put on the current one,
+ * `/console?thread=<key>`. A thread's full-screen page is its own project's (standaloneThreadHref), so
+ * on the Console a thread path has nothing else it could mean.
+ */
+function ConsoleThreadRedirect() {
+  const { thread } = useParams()
+  const { search, hash } = useLocation()
+  return <Navigate to={{ pathname: CONSOLE_PATH, search: withThreadParam(search, thread ?? null), hash }} replace />
+}
+
 export const router = createBrowserRouter([
-  // The focused single-thread pages sit OUTSIDE the layout — they have no rail, and should not. They
-  // are listed first for readability only; react-router ranks by specificity, so `/thread/x/full`
-  // beats `/thread/:thread` regardless of order.
-  { path: "/thread/:thread/full", element: <StandaloneRoute /> },
-  { path: `${PROJECT_PATH}/thread/:thread/full`, element: <StandaloneRoute /> },
+  // THE THREAD'S OWN PATH IS ITS FULL-SCREEN PAGE (lib/standaloneThreadRoute.ts); a drawer is the
+  // board's URL with `?thread=<slug>` (lib/router.ts). These pages sit OUTSIDE the layout — they have
+  // no rail, and should not. react-router ranks by specificity, so the `/full` aliases beat the page's
+  // own routes regardless of order.
+  { path: "/thread/:thread", element: <StandaloneRoute /> },
+  { path: `${PROJECT_PATH}/thread/:thread`, element: <StandaloneRoute /> },
+  { path: "/thread/:thread/full", element: <DropFullSuffix /> },
+  { path: `${PROJECT_PATH}/thread/:thread/full`, element: <DropFullSuffix /> },
   {
     element: <RootLayout />,
     children: [
-      { path: "/", element: <GridRoute /> },
+      { path: "/", element: <RootRoute /> },
       // The launching project, unprefixed. `/` itself belongs to the grid, so this project reaches its
-      // board through a thread or status path — see base-path.ts on why an empty base is supported.
-      { path: "/thread/:thread", element: <BoardRoute /> },
+      // board through a status path or `/?thread=<slug>` — see base-path.ts on why an empty base is
+      // supported.
       { path: "/status/:status", element: <BoardRoute /> },
       { path: PROJECT_PATH, children: boardChildren },
-      // The Console's own base (lib/base-path.ts): its threads are named by key, `/console/thread/<key>`.
+      // The Console's own base (lib/base-path.ts): its threads are named by key, `/console?thread=<key>`.
       {
         path: CONSOLE_PATH,
         children: [
           { index: true, element: <ConsoleRoute /> },
-          { path: "thread/:thread", element: <ConsoleRoute /> },
+          { path: "thread/:thread", element: <ConsoleThreadRedirect /> },
           { path: "status/:status", element: <ConsoleRoute /> },
         ],
       },

@@ -81,8 +81,8 @@ function LocalMcpPlug({ target, side }: { target: McpTarget; side: "top" | "bott
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen((was) => !was)}
-          // The paperclip's square, hover fill and tone, and held in its hover state while the menu is open,
-          // like a pressed toolbar button.
+          // The paperclip's hover fill and tone, on a square the chip's height (lib/iconRhythm.ts AGENT_MARKS),
+          // held in its hover state while the menu is open, like a pressed toolbar button.
           className={PLUG_MARK}
         >
           <Plug {...PLUG_GLYPH} aria-hidden />

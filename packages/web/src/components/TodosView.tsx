@@ -8,13 +8,14 @@ import { pageScrollY } from "../lib/pageScrollLock.ts"
 import { queueLandingHoldActive } from "../lib/queueLandingHold.ts"
 import { captureReaderPin, listGainedOrReordered, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
 import { rpc } from "../api/rpc.ts"
-import { useBoard, useBoardIsEmpty, useQueuedThreads, useTranscript } from "../hooks.ts"
+import { useBoard, useBoardIsEmpty, useQueueCards, useTranscript } from "../hooks.ts"
 import { orderQueue } from "../groups.ts"
 import { tailAskIdx } from "../lib/answering.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { hasQuestionBlock } from "../lib/questionBlocks.ts"
 import { carriesDoneRegistration, collapseMiddleRuns, opensQueueSegment, queueCollapseSegments, segmentFolds, supersededAskIndices, survivesQueueCollapse } from "../lib/queueCollapse.ts"
 import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
+import { latestSignOffs } from "../lib/signOffs.ts"
 import { isOptimisticallySteering, useSteeredAt } from "../lib/steering.ts"
 import { prefersReducedMotion } from "../lib/sheet.ts"
 import { REST_CATCH_UP_MS } from "../lib/steering.ts"
@@ -181,9 +182,10 @@ export function TodosView() {
   const onConsole = isConsolePath()
   const consoleGroup = useConsoleGroup()
   const consoleProjects = useConsoleProjectList(onConsole)
-  // The queued threads come UNTRACKED and identity-stable (hooks.ts useQueuedThreads): filtering the
+  // The queued threads come UNTRACKED and identity-stable (hooks.ts useQueueCards): filtering the
   // whole board through useBoard()'s tracking view read every Done thread on every render of this page.
-  const queuedThreads = useQueuedThreads()
+  // A pinned thread's plain report is no card here when this page's shelf shows its row instead.
+  const queuedThreads = useQueueCards()
   const boardIsEmpty = useBoardIsEmpty()
   const queueOrder = useSnapshot(prefs).queueOrder
   const queueItems = useMemo(() => orderQueue(queuedThreads, queueOrder), [queuedThreads, queueOrder])
@@ -1316,11 +1318,17 @@ const QueueCard = memo(function QueueCard({ thread, leaving, frozen, onResolve, 
   const hasMore = visibleStart > 0 || transcript?.hasEarlier === true
   // WHERE EACH OPEN QUESTION IS DRAWN — the message whose fence places it, or the rest it is anchored to —
   // so the middle collapse keeps the run holding it on screen (lib/queueCollapse collapseMiddleRuns).
-  const openQuestionPins = useMemo(
-    () => [...placement.placed.keys(), ...questionAnchors.byAnchor.keys()],
-    [placement, questionAnchors],
+  //
+  // AND WHERE THE NEWEST SIGN-OFF IS (lib/signOffs). The card used to keep only the first and last rounds,
+  // so a worker that handed off and was then woken by a PR review or CI, looked, and parked again quietly
+  // left the hand-off in the collapsed middle under "N more rounds" and the card ending on a bare park
+  // (maintainer 2026-11-06). Its round is kept whole like a question's, and the quiet rounds on either
+  // side of it collapse.
+  const keptPins = useMemo(
+    () => [...placement.placed.keys(), ...questionAnchors.byAnchor.keys(), ...latestSignOffs(messages, lastUserIdx)],
+    [placement, questionAnchors, messages, lastUserIdx],
   )
-  const { kept, middles } = useMemo(() => collapseMiddleRuns(allSegments, openQuestionPins), [allSegments, openQuestionPins])
+  const { kept, middles } = useMemo(() => collapseMiddleRuns(allSegments, keptPins), [allSegments, keptPins])
   const segments = useMemo(() => kept.filter(segmentFolds), [kept])
   // Index → the segment folding it, for the render loop. Only folding segments are indexed: a run with
   // nothing worth hiding renders exactly as it did before.

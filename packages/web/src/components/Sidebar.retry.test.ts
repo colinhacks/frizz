@@ -57,10 +57,10 @@ test("a stalled row carries a hover-revealed retry button, right-justified", () 
   assert.match(btn, /text-muted/, "a quiet grey icon, not an accent box")
 })
 
-test("every row carries the fullscreen door in its hover group, as a real link to /full", () => {
+test("every row carries the fullscreen door in its hover group, as a real link to the thread's page", () => {
   const html = row({ runtime: "running" })
   assert.match(html, /data-expand-thread="stalled-thread"/, "the door is present on a running row too")
-  assert.match(html, /href="\/thread\/stalled-thread\/full"/, "…as an anchor, so ⌘/middle/right-click open a new tab natively")
+  assert.match(html, /href="\/thread\/stalled-thread"/, "…as an anchor, so ⌘/middle/right-click open a new tab natively")
   assert.doesNotMatch(html, /data-sidebar-retry/, "a healthy running row offers no Retry beside it")
 })
 

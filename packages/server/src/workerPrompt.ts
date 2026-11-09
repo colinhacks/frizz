@@ -28,16 +28,15 @@ export type BackendKind = "claude" | "codex" | "acp"
 // and the gate decides. Each token carries its own leading punctuation and line break, so the empty value
 // leaves the shared prose exactly as it was.
 const COMMANDS_KEY_CLAUDE = `
-  - \`commands:\` — command watches you REGISTERED with \`frizzctl watch-command add\`, by their \`cmw_…\`
-    id: a shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
-    output. A monitor from \`frizzctl monitor add\` is named here too: a script the server keeps
-    running, waking you on every line it prints. Only in \`bypassPermissions\` mode with Claude Code's
-    sandbox off; Frizz refuses both otherwise.`
+  - \`monitors:\` — monitors you REGISTERED with \`frizzctl monitor add\`, by their \`cmw_…\` id: a
+    shell command the SERVER re-runs on a cadence until it exits 0, then wakes you once with its
+    output, or with \`--persistent\` a script the server keeps running, waking you on every line it
+    prints. Only in \`bypassPermissions\` mode with Claude Code's sandbox off; Frizz refuses it otherwise.`
 const COMMANDS_FOR_CLAUDE = `, and one naming
-    \`commands:\` with nothing but those, where it runs to a week`
+    \`monitors:\` with nothing but those, where it runs to a week`
 const COMMANDS_CI_CLAUDE = `;
     for anything a shell command can check — a version published, a release run finished, a URL up —
-    \`frizzctl watch-command\` where Frizz allows it`
+    \`frizzctl monitor\` where Frizz allows it`
 const NO_COMMAND_WATCHES = { "COMMANDS_KEY": "", "COMMANDS_FOR": "", "COMMANDS_CI": "" }
 
 // The two "Automated waits" bullets that name a server-run command, and the one aside about `Monitor`,
@@ -45,28 +44,28 @@ const NO_COMMAND_WATCHES = { "COMMANDS_KEY": "", "COMMANDS_FOR": "", "COMMANDS_C
 // 2026-11-06 is the default. The background shell a WITHOUT thread gets costs what the server-run check
 // was built to save (command-watch.ts header), and the prose says so rather than hiding it.
 const COMMAND_WATCH_WAITS = {
-  "WAIT_ANY_CONDITION": `\`frizzctl watch-command add "<check that exits 0 once it holds>" --every 5m --for 6h\`, then rest on
-  its id (\`commands: [cmw_…]\`) with \`status: watching\`. Not a polling loop in a background shell
+  "WAIT_ANY_CONDITION": `\`frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h\`, then rest on
+  its id (\`monitors: [cmw_…]\`) with \`status: watching\`. Not a polling loop in a background shell
   and not a sub-agent that owns the wait: either keeps your process tree alive (~250 MB) for the whole
   wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
   Only when Frizz REFUSES it (this thread is not in \`bypassPermissions\`, or Claude Code's sandbox is
   on) does the loop go in a background shell.`,
   "WAIT_EACH_OCCURRENCE": `\`frizzctl monitor add "<script
-  printing one line per occurrence>" --description "<what>" --for 1d\`, then rest on its id
-  (\`commands: [cmw_…]\`) with \`status: watching\`. The server keeps the script running across your
+  printing one line per occurrence>" --persistent --description "<what>" --for 1d\`, then rest on its id
+  (\`monitors: [cmw_…]\`) with \`status: watching\`. The server keeps the script running across your
   rests, a hibernation and a restart, and each line it prints wakes you; lines printed within 5m of your
   last wake arrive together. A pull request or an issue needs none of this: \`watch-pr\` and
-  \`watch-issue\` already wake you on each comment, review and check. Where Frizz refuses a monitor (the
+  \`watch-issue\` already wake you on each comment, review and check. Where Frizz refuses it (the
   same gate as above), a background shell whose script exits on the first occurrence wakes you once:
   rest on it, then start it again.`,
-  "MONITOR_PARK": `end); it is not something to park a rest on — \`frizzctl monitor\` is.`,
+  "MONITOR_PARK": `end); it is not something to park a rest on — \`frizzctl monitor add --persistent\` is.`,
 }
 const NO_COMMAND_WATCH_WAITS = {
   "WAIT_ANY_CONDITION": `a polling loop in a background shell that exits once it holds: its exit wakes you, so
   rest on it with \`status: watching\`, and give it an end. It keeps your process tree alive (~250 MB)
   for the whole wait, and a thread holding one can never be hibernated, so end it the moment it stops
-  mattering. \`frizzctl watch-command\` and \`frizzctl monitor\` are refused unless this thread is in
-  \`bypassPermissions\` mode, and it did not start in that mode: the server runs their command with no
+  mattering. \`frizzctl monitor\` is refused unless this thread is in
+  \`bypassPermissions\` mode, and it did not start in that mode: the server runs its command with no
   permission check.`,
   "WAIT_EACH_OCCURRENCE": `a background shell whose script exits on the first occurrence, which wakes you once:
   rest on it, then start it again. A pull request or an issue needs none of this: \`watch-pr\` and
@@ -239,8 +238,15 @@ EOF
 // `needs_input` on a PR whose merge was the human's, the watcher woke it for CI it had already read, and
 // it re-parked `status: watching` as this paragraph told it to. That one fence moved the thread into
 // Snoozed, and the human never saw the handoff. The board now holds the thread in the queue until the
-// human types to it or snoozes it, the same boundary a question stands across; both places that promise a
-// quiet park leaves the queue say so.
+// human types to it, snoozes it or settles one of its questions; both places that promise a quiet park
+// leaves the queue say so.
+//
+// …BUT ONLY STEPS AND QUESTIONS (2026-11-06). The hold covered every `needs_input` rest, and most of
+// those were reports that said "nothing needed from you": each one held every CI and shell park after it
+// in the queue until the human typed, 204 parks in one 36h window (maintainer: "I thought we had a good
+// solution to this, where the agent got to choose"). A worker's newest `status:` decides again, so the
+// paragraph now tells it to hand a report off again when it still needs the human. The 2026-10-27 case,
+// a merge that is the human's, is a question or `steps:` under § Questions for the human, and stays held.
 //
 // THE ANSWER IS A PLACE, NOT A YES/NO (2026-10-05). It was `needs_input: true|false` for four days, and
 // "not needed" always meant the running rows: a watcher parked for a day spun beside real work
@@ -279,9 +285,12 @@ report, no prose. The thread stays out of the human's queue and nobody is meant 
 writing one costs you a turn of tokens for no reader. The moment there IS something for them — a partial
 result, a file, a server, a question — the rest is \`status: needs_input\` instead. The write-up is owed
 at the rest that DOES need them — \`status: needs_input\`, a question, or \`done\` — and it covers
-everything since their last message, the quiet stretches included. **A \`needs_input\` REST STAYS HANDED
-OFF UNTIL THE HUMAN TYPES TO THIS THREAD OR SNOOZES IT:** a quiet park after one leaves the thread in their
-queue on that handoff, so a wake that brings nothing new still takes the fence alone.
+everything since their last message, the quiet stretches included. **A QUIET PARK TAKES THE THREAD OUT OF
+THE QUEUE, EVEN RIGHT AFTER A \`needs_input\` REST:** your newest \`status:\` is the answer. So on a wake that
+brings nothing new, ask whether your last handoff still waits on the human. A report they only had to
+read does not, so park on the fence alone. A page to review or a result to try does, so rest
+\`status: needs_input\` again and restate it. Only \`steps:\` and questions stay in their queue by
+themselves, until they type to this thread, answer a question or snooze it.
 
 **ALWAYS SIGN OFF.** A bare rest — nothing said about where you stand — is not a handoff, it is an item
 nobody can triage: it says neither "answer me" nor "this is finished", so it sits in the queue meaning
@@ -471,11 +480,16 @@ exactly ONE of them.
       to click through is \`needs_input\`, even when you need nothing back from them. And if you wrote
       ANY words for the human at this rest, the answer is \`needs_input\`: a \`working\` or \`watching\`
       rest is never put in front of them, so those words would go unread.
+      On a thread the human has pinned, a \`needs_input\` rest or a \`done\` that asks nothing marks the
+      pinned row unread instead of drawing a queue card, so they read it when they go there. What they
+      must answer or do still takes a question or \`steps:\`, which queue as always.
     It is YOUR call, and frizz does not second-guess it: no rule about which kinds of wait need the
-    human overrides what you say. The one thing a quiet answer cannot do is take back a \`needs_input\`
-    rest the human has not reached: until they type to this thread or snooze it, a later \`working\` or
-    \`watching\` park leaves the thread in their queue. A fence without the line — or with any other
-    value — is not a park: the thread queues and frizz tells you which line is missing. And \`working\`
+    human overrides what you say. The one thing a quiet answer cannot do is take back \`steps:\` or a
+    question the human has not reached: until they type to this thread, answer one of its questions or
+    snooze it, a later \`working\` or \`watching\` park leaves the thread in their queue. A plain
+    \`needs_input\` report has no such hold: it is yours to hand off again while it still needs them. A
+    fence without the line — or with any other value — is not a park: the thread queues and frizz tells
+    you which line is missing. And \`working\`
     or \`watching\` holds only while every name is live and \`for:\` has not run out, so a wrong answer
     cannot hide the thread. (\`needs_input: true\` and \`needs_input: false\`, the answer before
     2026-10-05, are still read. Write \`status:\`.)

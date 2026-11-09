@@ -88,7 +88,7 @@ try {
   }, "waiting for recovery")
   const requests = []
   page.on("request", req => requests.push({ url: req.url(), type: req.resourceType() }))
-  const response = await page.goto(`${origin}/project/project/thread/example/full`, { waitUntil: "networkidle2" })
+  const response = await page.goto(`${origin}/project/project/thread/example`, { waitUntil: "networkidle2" })
   assert.equal(response.status(), 503)
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light")
   const recovery = await page.evaluate(() => ({ color: getComputedStyle(document.documentElement).backgroundColor, chrome: document.querySelector('meta[name="theme-color"]').content }))

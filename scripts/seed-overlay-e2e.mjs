@@ -1,5 +1,5 @@
 // Seed a disposable adhoc stack with the one thread overlayAccessibility.e2e.test.ts's keyboard test
-// opens by its cold `/thread/overlay-e2e` route: a rested Claude session titled "Overlay E2E", with a
+// opens by its cold `?thread=overlay-e2e` route: a rested Claude session titled "Overlay E2E", with a
 // real transcript the tailer folds, so the drawer carries a live composer and its "Thread model and
 // effort" picker.
 //

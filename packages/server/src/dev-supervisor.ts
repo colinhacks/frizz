@@ -124,6 +124,8 @@ export interface DevSupervisorOptions {
   onCodeConsumed?: () => void
   /** A new device just signed in. See RestartSupervisorProxyOptions. */
   onDeviceSignedIn?: (device: { label: string; devices: number }) => void
+  /** A device, or every device, was signed out. See RestartSupervisorProxyOptions. */
+  onDeviceSignedOut?: (device: { label: string | null; devices: number }) => void
   /** Persisted session-signing key, so devices stay signed in across restarts. */
   sessionKey?: Buffer
   /** Persists a replacement for `sessionKey` when every device is signed out. See RestartSupervisorProxyOptions. */
@@ -209,6 +211,10 @@ export interface DevSupervisor {
   setPublicOrigin(origin: string | undefined): void
   /** What a session through the relay may do. See RestartSupervisorProxy.setRelayAccess. */
   setRelayAccess(access: RelayAccess | undefined): void
+  /** How many devices hold a live session. */
+  signedInDevices(): number
+  /** Sign every device out. See RestartSupervisorProxy.signOutAllDevices. */
+  signOutAllDevices(): number
   /** The port the relay agent dials, on which every request is public. See RestartSupervisorProxy.relayListener. */
   relayListener(): Promise<number>
   readonly firstBoot: Promise<DevBoot>
@@ -630,6 +636,7 @@ class Supervisor implements DevSupervisor {
       publicOrigin: opts.publicOrigin,
       onCodeConsumed: opts.onCodeConsumed,
       onDeviceSignedIn: opts.onDeviceSignedIn,
+      onDeviceSignedOut: opts.onDeviceSignedOut,
       sessionKey: opts.sessionKey,
       rotateSessionKey: opts.rotateSessionKey,
       sessionDirectory: opts.sessionDirectory,
@@ -672,6 +679,14 @@ class Supervisor implements DevSupervisor {
 
   setRelayAccess(access: RelayAccess | undefined): void {
     this.publicProxy.setRelayAccess(access)
+  }
+
+  signedInDevices(): number {
+    return this.publicProxy.signedInDevices()
+  }
+
+  signOutAllDevices(): number {
+    return this.publicProxy.signOutAllDevices()
   }
 
   relayListener(): Promise<number> {

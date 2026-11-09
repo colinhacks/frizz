@@ -129,6 +129,12 @@ export interface AppSocketDeps {
   maxReplayBytes?: number
   readTranscript: (slug: string) => TranscriptPush
   /**
+   * A promise while `readTranscript` would have to fold a cold transcript whole on this thread: it settles once
+   * that work is done in slices (transcript.ts catchUpTranscriptFold), and the read goes ahead then. Undefined
+   * means go ahead now. Absent (tests) means every read goes straight ahead.
+   */
+  catchUpTranscript?: (slug: string) => Promise<void> | undefined
+  /**
    * Arm a live watch on a local file for the FILE topic: gate the path exactly as its read is gated,
    * then call `onChange` after each settled burst of changes until the returned release runs. Throws
    * for a path the gate refuses or a directory that cannot be watched — the subscription is then
@@ -200,7 +206,7 @@ export function makeTranscriptReader(
     // window came to 0.5 MB). `editedFiles: false` skips the git-backed scan the page otherwise runs —
     // this producer fires on every byte-advance of every subscribed thread, and the rail keeps the copy
     // its last HTTP read delivered.
-    const page = readLatestThreadTranscriptPage(project, storage, slug, backendFor, { editedFiles: false })
+    const page = readLatestThreadTranscriptPage(project, storage, slug, backendFor)
     const named = peerNameFor ? projectTranscriptPeerNames(page.messages, (taskId) => peerNameFor(slug, taskId)) : page.messages
     const sent = sessionPeerThread ? projectTranscriptSessionPeers(named, sessionPeerThread) : named
     const projected = lifecycleFor ? projectTranscriptAgentLifecycles(sent, (id) => lifecycleFor(slug, id)) : sent
@@ -680,10 +686,14 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     | { kind: "unavailable" }
     | { kind: "oversized"; actualBytes: number }
     | { kind: "limited"; scope: "origin" | "global"; retryAfterMs: number }
+    | { kind: "folding"; done: Promise<void> }
 
   function snapshotFor(slug: string, origin?: string): SnapshotResult {
     const cached = getTranscriptSnapshot(slug)
     if (cached) return { kind: "ready", snapshot: cached }
+    // Before the read budget: a read that has not happened yet has spent nothing.
+    const folding = deps.catchUpTranscript?.(slug)
+    if (folding) return { kind: "folding", done: folding }
     const reservation = reserveTranscriptRead(origin)
     if (reservation.kind === "limited") return reservation
     const read = readTranscript(slug)
@@ -710,6 +720,12 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
   // broadcast of this SAME change to the OTHER (already-subscribed) connections, leaving them stale until
   // the next change. Called right after registry.subscribe, so subscribers(slug) includes this conn.
   function pushSnapshotResult(ws: WebSocket, slug: string, result: SnapshotResult): void {
+    if (result.kind === "folding") {
+      void result.done.then(() => {
+        if (!closing && ws.readyState === ws.OPEN && registry.isSubscribed(ws, slug)) enqueueSubscriptionPush(ws, slug)
+      })
+      return
+    }
     if (result.kind === "unavailable") {
       closeSocket(ws, 1011, "transcript unavailable")
       return
@@ -860,6 +876,13 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
         continue
       }
       const result = snapshotFor(slug) // shared producer refresh: global budget only
+      if (result.kind === "folding") {
+        void result.done.then(() => {
+          pendingTranscriptRefreshes.add(slug)
+          scheduleTranscriptFlush()
+        })
+        continue
+      }
       if (result.kind === "limited") {
         if (maxTranscriptReadsOverall === 0) {
           for (const ws of registry.subscribers(slug)) {

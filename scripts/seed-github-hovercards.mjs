@@ -74,4 +74,4 @@ execFileSync("sqlite3", [db, `INSERT OR REPLACE INTO session
 
 const api = createRpcClient(`http://127.0.0.1:${port}/`)
 await api.waitForHealth()
-console.log(JSON.stringify({ url: `http://127.0.0.1:${port}/thread/${SLUG}`, slug: SLUG }))
+console.log(JSON.stringify({ url: `http://127.0.0.1:${port}/?thread=${SLUG}`, slug: SLUG }))

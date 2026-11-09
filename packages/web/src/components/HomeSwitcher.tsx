@@ -2,7 +2,7 @@ import type { CSSProperties, MouseEvent } from "react"
 import { Link, useLocation } from "react-router"
 import { useQuery } from "@tanstack/react-query"
 import { rpc } from "../api/rpc.ts"
-import { useBoardLoaded, useQueuedThreads } from "../hooks.ts"
+import { useBoardLoaded, useQueueCards } from "../hooks.ts"
 import { CONSOLE_PATH, isConsolePath } from "../lib/base-path.ts"
 import { PROJECTS_HREF, type HomeView } from "../lib/homeView.ts"
 import { BOARD_PAIR_CLASS, SIDEBAR_WIDTH_CLASS, WORKPANE_WIDTH_CLASS } from "../lib/boardColumns.ts"
@@ -63,13 +63,13 @@ const TRIM = { textBox: "trim-both cap alphabetic" } as CSSProperties
 export function useQueueTotal(): number | undefined {
   const onConsole = isConsolePath()
   const board = useBoardLoaded()
-  const queuedThreads = useQueuedThreads()
+  const cards = useQueueCards()
   const polled = useQuery({
     queryKey: ["projectsRailCounts"],
     queryFn: () => rpc.projectsRailCounts(),
     refetchInterval: 5_000,
   })
-  if (onConsole && board) return queuedThreads.length
+  if (onConsole && board) return cards.length
   if (!polled.data) return undefined
   return Object.values(polled.data).reduce((sum, counts) => sum + counts.queued, 0)
 }

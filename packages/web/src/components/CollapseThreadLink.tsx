@@ -15,12 +15,12 @@ import { Tooltip } from "./Tooltip.tsx"
 // BACK TO THE SURFACE THE DOOR WAS PRESSED IN, when the door noted one (lib/fullscreenHandoff).
 // A thread read through a DRAWER has no surface on the board root, so landing there both stranded
 // the reader and left the reverse morph with nothing named to shrink into — it cross-faded at every
-// width. `/thread/<slug>` is that drawer's own address, and BoardRoute re-mounts and names it.
+// width. `?thread=<slug>` is that drawer's own address, and BoardRoute re-mounts and names it.
 //
 // The fallback is the queue, and it is THIS project's queue, not the launching one's — and a BOARD,
-// not the project picker. A bare "/" sent a reader who opened `/project/nub/thread/x/full` to
+// not the project picker. A bare "/" sent a reader who opened `/project/nub/thread/x` to
 // whichever board the server was started from, and on the launching project it sent them to the grid.
-// It is what a COLD arrival at /full gets: a deep link, a bookmark, a reload — no door was pressed,
+// It is what a COLD arrival at full screen gets: a deep link, a bookmark, a reload — no door was pressed,
 // so there is nowhere to go back to and the queue is the honest destination.
 export function exitFullscreenHref(slug: string): string {
   return fullscreenOriginFor(slug) ?? queueDestination("/")

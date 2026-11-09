@@ -83,7 +83,7 @@ test("registered picks survive fullscreen, project switches and reload, then cle
     await page.waitForSelector("main[data-standalone-thread]")
     await check()
     await page.keyboard.press("Escape")
-    await page.waitForFunction(() => !location.pathname.endsWith("/full"))
+    await page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname))
     await check()
     // Client-side project switches remount App. The same thread slug in B must not inherit A's picks.
     const switchProject = async (project: string) => {
@@ -94,7 +94,8 @@ test("registered picks survive fullscreen, project switches and reload, then cle
     }
     // The home button leads to the grid; its project links exercise the SPA switch, not a new document.
     const grid = async () => {
-      await page.$eval("a[href='/']", (el) => (el as HTMLAnchorElement).click())
+      // PROJECTS_HREF (lib/homeView.ts): the grid's own address, which never forwards to a kept Console.
+      await page.$eval("a[href^='/?']", (el) => (el as HTMLAnchorElement).click())
       await page.waitForFunction(() => location.pathname === "/")
     }
     await grid()

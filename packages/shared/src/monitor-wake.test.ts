@@ -1,8 +1,9 @@
-// A MONITOR's wakes (`frizzctl monitor`, 2026-11-02), composed and read back. The chat draws each as a
+// A MONITOR's wakes (`frizzctl monitor add --persistent`, 2026-11-02), composed and read back. The chat draws each as a
 // hairline from what parseMonitorWake returns, so every composer is pinned against its parser here — the
 // command watch's wakes reached the chat as raw prose for three days because one had no caller.
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { splitAwaitingFrontmatter } from "./index.ts"
 import {
   mergedWakeMessage,
   monitorCancelledWakeMessage,
@@ -72,6 +73,18 @@ test("a cancellation 0.15.42 wrote still reads back", () => {
   })
 })
 
+// For an hour on 2026-11-06 every wake said "command watch". Those stay in transcripts, and the chat still draws them.
+test("a wake that says command watch still reads back", () => {
+  const swap = (text: string) => text.replace("your monitor", "your command watch").replace("Your monitor", "Your command watch")
+  const event = monitorEventWakeMessage({ id: ID, label: "l", lines: ["a"], event: 1 })
+  const expired = monitorExpiredWakeMessage({ id: ID, label: "l", command: SCRIPT, events: 2 })
+  const human = monitorCancelledWakeMessage({ id: ID, label: "l", command: SCRIPT, events: 1, reason: MONITOR_STOPPED_BY_HUMAN_REASON, by: "human" })
+  assert.match(swap(event), /^📟 Your command watch /)
+  assert.deepEqual(parseMonitorWake(swap(event)), parseMonitorWake(event))
+  assert.deepEqual(parseMonitorWake(swap(expired)), parseMonitorWake(expired))
+  assert.deepEqual(parseMonitorWake(swap(human)), parseMonitorWake(human))
+})
+
 test("a merged delivery of a monitor's wakes splits back into each one", () => {
   const event = monitorEventWakeMessage({ id: ID, label: "l", lines: ["ERROR a"], event: 4 })
   const exited = monitorExitedWakeMessage({ id: ID, label: "l", command: SCRIPT, events: 4, run: { outcome: "exit", exitCode: 0, output: "" } })
@@ -90,4 +103,12 @@ test("a monitor is labelled by its description, else its squeezed command", () =
   assert.equal(monitorLabel({ command: SCRIPT, description: "  errors\n in app.log " }), "errors in app.log")
   assert.equal(monitorLabel({ command: "  echo   hi  " }), "echo hi")
   assert.equal(monitorLabel({ command: "x".repeat(200) }).length, 80)
+})
+
+// The fence key became `monitors:` with the name (2026-11-06). A resumed worker keeps the contract it started
+// with, which taught `commands:`, so both name the same registration.
+test("`monitors:` and the older `commands:` both name a monitor in a fence", () => {
+  const { hints, body } = splitAwaitingFrontmatter("monitors: [cmw_0a1b2c3d4e5f]\ncommands: [cmw_6197f27a1cb0]\nstatus: watching\nfor: 1d\n---\nWaiting on the log.")
+  assert.deepEqual(hints.filter((h) => h.kind === "command").map((h) => h.value), ["cmw_0a1b2c3d4e5f", "cmw_6197f27a1cb0"])
+  assert.equal(body, "Waiting on the log.")
 })
