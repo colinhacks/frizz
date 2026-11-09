@@ -24,7 +24,7 @@ import { createOpencodeBridge } from "./opencode-bridge.ts"
 import { OpencodeHub } from "./opencode-hub.ts"
 import { opencodeTranscriptPath, createOpencodeBackend } from "./opencode-transcript.ts"
 
-const [bin = "opencode", modelArg = "opencode/big-pickle"] = process.argv.slice(2)
+const [bin, modelArg = "opencode/big-pickle"] = process.argv.slice(2)
 const [providerID, ...rest] = modelArg.split("/")
 const model = { providerID: providerID!, id: rest.join("/") }
 const root = mkdtempSync(join(tmpdir(), "opencode-native-live-"))
@@ -35,7 +35,7 @@ const env: NodeJS.ProcessEnv = {
   PATH: process.env.PATH, HOME: home,
   XDG_DATA_HOME: join(home, ".local/share"), XDG_CONFIG_HOME: join(home, ".config"),
   XDG_STATE_HOME: join(home, ".local/state"), XDG_CACHE_HOME: join(home, ".cache"),
-  FRIZZ_OPENCODE_BIN: bin,
+  ...(bin ? { FRIZZ_OPENCODE_BIN: bin } : {}),
 }
 mkdirSync(join(home, ".config/opencode"), { recursive: true })
 writeFileSync(join(home, ".config/opencode/service.json"), JSON.stringify({ port: 20_000 + Math.floor(Math.random() * 20_000) }) + "\n")
