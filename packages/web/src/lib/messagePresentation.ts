@@ -24,8 +24,8 @@ export function lastAskIndex(messages: readonly Pick<TranscriptMessage, "role" |
   return -1
 }
 
-export type HumanTurnLike = Pick<TranscriptMessage, "role" | "text"> &
-  Partial<Pick<TranscriptMessage, "displayText" | "kind" | "queued" | "wake" | "peerFrom" | "agentInstruction" | "sessionPeer">>
+export type HumanTurnLike = { role: string; kind?: string } &
+  Partial<Pick<TranscriptMessage, "text" | "displayText" | "queued" | "wake" | "peerFrom" | "agentInstruction" | "sessionPeer">>
 
 // THE MOST RECENT INTERACTION — the last turn the human themself put into the thread. The QUEUE CARD
 // opens here, so it is stricter than the ask above: the card does not merely quote this message, it
@@ -51,10 +51,16 @@ export type HumanTurnLike = Pick<TranscriptMessage, "role" | "text"> &
 // 0 — the whole loaded transcript — when the human has written nothing in it yet.
 export function lastHumanTurnIndex(messages: readonly HumanTurnLike[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.role !== "user" || m.queued || m.peerFrom || m.agentInstruction || m.sessionPeer) continue
-    if (m.wake && !isAnswersMessage(m)) continue
-    return i
+    if (isHumanTurn(messages[i])) return i
   }
   return 0
+}
+
+/** Did the human put this turn into the thread — the rule above, for one message? lib/questionShadow
+ *  reads it too: a later fence naming an open question moves its card only past one of these, so the card
+ *  and the queue card's window agree on where the human last came in. */
+export function isHumanTurn(m: HumanTurnLike): boolean {
+  if (m.role !== "user" || m.kind === "event" || m.kind === "reasoning") return false
+  if (m.queued || m.peerFrom || m.agentInstruction || m.sessionPeer) return false
+  return !m.wake || (m.text !== undefined && isAnswersMessage({ ...m, text: m.text }))
 }

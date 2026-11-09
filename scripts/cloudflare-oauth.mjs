@@ -1,7 +1,7 @@
 // Signs the maintainer in to Cloudflare for ONE sitting, through the private OAuth client on the Frizz
 // account, so a Workers deploy needs an Authorize click instead of a hand-made dashboard token.
 //
-//   env -u NODE_COMPAT nub scripts/cloudflare-oauth.mjs <dir outside the repository>
+//   env -u NODE_COMPAT nub scripts/cloudflare-oauth.mjs [--job=deploy|drift|audit] <dir outside the repository>
 //
 // It prints a link. Whoever opens it sees Cloudflare's consent screen, picks the Frizz account and
 // selects Authorize. The token that comes back is handed to scripts/cloudflare-sitting.sh on stdin, and
@@ -18,6 +18,10 @@
 //   - Nothing is stored. The access token lives in this process and the holder's, and is never in a
 //     file, an argv or a transcript. Never add it to Keyward: the maintainer decided that on 2026-11-09.
 //   - No `offline_access`, so Cloudflare issues no refresh token, and the sitting ends with the token.
+//   - The client registers every Cloudflare scope as optional, and each sitting asks only for the scopes
+//     of the tokens it mints (scopesForJob). That is the real limit, not a formality: Cloudflare refuses
+//     to mint a token holding any permission the sign-in was not granted, so a deploy sitting's sign-in
+//     cannot make a token that touches DNS, and the consent screen lists exactly what is at stake.
 //   - The client is PRIVATE, so only members of the Frizz account can authorize it, and it has no
 //     secret: a command-line program cannot keep one, so PKCE proves the code came back to this process.
 //   - The token mints the deploy token and does not upload anything itself. Uploads under a member's
@@ -31,20 +35,22 @@ import { createHash, randomBytes } from "node:crypto"
 import { createServer } from "node:http"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { JOBS, scopesForJob } from "./cloudflare-tokens.mjs"
 
 /** The private client on the Frizz account. Not a secret: a PKCE client has none. */
-export const CLIENT_ID = ""
+export const CLIENT_ID = "5442053d640893fa1652bba17c65b7df"
 
 export const PORT = 8977
 /** Registered on the client exactly, so the two must change together. */
 export const REDIRECT_URI = `http://localhost:${PORT}/callback`
-/** Mirrors what scripts/cloudflare-tokens.mjs needs of its credential. Anything wider is a mistake. */
-export const SCOPES = ["account-api-tokens.write", "account-settings.read", "zone.read"]
 
 const AUTHORIZE = "https://dash.cloudflare.com/oauth2/auth"
 const TOKEN = "https://dash.cloudflare.com/oauth2/token"
 const REVOKE = "https://dash.cloudflare.com/oauth2/revoke"
-const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000
+// The link usually waits in the maintainer's queue, so the listener waits the length of a working day. A
+// long wait opens nothing: a code is useless without this process's PKCE verifier, and the listener
+// answers only the state it generated.
+const SIGN_IN_TIMEOUT_MS = 12 * 60 * 60 * 1000
 
 const base64url = (bytes) => bytes.toString("base64url")
 
@@ -53,13 +59,13 @@ export function pkcePair() {
   return { verifier, challenge: base64url(createHash("sha256").update(verifier).digest()) }
 }
 
-export function authorizeUrl({ clientId, state, challenge }) {
+export function authorizeUrl({ clientId, state, challenge, scopes }) {
   const url = new URL(AUTHORIZE)
   url.search = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
     redirect_uri: REDIRECT_URI,
-    scope: SCOPES.join(" "),
+    scope: scopes.join(" "),
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -103,7 +109,7 @@ export async function listenForCode({ state, port = PORT, timeoutMs = SIGN_IN_TI
     page(200, "Frizz is signed in to Cloudflare for this one sitting. You can close this tab.")
     finish(settle.resolve, received)
   }
-  const timer = setTimeout(() => finish(settle.reject, new Error("nobody authorized the sign-in within 10 minutes")), timeoutMs)
+  const timer = setTimeout(() => finish(settle.reject, new Error(`nobody authorized the sign-in within ${Math.round(timeoutMs / 60000)} minutes`)), timeoutMs)
   timer.unref?.()
 
   const listen = (host, onPort) =>
@@ -153,33 +159,36 @@ export async function revokeToken({ clientId, token, fetchImpl = fetch }) {
   return response.ok
 }
 
-/** Which required scopes the consent screen did not grant. An empty answer from Cloudflare proves nothing, so it is not a refusal. */
-export function missingScopes(granted) {
-  return granted.length === 0 ? [] : SCOPES.filter((scope) => !granted.includes(scope))
+/** Which requested scopes the consent screen did not grant. An empty answer from Cloudflare proves nothing, so it is not a refusal. */
+export function missingScopes(granted, requested) {
+  return granted.length === 0 ? [] : requested.filter((scope) => !granted.includes(scope))
 }
 
-async function main([dir]) {
-  if (!dir) throw new Error("usage: cloudflare-oauth.mjs <dir outside the repository>")
+async function main(args) {
+  const job = args.find((a) => a.startsWith("--job="))?.slice("--job=".length) ?? "deploy"
+  const dir = args.find((a) => !a.startsWith("--"))
+  if (!dir) throw new Error(`usage: cloudflare-oauth.mjs [--job=${Object.keys(JOBS).join("|")}] <dir outside the repository>`)
+  const scopes = scopesForJob(job)
   if (!CLIENT_ID) throw new Error("CLIENT_ID is empty: create the private OAuth client first, see this file's header")
   const { verifier, challenge } = pkcePair()
   const state = base64url(randomBytes(16))
   const { code } = await listenForCode({ state })
-  console.log(`Open this link and select Authorize, with the Frizz account picked:\n\n${authorizeUrl({ clientId: CLIENT_ID, state, challenge })}\n`)
+  console.log(`Open this link and select Authorize, with the Frizz account picked:\n\n${authorizeUrl({ clientId: CLIENT_ID, state, challenge, scopes })}\n`)
   const session = await exchangeCode({ clientId: CLIENT_ID, code: await code, verifier })
   const revoke = async () => {
     const tokens = [session.token, session.refreshToken].filter(Boolean)
     const results = await Promise.all(tokens.map((token) => revokeToken({ clientId: CLIENT_ID, token }).catch(() => false)))
     console.log(results.every(Boolean) ? "revoked the sign-in" : "COULD NOT revoke the sign-in: it ends when it expires, or at Manage OAuth authorizations on the profile page")
   }
-  const missing = missingScopes(session.scopes)
+  const missing = missingScopes(session.scopes, scopes)
   if (missing.length) {
     await revoke()
     throw new Error(`the sign-in lacks ${missing.join(", ")}: authorize again with every permission on`)
   }
   const expiresAt = session.expiresIn ? new Date(Date.now() + session.expiresIn * 1000).toISOString() : "unknown"
-  console.log(`signed in, expires ${expiresAt}, scopes ${session.scopes.join(" ") || "(not reported)"}${session.refreshToken ? ", and Cloudflare sent a refresh token anyway, which is dropped" : ""}`)
+  console.log(`signed in for a ${job} sitting, expires ${expiresAt}, ${session.scopes.length || "no reported"} scopes${session.refreshToken ? ", and Cloudflare sent a refresh token anyway, which is dropped" : ""}`)
 
-  const holder = spawn("bash", [join(dirname(fileURLToPath(import.meta.url)), "cloudflare-sitting.sh"), "-", resolve(dir), "oauth", expiresAt], { stdio: ["pipe", "inherit", "inherit"] })
+  const holder = spawn("bash", [join(dirname(fileURLToPath(import.meta.url)), "cloudflare-sitting.sh"), "-", resolve(dir), "oauth", expiresAt, (session.scopes.length ? session.scopes : scopes).join(" ")], { stdio: ["pipe", "inherit", "inherit"] })
   holder.stdin.end(`${session.token}\n`)
   const stop = () => holder.kill("SIGTERM")
   process.once("SIGTERM", stop)

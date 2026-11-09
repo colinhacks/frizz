@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { SNAPSHOT_TOKEN, TOKENS, expiresOn, findGroup, planToken, snapshotAccount, staleTokens, withAuthor } from "./cloudflare-tokens.mjs"
+import { JOBS, MINTER_SCOPES, OAUTH_SCOPES, SNAPSHOT_TOKEN, TOKENS, expiresOn, findGroup, planToken, scopesForJob, snapshotAccount, staleTokens, withAuthor } from "./cloudflare-tokens.mjs"
 
 // Shapes from GET /accounts/{account_id}/tokens/permission_groups, cut down to the fields the plan
 // reads. Not captured from the live account: the first real run resolves against the real list and
@@ -134,4 +134,40 @@ test("a snapshot saves every read it can, records each refusal, and covers a Wor
   } finally {
     rmSync(outDir, { recursive: true, force: true })
   }
+})
+
+test("every group a token names has its OAuth scope known, and only an optional one may have none", () => {
+  for (const spec of [...TOKENS, SNAPSHOT_TOKEN]) {
+    for (const raw of [...spec.account, ...spec.zone]) {
+      const name = raw.replace(/\?$/, "")
+      assert.ok(name in OAUTH_SCOPES, `${spec.name}: ${name} has no entry in OAUTH_SCOPES`)
+      if (!raw.endsWith("?")) assert.ok(OAUTH_SCOPES[name], `${spec.name}: ${name} is required, so a sign-in must be able to grant it`)
+    }
+  }
+})
+
+test("a deploy sitting asks to write Workers scripts and to read, and for nothing a deploy does not mint", () => {
+  const deploy = scopesForJob("deploy")
+  for (const scope of [...MINTER_SCOPES, "workers-scripts.write", "dns.read"]) assert.ok(deploy.includes(scope), scope)
+  assert.equal(deploy.filter((scope) => /\.(write|edit|admin)$/.test(scope)).sort().join(" "), "account-api-tokens.write workers-scripts.write")
+  assert.equal(scopesForJob("audit").includes("workers-scripts.write"), false)
+  assert.equal(scopesForJob("drift").includes("workers-scripts.write"), false)
+  assert.deepEqual(Object.keys(JOBS).sort(), ["audit", "deploy", "drift"])
+  assert.throws(() => scopesForJob("everything"), /no such sitting/)
+})
+
+test("under a sign-in, a group it was not granted counts as absent: skipped if optional, missing if required", () => {
+  const groups = [
+    { id: "g-scripts-w", name: "Workers Scripts Write", scopes: ["com.cloudflare.api.account"] },
+    { id: "g-scripts-r", name: "Workers Scripts Read", scopes: ["com.cloudflare.api.account"] },
+    { id: "g-wr", name: "Waiting Room Read", scopes: ["com.cloudflare.api.account.zone"] },
+  ]
+  const spec = { account: ["Workers Scripts Write", "Workers Scripts Read"], zone: ["Waiting Room Read?"] }
+  const granted = new Set(["workers-scripts.read"])
+  const plan = planToken(spec, { groups, accountId: "acct", zoneId: "zone1", granted })
+  assert.deepEqual(plan.missing, ["Workers Scripts Write"])
+  assert.deepEqual(plan.skipped, ["Waiting Room Read"])
+  assert.deepEqual(plan.policies.flatMap((p) => p.permission_groups.map((g) => g.name)), ["Workers Scripts Read"])
+  const unlimited = planToken(spec, { groups, accountId: "acct", zoneId: "zone1" })
+  assert.deepEqual(unlimited.missing, [])
 })

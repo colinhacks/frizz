@@ -561,12 +561,16 @@ const NOT_ANSWERED = { chosenIdxs: [] }
  *  removing the rendered versions of questions…?"). Offered a one-line row or a full copy, the maintainer
  *  chose the full copy. So the slot draws the root card READ-ONLY and greyed, its kind line saying where
  *  the answer goes, and carries no `data-question-id`: that names the one card focus and navigation reach.
- *  It is always ABOVE the live card, since that card sits in the newest message naming the question. */
-export function OpenQuestionCopyCard({ q, wrap }: { q: Pick<RegisteredQuestionView, "id" | "spec">; wrap?: boolean }) {
+ *
+ *  `above`: the live card is ABOVE this copy. Until 2026-11-09 it never was, because the card sat in the
+ *  newest message naming the question. Now a recap the worker writes after a wake, before the human's next
+ *  turn, leaves the card in the write-up that set it up (lib/questionShadow placeQuestions), so the recap's
+ *  copy points up. */
+export function OpenQuestionCopyCard({ q, above, wrap }: { q: Pick<RegisteredQuestionView, "id" | "spec">; above?: boolean; wrap?: boolean }) {
   const question = useMemo(() => toParsedQuestion(q.spec).question, [q.spec])
   return (
-    <article data-question-copy={q.id} data-question-open aria-label="Open question, answered further down" className="flex min-w-0 flex-col gap-2 opacity-60">
-      <QuestionBlockCard question={question} label="Still open, answer it below" wrap={wrap} />
+    <article data-question-copy={q.id} data-question-open={above ? "above" : "below"} aria-label={above ? "Open question, answered further up" : "Open question, answered further down"} className="flex min-w-0 flex-col gap-2 opacity-60">
+      <QuestionBlockCard question={question} label={above ? "Still open, answer it above" : "Still open, answer it below"} wrap={wrap} />
     </article>
   )
 }
