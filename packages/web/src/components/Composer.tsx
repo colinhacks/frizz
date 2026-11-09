@@ -155,7 +155,7 @@ export function Composer({
   placeholder,
   id,
   minHeight: minHeightProp,
-  maxHeight = 220,
+  maxHeight = 157,
   autoFocus,
   busy,
   footer,

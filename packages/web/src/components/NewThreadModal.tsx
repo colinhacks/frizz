@@ -346,7 +346,7 @@ function LocalDispatchForm({
         onSubmit={form.submit}
         placeholder="Describe the task…"
         minHeight={96}
-        maxHeight={340}
+        maxHeight={277}
         busy={form.busy}
         footer={form.footer}
       />
