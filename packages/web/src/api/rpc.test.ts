@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { assertMutationAllowedDuringControlPlaneTransition, CONTROL_PLANE_RESTARTING_MESSAGE, isKeptDeliveryError, isRetryableRpcError, parseRpcResponse, routeCall } from "./rpc.ts"
+import { queryPriority, assertMutationAllowedDuringControlPlaneTransition, CONTROL_PLANE_RESTARTING_MESSAGE, isKeptDeliveryError, isRetryableRpcError, parseRpcResponse, routeCall } from "./rpc.ts"
 import { store } from "../store.ts"
 
 test("RPC response: a stale server's plain-text missing route asks for a server restart", async () => {
@@ -8,6 +8,13 @@ test("RPC response: a stale server's plain-text missing route asks for a server 
     parseRpcResponse(new Response("404 Not Found", { status: 404 }), "setThreadPermission"),
     /Frizz server restart required/,
   )
+})
+
+test("RPC priority: a card's own reads yield to the board and the project poll", () => {
+  for (const name of ["threadTranscript", "threadSettledQuestions", "threadProfileOptions", "mcpStatus", "resolveLocalPaths", "githubRefPreview"]) {
+    assert.equal(queryPriority(name), "low", name)
+  }
+  for (const name of ["boardState", "projectsRailCounts", "projectsList"]) assert.equal(queryPriority(name), "auto", name)
 })
 
 test("RPC transition guard holds writes locally while preserving query access", () => {
