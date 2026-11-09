@@ -73,8 +73,8 @@ test("every bin target resolves inside a published directory", () => {
 test("the shell bootstraps the versioned public server contract", () => {
   assert.deepEqual(manifest.frizzServer, {
     package: "frizz-server",
-    version: "0.15.47",
-    minimum: "0.15.47",
+    version: "0.15.48",
+    minimum: "0.15.48",
     protocol: 1,
     dataEpoch: 1,
   });
@@ -82,8 +82,8 @@ test("the shell bootstraps the versioned public server contract", () => {
   assert.deepEqual(serverManifest.frizzServer, { protocol: 1, dataEpoch: 1 });
   // The launcher parses both at every start and refuses a minimum its own pin does not meet, so a
   // manifest that would stop every launch has to fail here, before it is published.
-  assert.equal(serverReleaseSpec(manifest).version, "0.15.47");
-  assert.equal(serverReleaseMinimum(manifest), "0.15.47");
+  assert.equal(serverReleaseSpec(manifest).version, "0.15.48");
+  assert.equal(serverReleaseMinimum(manifest), "0.15.48");
 });
 
 test("native server dependencies do not leak back into the stable shell", () => {
