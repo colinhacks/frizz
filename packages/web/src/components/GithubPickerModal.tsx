@@ -215,7 +215,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   return (
     <Overlay onClose={onClose}>
       <div
-        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50"
+        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel px-5 pb-3 pt-5 shadow-2xl shadow-shadow-ink/50"
         onKeyDownCapture={(e) => {
           if (e.key === "Escape") {
             e.stopPropagation()
@@ -358,9 +358,11 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
         {/* Footer: what every thread this batch starts will be, bottom-left, and the act that starts
             them, alone on the right — the prompt box's own layout. The selector is the SAME control the
             prompt box carries and writes the same durable preference; its menu opens UPWARD
-            (side="top"), since the footer sits on the modal's bottom edge. `pt-5` is the modal's own
-            padding, so the row is centred in its band and the Start button's corner is inset evenly. */}
-        <div className="-mx-5 mt-3 flex items-center justify-between gap-3 border-t border-border/60 px-5 pt-5">
+            (side="top"), since the footer sits on the modal's bottom edge. 12px above and below, like the
+            app's other panel footers, and about the height of the heading's band: at 20px each it was
+            the tallest thing on the picker (maintainer 2026-11-09: "way too much vertical spacing"). The
+            bottom 12 is the modal's own `pb-3`, so a model error under this row keeps its margin. */}
+        <div className="-mx-5 mt-2.5 flex items-center justify-between gap-3 border-t border-border/60 px-5 pt-3">
           <div className="flex min-w-0 items-center gap-x-1.5">
             <PromptControlGroup>
               <ProfileGridSelector
