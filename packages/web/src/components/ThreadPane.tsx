@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Inbox } from "lucide-react"
+import { Inbox, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react"
 import { useSnapshot } from "valtio"
 import type { ThreadView as ThreadRow } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
@@ -17,12 +17,13 @@ import { useOptimisticallySteered } from "../lib/steering.ts"
 import { keyProject } from "../lib/threadKey.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import {
-  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded, stepPane,
-  takeComposerFocus, usePaneWide, type AfterSend,
+  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded,
+  setPaneRailHidden, stepPane, takeComposerFocus, usePaneWide, type AfterSend,
 } from "../lib/threadPane.ts"
 import { store, threadBySlug } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
 import { LastActive } from "./LastActive.tsx"
+import { Tooltip } from "./Tooltip.tsx"
 import { RAIL_WIDTH } from "./FocusRail.tsx"
 import { LAYOUT_VARS, SidePane } from "./StandaloneThreadPage.tsx"
 
@@ -66,6 +67,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   // With nothing selected there is nothing to be full screen about.
   const folded = proto.folded && slug !== null
   const threeColumns = wide && !folded
+  const railShown = threeColumns && !proto.railHidden
   // A file wants more room than the rail's 340, so while one is open the thread and the file take the page
   // (PaneThread) and the sidebar gives up what they need of it: the file gets the thread's 720 before the
   // sidebar stands above its minimum.
@@ -145,7 +147,9 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       <main
         id="workpane"
         className="h-full min-w-0"
-        style={{ flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + RAIL_WIDTH}px` : `0 0 min(${PANE_THREAD_PX}px, 62vw)` }}
+        style={{
+          flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + (railShown ? RAIL_WIDTH : 0)}px` : `0 0 min(${PANE_THREAD_PX}px, 62vw)`,
+        }}
       >
         {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
       </main>
@@ -156,14 +160,18 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
 
 function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wide: boolean }) {
   const snap = useSnapshot(store)
+  const { railHidden } = useSnapshot(paneProto)
   const board = useBoard()
   const thread = useThreadSnapshot(slug)
   const route = resolveThreadRoute(board, slug, threadBySlug)
   const queryClient = useQueryClient()
   const threeColumns = wide && !folded
-  // The rail stands beside the thread full screen (from the split width up, as on /full) and in the three
-  // columns.
-  const railBeside = folded || threeColumns
+  // The rail has room beside the thread full screen (from the split width up, as on /full) and in the three
+  // columns, and stands there unless the human put it away.
+  const railRoom = folded || threeColumns
+  const railBeside = railRoom && !railHidden
+  // A file is asked for, so it opens beside the thread with the rail put away too, over nothing.
+  const sidePane = railRoom && (!railHidden || snap.filePanels.length > 0)
   const fileOpen = folded && snap.filePanels.some((panel) => !panel.closing)
   // In the three columns a file takes room from the thread rather than sliding the row: the sidebar stays,
   // so there is no slack beside the pair to slide into. Held through the layer's slide-out (`closing`
@@ -192,10 +200,10 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  // While the rail is beside the thread a file opens beside it too, as it does on /full. Narrowing the
-  // window past the wide line unfolded takes the rail away, and an open file with it.
+  // While the rail has room beside the thread a file opens beside it too, as it does on /full. Narrowing
+  // the window past the wide line unfolded takes the room away, and an open file with it.
   useEffect(() => {
-    if (!railBeside) return
+    if (!railRoom) return
     const split = window.matchMedia?.(`(min-width: ${SPLIT_MIN_PX}px)`)
     if (!split) return
     const apply = () => { store.splitFileViewer = split.matches }
@@ -206,7 +214,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
       store.splitFileViewer = false
       store.filePanels = []
     }
-  }, [railBeside])
+  }, [railRoom])
 
   const pane = useMemo(() => ({
     exit: {
@@ -217,19 +225,19 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
     // Full screen is one click from the open thread at every width: it is how one thread gets the page to
     // itself (maintainer 2026-11-09). Already there, the header has the door's closing half instead.
     expand: !folded,
-    railBeside: threeColumns,
+    railBeside,
     queueWindow: opensQueued === true,
-  }), [slug, folded, threeColumns, opensQueued])
+  }), [slug, folded, railBeside, opensQueued])
 
   // ONE TREE IN EVERY LAYOUT, each slot a fixed element whose classes change, so crossing the wide line
   // or folding never remounts the thread: the transcript keeps its scroll and the prompt box its focus.
   //   [gutter] [thread] [side pane]
-  // The gutter is /full's centring (LAYOUT_VARS), full screen only: in the three columns the thread
-  // stands hard against the sidebar and the rail.
+  // The gutter is /full's centring (LAYOUT_VARS), full screen only and only beside a side pane: in the
+  // three columns the thread stands hard against the sidebar and the rail, and alone it is simply centred.
   return (
     <ProjectScope project={keyProject(slug)}>
       <div
-        className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${threeColumns ? "" : "justify-center split:justify-start"}`}
+        className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${threeColumns ? "" : sidePane ? "justify-center split:justify-start" : "justify-center"}`}
         style={{
           ...LAYOUT_VARS,
           // In the three columns and at rest the side pane is the rail alone; with a file it is /full's
@@ -238,28 +246,69 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
           transform: fileOpen ? "translateX(calc(-1 * var(--full-gutter)))" : undefined,
         } as CSSProperties}
       >
-        {folded && <div aria-hidden="true" className="hidden w-[var(--full-gutter)] shrink-0 split:block" />}
+        {folded && sidePane && <div aria-hidden="true" className="hidden w-[var(--full-gutter)] shrink-0 split:block" />}
+        {/* The column, which holds the thread and the controls on its two lines. */}
         <div
-          data-pane-thread
-          className={`flex h-full min-w-0 flex-col overflow-hidden border-x border-border bg-panel [view-transition-name:thread-chat] ${
+          className={`relative h-full min-w-0 ${
             threeColumns
               // 720 is the drawer's width (lib/sheet.ts SHEET_BASE_WIDTH), the measure every thread surface
               // keeps. It gives way only to the opt-in project rail, whose 57px the 1360 does not count.
               ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "w-[720px] shrink"
-              : folded ? "w-[var(--full-thread-narrow)] shrink-0 split:w-[var(--full-thread)]" : "w-full shrink-0"
+              : folded
+                ? sidePane ? "w-[var(--full-thread-narrow)] shrink-0 split:w-[var(--full-thread)]" : "w-[var(--full-thread-narrow)] shrink-0"
+                : "w-full shrink-0"
           }`}
         >
-          {route.kind === "found" ? (
-            <ThreadView slug={slug} showReturnToQueue={folded} pane={pane} />
-          ) : route.kind === "missing" ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted" role="status">Thread “{slug}” was not found in this project.</div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center"><span className="block h-5 w-5 animate-spin rounded-full border-2 border-muted/50 border-t-transparent" /></div>
+          <div
+            data-pane-thread
+            className="flex h-full w-full min-w-0 flex-col overflow-hidden border-x border-border bg-panel [view-transition-name:thread-chat]"
+          >
+            {route.kind === "found" ? (
+              <ThreadView slug={slug} showReturnToQueue={folded} pane={pane} />
+            ) : route.kind === "missing" ? (
+              <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted" role="status">Thread “{slug}” was not found in this project.</div>
+            ) : (
+              <div className="flex flex-1 items-center justify-center"><span className="block h-5 w-5 animate-spin rounded-full border-2 border-muted/50 border-t-transparent" /></div>
+            )}
+          </div>
+          <PaneEdgeToggle side="left" hidden={folded} onToggle={() => setPaneFolded(!folded)} />
+          {/* Only where the rail has room, and not while a file stands over it: the file has its own ×. */}
+          {railRoom && snap.splitFileViewer && snap.filePanels.length === 0 && (
+            <PaneEdgeToggle side="right" hidden={railHidden} onToggle={() => setPaneRailHidden(!railHidden)} />
           )}
         </div>
-        {railBeside && thread && <SidePane slug={slug} thread={thread} />}
+        {sidePane && thread && <SidePane slug={slug} thread={thread} rail={!railHidden} />}
       </div>
     </ProjectScope>
+  )
+}
+
+// THE CONTROLS ON THE LINES (maintainer 2026-11-09, of a mock page of them: "K5, let's lock it in"). An 8px
+// dot centred on each line between the thread and what stands beside it, which opens under the pointer into
+// a knob holding the panel icon. They belong to the line, not to the transcript ("setting this control
+// inside of the content column itself doesn't make semantic sense"), so the dot's centre is the line's;
+// the open knob lies half over the thread's empty margin, clear of the text, and half over the 16px inset
+// of the column beside it. The left one is the header's full-screen door by another name.
+function PaneEdgeToggle({ side, hidden, onToggle }: { side: "left" | "right"; hidden: boolean; onToggle: () => void }) {
+  const label = `${hidden ? "Show" : "Hide"} ${side === "left" ? "sidebar" : "artifacts"}`
+  const Icon = side === "left" ? (hidden ? PanelLeftOpen : PanelLeftClose) : (hidden ? PanelRightOpen : PanelRightClose)
+  return (
+    <Tooltip label={label} side={side}>
+      <button
+        type="button"
+        data-pane-edge-toggle={side}
+        aria-label={label}
+        onClick={onToggle}
+        // The column's border is its outermost pixel, so the line's centre is half a pixel inside its edge.
+        className={`group absolute top-1/2 z-10 grid h-14 w-[26px] -translate-y-1/2 place-items-center outline-none ${
+          side === "left" ? "-left-[12.5px] [view-transition-name:pane-edge-left]" : "-right-[12.5px] [view-transition-name:pane-edge-right]"
+        }`}
+      >
+        <span className="grid size-2 place-items-center overflow-hidden rounded-full border border-border-strong bg-elevated text-fg transition-[width,height] duration-150 ease-out group-hover:size-[26px] group-focus-visible:size-[26px]">
+          <Icon aria-hidden size={14} strokeWidth={1.75} className="shrink-0 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-visible:opacity-100" />
+        </span>
+      </button>
+    </Tooltip>
   )
 }
 

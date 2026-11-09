@@ -16,12 +16,16 @@ export type AfterSend = "stay" | "next" | "auto"
 
 const KEY = "frizz.threadPanePrototype.v1"
 
-function load(): { afterSend: AfterSend; folded: boolean } {
-  const fallback = { afterSend: "stay" as AfterSend, folded: false }
+function load(): { afterSend: AfterSend; folded: boolean; railHidden: boolean } {
+  const fallback = { afterSend: "stay" as AfterSend, folded: false, railHidden: false }
   try {
     const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<typeof fallback>
     // Field by field, so a key an earlier build stored (the slim rail's `foldStyle`) is dropped.
-    return { afterSend: stored.afterSend ?? fallback.afterSend, folded: stored.folded ?? fallback.folded }
+    return {
+      afterSend: stored.afterSend ?? fallback.afterSend,
+      folded: stored.folded ?? fallback.folded,
+      railHidden: stored.railHidden ?? fallback.railHidden,
+    }
   } catch {
     return fallback
   }
@@ -139,9 +143,9 @@ const WIDEST_COLUMNS_PX = PANE_SIDEBAR_MAX_PX + PANE_THREAD_PX + 340
 const WIDEST_PAIR_PX = PANE_SIDEBAR_MAX_PX + PANE_THREAD_PX
 
 /** Where the sidebar's left edge stands, as a CSS length of the page: past the columns' greatest widths,
- *  the far left and far right share what is left over. */
-export function paneSidebarLeft(wide: boolean): string {
-  return `max(0px, calc((100% - ${wide ? WIDEST_COLUMNS_PX : WIDEST_PAIR_PX}px) / 2))`
+ *  the far left and far right share what is left over. `rail` is whether the rail stands beside them. */
+export function paneSidebarLeft(rail: boolean): string {
+  return `max(0px, calc((100% - ${rail ? WIDEST_COLUMNS_PX : WIDEST_PAIR_PX}px) / 2))`
 }
 const WIDE_QUERY = `(min-width: ${PANE_WIDE_MIN_PX}px)`
 
@@ -177,11 +181,24 @@ export function usePaneWide(): boolean {
 // (StandaloneThreadPage LAYOUT_VARS).
 export function setPaneFolded(next: boolean): void {
   if (paneProto.folded === next) return
-  const apply = () => {
-    flushSync(() => {
-      paneProto.folded = next
-    })
-  }
+  morph(() => {
+    paneProto.folded = next
+  })
+}
+
+// THE RAIL PUT AWAY (maintainer 2026-11-09, of the collapse controls on the lines between the columns: a
+// dot that opens into a knob, "K5, let's lock it in"). The columns that are left re-centre as a pair, and
+// the thread's ops strip comes back above its transcript, as it does wherever no rail stands beside it.
+// Remembered, like full screen: a reader who put it away wants it away on the next thread too.
+export function setPaneRailHidden(next: boolean): void {
+  if (paneProto.railHidden === next) return
+  morph(() => {
+    paneProto.railHidden = next
+  })
+}
+
+function morph(update: () => void): void {
+  const apply = () => flushSync(update)
   const start = (document as Document & { startViewTransition?: (update: () => void) => unknown }).startViewTransition
   if (!start || prefersReducedMotion()) apply()
   else start.call(document, apply)

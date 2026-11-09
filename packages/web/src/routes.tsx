@@ -91,11 +91,11 @@ function RootLayout() {
 // It follows the sidebar's own left edge, which is not the centred pair's (ThreadPane.tsx). With a file
 // open the columns fill the page, so that edge is the page's.
 function ConsoleHomeSwitcher({ railVisible }: { railVisible: boolean }) {
-  const { folded } = useSnapshot(paneProto)
+  const { folded, railHidden } = useSnapshot(paneProto)
   const { paneSlug, filePanels } = useSnapshot(store)
   const wide = usePaneWide()
   if (folded && paneSlug) return null
-  return <HomeSwitcher railVisible={railVisible} sidebarInset={wide && filePanels.length > 0 ? "16px" : `calc(${paneSidebarLeft(wide)} + 16px)`} />
+  return <HomeSwitcher railVisible={railVisible} sidebarInset={wide && filePanels.length > 0 ? "16px" : `calc(${paneSidebarLeft(wide && !railHidden)} + 16px)`} />
 }
 
 /**

@@ -174,9 +174,9 @@ function useChildDrillSlug(): string | null {
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
 /** What the one-thread pane hands the thread view it hosts (prototype): where acting on the thread takes
- *  the human, whether the header offers full screen, whether the rail stands beside it without the page
- *  being full screen (the three columns, which `showReturnToQueue` cannot say), and whether the thread
- *  was in the queue when it was opened, which draws it as its card does. */
+ *  the human, whether the header offers full screen, whether the rail stands beside it (full screen or in
+ *  the three columns, unless the human put it away), and whether the thread was in the queue when it was
+ *  opened, which draws it as its card does. */
 export interface ThreadPaneHooks {
   exit: SurfaceExit
   expand: boolean
@@ -190,7 +190,8 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
   // THE RAIL IS BESIDE THIS THREAD — the /full page's own column (`showReturnToQueue` is passed by
   // StandaloneThreadPage alone), at a width that draws its side pane. `splitFileViewer` is that width:
   // the page sets it off the same SPLIT_MIN_PX the `split:` variant shows the pane at. A thread opened
-  // in a drawer over /full is not the rail's thread, so it keeps its own ops strip.
+  // in a drawer over /full is not the rail's thread, so it keeps its own ops strip. The one-thread pane
+  // says for itself (`pane.railBeside`), because it can put the rail away.
   const { splitFileViewer } = useSnapshot(store)
   // The header is handed to ChatView, which owns the thread's surface (ThreadSurface): the surface is
   // the whole thread, header included, as the queue card's is.
@@ -198,7 +199,7 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
     <ChatView
       slug={slug}
       phone={phone}
-      railBeside={(showReturnToQueue || pane?.railBeside === true) && splitFileViewer}
+      railBeside={(pane ? pane.railBeside === true : showReturnToQueue) && splitFileViewer}
       pane={pane}
       header={phone ? (
         <MobileThreadHeader slug={slug} onClose={onClose} />

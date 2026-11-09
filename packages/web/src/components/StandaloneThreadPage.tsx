@@ -230,17 +230,20 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
 // nothing is open — so the viewer's own width is a constant and it never re-wraps a line of code to
 // arrive. The rail stays MOUNTED under the pane — its live rows keep polling — but goes inert, so
 // nothing hidden can take focus or a click. Readers stay mounted under each new layer, including
-// during its slide-out, so dismissing a file reveals exactly the reading position beneath it.
-export function SidePane({ slug, thread }: { slug: string; thread: ThreadView }) {
+// during its slide-out, so dismissing a file reveals exactly the reading position beneath it. Without
+// `rail` (the one-thread pane with its rail put away) the region holds files alone, over nothing.
+export function SidePane({ slug, thread, rail = true }: { slug: string; thread: ThreadView; rail?: boolean }) {
   const snap = useSnapshot(store)
   return (
     <div
       data-side-pane
       className="relative hidden h-full w-[var(--full-pane)] min-h-0 min-w-0 shrink-0 grow-0 overflow-hidden split:block"
     >
-      <div inert={snap.filePanels.length > 0 ? true : undefined} className="h-full min-h-0">
-        <FocusRail thread={thread} />
-      </div>
+      {rail && (
+        <div inert={snap.filePanels.length > 0 ? true : undefined} className="h-full min-h-0">
+          <FocusRail thread={thread} />
+        </div>
+      )}
       {snap.filePanels.map((panel, i) => (
         <FilePaneLayer
           key={panel.id}
