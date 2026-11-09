@@ -263,6 +263,10 @@ function describeSink(sink) {
 }
 
 async function whoAmI(cf) {
+  // An OAuth sign-in (scripts/cloudflare-oauth.mjs) is not an API token, so neither verify endpoint knows it.
+  if (process.env.CLOUDFLARE_FRIZZ_MINTER_KIND === "oauth") {
+    return { kind: "oauth", id: null, status: "active", expires_on: process.env.CLOUDFLARE_FRIZZ_MINTER_EXPIRES || "unknown" }
+  }
   try {
     return { kind: "account", ...(await cf("GET", `/accounts/${ACCOUNT_ID}/tokens/verify`)) }
   } catch (error) {
@@ -521,7 +525,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     const cf = client(credential)
     const me = await whoAmI(cf)
-    console.log(`credential: ${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`)
+    console.log(me.kind === "oauth" ? `credential: OAuth sign-in, expires ${me.expires_on}` : `credential: ${me.kind}-owned token ${me.id}, ${me.status}, expires ${me.expires_on ?? "never"}`)
     if (me.kind === "user") await reachOf(cf, me.id)
 
     if (flag("--audit")) {
