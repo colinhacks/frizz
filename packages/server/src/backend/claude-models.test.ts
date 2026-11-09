@@ -35,12 +35,40 @@ test("an alias no row resolves keeps its bare family label; junk rows are skippe
   assert.deepEqual(resolveClaudeModels([]), CLAUDE_MODELS_FALLBACK)
 })
 
-test("the first row of a family wins, so the default row names the edition every sibling shares", () => {
+test("with no row named for the alias, the first row of a family wins", () => {
   const rows = [
-    { value: "opus[1m]", resolvedModel: "claude-opus-5-5[1m]" },
-    { value: "opus-legacy", resolvedModel: "claude-opus-4-8" },
+    { value: "default", resolvedModel: "claude-opus-5-5[1m]" },
+    { value: "claude-opus-4-8", resolvedModel: "claude-opus-4-8" },
   ]
   assert.equal(resolveClaudeModels(rows).find((m) => m.alias === "opus")?.label, "Opus 5.5")
+})
+
+// The REAL Fable rows of `supportedModels()` on 2026-11-09, the day Fable 5.2 shipped, in the order each
+// build lists them. 2.1.319 lists `claude-fable-5-2` first, though `fable` still runs 5.1 on it (a real
+// `--model fable` turn was served by `claude-fable-5-1`); 2.1.321 moved the alias.
+const REAL_2_1_319_FABLE = [
+  { value: "claude-fable-5-2", resolvedModel: "claude-fable-5-2", displayName: "Fable 5.2" },
+  { value: "fable", resolvedModel: "claude-fable-5-1", displayName: "Fable 5.1" },
+  { value: "claude-fable-5", resolvedModel: "claude-fable-5", displayName: "Fable 5" },
+]
+const REAL_2_1_321_FABLE = [
+  { value: "fable", resolvedModel: "claude-fable-5-2", displayName: "Fable 5.2" },
+  { value: "claude-fable-5-1", resolvedModel: "claude-fable-5-1", displayName: "Fable 5.1" },
+  { value: "claude-fable-5", resolvedModel: "claude-fable-5", displayName: "Fable 5" },
+]
+
+test("a family is labelled by the row named for its alias, because the alias is what a worker runs", () => {
+  const fable = (rows: readonly unknown[]) => resolveClaudeModels(rows).find((m) => m.alias === "fable")
+  assert.deepEqual(fable(REAL_2_1_319_FABLE), { alias: "fable", label: "Fable 5.1", resolvedModel: "claude-fable-5-1", edition: "5.1" })
+  assert.deepEqual(fable(REAL_2_1_321_FABLE), { alias: "fable", label: "Fable 5.2", resolvedModel: "claude-fable-5-2", edition: "5.2" })
+})
+
+test("the 1M suffix on an alias row still names the alias", () => {
+  const rows = [
+    { value: "claude-opus-5-5", resolvedModel: "claude-opus-5-5" },
+    { value: "opus[1m]", resolvedModel: "claude-opus-5[1m]" },
+  ]
+  assert.equal(resolveClaudeModels(rows).find((m) => m.alias === "opus")?.label, "Opus 5")
 })
 
 // LIVE: the provisioned pin answers, and every alias Frizz offers resolves to an edition on it. This is
