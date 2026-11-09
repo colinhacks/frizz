@@ -15,6 +15,7 @@ import { tildePath } from "../lib/paths.ts"
 import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { AgentRow, BgShellRow, ChildThreadRow, CommandWatchRow, GithubWatchRow, ON_CAP, ROW_INSET, TimerRow, WaitGrid, WaitRow, type WaitGroup } from "./AwaitingBackgroundCard.tsx"
+import { HumanTodoList } from "./AwaitingSteps.tsx"
 import { transcriptBackgroundShells } from "../lib/transcriptShells.ts"
 
 // THE FULLSCREEN PAGE'S OPERATIONAL RAIL — what is going on in this thread, listed beside the transcript
@@ -243,6 +244,8 @@ export function FocusRail({ thread }: { thread: ThreadView }) {
   // rail with them, and the wait rows above are what the reader came for. The fold is a saved view
   // preference (lib/prefs.ts), so it holds across threads and reloads.
   const groups: WaitGroup[] = [
+    // First, as on the counts over a prompt box (lib/queueOpsCounts): it is the one group that waits on the reader.
+    { head: "To-do", rows: thread.humanTodos?.length ? [<div key="todos" className="px-2 text-[12px] leading-[18px]"><HumanTodoList thread={thread} /></div>] : [] },
     { head: "Sub-agents", rows: agents.map((a) => <AgentRow key={a.id ?? a.label} agent={a} slug={thread.id} now={now} onDismiss={childOpDismisser(thread.id, a)} />) },
     // Beside the sub-agents they resemble, as the counts over a prompt box order them (lib/queueOpsCounts).
     { head: "Child threads", rows: children.map((c) => <ChildThreadRow key={c.id} child={c} now={now} />) },

@@ -55,6 +55,7 @@ import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
+import type { StepsReply } from "../lib/stepsAnswer.ts"
 import { snoozePresetInstant, formatSnoozeWake } from "../lib/snooze.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { ICON_LABEL_NUDGE } from "../lib/iconAlign.ts"
@@ -3464,7 +3465,7 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
       paired={t.paired[index]}
       staleAwaiting={staleAwaiting}
       restingCardShown={restingCardShown}
-      stepsDone={t.stepsDone.has(index)}
+      stepsDone={t.stepsDone.get(index)}
       shadowedBy={t.shadowedByMessage.get(index)}
       placed={t.placement.placed.get(index)}
       settledPlaced={t.settledPlacement.placed.get(index)}
@@ -3508,10 +3509,9 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
 // presence switches the splitter to that grammar, and a fence's `id:` resolves against it: a row placed
 // here draws in the fence's slot, a row drawn elsewhere draws nothing here, and an ask that names no row
 // yet draws read-only from its own bytes. One array per surface, memoized, so the memo boundary holds.
-// `stepsDone` — the human answered this message's rest on steps with the "I have completed this" box
-// (lib/stepsAnswer stepsDoneReplies), so its settled steps card keeps the box, ticked. A boolean, false
-// on every other row.
-type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; thread?: ThreadViewData; restingCardShown?: boolean; stepsDone?: boolean }
+// `stepsDone` — what the human's reply to this message's rest on steps said was done (lib/stepsAnswer
+// stepsDoneReplies), which its settled steps card draws ticked. Absent on every other row.
+type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; thread?: ThreadViewData; restingCardShown?: boolean; stepsDone?: StepsReply }
 // EVERY MESSAGE SAYS WHEN IT WAS SAID ON HOVER — `Today at 8:33 AM` as the browser's own tooltip
 // (lib/messageTime). Here, around every branch of the body, so a bubble, a prose turn, a tool run and a
 // hairline all carry it on every surface, the sub-agent sheet's included. `contents` keeps the wrapper

@@ -3918,6 +3918,30 @@ export function splitAnswersNote(text: string): { answers: string; note: string 
   return { answers: text.slice(0, at).trimEnd(), note: text.slice(at + marker.length).trim() }
 }
 
+/** EXACTLY the message that says every step on the list is done: an ordinary reply from the human, the
+ *  same thing typing the word would send, with any note they typed under it. Nothing marks it as Frizz's,
+ *  because nothing about it is. The worker contract names the word. */
+export const STEPS_DONE = "Done"
+
+/** Does this reply say the steps are done? The word opens the human's own words: the whole message, or
+ *  what follows the answers that rode the same send. Each kind of answer ends its rows with its own note
+ *  header (withAnswersNote), so a reply carrying registered AND fenced answers nests twice, and the word
+ *  is under the last one. A reply that only MENTIONS done is not this. */
+export function repliesStepsDone(text: string): boolean {
+  const said = wordsUnderAnswers(text)
+  return said === STEPS_DONE || said.startsWith(`${STEPS_DONE}\n\n`)
+}
+
+/** What the human wrote themselves, under any answers that rode the same send. */
+export function wordsUnderAnswers(text: string): string {
+  let said = text.trim()
+  for (;;) {
+    const { answers, note } = splitAnswersNote(said)
+    if (answers === said) return said
+    said = note
+  }
+}
+
 /** THE ONE WAKE ON THIS PATH FRIZZ WRITES IN ITS OWN VOICE, so it is the one the chat draws as a
  *  hairline instead of a card (FrizzWake's rule: frizz's own news is a line, someone else's prose keeps
  *  the card). It says nobody is coming — the thread went autonomous while questions were still open, so
@@ -4048,6 +4072,27 @@ export const ThreadLinkView = z.object({
 }).strict()
 export type ThreadLinkView = z.infer<typeof ThreadLinkView>
 
+// THE HUMAN'S TO-DO LIST (2026-11-09, maintainer: "a single, coherent, human-facing to-do list for the
+// entire session. That's maintained by Frizz"). One per thread: every `steps:` a worker hands over lands
+// on it (server human-todos.ts), and each item is ticked on its own. Not the WORKER's to-do list, which
+// is TranscriptTodo: that one is the agent's own plan, and this one is what the agent cannot do.
+export const HumanTodo = z.object({
+  /** Stable across rests: the step's own text, hashed, so handing the same step over again is the same item. */
+  id: z.string(),
+  text: z.string(),
+  done: z.boolean(),
+  /** The tick differs from what the worker was last told, so the next send reports it. */
+  staged: z.boolean(),
+}).strict()
+export type HumanTodo = z.infer<typeof HumanTodo>
+
+export const SetHumanTodoInput = z.object({
+  slug: ThreadSlug,
+  id: z.string().min(1).max(64),
+  done: z.boolean(),
+})
+export type SetHumanTodoInput = z.infer<typeof SetHumanTodoInput>
+
 export const UpsertOwnLinkInput = z.object({
   slug: ThreadSlug,
   label: z.string().trim().min(1).max(240).regex(/^[^\x00-\x1f\x7f]+$/),
@@ -4144,6 +4189,9 @@ export const ThreadView = z.object({
   bgShells: z.array(BgShellView).default([]),
   // Optional for snapshots from a server that predates link registration.
   links: z.array(ThreadLinkView).optional(),
+  // What the worker has handed the human to do across this whole thread. Absent when it has handed over
+  // nothing, on an archived thread and from a server older than the list.
+  humanTodos: z.array(HumanTodo).optional(),
   // The thread's ARMED WATCHERS — registry-derived, not folded from the transcript, which is what makes
   // them survive the worker saying one more sentence. Same default-[] discipline as the two above.
   //
@@ -5330,6 +5378,10 @@ export const FollowUpInput = z.object({
   // follow-up rather than the scheduler's answer wake so the pair arrives together, in the order the
   // human wrote it, and as fast as a steer does.
   answers: z.array(QuestionAnswerSchema).optional(),
+  // THE TICKS THIS MESSAGE REPORTS. The words are already in `message`; this is what the server records
+  // once the send is accepted, so the list knows the worker has heard them and stops staging them. It
+  // writes the tick too, so a send that overtakes its own tick request still reports what was on screen.
+  todos: z.array(z.object({ id: z.string().min(1).max(64), done: z.boolean() })).max(128).optional(),
   // SEND TO THE QUEUE: while the agent is mid-turn, Frizz keeps this message and delivers it when the
   // thread comes to rest, so it opens the next turn instead of steering this one. The queue goes out ONE
   // message per turn (2026-10-20), so a message also waits, even at rest, behind one already held or one

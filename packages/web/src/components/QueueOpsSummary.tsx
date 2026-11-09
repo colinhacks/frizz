@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react"
-import { ExternalLink, FileText } from "lucide-react"
+import { ExternalLink, FileText, ListTodo } from "lucide-react"
 import type { BgShellView, ThreadView } from "@frizz/shared"
 import { CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, type TranscriptShellRecord } from "../lib/childOps.ts"
 import { useNowMs } from "../lib/liveClock.ts"
@@ -9,6 +9,7 @@ import { extendTrail, trailHeadingInto, type PointerSample } from "../lib/pointe
 import { queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
 import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
+import { HumanTodoList } from "./AwaitingSteps.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
 import { ChildThreadRows } from "./ChildThreadRows.tsx"
@@ -91,6 +92,7 @@ const CARET_HEIGHT_PX = 6
 
 // What a panel is called, since it holds one kind of row.
 const PANEL_LABEL: Record<QueueOpsKind, string> = {
+  todo: "What this thread needs a person to do",
   agent: "Sub-agents running for this thread",
   child: "Child threads this thread started",
   shell: "Background shells running for this thread",
@@ -225,7 +227,9 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
           // that panel: by then the pointer or the focus may already have opened the next count's.
           onOpenChange={(next) => (next ? openNow(group.key) : setOpenKind((current) => (current === group.key ? null : current)))}
         >
-          {group.key === "agent"
+          {group.key === "todo"
+            ? <div className="px-2 py-1.5"><HumanTodoList thread={thread} /></div>
+            : group.key === "agent"
             ? <QueueSubAgentLines slug={thread.id} subAgents={thread.subAgents ?? []} className="" density="panel" />
             : group.key === "child"
             ? <div data-queue-child-threads className="flex min-w-0 flex-col"><ChildThreadRows parent={thread.id} childThreads={childThreads} density="panel" /></div>
@@ -402,6 +406,7 @@ function PanelCaret({ count, line, caretAt }: { count: RefObject<HTMLButtonEleme
 
 function CountMark({ kind, states }: { kind: QueueOpsKind; states: readonly (string | undefined)[] }) {
   switch (kind) {
+    case "todo": return <ListTodo aria-hidden className="h-[1em] w-[1em] text-muted-45" />
     case "agent":
     case "child": return <Dot hue="agent" states={states} />
     case "shell": return <Dot hue="shell" states={states} />

@@ -1,5 +1,6 @@
 import type { LimitWindow, LiveTool, PermissionMode, ProviderError } from "@frizz/shared"
 import type { FenceView, SubAgentView, BgShellView, PendingAskData, TurnState } from "../tailer.ts"
+import type { HumanStep } from "../human-todos.ts"
 
 // A turn cut off by an exhausted SUBSCRIPTION window, as a backend's fold observed it. Carries only
 // typed data — which window, when it happened, and the provider's stated reset clock in structured
@@ -122,6 +123,9 @@ export interface NormalizedTail {
   restFromAt?: string
   // When the worker last rested on steps or questions for the human — see FoldState.handoffAt.
   handoffAt?: string
+  // What the worker has handed the human to do across the thread — see FoldState.humanSteps. Includes the
+  // fence the thread is resting on now, which the fold has not settled yet.
+  humanSteps?: HumanStep[]
   // When Frizz last delivered a ```question fence correction — see FoldState.questionCorrectedAt.
   questionCorrectedAt?: string
   lastUserText?: string // the newest drawn user turn's text, Frizz's deliveries included (confirms wake-token delivery)
@@ -237,6 +241,10 @@ export interface FoldState {
   // needed from you", and each one then held every CI and shell park after it in the queue until the
   // human typed: 204 parks in one 36h window. The worker's own next `status:` decides those now.
   handoffAt?: string
+  // THE HUMAN'S TO-DO LIST, as far as the transcript can say (human-todos.ts): every step of every rest
+  // that is over. The ticks live in the thread_human_todo table. Absent on a tail cached before the list
+  // existed, which reads as no history: only the fences after it count.
+  humanSteps?: HumanStep[]
   // The human messages QUEUED and not yet seen delivered, oldest first — so the record that delivers one
   // does not move `restFromAt` a second time, to an instant later than the human wrote it. Bounded.
   queuedHumanTexts?: string[]

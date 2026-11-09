@@ -246,10 +246,6 @@ export const draftKey = {
   // The same node's staged option picks (lib/registeredPicks encodes them). The text key plus a suffix,
   // so picks share its exact project/thread/question/path scope; the encoded path never holds a `:`.
   questionPick: (projectDir: string | undefined, slug: string, id: string, path: string) => `${draftKey.question(projectDir, slug, id, path)}:picks`,
-  // A steps card's "I have completed this" box, staged until a send carries it (lib/stepsAnswer). Keyed
-  // by the steps' own hash rather than a session: the box answers exactly these steps, and a later fence
-  // handing over different ones must start unticked.
-  steps: (projectDir: string | undefined, slug: string, hash: string) => `steps:${threadDraftScope(projectDir, slug)}:${encodeURIComponent(hash)}`,
   // There is no `settings:` key: the Settings drawer autosaves, so the server IS its draft store. A
   // sessionStorage mirror could only ever hold the ~500ms of typing the debounce has not written yet,
   // and it outlived the save — a stale entry that reappeared over the stored value on the next open.

@@ -48,6 +48,7 @@ export const TRACKED_REGISTRY_TABLES = [
   "thread_question",
   "thread_watch",
   "thread_done",
+  "thread_human_todo",
 ] as const
 export type TrackedRegistryTable = (typeof TRACKED_REGISTRY_TABLES)[number]
 

@@ -4,6 +4,7 @@ import type { AwaitingHint, BoardSnapshot, ThreadView as ThreadViewModel, Transc
 import { ThreadView } from "./components/ChatView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
+import { fixtureSetHumanTodo, fixtureTodos } from "./human-todos-fixture-stub.ts"
 import "./styles.css"
 
 // Browser QA for A STEPS CARD THAT OUTLIVES ITS REST (2026-10-08, maintainer: "We need to continue showing
@@ -15,7 +16,8 @@ import "./styles.css"
 //                the prompt box under it sends (or, `&drawer=1` at a phone width, the card's own Send)
 //   ?at=running  the human sent the ticked box and the worker is mid-turn (the default)
 //   ?at=moved    the worker finished and rested again on a later fence of its own
-//   ?at=asked    the human replied in words instead of ticking the box, and the worker is mid-turn
+//   ?at=asked    the human replied in words instead of ticking a box, and the worker is mid-turn
+//   ?at=partial  the human reported one step of the two done, and the worker is mid-turn
 //
 // The transcript also carries an EARLIER settled fence with no steps — a plain shell wait — which must
 // keep drawing nothing in every state: that is the negative control for the exception.
@@ -55,7 +57,7 @@ const messages: TranscriptMessage[] = [
   human("u1", "Cut the acme 4.2.0 release.", 40),
   say("a1", `Building the release artifacts.\n\n${SHELL_FENCE}`, 38),
   say("a2", `The build is green.\n\n${STEPS_FENCE}`, 20),
-  ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : "Done", 5)]),
+  ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : AT === "partial" ? "Done 1 of 2:\n- [x] Run `npm login --auth-type=web` in a terminal on this machine.\n- [ ] Approve the browser prompt with the **acme-bot** account." : "Done", 5)]),
   ...(AT === "moved" ? [say("a3", LATER_FENCE, 1)] : []),
 ]
 
@@ -73,7 +75,7 @@ const thread = {
   agents: [],
   errors: [],
   warnings: [],
-  runtime: AT === "running" || AT === "asked" ? "running" : "turn-idle",
+  runtime: AT === "running" || AT === "asked" || AT === "partial" ? "running" : "turn-idle",
   sessionId: "sid-settled-steps",
   unread: false,
   archived: false,
@@ -87,7 +89,7 @@ const thread = {
   bgShells: [],
   watches: [],
   questions: [],
-  ...(AT === "rest" ? { lastFence: { kind: "awaiting", body: STEPS_PROSE, hints: STEPS_HINTS } } : {}),
+  ...(AT === "rest" ? { lastFence: { kind: "awaiting", body: STEPS_PROSE, hints: STEPS_HINTS }, humanTodos: fixtureTodos(STEPS_HINTS.filter((h) => h.kind === "step").map((h) => h.value)) } : {}),
   ...(AT === "moved" ? { lastFence: { kind: "awaiting", body: "Published acme 4.2.0. Watching the follow-up PR for review.", hints: [{ kind: "pr", value: "acme/app#391" }] }, waitStatus: "watching" } : {}),
   lastActivityAt: ago(1),
   spawnedAt: ago(41),
@@ -106,6 +108,10 @@ window.fetch = async (input, init) => {
   }
   if (url.pathname === "/_frizz/rpc/threadSettledQuestions") {
     return new Response(JSON.stringify({ result: { questions: [] } }), { headers: { "content-type": "application/json" } })
+  }
+  if (url.pathname === "/_frizz/rpc/setHumanTodo") {
+    fixtureSetHumanTodo(JSON.parse(String(init?.body ?? "{}")))
+    return new Response(JSON.stringify({ result: null }), { headers: { "content-type": "application/json" } })
   }
   if (url.pathname.startsWith("/_frizz/rpc/")) {
     return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })

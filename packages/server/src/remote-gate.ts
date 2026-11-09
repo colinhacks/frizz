@@ -105,6 +105,7 @@ export const REMOTE_ACCESS = {
   adoptThread: "full",
   followUp: "full",
   dismissFailedFollowUp: "full",
+  setHumanTodo: "full",
   unqueueFollowUp: "full",
   deliverQueuedNow: "full",
   compactThread: "full",

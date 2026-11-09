@@ -1,23 +1,21 @@
-import { useMemo } from "react"
-import type { AwaitingHint, ThreadView } from "@frizz/shared"
-import { awaitingSteps, splitAnswersNote } from "@frizz/shared"
+import { useEffect } from "react"
+import { proxy, useSnapshot } from "valtio"
+import type { AwaitingHint, HumanTodo, ThreadView } from "@frizz/shared"
+import { awaitingSteps, repliesStepsDone, STEPS_DONE, wordsUnderAnswers } from "@frizz/shared"
+import { rpc } from "../api/rpc.ts"
 import type { ChatMessage } from "../hooks.ts"
-import { STEPS_DONE } from "./awaitingPresentation.ts"
-import { draftKey, draftStore, useDraft, useProjectDir } from "./drafts.ts"
+import { showToast } from "../store.ts"
 
-// THE STEPS CARD'S ANSWER (2026-10-12, maintainer: "The awaiting human block should switch over to be a
-// big checkbox that says 'I have completed this.' Once you've checked it you should have the ability to
-// submit it as an answer just as you can with any other question").
+// THE HUMAN'S TO-DO LIST, FROM THE BROWSER'S SIDE (2026-11-09, maintainer: "The user can indicate which
+// things they've completed and which ones they haven't, and it's a single, coherent, human-facing to-do
+// list for the entire session. That's maintained by Frizz").
 //
-// So the card's checkbox STAGES an answer, exactly as picking a question's option does, and nothing
-// leaves until the surface's one send (lib/sendScope) — the prompt box's Send, or Enter — carries it,
-// together with whatever is typed in the box. Until then the card sent the word the moment Done was
-// pressed, and a note had to follow as a second message.
-//
-// THE TICK LIVES IN THE DRAFT STORE, like a question's staged picks: the same card draws on the queue
-// card, in the drawer and on /full, each beside its own prompt box, and a reader who ticks it in one
-// must find it ticked in the others and after a reload. Keyed by the thread and the steps' own text, so a
-// later fence handing over different steps starts unticked.
+// The list is the server's (human-todos.ts) and arrives on the thread. Clicking a box saves the tick at
+// once, so the queue card, the drawer, /full and a phone all agree before anything is sent. Saving tells
+// the worker nothing: a tick STAGES an answer, as picking a question's option does (maintainer
+// 2026-10-12: "you should have the ability to submit it as an answer just as you can with any other
+// question"), and the surface's one send (lib/sendScope) carries every tick the worker has not heard,
+// together with whatever is typed in the box.
 
 /** The slice of a thread these read — READONLY all the way down, because the prompt box hands in the
  *  board's frozen snapshot rather than a ThreadView. */
@@ -25,105 +23,174 @@ type StepsThread = {
   readonly id: string
   readonly runtime: ThreadView["runtime"]
   readonly lastFence?: { readonly kind: NonNullable<ThreadView["lastFence"]>["kind"]; readonly hints: readonly AwaitingHint[] }
+  readonly humanTodos?: readonly HumanTodo[]
 }
+type TodoThread = Pick<StepsThread, "id" | "humanTodos">
 
 /** Is the thread resting on EXACTLY these steps right now — the board's own last fence, at rest? Only
- *  then may anything answer them. A fence the transcript hands in is a rest the thread may already have
- *  left: the tailer clears `lastFence` on the human's very next message, so a steps card drawn after the
- *  reply is a record of what was asked, and a second answer would send twice. */
+ *  then is a card live. A fence the transcript hands in is a rest the thread may already have left: the
+ *  tailer clears `lastFence` on the human's very next message, so a steps card drawn after the reply is a
+ *  record of what was asked. */
 export function restingOnSteps(thread: Omit<StepsThread, "id"> | undefined, steps: readonly string[]): boolean {
   if (steps.length === 0 || thread?.runtime !== "turn-idle" || thread.lastFence?.kind !== "awaiting") return false
   const live = awaitingSteps(thread.lastFence.hints)
   return live.length === steps.length && live.every((step, i) => step === steps[i])
 }
 
-// FNV-1a, 32-bit: a short stable key for a list that can run to thousands of characters.
-export function stepsHash(steps: readonly string[]): string {
-  let h = 0x811c9dc5
-  const text = steps.join("\u0000")
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return `${steps.length}.${(h >>> 0).toString(36)}`
+// ---- the ticks in flight --------------------------------------------------------------------------
+// What this tab has done that the board has not shown yet. An entry goes the moment the board agrees,
+// because from then on the board may know better: a worker that re-lists a step reopens its box. The
+// timer is for a push that never comes.
+
+interface PendingTick {
+  done: boolean
+  /** Set by a send: the worker has heard this, whatever the board still says. */
+  staged?: boolean
 }
 
-const CHECKED = "1"
+const pending = proxy<Record<string, PendingTick>>({})
+const settling = new Map<string, ReturnType<typeof setTimeout>>()
+const SETTLE_MS = 5_000
+const tickKey = (slug: string, id: string) => `${slug}\u0000${id}`
 
-/** The card's checkbox: whether it is ticked, and the setter. */
-export function useStepsChecked(slug: string, steps: readonly string[]): readonly [boolean, (checked: boolean) => void] {
-  const projectDir = useProjectDir()
-  const key = useMemo(() => draftKey.steps(projectDir, slug, stepsHash(steps)), [projectDir, slug, steps])
-  const [value, set, clear] = useDraft(key)
-  return [value === CHECKED, (checked: boolean) => (checked ? set(CHECKED) : clear())] as const
+function settleLater(key: string): void {
+  clearTimeout(settling.get(key))
+  settling.set(key, setTimeout(() => forgetTick(key), SETTLE_MS))
 }
 
-/** The reply a ticked card sends: the word, and the human's note under it when they typed one. */
-export function withStepsDone(note: string): string {
+function forgetTick(key: string): void {
+  clearTimeout(settling.get(key))
+  settling.delete(key)
+  delete pending[key]
+}
+
+/** Tick or untick one box. Saved at once, and sent to nobody. */
+export function tickHumanTodo(slug: string, id: string, done: boolean): void {
+  const key = tickKey(slug, id)
+  clearTimeout(settling.get(key))
+  settling.delete(key)
+  pending[key] = { done }
+  rpc.setHumanTodo({ slug, id, done }).then(
+    () => settleLater(key),
+    (error: Error) => {
+      forgetTick(key)
+      showToast(`Couldn’t save that tick — ${error.message.slice(0, 120)}`)
+    },
+  )
+}
+
+/** The thread's list as this tab should draw it. */
+export function useHumanTodos(thread: TodoThread | undefined): HumanTodo[] {
+  const ticks = useSnapshot(pending)
+  const slug = thread?.id
+  const board = thread?.humanTodos
+  useEffect(() => {
+    if (!slug) return
+    for (const todo of board ?? []) {
+      const key = tickKey(slug, todo.id)
+      const tick = pending[key]
+      if (tick && tick.done === todo.done && (tick.staged === undefined || tick.staged === todo.staged)) forgetTick(key)
+    }
+  }, [slug, board])
+  if (!thread) return []
+  return (thread.humanTodos ?? []).map((todo) => {
+    const tick = ticks[tickKey(thread.id, todo.id)]
+    if (!tick) return todo
+    return { ...todo, done: tick.done, staged: tick.staged ?? (tick.done === todo.done ? todo.staged : !todo.staged) }
+  })
+}
+
+// ---- what a send says -----------------------------------------------------------------------------
+
+/** What a send reports: everything still owed, and every tick the worker has not heard. A step it already
+ *  knows is done stays out, so a long thread's reply does not recite its whole history. */
+export function stepsReport<T extends Pick<HumanTodo, "done" | "staged">>(todos: readonly T[]): T[] {
+  return todos.filter((todo) => todo.staged || !todo.done)
+}
+
+/** The reply a send carries: the bare word when everything is done, as if the human had typed it, and a
+ *  checklist when some is not. The human's note goes under either. */
+export function withStepsReport(report: readonly Pick<HumanTodo, "text" | "done">[], note: string): string {
+  const done = report.filter((todo) => todo.done).length
+  const head = done === report.length
+    ? STEPS_DONE
+    : `${STEPS_DONE} ${done} of ${report.length}:\n${report.map((todo) => `- [${todo.done ? "x" : " "}] ${todo.text}`).join("\n")}`
   const trimmed = note.trim()
-  return trimmed ? `${STEPS_DONE}\n\n${trimmed}` : STEPS_DONE
+  return trimmed ? `${head}\n\n${trimmed}` : head
 }
 
-// A SETTLED STEPS CARD KEEPS ITS BOX, TICKED, when the human's reply to that rest was the box's
-// (maintainer 2026-10-15: "if someone checks 'I have completed this' … we should have something to
-// indicate that the awaiting human block … was, in fact, completed. Maybe just leave the checked
-// checkbox in there"). Read off the TRANSCRIPT rather than the draft store: the reply is in every
-// browser's copy of it, and the tick that sent it is cleared the moment it leaves.
+/** What a reply said was done: everything, the steps it ticked, or null for a reply that was not a report. */
+export type StepsReply = "all" | ReadonlySet<string>
 
-/** Does this reply say the steps are done? The box's word opens the human's own words: the whole
- *  message, or what follows the answers that rode the same send. Each kind of answer ends its rows with
- *  its own note header (shared withAnswersNote), so a reply carrying registered AND fenced answers nests
- *  twice, and the word is under the last one. A reply that only MENTIONS done is not the box's. */
-export function repliesStepsDone(text: string): boolean {
-  let said = text.trim()
-  for (;;) {
-    const { answers, note } = splitAnswersNote(said)
-    if (answers === said) break
-    said = note
+const REPORT_HEAD = new RegExp(`^${STEPS_DONE} \\d+ of \\d+:$`)
+const REPORT_ROW = /^- \[( |x)\] (.*)$/
+
+export function repliedSteps(text: string): StepsReply | null {
+  if (repliesStepsDone(text)) return "all"
+  const [head, ...rows] = wordsUnderAnswers(text).split("\n")
+  if (!REPORT_HEAD.test(head)) return null
+  const done = new Set<string>()
+  for (const row of rows) {
+    const match = REPORT_ROW.exec(row)
+    if (!match) break
+    if (match[1] === "x") done.add(match[2])
   }
-  return said === STEPS_DONE || said.startsWith(`${STEPS_DONE}\n\n`)
+  return done
 }
 
-/** The indices of the agent messages whose rest the human answered with the box: a reply that says the
- *  steps are done (repliesStepsDone) before the worker's next word. Only a message carrying an
- *  ```awaiting fence can be one, so the walk looks no further at any other. */
-export function stepsDoneReplies(messages: readonly Pick<ChatMessage, "role" | "kind" | "text">[]): ReadonlySet<number> {
-  const done = new Set<number>()
+// A SETTLED STEPS CARD SHOWS WHAT ITS REPLY SAID (maintainer 2026-10-15: "we should have something to
+// indicate that the awaiting human block … was, in fact, completed"). Read off the TRANSCRIPT, not the
+// list: a card is the record of one rest, and the list has moved on since.
+
+/** The agent messages whose rest the human answered with a report (repliedSteps), by index: the first
+ *  such reply before the worker's next word. Only a message carrying an ```awaiting fence can be one. */
+export function stepsDoneReplies(messages: readonly Pick<ChatMessage, "role" | "kind" | "text">[]): ReadonlyMap<number, StepsReply> {
+  const replies = new Map<number, StepsReply>()
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i]
     if (m.role !== "assistant" || m.kind === "event" || !m.text.includes("```awaiting")) continue
     for (let j = i + 1; j < messages.length; j++) {
       const reply = messages[j]
       if (reply.role === "assistant" && reply.kind !== "event") break
-      if (reply.role === "user" && repliesStepsDone(reply.text)) {
-        done.add(i)
+      const said = reply.role === "user" ? repliedSteps(reply.text) : null
+      if (said) {
+        replies.set(i, said)
         break
       }
     }
   }
-  return done
+  return replies
 }
 
-/** The staged answer as the prompt box's send needs it. */
+/** A staged report, as a send needs it. */
 export interface StepsTake {
-  /** The send has committed locally: the box unticks, as a sent question's picks clear. */
+  /** What the server records once the send is accepted (FollowUpInput.todos). */
+  todos: { id: string; done: boolean }[]
+  /** The reply, with the human's note under it. */
+  compose: (note: string) => string
+  /** The send has committed locally: nothing is staged any more, so a second Enter cannot repeat it. */
   onOptimistic: () => void
-  /** The send was refused: tick it again. */
+  /** The send was refused: the ticks are staged again. */
   onRollback: () => void
 }
 
-/** For the PROMPT BOX: is the card's answer staged, and the hand-off of it to a send. Staged only while
- *  the thread rests on the very steps that were ticked — a tick left behind by a card the thread has
- *  moved past answers nothing. */
-export function useStepsAnswer(thread: StepsThread | undefined): { staged: boolean; take: () => StepsTake | null } {
-  const projectDir = useProjectDir()
-  const fence = thread?.lastFence?.kind === "awaiting" ? thread.lastFence : undefined
-  const steps = useMemo(() => (fence ? awaitingSteps(fence.hints) : []), [fence])
-  const key = thread && steps.length > 0 ? draftKey.steps(projectDir, thread.id, stepsHash(steps)) : ""
-  const [value] = useDraft(key)
-  const staged = key !== "" && value === CHECKED && restingOnSteps(thread, steps)
-  const take = (): StepsTake | null => (staged
-    ? { onOptimistic: () => draftStore.clear(key), onRollback: () => draftStore.set(key, CHECKED) }
-    : null)
+/** For whatever sends: is anything staged, and the hand-off of it. */
+export function useStepsAnswer(thread: TodoThread | undefined): { staged: boolean; take: () => StepsTake | null } {
+  const todos = useHumanTodos(thread)
+  const staged = todos.some((todo) => todo.staged)
+  const take = (): StepsTake | null => {
+    if (!thread || !staged) return null
+    const report = stepsReport(todos)
+    const keys = report.map((todo) => tickKey(thread.id, todo.id))
+    return {
+      todos: report.map(({ id, done }) => ({ id, done })),
+      compose: (note) => withStepsReport(report, note),
+      onOptimistic: () => report.forEach((todo, i) => {
+        pending[keys[i]] = { done: todo.done, staged: false }
+        settleLater(keys[i])
+      }),
+      onRollback: () => keys.forEach(forgetTick),
+    }
+  }
   return { staged, take }
 }

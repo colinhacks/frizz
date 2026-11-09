@@ -13,10 +13,9 @@ const baseUrl = process.env.FRIZZ_SETTLED_STEPS_E2E_URL
 // on any more. Pinned in the real drawer (settled-steps-fixture.html), whose transcript also holds
 // an earlier settled shell wait — the negative control, which must stay invisible in every state.
 //
-// …AND WHEN THE REPLY WAS THE BOX'S, THE BOX STAYS, TICKED (2026-10-15, maintainer: "we should have
-// something to indicate that the awaiting human block … was, in fact, completed. Maybe just leave the
-// checked checkbox in there") — inert, as a record, from the frame the reply's bubble is drawn. A reply in
-// words instead leaves the card with no box.
+// …AND ITS BOXES SAY WHAT THE REPLY SAID (2026-10-15, maintainer: "we should have something to indicate
+// that the awaiting human block … was, in fact, completed") — inert, as a record, from the frame the
+// reply's bubble is drawn. A reply in words ticks nothing.
 
 const CARD = "[data-awaiting-background]"
 const STEPS = [
@@ -24,7 +23,7 @@ const STEPS = [
   "Approve the browser prompt with the acme-bot account.",
 ]
 
-test("a steps card stays in the transcript after its rest, its box ticked when the reply was the box's", {
+test("a steps card stays in the transcript after its rest, ticked as its reply said", {
   skip: !baseUrl,
   timeout: 120_000,
 }, async () => {
@@ -46,18 +45,12 @@ test("a steps card stays in the transcript after its rest, its box ticked when t
           cards: cards.map((el) => ({
             kind: (el.querySelector("[data-card-kind]") as HTMLElement | null)?.innerText.trim(),
             title: (el.querySelector("[data-card-title]") as HTMLElement | null)?.innerText.trim(),
-            steps: [...el.querySelectorAll("[data-awaiting-steps] .frizz-step-text")].map((li) => (li as HTMLElement).innerText.trim()),
-            // The box answers only while the thread rests on these steps; a settled card is a record.
-            box: !!el.querySelector("[data-steps-complete]"),
-            // The record of a reply that was the box's: ticked, and no control.
-            completed: (() => {
-              const row = el.querySelector("[data-steps-completed]") as HTMLElement | null
-              return row ? { checked: row.getAttribute("aria-checked"), controls: row.querySelectorAll("button, input").length, label: row.innerText.trim() } : null
-            })(),
-            // The card's own Send, drawn only where no prompt box sends the box for it.
+            steps: [...el.querySelectorAll("[data-awaiting-steps] .frizz-todo-text")].map((li) => (li as HTMLElement).innerText.trim()),
+            // A box per step, ticked as far as anyone has said. Only a card the thread rests on has controls.
+            ticks: [...el.querySelectorAll("[data-awaiting-steps] [role=checkbox]")].map((box) => box.getAttribute("aria-checked") === "true"),
+            controls: el.querySelectorAll("[data-awaiting-steps] button[role=checkbox]").length,
+            // The card's own Send, drawn only where no prompt box sends the list for it.
             send: !!el.querySelector("[data-steps-send]"),
-            // The step markers are never controls of their own.
-            markerControls: el.querySelectorAll("[data-awaiting-steps] button").length,
           })),
           // The earlier settled shell wait — card AND prose — must be gone.
           shellProse: document.body.innerText.includes("The release build is running in the background."),
@@ -73,7 +66,7 @@ test("a steps card stays in the transcript after its rest, its box ticked when t
     // AT REST on the steps: the tail's resting card states them, WITH the box — and the transcript does
     // not draw them a second time above it.
     const rest = await read("rest")
-    assert.deepEqual(rest.cards, [{ ...stepsCard, box: true, completed: null, send: false, markerControls: 0 }], "one card, the live one, with its box — and the drawer's prompt box to send it")
+    assert.deepEqual(rest.cards, [{ ...stepsCard, ticks: [false, false], controls: 2, send: false }], "one card, the live one, with its boxes — and the drawer's prompt box to send it")
     assert.equal(rest.shellProse, false, "a settled shell wait still draws nothing")
     assert.equal(rest.stepsProse, 1)
 
@@ -89,8 +82,8 @@ test("a steps card stays in the transcript after its rest, its box ticked when t
     })
     const sent = () => page.evaluate(() => (window as unknown as { __sent: string[] }).__sent)
     const tick = async () => {
-      await page.click("[data-steps-complete] button[role=checkbox]")
-      await page.waitForFunction(() => document.querySelector("[data-steps-complete] button[role=checkbox]")?.getAttribute("aria-checked") === "true")
+      for (const box of await page.$$("[data-awaiting-steps] button[role=checkbox]")) await box.click()
+      await page.waitForFunction(() => [...document.querySelectorAll("[data-awaiting-steps] button[role=checkbox]")].every((box) => box.getAttribute("aria-checked") === "true"))
     }
 
     // THE DRAWER'S PROMPT BOX sends the ticked box, as the queue card's does.
@@ -103,8 +96,8 @@ test("a steps card stays in the transcript after its rest, its box ticked when t
       w.__commits = []
       new MutationObserver(() => w.__commits.push({
         cards: document.querySelectorAll(`${sel} [data-awaiting-steps]`).length,
-        box: !!document.querySelector("[data-steps-complete]"),
-        completed: !!document.querySelector("[data-steps-completed]"),
+        box: !!document.querySelector("[data-awaiting-steps] button[role=checkbox]"),
+        completed: document.querySelectorAll("[data-awaiting-steps] span[role=checkbox][aria-checked=true]").length === 2,
         ghost: [...document.querySelectorAll(".bg-user-bubble.opacity-50")].some((el) => el.textContent?.includes("Done")),
       })).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
     }, CARD)
@@ -128,7 +121,7 @@ test("a steps card stays in the transcript after its rest, its box ticked when t
     // its own Send — dark until the box is ticked, and then the same ordinary reply.
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
     const phone = await read("rest&drawer=1")
-    assert.deepEqual(phone.cards, [{ ...stepsCard, box: true, completed: null, send: true, markerControls: 0 }], "the card's own Send, where nothing else sends the box")
+    assert.deepEqual(phone.cards, [{ ...stepsCard, ticks: [false, false], controls: 2, send: true }], "the card's own Send, where nothing else sends the list")
     await recordSends()
     assert.equal(await page.$eval("[data-steps-send]", (b) => (b as HTMLButtonElement).disabled), true, "nothing ticked, nothing to send")
     await tick()
@@ -138,22 +131,25 @@ test("a steps card stays in the transcript after its rest, its box ticked when t
     await page.setViewport({ width: 900, height: 1000 })
 
     // SENT, worker mid-turn: the card stays where it was, its box ticked and no longer a control.
-    const ticked = { checked: "true", controls: 0, label: "I have completed this" }
+    const record = (ticks: boolean[]) => ({ ...stepsCard, ticks, controls: 0, send: false })
     const running = await read("running")
-    assert.deepEqual(running.cards, [{ ...stepsCard, box: false, completed: ticked, send: false, markerControls: 0 }], "the steps stay, with the record that they were done")
+    assert.deepEqual(running.cards, [record([true, true])], "the steps stay, with the record that they were done")
     assert.equal(running.shellProse, false)
     assert.equal(running.stepsProse, 1)
 
     // ANSWERED IN WORDS instead: the steps stay, and no box claims they were done.
     const asked = await read("asked")
-    assert.deepEqual(asked.cards, [{ ...stepsCard, box: false, completed: null, send: false, markerControls: 0 }], "a reply that was not the box's leaves no box")
+    assert.deepEqual(asked.cards, [record([false, false])], "a reply in words ticks nothing")
+
+    // PART OF THE LIST reported: the record says which part.
+    assert.deepEqual((await read("partial")).cards, [record([true, false])], "the record of a partial report")
 
     // THE THREAD MOVED ON to a later rest: still there, still ticked, beside the new resting card.
     const moved = await read("moved")
     assert.equal(moved.cards.length, 2, "the settled steps card and the new resting card")
-    assert.deepEqual(moved.cards[0], { ...stepsCard, box: false, completed: ticked, send: false, markerControls: 0 })
+    assert.deepEqual(moved.cards[0], record([true, true]))
     assert.equal(moved.cards[1].steps.length, 0, "the later rest is a plain wait")
-    assert.equal(moved.cards[1].completed, null, "and carries no box")
+    assert.deepEqual(moved.cards[1].ticks, [], "and carries no box")
     assert.equal(moved.shellProse, false)
     assert.equal(moved.stepsProse, 1)
 

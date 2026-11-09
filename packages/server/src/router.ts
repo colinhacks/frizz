@@ -33,6 +33,7 @@ import {
   UnqueueFollowUpInput,
   DismissFailedFollowUpInput,
   DismissFailedFollowUpResult,
+  SetHumanTodoInput,
   UnqueueFollowUpResult,
   DeliverQueuedNowInput,
   CompactThreadInput,
@@ -1686,7 +1687,13 @@ export function createRouter(ctx: AppContext) {
       if (answers.length > 0) return
       throw new Error("There is nothing to send")
     }
-    const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, hold: undefined }
+    const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, todos: undefined, hold: undefined }
+    // After the send is accepted, so a refused one leaves its ticks staged for the retry.
+    const reportTodos = () => {
+      if (!input.todos?.length) return
+      ctx.storage.reportHumanTodos(input.slug, input.todos, Date.now())
+      ctx.board.refresh()
+    }
     const row = ctx.storage.getSession(input.slug)
     // A backend with no steer has nothing else to do with a message sent mid-turn, whoever is asking: a
     // tab from before the composer knew, or `frizzctl steer`.
@@ -1701,6 +1708,7 @@ export function createRouter(ctx: AppContext) {
       if (row && row.session_id === input.sessionId && (inFlight || heldSendMustWait(items))) {
         const id = input.deliveryId ?? randomUUID()
         if (holdDelivery(ctx.storage, input.slug, { id, text: message })) {
+          reportTodos()
           watchHeld(input.slug)
           ctx.transcriptChange.emit([input.slug])
           ctx.board.refresh()
@@ -1710,7 +1718,8 @@ export function createRouter(ctx: AppContext) {
         }
       }
     }
-    return deliverFollowUp(send)
+    await deliverFollowUp(send)
+    reportTodos()
   }
 
   // RELEASE WHAT FRIZZ IS HOLDING FOR THIS THREAD'S REST, oldest first, through the ordinary follow-up
@@ -4699,6 +4708,16 @@ export function createRouter(ctx: AppContext) {
     // the row out on the same reading), and it REPLACES a wall-clock snooze rather than stacking on one:
     // the two are one choice in one menu, and a clock left armed underneath would keep the thread parked
     // past the rest this one promises.
+    // One box on the human's to-do list. It sends nothing: the worker hears about it with the next send.
+    setHumanTodo: mutation({
+      input: SetHumanTodoInput,
+      handler: async ({ input }) => {
+        if (!ctx.storage.getSession(input.slug)) throw new Error("This thread no longer exists")
+        ctx.storage.setHumanTodo(input.slug, input.id, input.done, Date.now())
+        ctx.board.refresh()
+      },
+    }),
+
     snoozeAwaitingBackground: mutation({
       input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1) }).strict(),
       handler: async ({ input }) => {

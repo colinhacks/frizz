@@ -511,6 +511,15 @@ export interface CommandWatchRunRecord {
 }
 
 /** A saved destination, independent of running work and completion. */
+/** One box on a thread's to-do list. `done_at` is the tick; `reported_at` says a send told the worker
+ *  this item is done, and is null while it has not (human-todos.ts). Both are ms. */
+export interface ThreadHumanTodoRow {
+  thread_slug: string
+  item_id: string
+  done_at: number | null
+  reported_at: number | null
+}
+
 export interface ThreadLinkRow {
   id: string
   thread_slug: string
@@ -883,6 +892,12 @@ export interface Storage {
   listThreadLinks(slug: string): ThreadLinkRow[]
   threadLinksBySlug(): ReadonlyMap<string, readonly ThreadLinkRow[]>
   dropThreadLink(slug: string, id: string): boolean
+  /** Tick or untick one box on the human's to-do list. */
+  setHumanTodo(slug: string, itemId: string, done: boolean, atMs: number): void
+  /** A send told the worker these ticks. Writes the ticks too, so the report stands even if it overtook
+   *  its own tick request. */
+  reportHumanTodos(slug: string, todos: readonly { id: string; done: boolean }[], atMs: number): void
+  humanTodoTicksBySlug(): ReadonlyMap<string, readonly ThreadHumanTodoRow[]>
   /** Register a watch, or return the armed one already covering this (thread, kind, target). Idempotent
    *  by that triple, so a worker re-registering the same wait after a wake gets one row, not two. */
   armThreadWatch(watch: { id: string; slug: string; kind: "shell" | "agent"; target: string; createdAtMs: number; expiresAtMs: number }): ThreadWatchRow
@@ -1388,6 +1403,17 @@ export const STORAGE_SCHEMA = `
       created_at  INTEGER NOT NULL,
       UNIQUE (project_id, thread_slug, label)
     );
+    -- What the human has ticked on a thread's to-do list (2026-11-09, human-todos.ts). The list itself is
+    -- folded from the transcript, and this is the part of it a transcript cannot hold. A row for a step
+    -- no fence lists any more is a few stale bytes that nothing reads.
+    CREATE TABLE IF NOT EXISTS thread_human_todo (
+      project_id  TEXT NOT NULL,
+      thread_slug TEXT NOT NULL,
+      item_id     TEXT NOT NULL,
+      done_at     INTEGER,
+      reported_at INTEGER,
+      PRIMARY KEY (project_id, thread_slug, item_id)
+    );
     -- A worker's registered WATCHES on its own running work (2026-08-26). See
     -- plans/rest-by-registration.md: a wait stops being a line the worker re-writes at every rest and
     -- becomes a row it creates once, which the human sees in the queue and which wakes the thread itself.
@@ -1501,7 +1527,7 @@ export const STORAGE_SCHEMA = `
 export const STORAGE_TABLES = [
   "session", "settings", "tombstone", "adoption_claim", "adoption_retired_attempt", "retired_op",
   "thread_timer", "pr_watch", "thread_watch", "thread_question", "thread_done", "subagent_steer", "thread_link",
-  "command_watch",
+  "command_watch", "thread_human_todo",
 ] as const
 
 /** Idempotent; run by every createStorage and by frizz-db.ts before an import. */
@@ -2213,6 +2239,22 @@ export function createStorage(source: string | Database, projectId: string): Sto
   )
   const dropThreadLinkStmt = scope.prepare("DELETE FROM thread_link WHERE project_id = @project_id AND thread_slug = ? AND id = ?")
   const delThreadLinks = scope.prepare("DELETE FROM thread_link WHERE project_id = @project_id AND thread_slug = ?")
+  const setHumanTodoStmt = scope.prepare<[string, string, number | null]>(`
+    INSERT INTO thread_human_todo (project_id, thread_slug, item_id, done_at) VALUES (@project_id, ?, ?, ?)
+    ON CONFLICT (project_id, thread_slug, item_id) DO UPDATE SET done_at = excluded.done_at
+  `)
+  // COALESCE keeps the instant of the human's own tick: a tick no later than its report is what
+  // human-todos.ts reads as the one that report covered.
+  const reportHumanTodoStmt = scope.prepare<[string, string, number | null, number | null]>(`
+    INSERT INTO thread_human_todo (project_id, thread_slug, item_id, done_at, reported_at) VALUES (@project_id, ?, ?, ?, ?)
+    ON CONFLICT (project_id, thread_slug, item_id) DO UPDATE SET
+      done_at = CASE WHEN excluded.done_at IS NULL THEN NULL ELSE COALESCE(thread_human_todo.done_at, excluded.done_at) END,
+      reported_at = excluded.reported_at
+  `)
+  const humanTodoTicksStmt = scope.prepare<[], ThreadHumanTodoRow>(
+    "SELECT thread_slug, item_id, done_at, reported_at FROM thread_human_todo WHERE project_id = @project_id ORDER BY thread_slug, item_id",
+  )
+  const delHumanTodos = scope.prepare("DELETE FROM thread_human_todo WHERE project_id = @project_id AND thread_slug = ?")
   const armThreadWatchStmt = scope.prepare(`
     INSERT INTO thread_watch (project_id, id, thread_slug, kind, target, state, created_at, expires_at, settled_at)
     VALUES (@project_id, @id, @slug, @kind, @target, 'armed', @createdAtMs, @expiresAtMs, NULL)
@@ -2409,6 +2451,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     delCommandWatches.run(existing.slug)
     delThreadWatches.run(existing.slug)
     delThreadLinks.run(existing.slug)
+    delHumanTodos.run(existing.slug)
     delThreadQuestions.run(existing.slug)
     delThreadDone.run(existing.slug)
     delSubAgentSteers.run(existing.slug)
@@ -3061,6 +3104,11 @@ export function createStorage(source: string | Database, projectId: string): Sto
     listThreadLinks: (slug) => threadLinksBySlugStmt.all(slug),
     threadLinksBySlug: () => registryBySlug("thread_link", () => groupBySlug(threadLinksStmt.all()), sameRows),
     dropThreadLink: (slug, id) => dropThreadLinkStmt.run(slug, id).changes === 1,
+    setHumanTodo: (slug, itemId, done, atMs) => void setHumanTodoStmt.run(slug, itemId, done ? atMs : null),
+    reportHumanTodos: db.transaction((slug: string, todos: readonly { id: string; done: boolean }[], atMs: number) => {
+      for (const todo of todos) reportHumanTodoStmt.run(slug, todo.id, todo.done ? atMs : null, todo.done ? atMs : null)
+    }),
+    humanTodoTicksBySlug: () => registryBySlug("thread_human_todo", () => groupBySlug(humanTodoTicksStmt.all()), sameRows),
     // IDEMPOTENT BY (thread, kind, target), which is what the partial unique index enforces. A worker
     // woken by an expiry re-registers the same wait, and a worker that simply calls twice must not end
     // up with two rows to drop — so an existing armed row is RETURNED rather than replaced. Replacing

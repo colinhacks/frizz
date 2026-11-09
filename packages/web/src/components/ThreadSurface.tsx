@@ -17,7 +17,7 @@ import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
 import { latestSignOffs } from "../lib/signOffs.ts"
-import { stepsDoneReplies } from "../lib/stepsAnswer.ts"
+import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
@@ -159,9 +159,9 @@ export interface ThreadTranscript {
    *  do the emptiness predicates — a settled fence that handed the human steps keeps its card, a stated
    *  one does not. */
   hidesAwaiting: (index: number) => readonly [stale: boolean, stated: boolean]
-  /** The messages whose rest on steps the human answered with the "I have completed this" box
-   *  (lib/stepsAnswer stepsDoneReplies), so their settled steps card keeps the box, ticked. */
-  stepsDone: ReadonlySet<number>
+  /** What the human's reply said was done, by the message whose rest on steps it answered
+   *  (lib/stepsAnswer stepsDoneReplies), so that message's settled steps card can draw it ticked. */
+  stepsDone: ReadonlyMap<number, StepsReply>
   openQuestions: readonly RegisteredQuestionView[]
   /** A thread dispatched after the free-form fence was retired never gets a fence controller: a
    *  ```question with a body is prose there, and the registered card is the only answerable thing

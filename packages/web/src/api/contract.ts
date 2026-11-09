@@ -31,6 +31,7 @@ import type {
   UnqueueFollowUpResult,
   DismissFailedFollowUpInput,
   DismissFailedFollowUpResult,
+  SetHumanTodoInput,
   DeliverQueuedNowInput,
   DeliverQueuedNowResult,
   CompactThreadInput,
@@ -335,6 +336,8 @@ export interface Api {
   // (the parent comes to a NEW rest). No deadline and no scheduler — the board re-surfaces it the moment
   // rested_at advances. `sessionId` binds the click to the session the tab was looking at.
   snoozeAwaitingBackground(input: { slug: string; sessionId: string }): Promise<void>
+  // One box on the human's to-do list. Sends nothing to the worker.
+  setHumanTodo(input: SetHumanTodoInput): Promise<void>
   // Hard-delete: drop a stalled/exited phantom's registry row and tombstone its transcript id.
   // Refused for a genuinely live session — archive that one instead.
   forgetThread(input: { slug: string }): Promise<void>
@@ -534,6 +537,7 @@ export const PROCEDURES = {
   listOwnThreadActivity: "mutation",
   listThreads: "mutation",
   snoozeAwaitingBackground: "mutation",
+  setHumanTodo: "mutation",
   forgetThread: "mutation",
   openExternal: "mutation",
   openLocalFile: "mutation",

@@ -1,13 +1,14 @@
 import { statSync, openSync, readSync, closeSync, readdirSync, realpathSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { execFile } from "node:child_process"
 import { takeLoopTurn } from "./loop-turns.ts"
+import { closeHumanSteps, foldHumanSteps, type HumanStep } from "./human-todos.ts"
 import { execFileOffThread } from "./off-thread-exec.ts"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { fenceWaitsOnHuman, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingSteps, fenceWaitsOnHuman, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -2684,6 +2685,8 @@ export function applyRecord(state: TailState, rec: Record): void {
     // classifier, so the two projections cannot drift again — but the chat draws Frizz's own deliveries
     // too, so it is only the first gate. The question asks the narrower one below the row-order key.
     state.lastAssistantAllDone = false
+    // A tool result answers a call made in the same message, so that fence was never the thread's last word.
+    if (isRealUserMessage(rec.message?.content)) settleHumanSteps(state, userText)
     state.lastFence = undefined
     const humanSpoke = isHumanSpeaking(rec, userText, systemUserRec, compactSummaryRec)
     // Any user record supersedes a usage-limit pause: the conversation has moved past the point where
@@ -2765,6 +2768,33 @@ function applyFinalText(state: FoldState, text: string): void {
 function noteHandoff(state: FoldState): void {
   const fence = state.lastFence
   if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints) && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
+}
+
+// A REST ON `steps:` IS OVER, so what it handed the human joins the thread's list (human-todos.ts). Here
+// and not where the fence is parsed, because a later assistant message replaces a fence that was not the
+// thread's last word, and that fence never rested on anything.
+function settleHumanSteps(state: FoldState, replyText: string): void {
+  const steps = state.lastFence?.kind === "awaiting" ? awaitingSteps(state.lastFence.hints) : []
+  const atMs = Date.parse(state.handoffAt ?? "")
+  if (steps.length === 0 || !Number.isFinite(atMs)) return
+  const listed = foldHumanSteps(state.humanSteps ?? [], steps, atMs)
+  state.humanSteps = repliesStepsDone(replyText) ? closeHumanSteps(listed, steps, atMs) : listed
+}
+
+// The list with the fence the thread is resting on now, which has not settled yet. One value per fence
+// and base list, so the board's memos see the same array on every read of a thread that has not moved.
+const humanStepsAtRest = new WeakMap<FenceView, { base: HumanStep[] | undefined; steps: HumanStep[] }>()
+
+function humanStepsOf(state: FoldState): HumanStep[] | undefined {
+  const fence = state.turn === "idle" && state.lastFence?.kind === "awaiting" ? state.lastFence : undefined
+  const steps = fence ? awaitingSteps(fence.hints) : []
+  const atMs = Date.parse(state.handoffAt ?? "")
+  if (!fence || steps.length === 0 || !Number.isFinite(atMs)) return state.humanSteps
+  const memo = humanStepsAtRest.get(fence)
+  if (memo && memo.base === state.humanSteps) return memo.steps
+  const folded = foldHumanSteps(state.humanSteps ?? [], steps, atMs)
+  humanStepsAtRest.set(fence, { base: state.humanSteps, steps: folded })
+  return folded
 }
 
 // What ends FoldState.operatorStopped: the thread moving again.
@@ -2877,6 +2907,7 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.limitFault = undefined
       state.turn = "in-flight"
       state.lastAssistantAllDone = false
+      settleHumanSteps(state, ev.text ?? "")
       state.lastFence = undefined
       if (!ev.synthetic) {
         // …and the QUESTION is the human's to discharge, so it never clears unconditionally. Codex's
@@ -6274,7 +6305,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

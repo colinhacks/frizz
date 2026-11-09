@@ -1,9 +1,9 @@
-import type { BgShellView, ThreadView, ThreadWatchView } from "@frizz/shared"
+import { awaitingSteps, type BgShellView, type ThreadView, type ThreadWatchView } from "@frizz/shared"
 import type { TranscriptShellRecord } from "./childOps.ts"
 import { threadOps } from "./threadOps.ts"
 import { childThreadState } from "./childThreads.ts"
 
-export type QueueOpsKind = "agent" | "child" | "shell" | "pr" | "issue" | "command" | "timer" | "file" | "link"
+export type QueueOpsKind = "todo" | "agent" | "child" | "shell" | "pr" | "issue" | "command" | "timer" | "file" | "link"
 
 export interface QueueOpsCount {
   readonly key: QueueOpsKind
@@ -30,8 +30,14 @@ export function queueOpsCounts(
   transcriptShells: readonly (BgShellView & TranscriptShellRecord)[] = [],
   childThreads: readonly ThreadView[] = [],
 ): QueueOpsCount[] {
-  const { agents, children, shells, prs, issues, commands, timers, files, links } = threadOps(thread, transcriptShells, childThreads)
+  const { todos, agents, children, shells, prs, issues, commands, timers, files, links } = threadOps(thread, transcriptShells, childThreads)
+  const open = todos.filter((todo) => !todo.done).length
+  // A thread resting on `steps:` has the list on its card already, so it is not counted a second time.
+  const onCard = thread.runtime === "turn-idle" && thread.lastFence?.kind === "awaiting" && awaitingSteps(thread.lastFence.hints).length > 0
   const counts: QueueOpsCount[] = [
+    // FIRST, as the one kind that waits on the reader. Once all of it is done it still counts, so the
+    // finished list stays reachable.
+    { key: "todo", n: onCard ? 0 : open || todos.length, one: open ? "to-do" : "to-do done", many: open ? "to-dos" : "to-dos done", states: [] },
     { key: "agent", n: agents.length, one: "agent", many: "agents", states: agents.map((agent) => agent.state) },
     // CHILD THREADS, beside the sub-agents they resemble: work this thread handed to an agent of its own.
     // Their own count rather than more "agents", because each is a whole thread — it opens a drawer, not
