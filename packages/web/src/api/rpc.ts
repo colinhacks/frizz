@@ -174,6 +174,25 @@ function rekeyOutput(name: string, result: unknown, project: string): unknown {
   }
 }
 
+// THE READS EVERY QUEUE CARD MAKES FOR ITSELF. The Console mounts all its cards at once, 61 of them on the
+// board this was measured on, and together they ask for about 340 of these through the six connections a
+// browser gives one host. Queued behind them, the poll that adds each project the server has finished
+// opening took 30s to come back, so a third of the Console arrived 40s after a restart (2026-11-09).
+// Low, so that poll and a project's board take the next connection to come free.
+const CARD_READS: ReadonlySet<string> = new Set([
+  "threadTranscript",
+  "threadSettledQuestions",
+  "threadProfileOptions",
+  "mcpStatus",
+  "resolveLocalPaths",
+  "githubRefPreview",
+])
+
+/** The fetch priority of a query. Exported for its test. */
+export function queryPriority(name: string): RequestPriority {
+  return CARD_READS.has(name) ? "low" : "auto"
+}
+
 async function call(name: string, type: ProcType, rawInput?: unknown, opts?: RpcCallOpts, project?: string): Promise<unknown> {
   // The old child may remain healthy while its durable owner is building a replacement. Do not let
   // a mutation race that handoff; local draft state remains editable and every query stays available.
@@ -189,7 +208,7 @@ async function call(name: string, type: ProcType, rawInput?: unknown, opts?: Rpc
   if (type === "query") {
     const url = new URL(`${base}/rpc/${name}`, location.origin)
     if (input !== undefined) url.searchParams.set("input", JSON.stringify(input))
-    const res = await fetch(url.toString(), { signal: opts?.signal })
+    const res = await fetch(url.toString(), { signal: opts?.signal, priority: queryPriority(name) })
     noteServerBootId(res.headers.get("x-frizz-boot")) // notice a server restart on any RPC roundtrip
     return finish(await parseRpcResponse(res, name))
   }
