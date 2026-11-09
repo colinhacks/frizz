@@ -153,6 +153,23 @@ test("the header links out to the repo as right-justified text, rules frame the 
 // The grid is a menu inside a modal popover, and its per-runtime gear opens a panel from inside that menu:
 // three layers, each portaled to <body>. What only a real browser settles is who paints on top, who gets
 // the click, and that one Escape unwinds one layer.
+test("a native OpenCode profile reads as experimental in the panel and on the menu's OpenCode heading, in sentence case", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch("?rows=5&opencode=1")
+  const SELECTOR = `${PANEL} [aria-label="Model and effort"]`
+  const chip = (scope: string) => page.$eval(`${scope} [data-experimental-chip]`, (el) => ({ text: el.textContent, caps: getComputedStyle(el).fontVariantCaps }))
+  try {
+    await page.click(GEAR)
+    await page.waitForSelector(`${PANEL} [data-experimental-chip]`)
+    assert.deepEqual(await chip(PANEL), { text: "Experimental", caps: "normal" })
+    await page.click(SELECTOR)
+    await page.waitForSelector(".profile-grid-menu")
+    assert.deepEqual(await chip(".profile-grid-menu"), { text: "Experimental", caps: "normal" })
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
 test("the model selector works from inside the settings panel: its menu and the runtime panel paint on top, a pick saves, and Escape unwinds one layer at a time", { skip: !baseUrl, timeout: 90_000 }, async () => {
   const { browser, page, errors } = await launch()
   const SELECTOR = `${PANEL} [aria-label="Model and effort"]`

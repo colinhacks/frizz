@@ -22,6 +22,7 @@ import "./styles.css"
 //   ?drift=1         serves every later page one row early, as GitHub does when an issue is opened
 //                    between two fetches: each page's first row repeats the previous page's last
 //   ?searchTotal=N   reports N matching items, more than GitHub's search will page through
+//   ?opencode=1      a machine whose saved profile is native OpenCode
 const PAGE_SIZE = 30
 const params = new URLSearchParams(location.search)
 const HEAD = [412, 409, 407, 400, 398, 395, 390, 388, 381, 377, 370, 366, 361, 359, 352, 348, 344, 340, 337, 333, 330, 328, 321, 318]
@@ -57,10 +58,12 @@ const items: GithubItem[] = NUMBERS.map((number, i) => ({
 }))
 
 const codexModels: CodexModel[] = []
+const opencode = params.get("opencode") === "1"
 const preferences: DispatchPreferences = {
-  backend: "claude",
+  backend: opencode ? "opencode" : "claude",
   claude: { model: "opus", effort: "high", permissionMode: "auto" },
   codex: { permissionMode: "default" },
+  ...(opencode ? { opencode: { model: "opencode:" } } : {}),
 } as DispatchPreferences
 
 const dispatched: unknown[] = []
@@ -111,7 +114,8 @@ window.fetch = async (input, init) => {
     return json({ items: items.slice(from, from + perPage), total: searchTotal || items.length, page, pageCount })
   }
   if (url.pathname === "/_frizz/rpc/codexModels") return json(codexModels)
-  if (url.pathname === "/_frizz/rpc/acpAgents") return json([])
+  if (url.pathname === "/_frizz/rpc/acpAgents") return json(opencode ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }] : [])
+  if (url.pathname === "/_frizz/rpc/opencodeModels") return json({ models: [] })
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json(preferences)
   if (url.pathname === "/_frizz/rpc/dispatchPreferenceSet") {
     preferenceWrites.push(JSON.parse(String(init?.body ?? "{}")))

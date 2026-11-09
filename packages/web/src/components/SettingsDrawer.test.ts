@@ -6,6 +6,7 @@ const source = readFileSync(new URL("./SettingsDrawer.tsx", import.meta.url), "u
 const helpSource = readFileSync(new URL("../lib/settingsHelp.ts", import.meta.url), "utf8")
 const autosaveSource = readFileSync(new URL("../hooks/useSettingsAutosave.tsx", import.meta.url), "utf8")
 const fieldSource = readFileSync(new URL("./SettingsField.tsx", import.meta.url), "utf8")
+const experimentalChipSource = readFileSync(new URL("./ui/ExperimentalChip.tsx", import.meta.url), "utf8")
 const agentSource = readFileSync(new URL("./AgentSettingsPopover.tsx", import.meta.url), "utf8")
 const promptFieldSource = readFileSync(new URL("./GithubPromptField.tsx", import.meta.url), "utf8")
 const promptPopoverSource = readFileSync(new URL("./GithubPromptPopover.tsx", import.meta.url), "utf8")
@@ -79,7 +80,7 @@ test("the drawer is one untabbed list of interface preferences, with no project 
   assert.ok(source.indexOf('<SettingsField label="GitHub"') < source.indexOf("{!draft ? ("), "the GitHub row renders without the draft")
   // Child threads is the one experiment, and says so beside its name.
   assert.deepEqual([...source.matchAll(/<SettingsField label="([^"]+)" experimental\b/g)].map((m) => m[1]), ["Child threads"])
-  assert.match(fieldSource, /normal-case[^"]*tracking-normal[^"]*">\s*Experimental\s*</)
+  assert.match(experimentalChipSource, /normal-case[^`]*tracking-normal[^`]*`\}>\s*Experimental\s*</)
   // The triage prompt has exactly one editor, and it is the picker's.
   assert.doesNotMatch(source, /GithubPromptEditor|githubPrompt|<textarea/)
   assert.match(promptPopoverSource, /<GithubPromptEditor draft=\{draft\} onChange=\{update\} rows=\{14\} \/>/)

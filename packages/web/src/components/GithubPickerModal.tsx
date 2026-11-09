@@ -8,6 +8,7 @@ import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { OpencodeModelSelect } from "./OpencodeModelSelect.tsx"
+import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
@@ -394,6 +395,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                   className="max-w-[min(14rem,30vw)]"
                 />
               )}
+              {resolved?.backend === "opencode" && <ExperimentalChip className="shrink-0" />}
               {acpAgent && (
                 <AcpModelSelect
                   agentId={acpAgent.id}

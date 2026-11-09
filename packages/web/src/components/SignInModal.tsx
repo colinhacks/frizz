@@ -89,7 +89,7 @@ export function SignInModal({
 
           {onUseOpenCode && (
             <p className="mb-4 text-[12.5px] leading-relaxed text-muted">
-              Or use OpenCode, which is installed here and needs no {label} account.
+              Or use OpenCode, which is installed here and needs no {label} account. Frizz's OpenCode support is experimental.
             </p>
           )}
 

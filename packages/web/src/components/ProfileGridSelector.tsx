@@ -25,6 +25,7 @@ import { OPAQUE_PORTAL_SURFACE_Z, OPAQUE_SURFACE_BASE } from "../lib/overlaySurf
 import { AgentSettingsPopover } from "./AgentSettingsPopover.tsx"
 import { PhoneProfileSelector } from "./MobileModelSheet.tsx"
 import { PROMPT_CONTROL_CELL, usePromptControlCell } from "./ui/PromptControlGroup.tsx"
+import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
 
 const effortLabel = profileGridEffortLabel
@@ -271,8 +272,9 @@ function DesktopProfileGridSelector({
             <RadixMenu.Group key={group.id}>
               {group.label && (
                 <div className="profile-grid-header sticky left-0 flex items-baseline justify-between gap-4 px-1.5 pb-1 pt-1 first:pt-0.5">
-                  <RadixMenu.Label className="text-left font-medium tracking-[0.07em] text-muted-55">
+                  <RadixMenu.Label className="flex items-baseline gap-1.5 text-left font-medium tracking-[0.07em] text-muted-55">
                     {group.label}
+                    {group.experimental && <ExperimentalChip className="shrink-0" />}
                   </RadixMenu.Label>
                   {agentSettings && (group.id === "claude" || group.id === "codex") && (
                     <AgentSettingsPopover

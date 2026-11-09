@@ -12,6 +12,7 @@ import {
 } from "../lib/profileGrid.ts"
 import type { ProfileGridUpgrade } from "./ProfileGridSelector.tsx"
 import { PhoneBarHoldContext } from "./Composer.tsx"
+import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { Z_POPOVER } from "../lib/layers.ts"
 
 // THE PHONE'S MODEL AND EFFORT PICKER — a bottom sheet in place of the desktop's grid popover.
@@ -136,6 +137,7 @@ export function MobileModelSheet({
                       <span className="min-w-0 flex-1 truncate text-[15.5px] text-fg">
                         <ModelName option={option} />
                       </span>
+                      {group.experimental && oi === 0 && <ExperimentalChip className="shrink-0" />}
                       {checked && <Check aria-hidden size={18} strokeWidth={2.6} className="shrink-0 text-fg" />}
                     </button>
                   )

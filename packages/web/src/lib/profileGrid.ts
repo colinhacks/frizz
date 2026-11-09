@@ -14,6 +14,8 @@ export interface ProfileGridGroup {
   id: string
   label: string
   options: readonly ProfileGridOption[]
+  /** Draws an Experimental chip beside the group's name. */
+  experimental?: boolean
 }
 
 export interface ProfileGridSelection {

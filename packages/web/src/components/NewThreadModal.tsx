@@ -16,6 +16,7 @@ import { OpencodeModelSelect } from "./OpencodeModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { Select } from "./ui/Select.tsx"
 import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
+import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS } from "../lib/options.ts"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
@@ -244,7 +245,9 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     return (
       // `gap-1.5` for the phone's tool row, where the project chip and the model chip stand side by side
       // and can wrap. On a desktop the strip is the one line below.
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      // A query container only with the marks, which is to say on a desktop: the phone's tool row sizes this strip
+      // to its content, and a container has none, so it collapsed to nothing.
+      <div className={`${agentMarks ? "@container/dispatch-row " : ""}flex min-w-0 flex-1 flex-wrap items-center gap-1.5`}>
         {projectPicker}
         {/* The dropdowns and the marks that answer to them hold ONE line, on which the model name truncates,
             so a long one in a 272px sidebar never strands them on a row of their own. A phone's tool row has
@@ -307,6 +310,11 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
               />
             )}
           </PromptControlGroup>
+          {/* In the row as well as in the menu, because someone with only OpenCode lands on it by default and
+              may never open the menu. Only where the row has room: in the 272px sidebar it squeezed "OpenCode"
+              to a sliver, and on a phone it wrapped onto a line of its own, so there the menu or sheet alone
+              carries it. */}
+          {resolved.backend === "opencode" && <ExperimentalChip className="hidden shrink-0 @[300px]/dispatch-row:block" />}
           {agentMarks}
         </div>
       </div>

@@ -111,7 +111,7 @@ export function dispatchProfileGroups(
         efforts: model.efforts,
       })),
     },
-    ...(opencodeNative ? [{ id: "opencode", label: "OpenCode", options: [{ model: OPENCODE_MODEL_PREFIX, label: "OpenCode", efforts: [] }] }] : []),
+    ...(opencodeNative ? [{ id: "opencode", label: "OpenCode", experimental: true, options: [{ model: OPENCODE_MODEL_PREFIX, label: "OpenCode", efforts: [] }] }] : []),
     // One agent is its own heading. "ACP agents" names the protocol, and only earns its place as a list.
     ...(acpOptions.length ? [{ id: "acp", label: acpOptions.length === 1 ? acpOptions[0]!.label : "ACP agents", options: acpOptions }] : []),
   ]
@@ -181,6 +181,7 @@ export function resolveDispatchPreferences(
     codexModel,
     ...(acpAgentId ? { acpAgentId } : {}),
     ...(acpModelId ? { acpModelId } : {}),
+    ...(opencodeModel ? { opencodeModel } : {}),
     modelAvailable,
     effortAvailable,
     effortOptions,
