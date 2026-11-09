@@ -132,6 +132,17 @@ export function sendAndNext(canSend: boolean, submit: () => void): void {
 // to show the rail. Narrower, the sidebar and the rail cannot both stand beside a thread, and only full
 // screen brings the rail back.
 export const PANE_WIDE_MIN_PX = 1360
+export const PANE_THREAD_PX = 720
+export const PANE_SIDEBAR_MAX_PX = 480
+// The rail's 340 is FocusRail's RAIL_WIDTH, which this file sits under.
+const WIDEST_COLUMNS_PX = PANE_SIDEBAR_MAX_PX + PANE_THREAD_PX + 340
+const WIDEST_PAIR_PX = PANE_SIDEBAR_MAX_PX + PANE_THREAD_PX
+
+/** Where the sidebar's left edge stands, as a CSS length of the page: past the columns' greatest widths,
+ *  the far left and far right share what is left over. */
+export function paneSidebarLeft(wide: boolean): string {
+  return `max(0px, calc((100% - ${wide ? WIDEST_COLUMNS_PX : WIDEST_PAIR_PX}px) / 2))`
+}
 const WIDE_QUERY = `(min-width: ${PANE_WIDE_MIN_PX}px)`
 
 // One MediaQueryList for every caller, as lib/mobile.ts keeps for the phone breakpoint.

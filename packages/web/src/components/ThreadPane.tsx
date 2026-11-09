@@ -17,8 +17,8 @@ import { useOptimisticallySteered } from "../lib/steering.ts"
 import { keyProject } from "../lib/threadKey.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import {
-  advanceFrom, nextQueuedAfter, openFirstQueued, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded, stepPane, takeComposerFocus,
-  usePaneWide, type AfterSend,
+  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded, stepPane,
+  takeComposerFocus, usePaneWide, type AfterSend,
 } from "../lib/threadPane.ts"
 import { store, threadBySlug } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
@@ -30,15 +30,15 @@ import { LAYOUT_VARS, SidePane } from "./StandaloneThreadPage.tsx"
 // height. The thread is the same ThreadView the drawer and /full draw; everything a queue card did about
 // scrolling and fading is simply absent, because nothing here moves but the swap of one thread for another.
 
-// THE COLUMNS MEET EDGE TO EDGE, AND THE SIDEBAR TAKES THE SLACK (maintainer 2026-11-09: the rail "just
-// immediately up against the content window", "the same thing for the sidebar", and "let the sidebar
-// expand to any width that it wants" so titles do not wrap more than they must). The thread and the rail
-// hold their widths and the sidebar is whatever is left, with no upper limit. These are its minimums: 300
-// + the thread's 720 + the rail's 340 is the 1360 the three columns start at (lib/threadPane.ts
-// PANE_WIDE_MIN_PX). Its 16px insets are the peek's, so the two read alike.
+// THE COLUMNS MEET EDGE TO EDGE, AND THE SIDEBAR TAKES THE SLACK UP TO A LIMIT (maintainer 2026-11-09: the
+// rail "just immediately up against the content window", "the same thing for the sidebar", and of a sidebar
+// with no limit, "That looks insane … some reasonable max width, and then, if there's extra horizontal
+// space, it should just be off to the far left and to the far right"). The thread and the rail hold their
+// widths, the sidebar grows to lib/threadPane.ts PANE_SIDEBAR_MAX_PX, and the group centres in what is
+// left. These are its minimums: 300 + the thread's 720 + the rail's 340 is the 1360 the three columns start
+// at (PANE_WIDE_MIN_PX). Its 16px insets are the peek's, so the two read alike.
 const WIDE_SIDEBAR_PX = 300
 const NARROW_SIDEBAR_PX = 272
-const THREAD_PX = 720
 
 /** The queue in the order the pane walks it: the order the queue's cards stood in. */
 export function usePaneQueue(): readonly ThreadRow[] {
@@ -66,9 +66,13 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   // With nothing selected there is nothing to be full screen about.
   const folded = proto.folded && slug !== null
   const threeColumns = wide && !folded
-  // A file wants more room than the thread's 720 leaves it, so while one is open the sidebar comes back to
-  // its minimum, and the thread and the file halve what is left (PaneThread).
+  // A file wants more room than the rail's 340, so while one is open the thread and the file take the page
+  // (PaneThread) and the sidebar gives up what they need of it: the file gets the thread's 720 before the
+  // sidebar stands above its minimum.
   const fileBeside = threeColumns && snap.filePanels.length > 0
+  const sidebarFlex = fileBeside
+    ? `0 0 clamp(${WIDE_SIDEBAR_PX}px, calc(100% - ${2 * PANE_THREAD_PX}px), ${PANE_SIDEBAR_MAX_PX}px)`
+    : "1 1 0"
   const [peek, setPeek] = useState(false)
   if (!folded && peek) setPeek(false)
   // A board's sidebar opens level with the thread's header (its 52px was the line the first queue card
@@ -108,7 +112,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   return (
     <div
       data-pane-layout={folded ? "folded" : wide ? "wide" : "narrow"}
-      className="flex h-dvh w-full overflow-hidden"
+      className={`flex h-dvh w-full overflow-hidden ${folded || fileBeside ? "" : "justify-center"}`}
     >
       {/* The sidebar never unmounts across the wide line: the same docked column at every width. Full
           screen it waits off the left edge, and a pointer at that edge peeks it over the thread. */}
@@ -116,7 +120,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
         <div
           data-pane-sidebar
           className={`h-full px-4 [view-transition-name:pane-sidebar] [&>aside]:!w-full ${boardTop}`}
-          style={{ flex: fileBeside ? `0 0 ${WIDE_SIDEBAR_PX}px` : "1 1 0", minWidth: wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX }}
+          style={{ flex: sidebarFlex, minWidth: wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX, maxWidth: PANE_SIDEBAR_MAX_PX }}
         >
           {sidebar}
         </div>
@@ -141,7 +145,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       <main
         id="workpane"
         className="h-full min-w-0"
-        style={{ flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${THREAD_PX + RAIL_WIDTH}px` : `0 0 min(${THREAD_PX}px, 62vw)` }}
+        style={{ flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + RAIL_WIDTH}px` : `0 0 min(${PANE_THREAD_PX}px, 62vw)` }}
       >
         {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
       </main>
