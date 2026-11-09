@@ -217,6 +217,19 @@ export function serializeDeliveryLedger(items: DeliveryLedgerItem[]): string | n
   return items.length ? JSON.stringify(items) : null
 }
 
+/**
+ * Could a transcript record still change this ledger? The tail cache resumes a fold past the records it
+ * skips, so a thread whose ledger is waiting on evidence has to replay from byte 0 (tailer hydrateFromCache).
+ *
+ * A `cancelled` tombstone and a `held` send wait on nothing: the correlator refuses to match either, and
+ * neither ages. A tombstone also never leaves on its own, so "the ledger is not empty" made one cancelled
+ * message cost its thread a full re-read at every boot, for good: 36 threads, 28 of them archived, and
+ * 1.4 GB of the 1.4 GB a restart read (2026-11-09).
+ */
+export function ledgerAwaitsTranscript(json: string | null | undefined): boolean {
+  return parseDeliveryLedger(json).some((item) => item.state !== "cancelled" && item.state !== "held")
+}
+
 // Record a freshly accepted follow-up. Idempotent on id (an RPC retry must not double-project), capped
 // so a wedged session can't grow the row without bound (oldest evicted first — they're the stalest
 // unconfirmed sends, and the terminal is their recovery surface).

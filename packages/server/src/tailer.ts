@@ -22,7 +22,7 @@ import { classifyLimitRecord } from "./backend/usage-limit.ts"
 import { codexLimitFault } from "./backend/codex-usage-limit.ts"
 import { claudeBrokerDiagnosticLogPath } from "./backend/claude-broker-diagnostics.ts"
 import { claudeBrokerRecordPath, readBrokerRecord } from "./backend/claude-broker-host.ts"
-import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, type DeliveryLedgerItem } from "./delivery-ledger.ts"
+import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, ledgerAwaitsTranscript, type DeliveryLedgerItem } from "./delivery-ledger.ts"
 import { createCodexSubAgentTracker, type CodexSubAgentTracker } from "./codex-subagents.ts"
 import { defaultCodexHome, readCodexThreadNames, scanForeignRollouts } from "./backend/codex.ts"
 import {
@@ -4988,7 +4988,8 @@ export function createTailer(deps: TailerDeps): Tailer {
     // A row with an OPEN delivery ledger has follow-ups whose evidence may still be sitting in the
     // prefix we would skip. Correlating those records is the ledger's whole job, so such a row keeps
     // the full replay — there are only ever a handful, and they are the actively-steered threads.
-    if (row?.delivery_ledger) return false
+    // A ledger of nothing but tombstones and held sends is not open: see ledgerAwaitsTranscript.
+    if (ledgerAwaitsTranscript(row?.delivery_ledger)) return false
     // A CODEX row keeps the full replay too. This prime cache predates the codex sub-agent tracker
     // (`state.codexSubAgents`, a live object with methods) and cannot round-trip it — a restored plain
     // blob has no `.poll`. And resuming the parent fold mid-file would skip the `spawn_agent` records
@@ -5051,7 +5052,7 @@ export function createTailer(deps: TailerDeps): Tailer {
   function cacheSnapshot(state: TailState, row: SessionRow | null): TailCacheEntry | null {
     // Codex rows are never cached — the prime cache predates their live sub-agent tracker and cannot
     // round-trip it (see hydrateFromCache). Never persisting them keeps hydrate a guaranteed miss.
-    if (state.offset <= 0 || row?.delivery_ledger || row?.backend === "codex") return null
+    if (state.offset <= 0 || ledgerAwaitsTranscript(row?.delivery_ledger) || row?.backend === "codex") return null
     const fence = measureFence(state.path, state.offset)
     if (!fence) return null
     return {
