@@ -155,7 +155,9 @@ const SNAPSHOT_TOKEN_DAYS = 1 / 24
 // group with no scope (null) can never be minted under one, which only optional groups may be. A test
 // fails if a spec names a group missing here.
 export const OAUTH_SCOPES = {
-  "Access: Apps and Policies Read": "zone-access.read",
+  // Cloudflare lists this name twice: `access.read` on the account, `zone-access.read` on a zone. The
+  // snapshot reads it on the account.
+  "Access: Apps and Policies Read": "access.read",
   "Access: Service Tokens Read": "access-service-token.read",
   "Account API Tokens Write": "account-api-tokens.write",
   "Account Analytics Read": "account-analytics.read",
