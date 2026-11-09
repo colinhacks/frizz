@@ -87,11 +87,20 @@ test("the header links out to the repo as right-justified text, rules frame the 
         const style = getComputedStyle(el)
         return { width: style[`border${side}Width`], color: style[`border${side}Color`], left: box.left - inner.left, right: inner.right - box.right }
       }
-      return { heading: read(h2, "Bottom"), footer: read(footer, "Top") }
+      const start = footer.querySelector(":scope > button")!.getBoundingClientRect()
+      const ruleTop = footer.getBoundingClientRect().top
+      return {
+        heading: read(h2, "Bottom"),
+        footer: read(footer, "Top"),
+        aboveStart: start.top - ruleTop - 1,
+        belowStart: inner.bottom - 1 - start.bottom,
+      }
     })
     assert.equal(rules.heading.width, "1px", "a rule under the heading")
     assert.equal(rules.footer.width, "1px", "a rule above the footer")
     assert.equal(rules.heading.color, rules.footer.color, "the two rules are one tone")
+    assert.equal(rules.aboveStart, 12, "12px between the footer's rule and the Start button")
+    assert.equal(rules.belowStart, 12, "and 12px between the button and the modal's bottom edge")
     for (const rule of [rules.heading, rules.footer]) {
       assert.ok(rule.left <= 1 && rule.right <= 1, `the rule runs edge to edge, got ${rule.left} / ${rule.right} of inset`)
     }
