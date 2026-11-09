@@ -321,10 +321,32 @@ body {
      swaps in blue for a background shell/Monitor. */
   --live-dot: var(--color-accent);
   background: var(--live-dot);
-  /* Keep the motion cue close to the mark. At high browser zoom the former 4px pulse read as a
-     second, much larger circle rather than a quiet live-state halo. */
+  position: relative;
+  animation: frizz-live-fade 1.25s ease-in-out infinite;
+}
+/* THE PULSE ANIMATES OPACITY ONLY, so the GPU runs it and the page's main thread never sees a frame of
+   it. It animated `box-shadow` until 2026-11-09, which Chrome cannot hand off: every dot cost a style
+   and paint pass per frame, scrolled out of view or not. The Console's 20 dots, all below the fold,
+   held a settled page at 37% of a core, against 0.9% with animations off. As opacity it settles at 4%.
+
+   So the ring is two rings, cross-faded: the resting 1px one fades out as the 2px halo fades in, which
+   reads as the ring breathing outward and back. Keep the motion cue close to the mark: at high browser
+   zoom a 4px pulse read as a second, much larger circle rather than a quiet live-state halo. */
+.frizz-live-dot::before,
+.frizz-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.frizz-live-dot::before {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--live-dot) 28%, transparent);
-  animation: frizz-live-pulse 1.25s ease-in-out infinite;
+  animation: frizz-live-ring-rest 1.25s ease-in-out infinite;
+}
+.frizz-live-dot::after {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--live-dot) 14%, transparent);
+  opacity: 0;
+  animation: frizz-live-ring-halo 1.25s ease-in-out infinite;
 }
 /* Three runtime concerns, three hues: background shells pulse blue, sub-agents pulse the accent-yellow,
    and a parked PR watcher pulses violet.
@@ -496,11 +518,25 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .frizz-tile-badge-ring { animation: none; }
 }
-@keyframes frizz-live-pulse {
-  50% { opacity: 0.62; box-shadow: 0 0 0 2px color-mix(in srgb, var(--live-dot) 14%, transparent); }
+/* Every end of these keyframes is spelled out. Left implicit, Chrome refused to run 3 in 4 of the
+   Console's pulses on the GPU (trace `compositeFailed` 131072, "mixed keyframe value types"), though a
+   bare test page took the same rules, and the page stayed at 57-62% of a core. */
+@keyframes frizz-live-fade {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+@keyframes frizz-live-ring-rest {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes frizz-live-ring-halo {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .frizz-live-dot { animation: none; background: transparent; border: 2px solid var(--live-dot); box-shadow: none; }
+  .frizz-live-dot { animation: none; background: transparent; border: 2px solid var(--live-dot); }
+  .frizz-live-dot::before,
+  .frizz-live-dot::after { display: none; }
 }
 
 /* NO SPINNER LIVES HERE ANY MORE. `.frizz-tool-spinner` was the dispatch card's right-hand indicator for
