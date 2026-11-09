@@ -17,7 +17,6 @@ import { installCodeCopyInterceptor } from "./lib/copy-code.ts"
 import { installCodeTabInterceptor } from "./lib/switch-code-tab.ts"
 import { installCodeExpandInterceptor } from "./lib/expand-code.ts"
 import { installDisclosureInterceptor } from "./lib/toggle-disclosure.ts"
-import { installPasteFallback } from "./lib/paste-fallback.ts"
 import { installThreadLinkInterceptor } from "./lib/thread-links.ts"
 import { primeRoute } from "./lib/router.ts"
 import { stepOffStaleLayerEntries } from "./lib/backDismiss.ts"
@@ -76,7 +75,6 @@ if (!settingsFixture) {
   installCodeTabInterceptor()
   installCodeExpandInterceptor()
   installDisclosureInterceptor()
-  installPasteFallback()
   installThreadLinkInterceptor()
 }
 
