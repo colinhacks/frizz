@@ -4,7 +4,9 @@ import { Check, ChevronDown, Loader2 } from "lucide-react"
 import {
   profileGridDisplayParts,
   profileGridEffortLabel,
+  profileGridListedOptions,
   profileGridResolveSelection,
+  profileGridShownModel,
   profileGridSelectionKey,
   profileGridSelectionKnown,
   type ProfileGridGroup,
@@ -47,8 +49,6 @@ function effortFor(option: ProfileGridOption, current: string | undefined): stri
 
 function ModelName({ option }: { option: ProfileGridOption }) {
   const suffix = option.edition ? ` ${option.edition}` : ""
-  // OpenCode's "Default" row names the model it stands for, dimmed as a version is.
-  if (option.hint) return <>{option.label} <span className="text-edition">{option.hint}</span></>
   if (!suffix || !option.label.endsWith(suffix)) return <>{option.label}</>
   return <>{option.label.slice(0, -suffix.length)} <span className="text-edition">{option.edition}</span></>
 }
@@ -129,8 +129,9 @@ export function MobileModelSheet({
             <RadixDialog.Title className="px-[18px] pb-2.5 pt-1 text-[16px] font-semibold text-fg">Model</RadixDialog.Title>
             {groups.map((group, gi) => (
               <div key={group.id} role="radiogroup" aria-label={group.label}>
-                {group.options.map((option, oi) => {
-                  const checked = draft.provider === group.id && draft.model === option.model
+                {profileGridListedOptions(group).map((option, oi) => {
+                  // OpenCode's configured model is checked on its own model's row (profileGridShownModel).
+                  const checked = draft.provider === group.id && profileGridShownModel(group, draft.model) === option.model
                   return (
                     <button
                       key={option.model}

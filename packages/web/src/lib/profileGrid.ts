@@ -10,12 +10,14 @@ export interface ProfileGridOption {
   defaultEffort?: string
   /** A DROPDOWN group's subheading for this option: OpenCode's provider ("opencode", "anthropic"). */
   section?: string
-  /** Dim text after the label in a list, never in the trigger: OpenCode's default row names its model. */
-  hint?: string
   /** What the trigger reads when this option is chosen, where it differs from the list's label. */
   triggerLabel?: string
-  /** An alias for another option's model (OpenCode's "Default" names its default model): choosing one of
-   *  its non-default levels stores that model, since a level belongs to a model, not to a default. */
+  /** The trigger's dim tail, set in the edition ink, when it is not `label`'s own trailing version:
+   *  OpenCode's trigger reads "OpenCode" and then the whole model name ("OpenCode Flint 40B Free"). */
+  triggerEdition?: string
+  /** Another option this one stands for: OpenCode's bare `opencode:` is whatever model its config picks.
+   *  A list shows the target's row in its place (profileGridListedOptions), and a level chosen on it stores
+   *  the target, since a level belongs to a model. */
   aliasOf?: string
 }
 
@@ -131,6 +133,18 @@ export function profileGridSelections(groups: readonly ProfileGridGroup[]): Prof
   }))))
 }
 
+/** The options a list shows. An alias whose target is listed has no row of its own: the target's row is
+ *  it, so OpenCode's configured model appears once, by its name. */
+export function profileGridListedOptions(group: ProfileGridGroup): ProfileGridOption[] {
+  return group.options.filter((option) => !option.aliasOf || !group.options.some((target) => target.model === option.aliasOf))
+}
+
+/** The listed row that stands for `model`: its alias's target when that is the row shown in its place. */
+export function profileGridShownModel(group: ProfileGridGroup, model: string | undefined): string | undefined {
+  const option = group.options.find((candidate) => candidate.model === model)
+  return option?.aliasOf && group.options.some((target) => target.model === option.aliasOf) ? option.aliasOf : model
+}
+
 /** The selection to store for a pick: an alias option's model with a level of its own becomes its target. */
 export function profileGridResolveSelection(groups: readonly ProfileGridGroup[], selection: ProfileGridSelection): ProfileGridSelection {
   if (!selection.effort) return selection
@@ -187,6 +201,9 @@ export function profileGridDisplayParts(
 ): ProfileGridDisplayParts {
   if (!selection?.model && !selection?.effort) return { name: placeholder }
   const option = groups.flatMap((group) => group.options).find((candidate) => candidate.model === selection.model)
+  if (!modelLabel && option?.triggerEdition) {
+    return { name: option.triggerLabel ?? option.label, edition: option.triggerEdition, ...(selection.effort ? { effort: selection.effort } : {}) }
+  }
   const label = modelLabel ?? option?.triggerLabel ?? option?.label ?? selection.model ?? "Model unknown"
   const edition = modelLabel ? TRAILING_EDITION.exec(modelLabel)?.[1] : option?.edition
   const split = edition !== undefined && label.endsWith(` ${edition}`)

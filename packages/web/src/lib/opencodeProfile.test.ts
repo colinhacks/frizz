@@ -5,10 +5,13 @@ import { dispatchProfileUpdate } from "./dispatchPreferences.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "./opencodeProfile.ts"
 import {
   moveProfileGridSelection,
+  profileGridDisplayLabel,
   profileGridDisplayParts,
   profileGridEfforts,
+  profileGridListedOptions,
   profileGridMatrixGroups,
   profileGridResolveSelection,
+  profileGridShownModel,
   type ProfileGridGroup,
 } from "./profileGrid.ts"
 
@@ -37,28 +40,40 @@ test("a stored slug splits into the model and its variant, and goes back togethe
   })
 })
 
-test("the group lists every model with its own levels, and the default names the model it runs", () => {
+test("the list is the models by name, each with its own levels, and no Default row", () => {
   const group = opencodeProfileGroup({ models: listed })
   assert.equal(group.layout, "dropdown")
   assert.equal(group.experimental, true)
-  assert.deepEqual(group.options.map((option) => [option.model, option.label, option.section, option.efforts]), [
-    ["opencode:", "Default", undefined, ["", "low", "high"]],
+  assert.deepEqual(profileGridListedOptions(group).map((option) => [option.model, option.label, option.section, option.efforts]), [
     ["opencode:opencode/big-pickle", "Big Pickle", "opencode", ["", "low", "high"]],
     ["opencode:opencode/glm-5.3-flash-free", "GLM 5.3 Flash", "opencode", [""]],
     ["opencode:openai/gpt-5.5", "GPT-5.5", "openai", ["", "minimal", "xhigh"]],
   ])
-  assert.equal(group.options[0]?.hint, "Big Pickle")
-  // The trigger on the left of the prompt box reads the model that will run, never "Default".
-  assert.deepEqual(profileGridDisplayParts([group], { provider: "opencode", model: "opencode:", effort: "" }).name, "Big Pickle")
+  // The bare slug, OpenCode's configured model, is checked on that model's own row.
+  assert.equal(profileGridShownModel(group, "opencode:"), "opencode:opencode/big-pickle")
+  assert.equal(profileGridShownModel(group, "opencode:openai/gpt-5.5"), "opencode:openai/gpt-5.5")
 })
 
-test("a level picked on the default stores the default model itself", () => {
+test("the trigger reads OpenCode, then the model name in the edition ink, then the level", () => {
+  const group = opencodeProfileGroup({ models: listed })
+  assert.deepEqual(profileGridDisplayParts([group], { provider: "opencode", model: "opencode:", effort: "" }), { name: "OpenCode", edition: "Big Pickle" })
+  assert.deepEqual(
+    profileGridDisplayParts([group], { provider: "opencode", model: "opencode:openai/gpt-5.5", effort: "xhigh" }),
+    { name: "OpenCode", edition: "GPT-5.5", effort: "xhigh" },
+  )
+  assert.equal(profileGridDisplayLabel([group], { provider: "opencode", model: "opencode:openai/gpt-5.5", effort: "xhigh" }), "OpenCode GPT-5.5 › xhigh")
+  // Before the list arrives the model has no name yet: the trigger says OpenCode alone.
+  const early = opencodeProfileGroup({ loading: true })
+  assert.deepEqual(profileGridDisplayParts([early], { provider: "opencode", model: "opencode:", effort: "" }), { name: "OpenCode" })
+})
+
+test("a level picked on the configured model stores that model itself", () => {
   const group = opencodeProfileGroup({ models: listed })
   assert.deepEqual(
     profileGridResolveSelection([group], { provider: "opencode", model: "opencode:", effort: "high" }),
     { provider: "opencode", model: "opencode:opencode/big-pickle", effort: "high" },
   )
-  // With no level, the bare default stays: OpenCode's own config keeps deciding the model.
+  // With no level, the bare slug stays: OpenCode's own config keeps deciding the model.
   assert.deepEqual(
     profileGridResolveSelection([group], { provider: "opencode", model: "opencode:", effort: "" }),
     { provider: "opencode", model: "opencode:", effort: "" },
@@ -70,18 +85,18 @@ test("a saved model the list no longer has still reads as itself", () => {
   const option = gone.options.find((entry) => entry.model === "opencode:anthropic/claude-x")
   assert.equal(option?.label, "anthropic/claude-x (unavailable)")
   assert.deepEqual(option?.efforts, ["", "max"])
+  assert.deepEqual(profileGridDisplayParts([gone], { provider: "opencode", model: "opencode:anthropic/claude-x", effort: "max" }), { name: "OpenCode", edition: "anthropic/claude-x", effort: "max" })
   // Before the list arrives nothing is known to be gone.
   const early = opencodeProfileGroup({ saved: "opencode:anthropic/claude-x", loading: true })
   assert.equal(early.options.at(-1)?.label, "anthropic/claude-x")
-  assert.equal(early.options[0]?.triggerLabel, "OpenCode")
   // A saved level the model stopped listing is kept on that model.
   const level = opencodeProfileGroup({ models: listed, saved: "opencode:openai/gpt-5.5#turbo" })
   assert.deepEqual(level.options.find((entry) => entry.model === "opencode:openai/gpt-5.5")?.efforts, ["", "minimal", "xhigh", "turbo"])
 })
 
-test("a failed list says so and keeps the default", () => {
+test("a failed list says so and keeps the configured model as its one row", () => {
   const group = opencodeProfileGroup({ models: { available: true, models: [], error: "service did not start" } })
-  assert.deepEqual(group.options.map((option) => option.model), ["opencode:"])
+  assert.deepEqual(profileGridListedOptions(group).map((option) => [option.model, option.label]), [["opencode:", "Configured model"]])
   assert.match(group.notice ?? "", /did not list its models \(service did not start\)/)
 })
 
