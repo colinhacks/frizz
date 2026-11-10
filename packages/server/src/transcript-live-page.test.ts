@@ -8,6 +8,7 @@ import { join } from "node:path"
 import { execFileSync } from "node:child_process"
 import {
   __clearTranscriptCacheForTests,
+  __setTranscriptCacheBudgetForTests,
   catchUpTranscriptFold,
   latestTranscriptWindow,
   latestWindowStart,
@@ -21,6 +22,7 @@ import {
   transcriptFoldCaughtUp,
 } from "./transcript.ts"
 import { createStorage } from "./storage.ts"
+import { captureLogRecords } from "./logging.ts"
 import type { Project } from "./project.ts"
 
 // What the latest-page read costs on a LIVE transcript: the /ws producer runs it after every append of
@@ -289,6 +291,59 @@ test("many cold threads at once all finish, whatever order they queue in", async
     await Promise.all(threads.map((id) => transcriptFoldCaughtUp(h.project, h.store, id)))
     for (const id of threads) assert.equal(catchUpTranscriptFold(h.project, h.store, id), undefined, id)
   } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("a board of forty threads keeps a fold for each: reading them all again reads nothing from disk", () => {
+  const h = harness()
+  try {
+    // Terminal sessions Frizz did not start: their ids are their slugs, and no row is needed. Short
+    // enough that a page has no cursor, so a read of a thread whose fold is retained touches no file.
+    const threads = Array.from({ length: 40 }, (_, i) => `bbbbbbbb-${String(i).padStart(4, "0")}`)
+    for (const id of threads) writeFileSync(join(h.path, "..", `${id}.jsonl`), exchanges(0, 20))
+    __clearTranscriptCacheForTests()
+    const readAll = () => { for (const id of threads) assert.equal(readLatestThreadTranscriptPage(h.project, h.store, id).messages.length, 40, id) }
+    assert.ok(bytesRead(readAll) > 0, "the first pass folds every file")
+    // Sixteen folds were kept, whatever they held, so twenty-four of these were folded again on every pass.
+    assert.equal(bytesRead(readAll), 0, "the second pass finds every fold where it left it")
+  } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("over their byte budget the retained folds go least recently read first, never below sixteen, and a large one is logged", async () => {
+  const h = harness()
+  const log = captureLogRecords()
+  try {
+    const big = "cccccccc-b190" // hex, as a terminal session's id is: anything else is not a thread at all
+    const small = Array.from({ length: 20 }, (_, i) => `cccccccc-${String(i).padStart(4, "0")}`)
+    // Nine megabytes: past the size at which losing a fold is worth a line in the log.
+    writeFileSync(join(h.path, "..", `${big}.jsonl`), exchanges(0, 18000) + ASSISTANT("long", "é".repeat(400_000)) + "\n")
+    for (const id of small) writeFileSync(join(h.path, "..", `${id}.jsonl`), exchanges(0, 20))
+    __clearTranscriptCacheForTests()
+    __setTranscriptCacheBudgetForTests(1) // any two folds are over it
+    await transcriptFoldCaughtUp(h.project, h.store, big)
+    const read = (id: string) => bytesRead(() => { readLatestThreadTranscriptPage(h.project, h.store, id) })
+    assert.ok(readLatestThreadTranscriptPage(h.project, h.store, big).messages.length > 0, "the large thread is folded and held")
+    for (const id of small.slice(0, 15)) read(id)
+    assert.equal(log.records.filter((record) => record.scope === "transcript").length, 0, "sixteen folds are always kept")
+    // The seventeenth pushes out the least recently read, which is the large one.
+    read(small[15]!)
+    const said = log.records.filter((record) => record.scope === "transcript" && record.message.startsWith("dropped the retained fold"))
+    assert.equal(said.length, 1)
+    assert.match(said[0]!.message, new RegExp(`^dropped the retained fold of ${big}\\.jsonl \\(about \\d+ MB held, 8 MB of transcript read\\)`))
+    assert.equal(said[0]!.level, "info")
+    // The sixteen most recently read are still held; a small one going is not worth a line.
+    for (const id of small.slice(0, 16)) assert.equal(read(id), 0, id)
+    assert.ok(read(small[16]!) > 0)
+    assert.ok(read(small[16]!) === 0 && read(small[0]!) > 0, "the one just read stayed; the least recently read went to make room")
+    assert.equal(log.records.filter((record) => record.scope === "transcript").length, 1)
+  } finally {
+    log.restore()
+    __setTranscriptCacheBudgetForTests()
     __clearTranscriptCacheForTests()
     h.cleanup()
   }

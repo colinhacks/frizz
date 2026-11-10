@@ -2518,8 +2518,9 @@ function completionEvents(
 // ── Retained incremental parse cache ────────────────────────────────────────────────────────────────
 // Every read of a Claude transcript used to re-read and re-parse the WHOLE JSONL from byte 0. This LRU
 // keeps the fold's closure state alive per file and feeds it only the bytes appended since the last read
-// (the fold's in-place mutations back-fill earlier messages transparently). Bounded at 16 files. A file
-// that shrank/rotated or whose identityPrefix changed drops its entry → full re-fold.
+// (the fold's in-place mutations back-fill earlier messages transparently). Bounded by what the folds
+// hold, not by how many there are (TRANSCRIPT_CACHE_BUDGET below). A file that shrank/rotated or whose
+// identityPrefix changed drops its entry → full re-fold.
 //
 // WHO READS THROUGH IT NOW: the paged reader (projectSnapshot), which is what the `threadTranscript` RPC
 // and the /ws push both serve from, and `readTranscript` below. `readTranscript` was the /ws producer
@@ -2538,9 +2539,68 @@ interface TranscriptCacheEntry {
   // dev:ino:birthtime — a rotation/replacement of the same path (unlink + recreate) invalidates the fold
   // even when the new file is the same size or larger.
   fileId: string
+  /** About how many bytes of heap the fold's projection holds (retainedEstimate), as last measured. */
+  retained: number
+  /** `bytesRead` at that measurement; undefined until the first one. */
+  measuredAt?: number
 }
-const TRANSCRIPT_CACHE_CAP = 16
+
+// HOW MANY FOLDS ARE KEPT IS A QUESTION OF MEMORY, SO IT IS ANSWERED IN BYTES.
+//
+// This was a count, 16, across every project the server has open. A thread that fell out of it was folded
+// again from byte 0 at its next read, and a board with more than 16 open threads kept pushing each other
+// out: "11.4s of every 5 minutes on the live server … 83 open threads against the 16 folds the cache
+// keeps" (the cold-fold note below, which sliced that work without removing it). The count was standing
+// in for a memory bound, and the real figure is small: measured 2026-11-10 on this machine's 73 largest
+// transcripts (1,823 MB of files), the folds of ALL of them hold 168 MB of heap, the 16 largest of them
+// 111 MB, and one fold at most 19 MB. So the budget is on what the folds hold, and every thread of a busy
+// board fits in it. The count stays as a floor (what was always kept) and as a far ceiling.
+const TRANSCRIPT_CACHE_MIN = 16
+const TRANSCRIPT_CACHE_MAX = 1024
+const TRANSCRIPT_CACHE_BUDGET = 256 * 1024 * 1024
+let transcriptCacheBudget = TRANSCRIPT_CACHE_BUDGET
+/** A dropped fold this much of a transcript had been read into is worth a log line: reading it again is a long fold. */
+const RETAINED_EVICTION_LOG_BYTES = 8 * 1024 * 1024
 const transcriptCache = new Map<string, TranscriptCacheEntry>()
+
+// About what a projection holds: its strings at a byte a character, and a little for each object and
+// slot. Against the real heap of those 73 folds this reads 1.13x at the median, 0.89x to 1.31x for four
+// in five, and walking all 73 took 32ms, so it is taken only when a fold has grown by a quarter.
+function retainedEstimate(value: unknown, depth = 0): number {
+  if (typeof value === "string") return 24 + value.length
+  if (value === null || typeof value !== "object" || depth > 8) return 8
+  let bytes = 32
+  if (Array.isArray(value)) {
+    for (const item of value) bytes += retainedEstimate(item, depth + 1)
+    return bytes
+  }
+  for (const key in value) bytes += 8 + retainedEstimate((value as Record<string, unknown>)[key], depth + 1)
+  return bytes
+}
+
+/** After an ingest: measure the fold again if it has grown enough to matter, and make room if it has. */
+function noteRetained(entry: TranscriptCacheEntry): void {
+  if (entry.measuredAt !== undefined && entry.bytesRead < entry.measuredAt * 1.25 + 256 * 1024) return
+  entry.retained = retainedEstimate(entry.fold.allMessages())
+  entry.measuredAt = entry.bytesRead
+  evictRetainedFolds()
+}
+
+// Least recently read first, while the folds together are over the budget (or past the ceiling), and
+// never below the floor: the entry being read is always the newest, so it is never the one to go.
+function evictRetainedFolds(): void {
+  let total = 0
+  for (const entry of transcriptCache.values()) total += entry.retained
+  for (const [path, entry] of transcriptCache) {
+    if (transcriptCache.size <= TRANSCRIPT_CACHE_MIN) break
+    if (total <= transcriptCacheBudget && transcriptCache.size <= TRANSCRIPT_CACHE_MAX) break
+    transcriptCache.delete(path)
+    total -= entry.retained
+    if (entry.bytesRead >= RETAINED_EVICTION_LOG_BYTES) {
+      frizzLog.info("transcript", `dropped the retained fold of ${basename(path)} (about ${Math.round(entry.retained / 1024 / 1024)} MB held, ${Math.round(entry.bytesRead / 1024 / 1024)} MB of transcript read) to keep the retained folds under ${Math.round(transcriptCacheBudget / 1024 / 1024)} MB; its next read folds the file from the start`)
+    }
+  }
+}
 // ~1/50 of cache-hit reads are re-parsed from scratch and deep-compared against the incremental result
 // when FRIZZ_TRANSCRIPT_PARSE_VERIFY=1 — a loud, non-throwing correctness net for the appended-bytes fold.
 const PARSE_VERIFY_SAMPLE = 1 / 50
@@ -2609,17 +2669,12 @@ function retainedFoldEntry(path: string, identityPrefix: string, fileId: string,
   }
   const hit = entry !== undefined
   if (!entry) {
-    entry = { identityPrefix, fold: createTranscriptFold(identityPrefix), bytesRead: 0, decoder: new StringDecoder("utf8"), fileId }
+    entry = { identityPrefix, fold: createTranscriptFold(identityPrefix), bytesRead: 0, decoder: new StringDecoder("utf8"), fileId, retained: 0 }
   } else {
     transcriptCache.delete(path) // LRU touch — re-insert to move to the most-recently-used end.
   }
   transcriptCache.set(path, entry)
-  // Evict the least-recently-used entries beyond the cap (the first keys in insertion order).
-  while (transcriptCache.size > TRANSCRIPT_CACHE_CAP) {
-    const oldest = transcriptCache.keys().next().value
-    if (oldest === undefined) break
-    transcriptCache.delete(oldest)
-  }
+  evictRetainedFolds() // the first keys in insertion order are the least recently read
   return { entry, hit }
 }
 
@@ -2636,6 +2691,7 @@ export function readTranscript(project: Project, sessionId: string): TranscriptM
     const { entry, hit } = retainedFoldEntry(path, identityPrefix, fileId, size)
 
     ingestBounded(entry, size, (from, length) => readAppendedBytes(fd!, from, from + length))
+    noteRetained(entry)
     // size == bytesRead → no read, no ingest; the retained projection is already current.
 
     const messages = entry.fold.messages()
@@ -2685,6 +2741,11 @@ function verifyIncrementalParse(path: string, identityPrefix: string, incrementa
 // every real case).
 export function __clearTranscriptCacheForTests(): void {
   transcriptCache.clear()
+}
+
+/** Test-only: the retained folds' byte budget, or the shipped one when called with nothing. */
+export function __setTranscriptCacheBudgetForTests(bytes: number = TRANSCRIPT_CACHE_BUDGET): void {
+  transcriptCacheBudget = bytes
 }
 
 // A thread slug that is ITSELF a session id — a FOREIGN thread (a maintainer terminal) has no registry
@@ -4536,6 +4597,7 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   const { entry } = retainedFoldEntry(snapshot.path, prefix, snapshot.fileKey, snapshot.size)
   // Reads ONLY the appended delta — the reason the whole-file buffer is no longer materialised.
   ingestBounded(entry, snapshot.size, (from, length) => snapshot.readRange(from, length))
+  noteRetained(entry)
   // Deliberately NO finalize(): it is the one-shot path's trailing-partial flush and advances the fold
   // past bytes a later ingest would then re-fold, duplicating messages. A complete final record that
   // simply lacks its newline is still projected — the fold consumes it optimistically (tryConsumePartial)
@@ -4552,7 +4614,8 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
 //
 // A retained fold only pays for appended bytes, but one that is not retained pays for the whole file, on the one
 // thread that serves every project: 11.4s of every 5 minutes on the live server, in stretches of up to 1.1s
-// (profiled 2026-11-06, 83 open threads against the 16 folds the cache keeps). Every upload, board push and RPC
+// (profiled 2026-11-06, 83 open threads against the 16 folds the cache kept then; it is sized in bytes now,
+// TRANSCRIPT_CACHE_BUDGET, so an open thread is rarely unretained after its first read). Every upload, board push and RPC
 // sent in that time waits for it. The fold is synchronous and its callers are too, so this runs BEFORE them:
 // the same fold, the same retained entry, fed in slices with the event loop's whole cycle between them, so the
 // read that follows finds it caught up and pays for almost nothing. A fold costs as much CPU as ever. What
@@ -4562,8 +4625,8 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
 const COLD_FOLD_BYTES = 256 * 1024
 const FOLD_SLICE_BYTES = 64 * 1024
 const FOLD_SLICE_MS = 8
-// A page of cold cards takes turns, a few at a time. Far under TRANSCRIPT_CACHE_CAP, so the folds in progress
-// cannot evict each other, and a fold touches its entry each slice to stay recent.
+// A page of cold cards takes turns, a few at a time. Far under TRANSCRIPT_CACHE_MIN, the number of folds always
+// kept, so the folds in progress cannot evict each other, and a fold touches its entry each slice to stay recent.
 const COLD_FOLD_CONCURRENCY = 3
 const coldFolds = new Map<string, Promise<void>>()
 let coldFoldsRunning = 0
@@ -4579,6 +4642,7 @@ function foldSlice(snapshot: FixedTranscriptSnapshot): boolean {
     ingestBounded(entry, Math.min(from + FOLD_SLICE_BYTES, snapshot.size), snapshot.readRange)
     if (entry.bytesRead === from) return false // the file ended short of its stat; the read that follows reports it
   } while (entry.bytesRead < snapshot.size && performance.now() < until)
+  noteRetained(entry)
   return entry.bytesRead < snapshot.size
 }
 
