@@ -3,7 +3,7 @@ import test from "node:test"
 
 // Opt-in like the other *.e2e.test.ts here: start `vite` in packages/web and set
 // FRIZZ_CODE_TABS_E2E_URL to its origin, e.g.
-//   FRIZZ_CODE_TABS_E2E_URL=http://localhost:5731 nub --test --test-force-exit src/lib/codeTabs.e2e.test.ts
+//   FRIZZ_CODE_TABS_E2E_URL=http://localhost:5731 nub run test packages/web/src/lib/codeTabs.e2e.test.ts
 const baseUrl = process.env.FRIZZ_CODE_TABS_E2E_URL
 
 // lib/codeTabs.test.ts pins the grouping and the markup. What only a browser can say is whether that

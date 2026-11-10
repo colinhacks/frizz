@@ -55,6 +55,19 @@ export async function startFakeOpencode(opts = {}) {
   let idn = 0
   const id = (p) => `${p}_fake${String(++idn).padStart(6, "0")}`
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  // A scripted `wait` that an interrupt cuts short. The timer goes with it: a test scripts a 60s wait
+  // and interrupts it at once, and the timer left armed kept that test's process alive for the minute.
+  const waitOrAbort = (ms, signal) =>
+    new Promise((resolve) => {
+      if (signal.aborted) return resolve()
+      const timer = setTimeout(done, ms)
+      function done() {
+        clearTimeout(timer)
+        signal.removeEventListener("abort", done)
+        resolve()
+      }
+      signal.addEventListener("abort", done)
+    })
   let listening = true
 
   function emit(type, data) {
@@ -119,7 +132,7 @@ export async function startFakeOpencode(opts = {}) {
     let text0 = 0
     for (const [, kind, arg = ""] of tokens) {
       if (signal.aborted) return "interrupted"
-      if (kind === "wait") { await Promise.race([sleep(Number(arg)), new Promise((r) => signal.addEventListener("abort", r))]); continue }
+      if (kind === "wait") { await waitOrAbort(Number(arg), signal); continue }
       if (kind === "fail") {
         const error = { type: "provider.auth", message: "No credentials for opencode" }
         assistant.error = error

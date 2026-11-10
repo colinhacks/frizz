@@ -5,7 +5,7 @@ import test from "node:test"
 // one thread — the column under test only exists on a populated board — which two commands build:
 //   nub scripts/adhoc-stack.mjs --port=45783 > /tmp/stack.log 2>&1 &
 //   nub scripts/seed-done-thread.mjs --home=<home from the stack's json line> --port=45783
-//   FRIZZ_FIRST_PAINT_E2E_URL=http://127.0.0.1:45783 nub --test --test-force-exit \
+//   FRIZZ_FIRST_PAINT_E2E_URL=http://127.0.0.1:45783 nub run test \
 //     packages/web/src/App.firstPaint.e2e.test.ts
 const baseUrl = process.env.FRIZZ_FIRST_PAINT_E2E_URL
 

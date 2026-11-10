@@ -3,7 +3,8 @@
 // Pure on purpose: run-tests.mjs does the file reading and the process handling, this decides
 // whether a run proved anything. Every problem it returns is a reason the run must NOT be green.
 
-// `emitted` — what each test file tallied for itself, from scripts/test-guard-preload.mjs.
+// `emitted` — what each test file tallied for itself, from scripts/test-guard-preload.mjs, with
+//   `held` on a file that was still running after its tests and had to be ended.
 // `received` — what reached the parent's reporter, from scripts/test-guard-reporter.mjs.
 // `runnerSaidGreen` gates the checks that ask whether the run was VERIFIABLE at all: when the runner
 // has already failed, the run is red anyway and a second complaint about missing bookkeeping would
@@ -27,8 +28,14 @@ export function reconcile({ emitted, received, runnerSaidGreen, describe = (file
     return problems;
   }
 
-  for (const [file, count] of emittedByFile) {
+  // A file the preload ended because it would not end by itself (`held`) exits 1 with every test
+  // passed, and the parent then fails the FILE: one verdict the child never emitted, and the one it
+  // is there to produce.
+  const endedByThePreload = new Set(emitted.filter((entry) => Array.isArray(entry.held)).map((entry) => entry.file));
+
+  for (const [file, emittedCount] of emittedByFile) {
     const got = receivedByFile.get(file) ?? 0;
+    const count = emittedCount + (endedByThePreload.has(file) && got === emittedCount + 1 ? 1 : 0);
     if (got < count) problems.push(`${describe(file)}: ran ${count} tests but only ${got} reached the reporter — ${count - got} lost`);
     else if (got > count) problems.push(`${describe(file)}: reporter counted ${got} tests but the file only emitted ${count}`);
   }

@@ -90,6 +90,12 @@ test("nothing from the project the page has left reaches the UI", async () => {
   const here = { origin: "http://127.0.0.1:54917", pathname: "/project/alpha", reload: () => {} }
   install("WebSocket", FakeWebSocket)
   install("EventSource", FakeEventSource)
+  // The feed reads the board over HTTP the moment it binds to a project. Nothing here is about that
+  // read, so it stays in flight for the whole test. Left as the real `fetch`, it went to the port in
+  // `here.origin`: refused, retried on the feed's own backoff, and still at it after the test had put
+  // the real timers back, which is how this file passed and then failed with six errors raised after
+  // its one test had ended (hidden while the suite ran under --test-force-exit).
+  install("fetch", () => new Promise<never>(() => {}))
   install("location", here)
   install("window", { addEventListener: () => {}, removeEventListener: () => {}, focus: () => {} })
   install("document", { readyState: "complete", hidden: false, addEventListener: () => {}, removeEventListener: () => {} })

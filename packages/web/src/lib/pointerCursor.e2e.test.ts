@@ -3,7 +3,7 @@ import test from "node:test"
 
 // Opt-in like the other *.e2e.test.ts here: start `vite` in packages/web and set
 // FRIZZ_POINTER_CURSOR_E2E_URL to its origin, e.g.
-//   FRIZZ_POINTER_CURSOR_E2E_URL=http://localhost:5831 nub --test --test-force-exit src/lib/pointerCursor.e2e.test.ts
+//   FRIZZ_POINTER_CURSOR_E2E_URL=http://localhost:5831 nub run test packages/web/src/lib/pointerCursor.e2e.test.ts
 // (`nub run test:e2e-web` starts the vite and sets it for you.)
 const baseUrl = process.env.FRIZZ_POINTER_CURSOR_E2E_URL
 

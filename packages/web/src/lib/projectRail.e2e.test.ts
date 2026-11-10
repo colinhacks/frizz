@@ -5,7 +5,7 @@ import test from "node:test"
 // settings drawer only mounts inside a board, and the bug is in the seam between a client-side
 // project switch and the per-project query cache — which `scripts/adhoc-stack.mjs` builds in one command:
 //   nub scripts/adhoc-stack.mjs --port=45782 --project=/abs/a --also-project=/abs/b > /tmp/stack.log 2>&1 &
-//   FRIZZ_PROJECT_RAIL_E2E_URL=http://127.0.0.1:45782 nub --test --test-force-exit \
+//   FRIZZ_PROJECT_RAIL_E2E_URL=http://127.0.0.1:45782 nub run test \
 //     packages/web/src/lib/projectRail.e2e.test.ts
 const baseUrl = process.env.FRIZZ_PROJECT_RAIL_E2E_URL
 

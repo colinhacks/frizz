@@ -738,14 +738,18 @@ test("a shell sandboxed off the network is told so, and told not to retry", asyn
 // reads it uninvited never returns, and that reads as the command being broken.
 test("stdin is never read unless `-` asks for it", async () => {
   const fake = await fakeFrizz()
+  // Cleared when the command returns: left armed, the losing side of this race held the file's
+  // process open for ten seconds after its last test.
+  let giveUp: NodeJS.Timeout | undefined
   try {
     const ran = await Promise.race([
       run(["activity"], { env: worker(fake), holdStdinOpen: true }),
-      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 10_000)),
+      new Promise<"hung">((resolve) => { giveUp = setTimeout(() => resolve("hung"), 10_000) }),
     ])
     assert.notEqual(ran, "hung", "`frizzctl activity` waited on a stdin nobody asked it to read")
     assert.equal((ran as Ran).code, 0)
   } finally {
+    clearTimeout(giveUp)
     fake.close()
   }
 })

@@ -29,7 +29,7 @@ const baseUrl = process.env.FRIZZ_TOOLTIP_SWITCH_E2E_URL
 //
 // Opt-in like this repo's other e2e tests — point it at a vite server for packages/web:
 //   npx vite --port 5799 --strictPort   (in packages/web)
-//   FRIZZ_TOOLTIP_SWITCH_E2E_URL=http://localhost:5799 nub --test --test-force-exit \
+//   FRIZZ_TOOLTIP_SWITCH_E2E_URL=http://localhost:5799 nub run test \
 //     'packages/web/src/components/tooltipSwitch.e2e.test.ts'
 test("the tooltip names whichever icon verb the pointer is on, including the neighbour it slid from", {
   skip: !baseUrl,

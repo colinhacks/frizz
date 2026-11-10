@@ -2,17 +2,24 @@
 // The project test suite — `nub run test`. Runs node's test runner exactly as before, then proves
 // the run was COMPLETE before it lets the run be green.
 //
-// The problem it exists for: `--test-force-exit` makes each per-file child process.exit() the moment
-// its tests finish, and that discards whatever is still queued on the async pipe carrying its
-// verdicts to the parent. The parent counts only what arrived and still prints `fail 0` /
-// `cancelled 0` and exits 0. Measured 2026-08-16: one run in four dropped the last 31 of
+// The problem it exists for: a per-file child that calls process.exit() discards whatever is still
+// queued on the async pipe carrying its verdicts to the parent. The parent counts only what arrived
+// and still prints `fail 0` / `cancelled 0` and exits 0. Measured 2026-08-16, when the suite ran
+// under `--test-force-exit` and every child exited that way: one run in four dropped the last 31 of
 // delivery-ledger.test.ts's 70 tests, with nothing on screen to say so. Upstream: nodejs/node#64833.
 //
-// Dropping the flag is not the fix — packages/server/src/backend/claude-agent-broker.test.ts leaks a
-// handle and hangs forever without it (measured: still running after 90s, `cancelled 1`). So the
-// flag stays, scripts/test-guard-preload.mjs stops the truncation at its source, and this script
-// reconciles what each child EMITTED against what the parent RECEIVED. Any shortfall is a hard
-// failure with the offending files named.
+// THE FLAG IS NO LONGER PASSED (2026-11-10). It was here for one file,
+// packages/server/src/backend/claude-agent-broker.test.ts, which "leaks a handle and hangs forever
+// without it". That leak was a product bug (a six-hour idle timer re-armed after shutdown, fixed in
+// b89f6146c on 2026-10-01), and for the six weeks after the fix the flag did only harm: it hid a file
+// that never exits, and it ended each child before the errors its tests left behind could be raised.
+// scripts/test-guard-preload.mjs now does the flag's one useful job without the rest: a file that is
+// still running ten seconds after its last `after` hook is failed, with a list of what holds it open.
+//
+// The reconciliation stays. A child still exits early when a test calls process.exit(), and when the
+// preload ends a file that will not end by itself, so the preload still stops the truncation at its
+// source and this script still compares what each child EMITTED with what the parent RECEIVED. Any
+// shortfall is a hard failure with the offending files named.
 //
 //   nub run test                       the whole suite
 //   nub run test packages/x/y.test.ts  just these files, same guard
@@ -59,6 +66,8 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "frizz-test-guard-"));
 const ledgerPath = path.join(scratch, "emitted.jsonl");
 const receivedPath = path.join(scratch, "received.json");
 fs.writeFileSync(ledgerPath, "");
+/** Files the preload ended because they would not end by themselves, with what held each. */
+const heldOpen = [];
 
 const runner = spawn(
   "nub",
@@ -66,7 +75,6 @@ const runner = spawn(
     "--import",
     pathToFileURL(path.join(here, "test-guard-preload.mjs")).href,
     "--test",
-    "--test-force-exit",
     // Pinned explicitly because naming any reporter drops node's defaults. `spec` is what node
     // already chose here, to a terminal and through a pipe alike, so the output is unchanged.
     "--test-reporter=spec",
@@ -99,6 +107,19 @@ runner.on("exit", (code, signal) => {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 
+  // Each of these already failed its file and said why where the file's output is. Said once more
+  // at the end, because that is where a run of six hundred files is read.
+  if (heldOpen.length > 0) {
+    console.error("");
+    console.error(`✖ ${heldOpen.length} test file${heldOpen.length === 1 ? "" : "s"} did not exit after the tests in ${heldOpen.length === 1 ? "it" : "them"} finished:`);
+    for (const { file, held } of heldOpen) {
+      console.error(`  ${rel(file)}`);
+      for (const line of held) console.error(`    ${line}`);
+    }
+    console.error("");
+    console.error("  Re-run one with FRIZZ_TEST_EXIT_TRACE=1 to see where each of those was created.");
+  }
+
   if (problems.length > 0) {
     console.error("");
     console.error("✖ INCOMPLETE TEST RUN — results were lost, so this run proves nothing.");
@@ -106,7 +127,7 @@ runner.on("exit", (code, signal) => {
     console.error("");
     console.error("  Each test file tallies the verdicts it emits and writes that tally");
     console.error("  synchronously at exit; the reporter counts what the parent received. A");
-    console.error("  shortfall means --test-force-exit truncated a child's report pipe");
+    console.error("  shortfall means a child exited with part of its report still in the pipe");
     console.error("  (nodejs/node#64833). Re-run; if it persists, see scripts/test-guard-preload.mjs.");
     process.exit(1);
   }
@@ -128,6 +149,7 @@ function checkRun(runnerSaidGreen) {
     try {
       const entry = JSON.parse(line);
       emitted.push({ ...entry, file: canonical(entry.file) });
+      if (Array.isArray(entry.held)) heldOpen.push({ file: canonical(entry.file), held: entry.held });
     } catch {
       problems.push(`unreadable ledger line: ${line.slice(0, 120)}`);
     }

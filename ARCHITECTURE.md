@@ -79,14 +79,26 @@ Gates: `pnpm run typecheck` and `pnpm test`. CI (`.github/workflows/ci.yml`) run
 need no install or provider CLI; the full suite is local-only by design.
 
 The suite runs through `scripts/run-tests.mjs` rather than calling node's runner directly, because a
-green run has to prove the whole run happened. `--test-force-exit` is load-bearing here — without it
-`claude-agent-broker.test.ts` leaks a handle and hangs forever — but it also makes each per-file child
-`process.exit()` while verdicts are still queued on the pipe carrying them to the parent, which drops
-them with no failure and no non-zero exit ([nodejs/node#64833](https://github.com/nodejs/node/issues/64833),
-still open; measured here 2026-08-16 as a run that silently lost 31 of one file's 70 tests). So the
-runner is wrapped: every child puts its report pipe in blocking mode and tallies the verdicts it
-emits, and the wrapper refuses to report success unless that tally matches what reached the parent.
-Invoking `nub --test` by hand is fine for one file, but it bypasses that check.
+green run has to prove the whole run happened. Two things can make it lie, and the wrapper answers both
+from one preload every test file's process loads (`scripts/test-guard-preload.mjs`):
+
+- **A file that never exits.** A server left listening, a timer left armed or a child left running
+  keeps a file's process alive after its tests pass, and the run hangs with nothing on screen. Ten
+  seconds after a file's last `after` hook, a process that is still running is ended and its file
+  failed, with a list of what holds it open; `FRIZZ_TEST_EXIT_TRACE=1 nub run test <file>` adds the
+  line that created each. The suite ran under `--test-force-exit` instead from 2026-07-24 to 2026-11-10,
+  for one file whose leak turned out to be a product bug (`b89f6146c`). The flag is not passed any
+  more: it hid every later leak the same way, and it ended each process before the errors its tests
+  left behind could be raised.
+- **Results lost on the way to the parent.** A child that calls `process.exit()` drops whatever
+  verdicts are still queued on the pipe carrying them, with no failure and no non-zero exit
+  ([nodejs/node#64833](https://github.com/nodejs/node/issues/64833), still open; measured here
+  2026-08-16 as a run that silently lost 31 of one file's 70 tests). Every child puts its report pipe
+  in blocking mode and tallies the verdicts it emits, and the wrapper refuses to report success unless
+  that tally matches what reached the parent.
+
+Invoking `nub --test` by hand is fine for one file, but it bypasses both checks, and a file that leaks
+then hangs: `nub run test <file>` is the same run with them on.
 
 ## Invariants
 

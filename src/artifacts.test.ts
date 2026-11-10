@@ -754,15 +754,22 @@ async function stopArtifactChild(
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill("SIGTERM");
-  await Promise.race([
-    new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())),
-    new Promise<void>((_, reject) =>
-      setTimeout(
-        () => reject(new Error("bundled runtime did not exit after SIGTERM")),
-        15_000
-      )
-    ),
-  ]);
+  // Cleared once the child has gone: left armed, the losing side of this race kept the file's own
+  // process alive for fifteen seconds after its last test.
+  let gaveUp: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())),
+      new Promise<void>((_, reject) => {
+        gaveUp = setTimeout(
+          () => reject(new Error("bundled runtime did not exit after SIGTERM")),
+          15_000
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(gaveUp);
+  }
 }
 
 test("a real Nub/esbuild artifact boots its WebSocket-capable server and loads its immutable native cell", async () => {
