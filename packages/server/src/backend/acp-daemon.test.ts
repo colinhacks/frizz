@@ -13,6 +13,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { acpDaemonRecordPath, acpDaemonSocketPath, daemonAcpHost, liveAcpDaemonRecord, stopAcpDaemon, type AcpHostOptions } from "./acp-host.ts"
+import { forkArmedToCrash } from "./daemon.fixtures/crash-on-cue.ts"
 
 const FAKE = fileURLToPath(new URL("./acp.fixtures/fake-acp-agent.mjs", import.meta.url))
 const SESSION = "s1"
@@ -102,3 +103,35 @@ test("acp daemon: a loser dying while the record is absent leaves its successor'
     await waitForExit(survivor.daemonPid, 5_000, "the survivor, at teardown")
   }
 })
+
+// AN ERROR NOBODY CAUGHT USED TO LEAVE NOTHING. The daemon has no stdio, so node's own answer (print a
+// stack, exit 1) printed to nowhere: no breadcrumb, a record still naming the dead pid, and the agent
+// left running under a parent that was gone. Negative control: without the daemon's two handlers there
+// is no `.exit` file to read here, and the record is still on disk.
+for (const [kind, reason, what] of [
+  ["throw", "uncaught-exception", "an error nobody caught"],
+  ["reject", "unhandled-rejection", "a rejection nobody handled"],
+] as const) {
+  test(`acp daemon: ${what} is recorded with its stack, and takes the agent and the record with it`, async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "acp-daemon-test-"))
+    const { forked, crash } = await forkArmedToCrash(stateDir, (env) => daemonAcpHost(options(stateDir, { env })))
+    const record = liveAcpDaemonRecord(stateDir, SESSION)!
+    try {
+      forked.process.kill()
+      await delay(100)
+      assert.ok(alive(record.daemonPid), "armed is not crashed: alive until the cue")
+
+      crash(kind)
+
+      await waitForExit(record.daemonPid, 5_000, "the crashed daemon")
+      await waitForExit(record.childPid, 5_000, "its agent")
+      const exit = JSON.parse(readFileSync(`${acpDaemonRecordPath(stateDir, SESSION)}.exit`, "utf8")) as { reason: string; detail?: string; generation: string }
+      assert.equal(exit.reason, reason)
+      assert.equal(exit.generation, record.generation, "keyed to the daemon that died")
+      assert.match(exit.detail ?? "", /on cue[\s\S]*crash-on-cue\.mjs/u, "the message and where it was thrown")
+      assert.equal(existsSync(acpDaemonRecordPath(stateDir, SESSION)), false, "it removed its own record, so the next open forks at once")
+    } finally {
+      await stopAcpDaemon(stateDir, SESSION)
+    }
+  })
+}

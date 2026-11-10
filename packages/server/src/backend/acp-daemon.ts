@@ -34,6 +34,7 @@ import { dirname } from "node:path"
 import { StringDecoder } from "node:string_decoder"
 import { sweepStaleSockets } from "./stale-socket-sweep.ts"
 import { socketPathOwnership } from "./socket-ownership.ts"
+import { selfProcessStart } from "./daemon-identity.ts"
 
 interface DaemonConfig {
   threadSlug: string
@@ -144,7 +145,7 @@ function main(): void {
 
   // Why this daemon — and the agent + every turn inside it — is about to end. The bridge only ever SEES
   // a socket close; the breadcrumb, keyed by generation, is the only record of the real cause.
-  const writeExitBreadcrumb = (reason: string): void => {
+  const writeExitBreadcrumb = (reason: string, detail?: string): void => {
     try {
       writeFileSync(`${config.recordPath}.exit`, JSON.stringify({
         threadSlug: config.threadSlug,
@@ -153,11 +154,13 @@ function main(): void {
         daemonPid: process.pid,
         childPid: child.pid ?? null,
         reason,
+        // The message and stack of a crash (see `crash`). `reason` stays a short word a reader can match.
+        ...(detail ? { detail } : {}),
         at: new Date().toISOString(),
       }))
     } catch {}
   }
-  const die = (code: number, reason: string): never => { writeExitBreadcrumb(reason); cleanup(); process.exit(code) }
+  const die = (code: number, reason: string, detail?: string): never => { writeExitBreadcrumb(reason, detail); cleanup(); process.exit(code) }
 
   const armIdleExit = (): void => {
     if (idleTimer) clearTimeout(idleTimer)
@@ -269,12 +272,14 @@ function main(): void {
     toChild(message)
   }
 
+  const processStart = selfProcessStart()
   const writeRecord = (): void => {
     writeFileSync(config.recordPath, JSON.stringify({
       threadSlug: config.threadSlug,
       sessionId: config.sessionId,
       generation: config.generation,
       daemonPid: process.pid,
+      ...(processStart ? { processStart } : {}),
       childPid: child.pid,
       socketPath: config.socketPath,
       createdAt: new Date().toISOString(),
@@ -365,6 +370,19 @@ function main(): void {
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.on(signal, () => { try { child.kill("SIGTERM") } catch {}; die(0, `signal-${signal}`) })
   }
+
+  // A THROW NOBODY CAUGHT LEFT NOTHING BEHIND. This daemon is forked with `stdio: "ignore"`, so node's
+  // own answer to one (print a stack, exit 1) printed to nowhere and wrote no breadcrumb: the bridge saw
+  // a socket close with no cause, which is also all a SIGKILL leaves. The Claude broker has recorded
+  // these since 2026-08-02, after 53 of its 276 deaths could not be attributed at all; this daemon was
+  // copied from it without them. Recorded and then exited NON-ZERO, as node would have: installing a
+  // handler is what suppresses the default exit, so the exit here is the load-bearing line.
+  const crash = (reason: "uncaught-exception" | "unhandled-rejection", error: unknown): never => {
+    try { child.kill("SIGTERM") } catch {}
+    return die(1, reason, (error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error)).slice(0, 2000))
+  }
+  process.on("uncaughtException", (error) => crash("uncaught-exception", error))
+  process.on("unhandledRejection", (reason) => crash("unhandled-rejection", reason))
 }
 
 main()

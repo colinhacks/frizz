@@ -8,6 +8,7 @@ import { delimiter, dirname, isAbsolute, join } from "node:path"
 import { resolveDetachedDaemonEntry } from "../detached-daemons.ts"
 import type { BrokerRecord, ClaudeBrokerConfig } from "./claude-agent-broker.ts"
 import { claudeBrokerDiagnosticLogPath, describeClaudeBrokerExit, readClaudeBrokerExit } from "./claude-broker-diagnostics.ts"
+import { daemonMayBeSignalled, daemonPidVerdict, type DaemonClaim, type DaemonIdentityDeps } from "./daemon-identity.ts"
 import { endDaemonTree, type EndDaemonTreeDeps } from "./daemon-tree.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
 import type { WorkerMcpServers } from "./project-mcp-servers.ts"
@@ -256,7 +257,16 @@ function rememberBrokerIdentity(recordPath: string, record: BrokerRecord): void 
   try { writeFileSync(brokerLastKnownPath(recordPath), JSON.stringify(record)) } catch {}
 }
 
-/** A record whose daemon is still alive; prunes a stale record as a side effect. */
+/** What a record claims about its daemon's process, for daemon-identity.ts. */
+function brokerClaim(record: BrokerRecord): DaemonClaim {
+  return { pid: record.daemonPid, createdAt: record.createdAt, processStart: record.processStart }
+}
+
+/** A record whose daemon is still alive; prunes a stale record as a side effect.
+ *
+ *  "Alive" here is the pid answering, which a recycled pid also does. That is deliberate for a READ:
+ *  the two places that ACT on a record ask daemon-identity.ts whose process it is first
+ *  (adoptOrForkBroker before it reattaches, killBroker before it signals). */
 export function liveBrokerRecord(recordPath: string): BrokerRecord | null {
   const record = readBrokerRecord(recordPath)
   if (record && pidAlive(record.daemonPid)) return record
@@ -393,10 +403,18 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
   })
 }
 
-/** Reattach to a live broker if one exists (frizz restart), else fork a fresh one. */
-export async function adoptOrForkBroker(options: ForkBrokerOptions): Promise<{ record: BrokerRecord; reattached: boolean }> {
-  const existing = liveBrokerRecord(claudeBrokerRecordPath(options.stateDir, options.sessionId))
-  if (existing) return { record: existing, reattached: true }
+/** Reattach to a live broker if one exists (frizz restart), else fork a fresh one.
+ *
+ *  A record whose pid now belongs to ANOTHER process is not a broker to reattach to. Until 2026-11-10
+ *  it was taken for one: the bridge was handed a socket nobody served, every send to the thread failed
+ *  with "could not reach this thread's Claude session … Resend it", and nothing on that path dropped the
+ *  record, so the thread stayed unreachable for as long as the other process lived. Such a record is
+ *  dropped here and the session cold-starts, as it does when its daemon is simply gone. */
+export async function adoptOrForkBroker(options: ForkBrokerOptions, deps: { identity?: DaemonIdentityDeps } = {}): Promise<{ record: BrokerRecord; reattached: boolean }> {
+  const recordPath = claudeBrokerRecordPath(options.stateDir, options.sessionId)
+  const existing = liveBrokerRecord(recordPath)
+  if (existing && daemonPidVerdict(brokerClaim(existing), deps.identity) !== "not-ours") return { record: existing, reattached: true }
+  if (existing) { rememberBrokerIdentity(recordPath, existing); try { unlinkSync(recordPath) } catch {} }
   await ensureRuntime("claude")
   return { record: await forkBroker(options), reattached: false }
 }
@@ -415,13 +433,21 @@ export async function adoptOrForkBroker(options: ForkBrokerOptions): Promise<{ r
  *  handler and the SDK's exit cleanup end `claude` under it, and `taskkill /T /F` on Windows, where a
  *  signal is TerminateProcess of the daemon ALONE and `claude.exe` kept running its turn — tools
  *  executing, files changing — behind a card that read stopped (Windows audit 2026-09-11, finding 5).
- *  `deps` is the seam a test routes through. */
-export function killBroker(stateDir: string, sessionId: string, retireReason?: BrokerRetirementReason, deps: EndDaemonTreeDeps = {}): boolean {
+ *  `deps` is the seam a test routes through.
+ *
+ *  THE SIGNAL GOES ONLY TO A PROCESS THAT CAN STILL BE THE DAEMON (daemon-identity.ts). A record that
+ *  outlived its daemon names a pid the OS has since given to something else, and this runs unattended
+ *  from the hibernator as well as from Stop: the record is dropped either way, and a process that
+ *  started after the record was written is left alone. */
+export function killBroker(stateDir: string, sessionId: string, retireReason?: BrokerRetirementReason, deps: EndDaemonTreeDeps & { identity?: DaemonIdentityDeps } = {}): boolean {
   const recordPath = claudeBrokerRecordPath(stateDir, sessionId)
   const record = liveBrokerRecord(recordPath)
   if (retireReason) { if (record) markBrokerRetired(stateDir, sessionId, retireReason, record.generation) }
   else takeBrokerRetirement(stateDir, sessionId)
-  if (record) { rememberBrokerIdentity(recordPath, record); endDaemonTree(record.daemonPid, "SIGTERM", deps) }
+  if (record) {
+    rememberBrokerIdentity(recordPath, record)
+    if (daemonMayBeSignalled(brokerClaim(record), deps.identity)) endDaemonTree(record.daemonPid, "SIGTERM", deps)
+  }
   try { unlinkSync(recordPath) } catch {}
   return record !== null
 }

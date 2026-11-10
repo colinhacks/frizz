@@ -38,6 +38,7 @@ import { join } from "node:path"
 import { PassThrough, Writable, type Readable } from "node:stream"
 import { StringDecoder } from "node:string_decoder"
 import { WebSocket } from "ws"
+import { daemonMayBeSignalled, exactProcessStart, type DaemonIdentityDeps } from "./daemon-identity.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
 import { codexAppServerArgv } from "./codex-mcp.ts"
 import type { CodexAppServerProcess } from "./codex-app-server.ts"
@@ -54,6 +55,8 @@ export interface NativeListenerRecord {
   listenerPid: number
   socketPath: string
   createdAt: string
+  /** The listener's exact start marker, where the platform has one (daemon-identity.ts). */
+  processStart?: string
   /** Opaque ChatGPT account id present when this listener was spawned. */
   authAccountId?: string
   /** The launch prefix the listener was started through. When present, `listenerPid` is the PREFIX's
@@ -99,6 +102,9 @@ export function readNativeRecord(stateDir: string, projectId: string): NativeLis
       listenerPid: value.listenerPid,
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
+      // Copied by name like every field here, so a new one is lost unless it is listed: the stamp was
+      // written and never read back until this line, which left a Linux record judged as unstamped.
+      ...(typeof value.processStart === "string" && value.processStart ? { processStart: value.processStart } : {}),
       ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
       ...recordedLaunchPrefix(value.launchPrefix),
     }
@@ -111,12 +117,18 @@ export function readNativeRecord(stateDir: string, projectId: string): NativeLis
  *  started with it. The spawn is `detached`, so the recorded pid leads its own process group. With no
  *  prefix that pid IS codex and is signalled alone, exactly as before the setting existed. With one it
  *  is the prefix's process, and a prefix that does not forward signals (a plain `sh -c` that never
- *  `exec`s) would otherwise take the signal itself and leave codex holding the socket. */
-function signalListener(record: NativeListenerRecord, signal: NodeJS.Signals): void {
+ *  `exec`s) would otherwise take the signal itself and leave codex holding the socket.
+ *
+ *  Only a process that can still be the listener is signalled (daemon-identity.ts), and this one
+ *  matters more than the others: with a prefix the signal goes to a whole process GROUP. Returns
+ *  whether a signal went out. */
+function signalListener(record: NativeListenerRecord, signal: NodeJS.Signals, identity?: DaemonIdentityDeps): boolean {
+  if (!daemonMayBeSignalled({ pid: record.listenerPid, createdAt: record.createdAt, processStart: record.processStart }, identity)) return false
   if (record.launchPrefix?.length && process.platform !== "win32") {
-    try { process.kill(-record.listenerPid, signal); return } catch { /* no group: fall through */ }
+    try { process.kill(-record.listenerPid, signal); return true } catch { /* no group: fall through */ }
   }
   try { process.kill(record.listenerPid, signal) } catch {}
+  return true
 }
 
 /** A listener is live only while its process is running AND its socket is still bound; the app-server
@@ -131,12 +143,15 @@ export function liveNativeRecord(stateDir: string, projectId: string): NativeLis
 
 /** Terminate the listener. Only for an explicit teardown — never for a restart: this transport's
  *  entire value is that the listener OUTLIVES frizz, so nothing on the shutdown path may call this.
- *  Inert when there is no record, which is every project not on this transport. */
-export function killNativeListener(stateDir: string, projectId: string): void {
+ *  Inert when there is no record, which is every project not on this transport.
+ *  Returns whether a signal went out: a record whose pid is no longer the listener's is dropped
+ *  without one (see signalListener). */
+export function killNativeListener(stateDir: string, projectId: string, identity?: DaemonIdentityDeps): boolean {
   const record = liveNativeRecord(stateDir, projectId)
-  if (!record) return
-  signalListener(record, "SIGTERM")
+  if (!record) return false
+  const signalled = signalListener(record, "SIGTERM", identity)
   try { unlinkSync(nativeRecordPath(stateDir, projectId)) } catch {}
+  return signalled
 }
 
 /**
@@ -155,8 +170,8 @@ export function killNativeListener(stateDir: string, projectId: string): void {
  */
 export async function stopNativeListener(stateDir: string, projectId: string, timeoutMs = 10_000): Promise<void> {
   const record = liveNativeRecord(stateDir, projectId)
-  killNativeListener(stateDir, projectId)
-  if (!record) return
+  // Nothing to wait for, and nothing to escalate against, unless the listener itself was signalled.
+  if (!killNativeListener(stateDir, projectId) || !record) return
   const deadline = Date.now() + timeoutMs
   while (pidAlive(record.listenerPid) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -328,10 +343,13 @@ async function startListener(options: CodexAppServerHostOptions, launchPrefix: s
   })
   child.unref()
 
+  // codex writes no record of its own, so its spawner reads the exact start marker for it.
+  const listenerStart = child.pid ? exactProcessStart(child.pid) : undefined
   const record: NativeListenerRecord = {
     projectId,
     generation,
     listenerPid: child.pid ?? -1,
+    ...(listenerStart ? { processStart: listenerStart } : {}),
     socketPath,
     createdAt: new Date().toISOString(),
     ...(options.authAccountId ? { authAccountId: options.authAccountId } : {}),

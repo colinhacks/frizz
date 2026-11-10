@@ -27,6 +27,7 @@ import { join } from "node:path"
 import { PassThrough, Writable, type Readable } from "node:stream"
 import { StringDecoder } from "node:string_decoder"
 import { resolveDetachedDaemonEntry } from "../detached-daemons.ts"
+import { daemonMayBeSignalled, type DaemonIdentityDeps } from "./daemon-identity.ts"
 import { endDaemonTree } from "./daemon-tree.ts"
 import { stopNativeListener } from "./codex-app-server-native.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
@@ -47,6 +48,8 @@ export interface CodexAppServerDaemonRecord {
   childPid: number
   socketPath: string
   createdAt: string
+  /** The daemon's own exact start marker, where the platform has one (daemon-identity.ts). */
+  processStart?: string
   /** ChatGPT account loaded by this app-server at process start. Absent for legacy records and
    *  non-ChatGPT authentication. This is an opaque identifier, never a credential. */
   authAccountId?: string
@@ -141,6 +144,9 @@ export function readDaemonRecord(stateDir: string, projectId: string): CodexAppS
       childPid: typeof value.childPid === "number" ? value.childPid : 0,
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
+      // Copied by name like every field here, so a new one is lost unless it is listed: the stamp was
+      // written and never read back until this line, which left a Linux record judged as unstamped.
+      ...(typeof value.processStart === "string" && value.processStart ? { processStart: value.processStart } : {}),
       ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
       ...recordedLaunchPrefix(value.launchPrefix),
     }
@@ -155,8 +161,10 @@ export interface CodexAppServerExitBreadcrumb {
   childPid: number | null
   /** Why the daemon (and the app-server + every turn inside it) ended. See codex-app-server-daemon.ts's
    *  `writeExitBreadcrumb` for the vocabulary (`app-server-exited-code-*`, `self-collected-*`,
-   *  `signal-*`, `idle-timeout`, …). */
+   *  `signal-*`, `idle-timeout`, `uncaught-exception`, `unhandled-rejection`, …). */
   reason: string
+  /** The message and stack of a crash, when `reason` is one. */
+  detail?: string
   at: string
 }
 
@@ -173,6 +181,7 @@ export function readDaemonExitBreadcrumb(stateDir: string, projectId: string): C
       daemonPid: typeof value.daemonPid === "number" ? value.daemonPid : 0,
       childPid: typeof value.childPid === "number" ? value.childPid : null,
       reason: value.reason,
+      ...(typeof value.detail === "string" && value.detail ? { detail: value.detail } : {}),
       at: typeof value.at === "string" ? value.at : "",
     }
   } catch {
@@ -191,12 +200,18 @@ export function liveDaemonRecord(stateDir: string, projectId: string): CodexAppS
 
 /** Terminate the daemon AND its app-server. Only for an explicit teardown — never for a restart.
  *  Inert when there is no record, which is exactly the case for `directChildHost` and the in-process
- *  fallback: a test bridge can never kill a daemon it does not own, or its own in-process child. */
-export function killCodexAppServerDaemon(stateDir: string, projectId: string): void {
+ *  fallback: a test bridge can never kill a daemon it does not own, or its own in-process child.
+ *
+ *  Only a process that can still be the daemon is signalled (daemon-identity.ts). A record that outlived
+ *  its daemon names a pid that may be somebody else's by now: it is dropped, and that process is left
+ *  alone. Returns whether a signal went out, so the caller knows whether there is a death to wait for. */
+export function killCodexAppServerDaemon(stateDir: string, projectId: string, identity?: DaemonIdentityDeps): boolean {
   const record = liveDaemonRecord(stateDir, projectId)
-  if (!record) return
-  endDaemonTree(record.daemonPid, "SIGTERM")
+  if (!record) return false
+  const ours = daemonMayBeSignalled({ pid: record.daemonPid, createdAt: record.createdAt, processStart: record.processStart }, identity)
+  if (ours) endDaemonTree(record.daemonPid, "SIGTERM")
   try { unlinkSync(recordPath(stateDir, projectId)) } catch {}
+  return ours
 }
 
 /**
@@ -220,8 +235,8 @@ export function killCodexAppServerDaemon(stateDir: string, projectId: string): v
 export async function stopCodexAppServerDaemon(stateDir: string, projectId: string, timeoutMs = 10_000): Promise<void> {
   await stopNativeListener(stateDir, projectId, timeoutMs)
   const record = liveDaemonRecord(stateDir, projectId)
-  killCodexAppServerDaemon(stateDir, projectId)
-  if (!record) return
+  // Nothing to wait for, and nothing to escalate against, unless the daemon itself was signalled.
+  if (!killCodexAppServerDaemon(stateDir, projectId) || !record) return
   const deadline = Date.now() + timeoutMs
   while (pidAlive(record.daemonPid) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25))

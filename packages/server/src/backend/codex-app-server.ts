@@ -580,7 +580,7 @@ export type CodexAppServerDiagnostic =
   // own exit breadcrumb when it left one (`app-server-exited-code-*`, `self-collected-*`, `signal-*`,
   // …), or "unknown" when it vanished without writing one. This is the event that finally makes a
   // mid-turn daemon death attributable instead of an opaque disconnect.
-  | { event: "daemon-replaced"; previousGeneration: string; deathReason: string; deathAt: string | undefined }
+  | { event: "daemon-replaced"; previousGeneration: string; deathReason: string; deathDetail?: string; deathAt: string | undefined }
 
 class RpcProtocolError extends Error {
   readonly code: number
@@ -3204,6 +3204,8 @@ export class CodexAppServerBridge {
           event: "daemon-replaced",
           previousGeneration: negotiated.previousGeneration,
           deathReason: matched?.reason ?? "unknown",
+          // A crash's message and stack, which is the only place they are ever written down.
+          ...(matched?.detail ? { deathDetail: matched.detail } : {}),
           deathAt: matched?.at || undefined,
         })
       }

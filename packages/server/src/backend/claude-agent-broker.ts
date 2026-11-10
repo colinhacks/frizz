@@ -39,6 +39,7 @@ import { lazyMcpEnabled, startLazyMcpHost, type LazyMcpHost } from "./lazy-mcp-h
 import { frizzRoots } from "../frizz-paths.ts"
 import { claudeCompactionWindowOf } from "./types.ts"
 import { socketPathOwnership } from "./socket-ownership.ts"
+import { selfProcessStart } from "./daemon-identity.ts"
 import { createClaudeBrokerDiagnosticWriter, createClaudeBrokerExitWriter, type ClaudeBrokerExitReason } from "./claude-broker-diagnostics.ts"
 import { claudeClosureFingerprint, claudePluginSyncEnabled, createClaudePluginSync } from "./claude-plugin-sync.ts"
 import { recordObservedClaudeQuota } from "./claude-quota-observed.ts"
@@ -92,6 +93,9 @@ export interface ClaudeBrokerConfig {
 
 export interface BrokerRecord {
   daemonPid: number
+  /** The daemon's own exact start marker, where the platform has one (daemon-identity.ts). With
+   *  `createdAt` it is how a teardown tells this daemon from whatever later holds its pid. */
+  processStart?: string
   socketPath: string
   sessionId: string
   generation: string
@@ -659,7 +663,8 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
     published = true
     socketPathIsOurs = socketPathOwnership(config.socketPath)
     if (config.recordPath) {
-      const record: BrokerRecord = { daemonPid: process.pid, socketPath: config.socketPath, sessionId: config.sessionId, generation, createdAt: new Date().toISOString(), capabilities: BROKER_CAPABILITIES, compactionWindow: claudeCompactionWindowOf(config.workerEnv) }
+      const processStart = selfProcessStart()
+      const record: BrokerRecord = { daemonPid: process.pid, ...(processStart ? { processStart } : {}), socketPath: config.socketPath, sessionId: config.sessionId, generation, createdAt: new Date().toISOString(), capabilities: BROKER_CAPABILITIES, compactionWindow: claudeCompactionWindowOf(config.workerEnv) }
       try { writeFileSync(config.recordPath, JSON.stringify(record), { mode: 0o600 }) } catch {}
     }
     armIdle()
@@ -701,9 +706,24 @@ if (process.env.FRIZZ_CLAUDE_BROKER) {
       generation: running?.generation ?? config.generation ?? "",
     })(reason, detail)
   }
+  // …and take this daemon's own record with it. The handler exits without the teardown that unlinks the
+  // record, so an OS shutdown, a logout or an operator's `kill` left every broker's record on disk,
+  // naming a pid the next boot hands to something else (daemon-identity.ts). The identity is kept in the
+  // `.last` file first, as the host does when IT deletes a record, so the death can still be attributed
+  // to this daemon. Only a record this process still owns: a successor may have replaced it.
+  const dropOwnRecord = (): void => {
+    if (!config.recordPath) return
+    try {
+      const text = readFileSync(config.recordPath, "utf8")
+      if ((JSON.parse(text) as BrokerRecord).daemonPid !== process.pid) return
+      try { writeFileSync(`${config.recordPath}.last`, text) } catch {}
+      unlinkSync(config.recordPath)
+    } catch { /* no record, or not ours to read: nothing to drop */ }
+  }
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.on(sig, () => {
       recordExit(`signal-${sig}`)
+      dropOwnRecord()
       process.exit(0)
     })
   }

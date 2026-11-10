@@ -20,6 +20,7 @@ import { join } from "node:path"
 import { PassThrough, Writable, type Readable } from "node:stream"
 import { StringDecoder } from "node:string_decoder"
 import { resolveDetachedDaemonEntry } from "../detached-daemons.ts"
+import { daemonMayBeSignalled, type DaemonIdentityDeps } from "./daemon-identity.ts"
 import { endDaemonTree } from "./daemon-tree.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
 import { spawnAcpChild, type AcpProcess, type AcpSpawn, type AcpSpawnOptions } from "./acp-rpc.ts"
@@ -35,6 +36,8 @@ export interface AcpDaemonRecord {
   childPid: number
   socketPath: string
   createdAt: string
+  /** The daemon's own exact start marker, where the platform has one (daemon-identity.ts). */
+  processStart?: string
 }
 
 /** What the daemon reports about the stream a client is about to join. */
@@ -113,6 +116,9 @@ export function readAcpDaemonRecord(stateDir: string, sessionId: string): AcpDae
       childPid: typeof value.childPid === "number" ? value.childPid : 0,
       socketPath: value.socketPath,
       createdAt: value.createdAt ?? "",
+      // Copied by name like every field here, so a new one is lost unless it is listed: the stamp was
+      // written and never read back until this line, which left a Linux record judged as unstamped.
+      ...(typeof value.processStart === "string" && value.processStart ? { processStart: value.processStart } : {}),
     }
   } catch {
     return null
@@ -145,12 +151,17 @@ export function liveAcpDaemonSessionIds(stateDir: string): string[] {
  * dying would have its own paths deleted from under it. (A daemon forked by a current build checks the
  * socket by inode and spares a successor's — socket-ownership.ts — but one forked by an older build can
  * outlive an update, so the wait stays.)
+ *
+ * Only a process that can still be the daemon is signalled (daemon-identity.ts): a record that outlived
+ * its daemon names a pid that may be somebody else's by now, and that record is dropped without one.
  */
-export async function stopAcpDaemon(stateDir: string, sessionId: string, timeoutMs = 10_000): Promise<void> {
+export async function stopAcpDaemon(stateDir: string, sessionId: string, timeoutMs = 10_000, identity?: DaemonIdentityDeps): Promise<void> {
   const record = liveAcpDaemonRecord(stateDir, sessionId)
   if (!record) return
-  endDaemonTree(record.daemonPid, "SIGTERM")
+  const ours = daemonMayBeSignalled({ pid: record.daemonPid, createdAt: record.createdAt, processStart: record.processStart }, identity)
+  if (ours) endDaemonTree(record.daemonPid, "SIGTERM")
   try { unlinkSync(acpDaemonRecordPath(stateDir, sessionId)) } catch {}
+  if (!ours) return
   const deadline = Date.now() + timeoutMs
   while (pidAlive(record.daemonPid) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25))
