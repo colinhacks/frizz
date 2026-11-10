@@ -75,7 +75,7 @@ test("a Markdown image is framed from the same constants, in spans, only in bloc
 
   // Framing is BLOCK-prose only: the inline path drops its result into a one-line host (an answer chip,
   // a caption) that a block frame would burst.
-  assert.match(markdown, /if \(block\) frameImage\(el\)/)
+  assert.match(markdown, /if \(tag === "img" && block\) frameImage\(el\)/)
   // `html` since the built-in `.md` reader added a second Marked instance (soft breaks for a FILE) and
   // then its own long-block handling: either instance's output lands in this one variable, so the block
   // flag is still asserted on the single block path.

@@ -65,11 +65,12 @@ test("a blockquote copies its own Markdown, shows nothing it does not copy, and 
     assert.equal(cases.listed[0].source, "Closing as fixed in `0.15.27`.")
     assert.deepEqual(cases.callout.map((q) => [q.className, q.first]), [["md-callout md-callout-warning", false]])
     assert.deepEqual(cases.empty, [{ className: "", first: false, source: null }])
-    // A guessed mark is left as the author wrote it, with no button; an author's own button keeps its
-    // class but not the attribute only the sanitizer may write.
+    // An author writes no class (lib/markdown.ts CLASS_BY_TAG), so a guessed mark, a hand-written
+    // `md-quote` and a hand-written copy button all arrive bare: no button the copy handler knows, and
+    // never the attribute only the sanitizer may write.
     assert.deepEqual(cases.forged.map((q) => [q.className, q.first, q.source]), [
-      ["md-quote-src-0000000000000000-0", false, null],
-      ["md-quote", true, null],
+      ["", false, null],
+      ["", false, null],
     ])
     assert.equal(cases.chip[0].source, "Thanks — fixed in `4dc44d0`, out in the next release.")
     assert.ok(shape.carriers.length > 5 && shape.carriers.every(Boolean), "a source only ever rides on a minted button")
@@ -139,8 +140,11 @@ test("a blockquote copies its own Markdown, shows nothing it does not copy, and 
     assert.equal(await copyFrom("hidden"), "Visible words.")
     // The nested reply carries its inner quote's markers.
     assert.match(await copyFrom("nested"), /^The reporter wrote:\n\n> It hangs on `frizz --app`\.\n\nand that is the bug\.$/)
-    // The author's own button copies only what the quote shows, never its attribute's payload.
-    assert.doesNotMatch(await copyFrom("forged"), /rm -rf/)
+    // The author's own button is no copy button at all: nothing in the forged case answers to the copy
+    // handler, and a click on it never puts its attribute's payload on the clipboard.
+    assert.equal(await page.$$eval("[data-case=forged] .md-quote-copy, [data-case=forged] [data-md-source]", (found) => found.length), 0)
+    await page.click("[data-case=forged] button")
+    assert.doesNotMatch(await page.evaluate(() => navigator.clipboard.readText()), /rm -rf/)
 
     // ── In an answer chip: revealed by the quote, and a click on it copies without picking ──
     await page.hover("[data-case=chip] .md-quote > p")

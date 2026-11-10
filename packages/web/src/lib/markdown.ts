@@ -1,15 +1,15 @@
 import { Marked } from "marked"
 import type { Token, Tokens, TokenizerAndRendererExtension } from "marked"
-import { CODE_BLOCK_CLASS } from "./syntaxHighlight.ts"
-import { CODE_TABLIST_CLASS, CODE_TABS_CLASS, CODE_TITLE_CLASS, groupCodeTabs, isClosedFence } from "./codeTabs.ts"
-import { CODE_FRAME_CLASS, codeTabsExtension, renderCodeBlock, withLongBlocksOpen } from "./codeBlock.ts"
+import { CODE_BLOCK_CLASS, CODE_COPY_CLASS } from "./syntaxHighlight.ts"
+import { CODE_PANEL_CLASS, CODE_TAB_ACTIVE_CLASS, CODE_TAB_CLASS, CODE_TABLIST_CLASS, CODE_TABS_CLASS, CODE_TITLE_CLASS, groupCodeTabs, isClosedFence } from "./codeTabs.ts"
+import { CODE_CLAMPED_CLASS, CODE_DIFF_CLASS, CODE_EXPAND_CLASS, CODE_FRAME_CLASS, CODE_LINED_CLASS, CODE_LONG_CLASS, codeTabsExtension, renderCodeBlock, withLongBlocksOpen } from "./codeBlock.ts"
 import { CODE_LINE_CLASS, CODE_LINE_MARKED_CLASS } from "./codeLines.ts"
 import { ANSI_STYLE_PATTERN } from "./ansi.ts"
 import { isLocalMarkdownFile, localImageUrlForTarget, localMarkdownTarget, resolveRelativeLocalPath } from "./markdownTargets.ts"
 import { prefixedAppRoute } from "./base-path.ts"
 import { githubRefFromUrl, linkifyGithubRefs, withGithubRepo } from "./githubAutolink.ts"
 import { restoreWindowsPathEscapes } from "./windowsPathEscapes.ts"
-import { calloutExtension, promoteCallouts } from "./callouts.ts"
+import { CALLOUT_CLASS, CALLOUT_TITLE_CLASS, calloutExtension, promoteCallouts } from "./callouts.ts"
 import { restoreDisclosure } from "./disclosure.ts"
 import { mintQuoteCopy, quoteSourceFor, renderBlockquote, withQuoteSources, type QuoteSources } from "./quoteCopy.ts"
 import { FRAMED_IMAGE, IMAGE_FRAME, IMAGE_FRAME_MAT } from "../components/ImageFrame.tsx"
@@ -343,11 +343,18 @@ const ALLOWED_TAGS = new Set([
   // summary line.
   "details", "summary", "kbd", "sub", "sup", "mark",
 ])
-const ALLOWED_ATTRS = new Set(["href", "src", "alt", "title", "type", "class", "data-local-path", "data-local-image"])
-// `class` is allowlisted outright on every other tag; on `code` and `span` it is filtered to this set,
-// because those two are the tags the renderers below mint with meaning attached. Built from the constant
-// so the fenced-code wrapper's class cannot drift out of the pattern that has to admit it — a stripped
-// class silently costs the block its `position: relative` and drops the copy button somewhere else.
+// `class`, `data-local-path` and `data-local-image` are NOT here, and that is the rule: an author
+// writes none of them. All three were admitted on every tag until 2026-11-09, and every utility class
+// in the built stylesheet was the author's to use with them. On a sandbox board one message drew
+// `<button class="fixed inset-0 z-50 opacity-0" data-local-path="…">` across a 1440x900 board, and the
+// next click anywhere asked the server to open that file (lib/local-file-links.ts takes
+// `closest("[data-local-path]")`). A class survives only as a name a renderer mints on that tag
+// (CLASS_BY_TAG), and the two attributes are written by the walk itself, after the allowlist loop, from
+// the destination it resolved.
+const ALLOWED_ATTRS = new Set(["href", "src", "alt", "title", "type"])
+// The classes a renderer mints on `code` and `span`. Built from the constants so the fenced-code
+// wrapper's class cannot drift out of the pattern that has to admit it — a stripped class silently
+// costs the block its `position: relative` and drops the copy button somewhere else.
 const ALLOWED_CLASS = new RegExp(
   `^(?:hljs(?:-[a-z0-9_-]+)?|ansi-[a-z-]+|language-[a-z0-9-]+|md-task(?:-(?:checked|in-progress|cancelled|blocked|text))?`
   // A rendered diff's rows, columns and header counts (codeDiff.ts, codeBlock.ts).
@@ -356,6 +363,46 @@ const ALLOWED_CLASS = new RegExp(
     CODE_BLOCK_CLASS, CODE_FRAME_CLASS, CODE_TABS_CLASS, CODE_TABLIST_CLASS, CODE_TITLE_CLASS,
     CODE_LINE_CLASS, CODE_LINE_MARKED_CLASS,
   ].join("|")})$`)
+const exactly = (...names: string[]) => new RegExp(`^(?:${names.join("|")})$`)
+// Every tag a renderer classes BEFORE the walk, with the names it uses there. A tag missing from this
+// table keeps no class at all. What the walk itself mints (the local-file button, a picture's frame,
+// the quote's copy button, a summary's label) is set after this filter has run and needs no entry.
+// Adding a class to a renderer means adding it here, or the block it styles arrives unstyled: the
+// browser tests beside this file say so (markdownSanitizer, codeBlocks, codeTabs, quoteCopy, mdBlocks).
+const CLASS_BY_TAG: Record<string, RegExp> = {
+  code: ALLOWED_CLASS,
+  span: ALLOWED_CLASS,
+  // A fence's panel (codeBlock.ts `buildPanel` and `renderCodeBlock`).
+  pre: exactly(CODE_PANEL_CLASS, CODE_TAB_ACTIVE_CLASS, CODE_LINED_CLASS, CODE_DIFF_CLASS, "md-diff-titled", "md-diff-n[1-6]", CODE_LONG_CLASS, CODE_CLAMPED_CLASS),
+  // The copy button, a long block's show-all button and a tab (syntaxHighlight.ts, codeBlock.ts).
+  button: exactly(CODE_COPY_CLASS, CODE_EXPAND_CLASS, CODE_TAB_CLASS, CODE_TAB_ACTIVE_CLASS),
+  // A callout and its title (callouts.ts). A plain quote's per-render mark is admitted in `keptClass`.
+  blockquote: exactly(CALLOUT_CLASS, `${CALLOUT_CLASS}-[a-z]+`),
+  p: exactly(CALLOUT_TITLE_CLASS),
+}
+
+function keptClass(tag: string, value: string, quotes: QuoteSources | undefined): string {
+  const minted = CLASS_BY_TAG[tag]
+  return value.split(/\s+/).filter((name) =>
+    minted?.test(name)
+    // This render's own mark on a quote (quoteCopy.ts): a nonce and an index, replaced below by the
+    // class the stylesheet knows once the quote's source has been looked up.
+    || (tag === "blockquote" && quoteSourceFor(name, quotes) !== undefined)).join(" ")
+}
+
+// A link is a web address, a mail address, or a path on this origin (an in-app route, the image
+// route, an anchor). Judged on the protocol the URL parser resolves, which is what a click follows:
+// the parser skips a tab or a newline inside a scheme and a control character in front of one, so
+// `java&#9;script:` is `javascript:` to the browser and was nothing to the `/^\s*javascript:/` this
+// replaces. A local file never reaches here as a link; the walk has already made it a button.
+const LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"])
+function isLinkDestination(href: string): boolean {
+  try {
+    return LINK_PROTOCOLS.has(new URL(href, "http://frizz.invalid/").protocol)
+  } catch {
+    return false
+  }
+}
 
 // Attributes admitted only on the tag that gives them meaning, and only with a well-formed value.
 // Both carry information the author wrote and the flat allowlist above was silently discarding:
@@ -419,6 +466,9 @@ function walk(node: ParentNode, ctx: WalkContext) {
       continue
     }
     if (tag === "a" || tag === "img") rebaseRelative(el, tag === "a" ? "href" : "src", ctx)
+    // The file this element opens, when the walk resolved one. Written to `data-local-path` (and
+    // `data-local-image`) after the allowlist loop, which strips whatever the author wrote there.
+    let localPath: string | undefined
     if (tag === "a") {
       const inApp = prefixedAppRoute(el.getAttribute("href"), undefined, ctx.project)
       if (inApp) el.setAttribute("href", inApp)
@@ -431,8 +481,7 @@ function walk(node: ParentNode, ctx: WalkContext) {
           // rewritten so an absolute filesystem path cannot become a bogus same-origin web URL.
           el.setAttribute("href", imageUrl)
           el.setAttribute("title", target.display)
-          el.setAttribute("data-local-path", target.filePath!)
-          el.setAttribute("data-local-image", "true")
+          localPath = target.filePath!
         } else {
           // Don't turn a filesystem path into a bogus localhost URL or inert code. The app-wide
           // same-origin click handler sends this explicit action to the server, which realpath-gates
@@ -448,6 +497,11 @@ function walk(node: ParentNode, ctx: WalkContext) {
           if (target.filePath) button.setAttribute("data-local-path", target.filePath)
           while (el.firstChild) button.append(el.firstChild)
           el.replaceWith(button)
+          // The button is ours; what moved into it is the author's, and this loop is over a snapshot
+          // that will never reach it. Until 2026-11-09 nothing walked it:
+          // `<a href="/tmp/x.txt"><img src=x onerror=…></a>` kept its handler, which ran as the message
+          // was drawn, and `[![a](https://…/t.png)](/tmp/x.txt)` kept a remote picture.
+          walk(button, ctx)
           continue
         }
       }
@@ -462,18 +516,14 @@ function walk(node: ParentNode, ctx: WalkContext) {
       }
       el.setAttribute("src", imageUrl)
       el.setAttribute("title", target.display)
-      el.setAttribute("data-local-path", target.filePath!)
-      el.setAttribute("data-local-image", "true")
+      localPath = target.filePath!
       if (!el.getAttribute("alt")) el.setAttribute("alt", target.display)
-      // Block prose only — see sanitize's `block`. The attribute loop below still runs on `el`, which
-      // is the image itself; the frame around it is ours and is deliberately never re-walked.
-      if (block) frameImage(el)
     }
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase()
-      if (name === "class" && (tag === "code" || tag === "span")) {
-        const classes = attr.value.split(/\s+/).filter((value) => ALLOWED_CLASS.test(value))
-        if (classes.length > 0) el.setAttribute("class", classes.join(" "))
+      if (name === "class") {
+        const classes = keptClass(tag, attr.value, ctx.quotes)
+        if (classes) el.setAttribute("class", classes)
         else el.removeAttribute(attr.name)
         continue
       }
@@ -486,8 +536,18 @@ function walk(node: ParentNode, ctx: WalkContext) {
         el.removeAttribute(attr.name)
         continue
       }
-      if (name === "href" && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name)
+      if (name === "href" && !isLinkDestination(attr.value)) el.removeAttribute(attr.name)
     }
+    // Minted, so set LAST: the loop above is what strips a `data-local-path` an author hand-wrote, and
+    // these always describe the file the element really opens. A picture is the only thing that
+    // carries a path outside the button branch, as an `<img>` or as a link to one.
+    if (localPath !== undefined) {
+      el.setAttribute("data-local-path", localPath)
+      el.setAttribute("data-local-image", "true")
+    }
+    // The frame around a picture is ours too, and its classes are set outright; `el` stays the image.
+    // Block prose only — see sanitize's `block`. An `<img>` that reaches this line is a local one.
+    if (tag === "img" && block) frameImage(el)
     if (tag === "a") {
       el.setAttribute("target", "_blank")
       el.setAttribute("rel", "noopener noreferrer")
@@ -533,10 +593,9 @@ function rebaseRelative(el: Element, attr: "href" | "src", { baseDir, homeDir }:
 // phrasing content and survives that round trip intact; `md-image-frame` supplies the `display: block`
 // the frame's own class does not carry.
 //
-// This runs AFTER the walk's allowlist decisions and mints its own elements, which is what keeps it
-// safe: `figure`/`div`/`span`-with-arbitrary-class cannot be hand-written into a frame by an author,
-// since those tags are not in ALLOWED_TAGS and this is the only code that builds one. Setting `class`
-// outright (rather than merging) also drops any class a raw-HTML `<img>` smuggled past ALLOWED_ATTRS.
+// This runs AFTER the walk's allowlist loop and mints its own elements, which is what keeps it safe:
+// an author cannot hand-write a frame, because no tag keeps a class the walk did not mint (CLASS_BY_TAG),
+// and this is the only code that builds one. The image's own class is set outright here as well.
 function frameImage(img: Element) {
   const doc = img.ownerDocument
   const frame = doc.createElement("span")

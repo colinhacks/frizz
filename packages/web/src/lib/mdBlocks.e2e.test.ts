@@ -82,7 +82,8 @@ test("callouts, sections and inline keys render, stay sanitized, and a section s
     assert.deepEqual(clean.abusedInnerSpan, [])
     assert.equal(clean.abusedBody, "Body survives.")
     assert.deepEqual(clean.forged, [], "a hand-written rendered-open mark does not survive on a closed section")
-    assert.deepEqual(clean.inlineTags, ["kbd[]", "sup[class=x]", "mark[]", "sub[]"])
+    // An author writes no class on any tag (lib/markdown.ts CLASS_BY_TAG), so the `<sup>` arrives bare.
+    assert.deepEqual(clean.inlineTags, ["kbd[]", "sup[]", "mark[]", "sub[]"])
 
     // ── Callouts: one treatment per type, the body in the prose colour ──
     const callouts = await page.evaluate(() => {

@@ -54,6 +54,28 @@ test("the markdown sanitizer keeps authored meaning and blocks every scripted es
         genericText: document.querySelector("[data-case=generic]")?.textContent?.trim(),
         placeholderText: document.querySelector("[data-case=placeholder]")?.textContent?.trim(),
         detailsText: document.querySelector("[data-case=details]")?.textContent?.replace(/\s+/g, " ").trim(),
+        // what the walk mints, and what an author may not write
+        localLink: Array.from(document.querySelectorAll("[data-case=local-link] button")).map((n) => ({
+          className: n.className,
+          path: n.getAttribute("data-local-path"),
+          text: n.textContent,
+        })),
+        localImage: Array.from(document.querySelectorAll("[data-case=local-image] img")).map((n) => ({
+          path: n.getAttribute("data-local-path"),
+          image: n.getAttribute("data-local-image"),
+          proxied: (n.getAttribute("src") ?? "").includes("/local-image?path="),
+          framed: n.parentElement?.parentElement?.classList.contains("md-image-frame") ?? false,
+        })),
+        safeLinks: Array.from(document.querySelectorAll("[data-case=safe-links] a")).map((n) => n.getAttribute("href")),
+        // Every link left in the page, by the protocol the browser resolved for it.
+        linkProtocols: Array.from(new Set(Array.from(document.querySelectorAll("a[href]")).map((n) => (n as HTMLAnchorElement).protocol))).sort(),
+        // Every picture that would load from anywhere but the server's own image route.
+        foreignImages: Array.from(document.querySelectorAll("img")).map((n) => n.getAttribute("src") ?? "").filter((src) => !src.includes("/local-image?path=")),
+        // Every file the escape cases name for the click handler, and every class they kept.
+        escapePaths: Array.from(document.querySelectorAll("[data-case^=x-] [data-local-path]")).map((n) => `${n.closest("[data-case]")?.getAttribute("data-case")} ${n.tagName} ${n.getAttribute("data-local-path")}`),
+        escapeImageFlags: Array.from(document.querySelectorAll("[data-case^=x-] [data-local-image]")).map((n) => n.tagName),
+        overlayClasses: Array.from(document.querySelectorAll("[data-case=x-class-overlay] [class]")).map((n) => n.getAttribute("class") ?? ""),
+        overlayPositions: Array.from(document.querySelectorAll("[data-case=x-class-overlay] *")).map((n) => getComputedStyle(n).position).filter((position) => position === "fixed" || position === "absolute"),
         // xss — every one of these must keep the trailing prose and drop the payload
         xss: Object.fromEntries(Array.from(document.querySelectorAll("[data-case^=x-]")).map((n) => [
           n.getAttribute("data-case")!,
@@ -81,6 +103,25 @@ test("the markdown sanitizer keeps authored meaning and blocks every scripted es
     assert.equal(seen.xss["x-tdalign"].html.includes("align="), false, "a bogus align is dropped")
     assert.equal(seen.xss["x-span-style"].html.includes("style="), false, "only an ansi fence's bare hex colour is a style")
     assert.equal(seen.xss["x-span-style"].text, "styled fixed para")
+    // a minted button's children are sanitized like any other element's
+    assert.equal(seen.xss["x-local-link-img"].text, "after", "the picture inside a local link is not a local one, so it goes")
+    assert.equal(seen.xss["x-local-link-nested"].text, "label", "a local link keeps its label and loses the script")
+    assert.deepEqual(seen.foreignImages, [], "no picture may load from anywhere but the server's image route")
+    // an author names no file and places nothing
+    assert.deepEqual(seen.escapePaths, [
+      "x-local-link-img BUTTON /tmp/frizz-fixture.txt",
+      "x-local-link-remote-img BUTTON /tmp/frizz-fixture.txt",
+      "x-local-link-nested BUTTON /tmp/frizz-fixture.txt",
+      "x-class-overlay IMG /tmp/frizz-fixture.png",
+    ], "data-local-path is minted from the destination, never taken from the author")
+    assert.deepEqual(seen.escapeImageFlags, ["IMG"], "data-local-image is minted on a local picture only")
+    for (const classes of seen.overlayClasses)
+      assert.doesNotMatch(classes, /(?:^|\s)(?:fixed|absolute|inset-0|z-50|opacity-0)(?:\s|$)/, "an author-written class must not survive")
+    assert.deepEqual(seen.overlayPositions, [], "nothing an author wrote may leave the flow")
+    assert.equal(seen.xss["x-class-overlay"].text, "xparalink", "the overlay's elements stay, as plain content")
+    // only web and mail links are links
+    assert.deepEqual(seen.linkProtocols, ["http:", "https:", "mailto:"], "every surviving link is http(s) or mailto")
+    assert.equal(seen.xss["x-scheme"].text, "abcde f g", "a refused link keeps its label")
 
     // --- authored meaning survives ---
     assert.deepEqual(seen.taskBoxes, ["md-task md-task-checked", "md-task"], "checked state must be visible")
@@ -112,6 +153,12 @@ test("the markdown sanitizer keeps authored meaning and blocks every scripted es
     assert.equal(seen.placeholderText, "Write to /.jsonl and restart the tailer.",
       "consecutive placeholders must not delete the rest of the sentence")
     assert.match(seen.detailsText ?? "", /The stack was 40 frames deep/, "a non-allowlisted wrapper keeps its content")
+    assert.deepEqual(seen.localLink, [{ className: "local-file-action", path: "/tmp/frizz-fixture.txt", text: "the notes" }],
+      "a local link is the button the click handler opens")
+    assert.deepEqual(seen.localImage, [{ path: "/tmp/frizz-fixture.png", image: "true", proxied: true, framed: true }],
+      "a local picture keeps its path, its proxy URL and its frame")
+    assert.deepEqual(seen.safeLinks, ["https://example.invalid/a", "mailto:a@example.invalid", "#top", "/thread/some-slug"],
+      "web, mail, anchor and in-app links are untouched")
 
     assert.deepEqual(pageErrors, [])
   } finally {
