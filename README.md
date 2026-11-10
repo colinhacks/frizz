@@ -37,12 +37,12 @@ Then run it, from anywhere.
 ```sh
 $ npx frizz
 
-  FRIZZ v0.4.0  ready in 4.0s
+  FRIZZ v0.13.17  ready in 4.0s
 
   ➜  Local:    http://127.0.0.1:9393/
   ➜  Logs:     ~/Library/Application Support/Frizz/projects/979dae3c-fe15-4038-817e-11d0e7491959/logs/frizz-2026-08-01T13-44-43-16931.log
 
-  press ctrl-c to stop · run with --debug for the full event feed
+  press R to reach this board from a phone or another machine · ctrl-c to stop
 ```
 
 A browser tab opens on the dashboard at `http://127.0.0.1:9393/`. Add a **project** there — any folder: a repo, a jj checkout, or a folder of scripts. Frizz has no opinion about version control and does not require Git. Each project gets its own board at `/project/<name>`, and from then on running `npx frizz` inside that folder opens its board. Frizz always listens on port 9393 (19393 if something else holds it), and one server serves every project on the machine, so a second run joins the server already running rather than starting another. Runs on macOS, Linux, and Windows.
@@ -58,7 +58,7 @@ A browser tab opens on the dashboard at `http://127.0.0.1:9393/`. Add a **projec
 Frizz is a browser tab, a queue, and the agent CLIs you already pay for. It brings no model of its own, automates none of your workflow, and keeps every opinion it does have in a text file you can edit.
 
 - 🗂️ **A task queue, not a sidebar.** Every agent that comes to rest needing you becomes a card. Work the queue top to bottom instead of polling ten terminals.
-- 📁 **Projects.** Every directory you run it in gets its own board, all on one server. The home page lists them, and the project rail switches between them with each queue's count on its icon.
+- 📁 **Projects.** Every folder you add gets its own board, all on one server. The home page lists them, and the project rail switches between them with each queue's count on its icon.
 - 🔌 **Headless.** Every thread's agent runs in its own detached background process. Close the tab, quit the browser, ctrl-c the server, reboot — your threads are all still there when you come back, and Frizz reconnects to the ones still running rather than replaying them from disk.
 - 🤖 **Claude Code, Codex and OpenCode.** Pick the agent per thread and run them against the same repo at once. Frizz supports Claude Code and Codex subscriptions — your sign-in, your settings, your skills, driven by a copy of each CLI that Frizz pins and provisions itself. OpenCode runs from your own install, and its free models need no account.
 - 😴 **Snooze.** Not everything needs an answer now. Park a card for an hour, until tomorrow morning, or until a date you pick — optionally with a follow-up prompt attached, so the thread wakes up already working on what you told it to do next.
@@ -138,6 +138,7 @@ The command gets the worker's environment, and must run the command after it wit
 
 <h2 align="center">CLI</h2>
 
+<!-- help:start (written by scripts/sync-readme-help.mjs; edit the launcher's help, not this) -->
 ```sh
 $ npx frizz --help
 
@@ -159,6 +160,10 @@ Options:
                          GitHub sign-in, cloudflared, Claude, Codex, the machine's frizz.sh
                          key) are shared
   --link                 print a fresh single-use access link for the running board
+  --sessions             list the devices signed in to the running board
+  --sign-out <id|all>    sign one device out, or every one of them
+  --status               report the board running for this project: address, pid, version
+  --stop                 stop the board running for this project (running agents keep going)
   --debug                stream the full event feed to the terminal instead of the compact readout
   -h, --help             show this help
 
@@ -166,8 +171,10 @@ Options:
 To reach the board from a phone or another machine, press R in the terminal running it: a short
 walkthrough sets up a frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
 Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
-on. The board stays on loopback and shows a single-use sign-in link as a QR; press L for a fresh one, or run --link from another shell.
+on. The board stays on loopback and shows a single-use sign-in link as a QR; press L for a fresh
+one, or run --link from another shell.
 ```
+<!-- help:end -->
 
 <br/>
 
@@ -259,7 +266,7 @@ Frizz has its own small vocabulary. Most of it names a feature, so this doubles 
 
 | Term | What it means |
 | --- | --- |
-| **Project** | A directory you ran Frizz in. Each has its own board at `/project/<name>`; one server holds all of them. |
+| **Project** | A folder you added to Frizz. Each has its own board at `/project/<name>`; one server holds all of them. |
 | **Thread** | One effort, start to finish. Not a chat tab and not a branch. The session *is* the thread — there's no sidecar document to keep in sync, and dispatching doesn't write a file into your repo. |
 | **Worker** | The agent driving a thread: a real Claude Code, Codex or OpenCode process, running as *you*, with your credentials and your CLI config. |
 | **Sub-agent** | A helper a worker dispatches for an independent prong of its own task. Frizz binds each one back to its parent, so the fan-out is visible under the parent's card. |
@@ -267,7 +274,7 @@ Frizz has its own small vocabulary. Most of it names a feature, so this doubles 
 | **The queue** | The single list of threads that need you. A thread only earns a card when it genuinely wants a human. |
 | **Snooze** | Hide a card until later — an hour, tomorrow morning, or a date you pick — optionally with a follow-up prompt attached. |
 | **Goal** | A standing prompt a thread receives on its own — every time it rests, on a clock, or both — until you switch it off or the agent says it's done. |
-| **Scratchpad** | A thread's durable working memory, readable under its **Doc** tab. Where a worker keeps what a summary would otherwise lose: the approach, the alternatives it rejected, the decisions you made and reversed. |
+| **Scratch directory** | A folder each thread's worker gets for its own notes, under the project's `.frizz/threads/`. It is where a worker keeps what a summary of a long conversation would otherwise lose. Frizz reads nothing in it. |
 | **`FRIZZ.md`** | An optional file at your repo root whose contents are injected into every thread, for when you want agents to follow your repo's own norms. Only agents Frizz starts read it. |
 
 <br/>

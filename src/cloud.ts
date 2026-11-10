@@ -372,8 +372,10 @@ export async function establishCloudConfig(
   if (!REGISTRAR_IS_LIVE && !origin && !process.env.FRIZZ_REGISTRAR) {
     throw new Error(
       "claiming a frizz.sh subdomain is not available yet.\n" +
-        "       Reach this board through a tunnel of your own instead — see docs/remote-access.md — and\n" +
-        "       answer with its hostname rather than a bare name.",
+        // A URL, not `docs/remote-access.md`: the npm package ships `dist` alone, so whoever ran
+        // `npx frizz` has no such file to open.
+        "       Reach this board through a tunnel of your own instead (https://frizz.sh/docs/cloudflare-tunnel)\n" +
+        "       and answer with its hostname rather than a bare name.",
     );
   }
 
@@ -428,7 +430,7 @@ export async function establishCloudConfig(
     // than leaving them staring at a network error for a service they have never heard of.
     if (promptHint && error instanceof ClaimError && error.code === "unreachable") {
       throw new ClaimError(
-        `${error.message}\n       You can still reach this board through a tunnel of your own — see docs/remote-access.md, then answer with its hostname instead of a name.`,
+        `${error.message}\n       You can still reach this board through a tunnel of your own (https://frizz.sh/docs/cloudflare-tunnel): set one up, then answer with its hostname instead of a name.`,
         error.code,
       );
     }

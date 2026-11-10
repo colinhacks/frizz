@@ -9,7 +9,7 @@ The one-page site at [frizz.sh](https://frizz.sh). Static: no framework, no buil
 | `img/` | Screenshots of the real app, served as WebP (`cwebp -q 86 -m 6`). `board.webp` is the hero and `f-*.webp` are the feature sections. See [Regenerating the screenshots](#regenerating-the-screenshots). |
 | `og.html` | Source for `img/og.png`, the 1200×630 social card. Not deployed (`.vercelignore`). |
 | `fonts/` | Inter and Geist Mono, Latin-subset variable woff2 from Google Fonts, under the OFL in `fonts/OFL.txt`. |
-| `docs/` | The remote-access guides, at `/docs`. They mirror [`docs/remote-access.md`](../docs/remote-access.md), which `src/cloud.ts` names in its error messages — change one and change the other. One file per route, sharing `site.css` and the same `.doc` column as the homepage. |
+| `docs/` | The remote-access guides, at `/docs`. They mirror [`docs/remote-access.md`](../docs/remote-access.md): change one and change the other, and `scripts/site-docs.test.mjs` fails when a sentence about what a signed-in device or the relay can do is in one and not the other. The launcher's messages link these pages (`src/cloud.ts`, `src/remote-pane.ts`), since an `npx frizz` install has no `docs/` folder. One file per route, sharing `site.css` and the same `.doc` column as the homepage. |
 
 ## Why `/docs` and not `docs.frizz.sh`
 

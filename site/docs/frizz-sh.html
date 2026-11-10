@@ -47,11 +47,29 @@
         <ol>
           <li>Press <kbd>R</kbd> in the terminal running Frizz.</li>
           <li>Choose <strong>frizz.sh subdomain</strong>.</li>
+          <li>Answer what a device signed in through frizz.sh can do: <strong>Full control</strong> or <strong>Read and answer</strong>.</li>
           <li>Scan the QR code with your phone.</li>
         </ol>
         <pre class="term"><code>Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).
 
 Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for another.</code></pre>
+
+        <h2>What a signed-in device can do</h2>
+        <p>A device with <strong>full control</strong> can do what a tab on the computer running Frizz can do. A few things stay on that computer for every device:</p>
+        <ul>
+          <li>minting a sign-in link;</li>
+          <li>listing the devices that hold a session, or signing another one out;</li>
+          <li>changing what a device signed in through frizz.sh can do.</li>
+        </ul>
+        <p>A device at <strong>read and answer</strong> reads the board and answers question cards by picking a listed option. Everything else happens on the computer running Frizz:</p>
+        <ul>
+          <li>starting or steering a thread, or changing its settings;</li>
+          <li>answering a free-text, secret or danger card;</li>
+          <li>approving or denying an action a worker is waiting on;</li>
+          <li>restarts and updates;</li>
+          <li>reading a file outside a registered project or a thread&#8217;s scratch and attachment directories, or a secret-looking file inside one (<code>.env</code>, a key, anything under a dotted folder other than <code>.frizz</code>).</li>
+        </ul>
+        <p>To change the answer later, press <kbd>R</kbd> and pick <strong>Device access</strong>. The new answer applies to devices already signed in. A refused call is written to <code>logs/audit.jsonl</code> under Frizz&#8217;s data folder, with the session and device that made it.</p>
 
         <h2>Connection</h2>
         <p>This option needs no Tailscale or Cloudflare Tunnel. Your board stays on <code>127.0.0.1</code> and opens one outbound connection to a relay Frizz runs, and visitors&#8217; requests travel down that connection.</p>
@@ -75,13 +93,17 @@ Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for 
         <ul>
           <li><strong>One per machine.</strong> Each machine key holds one subdomain.</li>
           <li><strong>Lease.</strong> Frizz can reclaim any subdomain at any time.</li>
-          <li><strong>Relay.</strong> Every request and keystroke passes through a relay Frizz runs, and the sign-in check runs on your machine. To keep a relay out of the path, use <a href="/docs/tailscale">Tailscale</a> or <a href="/docs/reverse-proxy">your own proxy</a>.</li>
+          <li><strong>Relay.</strong> Every request and keystroke passes through a relay Frizz runs, and the sign-in check runs on your machine. A device with full control can run anything on your machine. The relay carries that traffic, so anyone who took control of the relay could do the same. Under read and answer, they could read the board and pick options on cards. To keep the relay out of the path, use <a href="/docs/tailscale">Tailscale</a> or <a href="/docs/reverse-proxy">your own proxy</a>.</li>
           <li><strong>No warranty.</strong> If you can&#8217;t afford to lose access, use <a href="/docs/cloudflare-tunnel">a domain you control</a>.</li>
         </ul>
 
         <h2>Other devices</h2>
         <p>Each device signs in with its own single-use link, which gives it a session for 30 days. Press <kbd>L</kbd> in the terminal for a new link, or run this from another shell:</p>
         <pre class="term"><code><span class="prompt">$</span> npx frizz --link</code></pre>
+        <p>To see the devices holding a session, or to revoke them, run these on the computer running Frizz:</p>
+        <pre class="term"><code><span class="prompt">$</span> npx frizz --sessions
+<span class="prompt">$</span> npx frizz --sign-out all</code></pre>
+        <p>A device can sign itself out: <strong>Sign out this device</strong> in Settings ends that browser&#8217;s session and nothing else. Signing out any other device happens on the computer running Frizz, so a stolen phone cannot sign out the laptop.</p>
       </article>
     </main>
     <footer class="foot">

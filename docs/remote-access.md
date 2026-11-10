@@ -80,7 +80,8 @@ Your board stays on loopback and opens one outbound connection to a relay Frizz 
 | | |
 | --- | --- |
 | **Address** | 20 random characters, so nobody finds it by guessing. A first visit still needs a single-use sign-in link. |
-| **Ownership** | This machine's key proves ownership, with no account. |
+| **Ownership** | This machine's key proves ownership, with no account. Copy the key file to another machine to move the subdomain. |
+| **Key file** | The file is `identity.key`, in `~/Library/Application Support/Frizz` on macOS and `~/.local/state/frizz` on Linux. An older install keeps it in `~/.frizz`. |
 | **Renewal** | A running board renews it. A subdomain nobody runs for **30 days** is released, and someone else can claim it. |
 
 ### Terms
