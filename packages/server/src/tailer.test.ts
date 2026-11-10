@@ -11,7 +11,7 @@ import type { CodexModel, ServerEvent } from "@frizz/shared"
 import { AwaitingHint, QUESTION_FENCE_RETIRED_AT, shellDoneMessage, wakeDeliveryToken } from "@frizz/shared"
 import { permMarkerPath, type Project } from "./project.ts"
 import { degradeIfAwaitingAnswer, deriveNeedsYou } from "./board.ts"
-import { parseLine, applyRecord, applyEvent, computeTurn, newTailState, createTailer, shellProbeTtlMs, defaultBrokerDaemonAlive, hasQuestionBlock, isClaudeAuthErrorText, isRealUserMessage, parseSignalFence, markerDecision, pendingCallDeadline, unwrapShellCommand, FOREIGN_FRESH_MS, parseWindowsShellHolderReport, probeShellsAlive, probeShellVerdicts, findShellProcesses, windowsShellHolderCommand, type ShellLaunch, type ShellVerdict } from "./tailer.ts"
+import { frizzHookFailure, hookFailureLine, FRIZZ_HOOK_FILES, HOOK_FAILURE_REPORT_EVERY_MS, type HookFailure, parseLine, applyRecord, applyEvent, computeTurn, newTailState, createTailer, shellProbeTtlMs, defaultBrokerDaemonAlive, hasQuestionBlock, isClaudeAuthErrorText, isRealUserMessage, parseSignalFence, markerDecision, pendingCallDeadline, unwrapShellCommand, FOREIGN_FRESH_MS, parseWindowsShellHolderReport, probeShellsAlive, probeShellVerdicts, findShellProcesses, windowsShellHolderCommand, type ShellLaunch, type ShellVerdict } from "./tailer.ts"
 import { claudeBrokerRecordPath } from "./backend/claude-broker-host.ts"
 import { buildClaudePermissionInteraction } from "./backend/claude-permission-interactions.ts"
 import type { AgentBackend, NormalizedEvent } from "./backend/types.ts"
@@ -2478,6 +2478,86 @@ test("tailer: primes an already-finished transcript WITHOUT a turn-done notify",
   assert.equal(tele?.lastAssistant, "all done")
   assert.equal(tele?.lastActivityAt, "2026-07-01T00:00:02.000Z")
   assert.equal(tele?.aiTitle, "x") // ai-title sidecar surfaces through telemetry
+})
+
+// A FAILED HOOK IS A GUARD THAT WAS OFF. Claude Code records a hook that exits non-zero as a
+// `hook_non_blocking_error` attachment and carries on as if it had not run, and one cut off at its timeout
+// as `hook_cancelled`; the transcript was the only place either showed. The records below have the shape
+// Claude Code 2.1.296 wrote for a plugin hook that could not load and for one held past a 2s timeout
+// (a real session, 2026-11-10): the command as configured, `${CLAUDE_PLUGIN_ROOT}` unexpanded.
+const hookRecord = (attachment: Record<string, unknown>, at = "2026-07-01T00:00:03.000Z") =>
+  JSON.stringify({ parentUuid: "u1", isSidechain: false, attachment, type: "attachment", uuid: "u2", timestamp: at, sessionId: "sid" })
+const HOOK_CRASH = hookRecord({
+  type: "hook_non_blocking_error", hookName: "PreToolUse:Bash", toolUseID: "toolu_1", hookEvent: "PreToolUse", stdout: "", exitCode: 1, durationMs: 280.4,
+  stderr: "Failed with non-blocking status code: node:internal/modules/esm/resolve:241\n    throw new ERR_MODULE_NOT_FOUND(\n          ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '/x/board/config.mjs' imported from /x/hooks/bash-background.mjs\n    at finalizeResolution (node:internal/modules/esm/resolve:241:11)",
+  command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/bash-background.mjs"',
+})
+const HOOK_TIMED_OUT = hookRecord({ type: "hook_cancelled", hookName: "PostToolUse:Bash", hookEvent: "PostToolUse", command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs" --mode=nudge --event=PostToolUse', durationMs: 30012 })
+
+test("a failed hook of Frizz's own is read off the transcript; a project's hook and an unattributable cancel are not", () => {
+  assert.deepEqual(frizzHookFailure(HOOK_CRASH), {
+    hook: "bash-background.mjs", hookName: "PreToolUse:Bash", kind: "exited", exitCode: 1, durationMs: 280.4,
+    detail: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/x/board/config.mjs' imported from /x/hooks/bash-background.mjs",
+  })
+  assert.deepEqual(frizzHookFailure(HOOK_TIMED_OUT), { hook: "scratchpad.mjs", hookName: "PostToolUse:Bash", kind: "cancelled", durationMs: 30012 })
+  assert.equal(
+    hookFailureLine({ slug: "fix-tests", ...frizzHookFailure(HOOK_CRASH)!, repeats: 3 }),
+    "thread fix-tests: Frizz's bash-background.mjs hook (PreToolUse:Bash) exited 1 after 280ms, and Claude Code carried on without it: Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/x/board/config.mjs' imported from /x/hooks/bash-background.mjs (and 3 more like it since the last report)",
+  )
+  assert.equal(
+    hookFailureLine({ slug: "fix-tests", ...frizzHookFailure(HOOK_TIMED_OUT)!, repeats: 0 }),
+    "thread fix-tests: Frizz's scratchpad.mjs hook (PostToolUse:Bash) was cancelled after 30012ms, and Claude Code carried on without it",
+  )
+  // The project's own hook, another plugin's hook of a different name, a cancel that names no command
+  // (an older Claude Code), a hook that succeeded, and a line that only mentions the words.
+  for (const line of [
+    hookRecord({ type: "hook_non_blocking_error", hookName: "UserPromptSubmit", exitCode: 1, stderr: "boom", command: 'node "$(git rev-parse --show-toplevel)/scripts/lat-prompt.mjs"' }),
+    hookRecord({ type: "hook_non_blocking_error", hookName: "PreToolUse:Bash", exitCode: 1, stderr: "boom", command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/someone-elses.mjs"' }),
+    hookRecord({ type: "hook_cancelled", hookName: "PreToolUse:Bash", toolUseID: "toolu_1", hookEvent: "PreToolUse" }),
+    hookRecord({ type: "hook_success", hookName: "PreToolUse:Bash", exitCode: 0, command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/bash-background.mjs"' }),
+    JSON.stringify({ type: "user", message: { role: "user", content: 'grep "hook_non_blocking_error" in the log' } }),
+    '{"type":"attachment","attachment":{"type":"hook_non_blocking_error"',
+  ]) assert.equal(frizzHookFailure(line), undefined, line.slice(0, 120))
+})
+
+test("every hook the plugin registers is one a failure would be attributed to", () => {
+  const cfg = JSON.parse(readFileSync(new URL("../../../cc-worker/hooks/hooks.json", import.meta.url), "utf8")) as { hooks: Record<string, { hooks: { command: string }[] }[]> }
+  const commands = Object.values(cfg.hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command))
+  assert.ok(commands.length >= 10)
+  const named = new Set<string>()
+  for (const command of commands) {
+    const failure = frizzHookFailure(hookRecord({ type: "hook_non_blocking_error", hookName: "X", exitCode: 1, stderr: "", command }))
+    assert.ok(failure, `a failure of \`${command}\` would go unreported`)
+    named.add(failure.hook)
+  }
+  assert.deepEqual([...named].sort(), [...FRIZZ_HOOK_FILES].sort(), "and the list names no hook that is not registered")
+})
+
+test("tailer: a hook failure is reported as it is tailed, once per thread and hook in ten minutes, and never from the boot read", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  // What the transcript already held when this server started is history, not news.
+  fixture(h.logDir, "sid", [IN_FLIGHT, HOOK_CRASH, TOOL])
+  const seen: HookFailure[] = []
+  const t = makeTailer(h, { onHookFailure: (failure) => seen.push(failure) })
+  const append = (...lines: string[]) => { appendFileSync(join(h.logDir, "sid.jsonl"), lines.map((l) => l + "\n").join("")); h.clock.ms += 1000; t.tick() }
+
+  t.tick() // prime
+  assert.equal(seen.length, 0)
+
+  append(HOOK_CRASH)
+  assert.deepEqual(seen.map((f) => [f.slug, f.hook, f.kind, f.exitCode, f.repeats]), [["t", "bash-background.mjs", "exited", 1, 0]])
+
+  // It fails again after every call: counted, not reported. A different hook, and the same hook failing a
+  // different way, are their own reports.
+  append(HOOK_CRASH, HOOK_CRASH)
+  append(HOOK_TIMED_OUT)
+  assert.deepEqual(seen.map((f) => [f.hook, f.kind, f.repeats]), [["bash-background.mjs", "exited", 0], ["scratchpad.mjs", "cancelled", 0]])
+
+  h.clock.ms += HOOK_FAILURE_REPORT_EVERY_MS
+  append(HOOK_CRASH)
+  assert.deepEqual(seen.map((f) => [f.hook, f.kind, f.repeats]).at(-1), ["bash-background.mjs", "exited", 2])
+  assert.equal(seen.length, 3)
 })
 
 // THE FREEZE, THROUGH THE TICK. The shape that produced it verbatim: an unresolved tool_use, its

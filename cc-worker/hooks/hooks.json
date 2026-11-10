@@ -4,19 +4,19 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/bash-background.mjs\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/bash-background.mjs\"", "timeout": 30 }
         ]
       },
       {
         "matcher": "Agent",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-dispatch.mjs\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-dispatch.mjs\"", "timeout": 30 }
         ]
       },
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-ask.mjs\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-ask.mjs\"", "timeout": 30 }
         ]
       }
     ],
@@ -24,19 +24,19 @@
       {
         "matcher": "Agent",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-bind.mjs\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-bind.mjs\"", "timeout": 30 }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=nudge --event=PostToolUse" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=nudge --event=PostToolUse", "timeout": 30 }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=nudge" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=nudge", "timeout": 30 }
         ]
       }
     ],
@@ -44,13 +44,13 @@
       {
         "matcher": "ExitPlanMode",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-plan.mjs\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-plan.mjs\"", "timeout": 30 }
         ]
       },
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/perm-policy.mjs\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/perm-policy.mjs\"", "timeout": 30 }
         ]
       }
     ],
@@ -58,13 +58,13 @@
       {
         "matcher": "auto",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=precompact" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=precompact", "timeout": 30 }
         ]
       },
       {
         "matcher": "manual",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=precompact" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=precompact", "timeout": 30 }
         ]
       }
     ],
@@ -72,29 +72,29 @@
       {
         "matcher": "startup",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"" },
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"", "timeout": 30 },
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start", "timeout": 30 }
         ]
       },
       {
         "matcher": "resume",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"" },
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"", "timeout": 30 },
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start", "timeout": 30 }
         ]
       },
       {
         "matcher": "clear",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"" },
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"", "timeout": 30 },
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start", "timeout": 30 }
         ]
       },
       {
         "matcher": "compact",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"" },
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-seed.mjs\"", "timeout": 30 },
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scratchpad.mjs\" --mode=session-start", "timeout": 30 }
         ]
       }
     ]

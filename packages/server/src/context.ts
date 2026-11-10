@@ -28,7 +28,7 @@ import { refreshClaudeQuotaInBackground } from "./backend/claude-quota.ts"
 import { createBoard, resolveSessionTitle, type BoardManager } from "./board.ts"
 import { createSessionPeerResolver, type SessionPeerThread } from "./session-peer.ts"
 import { auditLogPathForStateDir, fileAuditLog, type AuditLog } from "./audit.ts"
-import { createTailer, defaultLogDir, type Tailer } from "./tailer.ts"
+import { createTailer, defaultLogDir, hookFailureLine, type Tailer } from "./tailer.ts"
 import { createDispatcher, acpWorkerContract, opencodeWorkerContract, claudeContractOptions, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
 import { createScheduler, type Scheduler, probeIssueReadable, probePrReadable, type PrRef, type PrProbe } from "./scheduler.ts"
 import {
@@ -1093,6 +1093,8 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     storage,
     bus,
     onCrossSessionMessage: (peer) => void sessionPeerResolver(peer, project.id),
+    // A guard that crashed is a guard that was off, and the transcript was the only place it showed.
+    onHookFailure: (failure) => frizzLog.warn("hooks", hookFailureLine(failure)),
     backendFor,
     codexModels: () => readCodexModels(undefined, opts.codexVersion),
     // Through refreshSoon, not refresh: a busy worker's events change the board many times a second, and

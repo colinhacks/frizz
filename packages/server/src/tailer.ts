@@ -3267,6 +3267,75 @@ export interface Tailer {
   nudge?(slug?: string): void
 }
 
+/** One of Frizz's OWN worker hooks (cc-worker/hooks) failing, as Claude Code recorded it in the transcript. */
+export interface HookFailure {
+  slug: string
+  /** The hook's file under cc-worker/hooks: `bash-background.mjs`. */
+  hook: string
+  /** Where Claude Code ran it: `PreToolUse:Bash`, `SessionStart:startup`. */
+  hookName: string
+  /** `exited`: it ended non-zero without blocking. `cancelled`: it was cut off, in practice at its timeout. */
+  kind: "exited" | "cancelled"
+  exitCode?: number
+  durationMs?: number
+  /** The line of its stderr that names the error. */
+  detail?: string
+  /** How many more of the same went unreported since the last one that was (HOOK_FAILURE_REPORT_EVERY_MS). */
+  repeats: number
+}
+
+/** The files hooks.json registers, which is what tells a failure of Frizz's hook from one of the
+ *  project's own: Claude Code records a hook's command as it was configured, `${CLAUDE_PLUGIN_ROOT}`
+ *  unexpanded, and another plugin's hooks are written the same way. */
+export const FRIZZ_HOOK_FILES: ReadonlySet<string> = new Set([
+  "agent-bind.mjs", "agent-dispatch.mjs", "bash-background.mjs", "deny-ask.mjs", "deny-plan.mjs", "perm-policy.mjs", "scratchpad.mjs", "session-seed.mjs",
+])
+const FRIZZ_HOOK_COMMAND = /\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/([a-z-]+\.mjs)/
+
+/** One report per thread, hook and kind in this long. A hook that crashes on load fails after every tool
+ *  call, and a line for each would bury the log it is meant to be found in. */
+export const HOOK_FAILURE_REPORT_EVERY_MS = 10 * 60_000
+
+/**
+ * A transcript line that records one of Frizz's hooks failing, or undefined. Claude Code writes a hook
+ * that exits non-zero as a `hook_non_blocking_error` attachment and then carries on as if the hook had
+ * not run, and one cut off at its timeout as `hook_cancelled`: for a guard (bash-background.mjs, the
+ * permission policy) that is the guard being off, and until 2026-11-10 the transcript was the only place
+ * it showed. A `hook_cancelled` from before Claude Code recorded the command (seen without one on a
+ * 2026-10 build) cannot be attributed, and is not reported.
+ */
+export function frizzHookFailure(line: string): Omit<HookFailure, "slug" | "repeats"> | undefined {
+  if (!line.includes('"hook_non_blocking_error"') && !line.includes('"hook_cancelled"')) return undefined
+  let rec: { type?: unknown; attachment?: { type?: unknown; hookName?: unknown; command?: unknown; exitCode?: unknown; durationMs?: unknown; stderr?: unknown } }
+  try {
+    rec = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  const a = rec?.attachment
+  if (rec?.type !== "attachment" || !a || (a.type !== "hook_non_blocking_error" && a.type !== "hook_cancelled")) return undefined
+  const hook = typeof a.command === "string" ? FRIZZ_HOOK_COMMAND.exec(a.command)?.[1] : undefined
+  if (!hook || !FRIZZ_HOOK_FILES.has(hook)) return undefined
+  const lines = typeof a.stderr === "string" ? a.stderr.split("\n").map((l) => l.trim()).filter(Boolean) : []
+  const detail = (lines.find((l) => /^\w*Error\b/.test(l)) ?? lines.at(-1))?.slice(0, 240)
+  return {
+    hook,
+    hookName: typeof a.hookName === "string" ? a.hookName : "a hook",
+    kind: a.type === "hook_cancelled" ? "cancelled" : "exited",
+    ...(typeof a.exitCode === "number" ? { exitCode: a.exitCode } : {}),
+    ...(typeof a.durationMs === "number" ? { durationMs: a.durationMs } : {}),
+    ...(detail ? { detail } : {}),
+  }
+}
+
+/** A hook failure as the one line the server's log carries. */
+export function hookFailureLine(f: HookFailure): string {
+  const took = f.durationMs !== undefined ? ` after ${Math.round(f.durationMs)}ms` : ""
+  const what = f.kind === "cancelled" ? `was cancelled${took}` : `exited ${f.exitCode ?? "non-zero"}${took}`
+  const more = f.repeats > 0 ? ` (and ${f.repeats} more like it since the last report)` : ""
+  return `thread ${f.slug}: Frizz's ${f.hook} hook (${f.hookName}) ${what}, and Claude Code carried on without it${f.detail ? `: ${f.detail}` : ""}${more}`
+}
+
 export interface TailerDeps {
   project: Project
   storage: Storage
@@ -3280,6 +3349,10 @@ export interface TailerDeps {
   // record the moment it is tailed, while the sender is still running — the only time its socket can
   // be traced to a thread (see session-peer.ts). Optional: unset = resolved only when a reader asks.
   onCrossSessionMessage?: (peer: { socket?: string; name?: string }) => void
+  // One of Frizz's own worker hooks failed in a thread (frizzHookFailure), called on the record as it is
+  // tailed and at most once per thread, hook and kind in HOOK_FAILURE_REPORT_EVERY_MS. Optional: unset =
+  // the failure stays where Claude Code wrote it, in the transcript.
+  onHookFailure?: (failure: HookFailure) => void
   now?: () => number // injectable clock (tests)
   // Injectable MONOTONIC clock, distinct from `now` because it measures ELAPSED work rather than
   // naming an instant — it is what PRIME_BUDGET_MS is spent against. Defaults to `performance.now`.
@@ -5018,6 +5091,25 @@ export function createTailer(deps: TailerDeps): Tailer {
       }
     : undefined
 
+  const hookFailuresReported = new Map<string, { at: number; repeats: number }>()
+  const hookFailureOnLine = (row: SessionRow): ((line: string) => void) | undefined => {
+    const report = deps.onHookFailure
+    if (!report) return undefined
+    return (line: string) => {
+      const failure = frizzHookFailure(line)
+      if (!failure) return
+      const key = `${row.slug}\0${failure.hook}\0${failure.kind}`
+      const last = hookFailuresReported.get(key)
+      const at = now()
+      if (last && at - last.at < HOOK_FAILURE_REPORT_EVERY_MS) {
+        last.repeats += 1
+        return
+      }
+      hookFailuresReported.set(key, { at, repeats: 0 })
+      report({ slug: row.slug, ...failure, repeats: last?.repeats ?? 0 })
+    }
+  }
+
   function chainOnLine(
     a: ((line: string) => void) | undefined,
     b: ((line: string) => void) | undefined,
@@ -6043,7 +6135,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       const rowLedger = row.delivery_ledger ?? null
       const ledgerDrifted = rowLedger !== (state.deliveryLedgerSeen ?? null) // a router write with no JSONL advance
       const ledger = ledgerFold(row, nowMs, state)
-      consume(state, backend, chainOnLine(chainOnLine(chainOnLine(ledger.onLine, codexSubAgentOnLine(row, state)), opencodeSubAgentOnLine(row, state)), crossSessionOnLine))
+      consume(state, backend, chainOnLine(chainOnLine(chainOnLine(chainOnLine(ledger.onLine, codexSubAgentOnLine(row, state)), opencodeSubAgentOnLine(row, state)), crossSessionOnLine), hookFailureOnLine(row)))
       // Child rollouts advance on their OWN clock, so poll every tick — not only when the parent
       // appended. This is what flips a finished codex child out of the live set (and, once every
       // child is done, releases the thread from Active into the queue).
@@ -6669,6 +6761,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     forget(slug) {
       states.delete(slug)
       foreignStates.delete(slug)
+      for (const key of hookFailuresReported.keys()) if (key.startsWith(`${slug}\0`)) hookFailuresReported.delete(key)
     },
     notePermissionMode(slug, permissionMode) {
       const state = states.get(slug)

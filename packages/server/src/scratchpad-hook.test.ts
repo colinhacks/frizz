@@ -339,7 +339,13 @@ test("the nudge is silent when the transcript carries no readable usage", () => 
 test("hooks.json wires every channel, and no stale carryover registration survives", () => {
   const raw = readFileSync(join(here, "../../../cc-worker/hooks/hooks.json"), "utf8")
   assert.doesNotMatch(raw, /carryover/, "the separate carryover doc was collapsed into the scratchpad")
-  const cfg = JSON.parse(raw) as Record<string, Record<string, { matcher?: string; hooks: { command: string }[] }[]>>
+  const cfg = JSON.parse(raw) as Record<string, Record<string, { matcher?: string; hooks: { command: string; timeout?: number }[] }[]>>
+  // EVERY hook is bounded. Claude Code's default lets one run for ten minutes, and a tool call waits for
+  // it: a session was held 612s behind a hung hook before the call went ahead without it. Thirty seconds
+  // is three times the slowest run of the Bash guard measured on this machine under load (10.7s).
+  for (const hook of Object.values(cfg.hooks).flat().flatMap((entry) => entry.hooks)) {
+    assert.equal(hook.timeout, 30, `${hook.command} has no timeout`)
+  }
   const commandsFor = (event: string) =>
     (cfg.hooks[event] ?? []).flatMap((entry) => entry.hooks.map((h) => h.command))
 
