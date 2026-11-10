@@ -553,19 +553,19 @@ export function ClosedQuestionCard({ spec, state, wrap, copyOf }: { spec: AskedQ
 }
 const NOT_ANSWERED = { chosenIdxs: [] }
 
-/** AN OPEN QUESTION, AT A FENCE THAT NAMED IT WHERE ITS CARD IS NOT. A question draws ONE answerable card,
- *  in the newest message that names it (lib/questionShadow placeQuestions), so every older fence naming it
- *  — the ask itself, and each `id:`-only reference the worker wrote at a later rest — drew nothing, and a
+/** AN OPEN QUESTION, AT A FENCE THAT NAMED IT BEFORE THE HUMAN'S LAST TURN. Until 2026-11-06 a question
+ *  drew ONE answerable card, in the newest message naming it (lib/questionShadow placeQuestions), so every
+ *  older fence naming it — the ask itself, and each `id:`-only reference the worker wrote at a later rest — drew nothing, and a
  *  handoff that set a question up ("When the gateway gains HTTP:") ended on empty space once the next
  *  handoff named it again (maintainer 2026-11-06, of five such slots in one message: "Have we started
  *  removing the rendered versions of questions…?"). Offered a one-line row or a full copy, the maintainer
  *  chose the full copy. So the slot draws the root card READ-ONLY and greyed, its kind line saying where
- *  the answer goes, and carries no `data-question-id`: that names the one card focus and navigation reach.
+ *  the answer goes, and carries no `data-question-id`, which marks the answerable cards.
  *
- *  `above`: the live card is ABOVE this copy. Until 2026-11-09 it never was, because the card sat in the
- *  newest message naming the question. Now a recap the worker writes after a wake, before the human's next
- *  turn, leaves the card in the write-up that set it up (lib/questionShadow placeQuestions), so the recap's
- *  copy points up. */
+ *  Since 2026-11-10 a copy is drawn only at a fence from BEFORE the human's last turn: every message naming
+ *  the question since then draws it live (placeQuestions), so a write-up and the recap after it both stay
+ *  answerable. `above` (the live card is above this copy) is kept for a surface whose window cut the live
+ *  cards away; on 2026-11-09, for one day, it was what every recap drew. */
 export function OpenQuestionCopyCard({ q, above, wrap }: { q: Pick<RegisteredQuestionView, "id" | "spec">; above?: boolean; wrap?: boolean }) {
   const question = useMemo(() => toParsedQuestion(q.spec).question, [q.spec])
   return (

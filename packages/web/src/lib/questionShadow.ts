@@ -161,7 +161,7 @@ export function allFencesShadowed(
 // fence whose `id:` is its own handle for the question (shared question-fence.ts); the server registers
 // that fence as a row, and a later fence carrying `id:` alone references the row. Both name the row, so
 // both place it, by the same rule as the empty marker: the newest message naming it from its claiming rest
-// (since 2026-11-09, the first one after the human's last turn before that newest one — placeQuestions)
+// (since 2026-11-10, every one after the human's last turn before that newest one — placeQuestions)
 // on is where its card draws, answerable, with the rest's one Send. The name is matched against the row's
 // minted id and every handle in its tree (questionNames) — a follow-up's handle names the whole card.
 //
@@ -249,9 +249,11 @@ export function markerIdsIn(text: string): string[] {
 }
 
 /** Where each registered question renders, given what the messages from its claiming rest onward
- *  actually wrote: the FIRST message naming it since the human's last turn before the newest message
- *  naming it. A question no loaded message names is absent from `placed` and renders at its anchor. Human
- *  turns never place anything — a wake carries no marker of the worker's.
+ *  actually wrote: EVERY message naming it since the human's last turn before the newest message naming
+ *  it, so one question can be placed in several messages, each drawing it live and all sharing one answer
+ *  (RegisteredQuestionCards' answering state is keyed by the row). A question no loaded message names is
+ *  absent from `placed` and renders at its anchor. Human turns never place anything — a wake carries no
+ *  marker of the worker's.
  *
  *  Until 2026-11-09 it was simply the LAST message naming it — the newest handoff, on the reading that an
  *  older placement is history. It is not history while the human has not come back since: the worker had
@@ -261,9 +263,13 @@ export function markerIdsIn(text: string): string[] {
  *  left the write-up for the foot of that note, stacked with no lead-in, and the write-up drew read-only
  *  copies in its slots (maintainer 2026-11-09: "I had a perfect write-up with a bunch of nicely
  *  interleaved questions … then it just kind of tacked all those same questions on at the end, in no
- *  particular order and with no preamble or lead-up"). Now a later naming takes the card only past a turn
- *  the human put in (lib/messagePresentation isHumanTurn): an answer, or anything they typed. Short of
- *  that, the later fence is a recap, and draws a copy pointing up at the card (questionHomes). */
+ *  particular order and with no preamble or lead-up"). The first fix kept the card in the FIRST message of
+ *  that stretch and greyed every later naming, and the next day a triage thread that re-listed one open
+ *  question in each of a dozen reports showed it greyed in the newest one, twelve hours below its live
+ *  card (maintainer 2026-11-10: "That question is grayed out. But I haven't sent any messages in the
+ *  meantime"). Both reports are one rule: an open question goes grey only once the human has put a turn in
+ *  since (lib/messagePresentation isHumanTurn: an answer, or anything they typed). So it is live in every
+ *  message of the newest stretch that names it, and a message from before that turn draws the copy. */
 export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { askedAt: string; spec?: AskedQuestion }>(
   messages: readonly AnchorMessage[],
   questions: readonly Q[],
@@ -285,36 +291,40 @@ export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { 
   for (const [anchor, group] of questionsByAnchor(messages, questions)) {
     for (const q of group) {
       const names = questionNames(q)
-      let placedAt = -1
+      // The namings since the human's last turn: a turn of theirs before the next naming starts over.
+      let stretch: number[] = []
       let humanSince = false
       for (let i = restStart(messages, anchor); i < messages.length; i++) {
         if (isHumanTurn(messages[i])) humanSince = true
         if (isTurn(messages[i])) continue
         if (!markersOf(i).some((n) => names.includes(n) && nameMeans(messages[i], n, q.id))) continue
-        if (placedAt < 0 || humanSince) placedAt = i
+        if (humanSince) stretch = []
+        stretch.push(i)
         humanSince = false
       }
-      if (placedAt < 0) continue
-      const at = placed.get(placedAt)
-      if (at) at.push(q)
-      else placed.set(placedAt, [q])
+      if (stretch.length === 0) continue
+      for (const at of stretch) {
+        const group = placed.get(at)
+        if (group) group.push(q)
+        else placed.set(at, [q])
+      }
       placedIds.add(q.id)
     }
   }
   return { placed, placedIds }
 }
 
-/** The message each OPEN question's answerable card draws in (its placement) or under (its anchor), by
- *  row id — what a read-only copy elsewhere compares its own message against, to say whether the card is
- *  above it or below it. A surface drawing a window draws a card placed above it at the window's top, so
- *  "above" still holds there. */
+/** The message each OPEN question's NEWEST answerable card draws in (its placement) or under (its anchor),
+ *  by row id — what a read-only copy elsewhere compares its own message against, to say whether the card
+ *  is above it or below it. A copy is only drawn before the human's last turn and every live card after
+ *  it, so in practice it says "below"; "above" is kept for a window that cut the live cards away. */
 export function questionHomes<Q extends Pick<RegisteredQuestionView, "id"> & { askedAt: string; spec?: AskedQuestion }>(
   messages: readonly AnchorMessage[],
   questions: readonly Q[],
   placement: QuestionPlacement<Q>,
 ): Map<string, number> {
   const homes = new Map<string, number>()
-  for (const [at, group] of placement.placed) for (const q of group) homes.set(q.id, at)
+  for (const [at, group] of placement.placed) for (const q of group) homes.set(q.id, Math.max(at, homes.get(q.id) ?? at))
   const unplaced = questions.filter((q) => !placement.placedIds.has(q.id))
   for (const [anchor, group] of questionsByAnchor(messages, unplaced)) for (const q of group) homes.set(q.id, anchor)
   return homes

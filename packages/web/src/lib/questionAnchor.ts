@@ -29,7 +29,8 @@
 // rest never reads as a bare stop with an ask hidden above it, and this file only has to honour what the
 // worker said: a card stays where it was asked until a later rest claims it, and a claim moves it to the
 // end of that rest — under the fence that named it. A rest claims it only past a turn the human put in
-// (2026-11-09, questionClaims): a recap the worker writes after a wake leaves the card where it was.
+// (2026-11-09, questionClaims): a recap the worker writes after a wake draws the card live too, and the
+// claim stays with the first naming of that stretch (lib/questionShadow placeQuestions).
 //
 // WHETHER A QUESTION IS STILL THE THREAD'S ASK IS NOT DECIDED HERE. The server decides it — an open
 // question stands from when it was asked or last referenced until the human next TYPES to the thread
@@ -117,8 +118,9 @@ export function questionAnchorIndex(messages: readonly AnchorMessage[], askedAt:
  *  and the worker is asking again in a newer handoff, which is the one the human will read; or nothing the
  *  human did has happened in between — a steer, a sub-agent, a correction woke the worker, and it re-listed
  *  what is open. The second is a recap of a write-up the human has not read yet, and taking the card from
- *  that write-up hollowed it out (lib/questionShadow placeQuestions has the report). So a naming moves the
- *  claim only past a turn the human put in (lib/messagePresentation isHumanTurn), the same turn the queue
+ *  that write-up hollowed it out (lib/questionShadow placeQuestions has the report; both draw it live now,
+ *  and the claim is where the stretch's placement scan starts). So a naming moves the claim only past a
+ *  turn the human put in (lib/messagePresentation isHumanTurn), the same turn the queue
  *  card's window opens on. */
 export function questionClaims(messages: readonly AnchorMessage[]): Map<string, number> {
   const claims = new Map<string, number>()

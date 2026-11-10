@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// VERIFY: a recap the worker writes after a WAKE, before the human's next turn, leaves each question's
-// answerable card in the write-up that set it up, and draws read-only copies pointing UP at them
-// (lib/questionShadow placeQuestions, 2026-11-09). Only a turn the human puts in lets a later reference
-// take the card.
+// VERIFY: a recap the worker writes after a WAKE, before the human's next turn, draws each open question
+// LIVE beside the write-up that set it up, and the two cards share one answer (lib/questionShadow
+// placeQuestions, 2026-11-10). Only after a turn the human puts in does an older naming draw the read-only
+// copy.
 //
 // The report it reproduces: a write-up with six questions interleaved in its prose; another thread's steer
 // woke the worker; it rested again on a two-line note re-listing all six as `id:` references; all six
@@ -18,9 +18,9 @@
 //
 // Then it reads every question card in document order, with the message each sits in:
 //
-//   after 2, thread page: write-up alpha live, beta live; recap alpha copy ↑, beta copy ↑
-//   after 2, queue card:  the same
-//   after 3, thread page: write-up alpha copy ↓, beta live; recap alpha copy ↓, beta copy ↑; turn 3 alpha live
+//   after 2: write-up alpha live, beta live; recap alpha live, beta live
+//   a pick on the recap's beta shows on the write-up's beta; Enter in the prompt box answers it once
+//   after 3: write-up alpha copy ↓, beta answered; recap alpha copy ↓, beta answered; turn 3 alpha live
 //
 // Boot a stack with the scheduler armed and the scripted worker, from a shell with no Frizz worker
 // variables, on a throwaway repo:
@@ -104,6 +104,9 @@ await until("both questions to register", async () => (await openIds(slug)) === 
 step("alpha and beta registered")
 await until("the timer-woken recap", () => said(slug, "Both are still open:"), 90_000)
 step("the timer woke the worker, and it wrote the recap")
+// A card is answerable once the turn that drew it has ended; a pick made while it is still running is refused.
+await until("the recap's turn to end", async () => !["running", "spawning"].includes((await threadOf(slug))?.runtime), 60_000)
+step(`the thread is at rest (${(await threadOf(slug))?.runtime})`)
 
 // Every question card inside `root`, in document order: which question, what it is, and which message it
 // sits in (the index among the distinct transcript rows holding a card), plus whether each lead-in sits
@@ -139,15 +142,17 @@ const readCards = (page, root) => page.evaluate((root) => {
 }, root)
 
 const PAGE_ROOT = "body"
-const CARD_ROOT = `[data-queue-card-root="${slug}"]`
+const COMPOSER = "textarea[data-surface='chatComposer']"
 const errors = []
 const browser = await launchHeadless()
 step("browser up")
 try {
   const page = await browser.newPage()
   page.on("pageerror", (e) => errors.push(String(e)))
+  const answerCalls = []
+  page.on("request", (req) => { if (req.method() === "POST" && /\/rpc\/(answerQuestions|followUp)/.test(req.url())) answerCalls.push(req.url().split("/rpc/")[1]) })
   await page.setViewport({ width: 1100, height: 3200, deviceScaleFactor: 2 })
-  const settleTo = async (what, root, expected, open) => {
+  const settleTo = async (what, root, expected) => {
     let seen
     try {
       await until(what, async () => {
@@ -160,14 +165,42 @@ try {
     }
     return seen
   }
+  // Which options are pressed on each live card asking `which`, in document order.
+  const pressed = (which) => page.$$eval("article[data-question-id]", (cards, w) => cards
+    .filter((el) => el.textContent.includes(`Which ${w} should ship?`))
+    // The pressed button is labelled by a sibling, so the option row carries the text.
+    .map((el) => [...el.querySelectorAll("[aria-pressed='true']")].map((b) => (b.closest("[data-question-option]") ?? b).textContent.trim()).join(",")), which)
 
-  // AFTER THE RECAP, ON THE THREAD PAGE: both cards still live in the write-up, each under its own lead-in.
+  // AFTER THE RECAP: both questions live in the write-up, each under its own lead-in, and live in the recap.
   await page.goto(`${base}/project/${flags.slug}/thread/${slug}`, { waitUntil: "networkidle2" })
-  const recapPage = await settleTo("the thread page after the recap", PAGE_ROOT, [
-    "alpha@0: live", "beta@0: live", "alpha@1: copy ↑", "beta@1: copy ↑",
-  ])
-  assert.deepEqual(recapPage.order, { alphaUnderItsLeadIn: true, betaUnderItsLeadIn: true })
-  assert.equal(await page.$$eval("article[data-question-copy]", (els) => els.filter((el) => /answer it above/.test(el.textContent)).length), 2, "each recap copy says the card is above it")
+  step(`surface: ${await page.$("[data-pane-thread]") ? "the board's pane" : "the full-screen page"}`)
+  const recap = await settleTo("the thread after the recap", PAGE_ROOT, ["alpha@0: live", "beta@0: live", "alpha@1: live", "beta@1: live"])
+  assert.deepEqual(recap.order, { alphaUnderItsLeadIn: true, betaUnderItsLeadIn: true })
+  assert.equal(await page.$$eval("article[data-question-copy]", (els) => els.length), 0, "no read-only copy while the human has sent nothing")
+
+  // ONE ANSWER, TWO CARDS: a pick on the recap's beta is the write-up's beta's pick too.
+  // A real pointer click (the option's handler does not answer a synthetic `.click()`), aimed again until it
+  // lands: the transcript can still shift under a just-loaded page. A pick is a toggle, so it is re-aimed
+  // only while nothing on the card is pressed yet.
+  const recapBetaOption = () => page.$$eval("article[data-question-id]", (cards) => {
+    const recapBeta = cards.filter((el) => el.textContent.includes("Which beta should ship?"))[1]
+    const option = [...(recapBeta?.querySelectorAll("[data-question-option]") ?? [])].find((o) => o.textContent.includes("Beta two"))
+    const el = option?.querySelector("button") ?? option
+    el?.scrollIntoView({ block: "center" })
+    const r = el?.getBoundingClientRect()
+    return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null
+  })
+  const bothPicked = async () => { const p = await pressed("beta"); return p.length === 2 && p.every((x) => /Beta two/.test(x)) }
+  for (let attempt = 0; attempt < 5 && !(await bothPicked()); attempt++) {
+    if ((await pressed("beta")).some((x) => x)) break
+    await new Promise((r) => setTimeout(r, 400))
+    const target = await recapBetaOption()
+    assert.ok(target, "the recap's beta card has a Beta two option to pick")
+    await page.mouse.click(target.x, target.y)
+    await new Promise((r) => setTimeout(r, 600))
+  }
+  await until("the pick to show on both beta cards", bothPicked, 10_000)
+  step(`pressed on each beta card: ${JSON.stringify(await pressed("beta"))}`)
   if (flags.shots) {
     mkdirSync(flags.shots, { recursive: true })
     const clip = await page.evaluate(() => {
@@ -177,40 +210,26 @@ try {
       const last = cards[cards.length - 1].getBoundingClientRect()
       return { x: Math.max(0, first.left - 30), y: Math.max(0, first.top + window.scrollY - 20), width: Math.min(900, last.right - first.left + 60), height: last.bottom - first.top + 50 }
     })
-    await page.screenshot({ path: join(flags.shots, "thread-page-after-recap.png"), clip })
+    await page.screenshot({ path: join(flags.shots, "recap-live-shared-pick.png"), clip, captureBeyondViewport: false })
   }
+  // Enter in the prompt box sends what is staged, once.
+  await page.click(COMPOSER)
+  await page.waitForFunction((c) => document.querySelector(c) === document.activeElement, {}, COMPOSER)
+  await page.keyboard.press("Enter")
+  await until("beta to settle", async () => (await openIds(slug)) === "alpha", 30_000)
+  const answer = (await api.query("threadSettledQuestions", { slug })).questions.find((q) => q.spec?.handle === "beta")
+  step(`beta settled with ${JSON.stringify(answer?.answer)}; sends on the wire: ${JSON.stringify(answerCalls)}`)
+  assert.match(JSON.stringify(answer?.answer), /Beta two/)
+  assert.equal(answerCalls.length, 1, "one send")
+  await settleTo("the thread after answering beta", PAGE_ROOT, ["alpha@0: live", "beta@0: answered", "alpha@1: live", "beta@1: answered"])
 
-  // THE QUEUE CARD draws the same: the window opens on the dispatch prompt, the human's last turn.
-  await page.goto(`${base}/project/${flags.slug}`, { waitUntil: "networkidle2" })
-  await page.waitForSelector(CARD_ROOT, { timeout: 20_000 })
-  const recapCard = await settleTo("the queue card after the recap", CARD_ROOT, [
-    "alpha@0: live", "beta@0: live", "alpha@1: copy ↑", "beta@1: copy ↑",
-  ])
-  assert.deepEqual(recapCard.order, { alphaUnderItsLeadIn: true, betaUnderItsLeadIn: true })
-  if (flags.shots) {
-    const card = await page.$(CARD_ROOT)
-    await card.screenshot({ path: join(flags.shots, "queue-card-after-recap.png") })
-  }
-
-  // THE HUMAN TYPES, and the worker names alpha again: now that reference takes alpha's card. Beta, named
-  // nowhere since, stays live in the write-up.
+  // THE HUMAN TYPES, and the worker names alpha again: now the older namings are copies pointing down.
   await api.mutate("followUp", { slug, sessionId, message: "Move alpha" })
   await until("the turn after the human's reply", () => said(slug, "Alpha again, now that you have replied:"))
-  await page.goto(`${base}/project/${flags.slug}/thread/${slug}`, { waitUntil: "networkidle2" })
-  await settleTo("the thread page after the human's reply", PAGE_ROOT, [
-    "alpha@0: copy ↓", "beta@0: live", "alpha@1: copy ↓", "beta@1: copy ↑", "alpha@2: live",
-  ])
-
-  // ANSWERING beta leaves its answered card where the live one stood: in the write-up.
-  const beta = (await threadOf(slug)).questions.find((q) => q.spec.handle === "beta")
-  await api.mutate("answerQuestions", { slug, answers: [{ questionId: beta.id, question: beta.spec.question, chosen: ["Beta one"] }] })
-  await until("beta to settle", async () => (await openIds(slug)) === "alpha")
   await page.reload({ waitUntil: "networkidle2" })
-  await settleTo("the thread page after answering beta", PAGE_ROOT, [
-    "alpha@0: copy ↓", "beta@0: answered", "alpha@1: copy ↓", "beta@1: copy ↓ answered", "alpha@2: live",
-  ])
+  await settleTo("the thread after the human's reply", PAGE_ROOT, ["alpha@0: copy ↓", "beta@0: answered", "alpha@1: copy ↓", "beta@1: answered", "alpha@2: live"])
   assert.deepEqual(errors, [], "the page raised no errors")
-  console.log("ok — a wake-driven recap leaves the cards in the write-up, and the human's turn moves them")
+  console.log("ok — a wake-driven recap draws the questions live beside the write-up, sharing one answer")
 } finally {
   await browser.close()
 }

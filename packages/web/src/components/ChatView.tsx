@@ -3913,9 +3913,9 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
               push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
               continue
             }
-            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing at
-            // the card: down from a write-up the human has since replied past, up from a recap the worker
-            // wrote after a wake (lib/questionShadow placeQuestions).
+            // Anywhere else — a fence from before the human's last turn, since every naming after it is
+            // placed (lib/questionShadow placeQuestions): the copy. Answered, as its settled card stands;
+            // open, read-only, pointing down at the live card.
             const answered = answeredRow(row)
             const home = questionHomes?.get(row.id)
             push(answered
