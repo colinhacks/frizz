@@ -39,7 +39,7 @@ const PROBE = `(() => {
     order.push({
       id: row.dataset.sidebarItem,
       band: seenHr ? 'rested' : 'running',
-      spinner: !!row.querySelector('svg animate'),
+      spinner: !!row.querySelector('svg[data-box-spinner]'),
     })
   }
   return {

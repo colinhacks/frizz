@@ -12,6 +12,7 @@ import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchSta
 import { HumanTodoList } from "./AwaitingSteps.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
+import { LiveDot } from "./LiveDot.tsx"
 import { ChildThreadRows } from "./ChildThreadRows.tsx"
 import { useChildThreads } from "../hooks.ts"
 import { QueueSubAgentLines } from "./QueueSubAgentLines.tsx"
@@ -420,7 +421,7 @@ function CountMark({ kind, states }: { kind: QueueOpsKind; states: readonly (str
 }
 
 function Dot({ hue, states }: { hue: "agent" | "shell" | "github"; states: readonly (string | undefined)[] }) {
-  if (states.some(isRunningOperation)) return <span className={`frizz-live-dot frizz-live-dot--${hue}`} />
+  if (states.some(isRunningOperation)) return <LiveDot hue={hue} />
   return <span className={states.includes("rested") ? CHILD_RESTED_DOT_CLASS : CHILD_STALE_DOT_CLASS} />
 }
 

@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from "react"
 import { X } from "lucide-react"
 import { BoxSpinner } from "./BoxSpinner.tsx"
+import { LiveDot } from "./LiveDot.tsx"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
 import { compactElapsedSince } from "../lib/durationLabels.ts"
 import { useNowMs } from "../lib/liveClock.ts"
@@ -147,7 +148,7 @@ export function ChildOpRow({
   const running = isRunningOperation(state)
   // ONE HUE PER RUNTIME CONCERN, and the row is the only place they are named. A sub-agent pulses the
   // accent-yellow, a background shell the azure blue, a PR watcher the green.
-  const LIVE_DOT_HUE = { AGENT: "frizz-live-dot--agent", SHELL: "frizz-live-dot--shell", GITHUB: "frizz-live-dot--github", COMMAND: "frizz-live-dot--github", TIMER: "frizz-live-dot--github", CHILD: "frizz-live-dot--agent" } as const
+  const LIVE_DOT_HUE = { AGENT: "agent", SHELL: "shell", GITHUB: "github", COMMAND: "github", TIMER: "github", CHILD: "agent" } as const
   // THE TAG IS FIVE CHARACTERS ON EVERY KIND. `GITHUB` is six, and before this column had a track of
   // its own it pushed that row's label 4.3px right of every other row under the mono stack (where
   // five-letter tags are pixel-identical at 21.39px). `WATCH` is also the more accurate word: the row is
@@ -189,9 +190,9 @@ export function ChildOpRow({
     ? <span className={CHILD_RESTED_DOT_CLASS} title={kind === "CHILD" ? CHILD_THREAD_RESTED_TITLE : CHILD_RESTED_TITLE} />
     : <span className={CHILD_STALE_DOT_CLASS} title={kind === "SHELL" ? CHILD_STALE_SHELL_TITLE : kind === "CHILD" ? CHILD_THREAD_STALE_TITLE : CHILD_STALE_TITLE} />
   const liveDot = (
-    <span
+    <LiveDot
       aria-hidden
-      className={`frizz-live-dot ${LIVE_DOT_HUE[kind]}`}
+      hue={LIVE_DOT_HUE[kind]}
       data-running-indicator={density === "card" ? "queue-subagent" : "operation"}
     />
   )

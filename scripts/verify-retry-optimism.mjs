@@ -31,7 +31,7 @@ const READ_ROW = (s) => `(() => {
     if (!r) continue
     if (r.dataset.sidebarItem === '${s}') return {
       band, idx: i,
-      spinner: !!row.querySelector('svg animate'),
+      spinner: !!row.querySelector('svg[data-box-spinner]'),
       glyph: (row.querySelector('[aria-hidden].font-bold')?.textContent ?? '').trim() || null,
     }
     i++
