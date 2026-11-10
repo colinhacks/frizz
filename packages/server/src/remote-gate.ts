@@ -1,7 +1,7 @@
 import type { Context } from "hono"
 import { AskedQuestionSchema, type AskedQuestion, type QuestionAnswer, type RelayAccess, type SocketClientMsg } from "@frizz/shared"
 import type { RouterGuard } from "@frizz/rpc/server"
-import { accessOf, CALLER_HEADER, decodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog } from "./audit.ts"
+import { accessOf, CALLER_HEADER, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
 import type { AppRouter } from "./router.ts"
 
@@ -279,9 +279,14 @@ function refusalOfNode(node: AskedQuestion, said: QuestionAnswer, rootId: string
  */
 export const REMOTE_SOCKET_MESSAGES = { board: true, sub: true, unsub: true } satisfies Record<SocketClientMsg["t"], boolean>
 
-/** What the caller of a request may do, from the proxy's stamp. See accessOf. */
+/**
+ * What the caller of a request may do, from the proxy's stamp. See accessOf. Read through
+ * requestOriginFrom, the audit trail's own reading, so the gate and the record cannot disagree about
+ * who called: above all about a stamp that is present and unreadable, which is the most limited caller
+ * and never this machine.
+ */
 export function callerAccess(stamp: string | undefined): ReturnType<typeof accessOf> {
-  return accessOf(decodeCallerStamp(stamp))
+  return accessOf(requestOriginFrom({ caller: stamp, userAgent: undefined, socketRemote: undefined }))
 }
 
 /** Does this stamp name someone who is not on this machine? */

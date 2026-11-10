@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { Hono } from "hono"
 import { mountRouter } from "@frizz/rpc/server"
 import { DISPATCH_TASK_BANNER_MARKER, formatThreadMessage, parseThreadMessage, type BoardSnapshot, type Settings, type ThreadView, type TranscriptMessage } from "@frizz/shared"
+import type { AuditRecord } from "./audit.ts"
 import { deriveDeliveryInFlight, deriveNeedsYou, type BoardManager } from "./board.ts"
 import { appendDelivery, holdDelivery, parseDeliveryLedger, projectDeliveryLedger, serializeDeliveryLedger } from "./delivery-ledger.ts"
 import { createWakeDeliveryStore } from "./wake-store.ts"
@@ -450,6 +451,46 @@ test("setThreadPermission/setThreadProfile RPC: every row persists intent and re
   assert.equal(saved.model, "gpt-5.6-sol")
   assert.equal(saved.effort, "high")
   assert.equal(saved.runtime_control ?? null, null, "no durable runtime control was armed")
+  h.storage.close()
+})
+
+// A stolen full session moved a thread to bypass and then messaged it, and the log held only the message
+// (security audit 2026-11-09). Both ways of raising what threads may do now leave a line.
+test("setThreadPermission and settingsSet each write an audit record: what changed, from what, to what", async () => {
+  const h = harness()
+  const records: AuditRecord[] = []
+  h.ctx.audit = { append: (record) => void records.push(record) }
+  h.storage.upsertSession(row("audited-permission"))
+  h.storage.setPermissionMode("audited-permission", "default")
+  h.addExitedThread("audited-permission")
+
+  await h.router.setThreadPermission.handler({ input: { slug: "audited-permission", permissionMode: "bypassPermissions" } })
+  assert.deepEqual(records.map(({ action, outcome, thread, detail }) => ({ action, outcome, thread, detail })), [{
+    action: "setThreadPermission", outcome: "ok", thread: "audited-permission",
+    detail: { from: "default", to: "bypassPermissions", effect: "next-resume" },
+  }])
+
+  // A refusal is on record too, with the mode that was asked for.
+  await assert.rejects(h.router.setThreadPermission.handler({ input: { slug: "external", permissionMode: "bypassPermissions" } }), /not editable/)
+  assert.deepEqual([records[1]!.action, records[1]!.outcome, records[1]!.detail], ["setThreadPermission", "refused", { from: null, to: "bypassPermissions" }])
+
+  let stored = { permissionMode: "auto", localFileOpener: "system", preamble: "the operator's own words" } as unknown as Settings
+  h.ctx.getSettings = () => stored
+  h.ctx.setSettings = (next) => (stored = next)
+  h.ctx.resetSettings = () => (stored = { permissionMode: "auto" } as unknown as Settings)
+  await h.router.settingsSet.handler({ input: { ...stored, permissionMode: "bypassPermissions", preamble: "new words" } as Settings })
+  assert.deepEqual([records[2]!.action, records[2]!.outcome, records[2]!.detail], ["settingsSet", "ok", {
+    changed: ["permissionMode", "preamble"],
+    permissionMode: { from: "auto", to: "bypassPermissions" },
+  }])
+  await h.router.settingsReset.handler({ input: {} })
+  assert.deepEqual(records[3]!.detail, {
+    reset: true,
+    changed: ["localFileOpener", "permissionMode", "preamble"],
+    localFileOpener: { from: "system", to: null },
+    permissionMode: { from: "bypassPermissions", to: "auto" },
+  })
+  assert.ok(!JSON.stringify(records).includes("words"), "settings text is never written to the audit log")
   h.storage.close()
 })
 

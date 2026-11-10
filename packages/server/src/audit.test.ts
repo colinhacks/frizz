@@ -12,9 +12,11 @@ import {
   audited,
   encodeCallerStamp,
   fileAuditLog,
+  settingsChange,
   type AuditLog,
   type AuditRecord,
 } from "./audit.ts"
+import { callerAccess } from "./remote-gate.ts"
 
 // The audit trail exists because a stolen board session added `/private/tmp`, dispatched workers into
 // it and removed it again, and nothing recorded any of it (2026-10-08). These drive the REAL app: the
@@ -144,12 +146,38 @@ test("a request no proxy stamped is recorded as direct, with the peer the server
   assert.deepEqual(sink.records[0]!.origin, { via: "direct", remote: "127.0.0.1", session: null, device: "unknown device" })
 })
 
-test("a stamp that does not decode is not believed: the request reads as direct", async () => {
+// It read as `direct` until 2026-11-09, and `direct` is this machine with full control. That is the wrong
+// way to fail: the proxy lives in the launcher, which updates separately from the server, so a stamp a
+// newer launcher writes and this build cannot read would have made its public callers local.
+test("a stamp that does not decode is not believed, and is not this machine either: it is the most limited caller", async () => {
   const sink = capture()
-  const app = auditApp(sink, async () => ({ slug: "forged", sessionId: "sess-3" }))
-  const forged = Buffer.from(JSON.stringify({ via: "ceo", session: "x" })).toString("base64url")
-  await rpc(app, "dispatch", { prompt: "hello" }, { [CALLER_HEADER]: forged })
-  assert.equal(sink.records[0]!.origin.via, "direct")
+  let ran = false
+  const app = auditApp(sink, async () => { ran = true; return { slug: "forged", sessionId: "sess-3" } })
+  for (const stamp of [Buffer.from(JSON.stringify({ via: "ceo", session: "x" })).toString("base64url"), "not base64 json at all"]) {
+    const response = await rpc(app, "dispatch", { prompt: "hello" }, { [CALLER_HEADER]: stamp }, { remoteAddress: "127.0.0.1" })
+    assert.equal(response.status, 403, stamp)
+    assert.equal(callerAccess(stamp), "read-and-answer", stamp)
+  }
+  assert.equal(ran, false, "nothing was dispatched")
+  assert.deepEqual(sink.records.map((record) => [record.action, record.outcome]), [["remoteRefused", "refused"], ["remoteRefused", "refused"]])
+  assert.deepEqual(sink.records[0]!.origin, { via: "public", remote: "127.0.0.1", session: null, access: "read-and-answer", host: "unreadable caller stamp", device: "unknown device" })
+  // No stamp at all is still a caller that never passed the proxy, which is this machine.
+  assert.equal(callerAccess(undefined), "local")
+  assert.equal(callerAccess(""), "local")
+})
+
+test("a settings change is recorded by key, and by value only for the two keys that decide what a later action may do", () => {
+  const before = { permissionMode: "auto", localFileOpener: "system", preamble: "be terse", notifications: true }
+  assert.deepEqual(settingsChange(before, { ...before, permissionMode: "bypassPermissions", preamble: "PRIVATE WORDS" }), {
+    changed: ["permissionMode", "preamble"],
+    permissionMode: { from: "auto", to: "bypassPermissions" },
+  })
+  assert.deepEqual(settingsChange(before, { permissionMode: "auto", preamble: "be terse", notifications: true, launchPrefix: "nice" }), {
+    changed: ["launchPrefix", "localFileOpener"],
+    localFileOpener: { from: "system", to: null },
+  })
+  assert.deepEqual(settingsChange(before, { ...before }), { changed: [] })
+  assert.ok(!JSON.stringify(settingsChange(before, { ...before, preamble: "PRIVATE WORDS" })).includes("PRIVATE"), "a value that is the operator's words is never recorded")
 })
 
 test("a refused dispatch is recorded with its error, and the caller still gets that error", async () => {

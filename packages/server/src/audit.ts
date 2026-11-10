@@ -114,6 +114,12 @@ export function requestOriginFrom(input: {
   const device = describeDevice(input.userAgent)
   const stamp = decodeCallerStamp(input.caller)
   if (stamp) return { ...stamp, device }
+  // A stamp that is PRESENT and does not parse is not the same as none. None is a caller that never
+  // passed the proxy, which is this machine. One this build cannot read is a proxy saying something
+  // this build does not know, and the launcher is the half that updates separately: a newer one that
+  // gained a fourth `via` would have its public requests read here as `direct`, which accessOf calls
+  // local. So what cannot be read is the most limited caller there is, and the record says why.
+  if (input.caller) return { via: "public", remote: input.socketRemote ?? null, session: null, access: "read-and-answer", host: "unreadable caller stamp", device }
   return { via: "direct", remote: input.socketRemote ?? null, session: null, device }
 }
 
@@ -170,6 +176,16 @@ export type AuditAction =
   | "interactionResolve"
   | "commandWatchArm"
   | "monitorArm"
+  /** A thread was moved to another permission mode. `detail` has `from`, `to` and how it took effect. */
+  | "setThreadPermission"
+  /**
+   * The machine's settings were written or reset. `detail.changed` names the keys that differ, never
+   * their values (a preamble is the operator's words), except the two that decide what a LATER action
+   * may do: `permissionMode`, which every new thread starts in, and `localFileOpener`, which a click
+   * on a file link is handed to. Until 2026-11-09 neither this nor the action above wrote a line, so a
+   * session that switched a thread to bypass and then messaged it left only the message on record.
+   */
+  | "settingsSet"
   /** A remote caller asked for what only this machine may do: remote-gate.ts. `detail` says what. */
   | "remoteRefused"
 
@@ -242,6 +258,22 @@ export function auditSummary(record: AuditRecord): string {
   const target = [record.project.dir ?? record.project.id, record.thread].filter(Boolean).join(" ")
   const outcome = record.outcome === "ok" ? "ok" : `refused: ${record.error ?? "unknown error"}`
   return `${record.action} ${outcome}${target ? ` — ${target}` : ""} — via ${originSummary(record.origin)}`
+}
+
+/** The settings keys whose values an audit record may carry: enums that decide what a later action does. */
+const AUDITED_SETTING_VALUES = ["permissionMode", "localFileOpener"] as const
+
+/** What a settings write changed, for the audit record: every key by name, the two above by value. */
+export function settingsChange(before: Record<string, unknown>, after: Record<string, unknown>): Record<string, unknown> {
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+    .sort()
+  return {
+    changed,
+    ...Object.fromEntries(AUDITED_SETTING_VALUES
+      .filter((key) => changed.includes(key))
+      .map((key) => [key, { from: before[key] ?? null, to: after[key] ?? null }])),
+  }
 }
 
 export type AuditEntry = Omit<AuditRecord, "at" | "origin">

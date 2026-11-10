@@ -230,7 +230,7 @@ import { peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { deliverableInputText } from "./backend/claude-agent-sdk-protocol.ts"
 import { claudeModelStanding, claudeModelUpgradeBlock, claudeModelUpgradeDue, claudeModelUpgradeRefusal, claudeUpgradeCandidate, SERVER_STARTED_AT_MS } from "./backend/claude-model-upgrade.ts"
 import { log as frizzLog } from "./logging.ts"
-import { accessOf, audited, currentRequestOrigin, recordAudit, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
+import { accessOf, audited, currentRequestOrigin, recordAudit, settingsChange, textDigest, type AuditAction, type AuditFields } from "./audit.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { codexSandbox } from "./backend/codex.ts"
 import { liveBrokerRecords } from "./backend/claude-broker-host.ts"
@@ -3346,7 +3346,12 @@ export function createRouter(ctx: AppContext) {
     setThreadPermission: mutation({
       input: SetThreadPermissionInput,
       output: SetThreadPermissionResult,
-      handler: async ({ input }) => {
+      // Audited: this is how a thread is moved to bypass, and a follow-up sent a second later records
+      // only the follow-up (audit.ts `setThreadPermission`).
+      handler: ({ input }) => audit("setThreadPermission", () => {
+        const before = ctx.storage.getSession(input.slug)
+        return { project: thisProject, thread: input.slug, detail: { from: before?.permission_pending ?? before?.permission_mode ?? null, to: input.permissionMode } }
+      }, async () => {
         const thread = (await ctx.board.snapshot()).threads.find((t) => t.id === input.slug)
         if (!thread || thread.foreign || thread.kind !== "session") throw new Error(`thread ${input.slug} is not editable`)
         // EVERY codex thread persists its sandbox and applies it on the next turn: there is no separate
@@ -3431,7 +3436,7 @@ export function createRouter(ctx: AppContext) {
         }) === true
         cascadePermissionToChildren(input.slug, "claude", input.permissionMode)
         return { effect: retired ? "next-turn" as const : "next-resume" as const }
-      },
+      }, (result) => ({ detail: { effect: result.effect } })),
     }),
 
     threadProfileOptions: query({
@@ -5479,17 +5484,25 @@ export function createRouter(ctx: AppContext) {
       handler: async () => ctx.getSettings(),
     }),
 
+    // Audited, both of them: the settings hold the mode every new thread starts in and what a click on
+    // a file link is handed to, for every project on the machine (audit.ts `settingsSet`).
     settingsSet: mutation({
       input: Settings,
       output: Settings,
-      handler: async ({ input }) => ctx.setSettings(input),
+      handler: ({ input }) => {
+        const before = ctx.getSettings()
+        return audit("settingsSet", {}, () => ctx.setSettings(input), (saved) => ({ detail: settingsChange(before, saved) }))
+      },
     }),
 
     // Clear the stored settings blob so defaults (incl. the shipped default preamble) apply again.
     settingsReset: mutation({
       input: z.object({}),
       output: Settings,
-      handler: async () => ctx.resetSettings(),
+      handler: () => {
+        const before = ctx.getSettings()
+        return audit("settingsSet", { detail: { reset: true } }, () => ctx.resetSettings(), (saved) => ({ detail: settingsChange(before, saved) }))
+      },
     }),
 
     dispatchPreferencesGet: query({
