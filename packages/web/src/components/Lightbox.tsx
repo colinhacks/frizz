@@ -177,7 +177,9 @@ function GalleryPicture({ tile, ratio, labelled, onOpen, onShape, onBroken }: {
         ) : (
           <img
             src={localImageUrl(tile.path!)}
-            alt={tile.label}
+            // Under a caption the picture adds nothing to the button's name: with the label as its alt
+            // too, the tile was announced as its caption twice.
+            alt={labelled ? "" : tile.label}
             draggable={false}
             onLoad={(e) => shape(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)}
             onError={onBroken}

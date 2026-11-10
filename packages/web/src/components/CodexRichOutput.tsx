@@ -19,6 +19,7 @@ import type { CodexHostDirective, CodexHostDirectiveValue } from "../lib/codexHo
 import { BLOCK_RADIUS } from "./TranscriptCard.tsx"
 import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
 import { createMermaidRenderQueue } from "../lib/mermaidRenderQueue.ts"
+import { lazyModule } from "../lib/lazyModule.ts"
 
 function text(attrs: CodexHostDirective["attrs"], key: string): string | undefined {
   const value = attrs[key]
@@ -171,14 +172,11 @@ export function CodexDirectiveCard({ directive }: { directive: CodexHostDirectiv
   return <AutomationCard directive={directive} />
 }
 
-type MermaidModule = typeof import("mermaid")["default"]
-let mermaidModule: Promise<MermaidModule> | undefined
 let nextMermaidRender = 0
 
-function loadMermaid(): Promise<MermaidModule> {
-  mermaidModule ??= import("mermaid").then(({ default: mermaid }) => mermaid)
-  return mermaidModule
-}
+// Not `??= import("mermaid")`: that kept a failed chunk request, and every diagram after it read
+// "Diagram unavailable" until the page was reloaded (lib/lazyModule.ts has what each browser does).
+const loadMermaid = lazyModule(() => import("mermaid").then(({ default: mermaid }) => mermaid))
 
 function mermaidColors() {
   const root = getComputedStyle(document.documentElement)

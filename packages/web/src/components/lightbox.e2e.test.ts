@@ -190,6 +190,19 @@ test("a lightbox fence lays its pictures out in justified rows at their real sha
     // The missing file is listed as its path, and only the two real pictures take a place in the rows.
     assert.deepEqual(galleries[2].missing, ["/fixture/lightbox/missing-1440x900.png"])
     assert.equal(galleries[2].rows.flatMap((row) => row.pictures).length, 2)
+    // A tile is a button named by what is in it. Under a caption that is the caption, once: the picture
+    // carries no alt there. With no caption drawn, the picture's alt is the only name the button has.
+    const names = await page.$$eval("[data-lightbox-tile]", (tiles) => tiles.flatMap((tile) => {
+      const picture = tile.querySelector("img")
+      if (!picture) return [] // a video's frame is hidden from the name already
+      const caption = [...tile.querySelectorAll("span")].find((span) => span.title)?.textContent ?? null
+      return [{ caption, alt: picture.alt }]
+    }))
+    const captioned = names.filter((name) => name.caption !== null)
+    const bare = names.filter((name) => name.caption === null)
+    assert.ok(captioned.length > 0 && bare.length > 0, `the fixture has both kinds of gallery: ${JSON.stringify(names)}`)
+    assert.deepEqual(captioned.filter((name) => name.alt !== ""), [], "a captioned tile says its caption twice")
+    assert.deepEqual(bare.filter((name) => name.alt === ""), [], "an uncaptioned tile has no name at all")
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
