@@ -991,7 +991,11 @@ export class RestartSupervisorProxy {
     const maxAge = Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1000))
 
     url.searchParams.delete(ACCESS_CODE_PARAM)
-    const target = `${url.pathname}${url.search}${url.hash}` || "/"
+    // A path on this origin, never another host. `/.//evil.example/` normalizes to the pathname
+    // `//evil.example/`, and a Location that opens with two slashes names an authority: the visitor
+    // who just signed in would land on someone else's page. It needs a valid code to get this far.
+    const path = url.pathname.replace(/^[/\\]{2,}/, "/")
+    const target = `${path}${url.search}${url.hash}` || "/"
     // Secure + SameSite=Lax: the origin is https through the tunnel, and Lax still permits the
     // top-level navigation that lands here while refusing cross-site writes.
     res.writeHead(302, {

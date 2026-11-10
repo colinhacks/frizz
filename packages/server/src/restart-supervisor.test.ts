@@ -783,6 +783,11 @@ test("--public-origin without a session is not a reachable state: the gate cover
     const exchange = await proxied(port, `/thread/abc?frizz_code=${minted.code}`, publicHeaders)
     assert.equal(exchange.status, 302)
     assert.equal(exchange.headers?.location, "/thread/abc")
+    // The bounce is to a path on this origin. `/.//host/` normalizes to `//host/`, which a browser
+    // follows to that host: until 2026-11-09 this answered `Location: //evil.example/x?y=1`.
+    const offOrigin = await proxied(port, `/.//evil.example/x?y=1&frizz_code=${proxy.issueAccessCode()!.code}`, publicHeaders)
+    assert.equal(offOrigin.status, 302)
+    assert.equal(offOrigin.headers?.location, "/evil.example/x?y=1")
     assert.match(String(exchange.headers?.["set-cookie"]), /__Host-frizz_session=/)
     assert.match(String(exchange.headers?.["set-cookie"]), /HttpOnly/)
     const session = String(exchange.headers?.["set-cookie"]).split(";")[0]!
