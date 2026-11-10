@@ -37,7 +37,7 @@ import { leaseRuntime } from "../runtime-lease.ts"
 import { projectMcpServers, workerMcpServers, type StdioMcpServer, type WorkerMcpServers } from "./project-mcp-servers.ts"
 import { lazyMcpEnabled, startLazyMcpHost, type LazyMcpHost } from "./lazy-mcp-host.ts"
 import { frizzRoots } from "../frizz-paths.ts"
-import { claudeCompactionWindowOf } from "./types.ts"
+import { BROKER_DISALLOWED_TOOLS, claudeCompactionWindowOf } from "./types.ts"
 import { socketPathOwnership } from "./socket-ownership.ts"
 import { selfProcessStart } from "./daemon-identity.ts"
 import { createClaudeBrokerDiagnosticWriter, createClaudeBrokerExitWriter, type ClaudeBrokerExitReason } from "./claude-broker-diagnostics.ts"
@@ -254,13 +254,15 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
     ),
     strictMcpConfig: true,
     allowedTools: config.allowedTools,
-    // NO `disallowedTools` here, and the asymmetry with the argv path (WORKER_DISALLOWED_TOOLS →
+    // Claude Code's own schedulers are taken away (BROKER_DISALLOWED_TOOLS has the reason). AskUserQuestion
+    // is NOT on that list, and the asymmetry with the argv path (WORKER_DISALLOWED_TOOLS →
     // `--disallowedTools=AskUserQuestion`) is DELIBERATE. That flag exists because a worker launched as
     // its own interactive `claude` process had nowhere to put the question: it opened a TUI dialog on a
     // terminal screen nobody was looking at. On this path it
     // has somewhere to go — canUseTool routes it to a real dashboard question card, the operator answers
     // it, and the chosen labels reach the model. A follow-up sent instead of an answer retires the card
     // and unwinds the tool call (see retirePendingFor in the bridge), so a parked turn is still steerable.
+    disallowedTools: BROKER_DISALLOWED_TOOLS,
     canUseTool: async (request, context) => {
       const requestId = `perm-${++permSeq}`
       return await new Promise<ClaudePermissionDecision>((resolve) => {

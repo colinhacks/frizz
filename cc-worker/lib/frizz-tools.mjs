@@ -172,11 +172,6 @@ const GOAL = {
     "you keep notes in your scratch directory, a prompt that LINKS them comes back at the exact moment " +
     "you have lost everything else. Also mid-turn — a compaction happens while you are working.\n\n" +
     "Set at least one; any combination is fine.\n\n" +
-    "USE THIS RATHER THAN `CronCreate` or `ScheduleWakeup`. Those are Claude Code's own in-session " +
-    "schedulers and they CANNOT fire in the runtime frizz runs you in: their gate stays shut for as long " +
-    "as ANY background task of yours is outstanding, so the moment you are parked behind a background " +
-    "shell or a sub-agent — exactly when you most need waking — they go silent. This one is delivered by " +
-    "frizz itself and is unaffected.\n\n" +
     "READ IT BACK WITH `frizzctl goal get` — and do that BEFORE any `start` that is not a fresh arming. A " +
     "thread has AT MOST ONE goal, so a `start` REPLACES whatever is there, triggers and all, " +
     "and the text you are about to destroy may not be yours: the HUMAN can edit it in the thread footer, " +
@@ -256,8 +251,7 @@ const TIMER = {
     "independent, unlike the single goal this thread can hold.\n\n" +
     "USE IT for anything you want to come back to at a specific time: re-check a deploy in ten minutes, " +
     "re-read a slow log at the top of the hour, revisit a decision after a build finishes. USE " +
-    "`goal` instead when the thing must repeat, and remember that Claude Code's own " +
-    "`CronCreate`/`ScheduleWakeup` cannot fire in the runtime frizz runs you in.\n\n" +
+    "`goal` instead when the thing must repeat.\n\n" +
     "IT IS NOT A WAY TO POLL SOMETHING YOU COULD WAIT ON. If a background shell, a sub-agent or a " +
     "monitor can tell you the moment a thing happens, use that — an alarm every N seconds asking \"is it " +
     "done yet\" is strictly worse than being woken when it is.\n\n" +

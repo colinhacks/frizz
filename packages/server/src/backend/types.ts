@@ -730,6 +730,16 @@ export function claudeCompactionWindowOf(env: Record<string, string> | undefined
 // and lets the turn read the message. See `retirePendingFor`.
 export const WORKER_DISALLOWED_TOOLS = ["AskUserQuestion"] as const
 
+// Tools a BROKER Claude worker never gets, which is every Claude thread: Claude Code's own in-session
+// schedulers. The contract told workers for months not to use them, because their gate stays shut for
+// as long as any background task of the session is outstanding, which is exactly when a wake matters
+// (measured: 3 fires in 150s with no background work, 0 with a background shell alive). A tool a worker
+// must be warned off is better not offered, and `ScheduleWakeup` alone was 4,698 characters of schema
+// in every request. `frizzctl timer` and `frizzctl goal` are what a worker schedules with, and they
+// ride Frizz's own outbox. The `/loop` skill is built on these tools, so it has nothing to schedule
+// with in a Frizz thread; the contract says what to use instead.
+export const BROKER_DISALLOWED_TOOLS = ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList"] as const
+
 export interface SpawnOpts {
   sessionId: string // claude: pinned via --session-id. codex: advisory (id is discovered post-spawn)
   cwd: string

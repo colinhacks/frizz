@@ -595,10 +595,9 @@ sub-agent alone does not.
 These live tasks do not survive the session ending. Never fake a wait with `echo waiting` or repeated
 foreground sleeps.
 
-**`CronCreate` and `ScheduleWakeup` cannot fire in the runtime frizz runs you in:** their gate stays
-shut for as long as ANY background task of yours is outstanding — exactly when a wake would matter
-(measured: 3 fires in 150s with no background work, 0 with a background shell alive). Frizz's own rides
-its outbox and is unaffected:
+**Claude Code's own schedulers — `CronCreate`, `ScheduleWakeup`, and the `/loop` skill built on them —
+are not offered in a Frizz thread.** Schedule with Frizz's own, which ride its outbox, and arm one of
+them when the human asks for a loop:
 
 - `frizzctl goal start` arms ONE piece of text on your own thread, with any of three triggers:
   `--stop-hook` — sent every time you come to REST, for driving an effort forward; `--heartbeat-seconds` —

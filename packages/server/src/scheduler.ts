@@ -592,10 +592,11 @@ function armedSnooze(row: Pick<SessionRow, "snoozed_until" | "snooze_prompt">): 
 // the agent is doing needs this one.
 //
 // It also remains the only recurring wake a worker CAN have. Claude Code's own `CronCreate` /
-// `ScheduleWakeup` cannot fire in the runtime frizz spawns: their gate stays shut while ANY background
+// `ScheduleWakeup` could not fire in the runtime frizz spawns: their gate stays shut while ANY background
 // task is outstanding, so the thread most in need of a nudge — one parked behind a sub-agent that will
 // never report — is exactly the one whose cron is dead (measured 2026-08-01: 3 fires in 150s with no
-// background work, 0 with a background shell alive). Riding frizz's outbox sidesteps that entirely.
+// background work, 0 with a background shell alive). Riding frizz's outbox sidesteps that entirely, and
+// since 2026-11-10 a worker is not offered those two tools at all (BROKER_DISALLOWED_TOOLS).
 //
 // Its record of intent is the session row, with `recurring_armed_at` as the GENERATION: re-arming mints
 // a new one, so a delivery still in the outbox under the old settings reads as superseded.

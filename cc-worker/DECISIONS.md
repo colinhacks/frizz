@@ -1275,3 +1275,13 @@ Claude Code sends the appended system prompt as one cached block, and a block is
 - **The path reaches a Claude worker from three other places.** The first user message, and `session-seed.mjs` and `scratchpad.mjs` on every SessionStart: a startup, a resume, a clear and a compaction. On a cold resume of a real worker both hooks ran and named it. The contract's own sentence already sends the worker there ("exact path in your session-start context").
 - **Codex, ACP and OpenCode keep the line.** They have no hook that runs when a session starts.
 - **It reaches new threads only.** Claude Code keeps a thread's first system prompt across a resume.
+
+## 2026-11-10, later: a worker is not offered Claude Code's own schedulers
+
+The contract told every worker that `CronCreate` and `ScheduleWakeup` "cannot fire in the runtime frizz runs you in" (their gate stays shut while any background task of the session is outstanding), and both help texts repeated it. A tool a worker has to be warned off is better not offered.
+
+- **The broker passes `disallowedTools`: `ScheduleWakeup`, `CronCreate`, `CronDelete`, `CronList`** (`BROKER_DISALLOWED_TOOLS`). Measured on a real Haiku worker: 1,705 fewer tokens in every request, and the names are gone from the request's tools and from the deferred list.
+- **The warning is now two lines of the contract, and gone from `frizzctl goal --help` and `timer --help`.**
+- **`/loop` is built on those tools and its skill is still listed.** The contract says to arm one of Frizz's own (`frizzctl goal`, `frizzctl timer`) when the human asks for a loop. Sent `/loop 1m …`, a real worker armed `frizzctl goal start --heartbeat-seconds 60`.
+- **The tool list no longer matches the prefix Claude Code shares between all its users** (12,807 tokens here), so the first Frizz thread of an hour writes it and the rest read that copy.
+- **`AskUserQuestion`, `Workflow` and `ReportFindings` stay.** The first is drawn as a card, and a person can ask for the other two.

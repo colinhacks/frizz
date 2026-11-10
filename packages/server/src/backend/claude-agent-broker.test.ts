@@ -14,6 +14,7 @@ import { runClaudeBroker } from "./claude-agent-broker.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
 import { connectClaudeBroker, type ClaudeBrokerClient } from "./claude-broker-client.ts"
 import { CLAUDE_INPUT_DROP_DIAGNOSTIC_PREFIX, type ClaudeDiagnostic, type ClaudePermissionRequest, type ClaudeQueryEvent } from "./claude-agent-sdk-protocol.ts"
+import { BROKER_DISALLOWED_TOOLS } from "./types.ts"
 
 const fakeCli = fileURLToPath(new URL("./claude-agent-sdk.fixtures/fake-claude-cli.mjs", import.meta.url))
 
@@ -72,6 +73,24 @@ async function waitForRows(dir: string, predicate: (rows: ReturnType<typeof capt
     await new Promise((r) => setTimeout(r, 50))
   }
 }
+
+// What a worker is started WITHOUT, read off the arguments the CLI was really given. Claude Code's own
+// schedulers never fired while a background task was outstanding, so the contract warned every worker off
+// them; now they are simply not offered (BROKER_DISALLOWED_TOOLS). AskUserQuestion stays: this path
+// draws it as a card.
+test("a worker's CLI is started without Claude Code's own schedulers, and with AskUserQuestion", { timeout: 15_000 }, async () => {
+  const b = startBroker("basic")
+  try {
+    const rows = await waitForRows(b.dir, (r) => r.some((row) => row.kind === "startup"))
+    const argv = (rows.find((row) => row.kind === "startup") as unknown as { argv: string[] } | undefined)?.argv ?? []
+    const flag = argv.find((arg) => arg.startsWith("--disallowedTools="))
+    assert.ok(flag, `the CLI was given no --disallowedTools: ${argv.join(" ")}`)
+    const taken = flag.slice("--disallowedTools=".length).split(",")
+    assert.equal(taken.join(","), BROKER_DISALLOWED_TOOLS.join(","))
+    for (const tool of ["ScheduleWakeup", "CronCreate"]) assert.ok(taken.includes(tool), `${tool} is still offered`)
+    assert.ok(!taken.includes("AskUserQuestion"), "a question still has a card to go to")
+  } finally { await b.close() }
+})
 
 // The diagnostics log recorded a DROPPED input but never a RECEIVED one, and the drop line fires only
 // when `handle.send` REJECTS. A send that never completes — an agent wedged before it drains stdin —
