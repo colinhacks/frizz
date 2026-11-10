@@ -4,11 +4,16 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
-import watcher, {
-  type AsyncSubscription,
-  type Event as WatchEvent,
-  type Options as WatchOptions,
-  type SubscribeCallback,
+// TYPES ONLY. The watcher is a native addon, and this file is in the published launcher's bundle,
+// which never watches (src/production.ts passes `watch: false`). Imported as a value here, it was the
+// launcher's one runtime dependency: `npx frizz` installed eight packages where one would do, and a
+// machine without the platform's binary (`omit=optional`, an architecture with no prebuild) could not
+// print `--help`. The default subscriber below loads it the first time something is watched.
+import type {
+  AsyncSubscription,
+  Event as WatchEvent,
+  Options as WatchOptions,
+  SubscribeCallback,
 } from "@parcel/watcher"
 import {
   currentProcessGeneration,
@@ -504,6 +509,10 @@ function stopOwnerMessage(value: unknown): value is StopOwnerMessage {
   return msg.type === "frizz-stop-owner" && typeof msg.token === "string"
 }
 
+/** The default subscriber: the real watcher, loaded the first time a tree is watched (see the import at the top). */
+export const subscribeWithWatcher: NonNullable<DevSupervisorOptions["watchSubscribe"]> = async (root, callback, options) =>
+  (await import("@parcel/watcher")).default.subscribe(root, callback, options)
+
 class Supervisor implements DevSupervisor {
   readonly port: number
   readonly firstBoot: Promise<DevBoot>
@@ -605,7 +614,7 @@ class Supervisor implements DevSupervisor {
     this.childEntryProvider = opts.childEntryProvider
     this.childLaunchProvider = opts.childLaunchProvider
     this.childArgs = opts.childArgs ?? []
-    this.watchSubscribe = opts.watchSubscribe ?? ((root, callback, options) => watcher.subscribe(root, callback, options))
+    this.watchSubscribe = opts.watchSubscribe ?? subscribeWithWatcher
     // Not `typeof process.execve === "function"`: Node 24 on Windows exports it and throws
     // ERR_FEATURE_UNAVAILABLE_ON_PLATFORM on the call (measured 2026-09-11), so the platform decides.
     this.reexec = opts.reexec ?? (process.platform !== "win32" && typeof process.execve === "function"

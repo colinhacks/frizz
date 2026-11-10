@@ -42,9 +42,6 @@
     "prepack": "node ./scripts/prepare-package.mjs --server && node ./scripts/build-package.mjs --server && node ./scripts/build-package.mjs --shell && node ./scripts/publish-manifest.mjs --strip",
     "postpack": "node ./scripts/publish-manifest.mjs --restore"
   },
-  "dependencies": {
-    "@parcel/watcher": "2.5.6"
-  },
   "devDependencies": {
     "@frizz/server": "workspace:*",
     "@frizz/shared": "workspace:*",

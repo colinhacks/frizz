@@ -87,7 +87,10 @@ test("the shell bootstraps the versioned public server contract", () => {
 });
 
 test("native server dependencies do not leak back into the stable shell", () => {
-  assert.equal(manifest.dependencies?.["node-pty"], undefined);
+  // The shell is one bundled file. A dependency here is installed by every `npx frizz` and has to load
+  // before the launcher can print `--help`: until 2026-11-10 that was the server's file watcher, a
+  // native addon the registry launcher never starts (scripts/build-package.test.mjs runs the bundle).
+  assert.equal(manifest.dependencies, undefined, "the shell declares a runtime dependency again");
   // Sign-in runs over pipes: no pty, so no native addon that needs a build on any platform.
   assert.equal(serverManifest.dependencies?.["node-pty"], undefined);
   assert.equal(sourceServerManifest.dependencies?.["node-pty"], undefined);

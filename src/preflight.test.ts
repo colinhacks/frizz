@@ -120,26 +120,36 @@ test("the Node floor tracks the releases node:sqlite actually ships in", () => {
 // while declaring `engines: ">=22"`, and on Node 22.12 the addon did not fail to load — Node
 // SEGFAULTED registering it (EXC_BAD_ACCESS in napi_module_register_by_symbol during DLOpen).
 test("the Node floor covers the Node-API version every native dependency builds against", () => {
-  const require = createRequire(import.meta.url);
-  const manifest = JSON.parse(
-    readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
-  ) as { dependencies?: Record<string, string> };
+  // What a user's machine installs is the shell's dependencies and the published server's. The shell
+  // has had none since 2026-11-10, so the addons are the server's, resolved from where its source
+  // installs them. Reading only the shell's manifest would leave this loop with nothing to read.
+  const repo = join(import.meta.dirname, "..");
+  const dependenciesOf = (...path: string[]) =>
+    Object.keys((JSON.parse(readFileSync(join(repo, ...path, "package.json"), "utf8")) as { dependencies?: Record<string, string> }).dependencies ?? {});
+  const installed = [
+    ...dependenciesOf().map((name) => ({ name, require: createRequire(import.meta.url) })),
+    ...dependenciesOf("packages", "server-release").map((name) => ({ name, require: createRequire(join(repo, "packages", "server", "package.json")) })),
+  ];
   assert.ok(
-    !("better-sqlite3" in (manifest.dependencies ?? {})),
+    !installed.some(({ name }) => name === "better-sqlite3"),
     "better-sqlite3 is back as a dependency; it segfaults below its NAPI floor — see sqlite.ts"
   );
 
   let highest = 8; // Node-API 8 is the default when a binding.gyp says nothing.
-  for (const name of Object.keys(manifest.dependencies ?? {})) {
+  const addons: string[] = [];
+  for (const { name, require } of installed) {
     let gyp: string;
     try {
       gyp = readFileSync(join(dirname(require.resolve(`${name}/package.json`)), "binding.gyp"), "utf8");
     } catch {
       continue; // Not a native addon, or it ships no binding.gyp — nothing to derive.
     }
+    addons.push(name);
     const declared = Number(/NAPI_VERSION=(\d+)/.exec(gyp)?.[1]);
     if (Number.isSafeInteger(declared)) highest = Math.max(highest, declared);
   }
+  // The guard read something: with no addon found it would pass whatever the floor is.
+  assert.deepEqual(addons, ["@parcel/watcher"], "the set of native addons a user installs has changed; re-measure the Node floor");
 
   const lines = NODE_API_AVAILABILITY[highest];
   assert.ok(

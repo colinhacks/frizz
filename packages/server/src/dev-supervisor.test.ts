@@ -21,6 +21,7 @@ import {
   devReexecEnv,
   isDevServerSource,
   startDevSupervisor,
+  subscribeWithWatcher,
   type DevBoot,
   type DevSupervisor,
   type DevSupervisorOptions,
@@ -1632,4 +1633,30 @@ test("a forced supervisor stop still exits when releasing launch ownership throw
   stop()
   assert.deepEqual(exits, [1])
   assert.ok(errors.some((line) => line.includes("could not release launch ownership")))
+})
+
+test("the default subscriber loads the real watcher and reports a change in the tree", { timeout: 120_000 }, async () => {
+  // The supervisor's own tests hand it a stand-in subscriber, so nothing else here would notice the
+  // default one failing to load. It is an `import()` since 2026-11-10 (the note at the top of
+  // dev-supervisor.ts): the launcher's bundle no longer needs the addon installed to start.
+  const root = mkdtempSync(join(tmpdir(), "frizz-default-watch-"))
+  const seen: string[] = []
+  const subscription = await subscribeWithWatcher(root, (err, events) => {
+    assert.equal(err, null)
+    for (const event of events) seen.push(event.path)
+  }, {})
+  try {
+    // The operating system reports a new directory's first change late: 0.6s to 8.3s here on a busy
+    // machine, the same with the watcher imported statically. So the file is written until one write
+    // is reported.
+    const deadline = Date.now() + 90_000
+    for (let write = 0; seen.length === 0 && Date.now() < deadline; write++) {
+      writeFileSync(join(root, "touched.ts"), `// ${write}\n`)
+      await delay(50)
+    }
+    assert.ok(seen.some((path) => path.endsWith("touched.ts")), `no change was reported; saw ${JSON.stringify(seen)}`)
+  } finally {
+    await subscription.unsubscribe()
+    rmSync(root, { recursive: true, force: true })
+  }
 })

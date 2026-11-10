@@ -330,8 +330,11 @@ The Console is a project's board drawn from EVERY open project: one sidebar, one
 Two entry points, deliberately distinct:
 
 - **`npx frizz`** installs a stable, small `frizz` shell that resolves a compatible `frizz-server`
-  generation into an immutable managed directory. The shell package contains only `dist/frizz.js`;
-  its `frizzServer` manifest field names the default server package/version and compatibility epoch.
+  generation into an immutable managed directory. The shell package contains only `dist/frizz.js`
+  and declares no dependency: the bundle imports nothing at load but Node's own modules, so
+  `npx frizz` installs one package and the launcher starts on a machine where a native addon would
+  not (`scripts/build-package.test.mjs` bundles it and runs it with nothing installed beside it).
+  Its `frizzServer` manifest field names the default server package/version and compatibility epoch.
   `prepare-package.mjs --server` stages the public server's runtime closure at
   `packages/server-release/`: `web-dist/` (built client), `runtime/board/` (the board parser the
   server shells out to), and `runtime/cc-worker/` (the worker plugin dispatch loads), while
