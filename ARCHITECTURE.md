@@ -1,10 +1,25 @@
-# frizz architecture (read this before touching any package)
+# Frizz architecture (read § Invariants, then the section for what you touch)
 
-frizz is a workspace-scoped orchestration surface: a localhost server + web client (a browser tab by
-default) showing a sidebar of threads and, for the selected thread, a live embedded agent terminal.
-The UI has ZERO intelligence: all orchestration wisdom lives in the user-editable dispatch preamble
-(settings), in the repo's own `FRIZZ.md`, and in the worker plugin (`cc-worker/`). The original plan:
-`plans/standalone-ui.md`.
+Frizz is an orchestration surface for coding agents: one localhost server and a web client (a browser
+tab by default) showing every project's threads and, for the selected thread, its conversation, drawn
+from the agent's own transcript. There is no embedded terminal (§ Invariants: no tmux, no pty).
+The UI has ZERO intelligence: all orchestration wisdom lives in the worker contract and plugin
+(`cc-worker/`) and in the repo's own `FRIZZ.md`, the one operator-authored surface since the settings
+preamble was retired. The original plan: `plans/standalone-ui.md`.
+
+This file is long. § Invariants applies to every change. Beyond it, read what you are touching:
+
+| Touching | Read |
+| --- | --- |
+| Anything | § Invariants, § Conventions |
+| The web client (`packages/web`) | § Board nomenclature, § A thread's surfaces, § URL shape, § Switching projects without a document load, § The Console |
+| The server (`packages/server`) | § Packages, § URL shape |
+| A provider backend | § Provisioned runtimes, § Codex app-server bridge, § ACP backend, § OpenCode backend |
+| The launcher (`src/`), packaging, updates | § CLI launcher |
+| Running Frizz from source, its logs | § Developing frizz |
+
+`scripts/docs-paths.test.mjs` holds this table to the headings below, and every file that this
+document, `AGENTS.md`, `AGENTS.local.md`, `FRIZZ.md` and `README.md` name in backticks to the tree.
 
 ## Repo layout
 
@@ -245,15 +260,17 @@ The thread view always draws the virtualized transcript. The plain list it kept 
   project slug: rpc mounts at `/_frizz/rpc` (and `/_frizz/<project>/rpc` — see § URL shape), SSE at
   `/_frizz/events`, the multiplex socket at `/_frizz/ws`, static web assets in prod, Vite
   middleware in dev (`src/dev.ts`). Subsystems: `bus.ts` (EventEmitter → SSE), `board.ts`
-  (.frizz watcher + read model), `sessions.ts` (SQLite registry via better-sqlite3),
-  `tailer.ts` (JSONL), `dispatch.ts` (thread file create + prompt compose + spawn),
-  `settings.ts`.
+  (.frizz watcher + read model), `storage.ts` (the SQLite registry, on `node:sqlite`),
+  `tailer.ts` (JSONL), `dispatch.ts` (prompt compose + spawn: a thread is a session row and an
+  empty scratch folder, and no thread file is written), `settings.ts`.
 - `web` — React 19 + Vite 8 + Tailwind v4 + valtio + TanStack Query.
 
-Plus root `src/` — the `frizz` launcher (NOT a workspace package): canonicalize cwd's Git root,
-health-check/reuse its detached supervisor, atomically allocate/persist an isolated port, then open the
-URL. Locks and logs live under `~/.frizz/projects/<id>/`; `src/browser.ts` is vendored from Gluon via
-gent. See **CLI launcher** below.
+Plus root `src/` — the `frizz` launcher (NOT a workspace package): it joins the server already
+running on this machine or starts one, asks it where the launch lands, then opens the URL. Locks and
+logs live under `projects/<id>/` in Frizz's state root: `~/Library/Application Support/Frizz` on
+macOS, the XDG directories elsewhere, and `~/.frizz` only on a machine where that folder already
+exists (`packages/server/src/frizz-paths.ts`). `src/browser.ts` is vendored from Gluon via gent. See
+**CLI launcher** below.
 
 ## URL shape (one server, every project — the singleton)
 
