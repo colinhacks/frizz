@@ -36,6 +36,9 @@ export function useDispatchProfile(): {
   opencodeProfile: DefaultAgentProfile
   // The model menu's leading group on a machine that can start nothing else (defaultAgentProfile).
   firstGroup: string | undefined
+  // The providers the menu marks "Not signed in": a credential the server read as signed out, and no
+  // launch prefix that could be supplying one it cannot see.
+  signedOut: readonly string[]
   // What the model menu's OpenCode group is built from: the listed models, read only once OpenCode is
   // chosen or its list is opened (hooks/useOpencodeModels.ts), and the saved slug.
   opencode: Parameters<typeof opencodeProfileGroup>[0]
@@ -103,6 +106,13 @@ export function useDispatchProfile(): {
     onRequestOptions: opencodeModels.request,
   }), [opencodeModels.models, opencodeModels.loading, opencodeModels.request, resolved?.opencodeModel])
 
+  const claudeSignedOut = authStatus.data?.claude === "signed-out" && !settings.data?.launchPrefix?.claude?.trim()
+  const codexSignedOut = authStatus.data?.codex === "signed-out" && !settings.data?.launchPrefix?.codex?.trim()
+  const signedOut = useMemo(
+    () => [...(claudeSignedOut ? ["claude"] : []), ...(codexSignedOut ? ["codex"] : [])],
+    [claudeSignedOut, codexSignedOut],
+  )
+
   return {
     resolved,
     codexList,
@@ -111,6 +121,7 @@ export function useDispatchProfile(): {
     opencodeInstalled,
     opencodeProfile,
     firstGroup,
+    signedOut,
     opencode,
     loadError: preferences.isError || codexModels.isError,
     saveProfile: preference.mutate,

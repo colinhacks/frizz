@@ -35,7 +35,8 @@ const codexModels: CodexModel[] = [
   { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
 ]
 
-const allGroups = dispatchProfileGroups(codexModels, [], claudeModels)
+// `?signedOut=codex` (or `claude,codex`) marks those providers signed out, as useDispatchProfile does.
+const allGroups = dispatchProfileGroups(codexModels, [], claudeModels, undefined, undefined, (params.get("signedOut") ?? "").split(",").filter(Boolean))
 // A running thread's picker holds only its own backend's rows (useThreadComposerControls).
 const threadGroups = allGroups.filter((group) => group.id === "claude")
 

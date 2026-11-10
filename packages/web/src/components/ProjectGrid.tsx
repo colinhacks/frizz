@@ -705,9 +705,11 @@ export function ProjectGrid() {
             <PhantomCard hero pending={pick.isPending} onClick={() => pick.mutate()} />
           </div>
           <p className="mt-6 text-[11.5px] text-muted-70">
+            {/* `npx frizz`, and a folder: whoever is reading this ran `npx frizz`, so no `frizz` is on
+                their PATH, and a project does not have to be a repository. */}
             Or run{" "}
-            <code className="rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-muted">frizz</code>{" "}
-            inside a repository, and this page offers to add it.
+            <code className="rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-muted">npx frizz</code>{" "}
+            inside a folder, and this page offers to add it.
           </p>
         </div>
         {fallbackDialog}

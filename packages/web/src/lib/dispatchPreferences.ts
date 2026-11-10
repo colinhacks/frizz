@@ -94,6 +94,8 @@ export function dispatchProfileGroups(
   firstGroup?: string,
   // OpenCode's listed models and the saved slug, for its dropdown group (lib/opencodeProfile.ts).
   opencode?: Parameters<typeof opencodeProfileGroup>[0],
+  // The groups whose account is known to be signed out here (useDispatchProfile), by id.
+  signedOut: readonly string[] = [],
 ): ProfileGridGroup[] {
   // Only the agents actually on the server's PATH get a row: the catalogue lists eight, and a grid of
   // "not installed" rows would bury the two the operator has. A SAVED agent that has since gone
@@ -112,6 +114,7 @@ export function dispatchProfileGroups(
     {
       id: "claude",
       label: "Claude Code",
+      signedOut: signedOut.includes("claude") || undefined,
       options: claudeModelOptions(claudeModels).map((option) => ({
         model: option.value,
         label: option.label,
@@ -125,6 +128,7 @@ export function dispatchProfileGroups(
     {
       id: "codex",
       label: "Codex",
+      signedOut: signedOut.includes("codex") || undefined,
       options: codexModels.map((model) => ({
         model: model.slug,
         label: model.displayName,

@@ -35,6 +35,9 @@ export interface ProfileGridGroup {
   loading?: boolean
   /** Why the options could not be listed, shown in the group's dropdown. */
   notice?: string
+  /** The provider's account is signed out on this machine, so a thread on it stops at the sign-in. The
+   *  group says so beside its name. The models stay listed and can be picked. */
+  signedOut?: boolean
   /** Asks for the options. Called when the group's model list is opened, so a provider whose list costs
    *  something to read (OpenCode starts its service to answer) is never asked merely because a menu opened. */
   onRequestOptions?: () => void

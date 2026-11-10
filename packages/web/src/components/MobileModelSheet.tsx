@@ -151,6 +151,11 @@ export function MobileModelSheet({
                         <ModelName option={option} />
                       </span>
                       {group.experimental && oi === 0 && <ExperimentalChip className="shrink-0" />}
+                      {/* What the desktop menu writes beside the provider's name, on the row that carries
+                          the name here. Under the group's last model it read as that model's caption. */}
+                      {group.signedOut && oi === 0 && (
+                        <span data-mobile-model-signed-out className="shrink-0 text-[12.5px] text-muted">Not signed in</span>
+                      )}
                       {checked && <Check aria-hidden size={18} strokeWidth={2.6} className="shrink-0 text-fg" />}
                     </button>
                   )

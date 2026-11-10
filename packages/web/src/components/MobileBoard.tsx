@@ -434,6 +434,19 @@ const GEAR_DOT = "pointer-events-none absolute right-[9.5px] top-[10.5px] size-[
 
 const TAB_COUNT = "text-[12.5px] font-medium tabular-nums text-muted"
 
+/**
+ * The Queue tab's numbers: how many threads are asking (lit), then how many the tab lists (muted),
+ * as "2 · 5". When every listed thread is asking, the second number repeats the first, and "1 · 1"
+ * read as a glitch with nothing to say what either was: one number is shown. Each is named for a
+ * screen reader, which was read "Queue 1 · 1".
+ */
+export function queueTabCounts(asks: number, listed: number): { asks?: number; listed?: number } {
+  return {
+    ...(asks > 0 ? { asks } : {}),
+    ...(listed > 0 && listed !== asks ? { listed } : {}),
+  }
+}
+
 // The drawer stack and the modals stay the App's, and the restart overlay the PageFrame's that App
 // stands in: they are identical on both shells and mounting them twice would stack two of everything.
 export function MobileBoard() {
@@ -480,6 +493,7 @@ export function MobileBoard() {
   // "Working" is the maintainer's ACTIVE band — the rows that are spinning — counted with the predicate
   // the desktop rail's tooltip uses (activeBandThread), so the phone and the rail cannot disagree.
   const working = useMemo(() => all.filter(activeBandThread).length, [all])
+  const tabCounts = queueTabCounts(askCount, queue.length)
 
   const rows = tab === "queue" ? queue : tab === "snoozed" ? sections.snoozed : sections.inactive
   const statusView = snap.view.startsWith("status:") ? snap.view.slice(7) : null
@@ -548,8 +562,14 @@ export function MobileBoard() {
         </div>
         <div role="tablist" aria-label="Bands" className="flex gap-[22px] border-b border-border/70 px-[18px]">
           <BandTab band="queue" label="Queue" active={tab === "queue"} onClick={() => setTab("queue")}>
-            {askCount > 0 ? <span className="text-[12.5px] font-bold tabular-nums text-accent">{askCount}</span> : null}
-            {queue.length > 0 ? <span className={TAB_COUNT}>{askCount > 0 ? `· ${queue.length}` : queue.length}</span> : null}
+            {tabCounts.asks !== undefined ? (
+              <span aria-label={`${tabCounts.asks} need you`} className="text-[12.5px] font-bold tabular-nums text-accent">{tabCounts.asks}</span>
+            ) : null}
+            {tabCounts.listed !== undefined ? (
+              <span aria-label={tabCounts.asks !== undefined ? `of ${tabCounts.listed}` : `${tabCounts.listed} threads`} className={TAB_COUNT}>
+                {tabCounts.asks !== undefined ? `· ${tabCounts.listed}` : tabCounts.listed}
+              </span>
+            ) : null}
           </BandTab>
           <BandTab band="snoozed" label="Snoozed" active={tab === "snoozed"} onClick={() => setTab("snoozed")}>
             {sections.snoozed.length > 0 ? <span className={TAB_COUNT}>{sections.snoozed.length}</span> : null}

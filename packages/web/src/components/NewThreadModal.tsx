@@ -45,7 +45,7 @@ const NEW_THREAD_MARKS = <NewThreadAgentMarks />
 // preview — only the layout around them differs.
 function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
-  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, opencode, loadError: profileLoadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, signedOut, opencode, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -237,7 +237,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </PromptControlGroup>
       )
     }
-    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode)
+    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
@@ -297,7 +297,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </div>
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, firstGroup, opencode, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>

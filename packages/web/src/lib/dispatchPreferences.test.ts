@@ -207,3 +207,17 @@ test("a native OpenCode profile is ready to send: no effort axis, so nothing to 
     assert.equal(resolved.effortAvailable, true, model)
   }
 })
+
+test("a provider whose account is signed out is marked, and its models stay listed", () => {
+  const all = dispatchProfileGroups(models)
+  assert.deepEqual(all.filter((group) => group.signedOut).map((group) => group.id), [], "nothing is marked unless it is named")
+  const marked = dispatchProfileGroups(models, [], [], undefined, undefined, ["codex"])
+  assert.deepEqual(marked.filter((group) => group.signedOut).map((group) => group.id), ["codex"])
+  assert.deepEqual(
+    marked.find((group) => group.id === "codex")!.options.map((option) => option.model),
+    all.find((group) => group.id === "codex")!.options.map((option) => option.model),
+    "a signed-out provider can still be picked: Send is where the sign-in is offered",
+  )
+  // Only the two providers Frizz reads an account for can be marked.
+  assert.deepEqual(dispatchProfileGroups(models, [], [], undefined, undefined, ["claude", "codex", "acp"]).filter((group) => group.signedOut).map((group) => group.id), ["claude", "codex"])
+})

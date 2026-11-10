@@ -79,13 +79,19 @@ function isPlainClick(event: MouseEvent): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
 }
 
+/** What each home page is, in a line: a tab's tooltip. */
+export const HOME_TAB_ABOUT: Record<HomeView, string> = {
+  projects: "Every project on this machine",
+  console: "Every project's queue on one page",
+}
+
 /** The pill itself: the two tabs, Projects and Console. Placed by HomeSwitcher on the Console and by the grid. */
 export function HomeTabs({ className = "" }: { className?: string }) {
   // The tab that is lit is the page on screen. It read the KEPT home (lib/homeView.ts) until 2026-10-23,
   // which every tab shares: choosing Projects in one tab lit "Projects" over the Console in another.
   const view: HomeView = isConsolePath(useLocation().pathname) ? "console" : "projects"
   const total = useQueueTotal()
-  const tab = (target: HomeView, label: string, count?: number) => {
+  const tab = (target: HomeView, label: string, about: string, count?: number) => {
     const selected = view === target
     // REAL LINKS, so hovering one shows its address and ⌘-click, middle-click and "Open link in new tab"
     // work. They were buttons until 2026-10-23. Neither tab needs to record the choice: each page records
@@ -97,6 +103,9 @@ export function HomeTabs({ className = "" }: { className?: string }) {
         role="tab"
         aria-selected={selected}
         data-home-tab={target}
+        // What the page is, for whoever has not opened it: nothing else on a new install says what
+        // "Console" means. The browser's own delayed tooltip, since the pill is crossed constantly.
+        title={about}
         // The page you are on: a plain click stays put, as it did when the tabs were buttons, rather than
         // closing whatever thread the Console has open. A new tab still opens.
         onClick={(event) => { if (selected && isPlainClick(event)) event.preventDefault() }}
@@ -126,8 +135,8 @@ export function HomeTabs({ className = "" }: { className?: string }) {
       data-home-switcher
       className={`flex w-fit gap-0.5 rounded-full border border-border-strong bg-elevated/80 p-[3px] shadow-lg shadow-shadow-ink/40 backdrop-blur-md ${className}`}
     >
-      {tab("projects", "Projects")}
-      {tab("console", "Console", total)}
+      {tab("projects", "Projects", HOME_TAB_ABOUT.projects)}
+      {tab("console", "Console", HOME_TAB_ABOUT.console, total)}
     </div>
   )
 }

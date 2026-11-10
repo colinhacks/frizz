@@ -280,6 +280,15 @@ function DesktopProfileGridSelector({
                   <RadixMenu.Label className="flex items-baseline gap-1.5 text-left font-medium tracking-[0.07em] text-muted-55">
                     {group.label}
                     {group.experimental && <ExperimentalChip className="shrink-0" />}
+                    {/* A signed-out provider's models were listed like any other's, and the first sign of
+                        it was the sign-in at Send. In the heading's own line and its own small capitals,
+                        at the regular weight, so the name stays the louder of the two. In ordinary case
+                        the note stood taller than the name it annotates. */}
+                    {group.signedOut && (
+                      <span data-profile-grid-signed-out className="font-normal">
+                        <span aria-hidden="true">· </span>Not signed in
+                      </span>
+                    )}
                   </RadixMenu.Label>
                   {agentSettings && (group.id === "claude" || group.id === "codex") && (
                     <AgentSettingsPopover
