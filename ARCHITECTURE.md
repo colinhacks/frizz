@@ -133,10 +133,12 @@ then hangs: `nub run test <file>` is the same run with them on.
   machine, each named by a URL prefix. It was one server per repo until 2026-08; if you find a
   statement to that effect anywhere, it is stale. See "URL shape (one server, every project)" below —
   that section is load-bearing, and most bugs in this area come from carrying the old model forward.
-- **Frizz files are the source of truth for thread status.** The server imports the board logic
-  from `../../board/*.mjs` (zero-dep, plain node) — NEVER duplicate the parser. Writes
-  to thread files go through the same code paths as `frizz-update` (import `thread-update.mjs`
-  helpers), never hand-rolled markdown edits.
+- **A thread is a row in `ui.db`, and a `.frizz/<slug>.md` thread file is the legacy form.** The
+  server never parses or edits one itself: it SHELLS OUT to the board scripts in `board/` (zero-dep,
+  plain node), `index.mjs --json` to read them (`frizz.ts` `readBoard`, for adoption) and
+  `thread-update.mjs` to write one (`runThreadUpdate`), the same code path as `frizz-update`. NEVER
+  duplicate the parser, and never hand-roll a markdown edit. `board/` holds those two scripts, the
+  two modules the worker plugin's hooks import, and what they import; a test keeps it to that.
 - **Session JSONL (`~/.claude/projects/<slug>/<session-id>.jsonl`) is telemetry only** —
   liveness, previews. Parse defensively; on schema surprise degrade to "unknown", never crash,
   never let correctness depend on it.

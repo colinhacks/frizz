@@ -1,8 +1,8 @@
 // @ts-check
 /**
- * frizz — DERIVED agent state. The single shared derivation used by BOTH the Stop-hook
- * liveness helper (`./agent-liveness.mjs`) and the board (`./index.mjs`), so an agent's
- * reported state can never drift between the two.
+ * frizz — DERIVED agent state. The single derivation the board (`./index.mjs`) reports an agent's
+ * state from. (It was shared with a Stop-hook liveness helper, `agent-liveness.mjs`, until that hook
+ * was retired; the helper was removed on 2026-11-10.)
  *
  * THE PRINCIPLE — compute, don't store (the same rule the board already follows for
  * thread status). The thread↔agent binding (`.frizz/.agent-bindings.jsonl`, written

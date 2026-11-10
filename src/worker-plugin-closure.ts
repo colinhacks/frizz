@@ -46,10 +46,17 @@ export const WORKER_PLUGIN_REQUIRED_FILES = [
   "cc-worker/bin/frizzctl",
   "cc-worker/bin/frizzctl.mjs",
   "cc-worker/lib/frizz-tools.mjs",
+  // The board scripts the server shells out to (`index.mjs`, `thread-update.mjs`), the two modules the
+  // plugin's hooks import, and everything those four import in turn. Until 2026-11-10 the last three
+  // were missing, so a tree without `ownership.mjs` passed this check and failed at its first board
+  // read. `worker-plugin-closure.test.ts` keeps the list equal to the directory.
   "board/config.mjs",
   "board/agent-bindings.mjs",
   "board/index.mjs",
   "board/thread-update.mjs",
+  "board/ownership.mjs",
+  "board/agent-status.mjs",
+  "board/decisions.mjs",
 ] as const;
 
 /** Throw unless `root` (a staged `runtime/` tree, or the repo root it mirrors) holds every entry. */

@@ -10,15 +10,9 @@
  *   #2 SCOPED STALENESS — reconcileStampLastInstruction names the drifted thread(s).
  *   #3 STRUCTURED queued detection — only an UNCHECKED `- [ ]` follow-up flags (hasQueuedFollowup).
  *   #4 DEBOUNCE — a `dirty` nag holds until it persists > T min AND > K turns (debounceReconcileNag).
- *   #5 WATCHER/AGENT DROP-GUARD — a long-running still-alive agent with no terminal result gets a
- *      LOUD "VERIFY DIRECTLY" line (longRunningAgentLines).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   ownerCleanMtime,
   assessDrift,
@@ -29,10 +23,7 @@ import {
   DEFAULT_RECONCILE_DEBOUNCE_MIN,
   DEFAULT_RECONCILE_DEBOUNCE_TURNS,
 } from './config.mjs';
-import { longRunningAgentLines } from './agent-liveness.mjs';
-import { DEFAULT_LONG_RUNTIME_MIN, DEFAULT_DROPPED_MIN } from './agent-status.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 const BACKSTOP = 120;
 
 /** A throwaway ACTIVATED `.frizz/` project (session sentinel ON). */
@@ -108,81 +99,3 @@ test('debounceReconcileNag: dirty holds for T min AND K turns; first/backstop na
   // dirty, aged past BOTH → nag
   assert.equal(debounceReconcileNag({ reason: 'dirty', now: now + (min + 1) * 60_000, turns: 3 + turns, state: first.state, debounceMin: min, debounceTurns: turns }).nag, true, 'past both thresholds → fires');
 });
-
-// ── #2 self-satisfying stop + genuine-drift block ───────────────────────────────────
-/** Run the Stop hook; return `{ blocked, ctx }` (ctx = additionalContext when it blocked). */
-
-// ── #6 watcher/agent drop-guard ─────────────────────────────────────────────────────
-/**
- * Fixture for a long-running-but-still-alive agent: an active thread, a binding dispatched
- * `runtimeMin` ago, and a fresh `.output` (age `outputAgeMin`) under a /private/tmp/claude-* tasks
- * dir reachable from `transcriptPath`. Mirrors liveness.test.mjs's fixture, parametrizing the
- * dispatch time (runtime) which is what the drop-guard keys on.
- */
-let fixtureSeq = 0;
-function longRunningFixture({ runtimeMin, outputAgeMin, status = 'active' }) {
-  // UNIQUE per fixture: `agentAge`'s fallback globs ALL /private/tmp/claude-* task dirs, so two
-  // concurrent fixtures sharing an agentId/proj/session would cross-read each other's output.
-  const uid = `${process.pid}-${fixtureSeq++}`;
-  const agentId = `WATCH_${uid}`;
-  const dir = mkdtempSync(join(tmpdir(), 'frizz-dropguard-'));
-  mkdirSync(join(dir, '.frizz'), { recursive: true });
-  writeFileSync(join(dir, '.frizz', 'watch.md'), `---\ntitle: w\nstatus: ${status}\n---\nbody\n`);
-  const now = Date.now();
-  const dispatchedIso = new Date(now - runtimeMin * 60_000).toISOString();
-  writeFileSync(join(dir, '.frizz', '.agent-bindings.jsonl'),
-    JSON.stringify({ ts: dispatchedIso, agent_id: agentId, thread: 'watch', label: 'ci-watch' }) + '\n');
-
-  const projSlug = `proj-${uid}`, session = `sess-${uid}`;
-  // deriveTasksDir globs exactly ['/tmp','/private/tmp'], so the fixture MUST live under one of
-  // them — os.tmpdir() would not be found. macOS has both (/tmp -> /private/tmp); Linux only /tmp.
-  const claudeRoot = mkdtempSync(join(existsSync('/private/tmp') ? '/private/tmp' : '/tmp', 'claude-frizztest-'));
-  const tasksDir = join(claudeRoot, projSlug, session, 'tasks');
-  mkdirSync(tasksDir, { recursive: true });
-  const p = join(tasksDir, `${agentId}.output`);
-  writeFileSync(p, 'x');
-  if (outputAgeMin != null) {
-    const t = (now - outputAgeMin * 60_000) / 1000;
-    utimesSync(p, t, t);
-  }
-  const transcriptPath = join('/anything', projSlug, `${session}.jsonl`);
-  return { dir, sess: session, transcriptPath, agentId, outputPath: p, cleanup: () => { rmSync(dir, { recursive: true, force: true }); rmSync(claudeRoot, { recursive: true, force: true }); } };
-}
-
-/** Rewrite a fixture's binding so its agent's RUNTIME (now − dispatch ts) is `runtimeMin`, and
- *  re-touch its output to `outputAgeMin` (keeps it fresh) — to simulate an idle-wait watcher aging
- *  past a new drop-guard tier without re-creating the whole fixture (state persists across runs). */
-function ageFixture(fx, runtimeMin, outputAgeMin) {
-  const now = Date.now();
-  writeFileSync(join(fx.dir, '.frizz', '.agent-bindings.jsonl'),
-    JSON.stringify({ ts: new Date(now - runtimeMin * 60_000).toISOString(), agent_id: fx.agentId, thread: 'watch', label: 'ci-watch' }) + '\n');
-  const t = (now - outputAgeMin * 60_000) / 1000;
-  utimesSync(fx.outputPath, t, t);
-}
-
-test('longRunningAgentLines: a long-running STILL-ALIVE agent gets a loud VERIFY DIRECTLY line', () => {
-  const fx = longRunningFixture({ runtimeMin: DEFAULT_LONG_RUNTIME_MIN + 10, outputAgeMin: 5 });
-  try {
-    const lines = longRunningAgentLines({ transcriptPath: fx.transcriptPath, projectDir: fx.dir });
-    assert.equal(lines.length, 1);
-    assert.equal(lines[0].slug, 'watch');
-    assert.equal(lines[0].agentId, fx.agentId);
-    assert.match(lines[0].line, /VERIFY DIRECTLY — watch/);
-    assert.match(lines[0].line, /can HANG on a stuck\/ghost CI check/);
-  } finally {
-    fx.cleanup();
-  }
-});
-
-test('longRunningAgentLines: a SHORT-runtime agent, and a long-runtime-but-STALE one, are NOT flagged', () => {
-  const fresh = longRunningFixture({ runtimeMin: 10, outputAgeMin: 2 }); // under the runtime threshold
-  const stale = longRunningFixture({ runtimeMin: DEFAULT_LONG_RUNTIME_MIN + 30, outputAgeMin: DEFAULT_DROPPED_MIN + 5 }); // stale = the 'dropped' case, not this one
-  try {
-    assert.equal(longRunningAgentLines({ transcriptPath: fresh.transcriptPath, projectDir: fresh.dir }).length, 0, 'short runtime → no verify flag');
-    assert.equal(longRunningAgentLines({ transcriptPath: stale.transcriptPath, projectDir: stale.dir }).length, 0, 'long but STALE is the dropped signal, not the drop-guard (no double-nag)');
-  } finally {
-    fresh.cleanup();
-    stale.cleanup();
-  }
-});
-

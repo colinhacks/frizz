@@ -142,11 +142,19 @@ function fixture(root: string, content: string, omit: readonly string[] = []): s
         "board/agent-bindings.mjs": hash("bindings"),
         "board/index.mjs": hash("index"),
         "board/thread-update.mjs": hash("update"),
-      },
+      } as Record<string, string>,
     };
+  // Whatever the closure names beyond the files typed above, so widening the list needs no edit here:
+  // adding three board modules to it on 2026-11-10 failed fifteen tests in this file at once.
+  for (const file of WORKER_PLUGIN_REQUIRED_FILES) {
+    if (manifest.runtimeFiles[file]) continue;
+    mkdirSync(dirname(join(dir, "runtime", file)), { recursive: true });
+    writeFileSync(join(dir, "runtime", file), file);
+    manifest.runtimeFiles[file] = hash(file);
+  }
   for (const file of omit) {
     rmSync(join(dir, "runtime", file));
-    delete (manifest.runtimeFiles as Record<string, string>)[file];
+    delete manifest.runtimeFiles[file];
   }
   manifest.digest = fixtureDigest(manifest);
   const finalDir = join(root, manifest.digest);
