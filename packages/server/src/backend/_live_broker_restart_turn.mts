@@ -5,8 +5,9 @@
 // Reported symptom (2026-07-30, second report): four broker threads that had come to rest hours
 // earlier all rendered `runtime: "running"` — the "Working…" shimmer — on a control plane that had
 // restarted at 21:09Z. Every broker thread that rested AFTER that restart read correctly. Replaying the
-// live DB offline with NO runtime signal wired folds all four to `idle` (see _probe_turn_replay.mts),
-// so the fold is innocent and the reading can only come from the ingest's liveness map.
+// live DB offline with NO runtime signal wired folded all four to `idle` (a `_probe_turn_replay.mts`
+// that the unified database has since outdated, removed 2026-11-10; `git log` has it), so the fold is
+// innocent and the reading can only come from the ingest's liveness map.
 //
 // The suspected mechanism is one expression in claude-runtime-ingest.ts:
 //

@@ -1,10 +1,16 @@
 // Runs the REAL projectCodexTranscript over REAL rollout files and reports the tool cards it
 // produces, so the "write_stdin renders as its own card" claim is measured, not inferred from
 // reading the parser. Usage: nub packages/server/src/_probe_codex_cards.mts [days] [topN]
-import { readFileSync, readdirSync, statSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs"
 import { join } from "node:path"
-import { homedir } from "node:os"
-import { projectCodexTranscript } from "./transcript.ts"
+import { homedir, tmpdir } from "node:os"
+
+// The fold decodes a tool result's pictures into a cache under TMPDIR and prunes that cache at a cap.
+// Give it a directory of this run's own BEFORE the fold is loaded, so reading real rollouts never
+// writes into, or evicts from, the cache a running Frizz is serving.
+const scratchTmp = mkdtempSync(join(tmpdir(), "probe-codex-cards-"))
+process.env.TMPDIR = scratchTmp
+const { projectCodexTranscript } = await import("./transcript.ts")
 
 const days = Number(process.argv[2] ?? 14)
 const topN = Number(process.argv[3] ?? 25)
@@ -42,3 +48,4 @@ console.log(`\n--- rendered card names (top ${topN}) ---`)
 for (const [n, c] of [...cardNames].sort((a, b) => b[1] - a[1]).slice(0, topN)) {
   console.log(String(c).padStart(7), JSON.stringify(n))
 }
+rmSync(scratchTmp, { recursive: true, force: true })
