@@ -21,11 +21,10 @@ import {
   setPaneRailHidden, stepPane, takeComposerFocus, usePaneWide,
 } from "../lib/threadPane.ts"
 import { store } from "../store.ts"
-import { ThreadView } from "./ChatView.tsx"
+import { SidePane, ThreadView } from "./lazySurfaces.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { Tooltip } from "./Tooltip.tsx"
-import { RAIL_WIDTH } from "./FocusRail.tsx"
-import { LAYOUT_VARS, SidePane } from "./StandaloneThreadPage.tsx"
+import { LAYOUT_VARS, RAIL_WIDTH } from "../lib/fullLayout.ts"
 
 // THE ONE-THREAD PANE (see lib/threadPane.ts): the board as a sidebar and one thread at full
 // height. The thread is the same ThreadView the drawer and /full draw; everything a queue card did about

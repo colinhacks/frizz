@@ -9,7 +9,7 @@ import { childOpDismisser } from "../lib/dismissChildOp.ts"
 import { editedFileTree, flattenEditedFileTree } from "../lib/editedFileTree.ts"
 import { newestFileChangeKey } from "../lib/editedFilesRefresh.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
-import { prewarmLocalFile } from "../lib/localFileQuery.ts"
+import { prewarmLocalFile } from "../lib/localFileHighlight.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { tildePath } from "../lib/paths.ts"
 import { prefs } from "../lib/prefs.ts"
@@ -54,10 +54,9 @@ import { transcriptBackgroundShells } from "../lib/transcriptShells.ts"
 // thread header already says what the worker is doing, and the composer's own footer carries the
 // profile.
 
-// The rail's width, in px — the side pane on /full is exactly this wide while nothing covers it. 340
-// rather than the mockup's 300: the card's rows were fitted at a 368px card, and at 300 a PR row
-// truncated to "colinhacks/zod#…" — the one part of the ref that names the PR (2026-08-28).
-export const RAIL_WIDTH = 340
+// The rail's width lives in lib/fullLayout.ts, where the board's pane reads it without loading the rail.
+import { RAIL_WIDTH } from "../lib/fullLayout.ts"
+export { RAIL_WIDTH }
 
 // One level of the tree, in px. Tiny by request: at 12px type a level is well under an em, enough to
 // read as nesting beside a 12px mark without walking a deep path off the rail's right edge.

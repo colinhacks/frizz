@@ -1,6 +1,10 @@
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import "./styles.css"
+// DiffBlock imports this sheet too, and it is in the lazy thread-surfaces chunk (components/lazySurfaces):
+// imported here as well, the sheet stays in the entry's CSS, where it always was, for the classes it
+// styles outside that chunk (ImageFrame's `frizz-image-frame`, the tool rows).
+import "./lib/diff/diff.css"
 import { RootErrorBoundary } from "./components/ErrorBoundary.tsx"
 import { RouterProvider } from "react-router"
 import { router } from "./routes.tsx"
@@ -18,7 +22,9 @@ import { installCodeTabInterceptor } from "./lib/switch-code-tab.ts"
 import { installCodeExpandInterceptor } from "./lib/expand-code.ts"
 import { installDisclosureInterceptor } from "./lib/toggle-disclosure.ts"
 import { installThreadLinkInterceptor } from "./lib/thread-links.ts"
-import { primeRoute } from "./lib/router.ts"
+import { primeRoute, threadParam } from "./lib/router.ts"
+import { loadThreadSurfaces } from "./components/lazySurfaces.tsx"
+import { store } from "./store.ts"
 import { stepOffStaleLayerEntries } from "./lib/backDismiss.ts"
 import { innerPath } from "./lib/base-path.ts"
 import { projectScopedQueryKeyHash } from "./lib/queryKeyScope.ts"
@@ -39,6 +45,13 @@ if (!settingsFixture && !standaloneThreadSlug) {
   // open on the first frame instead of animating in afterwards. The router resolves the same path a
   // beat later and `useRouteToStore` re-applies it, which is idempotent.
   primeRoute()
+}
+
+// A page whose first paint is a thread — a full-screen page, a `?thread=` link, a drawer the route just
+// primed — needs the thread-surfaces chunk now, beside the board read; every other page fetches it once
+// its board has painted (components/lazySurfaces.tsx).
+if (!settingsFixture && (standaloneThreadSlug || threadParam(location.search) !== null || store.drawers.length > 0 || store.paneSlug)) {
+  void loadThreadSurfaces()
 }
 
 export const queryClient = new QueryClient({

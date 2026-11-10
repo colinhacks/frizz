@@ -292,5 +292,7 @@ test("a done card draws Mark as done only while the thread rests on it", () => {
   assert.ok(card, "FenceCard must exist")
   assert.match(card, /const markDone = doneThread && !isMobile && !pastRest \? \(/, "a card the thread has moved past draws no verb")
   // The tail's own done card (a sign-off that came in as a tool call) is never stale: it is only drawn at rest.
-  assert.match(source, /case "registered-done":\n\s+return <FenceCard fenceKind="done" body=\{thread!\.lastFence!\.body\} hints=\{thread!\.lastFence!\.hints\} wrap=\{wrap\} \/>/)
+  // (RegisteredDoneCard draws it, with the whole body — lib/registeredDoneBody — and no pastRest.)
+  assert.match(source, /case "registered-done":\n\s+return <RegisteredDoneCard thread=\{thread!\} wrap=\{wrap\} \/>/)
+  assert.match(source, /return <FenceCard fenceKind="done" body=\{body\} hints=\{thread\.lastFence!\.hints\} wrap=\{wrap\} \/>/)
 })

@@ -1,4 +1,4 @@
-import { awaitingFenceTitle, futureSnoozedUntil, type ThreadView } from "@frizz/shared"
+import { HEAD_MARKERS, awaitingFenceTitle, futureSnoozedUntil, type ThreadView } from "@frizz/shared"
 import type { SessionIndicatorKind } from "../groups.ts"
 import { awaitingProse, awaitingWaitClause, hintGloss } from "./awaitingPresentation.ts"
 import { toolActivityLabel } from "./toolActivity.ts"
@@ -33,8 +33,9 @@ function plain(text: string): string {
     .trim()
 }
 
-/** Block markers at the head of a message: a fence opener, a heading's `#`, a quote's `>`, a bullet. */
-const HEAD_MARKERS = /^(?:```[\w-]*\s*|#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)+/
+// The block markers at the head of a message (a fence opener, a heading's `#`, a quote's `>`, a bullet)
+// are shared HEAD_MARKERS: the board cuts an archived thread's done body to the head this line reads
+// (shared fence-head.ts), so both must agree on where the markers end.
 
 /** Where the first line ended, in a preview whose newlines are gone: the next block that could only
  *  have started a new line — a fence, a bullet, a numbered item, a heading, a quote. A real newline, if

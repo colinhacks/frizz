@@ -37,8 +37,13 @@ test("the card is the last rung of the one ladder, after the resting card", () =
     "the resting card, then the registered done, then the residual rung, then nothing",
   )
   // …and each of those rungs draws its own card, in the one renderer both paths call.
-  // The fence's HINTS ride along: a registered done carries the worker's `title:` there (2026-10-13).
-  assert.match(chat, /case "registered-done":\n\s*return <FenceCard fenceKind="done" body=\{thread!\.lastFence!\.body\} hints=\{thread!\.lastFence!\.hints\} wrap=\{wrap\} \/>/)
+  // The fence's HINTS ride along: a registered done carries the worker's `title:` there (2026-10-13). The
+  // BODY is the whole one: an archived thread's board view carries only its head (lib/registeredDoneBody),
+  // so the card draws what that hook reads, and nothing until it has it.
+  assert.match(chat, /case "registered-done":\n\s*return <RegisteredDoneCard thread=\{thread!\} wrap=\{wrap\} \/>/)
+  const card = chat.match(/function RegisteredDoneCard\([\s\S]*?\n}/)?.[0]
+  assert.ok(card, "RegisteredDoneCard must exist")
+  assert.match(card, /const body = useRegisteredDoneBody\(thread\)\n\s*if \(body === undefined\) return null\n\s*return <FenceCard fenceKind="done" body=\{body\} hints=\{thread\.lastFence!\.hints\} wrap=\{wrap\} \/>/)
   assert.match(chat, /case "rested":\n\s*return <RestedCard thread=\{thread!\} \/>/)
 })
 

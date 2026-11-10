@@ -163,6 +163,7 @@ import {
   DismissQuestionsInput,
   DismissQuestionsResult,
   ThreadSettledQuestionsResult,
+  ThreadRegisteredDoneResult,
   QuestionAnswerSchema,
   type SettledQuestionView,
   type ClosedQuestionSpecView,
@@ -197,7 +198,7 @@ import { withDefaultAgentProfile } from "./dispatch-preferences.ts"
 import { runtimeDownloads } from "./runtime-deferral.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
-import { appServerTurnStalled, resolveLiveWatchTarget, resolveRecurringPrompt, resolveSessionTitle } from "./board.ts"
+import { appServerTurnStalled, registeredDoneFence, resolveLiveWatchTarget, resolveRecurringPrompt, resolveSessionTitle } from "./board.ts"
 import { runThreadUpdate } from "./frizz.ts"
 import { repairThreadFile } from "./repair.ts"
 import { reopenArchivedThreadForFollowUp, resumeThread, wakeParkedThreadForFollowUp } from "./resume.ts"
@@ -2566,6 +2567,17 @@ export function createRouter(ctx: AppContext) {
         }
         return { questions, closed }
       },
+    }),
+
+    // A thread's registered completion, whole. An ARCHIVED thread's board view carries only the head of its
+    // done fence's body (shared fence-head.ts), and the one surface that draws the body — the done card at
+    // the bottom of the thread (web lib/registeredDone.ts) — reads it here when the thread is opened. The
+    // board decided the completion stands (registeredDoneFence against the last user turn); this is the
+    // same stored row, split by the same splitter, so the card reads what it read off the board before.
+    threadRegisteredDone: query({
+      input: SlugInput,
+      output: ThreadRegisteredDoneResult,
+      handler: async ({ input }) => ({ body: registeredDoneFence(ctx.storage.getThreadDone(input.slug), undefined)?.body ?? null }),
     }),
 
     // Runtime adapters create interactions internally. React gets only scoped reads and terminal

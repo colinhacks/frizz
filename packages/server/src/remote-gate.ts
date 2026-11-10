@@ -60,6 +60,7 @@ export const REMOTE_ACCESS = {
   threadTranscript: "allow",
   threadTranscriptEarlier: "allow",
   threadSettledQuestions: "allow",
+  threadRegisteredDone: "allow",
   threadLocate: "allow",
   pendingInteractions: "allow",
   interactionGet: "allow",

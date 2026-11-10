@@ -8,6 +8,7 @@ import type { TranscriptShellRecord } from "../lib/childOps.ts"
 import { heldHandoffIndex } from "../lib/fenceBlocks.ts"
 import { useFileDropZone, useFileIntakeHandle, type FileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
+import { useRegisteredDoneBody } from "../lib/registeredDoneBody.ts"
 import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
 import { useOpsHeldForTranscript } from "../lib/opsAhead.ts"
 import { placeQuestions, questionHomes, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
@@ -96,6 +97,9 @@ export interface ThreadMessages {
 
 export function useThreadMessages(thread: ThreadView | undefined, loaded: ChatMessage[]): ThreadMessages {
   const settledQuestions = useSettledQuestions(thread)
+  // Read beside the transcript: the done card at its bottom needs an archived thread's whole body, which
+  // the board view cuts to its head (lib/registeredDoneBody). The card reads the same cache.
+  useRegisteredDoneBody(thread)
   const boardQuestions = useMemo(() => openQuestionsOf(thread, settledQuestions), [thread, settledQuestions])
   const held = useTranscriptHeldForBoard(thread, loaded)
   const transcriptShells = useMemo(() => transcriptBackgroundShells(held), [held])

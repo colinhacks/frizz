@@ -16,7 +16,7 @@ import { SIDEBAR_COLUMN_CLASS, Sidebar } from "./components/Sidebar.tsx"
 import { MobileBoard } from "./components/MobileBoard.tsx"
 import { useIsMobile } from "./lib/mobile.ts"
 import { DrawerStack } from "./components/DrawerStack.tsx"
-import { TodosView } from "./components/TodosView.tsx"
+import { TodosView, preloadThreadSurfaces } from "./components/lazySurfaces.tsx"
 import { PaneLayout } from "./components/ThreadPane.tsx"
 import { setPaneFolded } from "./lib/threadPane.ts"
 import { NewThreadDialog } from "./components/NewThreadModal.tsx"
@@ -151,6 +151,8 @@ export function App() {
   // it has to run after the queue commits, which for a cold deep link is the same render the board
   // first arrives. (resolveRoutedThread no-ops unless there is a parked slug AND a board.)
   useEffect(() => { resolveRoutedThread() }, [board, snap.routeThreadSlug])
+  // The board has painted: fetch the thread surfaces while the browser is idle (components/lazySurfaces).
+  useEffect(() => { if (board) preloadThreadSurfaces() }, [board])
 
   const boardEmpty = useBoardIsEmpty()
   sidebarPresence.current = nextSidebarPresence(sidebarPresence.current, board && { projectDir: board.projectDir, threadCount: boardEmpty ? 0 : 1 })

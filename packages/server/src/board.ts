@@ -9,7 +9,7 @@ import { dirname, join } from "node:path"
 import watcher from "@parcel/watcher"
 import type { BoardDelta, BoardSnapshot, ClaudeModel, ThreadView, RuntimeState, ThreadRecurringPrompt, ProviderError } from "@frizz/shared"
 import { standingQuestions, type QuestionFenceFault } from "./question-fences.ts"
-import { AskedQuestionSchema, BoardDiffer, activeBandThreadAt, githubReadingStale, PermissionMode, SnoozeUntil, ThreadSlug, awaitingNeedsInput, formatElapsed, awaitingStatus, awaitingSteps, isDirectSubAgent, splitDoneFrontmatter, needsInputRequired, nameQuestionAnswer, questionAnswerMessage, questionsCancelledWakeMessage, type AskedQuestion, type NamedQuestionAnswer, type PermissionMode as PermissionModeValue, type QuestionAnswer, type QuestionDismissal } from "@frizz/shared"
+import { AskedQuestionSchema, BoardDiffer, activeBandThreadAt, githubReadingStale, PermissionMode, SnoozeUntil, ThreadSlug, awaitingNeedsInput, formatElapsed, awaitingStatus, awaitingSteps, isDirectSubAgent, splitDoneFrontmatter, elideArchivedDoneFence, needsInputRequired, nameQuestionAnswer, questionAnswerMessage, questionsCancelledWakeMessage, type AskedQuestion, type NamedQuestionAnswer, type PermissionMode as PermissionModeValue, type QuestionAnswer, type QuestionDismissal } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
 import { isHeadlessRow, isBrokerClaudeRow, sessionTitleLocked, type ThreadQuestionRow } from "./storage.ts"
@@ -2207,7 +2207,9 @@ function sessionThreadView(
     providerError,
     kind: "session",
     foreign: false,
-    lastFence: tele?.lastFence,
+    // An archived thread's ```done body travels as its head only (shared fence-head.ts): no row draws more,
+    // and the thread's own surface reads the rest when it opens (`threadRegisteredDone`).
+    lastFence: archived ? elideArchivedDoneFence(tele?.lastFence) : tele?.lastFence,
     seenAt: row.seen_at ?? undefined,
     state,
     // The two bands' order keys. `archivedAt` only while archived, so a reopened row never carries one;

@@ -11,40 +11,21 @@ import { setFaviconBadge } from "../lib/faviconBadge.ts"
 import { SHEET_BASE_WIDTH, SPLIT_MIN_PX } from "../lib/sheet.ts"
 import { trackQueueDock } from "../lib/queueDockInset.ts"
 import { boardQueuedThread, type ThreadView } from "@frizz/shared"
-import { ThreadView as ThreadViewSurface } from "./ChatView.tsx"
+import { ThreadView as ThreadViewSurface } from "./lazySurfaces.tsx"
 import { DrawerStack } from "./DrawerStack.tsx"
 import { FileViewerPanel } from "./FileViewerPanel.tsx"
-import { FocusRail, RAIL_WIDTH } from "./FocusRail.tsx"
+import { FocusRail } from "./FocusRail.tsx"
 import { PageFrame } from "./PageFrame.tsx"
 import { ThreadPageZone } from "./ThreadSurface.tsx"
 import { exitFullscreen } from "./CollapseThreadLink.tsx"
 import { TooltipProvider } from "./Tooltip.tsx"
 import { useQuery } from "@tanstack/react-query"
 
-/**
- * THE WHOLE GEOMETRY OF /full, as three lengths that depend on the PAGE WIDTH AND NOTHING ELSE — not
- * on whether a file is open, which is the point (see the layout comment below). Percentages resolve
- * against the row, which is the page minus the project rail, so a `vw` here would be wrong on a
- * board that shows one.
- *
- *   thread = half the page, capped at the drawer's width
- *   pane   = everything the thread does not take
- *   gutter = the slack left beside the pair once the rail has its 340
- *
- * `thread + pane` is exactly the page at every width (below 1440 both are half; above it the thread
- * pins at 720 and the pane takes the rest), which is what makes the open state a 50/50 read on a
- * 1200px screen — "600px of content, and then the file takes up 600px" (maintainer 2026-08-30) —
- * without either column having to change size to get there.
- */
-const PANE_W = `max(50%, calc(100% - ${SHEET_BASE_WIDTH}px))`
-export const LAYOUT_VARS = {
-  "--full-thread": `min(${SHEET_BASE_WIDTH}px, ${PANE_W})`,
-  // Below the split there is no rail and no viewer, so the column simply takes the page under the cap
-  // — which is the DRAWER's width, so the two surfaces agree and the morph between them is a translate.
-  "--full-thread-narrow": `min(${SHEET_BASE_WIDTH}px, 100%)`,
-  "--full-pane": PANE_W,
-  "--full-gutter": `max(0px, calc((100% - min(${SHEET_BASE_WIDTH}px, ${PANE_W}) - ${RAIL_WIDTH}px) / 2))`,
-} as CSSProperties
+// THE WHOLE GEOMETRY OF /full lives in lib/fullLayout.ts (LAYOUT_VARS), beside the rail's width: the board's
+// pane lays its thread out with the same lengths, and imports them from there so this page — a lazy chunk
+// since 2026-11-10 (components/lazySurfaces.tsx) — does not ride into the board's entry with them.
+import { LAYOUT_VARS } from "../lib/fullLayout.ts"
+export { LAYOUT_VARS }
 
 /**
  * The `/full` page for a thread in ANOTHER project — the two places that must name a project other

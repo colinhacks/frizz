@@ -1,5 +1,5 @@
 import { GithubHovercards } from "./GithubHovercards.tsx"
-import { LightboxHost } from "./Lightbox.tsx"
+import { LightboxHost } from "./lazySurfaces.tsx"
 import { Toaster } from "./Toaster.tsx"
 
 // THE HOSTS EVERY PAGE MOUNTS, in one place. The router has two shells — the layout around the grid and

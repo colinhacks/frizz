@@ -4,7 +4,7 @@ import { Navigate, Outlet, createBrowserRouter, useLocation, useNavigate, usePar
 import { App } from "./App.tsx"
 import { ProjectGrid } from "./components/ProjectGrid.tsx"
 import { ProjectRail, RAIL_INSET_CLASS } from "./components/ProjectRail.tsx"
-import { StandaloneThreadPage } from "./components/StandaloneThreadPage.tsx"
+import { StandaloneThreadPage } from "./components/lazySurfaces.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { PageHosts } from "./components/PageHosts.tsx"
 import { applyPath, registerNavigate, threadParam, withThreadParam } from "./lib/router.ts"
