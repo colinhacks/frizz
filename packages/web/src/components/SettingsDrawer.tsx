@@ -24,7 +24,7 @@ import { SettingsField } from "./SettingsField.tsx"
 import { Z_MODAL } from "../lib/layers.ts"
 import { ModalSurface } from "./ui/ModalSurface.tsx"
 
-type NotifPerm = "default" | "granted" | "denied" | "unsupported"
+export type NotifPerm = "default" | "granted" | "denied" | "unsupported"
 function currentPerm(): NotifPerm {
   if (typeof Notification === "undefined") return "unsupported"
   return Notification.permission as NotifPerm
@@ -88,6 +88,14 @@ export function SettingsDrawer({ offerUpdate = false }: {
     update({ ...draft, notifications: on })
   }
 
+  // The hint's own way to grant the permission. The setting ships On and the browser has not been
+  // asked, so until 2026-11-10 a new install read On and never showed a notification, and the only way
+  // to be asked was to click the On that was already selected.
+  async function allowNotifications() {
+    if (typeof Notification === "undefined") return
+    setPerm((await Notification.requestPermission()) as NotifPerm)
+  }
+
   if (isMobile) {
     return (
       <MobileSettingsPage
@@ -97,6 +105,7 @@ export function SettingsDrawer({ offerUpdate = false }: {
         notifications={draft ? draft.notifications : null}
         onNotifications={toggleNotifications}
         perm={perm}
+        onAllowNotifications={allowNotifications}
         offerUpdate={offerUpdate}
       />
     )
@@ -155,7 +164,7 @@ export function SettingsDrawer({ offerUpdate = false }: {
                 nothing else in the form). Off left, On right — switch convention. */}
             <SettingsField label="Desktop notifications" help={SETTINGS_HELP.notifications}>
               <OnOffToggle value={draft.notifications} onChange={toggleNotifications} />
-              {draft.notifications && <PermHint perm={perm} />}
+              {draft.notifications && <PermHint perm={perm} onAllow={allowNotifications} />}
             </SettingsField>
 
             {/* An experiment, so it sits below every preference an operator ordinarily adjusts and
@@ -325,6 +334,7 @@ function MobileSettingsPage({
   notifications,
   onNotifications,
   perm,
+  onAllowNotifications,
   offerUpdate,
 }: {
   shown: boolean
@@ -334,6 +344,7 @@ function MobileSettingsPage({
   notifications: boolean | null
   onNotifications: (on: boolean) => void
   perm: NotifPerm
+  onAllowNotifications: () => void
   offerUpdate: boolean
 }) {
   const { connection } = useSnapshot(store)
@@ -414,7 +425,7 @@ function MobileSettingsPage({
           </div>
           {notifications ? (
             <div className="border-b border-border/70 px-[18px] py-2.5">
-              <PermHint perm={perm} />
+              <PermHint perm={perm} onAllow={onAllowNotifications} touch />
             </div>
           ) : null}
         </MobileSection>
@@ -553,14 +564,34 @@ function WrapCodeToggle() {
 // Quiet, small permission-state line under the notifications toggle. Everything is muted (the old
 // loud-red denied line read as an error); the denied state additionally offers a recovery assist,
 // since a page can't re-prompt once denied.
-function PermHint({ perm }: { perm: NotifPerm }) {
+//
+// NOT YET ASKED is the one state the page can do something about, so it carries the button that asks:
+// the line and its action on one row, the action at the right, as the GitHub account's row has them.
+// `touch` is the phone's page, where the 30px button takes a 44px press.
+export function PermHint({ perm, onAllow, touch }: { perm: NotifPerm; onAllow: () => void; touch?: boolean }) {
   if (perm === "denied") return <NotifDeniedHelp />
-  const text: Record<Exclude<NotifPerm, "denied">, string> = {
+  const text: Record<Exclude<NotifPerm, "denied" | "default">, string> = {
     granted: "Browser permission granted — notifications fire when the window is hidden.",
-    default: "Browser permission not yet granted — notifications won't fire until you allow them.",
     unsupported: "This browser does not support desktop notifications.",
   }
-  return <span className="text-[11px] text-muted-70">{text[perm]}</span>
+  if (perm !== "default") return <span className="text-[11px] text-muted-70">{text[perm]}</span>
+  return (
+    <div className="flex items-center justify-between gap-3">
+      {/* Shorter than the line this state had alone ("… won't fire until you allow them."): the button
+          beside it now says how, and at 11px this one stays on a single line in the 512px drawer. */}
+      <span className="text-[11px] text-muted-70">Not yet allowed in this browser, so none are shown.</span>
+      <button
+        type="button"
+        data-allow-notifications
+        onClick={onAllow}
+        className={`button-outline shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-[12px] text-fg outline-none transition-colors hover:bg-panel-2 ${
+          touch ? "relative after:absolute after:inset-x-0 after:-inset-y-[7px] after:content-['']" : ""
+        }`}
+      >
+        Allow notifications
+      </button>
+    </div>
+  )
 }
 
 type Browser = "chrome" | "edge" | "safari" | "firefox" | "other"

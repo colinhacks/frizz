@@ -68,9 +68,26 @@ window.fetch = async (input, init) => {
   return nativeFetch(input, init)
 }
 
+// The browser's notification permission, which no headless browser can be asked for. Denied unless the
+// page is opened with `?notifications=default`: the not-yet-asked state, where the stand-in grants on
+// the first ask (`?notifications=default&answer=dismissed` leaves it unanswered instead) and counts the
+// asks on window.__notificationAsks.
+const notificationsParam = new URLSearchParams(location.search)
+const notificationPermission = { current: notificationsParam.get("notifications") === "default" ? "default" : "denied" }
+const notificationAsks = { count: 0 }
+Object.assign(window, { __notificationAsks: () => notificationAsks.count })
 Object.defineProperty(window, "Notification", {
   configurable: true,
-  value: { permission: "denied", requestPermission: async () => "denied" },
+  value: {
+    get permission() {
+      return notificationPermission.current
+    },
+    requestPermission: async () => {
+      notificationAsks.count += 1
+      if (notificationPermission.current === "default" && notificationsParam.get("answer") !== "dismissed") notificationPermission.current = "granted"
+      return notificationPermission.current
+    },
+  },
 })
 
 const [{ SettingsDrawer }, { queryClient }, { TooltipProvider }, { initCodeWrap }] = await Promise.all([
