@@ -233,7 +233,7 @@ export function App() {
               tuned 52px by ~1530px, where the pair has margins to spare. Wide layouts are unchanged.
           The classes are lib/boardColumns.ts's: the home switcher lays out an empty copy of this pair to
           find the top-left corner of the Console's sidebar, where it sits. */}
-      {/* THE ONE-THREAD PANE (prototype). A brand-new project keeps its centered first-task view below. */}
+      {/* THE ONE-THREAD PANE. A brand-new project keeps its centered first-task view below. */}
       {board && snap.view === "todos" && !(boardEmpty && !onConsole) ? (
         <PaneLayout sidebar={<ErrorBoundary label="the sidebar">{onConsole ? <ConsoleSidebar /> : <Sidebar />}</ErrorBoundary>} />
       ) : (

@@ -175,7 +175,7 @@ function useChildDrillSlug(): string | null {
 // desktop chrome on every width; a phone never links to it. (Desktop had a lifecycle footer under the
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
-/** What the one-thread pane hands the thread view it hosts (prototype): where acting on the thread takes
+/** What the one-thread pane hands the thread view it hosts: where acting on the thread takes
  *  the human, whether the header offers full screen, whether the rail stands beside it (full screen or in
  *  the three columns, unless the human put it away), and whether the thread was in the queue when it was
  *  opened, which draws it as its card does. */
@@ -665,7 +665,7 @@ export function RuntimeStatusLadder({
    *  server declines. RuntimeStatusSlot passes the surface's exit; off the queue there is none. */
   onRestingExit?: () => void
   onRestingExitFailed?: () => void
-  /** The steps reply where a send does not dismiss (prototype, the one-thread pane). */
+  /** The steps reply where a send does not dismiss (the one-thread pane). */
   onRestingReplied?: () => void
   /** The queue card's narrower column: the done card wraps its prose there (FenceCard `wrap`). */
   wrap?: boolean
@@ -841,7 +841,7 @@ function VirtualizedThreadTranscript({
   // The phone opens a thread at rest on the START of its last message rather than the end of it — see
   // the initial-scroll effect below. Read once, when the transcript first lands.
   openAtLastMessage?: boolean
-  // The one-thread pane's queue window (prototype): the first message drawn, by index into `messages`. It
+  // The one-thread pane's queue window: the first message drawn, by index into `messages`. It
   // reads from the top down, as the queue card does, and `sentAt` brings a reply back into view from there.
   windowStart?: number
   openAtTop?: boolean

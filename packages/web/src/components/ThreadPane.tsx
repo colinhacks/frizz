@@ -18,7 +18,7 @@ import { keyProject } from "../lib/threadKey.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import {
   advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded,
-  setPaneRailHidden, stepPane, takeComposerFocus, usePaneWide, type AfterSend,
+  setPaneRailHidden, stepPane, takeComposerFocus, usePaneWide,
 } from "../lib/threadPane.ts"
 import { store, threadBySlug } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
@@ -27,7 +27,7 @@ import { Tooltip } from "./Tooltip.tsx"
 import { RAIL_WIDTH } from "./FocusRail.tsx"
 import { LAYOUT_VARS, SidePane } from "./StandaloneThreadPage.tsx"
 
-// THE ONE-THREAD PANE, a PROTOTYPE (see lib/threadPane.ts): the board as a sidebar and one thread at full
+// THE ONE-THREAD PANE (see lib/threadPane.ts): the board as a sidebar and one thread at full
 // height. The thread is the same ThreadView the drawer and /full draw; everything a queue card did about
 // scrolling and fading is simply absent, because nothing here moves but the swap of one thread for another.
 
@@ -162,7 +162,6 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       >
         {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
       </main>
-      <PrototypeControls />
     </div>
   )
 }
@@ -350,46 +349,5 @@ function PaneEmpty({ parked, queue }: { parked: boolean; queue: readonly ThreadR
         <span aria-hidden className="text-[12px] opacity-60">⏎</span>
       </button>
     </div>
-  )
-}
-
-// The question a still frame cannot answer, kept out of Settings because it is not a setting.
-function PrototypeControls() {
-  const proto = useSnapshot(paneProto)
-  return (
-    <details data-pane-prototype className="group fixed bottom-3 left-3 z-20 text-[12px]">
-      <summary className="w-fit cursor-pointer list-none rounded-md border border-border bg-panel-2 px-2 py-1 text-muted-80 outline-none transition-colors hover:text-fg [&::-webkit-details-marker]:hidden">
-        Prototype
-      </summary>
-      <div className="absolute bottom-8 left-0 flex w-[300px] flex-col gap-3 rounded-lg border border-border bg-panel p-3 shadow-2xl">
-        <ProtoChoice<AfterSend>
-          name="After a send"
-          value={proto.afterSend}
-          onChange={(v) => { paneProto.afterSend = v }}
-          options={[
-            ["stay", "Stay on the thread", "⇧⌘⏎ sends and moves on"],
-            ["next", "Go to the next one", "Every send moves on"],
-            ["auto", "Depends how it was opened", "Stays from a row, moves on from the queue"],
-          ]}
-        />
-      </div>
-    </details>
-  )
-}
-
-function ProtoChoice<V extends string>({ name, value, onChange, options }: { name: string; value: V; onChange: (v: V) => void; options: readonly (readonly [V, string, string])[] }) {
-  return (
-    <fieldset className="flex flex-col gap-1">
-      <legend className="mb-1 text-[11px] font-medium text-muted-70">{name}</legend>
-      {options.map(([v, label, says]) => (
-        <label key={v} className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-0.5 hover:bg-hover">
-          <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} className="mt-[3px] accent-[var(--color-accent)]" />
-          <span className="min-w-0">
-            <span className="block leading-[18px] text-fg">{label}</span>
-            <span className="block text-[11.5px] leading-[15px] text-muted">{says}</span>
-          </span>
-        </label>
-      ))}
-    </fieldset>
   )
 }

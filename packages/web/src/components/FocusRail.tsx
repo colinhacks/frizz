@@ -290,7 +290,7 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
     // ABOVE the scroll origin (maintainer 2026-09-02, a 22-file list opening flush at the window edge),
     // where auto margins collapse to zero when there is no room.
     //
-    // `centred` is the one-thread pane prototype's: there the maintainer wants the column centred in the
+    // `centred` is the one-thread pane's: there the maintainer wants the column centred in the
     // window again, lists included (2026-11-09, "I want it to be vertically centered"), by the same auto
     // margins, so a list taller than the window still opens at its top.
     <aside data-focus-rail aria-label="Thread activity" className="flex h-full shrink-0 flex-col overflow-y-auto px-4 [view-transition-name:thread-rail]" style={{ width: RAIL_WIDTH }}>

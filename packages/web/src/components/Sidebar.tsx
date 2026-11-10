@@ -224,7 +224,7 @@ export function Sidebar() {
   const { running, rested } = useMemo(() => partitionActive(activeThreads), [activeThreads])
   const spy = useQueueScrollspy(snap.view, snap.drawers.length, rested.map((t) => t.id))
   const { railRef, navigateToQueueCard } = spy
-  // THE PANE (prototype): the marked row is the thread on screen, not a card under a reading line.
+  // THE PANE: the marked row is the thread on screen, not a card under a reading line.
   const activeId = snap.paneSlug ?? spy.activeId
   // A dispatch from the prompt box above, drawn as the Running row it is about to become — see StartingRow.
   // The board's ids are only gathered while one is pending.

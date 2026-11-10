@@ -69,7 +69,7 @@ export function SendSplitButton({
   bottom: number
   onMode: (mode: SendMode) => void
   onSend: () => void
-  /** Send, then bring up the next thread in the queue (prototype, the one-thread pane). */
+  /** Send, then bring up the next thread in the queue (the one-thread pane). */
   onSendAndNext?: () => void
   /** The menu closed: put the caret back in the prompt box, where the next keystroke belongs. */
   onMenuClosed?: () => void

@@ -37,7 +37,7 @@ export function ExpandThreadLink({ slug, size = 14, className, label = "Open ful
     event.stopPropagation()
     if (!isPlainLeftClick(event)) return
     event.preventDefault()
-    // THE PANE (prototype): full screen is the same page with the sidebar put away, not a navigation.
+    // THE PANE: full screen is the same page with the sidebar put away, not a navigation.
     // ⌘-click and the address stay what they were, for a /full tab of its own.
     if (paneEnabled()) {
       foldPane(slug)

@@ -134,7 +134,7 @@ export function HomeTabs({ className = "" }: { className?: string }) {
 
 /** The Console's placement: fixed, in the corner where its sidebar starts. `sidebarInset` is for a layout
  *  whose sidebar is not the centred pair's: how far in from the window's left edge the pill stands, as a
- *  CSS length of the page (the one-thread pane, a prototype). */
+ *  CSS length of the page (the one-thread pane). */
 export function HomeSwitcher({ railVisible, sidebarInset }: { railVisible: boolean; sidebarInset?: string }) {
   return (
     // The empty copy of the board's two columns, inset by the rail as the page is (routes.tsx RootLayout),

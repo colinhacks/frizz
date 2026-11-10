@@ -181,11 +181,9 @@ export const store = proxy({
   // The router parks the slug here and App resolves it the first render the board is authoritative
   // (see resolveRoutedThread). Snoozed slugs keep the address bar on ?thread=<slug> meanwhile.
   routeThreadSlug: null as string | null,
-  // THE ONE-THREAD PANE (prototype): the thread the board's right-hand column shows, chosen by a sidebar
-  // row or by moving through the queue. Null is the prompt to open the first item (ThreadPane.tsx).
+  // THE ONE-THREAD PANE: the thread the board's right-hand column shows, chosen by a sidebar row or by
+  // moving through the queue. Null is the prompt to open the first item (ThreadPane.tsx).
   paneSlug: null as string | null,
-  // How the pane's thread got there: a row the human clicked, or the queue bringing it up.
-  paneVia: "direct" as "direct" | "queue",
   // The slug whose BOARD surface (thread drawer or queue card) is currently wearing
   // `view-transition-name: thread-chat`, so the /full page's thread column has somewhere to morph
   // back into when the fullscreen page is left for the board (browser Back, or the collapse icon).
@@ -337,19 +335,18 @@ export function pushDrawer(kind: "thread" | "doc", slug: string, opts?: { routed
   openOrRaiseDrawer({ kind, slug, routed: opts?.routed })
 }
 
-// THE ONE-THREAD PANE (prototype): on a desktop board a thread opens in the right-hand column, never in a
+// THE ONE-THREAD PANE: on a desktop board a thread opens in the right-hand column, never in a
 // sheet over it. The phone keeps its own shell and its sheets; the /full page has no pane to show one in,
 // so a link there still opens a drawer.
 export function paneEnabled(): boolean {
   if (typeof location === "undefined" || typeof window === "undefined") return false
-  // A status list has no pane to show a thread in, so a thread there opens in a drawer as on main.
+  // A status list has no pane to show a thread in, so a thread there opens in a drawer.
   return !isMobileViewport() && store.view === "todos" && parseStandaloneThreadPath(innerPath()) === null
 }
 
-export function showInPane(slug: string, via: "direct" | "queue" = "direct"): void {
+export function showInPane(slug: string): void {
   const open = store.drawers.filter((d) => !d.closing).map((d) => d.id)
   if (open.length) closeDrawersById(open)
-  store.paneVia = via
   store.paneSlug = slug
 }
 

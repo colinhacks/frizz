@@ -626,7 +626,7 @@ export function Composer({
     // silently rode along with the next unrelated message. Typing stays enabled during upload (the
     // commit re-derives from valueRef); only SENDING waits for the attachment to land.
     const canSend = armed && !busy && !uploading
-    // ⇧⌘⏎ — send and move on (prototype, the one-thread pane). With nothing to send it just moves on.
+    // ⇧⌘⏎ — send and move on (the one-thread pane). With nothing to send it just moves on.
     if (surface === "chatComposer" && e.key === "Enter" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing && paneEnabled()) {
       e.preventDefault()
       e.stopPropagation()

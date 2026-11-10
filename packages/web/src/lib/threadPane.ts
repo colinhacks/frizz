@@ -4,25 +4,23 @@ import { proxy, subscribe } from "valtio"
 import { closeDrawersById, showInPane, store } from "../store.ts"
 import { prefersReducedMotion } from "./sheet.ts"
 
-// THE ONE-THREAD PANE, a PROTOTYPE on its own branch (maintainer 2026-11-06: "we may just be optimized for
-// only showing one card on the screen at a time"). The board's right-hand column shows one thread at full
-// height, picked by a sidebar row. Done and Snooze bring up the next thread in the queue. With nothing
-// picked the column offers the first item.
-//
-// `after send` is the question a still frame cannot answer, so the prototype lets it be tried
-// (ThreadPane.tsx PrototypeControls). It is not meant to survive it as a setting.
+// THE ONE-THREAD PANE (maintainer 2026-11-06: "we may just be optimized for only showing one card on the
+// screen at a time"; tried on its own branch and landed 2026-11-09). The board's right-hand column shows
+// one thread at full height, picked by a sidebar row. Done and Snooze bring up the next thread in the
+// queue. With nothing picked the column offers the first item. A send stays on the thread; ⇧⌘⏎ sends
+// and moves on.
 
-export type AfterSend = "stay" | "next" | "auto"
-
+// The key still says prototype, which is what the pane was when it was first stored: renaming it would
+// put away nothing but the human's choices.
 const KEY = "frizz.threadPanePrototype.v1"
 
-function load(): { afterSend: AfterSend; folded: boolean; railHidden: boolean } {
-  const fallback = { afterSend: "stay" as AfterSend, folded: false, railHidden: false }
+function load(): { folded: boolean; railHidden: boolean } {
+  const fallback = { folded: false, railHidden: false }
   try {
     const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<typeof fallback>
-    // Field by field, so a key an earlier build stored (the slim rail's `foldStyle`) is dropped.
+    // Field by field, so a key an earlier build stored (the slim rail's `foldStyle`, the trial's
+    // `afterSend`) is dropped.
     return {
-      afterSend: stored.afterSend ?? fallback.afterSend,
       folded: stored.folded ?? fallback.folded,
       railHidden: stored.railHidden ?? fallback.railHidden,
     }
@@ -80,7 +78,7 @@ export function advanceFrom(slug: string, opts?: { dismissed?: boolean }): void 
   // Asked first: `left` takes the thread out of the list its place in the queue is read from.
   const next = nextQueuedAfter(slug)
   if (opts?.dismissed) left.set(slug, Date.now())
-  if (next) showInPane(next, "queue")
+  if (next) showInPane(next)
   else {
     closeDrawersById(store.drawers.filter((d) => !d.closing).map((d) => d.id))
     store.paneSlug = null
@@ -95,7 +93,7 @@ export function reinstate(slug: string): void {
 
 export function openFirstQueued(): void {
   const first = liveQueue()[0]
-  if (first) showInPane(first, "queue")
+  if (first) showInPane(first)
 }
 
 /** One step through the queue from wherever the pane is. Off the queue, down is its first item. */
@@ -104,18 +102,18 @@ export function stepPane(delta: 1 | -1): void {
   const slug = store.paneSlug
   const at = slug ? live.indexOf(slug) : -1
   const target = at === -1 ? (delta === 1 ? live[0] : undefined) : live[at + delta]
-  if (target) showInPane(target, "queue")
+  if (target) showInPane(target)
 }
 
 // ── a send ────────────────────────────────────────────────────────────────────────────────────────
 let sendAndNextArmed = false
 
-/** The one thing a send decides: whether the thread that was sent to stays on screen. */
+/** The one thing a send decides: whether the thread that was sent to stays on screen. It does, unless
+ *  the send was ⇧⌘⏎'s. */
 export function paneAfterSend(slug: string): void {
   const armed = sendAndNextArmed
   sendAndNextArmed = false
-  const move = armed || paneProto.afterSend === "next" || (paneProto.afterSend === "auto" && store.paneVia === "queue")
-  if (move) advanceFrom(slug)
+  if (armed) advanceFrom(slug)
 }
 
 /** ⇧⌘⏎, and the Send menu's row. With nothing to send it only moves on. */

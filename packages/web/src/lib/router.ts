@@ -110,7 +110,7 @@ export function applyPath(path: string, search = ""): void {
     closeDrawersById(store.drawers.map((d) => d.id))
     return
   }
-  // THE PANE (prototype): the address names what the pane shows. A thread it already shows is this sync
+  // THE PANE: the address names what the pane shows. A thread it already shows is this sync
   // coming back around, and the sheets over it stay. Anything else is Back, Forward or a link: parked
   // like any thread, with the board's App settling it through pushDrawer (store.ts).
   if (paneEnabled()) {

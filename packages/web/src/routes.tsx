@@ -87,7 +87,7 @@ function RootLayout() {
   )
 }
 
-// THE ONE-THREAD PANE (prototype): the pill's corner belongs to the sidebar, which full screen puts away.
+// THE ONE-THREAD PANE: the pill's corner belongs to the sidebar, which full screen puts away.
 // It follows the sidebar's own left edge, which is not the centred pair's (ThreadPane.tsx). With a file
 // open the columns fill the page, so that edge is the page's.
 function ConsoleHomeSwitcher({ railVisible }: { railVisible: boolean }) {
