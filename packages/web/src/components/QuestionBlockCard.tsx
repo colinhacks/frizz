@@ -587,7 +587,9 @@ function Chip({
             a size, not to the muted tone: it is the substance of the choice, not a caption on it. The
             size is `[data-question-option] .md-body` in styles.css — a utility here loses to `.md-body`. */}
         {bodyMd !== undefined && (
-          <LinkedHtml className={`md-body mt-1.5 opacity-90${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={bodyHtml} />
+          // The space before `${` is load-bearing: Tailwind does not read a class that a `${` touches, and
+          // `opacity-90${…}` was styled only because a mockup happened to spell `opacity-90` on its own.
+          <LinkedHtml className={`md-body mt-1.5 opacity-90 ${wrap ? QUEUE_WRAP : ""}`} html={bodyHtml} />
         )}
       </div>
     </div>

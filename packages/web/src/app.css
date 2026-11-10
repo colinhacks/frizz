@@ -1,0 +1,26 @@
+/* THE APP'S STYLESHEET: styles.css, without the classes only a fixture or a test spells.
+
+   Tailwind writes a rule for every class it finds in any file under packages/web, and 125 fixture and
+   mockup pages, two kits and every test live in src/ beside the app. No fixture module reaches a
+   production chunk, but their classes did: built both ways on 2026-11-10, the one render-blocking
+   stylesheet was 246,129 bytes with them and 205,564 without (37,486 and 32,616 gzipped), 531 of its
+   2,244 class selectors used by nothing the app draws. A phone pays for it through the relay.
+
+   main.tsx imports THIS file. A fixture page imports styles.css itself, as before, and is compiled
+   with everything in view, so a fixture keeps every class it spells.
+
+   The consequence to know: a class the app uses has to be spelled whole in app source. One was not.
+   `opacity-90${…}` in QuestionBlockCard.tsx is unreadable to Tailwind (a class a `${` touches is not a
+   class to it) and was styled only because two mockups spelled `opacity-90`. With this file such a
+   class is missing in development too, where it is seen, not only in a build.
+
+   Everything else belongs in styles.css. This file stays these lines. */
+@import "./styles.css";
+@source not "./**/*-fixture.tsx";
+@source not "./**/*-fixture.ts";
+@source not "./**/*-fixture-stub.ts";
+@source not "./**/*-kit.tsx";
+@source not "./**/*-kit.ts";
+@source not "./**/*.test.ts";
+@source not "./**/*.test.tsx";
+@source not "../*-fixture.html";
