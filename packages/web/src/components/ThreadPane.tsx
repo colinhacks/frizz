@@ -41,6 +41,15 @@ import { LAYOUT_VARS, SidePane } from "./StandaloneThreadPage.tsx"
 const WIDE_SIDEBAR_PX = 300
 const NARROW_SIDEBAR_PX = 272
 
+// THE SIDEBAR AND THE RAIL FLOAT IN THE MIDDLE OF THE WINDOW (maintainer 2026-11-09: "I want it to be
+// vertically centered"). Both were centred once and anchored to the top on 2026-10-13, because a centred
+// column moves everything in it by half of any change in its height (Sidebar.tsx SIDEBAR_COLUMN_CLASS);
+// the pane brings the centring back for itself alone. Auto margins on the column's content, never
+// `justify-center` on the column: past the window's height the margins fall to zero and the list scrolls
+// from its top instead of being clipped above it (FocusRail). `flex-initial` lets the Console's column,
+// which fills its aside, shrink to its content so there is room to centre it in.
+const CENTRED_SIDEBAR = "[&>aside>div]:my-auto [&>aside>div]:flex-initial"
+
 /** The queue in the order the pane walks it: the order the queue's cards stood in. */
 export function usePaneQueue(): readonly ThreadRow[] {
   const onConsole = isConsolePath()
@@ -77,9 +86,9 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
     : "1 1 0"
   const [peek, setPeek] = useState(false)
   if (!folded && peek) setPeek(false)
-  // A board's sidebar opens level with the thread's header (its 52px was the line the first queue card
-  // opened on). The Console's top is held by the home switcher above its status row.
-  const boardTop = isConsolePath() ? "" : "[&>aside]:!pt-3"
+  // A board's sidebar keeps 12px clear above and below what it centres (its 52px top was the line the
+  // first queue card opened on). The Console's top is held by the home switcher above its status row.
+  const boardTop = isConsolePath() ? "" : "[&>aside]:!py-3"
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -121,7 +130,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       {!folded ? (
         <div
           data-pane-sidebar
-          className={`h-full px-4 [view-transition-name:pane-sidebar] [&>aside]:!w-full ${boardTop}`}
+          className={`h-full px-4 [view-transition-name:pane-sidebar] [&>aside]:!w-full ${CENTRED_SIDEBAR} ${boardTop}`}
           style={{ flex: sidebarFlex, minWidth: wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX, maxWidth: PANE_SIDEBAR_MAX_PX }}
         >
           {sidebar}
@@ -138,7 +147,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
             data-pane-sidebar-peek={peek ? "" : undefined}
             inert={peek ? undefined : true}
             onMouseLeave={() => setPeek(false)}
-            className={`fixed left-0 top-0 z-20 h-dvh border-r border-border bg-bg px-4 shadow-2xl transition-[translate,opacity] duration-150 ease-out ${boardTop} ${peek ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0"}`}
+            className={`fixed left-0 top-0 z-20 h-dvh border-r border-border bg-bg px-4 shadow-2xl transition-[translate,opacity] duration-150 ease-out ${CENTRED_SIDEBAR} ${boardTop} ${peek ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0"}`}
           >
             {sidebar}
           </div>
@@ -277,7 +286,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
             <PaneEdgeToggle side="right" hidden={railHidden} onToggle={() => setPaneRailHidden(!railHidden)} />
           )}
         </div>
-        {sidePane && thread && <SidePane slug={slug} thread={thread} rail={!railHidden} />}
+        {sidePane && thread && <SidePane slug={slug} thread={thread} rail={!railHidden} centredRail />}
       </div>
     </ProjectScope>
   )
