@@ -51,7 +51,11 @@ export interface LocalImageFile {
 // `bytes=0-` and then seeks with further ranges, and Safari plays nothing from a server that cannot
 // answer them. Both HTTP callers stream that span off disk rather than reading the file into memory —
 // a screen recording runs to hundreds of megabytes, and the element abandons most of what it asks for.
-export function resolveLocalImage(rawPath: string | undefined, range?: string | null): LocalImageResult {
+//
+// `restore` is asked about a path that names nothing, once: a picture Frizz decoded out of a transcript
+// lives in a small cache that drops its oldest files, and the server knows how to write one back
+// (transcript.ts restoreToolImage). True means the file is there now.
+export function resolveLocalImage(rawPath: string | undefined, range?: string | null, restore?: (path: string) => boolean): LocalImageResult {
   if (rawPath) rawPath = normalizeLocalPath(rawPath)
   if (!rawPath || !isAbsolute(rawPath)) return { status: 400 }
 
@@ -62,7 +66,12 @@ export function resolveLocalImage(rawPath: string | undefined, range?: string | 
   try {
     real = realpathSync(rawPath)
   } catch {
-    return { status: 404 }
+    if (!restore?.(rawPath)) return { status: 404 }
+    try {
+      real = realpathSync(rawPath)
+    } catch {
+      return { status: 404 }
+    }
   }
 
   let size: number

@@ -11,6 +11,7 @@ import type { AppContext } from "./context.ts"
 import { allowedLocalCorsOrigin, isTrustedLocalHttpRequest } from "./local-origin.ts"
 import { compress, MIN_COMPRESS_BYTES, negotiateEncoding, shouldCompress } from "./compression.ts"
 import { localImageHeaders, localImageStream, resolveLocalImage } from "./local-image.ts"
+import { restoreToolImage } from "./transcript.ts"
 import { localFileHeaders, resolveServedLocalFile } from "./local-file.ts"
 import { resolveProjectIconResponse } from "./project-icon.ts"
 import { resolveLocalVisualization } from "./local-visualization.ts"
@@ -201,7 +202,7 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
   app.get(frizzRoute("/local-image"), (c) => {
     // One 404 for a remote caller's refusal, as for a missing file: the answer says nothing about the disk.
     if (accessIn(c) === "read-and-answer" && !mayReadRemotely(c.req.query("path") ?? "")) return c.text("404", 404)
-    const r = resolveLocalImage(c.req.query("path"), c.req.header("range"))
+    const r = resolveLocalImage(c.req.query("path"), c.req.header("range"), restoreToolImage)
     if (r.status === 416) return c.body(null, 416, { "content-range": `bytes */${r.size}`, "accept-ranges": "bytes" })
     if (r.status === 400 || r.status === 404) return c.text(String(r.status), r.status)
     // Hono answers a HEAD by running this handler and dropping the body, so open no file for one.

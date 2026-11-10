@@ -1,7 +1,7 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { createHash, type Hash } from "node:crypto"
 import { StringDecoder } from "node:string_decoder"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import {
   DISPATCH_TASK_BANNER_MARKER,
@@ -830,7 +830,7 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
     let drewEvents = false
     if (evs.length > 0) {
       // A user-record carrier can in principle also carry tool_result blocks — never skip their back-fill.
-      attachToolResults(rec, pendingTools, backgroundShells, backgroundTaskIds, childDispatchIds)
+      attachToolResults(rec, pendingTools, backgroundShells, backgroundTaskIds, childDispatchIds, sourceId)
       evs.forEach((ev, i) => {
         ev.sourceId = i === 0 ? sourceId : `${sourceId}#${i}` // keep sourceIds unique per rendered message
         out.push(ev)
@@ -1058,7 +1058,7 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
     if (rec.type === "user") {
       // Back-fill any Read excerpts this record carries FIRST — a tool_result record is dropped as a
       // human bubble (isMeta / tool_result-only), but it still holds the file content we want to show.
-      attachToolResults(rec, pendingTools, backgroundShells, backgroundTaskIds, childDispatchIds)
+      attachToolResults(rec, pendingTools, backgroundShells, backgroundTaskIds, childDispatchIds, sourceId)
       // isMeta marks harness-injected user records (hook feedback, reminders, autonomous /loop
       // wakeups) — plumbing the human never typed, so it must not render as their bubble. But an
       // autonomous /loop wakeup is ENQUEUED like any follow-up (emitting a gray queued bubble),
@@ -1622,6 +1622,110 @@ function persistBase64Image(mediaType: string | undefined, data: string, idKey: 
   }
 }
 
+// WHERE EACH DECODED PICTURE CAME FROM, so one the cache has dropped can be written again.
+//
+// The cache is 200 files for the whole install, pruned oldest-first on every write, and a fold hands a
+// card its path once and never looks again. A retained fold therefore kept pointing at files other
+// threads' folds had long since pushed out: measured 2026-11-09 on the live board, 340 of the 367 image
+// cards in the latest windows of 70 open threads had no file, and a dead path draws as its hash name
+// where the picture was. Whether a screenshot showed depended on which other threads had been read since.
+//
+// The record the picture was decoded from is still in the transcript, at the byte offset the fold read
+// it at. So the fold notes that offset beside the file's name, and a request for a file that is gone
+// (the /local-image route, through `restoreToolImage`) reads that one record and decodes it again, under
+// the same checks as the first time. Both maps are memory of THIS process: after a restart a thread's
+// next read folds it again and notes its pictures again.
+//
+// Only what a transcript can give back is covered: a tool result's own image block. A copy of a file
+// the worker sent or viewed (persistSentFile) has no such source, since the worker overwrites that file.
+interface ImageOrigin {
+  /** `${identityPrefix}:${byte offset of the record's line}`: the record's `sourceId` in its fold. */
+  record: string
+  /** The `tool_use_id` whose result carries the picture, which is also what its cache name hashes. */
+  toolUseId: string
+}
+const IMAGE_ORIGINS_MAX = 20_000
+const imageOrigins = new Map<string, ImageOrigin>() // cache file name → where its bytes are
+const FOLDED_PATHS_MAX = 4_096
+const foldedTranscriptPaths = new Map<string, string>() // a fold's identityPrefix → the file it reads
+/** One record of a transcript, read on its own. Far above any real one; an image block alone may be 32 MB. */
+const IMAGE_RECORD_MAX_BYTES = 48 * 1024 * 1024
+
+function remember<V>(map: Map<string, V>, key: string, value: V, max: number): void {
+  map.delete(key) // re-inserted, so the newest use is the last to go
+  map.set(key, value)
+  if (map.size > max) map.delete(map.keys().next().value!)
+}
+
+function noteImageOrigin(cachePath: string, record: string, toolUseId: string): void {
+  remember(imageOrigins, basename(cachePath), { record, toolUseId }, IMAGE_ORIGINS_MAX)
+}
+
+/** The line that starts at `offset`, or undefined when it cannot be read or is longer than any record. */
+function readRecordAt(file: string, offset: number): string | undefined {
+  let fd: number | undefined
+  try {
+    fd = openSync(file, "r")
+    const parts: Buffer[] = []
+    let total = 0
+    for (;;) {
+      const buf = Buffer.allocUnsafe(1024 * 1024)
+      const read = readSync(fd, buf, 0, buf.length, offset + total)
+      if (read <= 0) break
+      const end = buf.subarray(0, read).indexOf(0x0a)
+      parts.push(buf.subarray(0, end === -1 ? read : end))
+      if (end !== -1) break
+      total += read
+      if (total > IMAGE_RECORD_MAX_BYTES) return undefined
+    }
+    return parts.length ? Buffer.concat(parts).toString("utf8") : undefined
+  } catch {
+    return undefined
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
+function inScreenshotCache(path: string): boolean {
+  const dir = dirname(path)
+  if (dir === SCREENSHOT_CACHE_DIR) return true
+  try {
+    return realpathSync(dir) === realpathSync(SCREENSHOT_CACHE_DIR) // /var and /private/var name one directory
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Write a pruned tool-result picture back into the cache from the transcript record it came from.
+ * True when the file `requested` names is there again. False for anything this process never handed
+ * out, a transcript that has moved or changed, and a record that no longer carries that picture.
+ */
+export function restoreToolImage(requested: string): boolean {
+  const origin = imageOrigins.get(basename(requested))
+  if (!origin || !inScreenshotCache(requested)) return false
+  const cut = origin.record.lastIndexOf(":")
+  const file = foldedTranscriptPaths.get(origin.record.slice(0, cut))
+  const offset = Number(origin.record.slice(cut + 1))
+  if (!file || !Number.isSafeInteger(offset) || offset < 0) return false
+  const line = readRecordAt(file, offset)
+  if (!line) return false
+  let rec: Raw
+  try {
+    rec = JSON.parse(line)
+  } catch {
+    return false
+  }
+  const content = rec?.message?.content
+  if (!Array.isArray(content)) return false
+  for (const block of content) {
+    if (block?.type !== "tool_result" || block.tool_use_id !== origin.toolUseId) continue
+    const restored = persistResultImage(block.content, origin.toolUseId)
+    return restored !== undefined && basename(restored) === basename(requested)
+  }
+  return false
+}
+
 // Max source image we will copy (bytes). A statSync check BEFORE readFileSync bounds memory — never load
 // a multi-GB path the model named into a Buffer. A real screenshot is far below this.
 const SENT_IMAGE_MAX_BYTES = 24_000_000
@@ -1769,6 +1873,7 @@ function attachToolResults(
   backgroundShells: Map<string, { at?: string; call: TranscriptToolCall }>,
   backgroundTaskIds: Map<string, string>,
   childDispatchIds: Map<string, string>,
+  sourceId?: string,
 ): void {
   const content = rec.message?.content
   if (!Array.isArray(content)) return
@@ -1888,6 +1993,7 @@ function attachToolResults(
     // card can render it inline. `b.tool_use_id` is a verified string by the guard at the loop head.
     // A Read of the human's own prompt attachment keeps its plain header instead (PendingClaudeTool).
     const outputImage = status !== "failed" && status !== "cancelled" && !entry.promptAttachment ? persistResultImage(b.content, b.tool_use_id) : undefined
+    if (outputImage && sourceId) noteImageOrigin(outputImage, sourceId, b.tool_use_id) // see restoreToolImage
     // A `&` job the worker's hook REFUSED never ran, so nothing is left untracked: the call is an ordinary
     // failed Bash and folds into `Ran N tool calls` like one. Kept as `"unknown"` it drew its own red row
     // between two digests (maintainer 2026-11-07: "Why do I sometimes see tool calls like this, even
@@ -2493,6 +2599,7 @@ function readAppendedBytes(fd: number, from: number, to: number): Buffer {
 // entry serves both. Before this they kept SEPARATE caches and folded the same 30 MB twice on a cold
 // drawer open — once for the RPC, once for the socket push — and retained two copies forever after.
 function retainedFoldEntry(path: string, identityPrefix: string, fileId: string, size: number): { entry: TranscriptCacheEntry; hit: boolean } {
+  remember(foldedTranscriptPaths, identityPrefix, path, FOLDED_PATHS_MAX) // where restoreToolImage reads a record back
   let entry = transcriptCache.get(path)
   // Drop a stale entry: the file shrank (truncation), rotated (new inode), or is being parsed under a
   // different identity. Any of these means the retained fold no longer describes byte 0..size.
@@ -5200,6 +5307,7 @@ export function projectTranscriptPageAgentLifecycles(
 export function readTranscriptFile(absPath: string): TranscriptMessage[] {
   try {
     const pathKey = createHash("sha256").update(absPath).digest("base64url").slice(0, 16)
+    remember(foldedTranscriptPaths, `claude-file:${pathKey}`, absPath, FOLDED_PATHS_MAX)
     return parseTranscript(readFileSync(absPath, "utf8"), `claude-file:${pathKey}`)
   } catch {
     return []
