@@ -3,13 +3,14 @@ import test from "node:test"
 
 // Opt-in because this drives a real Frizz server and Chrome. The live seam is intentional: the
 // regression came from Radix's portal/focus/outside-pointer side effects, which SSR cannot observe.
-// TWO slugs: _SLUG is a QUEUED (needs-you) thread — it has a card in the main column; _DRAWER_SLUG is a
-// NON-queued session thread, deep-linked to raise the modal thread drawer. They must differ, because a
-// queued thread deliberately has no drawer at all: its `/thread/<slug>` route scrolls to the card, and
-// the card's arrow is now a new-tab LINK to the standalone page rather than a drawer trigger.
+// TWO slugs: _SLUG is a QUEUED (needs-you) thread, opened in the desktop board's one-thread pane with
+// the snooze menu in its header; _DRAWER_SLUG is a SNOOZED thread, opened as a modal thread drawer over a
+// status list. A desktop board opens EVERY thread in its pane and never a drawer (store.paneEnabled,
+// since 2026-11-09), so the drawer comes from the one board view that has no pane: a status list,
+// `/status/<status>?thread=<slug>`. At 800px and below that drawer is modal (useNarrowDrawer).
 //
 // Recipe. The URL is the stack's project board (its json line's "url"), not the bare origin, which is
-// the project grid and has no cards. seed-overlay-e2e.mjs seeds the snoozed drawer thread; the queued
+// the project grid and has no board. seed-overlay-e2e.mjs seeds the snoozed drawer thread; the queued
 // one is the same row unsnoozed under another slug and session. Keep the project rail off (a fresh
 // stack's default; projectSwitch.e2e turns it on): the rail covers the bottom-left corner where the
 // outside-click probe sits, so the probe never receives the click.
@@ -36,10 +37,9 @@ test("Snooze menu stays non-modal and preserves anchored menu interactions", {
   const errors: string[] = []
   page.on("pageerror", (error) => errors.push(String(error)))
 
-  const cardSelector = `[data-queue-card="${threadSlug}"]`
-  // The header's alarm clock (SnoozeMenu). Addressed by its data attribute, not its label: the label is
-  // the snooze state ("Snoozed until …") whenever one is set.
-  const triggerSelector = `${cardSelector} button[data-snooze-menu]`
+  // The pane's thread header's alarm clock (SnoozeMenu). Addressed by its data attribute, not its
+  // label: the label is the snooze state ("Snoozed until …") whenever one is set.
+  const triggerSelector = "[data-pane-thread] button[data-snooze-menu]"
 
   async function openMenu(selector = triggerSelector): Promise<void> {
     await page.focus(selector)
@@ -64,17 +64,19 @@ test("Snooze menu stays non-modal and preserves anchored menu interactions", {
 
   try {
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 })
-    await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" })
-    await page.waitForSelector(triggerSelector)
+    // The pane remembers full screen (sidebar put away) across loads; start from its default layout.
+    await page.evaluateOnNewDocument(() => localStorage.removeItem("frizz.threadPanePrototype.v1"))
+    await page.goto(`${baseUrl}?thread=${encodeURIComponent(threadSlug!)}`, { waitUntil: "domcontentloaded" })
+    await page.waitForSelector(triggerSelector, { timeout: 60_000 })
 
-    const asideBefore = await page.$eval("aside", (aside) => {
+    const asideBefore = await page.$eval("[data-pane-sidebar] aside", (aside) => {
       const rect = aside.getBoundingClientRect()
       return { left: rect.left, width: rect.width, visibility: getComputedStyle(aside).visibility }
     })
     await openMenu()
     await expectNonModalRoot()
     const desktopOpen = await page.evaluate((selector) => {
-      const aside = document.querySelector("aside")!
+      const aside = document.querySelector("[data-pane-sidebar] aside")!
       const rect = aside.getBoundingClientRect()
       return {
         aside: { left: rect.left, width: rect.width, visibility: getComputedStyle(aside).visibility },
@@ -112,9 +114,9 @@ test("Snooze menu stays non-modal and preserves anchored menu interactions", {
     )
 
     // Compact layout keeps the menu within the viewport without making the page behind it modal. 768 is
-    // the narrowest width that still draws queue cards and a modal thread drawer with this menu in them:
-    // below it the phone layout takes over, with no cards on the board and the drawer's verbs in its ⋯
-    // sheet instead (MobileThreadActionsSheet), so a 390px viewport finds no trigger at all.
+    // a width that still draws the pane, and a modal thread drawer, with this menu in them: below 700 the
+    // phone layout takes over, with no pane on the board and the drawer's verbs in its ⋯ sheet instead
+    // (MobileThreadActionsSheet), so a 390px viewport finds no trigger at all.
     await page.setViewport({ width: 768, height: 844, deviceScaleFactor: 1 })
     await page.evaluate((selector) => document.querySelector(selector)?.scrollIntoView({ block: "center" }), triggerSelector)
     await openMenu()
@@ -129,9 +131,10 @@ test("Snooze menu stays non-modal and preserves anchored menu interactions", {
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => !document.querySelector('[role="menu"]'))
 
-    // In the modal drawer, one Escape belongs to the menu; the drawer itself stays open.
-    await page.goto(`${baseUrl}?thread=${encodeURIComponent(drawerSlug!)}`, { waitUntil: "domcontentloaded" })
-    await page.waitForSelector('[role="dialog"][aria-modal="true"]')
+    // In the modal drawer, one Escape belongs to the menu; the drawer itself stays open. The drawer opens
+    // over a status list, the board view with no pane.
+    await page.goto(`${baseUrl}/status/active?thread=${encodeURIComponent(drawerSlug!)}`, { waitUntil: "domcontentloaded" })
+    await page.waitForSelector('[role="dialog"][aria-modal="true"]', { timeout: 60_000 })
     const drawerTrigger = '[role="dialog"] button[data-snooze-menu]'
     await openMenu(drawerTrigger)
     await page.keyboard.press("Escape")

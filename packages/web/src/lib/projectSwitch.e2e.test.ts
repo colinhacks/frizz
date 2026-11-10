@@ -99,10 +99,12 @@ test("switching projects from the grid re-points the live feed at the project th
 // `threadSeen` for its slug to the new project, which marked the new project's same-slug thread read
 // although nobody had opened it (2026-10-08). routes.tsx now renders nothing until the reset has run.
 //
-// Two shapes, one browser: the phone drawer (where the write happened) and the desktop queue (where the
-// stale reads were). A slug that exists ONLY in the project left behind is the discriminator: any
-// request for it against the other project came from a stale render. The positive control is the
-// other side of the same switch — the new project's own threads still fetch their own data.
+// Two shapes, one browser: the phone drawer (where the write happened) and the desktop board's pane
+// (where the stale reads were, on the queue cards the pane replaced on 2026-11-09). Each holds a thread
+// open across the switch through `?thread=`. A slug that exists ONLY in the project left behind is the
+// discriminator: any request for it against the other project came from a stale render. The positive
+// control is the other side of the same switch — the new project's own thread, opened in the pane after
+// it, still fetches its own data, so the recorder is shown to see a thread's requests at all.
 test("a project switch sends none of the old project's thread slugs to the new project", {
   skip: !baseUrl || !sandboxHome,
   timeout: 120_000,
@@ -113,7 +115,7 @@ test("a project switch sends none of the old project's thread slugs to the new p
   assert.ok(projects.length >= 2, "needs a stack serving two projects")
   const [a, b] = projects as [{ id: string; slug: string }, { id: string; slug: string }]
 
-  // A bare session row is a thread at rest ("exited"), which is all a drawer or a queue card needs.
+  // A bare session row is a thread at rest ("exited"), which is all a drawer or the pane needs.
   const db = join(sandboxHome!, ".frizz", "ui.db")
   const sql = (q: string) => execFileSync("sqlite3", [db, q], { encoding: "utf8" }).trim()
   const seed = (project: string, slug: string, n: number) => sql(
@@ -153,7 +155,7 @@ test("a project switch sends none of the old project's thread slugs to the new p
 
     const shapes = [
       { name: "phone drawer", width: 420, start: `/project/${a.slug}?thread=switch-shared`, mounted: '[role="dialog"]' },
-      { name: "desktop queue", width: 1440, start: `/project/${a.slug}`, mounted: null },
+      { name: "desktop pane", width: 1440, start: `/project/${a.slug}?thread=switch-only-a`, mounted: '[data-pane-thread] [data-thread-surface="switch-only-a"]' },
     ]
     for (const shape of shapes) {
       phase = "load"
@@ -161,11 +163,10 @@ test("a project switch sends none of the old project's thread slugs to the new p
       await page.goto(`${baseUrl}${shape.start}`, { waitUntil: "networkidle2" })
       await page.waitForSelector(`a[href="/project/${b.slug}"]`, { timeout: 15_000 })
       // The precondition: the old project's thread is mounted and talking to its own project.
-      if (shape.mounted) {
-        await page.waitForSelector(shape.mounted, { timeout: 15_000 })
-        assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("thread")), "switch-shared",
-          `${shape.name}: the drawer is open through ?thread= before the switch`)
-      }
+      const opened = new URL(`${baseUrl}${shape.start}`).searchParams.get("thread")
+      await page.waitForSelector(shape.mounted, { timeout: 15_000 })
+      assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("thread")), opened,
+        `${shape.name}: the thread is open through ?thread= before the switch`)
       await page.waitForFunction(() => document.body.innerText.includes("switch-only-a"), { timeout: 15_000 })
         .catch(() => assert.fail(`${shape.name}: ${a.slug}'s board never rendered its threads`))
 
@@ -177,21 +178,26 @@ test("a project switch sends none of the old project's thread slugs to the new p
       await page.waitForFunction(() => document.body.innerText.includes("switch-only-b"), { timeout: 15_000 })
         .catch(() => assert.fail(`${shape.name}: ${b.slug}'s board never rendered after the switch`))
       await new Promise((r) => setTimeout(r, 1500))
-      // The drawer belongs to the project it was opened in. The rail's link names a bare board, so the
-      // switch drops `?thread=`, and b's same-slug thread must not open in a drawer of its own.
-      if (shape.mounted) {
-        assert.deepEqual(await page.evaluate(() => ({
-          search: location.search,
-          drawer: Boolean(document.querySelector('[role="dialog"]')),
-        })), { search: "", drawer: false }, `${shape.name}: the drawer followed the switch into ${b.slug}`)
-      }
+      // The open thread belongs to the project it was opened in. The rail's link names a bare board, so
+      // the switch drops `?thread=`, and b's same-slug thread must not open in a drawer or the pane.
+      assert.deepEqual(await page.evaluate(() => ({
+        search: location.search,
+        drawer: Boolean(document.querySelector('[role="dialog"]')),
+        pane: Boolean(document.querySelector("[data-pane-thread]")),
+      })), { search: "", drawer: false, pane: false }, `${shape.name}: the open thread followed the switch into ${b.slug}`)
 
       const toB = sent.filter((r) => r.phase === shape.name && r.path.startsWith(`/_frizz/${b.slug}/rpc/`))
       const leaked = toB.filter((r) => r.input.includes("switch-only-a") || r.path.endsWith("/threadSeen"))
       assert.deepEqual(leaked, [], `${shape.name}: requests to ${b.slug} carrying ${a.slug}'s threads`)
       if (shape.width === 1440) {
-        assert.ok(toB.some((r) => r.input.includes("switch-only-b")),
-          `${shape.name}: ${b.slug}'s own threads must still fetch their data after the switch`)
+        // The control: b's own thread, opened from its sidebar row, asks b about itself.
+        phase = "control"
+        await page.click('[data-sidebar-item="switch-only-b"] button')
+        await page.waitForSelector('[data-pane-thread] [data-thread-surface="switch-only-b"]', { timeout: 15_000 })
+        const deadline = Date.now() + 10_000
+        const own = () => sent.some((r) => r.phase === "control" && r.path.startsWith(`/_frizz/${b.slug}/rpc/`) && r.input.includes("switch-only-b"))
+        while (!own() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
+        assert.ok(own(), `${shape.name}: ${b.slug}'s own threads must still fetch their data after the switch`)
       }
     }
     assert.equal(bSeen(), "|", `${b.slug}'s switch-shared was marked seen by a switch away from ${a.slug}'s`)

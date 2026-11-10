@@ -2,12 +2,15 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 // The update popover and its failure card hang off the status row, inside the sticky sidebar column, and
-// spill out over the queue. A sticky box is a stacking context whatever its z-index, so while the panels
-// stacked themselves in the row (`absolute z-50`) they ranked only against the sidebar and went UNDER the
-// queue cards' sticky headers, and under a thread drawer entirely (maintainer 2026-10-30, on the Console:
-// "Z-index issues"). Unit markup cannot see paint order; this asks the browser what is on top.
+// spill out over the workpane beside it. A sticky box is a stacking context whatever its z-index, so while
+// the panels stacked themselves in the row (`absolute z-50`) they ranked only against the sidebar and went
+// UNDER the queue cards' sticky headers, and under a thread drawer entirely (maintainer 2026-10-30, on the
+// Console: "Z-index issues"). The queue cards gave way to the one-thread pane on 2026-11-09, so the board
+// is now read with a thread open in its pane, whose column the panel spills across. A desktop board
+// opens no drawer, so the drawer is opened over a status list (`/status/<status>?thread=<slug>`). Unit
+// markup cannot see paint order; this asks the browser what is on top.
 //
-// Point at the BOARD URL of an isolated adhoc-stack seeded with queue cards and a snoozed thread. Only
+// Point at the BOARD URL of an isolated adhoc-stack seeded with queued and snoozed threads. Only
 // the supervisor is simulated, and its update POST is answered without touching anything:
 //   nub scripts/adhoc-stack.mjs --port=47391 --also-project=/abs/throwaway-repo > stack.log 2>&1
 //   nub scripts/seed-console-bands.mjs --home=<home> --project=<launcher.id>=<launcher.dir> \
@@ -68,7 +71,7 @@ test("nothing paints over the update popover or its failure card", { skip: !url,
       await page.waitForFunction(() => document.querySelector("#update-restart-popover") === null)
       await (await page.waitForSelector(button))!.hover()
       await page.waitForSelector("#update-restart-popover")
-      // The seeded cards' headers sit under the popover's whole width: a fair test needs them there.
+      // Something has to sit behind the panel for the test to be fair.
       assert.ok(await page.$("[data-sidebar-item]") || await page.$("[data-console-sidebar]"), `${where}: a board behind the panel`)
       assert.deepEqual(await page.evaluate(coveredPoints, "#update-restart-popover"), { covered: 0, by: [] }, `${where}: the popover is on top`)
       // Leaving the button still shuts it: the panel left the row, the hover did not change.
@@ -76,8 +79,11 @@ test("nothing paints over the update popover or its failure card", { skip: !url,
       await page.waitForFunction(() => document.querySelector("#update-restart-popover") === null)
     }
 
-    // Where the maintainer saw it, then a project's own board, then with a thread's drawer open beside the
-    // sidebar (a queued thread's link opens its card, so the drawer is a snoozed one's).
+    // Where the maintainer saw it, then a project's own board, then with a thread open in that board's
+    // pane (at 1440px the panel's right half lies over the thread's column), then with a thread's drawer
+    // open beside the sidebar, over a status list, the one board view with no pane.
+    await page.evaluateOnNewDocument(() => localStorage.removeItem("frizz.threadPanePrototype.v1"))
+    const board = url!.replace(/\/$/, "")
     await page.goto(`${origin}/console`, { waitUntil: "networkidle2" })
     await page.waitForSelector("[data-console-sidebar]")
     await page.waitForSelector("[data-sidebar-item]")
@@ -85,7 +91,10 @@ test("nothing paints over the update popover or its failure card", { skip: !url,
     await page.goto(url!, { waitUntil: "networkidle2" })
     await page.waitForSelector("[data-sidebar-item]")
     await popoverOver("a project board")
-    await page.goto(`${url!.replace(/\/$/, "")}?thread=snoozed-0`, { waitUntil: "networkidle2" })
+    await page.goto(`${board}?thread=queued-0`, { waitUntil: "networkidle2" })
+    await page.waitForSelector("[data-pane-thread] [data-thread-header]")
+    await popoverOver("a thread in the pane")
+    await page.goto(`${board}/status/active?thread=snoozed-0`, { waitUntil: "networkidle2" })
     await page.waitForSelector(".frizz-sheet-panel")
     await popoverOver("a thread drawer")
 
