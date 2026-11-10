@@ -82,6 +82,19 @@ export function selectCodexHostKind(
   return nativeSupported ? "native" : "daemon"
 }
 export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.167.0"
+// THE FLOOR IS ITS OWN NUMBER, AND A PIN BUMP DOES NOT MOVE IT. The pin above is what a NEW app-server
+// is started on. This is the oldest one a bridge will keep TALKING to: an app-server that outlived
+// Update & Restart still runs the build it was started on, and until 2026-11-10 the pin was also the
+// floor, so every release that moved the pin (19 of them between 2026-09-04 and 2026-11-05) killed that
+// app-server on the first connect, with every turn, sub-agent and background command inside it, though
+// the bump's own audit usually read "additive protocol" or "byte-identical".
+//
+// Raise this in a pin bump ONLY when that bump makes the bridge send or depend on something the
+// previous build lacks: a new request or parameter (`scripts/pin-bump/codex-schema-diff.mjs OLD NEW`
+// prints them), or a notification this file now needs. Otherwise leave it, and an app-server between
+// this and the pin keeps its turns and is replaced the first time the project is idle (pinMoved).
+// plans/runtime-pin-bumps.md § Moving the Codex pin has the step.
+export const CODEX_APP_SERVER_MINIMUM_VERSION = "0.167.0"
 // Upgrade policy: the AUDITED version is an exact coordinate — changing it requires a fresh
 // generated-protocol audit plus a source audit at the matching immutable Rust tag/commit, then a new
 // fingerprint and contract fixtures. These coordinates are intentionally runtime-visible diagnostics,
@@ -107,6 +120,8 @@ export function compareCodexVersions(a: string, b: string): number {
 export type CodexVersionVerdict =
   | { kind: "audited" }
   | { kind: "ahead"; message: string }
+  /** Older than the pin and at or above the floor: the build a previous release started. */
+  | { kind: "behind"; message: string }
   | { kind: "refused"; message: string }
 
 /**
@@ -125,8 +140,12 @@ export type CodexVersionVerdict =
  * test passed against that binary's own generated schema before the pin moved.
  *
  * The rule now: a FLOOR that refuses, and a CEILING that only warns.
- *  - BELOW the audited version → refuse. An older binary may genuinely lack params frizz sends, and
- *    that is the direction where proceeding produces silent misbehaviour.
+ *  - BELOW the minimum (CODEX_APP_SERVER_MINIMUM_VERSION) → refuse. An older binary may genuinely
+ *    lack params frizz sends, and that is the direction where proceeding produces silent misbehaviour.
+ *  - AT OR ABOVE the minimum and BELOW the audited version → `behind`. Never what a new app-server
+ *    reports, since one is started on the pin: it is an app-server a previous release started, still
+ *    running. The bridge decides what that is worth (see `connect`): kept and replaced at an idle
+ *    boundary when its files are safe from the sweep, refused otherwise.
  *  - AT it → the audited path, unchanged.
  *  - ABOVE it → run, and say so loudly once. Codex's protocol is additive in practice and unknown
  *    fields are ignored, so "newer" is overwhelmingly compatible — and frizz already owns a REAL drift
@@ -139,6 +158,7 @@ export type CodexVersionVerdict =
 export function codexVersionVerdict(
   received: string | undefined,
   audited: string = CODEX_APP_SERVER_SUPPORTED_VERSION,
+  minimum: string = CODEX_APP_SERVER_MINIMUM_VERSION,
 ): CodexVersionVerdict {
   if (!received) {
     return { kind: "refused", message: `Codex app-server did not report a parseable frizz/<version> user agent; expected ${audited}` }
@@ -146,6 +166,15 @@ export function codexVersionVerdict(
   const cmp = compareCodexVersions(received, audited)
   if (cmp === 0) return { kind: "audited" }
   if (cmp < 0) {
+    // A minimum that will not parse sorts below everything in compareCodexVersions, which would admit
+    // any build at all, so it is read as "no room below the pin".
+    const floor = /^\d+\.\d+\.\d+/u.test(minimum) ? minimum : audited
+    if (compareCodexVersions(received, floor) >= 0) {
+      return {
+        kind: "behind",
+        message: `Codex app-server ${received} is older than the pinned ${audited} and at or above the minimum ${floor}: its turns keep running, and it is replaced the first time no turn is in flight.`,
+      }
+    }
     return {
       kind: "refused",
       message: `Codex app-server ${received} is older than the audited protocol ${audited}. Upgrade codex (\`npm i -g @openai/codex\`) — frizz sends parameters this build may not accept.`,
@@ -159,6 +188,7 @@ export function codexVersionVerdict(
 
 // Latched per process: the "running ahead of the audit" warning must not repeat on every reconnect.
 let aheadVersionWarned: string | undefined
+let behindVersionWarned: string | undefined
 
 const PROTOCOL_FINGERPRINT = [
   CODEX_APP_SERVER_PROTOCOL_REVISION.sourceTag,
@@ -559,6 +589,11 @@ export type CodexAppServerDiagnostic =
   // The app-server is NEWER than the audited protocol. Not a failure — frizz runs anyway; this is the
   // breadcrumb that says which build was actually driving if something later looks wrong.
   | { event: "version-ahead"; expected: string; received: string }
+  // The app-server is OLDER than the pin and at or above the minimum: one a previous release started.
+  // `replaceAtIdle` says which way it went: true ⇒ its turns keep running and it is replaced at the
+  // next idle boundary (`pin-moved` then follows); false ⇒ it is what a fresh start gives, so there is
+  // nothing newer to replace it with.
+  | { event: "version-behind"; expected: string; received: string; replaceAtIdle: boolean }
   | { event: "stderr"; bytes: number; truncated: boolean }
   | { event: "request-rejected"; method: string; code: number }
   | { event: "turn-auto-resumed"; threadSlug: string; interruptedTurnId: string }
@@ -574,6 +609,9 @@ export type CodexAppServerDiagnostic =
   | { event: "auth-account-refreshed" }
   // The app-server was replaced because the project's Codex launch prefix changed (ensureCurrentAuth).
   | { event: "launch-prefix-applied" }
+  // The app-server a previous release started was replaced by one on the current pin, at an idle
+  // boundary (ensureCurrentAuth). `previous` is the version it had been running.
+  | { event: "pin-moved"; previous: string }
   | { event: "execution-health-failed"; detail: string }
   // The app-server this bridge had been talking to is gone and a fresh one replaced it — every turn
   // that was running inside it (parents AND their sub-agents) died. `deathReason` is the dead daemon's
@@ -1064,6 +1102,10 @@ export interface CodexAppServerBridgeOptions {
   launchPrefix?: () => string[]
   /** Test seam for the account-replacement patience bound (AUTH_REPLACEMENT_WAIT_MS). */
   authReplacementWaitMs?: number
+  /** Test seam for the pin and the floor (CODEX_APP_SERVER_SUPPORTED_VERSION and
+   *  CODEX_APP_SERVER_MINIMUM_VERSION): the two are constants, and are equal whenever the last bump
+   *  raised the floor, so a test of the range between them has to name its own. */
+  supportedVersions?: { audited: string; minimum: string }
   /** Test seam for the local macOS service check; production always probes through the app-server. */
   executionHealth?: CodexExecutionHealth
   /**
@@ -1954,6 +1996,11 @@ export class CodexAppServerBridge {
   /** The launch prefix the current app-server process was started through (`[]` = none); undefined
    *  while no process is known. */
   private processLaunchPrefix: string[] | undefined
+  /** The version of the current app-server process when it is one a previous release started and it
+   *  is worth replacing (see `connect`); undefined otherwise, and while no process is known. */
+  private processBehindPin: string | undefined
+  private readonly auditedVersion: string
+  private readonly minimumVersion: string
   /** Serializes account-driven replacement across concurrent session/turn starts. */
   private authReplacement: Promise<void> | null = null
   private readonly authReplacementWaitMs: number
@@ -2020,6 +2067,8 @@ export class CodexAppServerBridge {
     this.codexBin = options.codexBin ?? "codex"
     this.timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.authReplacementWaitMs = options.authReplacementWaitMs ?? AUTH_REPLACEMENT_WAIT_MS
+    this.auditedVersion = options.supportedVersions?.audited ?? CODEX_APP_SERVER_SUPPORTED_VERSION
+    this.minimumVersion = options.supportedVersions?.minimum ?? CODEX_APP_SERVER_MINIMUM_VERSION
     // Production hosts the app-server on its OWN unix listener (codex-app-server-native.ts) so it
     // outlives this runtime with no frizz-authored daemon that could kill it — see selectCodexHostKind
     // for the per-platform default and the overrides. An injected `spawn` — every unit test and the
@@ -2897,6 +2946,7 @@ export class CodexAppServerBridge {
       }
       this.processAuthAccountId = undefined
       this.processLaunchPrefix = undefined
+      this.processBehindPin = undefined
       this.notifyTurnIdleWaiters()
     }
   }
@@ -2965,18 +3015,27 @@ export class CodexAppServerBridge {
       // Settings has to reach the app-server every Codex thread here shares, and this is the one place
       // that already knows how to replace it without cutting a running turn short.
       const launchStale = this.launchPrefixStale()
-      if (!accountStale && !launchStale) return connection
+      // And the third: which BUILD it is. An app-server a previous release started is replaced by one
+      // on the current pin through this same door, for the same reason: it is the one place that
+      // already knows how to do it without cutting a running turn short.
+      const pinMoved = this.pinMoved()
+      if (!accountStale && !launchStale && !pinMoved) return connection
       // The loop re-reads auth.json each pass, so it terminates on its own in the ordinary case. The
       // cap is for the pathological one — a replacement that keeps succeeding while the account keeps
       // failing to match — which would otherwise spin here forever.
       if (attempt >= MAX_AUTH_REPLACEMENT_ATTEMPTS) return connection
       if (!this.authReplacement) {
-        const replacement = this.replaceAppServerForAuthChange(accountStale ? "auth-account-refreshed" : "launch-prefix-applied")
+        const replacement = this.replaceAppServerAtIdle(accountStale ? "auth-account-refreshed" : launchStale ? "launch-prefix-applied" : "pin-moved")
         this.authReplacement = replacement
         void replacement.finally(() => {
           if (this.authReplacement === replacement) this.authReplacement = null
         }).catch(() => undefined)
       }
+      // A NEW ACCOUNT OR PREFIX IS WORTH A SHORT WAIT; A NEWER BUILD IS NOT. The operator changed the
+      // first two and expects the next turn to use them. Nobody asked for the third, and the build
+      // already running is one this bridge supports, so while other turns hold the boundary off this
+      // one starts at once and the replacement stays armed for when they finish.
+      if (!accountStale && !launchStale && this.hasInFlightTurns()) return connection
       if (!await this.awaitAuthReplacement(this.authReplacement)) return connection
     }
   }
@@ -3038,13 +3097,27 @@ export class CodexAppServerBridge {
     this.turnIdleWaiters.clear()
   }
 
-  private async replaceAppServerForAuthChange(event: "auth-account-refreshed" | "launch-prefix-applied"): Promise<void> {
+  private async replaceAppServerAtIdle(event: "auth-account-refreshed" | "launch-prefix-applied" | "pin-moved"): Promise<void> {
     while (this.hasInFlightTurns()) await this.whenTurnsIdle()
     if (this.closed || this.dbReleased) throw new Error("Codex app-server bridge is closed")
+    // A pin move is the one reason that can stop applying while it waits: the turns it waited out may
+    // have left a background command running, or the process may already have been replaced for
+    // another reason. Nothing is lost by leaving it, so it is asked again rather than assumed.
+    const previous = this.processBehindPin
+    if (event === "pin-moved" && (!this.pinMoved() || previous === undefined)) return
     this.disconnectOwnedProcess()
     await stopCodexAppServerDaemon(this.options.stateDir ?? this.options.projectDir, this.options.projectId)
     await this.ensureConnected()
-    this.options.diagnostic?.({ event })
+    this.options.diagnostic?.(event === "pin-moved" ? { event, previous: previous! } : { event })
+  }
+
+  /** Whether the running app-server is one a previous release started and can be replaced now by one
+   *  on the current pin. Not while a background command is running in it: an idle boundary means no
+   *  TURN is in flight, and a dev server a finished turn left running would die with the process. An
+   *  account or prefix change accepts that cost because the operator asked for the change; nobody
+   *  asked for this one, so it waits for the command. */
+  private pinMoved(): boolean {
+    return this.processBehindPin !== undefined && this.liveExecs.size === 0
   }
 
   /** Whether the running app-server was started through a different launch prefix than Settings now
@@ -3076,6 +3149,10 @@ export class CodexAppServerBridge {
    * the handshake failed against a daemon we REATTACHED to, so the cache is the suspect; kill that
    * daemon, fork a fresh one, and ask the real binary. Exactly once — see `reforkRejectedHandshake`
    * for why a genuinely unsupported codex still fails loudly instead of reforking in a loop.
+   *
+   * Since 2026-11-10 that recovery is for an app-server BELOW the floor, or one whose files nothing
+   * protects. One between CODEX_APP_SERVER_MINIMUM_VERSION and the pin is the app-server the previous
+   * release started: it is kept, its turns with it, and `pinMoved` replaces it at an idle boundary.
    */
   private async connect(refork = false): Promise<JsonlRpcConnection> {
     await ensureRuntime("codex")
@@ -3125,16 +3202,27 @@ export class CodexAppServerBridge {
       // an incompatible user agent.
       const version = initialized.userAgent.match(/^frizz\/(\d+\.\d+\.\d+)(?:\s|\()/u)?.[1]
       handshakeVersion = version
-      const verdict = codexVersionVerdict(version)
+      const verdict = codexVersionVerdict(version, this.auditedVersion, this.minimumVersion)
+      // AN APP-SERVER A PREVIOUS RELEASE STARTED IS KEPT ONLY WHILE ITS FILES ARE SAFE. Codex starts
+      // helpers out of its own version directory long after boot, and this server's boot swept every
+      // directory the new pin superseded that nobody leased (runtimes.ts). The Frizz daemon has leased
+      // its own since 2026-09-10; the native listener is codex's own program and got a lease only on
+      // 2026-11-10, written by the server that starts it. One without it may already be running out of
+      // a directory that is gone, so it takes the path it always took: refused, stopped, restarted.
+      const behindUnprotected = verdict.kind === "behind" && attachment.reattached && attachment.runtimeLeased !== true
       // `!version` is already the refused case inside codexVersionVerdict; naming it here too is what
       // lets the compiler see that `version` is a string for the rest of the handshake.
-      if (verdict.kind === "refused" || !version) {
+      if (verdict.kind === "refused" || behindUnprotected || !version) {
         this.options.diagnostic?.({
           event: "version-rejected",
-          expected: CODEX_APP_SERVER_SUPPORTED_VERSION,
+          expected: this.auditedVersion,
           received: version ?? "unparseable",
         })
-        throw new Error(verdict.kind === "refused" ? verdict.message : `Codex app-server did not report a parseable version; expected ${CODEX_APP_SERVER_SUPPORTED_VERSION}`)
+        throw new Error(
+          verdict.kind === "refused" ? verdict.message
+            : behindUnprotected ? `Codex app-server ${version} is older than the pinned ${this.auditedVersion} and holds no lease on its files; replacing it.`
+              : `Codex app-server did not report a parseable version; expected ${this.auditedVersion}`,
+        )
       }
       if (verdict.kind === "ahead") {
         // The DIAGNOSTIC is per connection — it is the durable breadcrumb saying which build was
@@ -3142,12 +3230,23 @@ export class CodexAppServerBridge {
         // because a warning that repeats on every reconnect is a warning nobody reads.
         this.options.diagnostic?.({
           event: "version-ahead",
-          expected: CODEX_APP_SERVER_SUPPORTED_VERSION,
+          expected: this.auditedVersion,
           received: version,
         })
         if (version !== aheadVersionWarned) {
           aheadVersionWarned = version
           frizzLog.warn("codex", verdict.message)
+        }
+      }
+      // Only an app-server this bridge REJOINED can be behind for a reason a replacement cures: a new
+      // one is started on the pin, so one that reports an older build anyway is what this machine
+      // starts, and replacing it would only start the same build again.
+      const replaceAtIdle = verdict.kind === "behind" && attachment.reattached
+      if (verdict.kind === "behind") {
+        this.options.diagnostic?.({ event: "version-behind", expected: this.auditedVersion, received: version, replaceAtIdle })
+        if (version !== behindVersionWarned) {
+          behindVersionWarned = version
+          frizzLog.info("codex", replaceAtIdle ? verdict.message : `Codex app-server ${version} is older than the pinned ${this.auditedVersion} and at or above the minimum ${this.minimumVersion}; running on it.`)
         }
       }
       handshaking = false
@@ -3185,6 +3284,7 @@ export class CodexAppServerBridge {
       this.daemonGeneration = attachment.generation
       this.processAuthAccountId = attachment.authAccountId
       this.processLaunchPrefix = attachment.launchPrefix ?? []
+      this.processBehindPin = replaceAtIdle ? version : undefined
       if (this.closed) throw new Error("Codex app-server bridge closed during negotiation")
       this.connection = connection
       this.openingConnection = null
@@ -3246,6 +3346,7 @@ export class CodexAppServerBridge {
     this.connection = null
     this.processAuthAccountId = undefined
     this.processLaunchPrefix = undefined
+    this.processBehindPin = undefined
     this.providerErrors.clear()
     this.forgetCorrelatedFileItems()
     // No notification can ever arrive on a dead connection, so release every settings waiter now

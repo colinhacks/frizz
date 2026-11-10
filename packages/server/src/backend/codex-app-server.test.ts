@@ -12,9 +12,12 @@ import { directChildHost } from "./codex-app-server-host.ts"
 import { CodexExecutionHealth } from "./codex-execution-health.ts"
 import { FRIZZ_MCP } from "./types.ts"
 import {
+  CODEX_APP_SERVER_MINIMUM_VERSION,
   CODEX_APP_SERVER_PROTOCOL_REVISION,
   CODEX_APP_SERVER_SUPPORTED_VERSION,
   CodexAppServerBridge,
+  codexVersionVerdict,
+  compareCodexVersions,
   codexAppServerEnvironment,
   codexAppServerBridgeEnabled,
   selectCodexHostKind,
@@ -2465,8 +2468,8 @@ test("bridge persistence refuses malformed or future authority schemas before sp
  *  `generation`, and how many lines the daemon had to drop while nobody was attached. Those three
  *  fields are the entire input to the bridge's "did my turns survive?" decision. */
 function scriptedHostHarness(
-  script: () => { generation: string; reattached: boolean; droppedWhileDetached: number; serviceExitCode?: number },
-  worker: Pick<import("./codex-app-server.ts").CodexAppServerBridgeOptions, "frizzMcp" | "mountsMcp" | "frizzCli" | "workerConfig" | "workerBaseInstructions"> = {},
+  script: () => { generation: string; reattached: boolean; droppedWhileDetached: number; serviceExitCode?: number; version?: string; runtimeLeased?: boolean },
+  worker: Pick<import("./codex-app-server.ts").CodexAppServerBridgeOptions, "frizzMcp" | "mountsMcp" | "frizzCli" | "workerConfig" | "workerBaseInstructions" | "supportedVersions"> = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-codex-attachment-"))
   const dbPath = join(dir, "ui.db")
@@ -2491,15 +2494,15 @@ function scriptedHostHarness(
       codexBin: "/opt/codex",
       host: async (options) => {
         hostCalls.push({ frizzMcp: options.frizzMcp })
-        const process_ = new FakeAppServerProcess()
+        const { generation, reattached, droppedWhileDetached, serviceExitCode, version, runtimeLeased } = script()
+        const process_ = new FakeAppServerProcess(version)
         // Applied at CREATION: the reconnect's process does not exist until the bridge connects, which
         // is the same call whose reconciliation the status has to steer.
         process_.resumeThreadStatus = nextResumeThreadStatus
         process_.backgroundTerminals = nextBackgroundTerminals
         processes.push(process_)
-        const { generation, reattached, droppedWhileDetached, serviceExitCode } = script()
         process_.serviceExitCode = serviceExitCode ?? 0
-        return { process: process_, generation, reattached, daemonPid: 4242, droppedWhileDetached, authAccountId: options.authAccountId }
+        return { process: process_, generation, reattached, daemonPid: 4242, droppedWhileDetached, authAccountId: options.authAccountId, ...(runtimeLeased ? { runtimeLeased } : {}) }
       },
       now: () => now,
       id: () => `client-message-${++clientId}`,
@@ -3318,4 +3321,151 @@ test("two projects on one connection never see each other's bindings, even for t
     other.close()
     h.close()
   }
+})
+
+// ---- the floor is not the pin: an app-server a previous release started ----------------------------
+// The pin is what a NEW app-server is started on. Until 2026-11-10 it was also the oldest one a bridge
+// would talk to, so every release that moved the pin killed the app-server that had outlived Update &
+// Restart on the first connect, with every turn inside it. The floor is its own constant now, and these
+// pin what happens to an app-server between the two.
+
+test("the version gate: below the minimum is refused, between the minimum and the pin is behind", () => {
+  const verdict = (received: string | undefined, minimum = "0.165.0") => codexVersionVerdict(received, "0.167.0", minimum).kind
+  assert.equal(verdict("0.167.0"), "audited")
+  assert.equal(verdict("0.168.0"), "ahead")
+  assert.equal(verdict("0.166.2"), "behind")
+  assert.equal(verdict("0.165.0"), "behind", "the minimum itself is supported")
+  assert.equal(verdict("0.164.9"), "refused")
+  assert.equal(verdict(undefined), "refused")
+  assert.equal(verdict("0.166.0", "0.167.0"), "refused", "a minimum at the pin leaves no room below it")
+  assert.equal(verdict("0.166.0", "0.168.0"), "refused", "nor does one above it")
+  assert.equal(verdict("0.1.0", "not a version"), "refused", "a minimum that will not parse admits nothing older than the pin")
+  assert.ok(
+    compareCodexVersions(CODEX_APP_SERVER_MINIMUM_VERSION, CODEX_APP_SERVER_SUPPORTED_VERSION) <= 0
+      && /^\d+\.\d+\.\d+$/u.test(CODEX_APP_SERVER_MINIMUM_VERSION),
+    "the shipped minimum is a version at or below the shipped pin",
+  )
+})
+
+const OLD_PIN = "0.166.0"
+const BETWEEN = { supportedVersions: { audited: CODEX_APP_SERVER_SUPPORTED_VERSION, minimum: OLD_PIN } }
+const events = (h: { diagnostics: unknown[] }, name: string) => h.diagnostics.filter((d) => (d as { event?: string }).event === name) as Array<Record<string, unknown>>
+
+// Negative control: with the floor at the pin (drop `BETWEEN`) the rejoin below is refused and
+// reforked, and the turn's id is gone from the binding.
+test("an app-server a previous release started keeps its turn through the restart, and is replaced once nothing is running", async () => {
+  type Plan = { generation: string; reattached: boolean; droppedWhileDetached: number; version: string; runtimeLeased?: boolean }
+  let plan: Plan = { generation: "gen-A", reattached: false, droppedWhileDetached: 0, version: OLD_PIN }
+  const h = scriptedHostHarness(() => plan, BETWEEN)
+  try {
+    const before = h.newBridge()
+    const binding = await before.startDisposableSession({ threadSlug: "kept", sessionId: "kept-session", cwd: h.dir, ephemeral: false })
+    const { turnId } = await before.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "A long job" })
+    await waitFor(() => before.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === turnId, "turn active")
+    before.close() // Update & Restart: the app-server and its turn keep going
+
+    plan = { generation: "gen-A", reattached: true, droppedWhileDetached: 0, version: OLD_PIN, runtimeLeased: true }
+    const after = h.newBridge()
+    await after.resumeOwnedSession(binding.threadSlug, binding.sessionId)
+    assert.equal(after.binding(binding.threadSlug, binding.sessionId)?.currentTurnId, turnId, "the turn that was running is still running")
+    assert.deepEqual(events(h, "version-rejected"), [], "an older build above the minimum is not refused")
+    assert.deepEqual(events(h, "daemon-reforked"), [])
+    assert.deepEqual(events(h, "version-behind").at(-1), { event: "version-behind", expected: CODEX_APP_SERVER_SUPPORTED_VERSION, received: OLD_PIN, replaceAtIdle: true })
+
+    // Other work in the project is not held for the replacement, and does not trigger it early.
+    plan = { generation: "gen-B", reattached: false, droppedWhileDetached: 0, version: CODEX_APP_SERVER_SUPPORTED_VERSION }
+    const outcome = await Promise.race([
+      after.startDisposableSession({ threadSlug: "meanwhile", sessionId: "meanwhile-session", cwd: h.dir, ephemeral: false }).then(() => "started" as const),
+      new Promise<"held">((resolve) => { setTimeout(() => resolve("held"), 3_000).unref?.() }),
+    ])
+    assert.equal(outcome, "started", "a new thread starts at once on the build already running")
+    assert.equal(h.processes.length, 2, "and nothing was replaced while the turn was in flight")
+    assert.equal(h.processes[1]!.killed, false)
+
+    // The turn ends: that is the idle boundary the replacement was waiting for.
+    h.processes[1]!.completeActiveTurn(binding.codexThreadId, turnId)
+    await waitFor(() => events(h, "pin-moved").length === 1, "the replacement at the idle boundary", 1_000)
+    assert.deepEqual(events(h, "pin-moved"), [{ event: "pin-moved", previous: OLD_PIN }])
+    assert.equal(h.processes.length, 3)
+    assert.equal(h.processes[1]!.killed, true, "the old app-server is gone")
+    assert.equal((events(h, "connected").at(-1) as { version?: string }).version, CODEX_APP_SERVER_SUPPORTED_VERSION, "and the one in its place is on the pin")
+
+    // The thread carries on there, and an app-server on the pin is left alone.
+    await after.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "And then" })
+    assert.ok(h.processes[2]!.clientRequests.some((message) => message.method === "thread/resume"))
+    assert.ok(h.processes[2]!.clientRequests.some((message) => message.method === "turn/start"))
+    assert.equal(h.processes.length, 3, "no further churn")
+  } finally { h.close() }
+})
+
+test("an older app-server is not replaced while a background command is still running in it", async () => {
+  type Plan = { generation: string; reattached: boolean; droppedWhileDetached: number; version: string; runtimeLeased?: boolean }
+  let plan: Plan = { generation: "gen-A", reattached: false, droppedWhileDetached: 0, version: OLD_PIN }
+  const h = scriptedHostHarness(() => plan, BETWEEN)
+  try {
+    const before = h.newBridge()
+    const { binding, terminal } = await threadWithBackgroundExec(h, before, "bg-pin")
+    before.close()
+
+    plan = { generation: "gen-A", reattached: true, droppedWhileDetached: 1, version: OLD_PIN, runtimeLeased: true }
+    h.backgroundTerminals({ [binding.codexThreadId]: [terminal] })
+    const after = h.newBridge()
+    await after.warmUp()
+    assert.equal(after.backgroundExecs(binding.threadSlug, binding.sessionId).length, 1, "control: the command is known to be running")
+
+    plan = { generation: "gen-B", reattached: false, droppedWhileDetached: 0, version: CODEX_APP_SERVER_SUPPORTED_VERSION }
+    await after.startDisposableSession({ threadSlug: "bg-other", sessionId: "bg-other-session", cwd: h.dir, ephemeral: false })
+    assert.equal(h.processes.length, 2, "no turn is in flight, and the app-server holding the command is still not replaced")
+    assert.deepEqual(events(h, "pin-moved"), [])
+
+    // The command ends. The next piece of work finds nothing in the way.
+    h.processes[1]!.notify("item/completed", {
+      item: { type: "commandExecution", id: "exec-item-1", command: "sleep 811", processId: "4242", status: "completed", exitCode: 0 },
+      threadId: binding.codexThreadId,
+      turnId: "codex-turn-ended",
+      completedAtMs: Date.parse("2026-07-13T12:00:01.000Z"),
+    })
+    await waitFor(() => after.backgroundExecs(binding.threadSlug, binding.sessionId).length === 0, "the command's end")
+    await after.startDisposableSession({ threadSlug: "bg-later", sessionId: "bg-later-session", cwd: h.dir, ephemeral: false })
+    assert.equal(h.processes.length, 3)
+    assert.deepEqual(events(h, "pin-moved"), [{ event: "pin-moved", previous: OLD_PIN }])
+  } finally { h.close() }
+})
+
+// Codex starts helpers out of its own version directory long after boot, and a server's boot sweeps
+// every directory its pin superseded that nobody leased. An app-server with no lease may be running
+// out of a directory that is gone, so it is restarted at once, which is what every older one got.
+test("an older app-server with no lease on its files is restarted at once, as before", async () => {
+  const plans = [
+    { generation: "gen-A", reattached: true, droppedWhileDetached: 0, version: OLD_PIN },
+    { generation: "gen-B", reattached: false, droppedWhileDetached: 0, version: CODEX_APP_SERVER_SUPPORTED_VERSION },
+  ]
+  let attachment = 0
+  const h = scriptedHostHarness(() => plans[Math.min(attachment++, plans.length - 1)]!, BETWEEN)
+  try {
+    const bridge = h.newBridge()
+    await bridge.startDisposableSession({ threadSlug: "unleased", sessionId: "unleased-session", cwd: h.dir, ephemeral: false })
+    assert.deepEqual(events(h, "version-rejected"), [{ event: "version-rejected", expected: CODEX_APP_SERVER_SUPPORTED_VERSION, received: OLD_PIN }])
+    assert.equal(events(h, "daemon-reforked").length, 1)
+    assert.deepEqual(events(h, "version-behind"), [])
+    assert.equal(h.processes.length, 2)
+    assert.ok(h.processes[1]!.clientRequests.some((message) => message.method === "thread/start"), "and the work runs on its replacement")
+  } finally { h.close() }
+})
+
+// A new app-server is started on the pin, so one that reports an older build anyway is what this
+// machine starts. Replacing it would start the same build again, once per piece of work, forever.
+test("a freshly started app-server that is behind the pin runs, and is never replaced for it", async () => {
+  const h = scriptedHostHarness(() => ({ generation: "gen-A", reattached: false, droppedWhileDetached: 0, version: OLD_PIN }), BETWEEN)
+  try {
+    const bridge = h.newBridge()
+    const binding = await bridge.startDisposableSession({ threadSlug: "fresh-behind", sessionId: "fresh-behind-session", cwd: h.dir, ephemeral: false })
+    await bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "one" })
+    h.processes[0]!.completeActiveTurn()
+    await waitFor(() => bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "turn completed")
+    await bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "two" })
+    assert.equal(h.processes.length, 1)
+    assert.deepEqual(events(h, "version-behind"), [{ event: "version-behind", expected: CODEX_APP_SERVER_SUPPORTED_VERSION, received: OLD_PIN, replaceAtIdle: false }])
+    assert.deepEqual(events(h, "pin-moved"), [])
+  } finally { h.close() }
 })

@@ -53,14 +53,18 @@ function pidAlive(pid: number): boolean {
 
 /** Record that this process runs `bin`. Best-effort: a lease that cannot be written costs one early
  *  sweep at worst, never the process. Returns a release for the normal exit path; a crash is covered
- *  by the pid check. */
-export function leaseRuntime(bin: string, role: string): () => void {
+ *  by the pid check.
+ *
+ *  `pid` is for a process that cannot write its own: codex's native listener is codex's own program,
+ *  so the server that starts it leases on its behalf. Until 2026-11-10 nothing did, and a later pin's
+ *  sweep removed the version directory a surviving listener was still starting its helpers from. */
+export function leaseRuntime(bin: string, role: string, pid: number = process.pid): () => void {
   const versionDir = runtimeVersionDir(bin)
   if (!versionDir) return () => {}
-  const path = join(versionDir, LEASES_DIR, `${process.pid}.json`)
+  const path = join(versionDir, LEASES_DIR, `${pid}.json`)
   try {
     mkdirSync(dirname(path), { recursive: true })
-    const lease: RuntimeLease = { pid: process.pid, role, bin, at: new Date().toISOString() }
+    const lease: RuntimeLease = { pid, role, bin, at: new Date().toISOString() }
     writeFileSync(path, JSON.stringify(lease))
   } catch { return () => {} }
   return () => { try { unlinkSync(path) } catch {} }

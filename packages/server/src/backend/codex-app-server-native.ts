@@ -46,6 +46,7 @@ import type { CodexAppServerAttachment, CodexAppServerHost, CodexAppServerHostOp
 import { recordedLaunchPrefix } from "./launch-prefix.ts"
 import { applyLaunchPrefix } from "@frizz/shared"
 import { log as frizzLog } from "../logging.ts"
+import { leaseRuntime } from "../runtime-lease.ts"
 
 export interface NativeListenerRecord {
   projectId: string
@@ -62,6 +63,10 @@ export interface NativeListenerRecord {
   /** The launch prefix the listener was started through. When present, `listenerPid` is the PREFIX's
    *  process, not codex's — see signalListener. */
   launchPrefix?: string[]
+  /** The server that started this listener leased its binary's version directory for it
+   *  (runtime-lease.ts). Absent on a record written before 2026-11-10, whose directory a later pin's
+   *  sweep may already have removed. */
+  runtimeLeased?: boolean
 }
 
 function nativeDir(stateDir: string): string {
@@ -107,6 +112,7 @@ export function readNativeRecord(stateDir: string, projectId: string): NativeLis
       ...(typeof value.processStart === "string" && value.processStart ? { processStart: value.processStart } : {}),
       ...(typeof value.authAccountId === "string" && value.authAccountId ? { authAccountId: value.authAccountId } : {}),
       ...recordedLaunchPrefix(value.launchPrefix),
+      ...(value.runtimeLeased === true ? { runtimeLeased: true } : {}),
     }
   } catch {
     return null
@@ -343,8 +349,11 @@ async function startListener(options: CodexAppServerHostOptions, launchPrefix: s
   })
   child.unref()
 
-  // codex writes no record of its own, so its spawner reads the exact start marker for it.
+  // codex writes no record of its own, so its spawner reads the exact start marker for it, and takes
+  // the lease that keeps its version directory through a later pin's sweep. Never released here: the
+  // listener outlives this server on purpose, and the sweep drops a lease whose pid has gone.
   const listenerStart = child.pid ? exactProcessStart(child.pid) : undefined
+  if (child.pid) leaseRuntime(options.codexBin, "codex-native-listener", child.pid)
   const record: NativeListenerRecord = {
     projectId,
     generation,
@@ -354,6 +363,7 @@ async function startListener(options: CodexAppServerHostOptions, launchPrefix: s
     createdAt: new Date().toISOString(),
     ...(options.authAccountId ? { authAccountId: options.authAccountId } : {}),
     ...(launchPrefix.length > 0 ? { launchPrefix } : {}),
+    ...(child.pid ? { runtimeLeased: true } : {}),
   }
   // Published BEFORE the socket is up: a runtime that dies during startup must still leave the next
   // one a way to find (and if need be reap) the listener it created.
@@ -411,6 +421,7 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
         droppedWhileDetached: PRESUMED_LOSSY_REJOIN,
         authAccountId: existing.authAccountId,
         launchPrefix: existing.launchPrefix ?? [],
+        runtimeLeased: existing.runtimeLeased === true,
       }
     } catch {
       // The record outlived its socket. Drop it and start fresh rather than failing the connect.
@@ -431,6 +442,7 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
       droppedWhileDetached: 0,
       authAccountId: record.authAccountId,
       launchPrefix,
+      runtimeLeased: record.runtimeLeased === true,
     }
   } catch (error) {
     // A concurrent frizz may have won the bind between our probe and our spawn ("app-server control
@@ -445,6 +457,7 @@ export const nativeListenCodexAppServerHost: CodexAppServerHost = async (options
         droppedWhileDetached: PRESUMED_LOSSY_REJOIN,
         authAccountId: raced.authAccountId,
         launchPrefix: raced.launchPrefix ?? [],
+        runtimeLeased: raced.runtimeLeased === true,
       }
     }
     frizzLog.error("codex", `codex app-server native listener unavailable (${(error as Error).message}); falling back to an in-process app-server — turns will NOT survive a frizz restart`)

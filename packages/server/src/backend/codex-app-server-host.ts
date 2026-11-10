@@ -73,6 +73,11 @@ export interface CodexAppServerAttachment {
   /** The launch prefix this app-server process was started through; `[]` or absent ⇒ none. The bridge
    *  compares it with the current setting and replaces the process at an idle boundary when they differ. */
   launchPrefix?: string[]
+  /** True when the process holds a lease on the version directory its binary lives in
+   *  (runtime-lease.ts), so the sweep a later pin runs leaves that directory alone for as long as the
+   *  process lives. A bridge keeps running on an app-server older than its pin only then: codex starts
+   *  helpers out of its own directory long after boot. */
+  runtimeLeased?: boolean
 }
 
 export interface CodexAppServerHostOptions {
@@ -413,7 +418,8 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
   if (existing) {
     try {
       const attached = await attach(existing, timeoutMs)
-      return { ...attached, generation: existing.generation, reattached: true, daemonPid: existing.daemonPid, authAccountId: existing.authAccountId, launchPrefix: existing.launchPrefix ?? [] }
+      // The daemon leases its own binary when it starts (codex-app-server-daemon.ts).
+      return { ...attached, generation: existing.generation, reattached: true, daemonPid: existing.daemonPid, authAccountId: existing.authAccountId, launchPrefix: existing.launchPrefix ?? [], runtimeLeased: true }
     } catch {
       // The record outlived its socket (a daemon killed between the pid check and connect). Drop it
       // and fall through to a fresh fork rather than failing the whole connect.
@@ -430,7 +436,7 @@ export const daemonCodexAppServerHost: CodexAppServerHost = async (options) => {
   try {
     const record = await forkDaemon(options, launchPrefix)
     const attached = await attach(record, timeoutMs)
-    return { ...attached, generation: record.generation, reattached: false, daemonPid: record.daemonPid, authAccountId: record.authAccountId, launchPrefix }
+    return { ...attached, generation: record.generation, reattached: false, daemonPid: record.daemonPid, authAccountId: record.authAccountId, launchPrefix, runtimeLeased: true }
   } catch (error) {
     // LAST RESORT, and deliberately not a hard failure. The daemon buys ONE thing — an in-flight turn
     // surviving Update & Restart. Codex itself does not need it: before the daemon existed the

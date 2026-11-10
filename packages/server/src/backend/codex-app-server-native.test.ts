@@ -10,7 +10,8 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer, type Server } from "node:http"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -22,7 +23,9 @@ import {
   liveNativeRecord,
 } from "./codex-app-server-native.ts"
 import { stopCodexAppServerDaemon } from "./codex-app-server-host.ts"
+import { codexAppServerArgv } from "./codex-mcp.ts"
 import { frizzIpcPath } from "./ipc-path.ts"
+import { liveRuntimeLeases } from "../runtime-lease.ts"
 
 interface Fixture {
   stateDir: string
@@ -219,4 +222,70 @@ test("stopCodexAppServerDaemon is inert for a project with no listener and no da
     // and the direct-child / in-process fallbacks own no detached process at all.
     await stopCodexAppServerDaemon(f.stateDir, f.projectId, 1_000)
   } finally { f.cleanup() }
+})
+
+// ---- the listener's lease on its own files -------------------------------------------------------------
+// The listener is codex's own program and writes nothing for Frizz, so until 2026-11-10 nothing leased
+// the version directory it runs out of, and the sweep a later pin runs at boot removed that directory
+// under it: codex starts its helpers from there long after it started. The server that starts a listener
+// now takes the lease in the listener's name, and says so in the record, which is what lets a bridge
+// keep an older listener's turns running instead of restarting it (codex-app-server.ts, `connect`).
+
+/** A program that is `codex app-server --listen unix://<path>` as far as the host can tell. The codex
+ *  command is node, and the script sits at the path codex's first argument names, as in
+ *  codex-app-server-daemon.test.ts. */
+const FAKE_LISTENER = `const { createServer } = require("node:http")
+const { WebSocketServer } = require(${JSON.stringify(createRequire(import.meta.url).resolve("ws"))})
+const socketPath = process.argv[process.argv.indexOf("--listen") + 1].replace(/^unix:\\/\\//, "")
+const http = createServer()
+new WebSocketServer({ server: http, perMessageDeflate: false })
+http.listen(socketPath)
+process.on("SIGTERM", () => { try { require("node:fs").unlinkSync(socketPath) } catch {}; process.exit(0) })
+`
+
+test("a listener this server starts is leased for under its own pid, and a rejoin reports whether one is held", { skip: process.platform === "win32" && "the native listener is not used on Windows" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "frizz-native-lease-"))
+  const stateDir = join(root, "state")
+  const projectId = randomUUID()
+  // A provisioned version directory, as runtimes.ts lays one out: the marker, and the binary below it.
+  const versionDir = join(root, "runtimes", "codex", "9.9.9-test")
+  mkdirSync(join(versionDir, "bin"), { recursive: true })
+  writeFileSync(join(versionDir, "provisioned.json"), "{}")
+  const codexBin = join(versionDir, "bin", "codex")
+  symlinkSync(process.execPath, codexBin)
+  writeFileSync(join(root, codexAppServerArgv([])[0]!), FAKE_LISTENER)
+  const options = { projectId, stateDir, cwd: root, codexBin, env: {}, clientInfo: {}, capabilities: {}, timeoutMs: 10_000 }
+  try {
+    const started = await nativeListenCodexAppServerHost(options)
+    const record = liveNativeRecord(stateDir, projectId)!
+    assert.equal(started.reattached, false)
+    assert.equal(started.runtimeLeased, true)
+    assert.equal(record.runtimeLeased, true, "the record says the lease was taken")
+    assert.deepEqual(
+      liveRuntimeLeases(versionDir).map(({ pid, role }) => ({ pid, role })),
+      [{ pid: record.listenerPid, role: "codex-native-listener" }],
+      "held in the LISTENER's name, so it lasts exactly as long as the listener does",
+    )
+    started.process.kill()
+
+    const rejoined = await nativeListenCodexAppServerHost(options)
+    assert.equal(rejoined.reattached, true)
+    assert.equal(rejoined.runtimeLeased, true)
+    rejoined.process.kill()
+
+    // A listener a server from before the lease started: same record, without the word.
+    const { runtimeLeased: _dropped, ...legacy } = record
+    writeFileSync(nativeRecordPath(stateDir, projectId), JSON.stringify(legacy))
+    const legacyRejoin = await nativeListenCodexAppServerHost(options)
+    assert.equal(legacyRejoin.reattached, true)
+    assert.equal(legacyRejoin.runtimeLeased, false, "nothing vouches for its files")
+    legacyRejoin.process.kill()
+
+    await stopCodexAppServerDaemon(stateDir, projectId, 5_000)
+    assert.equal(alive(record.listenerPid), false)
+    assert.deepEqual(liveRuntimeLeases(versionDir), [], "and the lease goes with the listener")
+  } finally {
+    await stopCodexAppServerDaemon(stateDir, projectId, 5_000)
+    rmSync(root, { recursive: true, force: true })
+  }
 })

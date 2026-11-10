@@ -395,7 +395,7 @@ function versionedHarness(initialVersion: string) {
   }
 }
 
-function skewBridge(h: ReturnType<typeof versionedHarness>, diagnostics: unknown[]) {
+function skewBridge(h: ReturnType<typeof versionedHarness>, diagnostics: unknown[], supportedVersions?: { audited: string; minimum: string }) {
   const db = new Database(join(h.stateDir, "ui.db"))
   db.pragma("journal_mode = WAL")
   const interactions = createInteractionStore(db)
@@ -411,6 +411,11 @@ function skewBridge(h: ReturnType<typeof versionedHarness>, diagnostics: unknown
     // transport, so pin the daemon host explicitly rather than inheriting the flip.
     host: daemonCodexAppServerHost,
     diagnostic: (event) => diagnostics.push(event),
+    // The account the harness's daemons are started under (`options`). Left to the default, the bridge
+    // reads this machine's own ~/.codex/auth.json, finds a different account on any machine that is
+    // signed in, and replaces the daemon for THAT, which is not what these tests are about.
+    codexAuthAccountId: () => "account-one",
+    ...(supportedVersions ? { supportedVersions } : {}),
   })
   return { bridge, dispose() { bridge.close(); interactions.dispose(); db.close() } }
 }
@@ -464,6 +469,44 @@ test("codex daemon: a daemon caching a stale handshake is reforked, not left to 
     const after = liveDaemonRecord(h.stateDir, PROJECT)
     assert.ok(after, "a replacement daemon is running")
     assert.notEqual(after!.generation, staleGeneration, "it is a NEW app-server process, not the wedged one")
+  } finally {
+    bridge?.dispose()
+    killCodexAppServerDaemon(h.stateDir, PROJECT)
+  }
+})
+
+// THE SAME UPGRADE WHEN THE BUMP LEFT THE FLOOR ALONE, which is most of them. The daemon is one pin
+// behind and at or above CODEX_APP_SERVER_MINIMUM_VERSION, so nothing about it is wrong: it is not
+// refused and not reforked on sight. This project is idle, so the first piece of work replaces it with
+// one on the pin through the idle-boundary door (the bridge suite holds a turn in flight across the
+// same door). The real daemon host is what says the daemon's files are leased; without that the bridge
+// falls back to the refork above.
+test("codex daemon: a daemon one pin behind is kept rather than refused, and replaced by one on the pin while idle", async () => {
+  const h = versionedHarness("0.166.0")
+  const diagnostics: unknown[] = []
+  const named = (name: string) => diagnostics.filter((event) => (event as { event?: string }).event === name) as Array<Record<string, unknown>>
+  let bridge: ReturnType<typeof skewBridge> | undefined
+  try {
+    const stale = await daemonCodexAppServerHost(h.hostOptions())
+    const staleGeneration = stale.generation
+    stale.process.kill()
+    await delay(200)
+    h.setInstalledVersion(CODEX_APP_SERVER_SUPPORTED_VERSION)
+
+    bridge = skewBridge(h, diagnostics, { audited: CODEX_APP_SERVER_SUPPORTED_VERSION, minimum: "0.166.0" })
+    const binding = await bridge.bridge.startDisposableSession({
+      threadSlug: "one-pin-behind", sessionId: "one-pin-behind-session", cwd: h.stateDir,
+    })
+    assert.ok(binding, "the work ran")
+
+    assert.deepEqual(named("version-rejected"), [], `an older build above the minimum is not refused — saw ${JSON.stringify(diagnostics)}`)
+    assert.deepEqual(named("daemon-reforked"), [])
+    assert.deepEqual(named("version-behind"), [{ event: "version-behind", expected: CODEX_APP_SERVER_SUPPORTED_VERSION, received: "0.166.0", replaceAtIdle: true }])
+    assert.deepEqual(named("pin-moved"), [{ event: "pin-moved", previous: "0.166.0" }])
+    assert.equal(named("connected").at(-1)?.version, CODEX_APP_SERVER_SUPPORTED_VERSION, "the app-server now running is on the pin")
+    const after = liveDaemonRecord(h.stateDir, PROJECT)
+    assert.ok(after, "a daemon is running")
+    assert.notEqual(after!.generation, staleGeneration, "and it is a new one")
   } finally {
     bridge?.dispose()
     killCodexAppServerDaemon(h.stateDir, PROJECT)
