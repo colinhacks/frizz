@@ -51,6 +51,7 @@ import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from 
 import { BACKGROUND_JOB_REFUSAL, hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
 import { frizzTempDir, isPromptAttachmentPath } from "./frizz-paths.ts"
 import { dispatchProfileCell, observedDispatchCell } from "./subagent-profile.ts"
+import { detached } from "./detached-string.ts"
 
 // Parse a session JSONL into a renderable conversation — mechanically, no AI. Same defensive
 // posture as the tailer: bad line → skip, unknown type → ignore, never throw. Assistant messages
@@ -1385,7 +1386,7 @@ function editLines(s: string): number {
 
 function capEdit(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > EDIT_CAP ? safe.slice(0, EDIT_CAP) + TRUNC_MARKER : safe
+  return safe.length > EDIT_CAP ? detached(safe.slice(0, EDIT_CAP) + TRUNC_MARKER) : safe
 }
 
 // An Agent dispatch prompt is a full worker contract — often thousands of chars. Cap it like the
@@ -1394,7 +1395,7 @@ function capEdit(s: string): string {
 const AGENT_PROMPT_CAP = 4000
 function capAgentPrompt(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > AGENT_PROMPT_CAP ? safe.slice(0, AGENT_PROMPT_CAP) + TRUNC_MARKER : safe
+  return safe.length > AGENT_PROMPT_CAP ? detached(safe.slice(0, AGENT_PROMPT_CAP) + TRUNC_MARKER) : safe
 }
 
 // A SendMessage body is peer-to-peer prose — usually short, but a steer can run long. Cap it like the
@@ -1403,7 +1404,7 @@ function capAgentPrompt(s: string): string {
 const SEND_BODY_CAP = 4000
 function capSendBody(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > SEND_BODY_CAP ? safe.slice(0, SEND_BODY_CAP) + TRUNC_MARKER : safe
+  return safe.length > SEND_BODY_CAP ? detached(safe.slice(0, SEND_BODY_CAP) + TRUNC_MARKER) : safe
 }
 
 // EVERY Bash call ships its `command` so the client renders it as a collapsed BashBlock card (the
@@ -1413,12 +1414,12 @@ function capSendBody(s: string): string {
 const COMMAND_CAP = 2000
 function capCommand(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > COMMAND_CAP ? safe.slice(0, COMMAND_CAP) + TRUNC_MARKER : safe
+  return safe.length > COMMAND_CAP ? detached(safe.slice(0, COMMAND_CAP) + TRUNC_MARKER) : safe
 }
 const TOOL_INPUT_CAP = 4000
 function capToolInput(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > TOOL_INPUT_CAP ? safe.slice(0, TOOL_INPUT_CAP) + TRUNC_MARKER : safe
+  return safe.length > TOOL_INPUT_CAP ? detached(safe.slice(0, TOOL_INPUT_CAP) + TRUNC_MARKER) : safe
 }
 // One-line summary for a block command: its first non-blank line, with a trailing ellipsis when more
 // content follows. Feeds the inline renderer and dense card previews; the full command rides `command`.
@@ -1427,7 +1428,7 @@ function bashSummary(cmd: string): string {
   const first = (lines.find((l) => l.trim()) ?? "").trim()
   const hasMore = cmd.trim() !== first
   const base = first.length > 120 ? first.slice(0, 119) + "…" : first
-  return hasMore && !base.endsWith("…") ? base + "…" : base
+  return detached(hasMore && !base.endsWith("…") ? base + "…" : base)
 }
 
 // A Read call's result excerpt: the file content it returned, capped like the edit/command payloads
@@ -1441,7 +1442,9 @@ function capRead(s: string): string {
   const lines = out.split("\n")
   if (lines.length > READ_LINE_CAP) out = lines.slice(0, READ_LINE_CAP).join("\n") + TRUNC_MARKER
   if (out.length > READ_BYTE_CAP) out = out.slice(0, READ_BYTE_CAP) + TRUNC_MARKER
-  return out
+  // A Read result is often cut out of a larger tool_result string; copy it so the retained fold does
+  // not keep that whole string alive (detached-string.ts).
+  return detached(out)
 }
 
 // Map a base64 image block's media_type to a file extension the /local-image route can serve. The route
@@ -2038,7 +2041,7 @@ function todoRows(raw: unknown): TranscriptTodo[] | undefined {
 const TODO_TEXT_CAP = 300
 function capTodoText(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim()
-  return flat.length > TODO_TEXT_CAP ? `${flat.slice(0, TODO_TEXT_CAP - 1)}…` : flat
+  return detached(flat.length > TODO_TEXT_CAP ? `${flat.slice(0, TODO_TEXT_CAP - 1)}…` : flat)
 }
 
 // A whole-list call → the checklist card. `input` carries the model's own commentary when it wrote any
@@ -2122,7 +2125,7 @@ function toolDetail(input: any): string | undefined {
   const s = redactToolPayload(cand.trim()).replace(/\s+/g, " ")
   // Generous cap: an 80-char cut ate file paths mid-word (and its "…" broke the client's path-link
   // detection). Display truncation is the CLIENT's job (CSS ellipsis over the card's full width).
-  return s.length > 400 ? `${s.slice(0, 399)}…` : s
+  return detached(s.length > 400 ? `${s.slice(0, 399)}…` : s)
 }
 
 // A concise cause label for the turn-boundary line emitted when a background-shell completion wakes
@@ -2356,9 +2359,37 @@ interface TranscriptCacheEntry {
   // dev:ino:birthtime — a rotation/replacement of the same path (unlink + recreate) invalidates the fold
   // even when the new file is the same size or larger.
   fileId: string
+  // When a reader last asked for this fold (Date.now()). See TRANSCRIPT_FOLD_IDLE_MS.
+  touchedAt: number
 }
 const TRANSCRIPT_CACHE_CAP = 16
 const transcriptCache = new Map<string, TranscriptCacheEntry>()
+
+// A FOLD NOBODY HAS READ FOR HALF AN HOUR IS DROPPED. The count cap alone kept the last 16 folds for the
+// life of the server, however long ago anyone looked: a fold holds the whole projection of its thread
+// (8.6-18.7 MB for the 80-135 MB transcripts on the maintainer's boards, heap snapshot 2026-11-09), so a
+// handful of big threads opened once in the morning were still resident at night. Half an hour is far
+// past every reader that re-reads a fold — a subscribed thread is read on each change, a page on each
+// "load earlier" — so this frees only what the 16-entry LRU would also have dropped under any traffic,
+// and costs a reader that does come back exactly what a first open costs: a cold fold, done in slices
+// (catchUpTranscriptFold). The sweep runs on every access and on an unref'd timer, so an idle server
+// frees them too.
+export const TRANSCRIPT_FOLD_IDLE_MS = 30 * 60_000
+const TRANSCRIPT_FOLD_SWEEP_MS = 5 * 60_000
+
+/** Drop every retained fold not read for TRANSCRIPT_FOLD_IDLE_MS. Returns how many it dropped. */
+export function sweepIdleTranscriptFolds(now = Date.now()): number {
+  let dropped = 0
+  for (const [path, entry] of transcriptCache) {
+    if (now - entry.touchedAt < TRANSCRIPT_FOLD_IDLE_MS) continue
+    // A cold fold in progress touches its entry every slice; never pull one out from under it.
+    if (coldFolds.has(path)) continue
+    transcriptCache.delete(path)
+    dropped++
+  }
+  return dropped
+}
+setInterval(() => sweepIdleTranscriptFolds(), TRANSCRIPT_FOLD_SWEEP_MS).unref()
 // ~1/50 of cache-hit reads are re-parsed from scratch and deep-compared against the incremental result
 // when FRIZZ_TRANSCRIPT_PARSE_VERIFY=1 — a loud, non-throwing correctness net for the appended-bytes fold.
 const PARSE_VERIFY_SAMPLE = 1 / 50
@@ -2426,11 +2457,13 @@ function retainedFoldEntry(path: string, identityPrefix: string, fileId: string,
   }
   const hit = entry !== undefined
   if (!entry) {
-    entry = { identityPrefix, fold: createTranscriptFold(identityPrefix), bytesRead: 0, decoder: new StringDecoder("utf8"), fileId }
+    entry = { identityPrefix, fold: createTranscriptFold(identityPrefix), bytesRead: 0, decoder: new StringDecoder("utf8"), fileId, touchedAt: Date.now() }
   } else {
     transcriptCache.delete(path) // LRU touch — re-insert to move to the most-recently-used end.
+    entry.touchedAt = Date.now()
   }
   transcriptCache.set(path, entry)
+  sweepIdleTranscriptFolds(entry.touchedAt)
   // Evict the least-recently-used entries beyond the cap (the first keys in insertion order).
   while (transcriptCache.size > TRANSCRIPT_CACHE_CAP) {
     const oldest = transcriptCache.keys().next().value

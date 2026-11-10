@@ -45,6 +45,7 @@ import { frizzTempDir } from "./frizz-paths.ts"
 import { pidIsAlive } from "./project-identity.ts"
 import { redactToolPayload } from "./credential-redaction.ts"
 import { jsonCopy, jsonEqual } from "./json-value.ts"
+import { detached } from "./detached-string.ts"
 
 // The JSONL tailer: incrementally reads each registered session's Claude Code transcript
 // (~/.claude/projects/<cwdSlug>/<session_id>.jsonl) to derive liveness telemetry — last activity
@@ -1240,7 +1241,8 @@ function noteQuestionFences(state: FoldState, at: string | undefined, text: stri
   if (!at || !text || !mayHoldQuestionFence(text)) return
   const blocks = questionFenceBlocks(text)
   if (blocks.length === 0) return
-  const sighting: QuestionSighting = { at, text: blocks.map((b) => text.slice(b.start, b.end).trimEnd()).join("\n\n") }
+  // Each fence is cut out of the whole reply; copy, so the sighting ring keeps only the fences (detached-string.ts).
+  const sighting: QuestionSighting = { at, text: detached(blocks.map((b) => text.slice(b.start, b.end).trimEnd()).join("\n\n")) }
   const ring = state.questionSightings ?? []
   const last = ring[ring.length - 1]
   if (last && last.at === sighting.at && last.text === sighting.text) return
@@ -1277,7 +1279,8 @@ function lastTextBlock(content: unknown): string | undefined {
 function previewText(raw: string): string | undefined {
   const norm = raw.replace(/\s+/g, " ").trim()
   if (!norm) return undefined
-  return norm.length > 200 ? `${norm.slice(0, 200)}…` : norm
+  // Stored for the life of the thread: copy, or the preview keeps the whole reply alive (detached-string.ts).
+  return detached(norm.length > 200 ? `${norm.slice(0, 200)}…` : norm)
 }
 
 // How long the first line of a handoff may run. A verdict line is a sentence, not a paragraph; this only
@@ -1291,7 +1294,7 @@ export function firstTextLine(raw: string | undefined): string | undefined {
   if (typeof raw !== "string") return undefined
   for (const line of raw.split("\n")) {
     const norm = line.replace(/\s+/g, " ").trim()
-    if (norm) return norm.length > ASSISTANT_LINE_MAX ? `${norm.slice(0, ASSISTANT_LINE_MAX)}…` : norm
+    if (norm) return detached(norm.length > ASSISTANT_LINE_MAX ? `${norm.slice(0, ASSISTANT_LINE_MAX)}…` : norm)
   }
   return undefined
 }
@@ -1851,7 +1854,7 @@ function launchOutputFile(state: TailState, text: string): string | undefined {
   const m = text.match(/output_file:\s*(\S+)/) ?? text.match(/Output is being written to:\s*(\S+)/)
   // The shell ack embeds the path mid-sentence ("… written to: <path>. You will be notified …") —
   // strip the sentence period or the staleness stat hits a nonexistent path and flags every shell stale.
-  if (m) return m[1].replace(/\.$/, "")
+  if (m) return detached(m[1].replace(/\.$/, ""))
   const aid = text.match(/agentId:\s*(\S+)/)?.[1]
   if (aid) return `${state.path.replace(/\.jsonl$/, "")}/subagents/agent-${aid}.jsonl`
   return undefined
@@ -2075,7 +2078,7 @@ function parseResumeAck(text: string): ResumeAck | undefined {
   const agentId = typeof ack.resumedAgentId === "string" ? ack.resumedAgentId.trim() : ""
   if (!agentId) return undefined
   const message = typeof ack.message === "string" ? ack.message : ""
-  return { agentId, outputFile: message.match(/Output:\s*(\S+)/)?.[1]?.replace(/\.$/, "") }
+  return { agentId, outputFile: detached(message.match(/Output:\s*(\S+)/)?.[1]?.replace(/\.$/, "")) }
 }
 
 // Correlate a restart ack to a row frizz already holds. The runtime task id is the primary key (both
@@ -2710,7 +2713,7 @@ export function applyRecord(state: TailState, rec: Record): void {
       // the turn the conversation STARTED on, not the newest one.
       if (state.firstUserText === undefined) {
         const text = userMessageText(rec.message?.content).trim()
-        if (text) state.firstUserText = text.slice(0, FIRST_USER_TEXT_MAX)
+        if (text) state.firstUserText = detached(text.slice(0, FIRST_USER_TEXT_MAX))
       }
     }
     trackLaunchResults(state, rec) // resolve a background dispatch's transcript path from its launch result
@@ -2926,7 +2929,7 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
         // row activity, but its newer timestamp must never retain text from an older human turn.
         state.lastUserText = typeof ev.text === "string" ? ev.text : undefined
         if (state.firstUserText === undefined && typeof ev.text === "string" && ev.text.trim()) {
-          state.firstUserText = ev.text.trim().slice(0, FIRST_USER_TEXT_MAX)
+          state.firstUserText = detached(ev.text.trim().slice(0, FIRST_USER_TEXT_MAX))
         }
       }
       break

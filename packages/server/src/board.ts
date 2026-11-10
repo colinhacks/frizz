@@ -2537,15 +2537,27 @@ function parsedSetting<T>(parse: (raw: unknown) => T): { read(raw: unknown): T }
 // boot — is kept alone at most, and evicted by the next one.
 export const RECENT_DELTAS = 512
 export const RECENT_DELTA_THREADS = 2048
+// AND BY AGE. Both gaps the ring covers are seconds long, but the count bounds alone kept every ring
+// FULL forever: a project's last 512 deltas stayed in memory hours after its workers went quiet, each
+// holding superseded ThreadViews no client could still ask for. On a copy of the maintainer's 19 boards
+// with a dozen workers busy, the rings held 15.8 MB after 35 minutes (heap snapshot, 2026-11-09), on a
+// server whose clients resume within a second of their HTTP read. Two minutes is still far past any
+// resume that replaying could serve better than a fresh read; anything older is read over HTTP, which
+// is always correct. The board prunes on its 15s reconcile (`prune`), so an idle project's ring empties.
+export const RECENT_DELTA_MAX_AGE_MS = 120_000
 
 export class DeltaRing {
   private recent: BoardDelta[] = []
+  // When each entry of `recent` was remembered, index for index.
+  private at: number[] = []
   private threads = 0
   constructor(
     // The seq of the last delta published, which the ring's newest entry must carry.
     private readonly currentSeq: () => number,
     private readonly maxDeltas = RECENT_DELTAS,
     private readonly maxThreads = RECENT_DELTA_THREADS,
+    private readonly maxAgeMs = RECENT_DELTA_MAX_AGE_MS,
+    private readonly now: () => number = Date.now,
   ) {}
 
   // Every delta, in publish order. A seq that does not follow the newest one (it never happens: the
@@ -2554,13 +2566,33 @@ export class DeltaRing {
     const last = this.recent.at(-1)
     if (last && event.seq !== last.seq + 1) {
       this.recent = []
+      this.at = []
       this.threads = 0
     }
     this.recent.push(event)
+    this.at.push(this.now())
     this.threads += event.upserts.length
     while (this.recent.length > this.maxDeltas || (this.threads > this.maxThreads && this.recent.length > 1)) {
-      this.threads -= this.recent.shift()!.upserts.length
+      this.dropOldest()
     }
+    this.prune()
+  }
+
+  // Drop every delta older than the age bound. Dropping from the OLD end keeps the run contiguous up to
+  // the newest seq, which is all `since` needs; an emptied ring answers null below `currentSeq`.
+  prune(): void {
+    const cutoff = this.now() - this.maxAgeMs
+    let drop = 0
+    while (drop < this.at.length && this.at[drop]! < cutoff) drop++
+    if (drop === 0) return
+    for (let i = 0; i < drop; i++) this.threads -= this.recent[i]!.upserts.length
+    this.recent = this.recent.slice(drop)
+    this.at = this.at.slice(drop)
+  }
+
+  private dropOldest(): void {
+    this.threads -= this.recent.shift()!.upserts.length
+    this.at.shift()
   }
 
   // The deltas after `seq`, oldest first; [] when `seq` is current. null when they cannot all be
@@ -3150,7 +3182,10 @@ export function createBoard(
       // LEVEL-TRIGGERED reconciliation: a periodic full rebuild guarantees convergence even if every
       // edge (watcher event, SSE push, mutation hook) is missed or fails — the UI can lag one period,
       // never forever. Edge-triggered paths above make it feel instant; this makes it CORRECT.
-      reconcileTimer = setInterval(() => void rebuild().catch(() => {}), RECONCILE_MS)
+      reconcileTimer = setInterval(() => {
+        recent.prune()
+        void rebuild().catch(() => {})
+      }, RECONCILE_MS)
       if (frizzDirExists(project.dir)) {
         await watchFrizzDir()
       } else {

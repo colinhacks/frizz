@@ -4,6 +4,8 @@ import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
+  sweepIdleTranscriptFolds,
+  TRANSCRIPT_FOLD_IDLE_MS,
   createTranscriptFold,
   parseTranscript,
   projectClaudeTranscript,
@@ -304,5 +306,25 @@ test("perf: retained fold is dramatically cheaper than re-parsing the whole file
   } finally {
     hBefore.cleanup()
     hAfter.cleanup()
+  }
+})
+
+// A FOLD NOBODY READS FOR TRANSCRIPT_FOLD_IDLE_MS IS DROPPED, and a reader that comes back gets the same
+// messages from a fresh fold.
+test("readTranscript cache: an idle fold is swept, a recent one is kept, and a later read re-folds it whole", () => {
+  __clearTranscriptCacheForTests()
+  const h = cacheHarness()
+  try {
+    h.write([userLine("q1"), asstText("m1", "a1")])
+    const first = readTranscript(h.project, h.sessionId)
+    const readAt = Date.now()
+    assert.equal(sweepIdleTranscriptFolds(readAt + TRANSCRIPT_FOLD_IDLE_MS - 1_000), 0, "a fold read inside the window stays")
+    assert.equal(sweepIdleTranscriptFolds(readAt + TRANSCRIPT_FOLD_IDLE_MS + 1_000), 1, "a fold idle past the window goes")
+    assert.equal(sweepIdleTranscriptFolds(readAt + TRANSCRIPT_FOLD_IDLE_MS + 1_000), 0, "and is gone")
+    h.append([asstText("m2", "a2")])
+    const again = readTranscript(h.project, h.sessionId)
+    assert.deepEqual(again.map((m) => m.text), [...first.map((m) => m.text), "a2"])
+  } finally {
+    h.cleanup()
   }
 })

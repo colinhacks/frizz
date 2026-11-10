@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import type { AwaitingStep, HumanTodo } from "@frizz/shared"
+import { detached } from "./detached-string.ts"
 
 // THE HUMAN'S TO-DO LIST (2026-11-09, maintainer: "a single, coherent, human-facing to-do list for the
 // entire session. That's maintained by Frizz").
@@ -63,9 +64,10 @@ export function foldHumanSteps(list: readonly HumanStep[], steps: readonly Await
     if (listed === undefined) return { ...step, listed: false }
     named.delete(step.id)
     const { closedAt: _closed, body: _body, ...open } = step
-    return { ...open, text: listed.text, ...(listed.body ? { body: listed.body } : {}), listedAt: atMs, listed: true }
+    return { ...open, text: detached(listed.text), ...(listed.body ? { body: detached(listed.body) } : {}), listedAt: atMs, listed: true }
   })
-  for (const [id, { text, body }] of named) next.push({ id, text, ...(body ? { body } : {}), listedAt: atMs, listed: true })
+  // A step is cut out of the reply that listed it, and the list outlives the reply: copy (detached-string.ts).
+  for (const [id, { text, body }] of named) next.push({ id, text: detached(text), ...(body ? { body: detached(body) } : {}), listedAt: atMs, listed: true })
   while (next.length > HUMAN_STEPS_MAX) {
     const oldest = next.findIndex((step) => !step.listed)
     next.splice(oldest === -1 ? 0 : oldest, 1)

@@ -177,6 +177,40 @@ test("forkBroker: control — a daemon that publishes its record and stays up re
   }
 })
 
+// --- forkBroker: a live daemon's ChildProcess must not keep the fork's options alive -----------------------
+//
+// The `exit` listener lives on the ChildProcess, which lives as long as the detached daemon does. When
+// its closure reached `options`, every live worker kept its whole system prompt (~160 KB) on the
+// server's heap for the life of the thread: 5 MB across 32 daemons (heap snapshot, 2026-11-09).
+
+test("forkBroker: once the daemon is up, nothing the fork left behind holds its options", async () => {
+  const v8 = await import("node:v8")
+  const vm = await import("node:vm")
+  v8.setFlagsFromString("--expose-gc")
+  const gc = vm.runInNewContext("gc") as () => void
+  const dir = mkdtempSync(join(tmpdir(), "frizz-broker-fork-"))
+  let daemonPid: number | undefined
+  try {
+    const entry = scratchDaemon(dir, "lives", [
+      "writeFileSync(config.recordPath, JSON.stringify({ daemonPid: process.pid, socketPath: config.socketPath, sessionId: config.sessionId, generation: config.generation, createdAt: new Date().toISOString() }))",
+      "setInterval(() => {}, 1000)",
+    ].join("\n"))
+    let options: ReturnType<typeof forkOptions> & { appendSystemPrompt?: string } | undefined = { ...forkOptions(dir, entry), appendSystemPrompt: "a worker contract ".repeat(64) }
+    const held = new WeakRef(options)
+    daemonPid = (await forkBroker(options)).daemonPid
+    options = undefined
+    // A WeakRef target survives until the job that created the ref ends, so collect on a later turn.
+    for (let i = 0; i < 5 && held.deref(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      gc()
+    }
+    assert.equal(held.deref(), undefined, "the live daemon's ChildProcess still reaches the fork options")
+  } finally {
+    if (daemonPid) { try { process.kill(daemonPid, "SIGKILL") } catch {} }
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // --- killBroker: the daemon TREE ends on Windows, one signal on POSIX -----------------------------------
 
 test("killBroker: win32 routes through taskkill /T /F and drops the record; posix signals the daemon", (t) => {

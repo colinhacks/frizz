@@ -341,9 +341,15 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
   child.unref()
 
   const deadline = Date.now() + (options.timeoutMs ?? 30_000)
+  // NOTHING BELOW MAY CLOSE OVER `options` OR `config`. The `exit` listener lives on the ChildProcess,
+  // and a detached daemon's ChildProcess lives as long as the daemon does, so whatever the closures here
+  // capture is held for the life of the thread: `options` carries the worker's whole system prompt
+  // (~160 KB each), and 32 live daemons held 5 MB of them (heap snapshot, 2026-11-09). Read the two
+  // strings the closures need into locals, and drop the listeners once the fork has settled.
+  const { stateDir, sessionId } = options
   // The cause a dead daemon recorded for itself (claude-broker-diagnostics.ts), keyed to THIS fork's
   // generation so a predecessor's death is never quoted as this one's.
-  const recordedCause = () => readClaudeBrokerExit(options.stateDir, options.sessionId, generation)
+  const recordedCause = () => readClaudeBrokerExit(stateDir, sessionId, generation)
   return new Promise<BrokerRecord>((resolve, reject) => {
     let settled = false
     let timer: NodeJS.Timeout | undefined
@@ -351,6 +357,7 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
+      child.removeAllListeners("exit")
       outcome()
     }
     const poll = () => {
@@ -361,7 +368,7 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
         // an operator sees when the exit event was missed (a frizz restart between fork and death).
         const exit = recordedCause()
         return settle(() => reject(new Error(
-          `Claude broker for session ${options.sessionId} did not become ready${exit ? `: ${describeClaudeBrokerExit(exit)}` : ""}`,
+          `Claude broker for session ${sessionId} did not become ready${exit ? `: ${describeClaudeBrokerExit(exit)}` : ""}`,
         )))
       }
       timer = setTimeout(poll, 50)
@@ -384,7 +391,7 @@ export function forkBroker(options: ForkBrokerOptions): Promise<BrokerRecord> {
         const exit = recordedCause()
         if (!exit && Date.now() < until) { setTimeout(read, 25); return }
         settle(() => reject(new Error(
-          `Claude broker for session ${options.sessionId} exited before it became ready (${how}): ${describeClaudeBrokerExit(exit)}`,
+          `Claude broker for session ${sessionId} exited before it became ready (${how}): ${describeClaudeBrokerExit(exit)}`,
         )))
       }
       read()
