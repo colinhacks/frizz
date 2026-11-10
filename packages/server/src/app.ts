@@ -9,7 +9,7 @@ import { createRouter } from "./router.ts"
 import { ATTACHMENT_INVALID_JSON, storeAttachment } from "./attachment-intake.ts"
 import type { AppContext } from "./context.ts"
 import { allowedLocalCorsOrigin, isTrustedLocalHttpRequest } from "./local-origin.ts"
-import { compress, MIN_COMPRESS_BYTES, negotiateEncoding, shouldCompress } from "./compression.ts"
+import { compress, etagMatches, MIN_COMPRESS_BYTES, negotiateEncoding, RPC_CACHE_CONTROL, rpcEtag, shouldCompress } from "./compression.ts"
 import { localImageHeaders, localImageStream, resolveLocalImage } from "./local-image.ts"
 import { localFileHeaders, resolveServedLocalFile } from "./local-file.ts"
 import { resolveProjectIconResponse } from "./project-icon.ts"
@@ -130,12 +130,36 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
   // connection through a tunnel, which is what made a remote board feel slow. Brotli q4 takes it to
   // ~150 KB for ~6 ms of CPU. Scoped to /rpc/* on purpose: the SSE stream must never be buffered by a
   // compressor. See compression.ts for the measurements behind the level choice.
+  //
+  // A query's answer also carries a validator. Every page load reads each project's board (the Console,
+  // ~20 of them: 460 KB of brotli, 2 MB of JSON, on the maintainer's machine), and the rail polls its
+  // counts every 5s, but most of those answers are what the browser already holds. `no-cache` makes the
+  // browser ask every time, exactly as it does now, and an unchanged answer comes back as a bodiless 304
+  // that also skips the compressor. The tag is over the uncompressed body, so it is weak: two encodings
+  // of one answer are one answer. `private` keeps it out of any shared cache; the browser's own HTTP
+  // cache keeps the last answer per URL, which a 200 without directives was already storable in. A
+  // route that says its own cache policy (`no-store` on a file read) is left as it says.
   app.use(`${frizzRoute("/rpc")}/*`, async (c, next) => {
     await next()
+    const validated = c.req.method === "GET" && c.res.status === 200 && !!c.res.body && !c.res.headers.has("cache-control")
     const encoding = negotiateEncoding(c.req.header("accept-encoding"))
-    if (!encoding || !c.res.body) return
+    if (!validated && (!encoding || !c.res.body)) return
     const body = new Uint8Array(await c.res.arrayBuffer())
-    if (!shouldCompress(c.res.headers, body.byteLength)) {
+    if (validated) {
+      const etag = rpcEtag(body)
+      if (etagMatches(c.req.header("if-none-match"), etag)) {
+        const headers = new Headers(c.res.headers)
+        for (const name of ["content-length", "content-type", "content-encoding"]) headers.delete(name)
+        headers.set("etag", etag)
+        headers.set("cache-control", RPC_CACHE_CONTROL)
+        headers.set("vary", "Accept-Encoding")
+        c.res = new Response(null, { status: 304, headers })
+        return
+      }
+      c.res.headers.set("etag", etag)
+      c.res.headers.set("cache-control", RPC_CACHE_CONTROL)
+    }
+    if (!encoding || !shouldCompress(c.res.headers, body.byteLength)) {
       // arrayBuffer() consumed the stream, so the response has to be rebuilt either way.
       c.res = new Response(body, { status: c.res.status, headers: c.res.headers })
       return
