@@ -1,6 +1,6 @@
 import { showToast } from "../store.ts"
 import { copyTextToClipboard } from "./clipboard.ts"
-import { CODE_BLOCK_CLASS, CODE_COPIED_CLASS, CODE_COPY_CLASS, COPY_CODE_LABEL } from "./syntaxHighlight.ts"
+import { CODE_BLOCK_CLASS, CODE_COPIED_CLASS, CODE_COPY_CLASS, COPY_CODE_LABEL } from "./codeLanguage.ts"
 import { CODE_PANEL_CLASS, CODE_TAB_ACTIVE_CLASS } from "./codeTabs.ts"
 import { COPY_QUOTE_LABEL, QUOTE_CLASS, QUOTE_COPY_CLASS, QUOTE_SOURCE_ATTR } from "./quoteCopy.ts"
 

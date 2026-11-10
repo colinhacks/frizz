@@ -15,7 +15,10 @@ import { SHEET_BASE_WIDTH, SPLIT_MIN_PX } from "../lib/sheet.ts"
 // to the overlay drawer. That is the seam this file exists to hold shut.
 
 const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8")
+// The page's lengths live in lib/fullLayout.ts (beside the rail's width), which the page and the board's
+// pane both read, since the page itself is a lazy chunk (components/lazySurfaces.tsx).
 const page = readFileSync(new URL("./StandaloneThreadPage.tsx", import.meta.url), "utf8")
+const layout = readFileSync(new URL("../lib/fullLayout.ts", import.meta.url), "utf8")
 
 test("the CSS breakpoint and the file-click gate are the SAME width", () => {
   const declared = css.match(/--breakpoint-split:\s*(\d+)px/)
@@ -35,7 +38,7 @@ test("below the split, the fullscreen column is the DRAWER's width", () => {
   // the 1200 it was specified for — so the two agree again only from 1440 up. That divergence is the
   // 50/50 rule working as instructed, not a drift, which is why only the NARROW half is pinned here.
   assert.match(
-    page,
+    layout,
     new RegExp(String.raw`"--full-thread-narrow":\s*` + "`" + String.raw`min\(\$\{SHEET_BASE_WIDTH\}px, 100%\)` + "`"),
     "the single-column width must be capped by SHEET_BASE_WIDTH itself, not by a copy of the number",
   )

@@ -55,3 +55,15 @@ test("binary payloads are skipped; text-shaped ones are not", () => {
     assert.equal(shouldCompress(new Headers({ "content-type": type }), 100_000), true, type)
   }
 })
+
+test("an RPC tag matches itself through either form and a list, and nothing else", async () => {
+  const { etagMatches, rpcEtag } = await import("./compression.ts")
+  const tag = rpcEtag(new TextEncoder().encode('{"result":1}'))
+  assert.match(tag, /^W\/"[\w-]+"$/)
+  assert.equal(etagMatches(tag, tag), true)
+  assert.equal(etagMatches(tag.slice(2), tag), true, "weak comparison ignores the W/")
+  assert.equal(etagMatches(`"other", ${tag}`, tag), true)
+  assert.equal(etagMatches("*", tag), true)
+  assert.equal(etagMatches(rpcEtag(new TextEncoder().encode('{"result":2}')), tag), false)
+  assert.equal(etagMatches(undefined, tag), false)
+})

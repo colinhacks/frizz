@@ -487,7 +487,7 @@ try {
   check("resolveLocalPaths names a project document", jsonOf(await pub.query("resolveLocalPaths", { paths: [readme] }))?.result?.resolved?.[0]?.path === readme)
 
   section("The board reads")
-  for (const [name, input] of [["board"], ["boardState"], ["projectsList"], ["projectsRailCounts"], ["settingsGet"], ["threadBody", { slug: SLUG }], ["pendingInteractions", { slug: SLUG, sessionId }], ["threadSettledQuestions", { slug: SLUG }]]) {
+  for (const [name, input] of [["board"], ["boardState"], ["projectsList"], ["projectsRailCounts"], ["settingsGet"], ["threadBody", { slug: SLUG }], ["pendingInteractions", { slug: SLUG, sessionId }], ["threadSettledQuestions", { slug: SLUG }], ["threadRegisteredDone", { slug: SLUG }]]) {
     const response = await pub.query(name, input)
     check(`${name} answers`, response.status === 200 && jsonOf(response)?.result !== undefined, `HTTP ${response.status} ${response.status === 200 ? "" : response.text.slice(0, 120)}`)
   }

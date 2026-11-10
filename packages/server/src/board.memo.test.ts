@@ -312,3 +312,63 @@ test("golden: a warm, memoized board is the cold derivation at every step — da
     await step("a thread forgotten", () => { f.storage.forgetSession("old-12") })
   } finally { f.close() }
 })
+
+// AN OPEN THREAD IS RE-DERIVED ON EVERY BUILD (the clock is one of its inputs), and on a busy board nearly
+// every one comes out as it was. The board hands back the view it last shipped when the new one is the
+// same (board.ts shippedViewOr), so the differ skips it on identity and publishes nothing for it — and the
+// question views it carries are reused while the thread's question rows, telemetry and faults hold
+// (questionViewsOf). Each step is still the cold derivation.
+test("golden: an open thread that did not change ships the same view object, and one that did ships a new one", async () => {
+  const f = fixture()
+  try {
+    const spec = (question: string) => JSON.stringify({ question, kind: "question", options: [{ label: "Yes" }, { label: "No" }] })
+    f.thread("asking", [prompt(1), reply(3, "one question for you")], { state: "open", exited: 0, rested_at: at(3) })
+    f.storage.askThreadQuestion({ id: "qst_a", slug: "asking", spec: spec("Ship it?"), askedAtMs: T0 + 3_500, handle: "ship-it" })
+    f.thread("quiet", [prompt(1), reply(3, "resting")], { state: "open", exited: 0, rested_at: at(3) })
+    f.thread("busy", [prompt(1)], { state: "open", exited: 0 })
+    f.setAlive(["asking-sid", "quiet-sid", "busy-sid"])
+    primeAll(f.tailer, f.storage)
+    const first = await f.board.rebuild()
+    await assertGolden(f, "first build", first)
+    const view = (b: BoardSnapshot, id: string) => b.threads.find((t) => t.id === id)!
+    f.events.length = 0
+
+    f.clock.ms += 1_000
+    const again = f.board.refresh()
+    for (const id of ["asking", "quiet", "busy"]) assert.equal(view(again, id), view(first, id), `${id}: unchanged, so the same object`)
+    assert.equal(f.events.filter((e) => e.type === "board-delta").length, 0, "and no delta at all")
+    await assertGolden(f, "a build where nothing moved", again)
+
+    f.append("busy", reply(5, "made progress"))
+    f.tailer.tick()
+    const moved = f.board.refresh()
+    assert.notEqual(view(moved, "busy"), view(again, "busy"), "the thread that moved ships a new view")
+    assert.equal(view(moved, "busy").lastAssistant, "made progress")
+    assert.equal(view(moved, "quiet"), view(first, "quiet"), "the others keep theirs")
+    const delta = f.events.filter((e) => e.type === "board-delta").at(-1) as Extract<ServerEvent, { type: "board-delta" }>
+    assert.deepEqual(delta.upserts.map((t) => t.id), ["busy"], "the delta carries the one that moved")
+    await assertGolden(f, "one open thread moved", moved)
+
+    // THE FENCE SYNC GROWS A QUESTION ON THE ROW OBJECT THE STORAGE HANDED OUT (question-fences.ts
+    // syncQuestionFences: `entry.row.spec = …` after the write), and the storage then keeps that object,
+    // and its bucket, as unchanged. The view must carry the grown spec anyway.
+    const bucket = f.storage.threadQuestionsBySlug().get("asking")!
+    const grown = spec("Ship it today?")
+    assert.equal(f.storage.growThreadQuestionSpec("asking", "qst_a", grown), true)
+    ;(bucket[0] as { spec: string }).spec = grown
+    assert.equal(f.storage.threadQuestionsBySlug().get("asking"), bucket, "precondition: the storage kept the bucket object")
+    const regrown = f.board.refresh()
+    assert.equal(view(regrown, "asking").questions[0]?.spec.question, "Ship it today?", "the grown spec reached the view")
+    await assertGolden(f, "a question grown in place", regrown)
+
+    // The human types past the question: same rows, new telemetry, and the question no longer stands.
+    assert.equal(view(regrown, "asking").questions[0]?.standing, true, "precondition: it stands")
+    f.append("asking", prompt(9, "never mind, carry on"))
+    f.tailer.tick()
+    const typedPast = f.board.refresh()
+    assert.equal(view(typedPast, "asking").questions[0]?.standing, false, "typed past, it fades")
+    await assertGolden(f, "the human typed past the question", typedPast)
+  } finally {
+    f.close()
+  }
+})

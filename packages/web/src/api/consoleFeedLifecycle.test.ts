@@ -125,7 +125,7 @@ test("the Console's feed shows a board only once every project in it has answere
     // A cold load of the grid holds the launching project's connection.
     here.pathname = "/"
     socket.connectSync(queryClient as never)
-    assert.equal(socketFor("/_frizz/ws")?.url, "ws://127.0.0.1:54917/_frizz/ws")
+    assert.equal(socketFor("/_frizz/ws")?.url, "ws://127.0.0.1:54917/_frizz/ws?patch=1")
 
     // 1. INTO THE CONSOLE: nothing is shown until both projects have answered.
     here.pathname = "/console"

@@ -1,8 +1,8 @@
 import type { IncomingMessage } from "node:http"
 import type { Duplex } from "node:stream"
-import { createHash } from "node:crypto"
 import { WebSocketServer, type WebSocket } from "ws"
-import type { BoardDelta, BoardResyncReason, ServerEvent, SocketServerMsg, TranscriptMessage, TranscriptPushPage } from "@frizz/shared"
+import type { BoardDelta, BoardResyncReason, ServerEvent, SocketServerMsg, ThreadView, TranscriptMessage, TranscriptPushPage } from "@frizz/shared"
+import { diffJson, windowSplice } from "@frizz/shared"
 import { projectTranscriptSessionPeers, type SessionPeerThread } from "./session-peer.ts"
 import { SocketClientMsg, frizzRoute, type RelayAccess } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
@@ -10,7 +10,8 @@ import type { Emitter } from "./bus.ts"
 import type { Project } from "./project.ts"
 import type { Storage } from "./storage.ts"
 import type { AgentBackend } from "./backend/types.ts"
-import { projectRetiredBackgroundOps, retiredOpsFor, projectTranscriptAgentLifecycles, projectTranscriptPeerNames, readLatestThreadTranscriptPage, type AgentLifecycleProjection } from "./transcript.ts"
+import { projectRetiredBackgroundOps, retiredOpsFor, projectTranscriptAgentLifecycles, projectTranscriptPeerNames, readLatestThreadTranscriptPageRead, type AgentLifecycleProjection } from "./transcript.ts"
+import { MessageJsonMemo } from "./message-json-memo.ts"
 import { isTrustedLocalWebSocketRequest, rejectWebSocketUpgrade } from "./local-origin.ts"
 import { CALLER_HEADER } from "./audit.ts"
 import { callerAccess, REMOTE_SOCKET_MESSAGES } from "./remote-gate.ts"
@@ -25,6 +26,19 @@ const WS_PATH = frizzRoute("/ws")
 
 function isWsPath(url: string | undefined): boolean {
   return (url ?? "").split("?")[0] === WS_PATH
+}
+
+// A client that can apply patches says so in the URL it opens, `/ws?patch=1` — a query, not a socket
+// message, because the client's messages are strict and a server from before patches would close the
+// socket on a field it does not know, while it ignores a query. Such a connection is sent each change
+// as the difference from what it already holds (shared wire-patch.ts): a transcript as `transcript-tail`
+// frames, a board delta with `patches`. Every other connection gets whole values, as it always has —
+// which is also what an open tab from before this server keeps getting after an update.
+export const WS_PATCH_PARAM = "patch"
+
+function wantsPatches(url: string | undefined): boolean {
+  const query = (url ?? "").split("?")[1]
+  return query ? new URLSearchParams(query).get(WS_PATCH_PARAM) === "1" : false
 }
 
 // ── subscription registry ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +128,23 @@ export class SubscriptionRegistry<C> {
 export interface TranscriptPush {
   messages: TranscriptMessage[]
   page?: TranscriptPushPage
+  /** The transcript size the window was read at, when the reader knows it (the push verifier's reference point). */
+  bytes?: number
+}
+
+// A window as it was sent: the parts and envelope of a transcript snapshot.
+interface SentWindow {
+  parts: readonly string[]
+  pageJson: string | undefined
+}
+
+// The same frame, exactly: the same envelope and, message by message, the same JSON. Strings compare by
+// value, so this is exact whether or not a part is the same string object; when it is (a message the
+// memo served unchanged), the comparison costs a pointer check.
+export function sameWindow(a: SentWindow, b: SentWindow | undefined): boolean {
+  if (!b || a.pageJson !== b.pageJson || a.parts.length !== b.parts.length) return false
+  for (let i = 0; i < a.parts.length; i++) if (a.parts[i] !== b.parts[i]) return false
+  return true
 }
 
 // ── narrow deps ─────────────────────────────────────────────────────────────────────────────────────
@@ -127,7 +158,12 @@ export interface AppSocketDeps {
   /** The board deltas published after `seq`, or null when they cannot all be produced (board.ts). */
   boardDeltasSince: (seq: number) => BoardDelta[] | null
   maxReplayBytes?: number
-  readTranscript: (slug: string) => TranscriptPush
+  /**
+   * The thread's latest window. `memo` is the subscription's (message-json-memo.ts): a reader that measures
+   * the window may take each message's size from it, and the push then encodes from the same memo. It
+   * changes what a read costs, never what it returns.
+   */
+  readTranscript: (slug: string, memo?: MessageJsonMemo, coldAt?: number) => TranscriptPush | undefined
   /**
    * A promise while `readTranscript` would have to fold a cold transcript whole on this thread: it settles once
    * that work is done in slices (transcript.ts catchUpTranscriptFold), and the read goes ahead then. Undefined
@@ -193,8 +229,11 @@ export function makeTranscriptReader(
   // The thread behind a cross-session message's sender (session-peer.ts) — the same lookup the paged
   // RPC uses, so the live push and the page head the card with the same link.
   sessionPeerThread?: (peer: NonNullable<TranscriptMessage["sessionPeer"]>) => SessionPeerThread | undefined,
-): (slug: string) => TranscriptPush {
-  return (slug: string) => {
+): (slug: string, memo?: MessageJsonMemo, coldAt?: number) => TranscriptPush | undefined {
+  // `coldAt` asks for the reference read the push verifier compares against: the same window folded from
+  // byte 0 at exactly that size (transcript.ts readLatestThreadTranscriptPageRead). Undefined when it
+  // cannot be had (not a Claude transcript, or the file is no longer that long).
+  return (slug: string, memo?: MessageJsonMemo, coldAt?: number) => {
     // The SAME bounded latest window the paged RPC serves (readLatestThreadTranscriptPage), never the
     // whole transcript. This read used to be readThreadTranscript — every message the thread had ever
     // produced — while the client's push reconciler was already written for a window that slides
@@ -206,7 +245,9 @@ export function makeTranscriptReader(
     // window came to 0.5 MB). `editedFiles: false` skips the git-backed scan the page otherwise runs —
     // this producer fires on every byte-advance of every subscribed thread, and the rail keeps the copy
     // its last HTTP read delivered.
-    const page = readLatestThreadTranscriptPage(project, storage, slug, backendFor)
+    const read = readLatestThreadTranscriptPageRead(project, storage, slug, backendFor, { memo, coldAt })
+    if (!read) return undefined
+    const { page } = read
     const named = peerNameFor ? projectTranscriptPeerNames(page.messages, (taskId) => peerNameFor(slug, taskId)) : page.messages
     const sent = sessionPeerThread ? projectTranscriptSessionPeers(named, sessionPeerThread) : named
     const projected = lifecycleFor ? projectTranscriptAgentLifecycles(sent, (id) => lifecycleFor(slug, id)) : sent
@@ -223,6 +264,7 @@ export function makeTranscriptReader(
         reachedTurnBoundary: page.reachedTurnBoundary,
         transcriptKey: page.transcriptKey,
       },
+      bytes: read.bytes,
     }
   }
 }
@@ -238,6 +280,12 @@ export interface AppSocketServer {
   readonly connectionCount: number
   readonly transcriptCacheEntries: number
   readonly transcriptCacheBytes: number
+  // How many transcript snapshots have been encoded (read and serialized) — the coalescing tests' count.
+  readonly transcriptEncodes: number
+  // Subscribed slugs holding a JSON memo — for tests to assert one goes with its last subscriber.
+  readonly transcriptJsonMemos: number
+  // FRIZZ_TRANSCRIPT_PUSH_VERIFY's tally: pushes compared with a cold read, how many differed, how many had no reference.
+  readonly pushVerify: { checked: number; diverged: number; skipped: number }
   readonly pendingTranscriptRefreshes: number
   // Live file watches held across every connection — a clean close must leave 0.
   readonly fileWatchCount: number
@@ -272,14 +320,25 @@ export const APP_SOCKET_MAX_TRANSCRIPT_CACHE_BYTES = 32 * 1_024 * 1_024
 // window and a bulk delta still do.) Loopback bandwidth is cheap, but the browser still has to receive and the
 // server still has to write 914 KB, and on a relayed/remote origin it is the whole cost.
 //
-// The threshold keeps the small frames raw: a per-frame deflate on a 200-byte tail event costs more in
-// CPU and zlib bookkeeping than it saves, and those frames are the common case. The memLevel and
-// concurrency caps are the `ws` documentation's own guardrails against per-connection zlib memory,
-// which is the reason the default is off at all.
+// The threshold keeps the tiny frames raw — a heartbeat, a notify, an invalidation — where zlib's per-frame
+// bookkeeping costs more than it saves. It was 8 KiB until 2026-11-09, which suited frames that were
+// whole thread views and whole transcript windows; once a change rides as a patch (wire-patch.ts) a
+// busy board's frames are 0.4-2 KB, and every one of them went out raw. Measured on the maintainer's
+// real boards with three busy scripted workers (Console, one thread open, two minutes): 2.75 MB of
+// patch frames at 8 KiB, 1.18 MB at 512 B (1.17 MB at 64 B), for ~50-100 us of deflate per frame.
+//
+// The window is 8 KiB (`serverMaxWindowBits: 13`) and memLevel 7, which is what zlib keeps per
+// connection for as long as it lives — 96 KB rather than the 256 KB of the defaults, and the Console
+// holds one connection per project, ~20. Over the same recorded frames that cost nothing measurable:
+// the whole 130 KB transcript windows deflated to 393 KB per 8.2 MB against 388 KB at the full 32 KiB
+// window, and the patch frames to the same byte. The memLevel and concurrency caps are the `ws`
+// documentation's own guardrails against per-connection zlib memory, which is the reason the default
+// is off at all.
 export const APP_SOCKET_DEFLATE = {
-  threshold: 8 * 1_024,
+  threshold: 512,
   concurrencyLimit: 10,
-  zlibDeflateOptions: { level: 6, memLevel: 8 },
+  serverMaxWindowBits: 13,
+  zlibDeflateOptions: { level: 6, memLevel: 7 },
   // A sliding window is negotiated per connection and costs memory on both ends for the whole
   // connection's life; these frames are independently compressible, so decline the context takeover.
   serverNoContextTakeover: true,
@@ -344,9 +403,22 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
   let connectionCount = 0
   let pendingUpgrades = 0
   const socketOrigins = new WeakMap<WebSocket, string>()
-  // Per-slug signature of the last BROADCAST transcript — dedupes an unchanged re-read (a tailer tick that
+  // Per-slug window of the last BROADCAST transcript — dedupes an unchanged re-read (a tailer tick that
   // advanced the file with records the transcript renderer ignores) so we don't push identical frames.
-  const lastSig = new Map<string, string>()
+  // It was a sha256 over the joined frame (up to 3 MB hashed per read); it is now the window itself,
+  // compared part by part (`sameWindow`). The parts are the snapshot's own strings, and an unchanged
+  // message's JSON is the SAME string from one read to the next (jsonMemos), so the comparison is a
+  // pointer check per message and keeps nothing the snapshot cache and the held windows do not.
+  const lastSig = new Map<string, SentWindow>()
+  // Each subscribed slug's JSON memo (message-json-memo.ts), dropped with its last subscriber.
+  const jsonMemos = new Map<string, MessageJsonMemo>()
+  function forgetSlugWindow(slug: string): void {
+    lastSig.delete(slug)
+    jsonMemos.delete(slug)
+  }
+  // Connections that asked for patches (`?patch=1`, see WS_PATCH_PARAM).
+  const patchSockets = new WeakSet<WebSocket>()
+  let patchSocketCount = 0
 
   // ── the FILE topic ─────────────────────────────────────────────────────────────────────────────────
   // Per connection, the local files its readers have open, each holding the release of a live watch.
@@ -549,9 +621,60 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     sendEncoded(ws, frame, false)
   }
 
-  function frameSignature(frame: EncodedMessage): string {
-    return createHash("sha256").update(frame.text).digest("base64url")
+
+  // ── board deltas, encoded once ──────────────────────────────────────────────────────────────────
+  // Every connection is sent the same frame for a live delta, so it is encoded once, by the first one.
+  // A connection that takes patches gets a second encoding, where each changed thread is the edits from
+  // the view that connection holds (shared wire-patch.ts diffJson). What it holds is known exactly: it
+  // is resumed from a board at some seq and applies every delta after it in order, so before delta N it
+  // holds each thread as the last delta before N left it, or as its board read did if none touched it.
+  // `boardViews` is that — the thread as the newest delta carried it — kept from a bus subscription
+  // made here, before any connection's, so it runs first and the patch is taken against the view from
+  // BEFORE this delta. A thread no delta has carried since this server started has no entry and goes
+  // whole. A replay on resume always goes whole (`resumeBoard` encodes it), so this is only ever applied
+  // to the live delta that follows a connection's held seq.
+  //
+  // The views are the board's own objects, which are never written once published (shared delta.ts).
+  const boardViews = new Map<string, ThreadView>()
+  // The encodings of the delta being published now. A publish reaches every connection synchronously
+  // (bus.ts), so one slot is enough, and it keeps no frame alive past its publish; the ring holds the
+  // events themselves for a resume, which encodes its replay afresh.
+  let encodedFor: BoardDelta | null = null
+  let wholeFrame: EncodedMessage | null | undefined
+  let patchedFrame: EncodedMessage | null = null
+
+  function patchedDelta(event: BoardDelta): BoardDelta | null {
+    const upserts: ThreadView[] = []
+    const patches: { id: string; ops: unknown[][] }[] = []
+    for (const thread of event.upserts) {
+      const held = boardViews.get(thread.id)
+      const ops = held ? diffJson(held, thread) : null
+      if (!ops?.length || JSON.stringify(ops).length >= JSON.stringify(thread).length) upserts.push(thread)
+      else patches.push({ id: thread.id, ops })
+    }
+    return patches.length ? { ...event, upserts, patches } : null
   }
+
+  const offBoardViews = deps.bus.subscribe((event) => {
+    if (event.type !== "board-delta") return
+    encodedFor = event
+    wholeFrame = undefined
+    patchedFrame = null
+    if (patchSocketCount > 0) {
+      const patched = patchedDelta(event)
+      patchedFrame = patched ? encodeMsg({ t: "event", event: patched }) : null
+    }
+    for (const thread of event.upserts) boardViews.set(thread.id, thread)
+    for (const id of event.removed) boardViews.delete(id)
+  })
+
+  function liveDeltaFrame(ws: WebSocket, event: BoardDelta): EncodedMessage | null {
+    if (event !== encodedFor) return encodeMsg({ t: "event", event })
+    if (patchFrameFor(ws)) return patchedFrame!
+    if (wholeFrame === undefined) wholeFrame = encodeMsg({ t: "event", event })
+    return wholeFrame
+  }
+  const patchFrameFor = (ws: WebSocket): boolean => patchedFrame !== null && patchSockets.has(ws)
 
   // ── aggregate transcript read budget ─────────────────────────────────────────────────────────────
   // Sliding timestamps (rather than resettable fixed windows) prevent a client from taking one full
@@ -620,18 +743,128 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
   // zero disk/parse work AND zero full-frame serialization. Map insertion order is the LRU order.
   // Entries are evicted as soon as the last subscriber leaves, so a forgotten thread cannot be served
   // from stale retained content; tailer invalidation deletes the entry synchronously before refresh.
+  // A snapshot keeps each message's JSON (`parts`) rather than one frame string: a connection that takes
+  // patches is sent only the parts that changed (`transcriptFrameFor`), and the whole frame is built from
+  // the parts the first time a connection needs it whole — never, while every subscriber takes patches.
   interface TranscriptSnapshot {
     frame: EncodedMessage
-    sig: string
+    parts: string[]
+    pageJson: string | undefined
     weight: number
+    // The `transcript-tail` frame from an earlier snapshot's parts to this one, by that array, so every
+    // connection holding the same earlier window shares one splice and one encoding.
+    tails?: Map<string[], EncodedMessage | null>
   }
   const transcriptCache = new Map<string, TranscriptSnapshot>()
   let transcriptCacheBytes = 0
 
-  function snapshotWeight(frame: EncodedMessage): number {
+  // The frame `{t, slug, messages, page}` exactly as JSON.stringify writes it, from each message's own
+  // JSON. Its byte count is taken from the parts, so the joined string is built only when a connection is
+  // sent the window whole. The parts come from the slug's JSON memo: a message unchanged since the last read
+  // is the same string again, and only what changed is serialized (message-json-memo.ts).
+  let transcriptEncodes = 0
+  function encodeTranscript(slug: string, read: TranscriptPush, memo: MessageJsonMemo): TranscriptSnapshot | null {
+    let parts: string[]
+    let pageJson: string | undefined
+    let bytes: number
+    let units: number
+    const head = `{"t":"transcript","slug":${JSON.stringify(slug)},"messages":[`
+    try {
+      pageJson = read.page ? JSON.stringify(read.page) : undefined
+      const end = pageJson === undefined ? "]}" : `],"page":${pageJson}}`
+      bytes = Buffer.byteLength(head) + Buffer.byteLength(end) + Math.max(0, read.messages.length - 1)
+      units = head.length + end.length + Math.max(0, read.messages.length - 1)
+      // Each message's JSON from the subscription's memo: serialized afresh only when it changed.
+      parts = new Array<string>(read.messages.length)
+      for (let i = 0; i < read.messages.length; i++) {
+        const part = memo.get(read.messages[i]!)
+        // In an array JSON writes null for what it would leave out, so a part is never missing.
+        if (typeof part.json !== "string") {
+          parts[i] = "null"
+          bytes += 4
+          units += 4
+          continue
+        }
+        parts[i] = part.json
+        bytes += part.bytes
+        units += part.json.length
+      }
+    } catch {
+      return null
+    }
+    transcriptEncodes++
+    const end = pageJson === undefined ? "]}" : `],"page":${pageJson}}`
+    // Joined on each use and never kept: holding it would keep every window twice, once as parts and
+    // once whole. A whole frame goes out on a subscription and to a connection that takes no patches.
+    const frame: EncodedMessage = {
+      get text() {
+        return head + parts.join(",") + end
+      },
+      bytes,
+    }
     // V8 strings may occupy two bytes/code-unit; take the larger of UTF-8 wire bytes and that
     // conservative in-memory estimate. Small Map/object overhead is bounded by the separate entry cap.
-    return Math.max(frame.bytes, frame.text.length * 2)
+    const weight = Math.max(bytes, units * 2)
+    return { frame, parts, pageJson, weight }
+  }
+
+  // ── what each patch-taking connection holds ───────────────────────────────────────────────────────
+  // Per connection and slug, the window it was last SENT (the snapshot's own arrays, shared, not copies).
+  // A frame is a patch only against this, and it is written only when a frame actually went out, so a
+  // generation skipped for backpressure is followed by a patch from what the peer really has.
+  const heldTranscripts = new WeakMap<WebSocket, Map<string, { parts: string[]; pageJson: string | undefined }>>()
+
+  // The frame this connection should get for this snapshot: the whole window, a tail, or null when it
+  // already holds exactly this window (nothing to send).
+  function transcriptFrameFor(ws: WebSocket, slug: string, snapshot: TranscriptSnapshot): EncodedMessage | null {
+    if (!patchSockets.has(ws)) return snapshot.frame
+    const held = heldTranscripts.get(ws)?.get(slug)
+    if (!held) return snapshot.frame
+    if (held.parts === snapshot.parts && held.pageJson === snapshot.pageJson) return null
+    snapshot.tails ??= new Map()
+    if (snapshot.tails.has(held.parts)) return snapshot.tails.get(held.parts) ?? snapshot.frame
+    const splice = windowSplice(held.parts, snapshot.parts)
+    let tail: EncodedMessage | null = null
+    if (
+      splice.drop === 0
+      && splice.keep === held.parts.length
+      && splice.keep === snapshot.parts.length
+      && held.pageJson === snapshot.pageJson
+    ) {
+      // The same window read again: nothing changed for this connection.
+      snapshot.tails.set(held.parts, null)
+      return null
+    }
+    if (splice.keep > 0) {
+      const added = snapshot.parts.slice(splice.keep)
+      const text = `{"t":"transcript-tail","slug":${JSON.stringify(slug)},"from":${held.parts.length},"drop":${splice.drop},"keep":${splice.keep},"messages":[${added.join(",")}]${snapshot.pageJson === undefined ? "" : `,"page":${snapshot.pageJson}`}}`
+      const bytes = Buffer.byteLength(text)
+      // Only when it is worth it: a tail most of the size of the window is sent as the window.
+      if (bytes < snapshot.frame.bytes / 2) tail = { text, bytes }
+    }
+    snapshot.tails.set(held.parts, tail)
+    return tail ?? snapshot.frame
+  }
+
+  function noteTranscriptSent(ws: WebSocket, slug: string, snapshot: TranscriptSnapshot): void {
+    if (!patchSockets.has(ws)) return
+    let held = heldTranscripts.get(ws)
+    if (!held) heldTranscripts.set(ws, (held = new Map()))
+    held.set(slug, { parts: snapshot.parts, pageJson: snapshot.pageJson })
+  }
+
+  function forgetTranscriptSent(ws: WebSocket, slug?: string): void {
+    if (slug === undefined) heldTranscripts.delete(ws)
+    else heldTranscripts.get(ws)?.delete(slug)
+  }
+
+  // Send one snapshot of a slug to one subscriber, whole or as a tail. Nothing to send counts as sent.
+  function sendTranscript(ws: WebSocket, slug: string, snapshot: TranscriptSnapshot): SendResult {
+    const frame = transcriptFrameFor(ws, slug, snapshot)
+    if (!frame) return ws.readyState === ws.OPEN ? { kind: "sent" } : { kind: "unavailable" }
+    const result = sendEncoded(ws, frame, true, "skip")
+    if (result.kind === "sent") noteTranscriptSent(ws, slug, snapshot)
+    return result
   }
 
   function deleteTranscriptSnapshot(slug: string): void {
@@ -673,12 +906,60 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     transcriptCacheBytes = 0
   }
 
-  function readTranscript(slug: string): TranscriptPush | null {
+  function readTranscript(slug: string, memo: MessageJsonMemo): TranscriptPush | null {
     try {
-      return deps.readTranscript(slug)
+      return deps.readTranscript(slug, memo) ?? null
     } catch {
       return null
     }
+  }
+
+  // ── FRIZZ_TRANSCRIPT_PUSH_VERIFY=1: every push checked against a cold read ───────────────────────────
+  // A push is encoded from the retained fold and the subscription's JSON memo. With this set, each one is
+  // compared, in the same synchronous turn, with a COLD read at the same transcript size — a fold from
+  // byte 0, no memo — encoded with plain JSON.stringify. A difference is logged loudly; nothing is thrown
+  // and the push goes out as it would have. Off by default: the cold read costs a whole fold per push.
+  const verifyPushes = process.env.FRIZZ_TRANSCRIPT_PUSH_VERIFY === "1"
+  const pushVerify = { checked: 0, diverged: 0, skipped: 0 }
+  function verifyPush(slug: string, read: TranscriptPush, snapshot: TranscriptSnapshot): void {
+    let cold: TranscriptPush | undefined
+    try {
+      cold = read.bytes === undefined ? undefined : deps.readTranscript(slug, undefined, read.bytes)
+    } catch {
+      cold = undefined
+    }
+    if (!cold) {
+      pushVerify.skipped++
+      return
+    }
+    pushVerify.checked++
+    const coldParts = cold.messages.map((m) => JSON.stringify(m) ?? "null")
+    const coldPage = cold.page ? JSON.stringify(cold.page) : undefined
+    if (!sameWindow({ parts: coldParts, pageJson: coldPage }, snapshot)) {
+      pushVerify.diverged++
+      let at = 0
+      while (at < coldParts.length && coldParts[at] === snapshot.parts[at]) at++
+      console.error(JSON.stringify({
+        event: "transcript_push_divergence",
+        slug,
+        bytes: read.bytes,
+        warmMessages: snapshot.parts.length,
+        coldMessages: coldParts.length,
+        firstDifference: at,
+        pageDiffers: coldPage !== snapshot.pageJson,
+        warm: snapshot.parts[at]?.slice(0, 400),
+        cold: coldParts[at]?.slice(0, 400),
+      }))
+    }
+    if ((pushVerify.checked + pushVerify.skipped) % 100 === 0) {
+      console.error(JSON.stringify({ event: "transcript_push_verify", ...pushVerify }))
+    }
+  }
+
+  function jsonMemoFor(slug: string): MessageJsonMemo {
+    let memo = jsonMemos.get(slug)
+    if (!memo) jsonMemos.set(slug, (memo = new MessageJsonMemo()))
+    return memo
   }
 
   type SnapshotResult =
@@ -696,20 +977,23 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     if (folding) return { kind: "folding", done: folding }
     const reservation = reserveTranscriptRead(origin)
     if (reservation.kind === "limited") return reservation
-    const read = readTranscript(slug)
+    const memo = jsonMemoFor(slug)
+    memo.rotate() // one read: what it does not use is dropped at the next
+    const read = readTranscript(slug, memo)
     if (!read) return { kind: "unavailable" }
-    const frame = encodeMsg(read.page ? { t: "transcript", slug, messages: read.messages, page: read.page } : { t: "transcript", slug, messages: read.messages })
-    if (!frame) return { kind: "unavailable" }
-    if (frame.bytes > maxLogicalFrameBytes) return { kind: "oversized", actualBytes: frame.bytes }
-    const snapshot = { frame, sig: frameSignature(frame), weight: snapshotWeight(frame) }
+    const snapshot = encodeTranscript(slug, read, memo)
+    if (!snapshot) return { kind: "unavailable" }
+    if (verifyPushes) verifyPush(slug, read, snapshot)
+    if (snapshot.frame.bytes > maxLogicalFrameBytes) return { kind: "oversized", actualBytes: snapshot.frame.bytes }
     cacheTranscriptSnapshot(slug, snapshot)
     return { kind: "ready", snapshot }
   }
 
   function dropSubscription(ws: WebSocket, slug: string): void {
+    forgetTranscriptSent(ws, slug)
     registry.unsubscribe(ws, slug)
     if (!registry.hasSubscribers(slug)) {
-      lastSig.delete(slug)
+      forgetSlugWindow(slug)
       deleteTranscriptSnapshot(slug)
     }
   }
@@ -752,7 +1036,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
       })
       return
     }
-    const sent = sendEncoded(ws, result.snapshot.frame, true, "skip")
+    const sent = sendTranscript(ws, slug, result.snapshot)
     if (sent.kind === "backpressure") {
       // Keep the subscription: this peer is merely behind, not broken. Leave the slug dirty so the next
       // flush delivers the CURRENT snapshot, and never seed lastSig — that would dedupe away the very
@@ -761,7 +1045,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
       return
     }
     if (sent.kind === "sent" && registry.subscribers(slug).length <= 1) {
-      lastSig.set(slug, result.snapshot.sig)
+      lastSig.set(slug, { parts: result.snapshot.parts, pageJson: result.snapshot.pageJson })
     }
   }
 
@@ -871,7 +1155,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     let retryMs: number | undefined
     for (const slug of slugs) {
       if (!registry.hasSubscribers(slug)) {
-        lastSig.delete(slug)
+        forgetSlugWindow(slug)
         deleteTranscriptSnapshot(slug)
         continue
       }
@@ -904,7 +1188,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
       }
       if (result.kind === "unavailable") {
         for (const ws of registry.subscribers(slug)) closeSocket(ws, 1011, "transcript unavailable")
-        lastSig.delete(slug)
+        forgetSlugWindow(slug)
         deleteTranscriptSnapshot(slug)
         continue
       }
@@ -920,15 +1204,15 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
             maxBytes: maxLogicalFrameBytes,
           })
         }
-        lastSig.delete(slug)
+        forgetSlugWindow(slug)
         deleteTranscriptSnapshot(slug)
         continue
       }
-      if (result.snapshot.sig === lastSig.get(slug)) continue
+      if (sameWindow(result.snapshot, lastSig.get(slug))) continue
       let sent = false
       let skipped = false
       for (const ws of registry.subscribers(slug)) {
-        const outcome = sendEncoded(ws, result.snapshot.frame, true, "skip")
+        const outcome = sendTranscript(ws, slug, result.snapshot)
         if (outcome.kind === "sent") sent = true
         else if (outcome.kind === "backpressure") skipped = true
       }
@@ -939,7 +1223,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
         retryMs = retryMs === undefined ? BACKPRESSURE_RETRY_MS : Math.min(retryMs, BACKPRESSURE_RETRY_MS)
         continue
       }
-      if (sent) lastSig.set(slug, result.snapshot.sig)
+      if (sent) lastSig.set(slug, { parts: result.snapshot.parts, pageJson: result.snapshot.pageJson })
     }
     if (pendingTranscriptRefreshes.size) scheduleTranscriptFlush(retryMs ?? 0)
   }
@@ -991,7 +1275,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
         return
       }
       boardSeq = event.seq
-      const frame = encoded ?? encodeMsg({ t: "event", event })
+      const frame = encoded ?? liveDeltaFrame(ws, event)
       if (!frame) {
         closeSocket(ws, 1011, "serialization failed")
         return
@@ -1113,6 +1397,11 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     })
 
     ws.on("close", () => {
+      if (patchSockets.has(ws)) {
+        patchSockets.delete(ws)
+        patchSocketCount = Math.max(0, patchSocketCount - 1)
+      }
+      forgetTranscriptSent(ws)
       try {
         unsubscribeBus()
       } catch {
@@ -1128,7 +1417,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
       registry.removeConn(ws) // leak-guard: drop this connection from every slug it held
       for (const slug of held) {
         if (!registry.hasSubscribers(slug)) {
-          lastSig.delete(slug)
+          forgetSlugWindow(slug)
           deleteTranscriptSnapshot(slug)
         }
       }
@@ -1188,6 +1477,10 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
           releaseReservation()
           const origin = req.headers.origin
           if (typeof origin === "string") socketOrigins.set(ws, origin)
+          if (wantsPatches(req.url)) {
+            patchSockets.add(ws)
+            patchSocketCount++
+          }
           const stamp = req.headers[CALLER_HEADER]
           const access = typeof stamp === "string" ? callerAccess(stamp) : "local"
           if (access !== "local") remoteSockets.set(ws, { stamp: stamp as string, userAgent: req.headers["user-agent"], access })
@@ -1202,6 +1495,12 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     close() {
       if (closePromise) return closePromise
       closing = true
+      try {
+        offBoardViews()
+      } catch {
+        // Continue reclaiming sockets even if a custom producer cleanup fails.
+      }
+      boardViews.clear()
       try {
         offTranscript()
       } catch {
@@ -1233,6 +1532,7 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
         }
       }))
       lastSig.clear()
+      jsonMemos.clear()
       closePromise = (async () => {
         await Promise.allSettled(socketDrains)
         try {
@@ -1255,6 +1555,15 @@ export function createAppSocketServer(deps: AppSocketDeps): AppSocketServer {
     },
     get transcriptCacheBytes() {
       return transcriptCacheBytes
+    },
+    get transcriptEncodes() {
+      return transcriptEncodes
+    },
+    get transcriptJsonMemos() {
+      return jsonMemos.size
+    },
+    get pushVerify() {
+      return { ...pushVerify }
     },
     get pendingTranscriptRefreshes() {
       return pendingTranscriptRefreshes.size

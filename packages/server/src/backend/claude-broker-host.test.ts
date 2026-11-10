@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { delimiter, join } from "node:path"
 import { test } from "node:test"
+import { spawnSync } from "node:child_process"
 import { brokerLivenessSnapshot, claudeBrokerRecordPath, forkBroker, killBroker, liveBrokerRecord, resolveClaudeExecutableAbsolute } from "./claude-broker-host.ts"
 
 // The npm `.cmd` stub, verbatim from a real `npm i -g @anthropic-ai/claude-code` on Windows Server
@@ -177,6 +178,40 @@ test("forkBroker: control — a daemon that publishes its record and stays up re
   }
 })
 
+// --- forkBroker: a live daemon's ChildProcess must not keep the fork's options alive -----------------------
+//
+// The `exit` listener lives on the ChildProcess, which lives as long as the detached daemon does. When
+// its closure reached `options`, every live worker kept its whole system prompt (~160 KB) on the
+// server's heap for the life of the thread: 5 MB across 32 daemons (heap snapshot, 2026-11-09).
+
+test("forkBroker: once the daemon is up, nothing the fork left behind holds its options", async () => {
+  const v8 = await import("node:v8")
+  const vm = await import("node:vm")
+  v8.setFlagsFromString("--expose-gc")
+  const gc = vm.runInNewContext("gc") as () => void
+  const dir = mkdtempSync(join(tmpdir(), "frizz-broker-fork-"))
+  let daemonPid: number | undefined
+  try {
+    const entry = scratchDaemon(dir, "lives", [
+      "writeFileSync(config.recordPath, JSON.stringify({ daemonPid: process.pid, socketPath: config.socketPath, sessionId: config.sessionId, generation: config.generation, createdAt: new Date().toISOString() }))",
+      "setInterval(() => {}, 1000)",
+    ].join("\n"))
+    let options: ReturnType<typeof forkOptions> & { appendSystemPrompt?: string } | undefined = { ...forkOptions(dir, entry), appendSystemPrompt: "a worker contract ".repeat(64) }
+    const held = new WeakRef(options)
+    daemonPid = (await forkBroker(options)).daemonPid
+    options = undefined
+    // A WeakRef target survives until the job that created the ref ends, so collect on a later turn.
+    for (let i = 0; i < 5 && held.deref(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      gc()
+    }
+    assert.equal(held.deref(), undefined, "the live daemon's ChildProcess still reaches the fork options")
+  } finally {
+    if (daemonPid) { try { process.kill(daemonPid, "SIGKILL") } catch {} }
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // --- killBroker: the daemon TREE ends on Windows, one signal on POSIX -----------------------------------
 
 test("killBroker: win32 routes through taskkill /T /F and drops the record; posix signals the daemon", (t) => {
@@ -266,4 +301,30 @@ test("brokerLivenessSnapshot sees a record created after its listing was cached"
   writeFileSync(claudeBrokerRecordPath(dir, other), JSON.stringify({ daemonPid: process.pid, socketPath: join(dir, "s"), sessionId: other, generation: "g1", createdAt: new Date().toISOString() }))
   utimesSync(records, old, old)
   assert.equal(brokerLivenessSnapshot(dir)(other), false, "an unchanged mtime serves the cached listing")
+})
+
+// The board asks whether every open broker thread's daemon is alive on every build. The record names the
+// same pid for as long as the file is the one that was read, so only the pid is asked again; a record
+// rewritten for a new daemon, or one whose daemon died, is read and pruned exactly as before.
+test("brokerLivenessSnapshot reads a record once per version of the file, and still sees it change", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-broker-pid-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  mkdirSync(join(dir, "claude-broker"), { recursive: true })
+  const sessionId = "cccccccc-0000-4000-8000-000000000001"
+  const path = claudeBrokerRecordPath(dir, sessionId)
+  const record = (pid: number) => JSON.stringify({ daemonPid: pid, socketPath: join(dir, "s"), sessionId, generation: `g${pid}`, createdAt: new Date().toISOString() })
+  writeFileSync(path, record(process.pid))
+  assert.equal(brokerLivenessSnapshot(dir)(sessionId), true)
+
+  // Unreadable now, unchanged otherwise: an answer that still comes back alive never opened the file.
+  chmodSync(path, 0o000)
+  try {
+    assert.equal(brokerLivenessSnapshot(dir)(sessionId), true, "the same file: its pid, remembered")
+  } finally { chmodSync(path, 0o600) }
+
+  // The record rewritten in place for a daemon that is not running: read again, found dead, pruned.
+  const dead = spawnSync(process.execPath, ["-e", ""]).pid
+  writeFileSync(path, record(dead))
+  assert.equal(brokerLivenessSnapshot(dir)(sessionId), false, "a rewritten record is read again")
+  assert.equal(existsSync(path), false, "and a dead daemon's record is pruned, as liveBrokerRecord does")
 })

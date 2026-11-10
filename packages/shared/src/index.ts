@@ -3808,6 +3808,13 @@ export const ThreadSettledQuestionsResult = z.object({
 }).strict()
 export type ThreadSettledQuestionsResult = z.infer<typeof ThreadSettledQuestionsResult>
 
+/** A thread's REGISTERED completion (`frizzctl done`), whole: the body an archived thread's board view
+ *  carries only the head of (ThreadFence.bodyElided). `body` is null when the thread has none. */
+export const ThreadRegisteredDoneResult = z.object({
+  body: z.string().nullable(),
+}).strict()
+export type ThreadRegisteredDoneResult = z.infer<typeof ThreadRegisteredDoneResult>
+
 /** THE HEADER OF THE ONE WIRE FORMAT AN ANSWER TRAVELS IN, and the reason it is declared in shared
  *  rather than beside either producer: two of them write this line — the fence path's `composeAnswerWire`
  *  in the browser and `questionAnswerMessage` below — and ONE parser in the chat reads it
@@ -4108,6 +4115,10 @@ export const ThreadFence = z.object({
   // is in no message, needs the client to know it must draw the card itself at the bottom of the thread
   // (maintainer 2026-08-27: a thread that signed off by tool rested with no card at all).
   registered: z.literal(true).optional(),
+  // Present only on an ARCHIVED thread's ```done fence as the board carries it: `body` is then only its
+  // head (fence-head.ts doneFenceBodyHead), and this is the whole body's length. A surface that draws the
+  // body whole reads it per thread (`threadRegisteredDone`, web lib/registeredDone.ts).
+  bodyElided: z.number().int().nonnegative().optional(),
 })
 export type ThreadFence = z.infer<typeof ThreadFence>
 
@@ -7235,6 +7246,11 @@ const BoardDeltaEvent = z.object({
   upserts: z.array(ThreadView),
   removed: z.array(ThreadSlug),
   meta: BoardMeta.optional(),
+  // Only on a /ws connection that asked for patches (`?patch=1`, app-socket.ts), and never in the ring,
+  // over SSE or from `boardDeltas`: threads that CHANGED, each as the edits (wire-patch.ts diffJson)
+  // that turn the view the client holds into the new one. A thread is in `upserts` or here, never both.
+  // The client expands them back into upserts before applying the delta (web api/wirePatch.ts).
+  patches: z.array(z.object({ id: ThreadSlug, ops: z.array(z.array(z.unknown())) })).optional(),
 })
 
 export const ServerEvent = z.discriminatedUnion("type", [
@@ -7303,6 +7319,8 @@ export * from "./claude-editions.ts"
 export * from "./code-fences.ts"
 export * from "./question-fence.ts"
 export * from "./delta.ts"
+export * from "./wire-patch.ts"
+export * from "./fence-head.ts"
 export * from "./drainable-worker.ts"
 export * from "./interactions.ts"
 export * from "./launch-prefix.ts"
@@ -7792,6 +7810,19 @@ export type SocketServerMsg =
   | { t: "board-resync"; reason: BoardResyncReason }
   | { t: "event"; event: ServerEvent }
   | { t: "transcript"; slug: ThreadSlug; messages: TranscriptMessage[]; page?: TranscriptPushPage }
+  // Only on a /ws connection that asked for patches (`?patch=1`): the subscribed slug's new window as a
+  // splice of the LAST window this connection received for it (wire-patch.ts windowSplice) — `from` is
+  // that window's length, as a check — with `messages` the new tail. The client rebuilds the whole
+  // window and handles it exactly as a `transcript` frame. Sent instead of one only when it is smaller.
+  | {
+      t: "transcript-tail"
+      slug: ThreadSlug
+      from: number
+      drop: number
+      keep: number
+      messages: TranscriptMessage[]
+      page?: TranscriptPushPage
+    }
   | { t: "file-changed"; path: string }
   | { t: "payload-too-large"; channel: "board"; actualBytes: number; maxBytes: number }
   | { t: "payload-too-large"; channel: "transcript"; slug: ThreadSlug; actualBytes: number; maxBytes: number }

@@ -81,3 +81,36 @@ test("delta ring: a ring that is behind the server's seq serves nothing rather t
   assert.equal(r.since(1), null)
   assert.deepEqual(r.since(3), [])
 })
+
+// AND BY AGE (RECENT_DELTA_MAX_AGE_MS). Count bounds alone kept a quiet project's last 512 deltas —
+// superseded ThreadViews no client could still ask for — for the life of the server.
+test("delta ring: deltas older than the age bound are dropped, on publish and on prune, and resume falls back to a read", () => {
+  let seq = 0
+  let now = 1_000_000
+  const r = new DeltaRing(() => seq, 512, 2048, 120_000, () => now)
+  const publish = () => r.remember(delta(++seq))
+  for (let i = 0; i < 3; i++) publish() // seqs 1..3 at t0
+  now += 90_000
+  publish() // seq 4 at t0+90s
+  assert.deepEqual(r.since(0)?.map((d) => d.seq), [1, 2, 3, 4], "everything is younger than two minutes")
+  now += 60_000 // seqs 1..3 are now 150s old, seq 4 is 60s old
+  r.prune()
+  assert.equal(r.size, 1)
+  assert.equal(r.since(0), null, "a resume from before the ring is a full read, never a replay with a hole")
+  assert.deepEqual(r.since(3)?.map((d) => d.seq), [4])
+  now += 120_001
+  r.prune()
+  assert.equal(r.size, 0, "a quiet project's ring empties")
+  assert.deepEqual(r.since(4), [], "a client at the current seq still resumes")
+  assert.equal(r.since(3), null)
+  publish() // seq 5: the ring starts again from what it is handed
+  assert.deepEqual(r.since(4)?.map((d) => d.seq), [5])
+})
+
+test("delta ring: control — without a clock that moves, nothing is aged out", () => {
+  let seq = 0
+  const r = new DeltaRing(() => seq, 512, 2048, 120_000, () => 0)
+  for (let i = 0; i < 10; i++) r.remember(delta(++seq))
+  r.prune()
+  assert.equal(r.size, 10)
+})

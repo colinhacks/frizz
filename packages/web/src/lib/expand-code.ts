@@ -4,8 +4,8 @@ import {
   CODE_LONG_CLASS,
   longBlockLabel,
   rememberLongBlock,
-} from "./codeBlock.ts"
-import { CODE_BLOCK_CLASS } from "./syntaxHighlight.ts"
+} from "./codeClamp.ts"
+import { CODE_BLOCK_CLASS } from "./codeLanguage.ts"
 
 // One delegated listener for the show-all button under every long code block in every sanitized
 // markdown surface, for the reason lib/copy-code.ts is delegated: the block is injected as an HTML

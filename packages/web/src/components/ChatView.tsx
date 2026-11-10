@@ -25,6 +25,7 @@ import { TodoBlock } from "./TodoBlock.tsx"
 import { followUpParentsIn, splitMessageQuestions, parseQuestionBlock, type QuestionKind, type BlockAnswer, type MessageAnswering } from "../lib/questionBlocks.ts"
 import { splitFenceBlocks, type FenceKind } from "../lib/fenceBlocks.ts"
 import { showsRegisteredDoneCard } from "../lib/registeredDone.ts"
+import { useRegisteredDoneBody } from "../lib/registeredDoneBody.ts"
 import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
 import { providerNameFor } from "./providerMark.ts"
@@ -719,13 +720,21 @@ export function RuntimeStatusLadder({
     // everything because `done` refuses while anything above could still be true — an open question or an
     // armed watch blocks the verb — so a thread showing this is at rest with nothing left to wait on.
     case "registered-done":
-      return <FenceCard fenceKind="done" body={thread!.lastFence!.body} hints={thread!.lastFence!.hints} wrap={wrap} />
+      return <RegisteredDoneCard thread={thread!} wrap={wrap} />
     // NOTHING ELSE APPLIES, and the bottom of the thread still has to say so — see RestedCard.
     case "rested":
       return <RestedCard thread={thread!} />
     default:
       return null
   }
+}
+
+/** A registered done's card. An archived thread's board view carries only the head of the body, so the
+ *  body comes through lib/registeredDoneBody, and the card waits for it rather than drawing the head. */
+function RegisteredDoneCard({ thread, wrap }: { thread: ThreadViewData; wrap?: boolean }) {
+  const body = useRegisteredDoneBody(thread)
+  if (body === undefined) return null
+  return <FenceCard fenceKind="done" body={body} hints={thread.lastFence!.hints} wrap={wrap} />
 }
 
 /** WHAT THE SLOT DRAWS, worked out once for every surface: which rung wins, whether the slot draws at
@@ -4170,7 +4179,9 @@ export function InlineVisualization({ file }: { file: string }) {
   const [height, setHeight] = useState(360)
   const [available, setAvailable] = useState<boolean | null>(null)
   const [appliedSrc, setAppliedSrc] = useState<string | null>(null)
-  const paletteTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // A number: it is `window.setTimeout`'s handle. `ReturnType<typeof setTimeout>` is Node's Timeout where
+  // the test files are typechecked (tsconfig.test.json), and the two do not assign.
+  const paletteTimeout = useRef<number | undefined>(undefined)
   const requestId = useRef(0)
   const loadedSrc = useRef<string | null>(null)
   const { resolved } = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeSnapshot)

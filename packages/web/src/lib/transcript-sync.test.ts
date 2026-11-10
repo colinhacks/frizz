@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mergeOptimistic, preserveMessageIdentity, isTranscriptStale, newestRenderedAt, type QueuedMessage } from "./transcript-sync.ts"
+import { mergeOptimistic, preserveMessageIdentity, isTranscriptStale, newestRenderedAt, sameContent, type QueuedMessage } from "./transcript-sync.ts"
 
 const user = (text: string, opts: { queued?: boolean; at?: string; sourceId?: string } = {}): QueuedMessage => ({
   role: "user",
@@ -262,4 +262,52 @@ test("preserveMessageIdentity: no previous window → incoming unchanged", () =>
   const incoming = [user("a", { sourceId: "s:1" })]
   assert.equal(preserveMessageIdentity(undefined, incoming), incoming)
   assert.equal(preserveMessageIdentity([], incoming), incoming)
+})
+
+// ---- sameContent: the structural compare preserveMessageIdentity reuses objects on ----
+test("sameContent: equal content in fresh objects is the same; any differing leaf is not", () => {
+  const a = { role: "assistant", text: "x", tools: [{ name: "Bash", output: "ok", status: "completed" }], parts: [{ kind: "text", text: "x" }] }
+  const b = structuredClone(a)
+  assert.equal(sameContent(a, b), true)
+  b.tools[0]!.status = "running"
+  assert.equal(sameContent(a, b), false)
+  assert.equal(sameContent([1, 2], [1, 2, 3]), false)
+  assert.equal(sameContent({ a: [1] }, { a: { 0: 1 } }), false)
+  assert.equal(sameContent({ a: 1 }, { a: 1, b: 2 }), false)
+  assert.equal(sameContent(null, {}), false)
+})
+
+test("sameContent: a key holding undefined reads as absent, as the JSON compare it replaced did", () => {
+  assert.equal(sameContent({ a: 1, queued: undefined }, { a: 1 }), true)
+  assert.equal(sameContent({ a: 1 }, { a: 1, deliveryId: undefined }), true)
+  assert.equal(sameContent({ a: 1, queued: undefined }, { a: 1, queued: true }), false)
+})
+
+// The compare used to cache a JSON signature of every message it saw, in a WeakMap keyed by the message:
+// a second, serialized copy of every transcript the query cache held, alive as long as the transcript.
+// Measured with the real heap: compare a transcript of big tool outputs, keep it, collect, and see what the
+// compare left behind. The serialized copy would be at least the outputs' size; a walk leaves ~nothing.
+test("preserveMessageIdentity keeps no copy of the messages it compared", async () => {
+  const { setFlagsFromString } = await import("node:v8")
+  const { runInNewContext } = await import("node:vm")
+  setFlagsFromString("--expose-gc")
+  const gc = runInNewContext("gc") as () => void
+  const big = (i: number, salt: string): QueuedMessage => ({
+    role: "assistant", text: `turn ${i}`, sourceId: `s:${i}`, parts: [],
+    // Through JSON.parse so the string is flat: comparing a rope would flatten it, which is the
+    // engine's allocation, not the compare's.
+    tools: [{ name: "Bash", output: JSON.parse(JSON.stringify(`${salt}${i}:`.padEnd(50_000, "o"))) as string }],
+  } as unknown as QueuedMessage)
+  // Distinct strings per side, so a cache could not share them with the messages themselves.
+  const prev = Array.from({ length: 120 }, (_, i) => big(i, "p"))
+  const incoming = Array.from({ length: 120 }, (_, i) => big(i, "p"))
+  gc()
+  const before = process.memoryUsage().heapUsed
+  const out = preserveMessageIdentity(prev, incoming)
+  gc()
+  const grown = process.memoryUsage().heapUsed - before
+  assert.equal(out[0], prev[0]) // still reuses the previous object
+  // 120 messages × 50 KB = 6 MB of output; a signature cache keeps at least that.
+  assert.ok(grown < 1_000_000, `the compare left ${(grown / 1e6).toFixed(1)} MB behind`)
+  assert.equal(prev.length + incoming.length, 240) // both sides stay alive across the reading
 })

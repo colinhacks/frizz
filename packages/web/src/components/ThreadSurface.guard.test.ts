@@ -50,9 +50,12 @@ test("every surface that draws a thread's prompt box mounts the shell, once", ()
   }
   // A page that is one thread's widens that thread's zone to itself (ThreadPageZone) — the shell's
   // element, mounted by the full-screen page and by the board's one-thread pane around its thread and rail,
-  // neither of which binds a drag handler of its own.
+  // neither of which binds a drag handler of its own. It is defined in a module of its own, which the
+  // shell reads its context from, so the pane can mount it at first paint without loading the shell.
+  const PAGE_ZONE = "components/ThreadPageZone.tsx"
   const pageZones = ["components/StandaloneThreadPage.tsx", "components/ThreadPane.tsx"]
-  assert.deepEqual(filesWith("<ThreadPageZone").filter((file) => file !== SHELL), pageZones)
+  assert.deepEqual(filesWith("<ThreadPageZone").filter((file) => file !== SHELL && file !== PAGE_ZONE), pageZones)
+  assert.deepEqual(filesWith("useThreadPageZone("), [PAGE_ZONE, SHELL].sort(), "only the shell hands its zone up to the page")
   for (const file of pageZones) assert.doesNotMatch(sources.get(file)!, /\bon(?:Drop|DragOver|DragEnter|DragLeave)=/)
   assert.match(sources.get(SHELL)!, /<div \{\.\.\.root\} \{\.\.\.\(pageZone \? null : zone\)\} data-thread-surface=/, "one zone: a surface whose page took it binds none on its own root")
   // The box is drawn directly by the queue card, and through ThreadActionBar by ChatView.

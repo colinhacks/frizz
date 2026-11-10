@@ -137,18 +137,37 @@ function retainOptimistic(message: QueuedMessage, serverNow: number, atSend: num
 // when nothing about it changed. The memoized <Message> rows key their bail-out on `m`'s identity, so an
 // identity churn re-renders EVERY mounted row on EVERY push — measured ~60-75ms of main-thread block per
 // push on an ~130-row drawer, i.e. a solid jank beat all through a streaming turn. Reuse the PREVIOUS
-// render's object wherever the incoming copy is content-identical (sourceId match + deep-equal via a
-// serialized signature, cached per object so the prev side is stringified once across its lifetime).
+// render's object wherever the incoming copy is content-identical (sourceId match + a structural compare).
 // Messages that really changed (a tool status backfill, a queued→delivered flip, tail growth) keep the
 // fresh object and re-render exactly as before.
-const contentSig = new WeakMap<TranscriptMessage, string>()
-function sigOf(message: TranscriptMessage): string {
-  let sig = contentSig.get(message)
-  if (sig === undefined) {
-    sig = JSON.stringify(message)
-    contentSig.set(message, sig)
+//
+// THE COMPARE WALKS BOTH MESSAGES AND KEEPS NOTHING. Until 2026-11-09 it compared JSON signatures, cached
+// per message in a WeakMap so the previous side was stringified once in its lifetime — which kept a second,
+// serialized copy of every message alive as long as the message itself. A transcript is mostly strings (tool
+// output, commands, file reads), so that copy was as big as the transcript: on the Console, after visiting
+// twelve threads, the signatures were 22 MB of a 50 MB string heap, more than the transcripts they described
+// (heap snapshot, copy of the real boards, 2026-11-09). The walk costs no more than stringifying the incoming
+// side did, and stops at the first difference.
+export function sameContent(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (!sameContent(a[i], b[i])) return false
+    return true
   }
-  return sig
+  if (Array.isArray(b)) return false
+  // What JSON would have kept: a key whose value is undefined is the same as no key at all.
+  const ra = a as Record<string, unknown>
+  const rb = b as Record<string, unknown>
+  let count = 0
+  for (const key in ra) {
+    if (!Object.hasOwn(ra, key) || ra[key] === undefined) continue
+    count++
+    if (!Object.hasOwn(rb, key) || !sameContent(ra[key], rb[key])) return false
+  }
+  for (const key in rb) if (Object.hasOwn(rb, key) && rb[key] !== undefined) count--
+  return count === 0
 }
 
 export function preserveMessageIdentity(
@@ -165,7 +184,7 @@ export function preserveMessageIdentity(
   const out = incoming.map((message) => {
     if (message === prevById.get(message.sourceId ?? "")) return message // already the same object (optimistic re-append)
     const previous = message.sourceId ? prevById.get(message.sourceId) : undefined
-    if (previous && sigOf(previous) === sigOf(message)) {
+    if (previous && sameContent(previous, message)) {
       reused = true
       return previous
     }

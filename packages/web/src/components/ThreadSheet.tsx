@@ -12,7 +12,7 @@ import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
 import { DrawerInitialScrollCoordinator } from "../lib/drawerInitialScroll.ts"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
-import { ThreadView } from "./ChatView.tsx"
+import { ThreadView } from "./lazySurfaces.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
 import { drawerZ } from "../lib/layers.ts"
 

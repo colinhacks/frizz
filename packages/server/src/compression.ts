@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { brotliCompressSync, gzipSync, constants } from "node:zlib"
 
 /**
@@ -79,3 +80,22 @@ export function shouldCompress(headers: Headers, byteLength: number): boolean {
   if (type.includes("text/event-stream")) return false
   return /json|text\/|javascript|xml|svg/i.test(type)
 }
+
+/**
+ * An RPC answer's validator: weak, over the UNCOMPRESSED body, so a br and a gzip copy of one answer
+ * revalidate alike. SHA-1 for speed (~1 GB/s here, 2 ms on a 2 MB board against ~13 ms of brotli it
+ * saves on a match); it is a cache key on the caller's own data, not a security boundary.
+ */
+export function rpcEtag(body: Uint8Array): string {
+  return `W/"${createHash("sha1").update(body).digest("base64url")}"`
+}
+
+/** `If-None-Match` names this tag (weak comparison, as RFC 9110 has for that header), or `*`. */
+export function etagMatches(ifNoneMatch: string | undefined | null, etag: string): boolean {
+  if (!ifNoneMatch) return false
+  const bare = (tag: string) => tag.trim().replace(/^W\//, "")
+  return ifNoneMatch.split(",").some((tag) => tag.trim() === "*" || bare(tag) === bare(etag))
+}
+
+/** Store it, but ask the server every time: an answer is never served from cache unchecked. */
+export const RPC_CACHE_CONTROL = "private, no-cache"

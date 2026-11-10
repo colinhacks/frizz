@@ -52,6 +52,8 @@ import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from 
 import { BACKGROUND_JOB_REFUSAL, hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
 import { frizzTempDir, isPromptAttachmentPath } from "./frizz-paths.ts"
 import { dispatchProfileCell, observedDispatchCell } from "./subagent-profile.ts"
+import { detached } from "./detached-string.ts"
+import type { MessageJsonMemo } from "./message-json-memo.ts"
 
 // Parse a session JSONL into a renderable conversation — mechanically, no AI. Same defensive
 // posture as the tailer: bad line → skip, unknown type → ignore, never throw. Assistant messages
@@ -1438,7 +1440,7 @@ function editLines(s: string): number {
 
 function capEdit(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > EDIT_CAP ? safe.slice(0, EDIT_CAP) + TRUNC_MARKER : safe
+  return safe.length > EDIT_CAP ? detached(safe.slice(0, EDIT_CAP) + TRUNC_MARKER) : safe
 }
 
 // An Agent dispatch prompt is a full worker contract — often thousands of chars. Cap it like the
@@ -1447,7 +1449,7 @@ function capEdit(s: string): string {
 const AGENT_PROMPT_CAP = 4000
 function capAgentPrompt(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > AGENT_PROMPT_CAP ? safe.slice(0, AGENT_PROMPT_CAP) + TRUNC_MARKER : safe
+  return safe.length > AGENT_PROMPT_CAP ? detached(safe.slice(0, AGENT_PROMPT_CAP) + TRUNC_MARKER) : safe
 }
 
 // A SendMessage body is peer-to-peer prose — usually short, but a steer can run long. Cap it like the
@@ -1456,7 +1458,7 @@ function capAgentPrompt(s: string): string {
 const SEND_BODY_CAP = 4000
 function capSendBody(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > SEND_BODY_CAP ? safe.slice(0, SEND_BODY_CAP) + TRUNC_MARKER : safe
+  return safe.length > SEND_BODY_CAP ? detached(safe.slice(0, SEND_BODY_CAP) + TRUNC_MARKER) : safe
 }
 
 // EVERY Bash call ships its `command` so the client renders it as a collapsed BashBlock card (the
@@ -1466,12 +1468,12 @@ function capSendBody(s: string): string {
 const COMMAND_CAP = 2000
 function capCommand(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > COMMAND_CAP ? safe.slice(0, COMMAND_CAP) + TRUNC_MARKER : safe
+  return safe.length > COMMAND_CAP ? detached(safe.slice(0, COMMAND_CAP) + TRUNC_MARKER) : safe
 }
 const TOOL_INPUT_CAP = 4000
 function capToolInput(s: string): string {
   const safe = redactToolPayload(s)
-  return safe.length > TOOL_INPUT_CAP ? safe.slice(0, TOOL_INPUT_CAP) + TRUNC_MARKER : safe
+  return safe.length > TOOL_INPUT_CAP ? detached(safe.slice(0, TOOL_INPUT_CAP) + TRUNC_MARKER) : safe
 }
 // One-line summary for a block command: its first non-blank line, with a trailing ellipsis when more
 // content follows. Feeds the inline renderer and dense card previews; the full command rides `command`.
@@ -1480,7 +1482,7 @@ function bashSummary(cmd: string): string {
   const first = (lines.find((l) => l.trim()) ?? "").trim()
   const hasMore = cmd.trim() !== first
   const base = first.length > 120 ? first.slice(0, 119) + "…" : first
-  return hasMore && !base.endsWith("…") ? base + "…" : base
+  return detached(hasMore && !base.endsWith("…") ? base + "…" : base)
 }
 
 // A Read call's result excerpt: the file content it returned, capped like the edit/command payloads
@@ -1494,7 +1496,9 @@ function capRead(s: string): string {
   const lines = out.split("\n")
   if (lines.length > READ_LINE_CAP) out = lines.slice(0, READ_LINE_CAP).join("\n") + TRUNC_MARKER
   if (out.length > READ_BYTE_CAP) out = out.slice(0, READ_BYTE_CAP) + TRUNC_MARKER
-  return out
+  // A Read result is often cut out of a larger tool_result string; copy it so the retained fold does
+  // not keep that whole string alive (detached-string.ts).
+  return detached(out)
 }
 
 // Map a base64 image block's media_type to a file extension the /local-image route can serve. The route
@@ -2216,7 +2220,7 @@ function todoRows(raw: unknown): TranscriptTodo[] | undefined {
 const TODO_TEXT_CAP = 300
 function capTodoText(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim()
-  return flat.length > TODO_TEXT_CAP ? `${flat.slice(0, TODO_TEXT_CAP - 1)}…` : flat
+  return detached(flat.length > TODO_TEXT_CAP ? `${flat.slice(0, TODO_TEXT_CAP - 1)}…` : flat)
 }
 
 // A whole-list call → the checklist card. `input` carries the model's own commentary when it wrote any
@@ -2300,7 +2304,7 @@ function toolDetail(input: any): string | undefined {
   const s = redactToolPayload(cand.trim()).replace(/\s+/g, " ")
   // Generous cap: an 80-char cut ate file paths mid-word (and its "…" broke the client's path-link
   // detection). Display truncation is the CLIENT's job (CSS ellipsis over the card's full width).
-  return s.length > 400 ? `${s.slice(0, 399)}…` : s
+  return detached(s.length > 400 ? `${s.slice(0, 399)}…` : s)
 }
 
 // A concise cause label for the turn-boundary line emitted when a background-shell completion wakes
@@ -2519,8 +2523,9 @@ function completionEvents(
 // Every read of a Claude transcript used to re-read and re-parse the WHOLE JSONL from byte 0. This LRU
 // keeps the fold's closure state alive per file and feeds it only the bytes appended since the last read
 // (the fold's in-place mutations back-fill earlier messages transparently). Bounded by what the folds
-// hold, not by how many there are (TRANSCRIPT_CACHE_BUDGET below). A file that shrank/rotated or whose
-// identityPrefix changed drops its entry → full re-fold.
+// hold, not by how many there are (TRANSCRIPT_CACHE_BUDGET below), and a fold nobody has read for half an
+// hour is dropped (TRANSCRIPT_FOLD_IDLE_MS). A file that shrank/rotated or whose identityPrefix changed
+// drops its entry → full re-fold.
 //
 // WHO READS THROUGH IT NOW: the paged reader (projectSnapshot), which is what the `threadTranscript` RPC
 // and the /ws push both serve from, and `readTranscript` below. `readTranscript` was the /ws producer
@@ -2543,6 +2548,8 @@ interface TranscriptCacheEntry {
   retained: number
   /** `bytesRead` at that measurement; undefined until the first one. */
   measuredAt?: number
+  // When a reader last asked for this fold (Date.now()). See TRANSCRIPT_FOLD_IDLE_MS.
+  touchedAt: number
 }
 
 // HOW MANY FOLDS ARE KEPT IS A QUESTION OF MEMORY, SO IT IS ANSWERED IN BYTES.
@@ -2601,6 +2608,33 @@ function evictRetainedFolds(): void {
     }
   }
 }
+
+// A FOLD NOBODY HAS READ FOR HALF AN HOUR IS DROPPED. The budget above alone keeps a fold for the life of
+// the server, however long ago anyone looked, as the count of 16 did before it: a fold holds the whole
+// projection of its thread
+// (8.6-18.7 MB for the 80-135 MB transcripts on the maintainer's boards, heap snapshot 2026-11-09), so a
+// handful of big threads opened once in the morning were still resident at night. Half an hour is far
+// past every reader that re-reads a fold — a subscribed thread is read on each change, a page on each
+// "load earlier" — so this frees only folds nothing is reading, and costs a reader that does come back
+// exactly what a first open costs: a cold fold, done in slices
+// (catchUpTranscriptFold). The sweep runs on every access and on an unref'd timer, so an idle server
+// frees them too.
+export const TRANSCRIPT_FOLD_IDLE_MS = 30 * 60_000
+const TRANSCRIPT_FOLD_SWEEP_MS = 5 * 60_000
+
+/** Drop every retained fold not read for TRANSCRIPT_FOLD_IDLE_MS. Returns how many it dropped. */
+export function sweepIdleTranscriptFolds(now = Date.now()): number {
+  let dropped = 0
+  for (const [path, entry] of transcriptCache) {
+    if (now - entry.touchedAt < TRANSCRIPT_FOLD_IDLE_MS) continue
+    // A cold fold in progress touches its entry every slice; never pull one out from under it.
+    if (coldFolds.has(path)) continue
+    transcriptCache.delete(path)
+    dropped++
+  }
+  return dropped
+}
+setInterval(() => sweepIdleTranscriptFolds(), TRANSCRIPT_FOLD_SWEEP_MS).unref()
 // ~1/50 of cache-hit reads are re-parsed from scratch and deep-compared against the incremental result
 // when FRIZZ_TRANSCRIPT_PARSE_VERIFY=1 — a loud, non-throwing correctness net for the appended-bytes fold.
 const PARSE_VERIFY_SAMPLE = 1 / 50
@@ -2669,11 +2703,13 @@ function retainedFoldEntry(path: string, identityPrefix: string, fileId: string,
   }
   const hit = entry !== undefined
   if (!entry) {
-    entry = { identityPrefix, fold: createTranscriptFold(identityPrefix), bytesRead: 0, decoder: new StringDecoder("utf8"), fileId, retained: 0 }
+    entry = { identityPrefix, fold: createTranscriptFold(identityPrefix), bytesRead: 0, decoder: new StringDecoder("utf8"), fileId, retained: 0, touchedAt: Date.now() }
   } else {
     transcriptCache.delete(path) // LRU touch — re-insert to move to the most-recently-used end.
+    entry.touchedAt = Date.now()
   }
   transcriptCache.set(path, entry)
+  sweepIdleTranscriptFolds(entry.touchedAt)
   evictRetainedFolds() // the first keys in insertion order are the least recently read
   return { entry, hit }
 }
@@ -3277,22 +3313,26 @@ const MAX_PINNED_BACKGROUND_OPERATIONS = 128
 // THE REACH IS ALL-OR-NOTHING. A partial extension buys no anchor and still ships the extra megabyte, so
 // when the ask is further back than one earlier page's allowance the window stays exactly where it was
 // and "Load earlier messages" remains the route to it.
-export function latestWindowStart(messages: readonly TranscriptMessage[]): number {
-  return byteBoundedStart(messages, countBoundedStart(messages))
+//
+// `memo` (a subscribed thread's, see message-json-memo.ts) serves each message's size from the JSON kept
+// since the last read instead of serializing the window again; the answer is the same either way.
+export function latestWindowStart(messages: readonly TranscriptMessage[], memo?: MessageJsonMemo): number {
+  const sizeOf = memo ? (message: TranscriptMessage) => memo.bytes(message) : messageBytes
+  return byteBoundedStart(messages, countBoundedStart(messages, sizeOf), sizeOf)
 }
 
 // The ceiling on the count-and-reach start: walk back from the newest message and stop where the
 // window would pass LATEST_WINDOW_MAX_BYTES. Never past `start`, never before the newest message.
-function byteBoundedStart(messages: readonly TranscriptMessage[], start: number): number {
+function byteBoundedStart(messages: readonly TranscriptMessage[], start: number, sizeOf: (message: TranscriptMessage) => number): number {
   let bytes = 0
   for (let i = messages.length - 1; i >= start; i--) {
-    bytes += messageBytes(messages[i])
+    bytes += sizeOf(messages[i])
     if (bytes > LATEST_WINDOW_MAX_BYTES) return Math.min(i + 1, messages.length - 1)
   }
   return start
 }
 
-function countBoundedStart(messages: readonly TranscriptMessage[]): number {
+function countBoundedStart(messages: readonly TranscriptMessage[], sizeOf: (message: TranscriptMessage) => number): number {
   const tail = Math.max(0, messages.length - MAX_MESSAGES)
   if (tail === 0) return 0
   let boundary = -1
@@ -3307,12 +3347,27 @@ function countBoundedStart(messages: readonly TranscriptMessage[]): number {
   let start = tail
   let bytes = 0
   while (start > boundary && tail - start < LATEST_WINDOW_ASK_REACH_ITEMS) {
-    const nextBytes = messageBytes(messages[start - 1])
+    const nextBytes = sizeOf(messages[start - 1])
     if (bytes + nextBytes > LATEST_WINDOW_ASK_REACH_BYTES) break
     start--
     bytes += nextBytes
   }
   return start === boundary ? start : tail
+}
+
+const isPendingBackground = (call: TranscriptToolCall): boolean => call.status === "pending" && call.backgroundState === "background"
+
+// sha256 of a source id, kept: a pinned row is re-minted on every read for as long as its shell runs.
+const pinnedIds = new Map<string, string>()
+const PINNED_IDS_CAP = 1024
+function pinnedSourceId(sourceId: string): string {
+  let id = pinnedIds.get(sourceId)
+  if (id === undefined) {
+    id = `pinned-bg:${createHash("sha256").update(sourceId).digest("base64url").slice(0, 24)}`
+    if (pinnedIds.size >= PINNED_IDS_CAP) pinnedIds.clear()
+    pinnedIds.set(sourceId, id)
+  }
+  return id
 }
 
 // `start` lets a caller that ALSO needs the window's head (the paged reader mints its cursor there) pass
@@ -3328,17 +3383,19 @@ export function latestTranscriptWindow(messages: readonly TranscriptMessage[], s
   // instruction as a small chronological prefix. Codex bodies are encrypted markers (4258 observed,
   // max 236 in one rollout); Claude's plaintext bodies are rarer (207 observed, max 24), so this stays
   // far smaller than returning a whole 129 MB child rollout while making every steer reachable.
-  const earlierInstructions = messages.slice(0, start).filter((message) => message.agentInstruction)
+  //
+  // This walks every message above the window on each read of a subscribed thread, so it allocates
+  // nothing for a message that contributes nothing (most of them): no per-message filtered array, and
+  // a pinned row's id is hashed once per source, not once per read.
+  const earlierInstructions: TranscriptMessage[] = []
   const pinned: TranscriptMessage[] = []
   for (let i = 0; i < start; i++) {
     const message = messages[i]
-    if (!message.sourceId) continue
-    const tools = message.tools.filter(
-      (call) => call.status === "pending" && call.backgroundState === "background",
-    )
-    if (tools.length === 0) continue
+    if (message.agentInstruction) earlierInstructions.push(message)
+    if (!message.sourceId || !message.tools.some(isPendingBackground)) continue
+    const tools = message.tools.filter(isPendingBackground)
     pinned.push({
-      sourceId: `pinned-bg:${createHash("sha256").update(message.sourceId).digest("base64url").slice(0, 24)}`,
+      sourceId: pinnedSourceId(message.sourceId),
       pinnedFromSourceId: message.sourceId,
       role: "assistant",
       text: "",
@@ -4495,6 +4552,80 @@ function discoveredClaudeSource(
   }
 }
 
+// The same file, as it stood at `size` bytes: a reference read of a prefix of a file that has grown since.
+function truncatedSnapshot(snapshot: FixedTranscriptSnapshot, size: number): FixedTranscriptSnapshot {
+  const { readRange } = snapshot
+  return {
+    slug: snapshot.slug,
+    sessionId: snapshot.sessionId,
+    nativeId: snapshot.nativeId,
+    backend: snapshot.backend,
+    runtimeGeneration: snapshot.runtimeGeneration,
+    path: snapshot.path,
+    get raw() {
+      return this.bytes.toString("utf8")
+    },
+    get bytes() {
+      return readRange(0, size)
+    },
+    size,
+    readRange: (from, length) => readRange(from, Math.max(0, Math.min(length, size - from))),
+    fileKey: snapshot.fileKey,
+    transcriptKey: snapshot.transcriptKey,
+  }
+}
+
+function fileKeyOf(st: { dev: number; ino: number; birthtimeMs: number }): string {
+  return `${st.dev}:${st.ino}:${Math.trunc(st.birthtimeMs)}`
+}
+
+// The page's transcriptKey, a hash of the binding and the file's identity — the same few inputs on every
+// read of a subscribed thread, so it is hashed once per binding.
+const transcriptKeys = new Map<string, string>()
+const TRANSCRIPT_KEYS_CAP = 256
+function transcriptKeyOf(seed: string): string {
+  let key = transcriptKeys.get(seed)
+  if (key === undefined) {
+    key = createHash("sha256").update(seed).digest("base64url").slice(0, 32)
+    if (transcriptKeys.size >= TRANSCRIPT_KEYS_CAP) transcriptKeys.clear()
+    transcriptKeys.set(seed, key)
+  }
+  return key
+}
+
+// FILES HELD OPEN FOR ONE READ. A snapshot's range reads each opened the file again by path (an open and an
+// fstat per range), and a latest-page read makes several — the appended bytes for the fold, the same bytes
+// again for the cursor's running digest — on every push of every subscribed thread: the opens were 11% of
+// the push's CPU in the 2026-11-10 profile. Inside `withHeldTranscriptFiles` a snapshot reads through the
+// descriptor it was taken with instead, and every one is closed when that synchronous read returns.
+//
+// The guarantee is the same one the re-open gave. A descriptor names the INODE the snapshot measured, so a
+// file renamed over the path is not mixed in (its bytes stay the old file's, which is what the snapshot
+// describes); a file truncated in place fails the size check each range read still makes.
+interface HeldFile {
+  fd: number
+  open: boolean
+}
+let heldFiles: HeldFile[] | undefined
+
+function withHeldTranscriptFiles<T>(read: () => T): T {
+  if (heldFiles) return read()
+  const held: HeldFile[] = (heldFiles = [])
+  try {
+    return read()
+  } finally {
+    heldFiles = undefined
+    for (const file of held) {
+      file.open = false
+      try {
+        closeSync(file.fd)
+      } catch {
+        // already gone; nothing to release
+      }
+    }
+  }
+}
+
 function fixedSnapshot(source: TranscriptSourceBinding): FixedTranscriptSnapshot | undefined {
   let fd: number | undefined
   try {
@@ -4516,9 +4647,16 @@ function fixedSnapshot(source: TranscriptSourceBinding): FixedTranscriptSnapshot
     }
     const size = before.size
     const path = source.path
+    let held: HeldFile | undefined
+    if (heldFiles) {
+      held = { fd, open: true }
+      heldFiles.push(held)
+      fd = undefined // closed by withHeldTranscriptFiles, not by the finally below
+    }
     /** Read `[from, from+length)` on demand, re-verifying identity so a rotated file cannot be mixed. */
     const readRange = (from: number, length: number): Buffer => {
-      const rfd = openSync(path, "r")
+      const own = held?.open !== true
+      const rfd = own ? openSync(path, "r") : held!.fd
       try {
         const st = fstatSync(rfd)
         if (st.dev !== before.dev || st.ino !== before.ino || st.size < size) {
@@ -4534,17 +4672,14 @@ function fixedSnapshot(source: TranscriptSourceBinding): FixedTranscriptSnapshot
         }
         return filled === want ? buf : buf.subarray(0, filled)
       } finally {
-        closeSync(rfd)
+        if (own) closeSync(rfd)
       }
     }
     // The whole-file Buffer, materialised ONLY if something genuinely needs it (the codex projector
     // and the full digest). Everything on the claude path goes through readRange instead.
     let allBytes: Buffer | undefined
-    const fileKey = `${before.dev}:${before.ino}:${Math.trunc(before.birthtimeMs)}`
-    const transcriptKey = createHash("sha256")
-      .update(`${source.slug}\0${source.sessionId}\0${source.nativeId}\0${source.backend}\0${source.runtimeGeneration}\0${fileKey}`)
-      .digest("base64url")
-      .slice(0, 32)
+    const fileKey = fileKeyOf(before)
+    const transcriptKey = transcriptKeyOf(`${source.slug}\0${source.sessionId}\0${source.nativeId}\0${source.backend}\0${source.runtimeGeneration}\0${fileKey}`)
     // `raw` is LAZY: the cached projection below folds only the APPENDED byte range, so a warm read of a
     // 30 MB transcript must never pay to materialize the whole file as a JS string. Only the codex
     // projector (non-incremental) and a cold claude fold ever touch it.
@@ -4578,7 +4713,7 @@ function fixedSnapshot(source: TranscriptSourceBinding): FixedTranscriptSnapshot
 // busy board, where these queue behind each other and behind the tailer tick). It now shares the SAME
 // retained fold as readTranscript (see retainedFoldEntry): an unchanged file costs no parse work, a live
 // one costs only the appended delta, and the two readers no longer fold the same bytes twice.
-function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[] {
+function projectSnapshot(snapshot: FixedTranscriptSnapshot, cold = false): TranscriptMessage[] {
   const prefix = `${snapshot.backend}:${snapshot.nativeId}`
   // The codex projector parses a rollout whole — no incremental fold to retain, and rollouts are small.
   // It emits no queued bubbles today (codex's gray bubbles come only from the delivery ledger, which
@@ -4594,10 +4729,13 @@ function projectSnapshot(snapshot: FixedTranscriptSnapshot): TranscriptMessage[]
   if (snapshot.backend === "acp") return projectSignOffs(retireStaleQueuedBubbles(projectAcpTranscript(snapshot.raw, prefix, acpUserRecordProjector)))
   if (snapshot.backend === "opencode") return projectSignOffs(retireStaleQueuedBubbles(projectOpencodeTranscript(snapshot.raw, prefix, opencodeToolCards, acpUserRecordProjector)))
 
-  const { entry } = retainedFoldEntry(snapshot.path, prefix, snapshot.fileKey, snapshot.size)
+  // A cold read (readLatestThreadTranscriptPageRead's coldAt) folds from byte 0 into a fold of its own.
+  const retained = cold ? undefined : retainedFoldEntry(snapshot.path, prefix, snapshot.fileKey, snapshot.size).entry
+  const entry = retained ?? { fold: createTranscriptFold(prefix), bytesRead: 0, decoder: new StringDecoder("utf8") }
   // Reads ONLY the appended delta — the reason the whole-file buffer is no longer materialised.
   ingestBounded(entry, snapshot.size, (from, length) => snapshot.readRange(from, length))
-  noteRetained(entry)
+  // A cold read's fold is its own and is let go with it, so there is nothing of it to count.
+  if (retained) noteRetained(retained)
   // Deliberately NO finalize(): it is the one-shot path's trailing-partial flush and advances the fold
   // past bytes a later ingest would then re-fold, duplicating messages. A complete final record that
   // simply lacks its newline is still projected — the fold consumes it optimistically (tryConsumePartial)
@@ -4686,16 +4824,21 @@ export function catchUpTranscriptFold(
   let snapshot: FixedTranscriptSnapshot | undefined
   try {
     const source = sourceForThread(project, storage, slug, backendFor)
-    snapshot = source && fixedSnapshot(source)
+    if (!source || source.backend !== "claude") return undefined
+    const running = coldFolds.get(source.path)
+    if (running) return running
+    // A stat answers "is the fold far behind?", and a subscribed thread asks it before every read of every
+    // change, almost always to hear "no". The snapshot (an open, two fstats and a hash) is taken only for a
+    // fold that is.
+    const st = statSync(source.path)
+    const retained = transcriptCache.get(source.path)
+    const current = retained && retained.identityPrefix === `${source.backend}:${source.nativeId}` && retained.fileId === fileKeyOf(st) && st.size >= retained.bytesRead
+    if (st.size - (current ? retained.bytesRead : 0) < COLD_FOLD_BYTES) return undefined
+    snapshot = fixedSnapshot(source)
   } catch {
     return undefined
   }
-  if (!snapshot || snapshot.backend !== "claude") return undefined
-  const running = coldFolds.get(snapshot.path)
-  if (running) return running
-  const retained = transcriptCache.get(snapshot.path)
-  const current = retained && retained.identityPrefix === `${snapshot.backend}:${snapshot.nativeId}` && retained.fileId === snapshot.fileKey && snapshot.size >= retained.bytesRead
-  if (snapshot.size - (current ? retained.bytesRead : 0) < COLD_FOLD_BYTES) return undefined
+  if (!snapshot) return undefined
   const { path } = snapshot
   const folding = foldInSlices(snapshot).catch(() => undefined).finally(() => { coldFolds.delete(path) })
   coldFolds.set(path, folding)
@@ -4783,7 +4926,7 @@ function fullDigest(snapshot: FixedTranscriptSnapshot): string {
   return entry.digest
 }
 
-function encodeTranscriptCursor(snapshot: FixedTranscriptSnapshot, anchorSourceId: string): string {
+function encodeTranscriptCursor(snapshot: FixedTranscriptSnapshot, anchorSourceId: string, cold = false): string {
   const payload: TranscriptCursorPayload = {
     v: 1,
     slug: snapshot.slug,
@@ -4793,7 +4936,7 @@ function encodeTranscriptCursor(snapshot: FixedTranscriptSnapshot, anchorSourceI
     runtimeGeneration: snapshot.runtimeGeneration,
     fileKey: snapshot.fileKey,
     snapshotBytes: snapshot.size,
-    prefixDigest: fullDigest(snapshot),
+    prefixDigest: cold ? digestPrefix(snapshot, snapshot.size) : fullDigest(snapshot),
     anchorSourceId,
   }
   return Buffer.from(JSON.stringify(payload)).toString("base64url")
@@ -4918,8 +5061,31 @@ export function readLatestThreadTranscriptPage(
   storage: Storage,
   slug: string,
   backendFor?: (kind?: string) => AgentBackend,
+  // The subscription's JSON memo (message-json-memo.ts): the window is measured from the JSON its last
+  // read kept. Changes the cost, never the page.
+  memo?: MessageJsonMemo,
 ): TranscriptPage {
-  return latestThreadPage(project, storage, slug, backendFor).page
+  return latestThreadPage(project, storage, slug, backendFor, { memo }).page
+}
+
+/**
+ * The latest page and the transcript size it was read at (undefined for a page with no file behind it).
+ *
+ * `coldAt` reads the page COLD at exactly that size: a fold built from byte 0 for this read alone, no retained
+ * fold, no memo, no cached digest. It is the reference a warm read must equal, which is what the socket's
+ * FRIZZ_TRANSCRIPT_PUSH_VERIFY net compares every push against (app-socket.ts). Claude transcripts only;
+ * for another backend, or a file that is no longer at least that long, it returns undefined.
+ */
+export function readLatestThreadTranscriptPageRead(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor?: (kind?: string) => AgentBackend,
+  opts: { memo?: MessageJsonMemo; coldAt?: number } = {},
+): { page: TranscriptPage; bytes?: number } | undefined {
+  const read = latestThreadPage(project, storage, slug, backendFor, opts)
+  if (opts.coldAt !== undefined && read.bytes !== opts.coldAt) return undefined
+  return { page: read.page, bytes: read.bytes }
 }
 
 /**
@@ -4944,7 +5110,19 @@ function latestThreadPage(
   storage: Storage,
   slug: string,
   backendFor?: (kind?: string) => AgentBackend,
-): { page: TranscriptPage; projected?: readonly TranscriptMessage[] } {
+  opts: { memo?: MessageJsonMemo; coldAt?: number } = {},
+): { page: TranscriptPage; projected?: readonly TranscriptMessage[]; bytes?: number } {
+  return withHeldTranscriptFiles(() => readLatestThreadPage(project, storage, slug, backendFor, opts))
+}
+
+function readLatestThreadPage(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor: ((kind?: string) => AgentBackend) | undefined,
+  opts: { memo?: MessageJsonMemo; coldAt?: number },
+): { page: TranscriptPage; projected?: readonly TranscriptMessage[]; bytes?: number } {
+  const { memo, coldAt } = opts
   let source = sourceForThread(project, storage, slug, backendFor)
   if (!source) return { page: emptyLatestTranscriptPage(storage, slug) }
   let snapshot = fixedSnapshot(source)
@@ -4955,14 +5133,19 @@ function latestThreadPage(
     source = discovered!
     snapshot = discoveredSnapshot
   }
-  let projected = projectSnapshot(snapshot)
+  if (coldAt !== undefined) {
+    if (snapshot.backend !== "claude" || snapshot.size < coldAt) return { page: emptyTranscriptPage(source) }
+    snapshot = truncatedSnapshot(snapshot, coldAt)
+  }
+  const cold = coldAt !== undefined
+  let projected = projectSnapshot(snapshot, cold)
   // Match the legacy reader's gated, bounded drift recovery for old Claude sessions whose real file
   // was minted under a different native id. The cursor binds that discovered id; the follow-up read
   // repeats the same sentinel proof until the tailer persists the re-link.
   if (!projected.length) {
     const discovered = discoveredClaudeSource(project, storage, slug)
     const discoveredSnapshot = discovered ? fixedSnapshot(discovered) : undefined
-    if (discoveredSnapshot) {
+    if (discoveredSnapshot && !cold) {
       source = discovered!
       snapshot = discoveredSnapshot
       projected = projectSnapshot(snapshot)
@@ -4971,7 +5154,7 @@ function latestThreadPage(
   // The cursor has to name the window's REAL head, not the raw MAX_MESSAGES cut: once the window reaches
   // back for the human's ask, a cursor anchored at the cut sits INSIDE what was already sent, and the
   // first "Load earlier messages" click would page over messages the card is already showing.
-  const canonicalStart = latestWindowStart(projected)
+  const canonicalStart = latestWindowStart(projected, memo)
   const latest = latestTranscriptWindow(projected, canonicalStart)
   // The latest window carries the delivery-ledger projection (same as readThreadTranscript): a tracked
   // follow-up renders as its gray queued bubble at the tail even before any JSONL evidence exists. The
@@ -4985,9 +5168,10 @@ function latestThreadPage(
     : latest
   return {
     projected,
+    bytes: snapshot.size,
     page: {
       messages: pageMessages,
-      beforeCursor: canonicalStart > 0 ? encodeTranscriptCursor(snapshot, projected[canonicalStart].sourceId!) : null,
+      beforeCursor: canonicalStart > 0 ? encodeTranscriptCursor(snapshot, projected[canonicalStart].sourceId!, cold) : null,
       hasEarlier: canonicalStart > 0,
       reachedTurnBoundary: true,
       transcriptKey: snapshot.transcriptKey,
@@ -5242,11 +5426,40 @@ export function projectTranscriptAgentLifecycles(
       ...(elapsed === undefined ? {} : { agentElapsedMs: elapsed }),
     }
   }
-  return messages.map((message) => ({
-    ...message,
-    tools: message.tools.map(projectTool),
-    parts: message.parts.map((part) => part.kind === "tools" ? { ...part, tools: part.tools.map(projectTool) } : part),
-  }))
+  return messages.map((message) => projectMessageTools(message, projectTool))
+}
+
+// A message with `projectTool` applied to every call it carries — in `tools` and in its `parts` — copied
+// only where a call actually changed. Both projections below run on every read of a subscribed thread,
+// and copying every message of the window (what they did) made each read allocate a second window and
+// handed the socket's JSON memo a fresh object for every message. The JSON of an untouched message is
+// the same either way: a spread copy keeps the keys, their order and their values.
+function projectMessageTools(message: TranscriptMessage, projectTool: (call: TranscriptToolCall) => TranscriptToolCall): TranscriptMessage {
+  const tools = mapChanged(message.tools, projectTool)
+  let partsChanged = false
+  const parts = message.parts.map((part) => {
+    if (part.kind !== "tools") return part
+    const partTools = mapChanged(part.tools, projectTool)
+    if (partTools === part.tools) return part
+    partsChanged = true
+    return { ...part, tools: partTools }
+  })
+  if (tools === message.tools && !partsChanged) return message
+  return { ...message, tools, parts: partsChanged ? parts : message.parts }
+}
+
+/** `items.map(fn)`, or `items` itself when `fn` returned every item unchanged. */
+function mapChanged<T>(items: T[], fn: (item: T) => T): T[] {
+  let out: T[] | undefined
+  for (let i = 0; i < items.length; i++) {
+    const next = fn(items[i])
+    if (out) out.push(next)
+    else if (next !== items[i]) {
+      out = items.slice(0, i)
+      out.push(next)
+    }
+  }
+  return out ?? items
 }
 
 // A background op the operator RETIRED with the × is no longer live, and the TRANSCRIPT is the second
@@ -5311,11 +5524,7 @@ export function projectRetiredBackgroundOps(
     // carrying a days-old `at` at the bottom of the conversation. The canonical message keeps its
     // cancelled card at its own position in paginated history.
     if (message.pinnedFromSourceId && message.tools.length > 0 && message.tools.every(isRetired)) continue
-    out.push({
-      ...message,
-      tools: message.tools.map(projectTool),
-      parts: message.parts.map((part) => part.kind === "tools" ? { ...part, tools: part.tools.map(projectTool) } : part),
-    })
+    out.push(projectMessageTools(message, projectTool))
   }
   return out
 }

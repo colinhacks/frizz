@@ -19,6 +19,10 @@
 
 import type { TokenizerAndRendererExtension } from "marked"
 import { parseDiffFence, renderDiffFence } from "./codeDiff.ts"
+import { CODE_CLAMPED_CLASS, CODE_EXPAND_CLASS, CODE_LONG_CLASS, isLongBlockOpen, longBlockLabel } from "./codeClamp.ts"
+// The long-block state and its class names live in lib/codeClamp.ts, which the delegated show-all handler
+// (lib/expand-code.ts) reads without loading marked or the highlighter; re-exported for this module's importers.
+export { CODE_CLAMPED_CLASS, CODE_EXPAND_CLASS, CODE_LONG_CLASS, forgetLongBlocks, longBlockLabel, rememberLongBlock } from "./codeClamp.ts"
 import { isMarkedLine, parseLineMarks, renderLinedCode } from "./codeLines.ts"
 import {
   CODE_PANEL_CLASS,
@@ -46,9 +50,6 @@ import {
 export const CODE_FRAME_CLASS = "md-code-frame"
 export const CODE_LINED_CLASS = "md-code-lined"
 export const CODE_DIFF_CLASS = "md-diff"
-export const CODE_LONG_CLASS = "md-code-long"
-export const CODE_CLAMPED_CLASS = "is-clamped"
-export const CODE_EXPAND_CLASS = "md-code-expand"
 
 // A block longer than OVER lines is drawn SHOWN lines tall until the reader opens it. The gap between
 // the two is deliberate: a button that reveals two more lines is worse than the two lines. SHOWN is
@@ -70,28 +71,6 @@ export interface CodePart {
 // They keep the one markup those passes look for, whatever else their info string says.
 const ISLAND_FENCE = /^(?:lightbox|mermaid)$/i
 
-// WHICH LONG BLOCKS ARE OPEN is remembered for the life of the page, for the reason lib/codeTabs.ts
-// remembers the chosen tab: a streaming message re-renders its blocks on every delta and the transcript
-// unmounts rows as it virtualizes, and either would shut a block the reader had just opened. A block's
-// only identity in an HTML string is its text, so that is the key — its length and its head, which is
-// as unique as two blocks on one page need.
-const openLongBlocks = new Set<string>()
-const longBlockKey = (text: string) => {
-  const body = text.replace(/\n$/, "")
-  return `${body.length}:${body.slice(0, 256)}`
-}
-
-/** Record that the long block with this text was opened or shut (lib/expand-code.ts, on the click). */
-export function rememberLongBlock(text: string, open: boolean): void {
-  if (open) openLongBlocks.add(longBlockKey(text))
-  else openLongBlocks.delete(longBlockKey(text))
-}
-
-export function forgetLongBlocks(): void {
-  openLongBlocks.clear()
-}
-
-export const longBlockLabel = (lines: number, open: boolean) => (open ? "Show less" : `Show all ${lines} lines`)
 
 // A rendered FILE is not collapsed: its author laid the document out, and the reader opened it to read
 // it. marked's renderers take no per-call options, and a parse is synchronous, so the file reader's
@@ -156,7 +135,7 @@ function buildPanel(part: CodePart): Panel {
   let markedBelow = false
   if (marks) for (let line = LONG_BLOCK_SHOWN + 1; line <= lines && !markedBelow; line++) markedBelow = isMarkedLine(marks, line)
   const long = collapseLongBlocks && part.closed && lines > LONG_BLOCK_OVER && !markedBelow
-  const open = long && openLongBlocks.has(longBlockKey(part.text))
+  const open = long && isLongBlockOpen(part.text)
   if (long) classes.push(open ? CODE_LONG_CLASS : `${CODE_LONG_CLASS} ${CODE_CLAMPED_CLASS}`)
   return { code, classes, lines, long, open, diff }
 }

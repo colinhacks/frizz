@@ -182,6 +182,7 @@ function rekeyOutput(name: string, result: unknown, project: string): unknown {
 const CARD_READS: ReadonlySet<string> = new Set([
   "threadTranscript",
   "threadSettledQuestions",
+  "threadRegisteredDone",
   "threadProfileOptions",
   "mcpStatus",
   "resolveLocalPaths",
