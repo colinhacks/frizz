@@ -13,7 +13,7 @@ function fakeHistory(entries: unknown[]) {
   globals.window = {
     addEventListener: (type: string, fn: () => void) => { if (type === "popstate") listeners.add(fn) },
     removeEventListener: (type: string, fn: () => void) => { if (type === "popstate") listeners.delete(fn) },
-  } as unknown as Window
+  } as unknown as typeof window
   globals.history = {
     get state() { return entries[index] },
     back: () => {

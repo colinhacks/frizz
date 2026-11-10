@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // The node:test files run under node, beside the browser code they import.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.test.ts", "src/vite-env.d.ts"],
+  "exclude": []
+}

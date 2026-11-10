@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { carriesDoneRegistration, collapseMiddleRuns, opensQueueSegment, queueCollapseSegments, segmentFolds, supersededAskIndices, survivesQueueCollapse } from "./queueCollapse.ts"
+import { carriesDoneRegistration, collapseMiddleRuns, opensQueueSegment, queueCollapseSegments, segmentFolds, supersededAskIndices, survivesQueueCollapse, type CollapseStep } from "./queueCollapse.ts"
 
 // The REAL Goal delivery frizz wrote into the maintainer's zod thread on 2026-08-12, verbatim — trailer,
 // the `<!-- frizz-wake:… -->` token and all.
@@ -106,7 +106,7 @@ test("the message carrying a successful done registration survives the collapse"
 // call is projected as `Bash`; a long or multi-line one carries its raw text in `command`.
 test("a successful `frizzctl done` is the same registration, however the command was composed", () => {
   const none = new Set<number>()
-  const signedOff = (tool: { name: string; status: string; detail?: string; command?: string }) => carriesDoneRegistration({ text: "The write-up.", tools: [tool] })
+  const signedOff = (tool: { name: string; status: string; detail?: string; command?: string }) => carriesDoneRegistration({ tools: [tool] })
   const heredoc = "frizzctl done --body-file - <<'EOF'\n- **Fixed the lookup** in `src/resolver.ts`.\nEOF"
   assert.equal(signedOff({ name: "Bash", status: "completed", detail: "frizzctl done --body-file - <<'EOF' …", command: heredoc }), true)
   assert.equal(signedOff({ name: "Bash", status: "completed", detail: "frizzctl done --body-file handoff.md" }), true)
@@ -371,7 +371,7 @@ test("one run, and no run at all, are both left alone", () => {
 // The 642 shape at scale: the count has to be the number of ROUNDS, not of records, or the divider says
 // "412 steps" where the honest summary is "the agent went round 28 more times".
 test("thirty runs collapse to two visible runs and one line", () => {
-  const steps = [x(), p(), t(2)]
+  const steps: CollapseStep[] = [x(), p(), t(2)]
   for (let i = 0; i < 29; i++) steps.push(r(), w(), p(), t(2))
   const segs = queueCollapseSegments(steps, 1)
   assert.equal(segs.length, 30)
@@ -385,7 +385,7 @@ test("thirty runs collapse to two visible runs and one line", () => {
 // a background task woke it, and it rested again without naming the question — so the card stayed at the
 // 6th run's rest, inside the middle, behind "N more rounds". The rail said [?] and nothing showed the ask.
 test("a middle run holding an open question is kept, with the rounds on each side collapsed", () => {
-  const steps = [x(), p(), t(2)] // 0..2: the human's ask and the first run
+  const steps: CollapseStep[] = [x(), p(), t(2)] // 0..2: the human's ask and the first run
   for (let i = 0; i < 7; i++) steps.push(r(), w(), p(), t(2)) // seven more runs, four messages each
   const segs = queueCollapseSegments(steps, 1)
   assert.equal(segs.length, 8)
@@ -402,7 +402,7 @@ test("a middle run holding an open question is kept, with the rounds on each sid
 })
 
 test("a question anchored to a rest pins the run that rest closed", () => {
-  const steps = [x(), p(), t(2)]
+  const steps: CollapseStep[] = [x(), p(), t(2)]
   for (let i = 0; i < 4; i++) steps.push(r(), w(), p(), t(2))
   const segs = queueCollapseSegments(steps, 1)
   assert.equal(segs.length, 5)
@@ -415,7 +415,7 @@ test("a question anchored to a rest pins the run that rest closed", () => {
 })
 
 test("adjacent pinned runs share no divider, and pins in the first or last run change nothing", () => {
-  const steps = [x(), p(), t(2)]
+  const steps: CollapseStep[] = [x(), p(), t(2)]
   for (let i = 0; i < 4; i++) steps.push(r(), w(), p(), t(2))
   const segs = queueCollapseSegments(steps, 1)
   const both = collapseMiddleRuns(segs, [segs[2].open, segs[3].open])

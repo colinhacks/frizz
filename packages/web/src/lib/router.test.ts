@@ -47,7 +47,7 @@ function mountQueueCard(slug: string | null, { phone = false }: { phone?: boolea
     clearTimeout: () => {},
     setTimeout: () => 0,
     ...(phone ? { matchMedia: () => ({ matches: true, addEventListener: () => {} }) } : null),
-  } as unknown as Window
+  } as unknown as typeof window
   return () => Object.assign(globals, previous)
 }
 
@@ -290,7 +290,7 @@ test("the store→URL sync never writes over the fullscreen page", async () => {
     store.drawers = []
     await settle()
     stop()
-    assert.deepEqual(navigated, [], "no write while the address bar names a full-screen page")
+    assert.deepEqual(navigated, [] as string[], "no write while the address bar names a full-screen page")
 
     // CONTROL — the same writes on the board DO drive the URL, so the guard is the only difference.
     globals.location = { pathname: "/", search: "" } as unknown as Location

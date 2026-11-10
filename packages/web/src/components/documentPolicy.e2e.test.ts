@@ -176,7 +176,8 @@ test("the built app runs under its document's script policy, and what the policy
     await drawn(phone)
     await phone.close()
 
-    assert.deepEqual(refusals, [], "the app needed nothing the policy refuses")
+    // Typed, or the assertion narrows `refusals` to an empty list for the rest of the test.
+    assert.deepEqual(refusals, [] as Refusal[], "the app needed nothing the policy refuses")
     assert.deepEqual(errors, [], "no page error")
 
     // ── what the policy exists to stop ────────────────────────────────────────────────────────────────

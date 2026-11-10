@@ -3,7 +3,7 @@ import test from "node:test"
 import type { QuestionFenceFaultView } from "@frizz/shared"
 import { questionClaims } from "./questionAnchor.ts"
 import { followUpParentsIn, hasQuestionBlock, questionFenceIdsIn, splitMessageQuestions } from "./questionBlocks.ts"
-import { messageIndexAt, questionFaultsKey, refusalSummary, refusedFencesByMessage, withRefusedFences } from "./questionFaults.ts"
+import { messageIndexAt, questionFaultsKey, refusalSummary, refusedFencesByMessage, withRefusedFences, type FaultMessage } from "./questionFaults.ts"
 import { placeQuestions } from "./questionShadow.ts"
 import { settledQuestionPositions } from "./settledQuestions.ts"
 
@@ -24,7 +24,7 @@ const ROW = {
 
 // The reused id, as it happens: asked at 10:05, the human replies past it, and at 10:12 the worker writes
 // a DIFFERENT question under the same id. The server refuses the second and faults it at its own instant.
-const REUSED = [
+const REUSED: FaultMessage[] = [
   { role: "user", at: at(0), text: "Move the settings into a real store." },
   { role: "assistant", at: at(5), text: `One call first:\n\n${choice("store")}\n\nThe rest is done.` },
   { role: "assistant", kind: "event", at: at(5), text: "Agent rested" },
@@ -112,7 +112,7 @@ test("a refused late follow-up claims nothing: its parent's card does not move, 
   assert.deepEqual(followUpParentsIn(text, new Set(["store-path"])), [])
   assert.deepEqual(questionFenceIdsIn(text, new Set(["store-path"])), [])
   assert.deepEqual(splitMessageQuestions(text, true, new Set(["store-path"])).map((s) => s.kind), ["prose", "refusedAsk"])
-  const messages = [
+  const messages: FaultMessage[] = [
     { role: "assistant", at: at(5), text: `One call first:\n\n${choice("store")}` },
     { role: "user", at: at(8), text: "Answers: SQLite" },
     { role: "assistant", at: at(12), text },

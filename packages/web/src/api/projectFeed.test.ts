@@ -157,7 +157,7 @@ test("nothing from the project the page has left reaches the UI", async () => {
     setBoard(board("alpha"))
     assert.equal(store.board, null, "setBoard must refuse a board stamped with another project")
     setBoard(board("beta"))
-    assert.equal(store.board?.projectName, "beta", "…and must accept this project's own board")
+    assert.equal((store.board as BoardSnapshot | null)?.projectName, "beta", "…and must accept this project's own board")
     store.board = null
 
     // 4. A SESSION THAT FELL BACK TO SSE SWITCHES PROJECTS TOO. `rebindSSEProject` existed, was

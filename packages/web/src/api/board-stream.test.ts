@@ -67,7 +67,7 @@ test("a notification click opens the thread in the project it was raised for, no
   store.notificationsEnabled = true
 
   try {
-    const event = { type: "notify", slug: "fix-auth", title: "Done", body: "…" } as const satisfies ServerEvent
+    const event = { type: "notify", slug: "fix-auth", kind: "turn-done", title: "Done", body: "…" } as const satisfies ServerEvent
 
     // Raised on alpha, clicked on alpha: the board's pane (the one-thread pane, a desktop board), no
     // navigation.

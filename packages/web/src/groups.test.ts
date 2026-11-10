@@ -23,7 +23,10 @@ function thread(over: Partial<ThreadView> = {}): ThreadView {
     archived: false,
     hasPlan: false,
     subAgents: [],
+    bgShells: [],
+    watches: [],
     pendingQuestion: false,
+    questions: [],
     spawnedAt: "2026-07-08T00:00:00.000Z",
     ...over,
   }
@@ -347,7 +350,7 @@ test("sessionIndicatorKind: a queued shell-only rest sits in the rested band and
 // So an armed thread's rail row is whatever it would have been anyway: spinning while it works, at rest
 // when it is genuinely done. This test is the guard against reintroducing the mark.
 test("sessionIndicatorKind: an armed recurring prompt changes NO rail mark", () => {
-  const hook = { prompt: "keep going", stopHook: true, heartbeat: false, armedAt: "2026-07-10T00:00:00.000Z" }
+  const hook = { prompt: "keep going", stopHook: true, heartbeat: false, postCompaction: false, armedAt: "2026-07-10T00:00:00.000Z" }
   const base = { kind: "session" as const, state: "open" as const, needsYou: false, runtime: "turn-idle" as const }
 
   // At rest with a hook armed: the ordinary at-rest ellipsis, exactly as without one.
@@ -1093,7 +1096,7 @@ test("sessionIndicatorKind: a watched PR wears GitHub's mark whether its checks 
     kind: "session", runtime: "turn-idle", awaitingBackground: true,
     watches: [{
       id: "github:t:o/r#1", kind: "github", target: "o/r#1", state: "armed", createdAt: "2026-08-19T00:00:00.000Z",
-      github: { checks, running: checks === "running" ? 1 : 0, passed: 10, failed: 0, failing: [], merge: "mergeable", state: "open", polledAt: "2026-08-19T00:00:00.000Z" },
+      github: { checks, running: checks === "running" ? 1 : 0, passed: 10, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "mergeable", state: "open", polledAt: "2026-08-19T00:00:00.000Z" },
     }],
     ...over,
   })
@@ -1269,7 +1272,7 @@ test("isSnoozed: an event-snoozed rest parks in Snoozed — behind a PR watch, a
     lastFence: { kind: "awaiting", body: "Waiting on the merge.", hints: [{ kind: "pr", value: "o/r#1" }] },
     watches: [{
       id: "github:t:o/r#1", kind: "github", target: "o/r#1", state: "armed", createdAt: "2026-08-28T00:00:00.000Z",
-      github: { checks: "passing", running: 0, passed: 7, failed: 0, failing: [], merge: "mergeable", state: "open", polledAt: "2026-08-28T00:00:00.000Z" },
+      github: { checks: "passing", running: 0, passed: 7, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "mergeable", state: "open", polledAt: "2026-08-28T00:00:00.000Z" },
     }],
   })
   assert.equal(isSnoozed(greenPr), true)

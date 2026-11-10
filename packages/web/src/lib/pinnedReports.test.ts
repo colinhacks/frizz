@@ -36,9 +36,9 @@ test("By status reads the Console's pin alone, and By project lifts nothing, so 
 
 test("the phone's Done loop passes over a pinned thread's report, and lands on its ask", () => {
   const threads = [
-    rest("current", { restedAt: "2026-11-06T08:00:00.000Z" }),
+    rest("current"),
     rest("pinned report", { ...report, ...boardPin }),
-    rest("pinned ask", { pinnedAt: "2026-11-06T11:00:00.000Z", pendingAsk: { question: "?" } as ThreadView["pendingAsk"] }),
+    rest("pinned ask", { pinnedAt: "2026-11-06T11:00:00.000Z", pendingAsk: { questions: [{ question: "?", options: [] }] } }),
   ]
   assert.equal(nextThreadNeedingYou(threads, "current", "fifo", {})?.id, "pinned ask")
   assert.equal(nextThreadNeedingYou(threads.slice(0, 2), "current", "fifo", {}), undefined)

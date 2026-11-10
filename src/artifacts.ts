@@ -975,8 +975,12 @@ export function buildFrizzArtifact(
     // Vite/Rolldown transpiles TypeScript but does not typecheck it. Validate the coherent captured
     // snapshot — not the mutable checkout before capture — so an intermediate edit with a missing
     // import can never become a valid immutable artifact and fail later as a browser global.
+    // `typecheck:artifact` is `typecheck` less the web package's test files. None of them is in an
+    // artifact, a cold check of them adds 8s to every build (a snapshot carries no .tsbuildinfo), and
+    // a test another agent is halfway through editing should not refuse a restart. `typecheck` is
+    // the gate that covers them, before a change lands.
     options.onProgress?.("Type-checking captured Frizz source");
-    runCommand(["run", "typecheck"], source);
+    runCommand(["run", "typecheck:artifact"], source);
     options.onProgress?.("Building immutable artifact: web UI");
     runCommand(["run", "--filter", "@frizz/web", "build"], source);
     const webSource = join(source, "packages", "web", "dist");

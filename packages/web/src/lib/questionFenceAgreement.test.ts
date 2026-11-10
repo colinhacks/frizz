@@ -308,7 +308,7 @@ test("a question holding a code block: the server registers it whole and the web
       for (const t of context) if (t.type === "code") assert.match(t.raw.trimEnd(), /\n`{3,}$/, `${name}: and every block in it is closed`)
     }
   }
-  assert.deepEqual(splitMessageQuestions(inputs["code in the context, fences the same length"], true).map((s) => (s.kind === "prose" ? s.text : s.fence?.id)), ["Lead.\n\n", "x", "\nAfter."])
+  assert.deepEqual(splitMessageQuestions(inputs["code in the context, fences the same length"], true).map((s) => (s.kind === "prose" ? s.text : s.kind === "question" ? s.fence?.id : undefined)), ["Lead.\n\n", "x", "\nAfter."])
 })
 
 test("a done or awaiting fence written after a question that holds a code block is still a signal fence", () => {
@@ -412,7 +412,7 @@ test("a tilde fence and a capitalised info string: the server registers it, and 
     assert.deepEqual(placementNamesIn(text), ids, name)
     assert.deepEqual(questionFenceIdsIn(text), ids, name)
   }
-  assert.deepEqual(splitMessageQuestions(inputs["tilde fence, code in the context"], true).map((s) => (s.kind === "prose" ? s.text : s.fence?.id)), ["Lead.\n\n", "x", "\nAfter."])
+  assert.deepEqual(splitMessageQuestions(inputs["tilde fence, code in the context"], true).map((s) => (s.kind === "prose" ? s.text : s.kind === "question" ? s.fence?.id : undefined)), ["Lead.\n\n", "x", "\nAfter."])
   // A follow-up written on tildes in a later message than its parent claims the parent's slot.
   assert.deepEqual(followUpParentsIn(inputs["tilde orphan follow-up"]), ["p"])
   // The row that arrives before its message is held until a message names it — a tilde fence names it.

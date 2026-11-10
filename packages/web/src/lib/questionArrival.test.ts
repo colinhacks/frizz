@@ -40,7 +40,8 @@ test("a later record of the message, or a line stamped after it, is the transcri
   const late = row(at(5, 7))
   assert.equal(awaitsItsMessage(late, [...BEFORE, ASKING]), false)
   // Loaded through the instant by a line that names nothing — the rest divider, a wake.
-  assert.equal(awaitsItsMessage(late, [...BEFORE, { role: "assistant", kind: "event", at: at(5, 7), text: "Agent rested" }]), false)
+  const divider = { role: "assistant", kind: "event", at: at(5, 7), text: "Agent rested" }
+  assert.equal(awaitsItsMessage(late, [...BEFORE, divider]), false)
   // An unstamped tail (this tab's own optimistic send) proves nothing about the transcript.
   assert.equal(awaitsItsMessage(late, [...BEFORE, { role: "user", text: "and another thing" }]), true)
   // A question asked long ago, its message above the loaded window: everything loaded is later.

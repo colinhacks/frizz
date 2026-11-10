@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { sendPlaceholder } from "../lib/sendMode.ts"
 
-const base = { armed: true, mode: "steer" as const, running: true, right: 8, onMode: () => {}, onSend: () => {} }
+const base = { armed: true, mode: "steer" as const, running: true, right: 8, bottom: 7, onMode: () => {}, onSend: () => {} }
 
 test("a thread that can steer keeps the caret and says what its send does", () => {
   const html = renderToStaticMarkup(createElement(SendSplitButton, base))

@@ -2,6 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Page } from "puppeteer"
 
+// What the page's fixture (github-picker-range-fixture.tsx) puts on `window`.
+declare global {
+  interface Window { githubPickerRangeFixture?: { dispatched: unknown[]; settingsWrites: Record<string, unknown>[]; listRequests: number[]; preferenceWrites: unknown[] } }
+}
+
 // Range selection is a MOUSE gesture: the modifier, the anchor, the browser's own text-selection
 // reflex. Unit tests pin the reducer, but only a real browser proves the wiring — that shift reaches
 // the handler, that the row's title link doesn't swallow the click, and that dragging across rows

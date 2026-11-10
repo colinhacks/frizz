@@ -8,7 +8,7 @@
     "types": []
   },
   "include": ["src"],
-  // *.test.ts are node:test files run via `node --test`, not part of the browser bundle; the
-  // browser tsconfig has no node types, so keep them out of this typecheck.
+  // *.test.ts are node:test files, not part of the browser bundle, and this config has no node
+  // types. tsconfig.test.json checks them, with node's types beside the DOM's.
   "exclude": ["src/**/*.test.ts"]
 }

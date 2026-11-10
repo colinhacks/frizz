@@ -45,7 +45,7 @@ test("full-screen file links push readers and Escape restores the reader underne
       // Mark the original DOM node and scroll to its final link. Returning must preserve both.
       const scroll = await page.$eval(`${top} .overflow-y-auto`, (el) => { el.scrollTop = el.scrollHeight; return el.scrollTop })
       assert.ok(scroll > 0)
-      await original!.evaluate((el) => { el.dataset.originalReader = "true" })
+      await original!.evaluate((el) => { (el as HTMLElement).dataset.originalReader = "true" })
       await page.evaluate(() => {
         (window as any).fileSlides = []
         document.addEventListener("transitionrun", (event) => {
@@ -58,7 +58,7 @@ test("full-screen file links push readers and Escape restores the reader underne
       await waitCount(2)
       assert.equal(await page.evaluate(() => (window as any).fileSlides.length), 1, "the nested reader actually slides, not just swaps content")
       await page.waitForSelector(`${top} [data-local-path$="/first.md"]`)
-      assert.equal(await page.$eval(slot, (el) => el.inert), true)
+      assert.equal(await page.$eval(slot, (el) => (el as HTMLElement).inert), true)
       assert.equal(await page.$eval("main[data-standalone-thread]", (el) => el.getBoundingClientRect().width), threadWidth)
       await page.click(`${top} [data-local-path$="/first.md"]`)
       await waitCount(3)
@@ -94,9 +94,9 @@ test("full-screen file links push readers and Escape restores the reader underne
       }
       await page.keyboard.press("Escape")
       await waitCount(1)
-      assert.equal(await original!.evaluate((el) => el.isConnected && el.dataset.originalReader === "true"), true)
+      assert.equal(await original!.evaluate((el) => el.isConnected && (el as HTMLElement).dataset.originalReader === "true"), true)
       assert.equal(await page.$eval(`${top} .overflow-y-auto`, (el) => el.scrollTop), scroll)
-      assert.equal(await page.$eval(top, (el) => el.inert), false)
+      assert.equal(await page.$eval(top, (el) => (el as HTMLElement).inert), false)
       // Shrinking uses the existing Markdown drawers without destroying the hidden split stack.
       await page.setViewport({ width: 390, height: 844 })
       await page.click(firstLink)

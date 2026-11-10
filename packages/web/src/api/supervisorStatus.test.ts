@@ -26,7 +26,7 @@ function makeClient(): QueryClient {
 }
 
 // A surface reading the status: exactly what useSupervisorStatus() mounts, minus React.
-function observe(qc: QueryClient): { stop: () => void; observer: QueryObserver<Awaited<ReturnType<typeof supervisorStatusQueryOptions.queryFn>>> } {
+function observe(qc: QueryClient) {
   const observer = new QueryObserver(qc, supervisorStatusQueryOptions)
   return { stop: observer.subscribe(() => {}), observer }
 }

@@ -39,9 +39,9 @@ const thread = (id: string, over: Partial<ThreadView>) =>
 
 const LATER = new Date(Date.now() + 3_600_000).toISOString()
 const snoozed = (id: string) => thread(id, { snoozedUntil: LATER })
-const done = (id: string) => thread(id, { archived: true, state: "archived", status: "inactive" } as Partial<ThreadView>)
+const done = (id: string) => thread(id, { archived: true, state: "archived" })
 const queued = (id: string) => thread(id, { needsYou: true })
-const running = (id: string) => thread(id, { runtime: "turn-active" } as Partial<ThreadView>)
+const running = (id: string) => thread(id, { runtime: "running" })
 
 function rail(threads: ThreadView[]) {
   store.board = { threads, errors: [], projectDir: "/tmp/p", homeDir: "/tmp" } as unknown as BoardSnapshot

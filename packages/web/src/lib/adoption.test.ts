@@ -21,7 +21,10 @@ function legacy(over: Partial<ThreadView> = {}): ThreadView {
     archived: false,
     hasPlan: false,
     subAgents: [],
+    bgShells: [],
+    watches: [],
     pendingQuestion: false,
+    questions: [],
     kind: "legacy",
     ...over,
   }

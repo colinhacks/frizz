@@ -2,6 +2,15 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Page } from "puppeteer"
 
+// What the page's fixture (queue-landing-hold-fixture.tsx) puts on `window`.
+declare global {
+  interface Window {
+    __route: (slug: string) => void
+    __grow: (slug: string, px: number) => void
+    __spy: () => string | null
+  }
+}
+
 // Runtime coverage for the queue's LANDING HOLD (lib/queueLandingHold.ts), which only a browser can
 // settle: it is a race between a one-shot scroll and the layout that arrives after it. A desktop deep
 // link to a queue card BELOW another card landed while the whole queue was still skeletons, the browser

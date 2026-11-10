@@ -26,7 +26,7 @@ const shell = (state: "running") => ({ id: "toolu_s", taskId: "bzvtnt3ig", label
 // through ChatView's fence block, and offers the park only where there is a rest to park). A fixture
 // omitting either would silently pin the card's no-verb branch while claiming to test the ordinary one.
 const thread = (subAgents: unknown[], bgShells: unknown[]) =>
-  ({ id: "demo-thread", sessionId: "sess-demo", kind: "session", awaitingBackground: true, runtime: "turn-idle", subAgents, bgShells } as unknown as Parameters<typeof AwaitingBackgroundCard>[0]["thread"])
+  ({ id: "demo-thread", sessionId: "sess-demo", kind: "session", awaitingBackground: true, runtime: "turn-idle", subAgents, bgShells } as unknown as NonNullable<Parameters<typeof AwaitingBackgroundCard>[0]["thread"]>)
 
 // A DECLARED shell wait — what a worker's `watch: <handle>` fence hint becomes server-side.
 const shellWatch = (target: string) => ({ id: `shell:demo:${target}`, kind: "shell" as const, target, state: "armed" as const, createdAt: "2026-07-28T09:00:00.000Z" })
@@ -215,7 +215,7 @@ test("a park on a command watch alone rows the command, its cadence and its last
     ...thread([], []),
     watches: [commandWatch()],
     lastFence: { kind: "awaiting", body: "", hints: [{ kind: "command", value: "cmw_12f995833a5b" }, { kind: "status", value: "watching" }] },
-  } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"]
+  } as NonNullable<Parameters<typeof AwaitingBackgroundCard>[0]["thread"]>
   const html = render(t)
   assert.doesNotMatch(html, /Waiting for an external update/)
   assert.match(html, /data-wait-row="cmw_12f995833a5b" data-wait-kind="command"/)
@@ -271,7 +271,7 @@ test("every kind the thread declared gets a row, under its own heading", () => {
 // is the timer's own prompt — the id names nothing to a human — and its status counts down to the fire
 // instant. Non-interactive by the settled id-less policy: nothing to open, so no chevron and no control.
 test("an armed timer gets a row: named by its prompt, counting down, non-interactive", () => {
-  const t = { ...thread([], []), watches: [timerWatch()] } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"]
+  const t = { ...thread([], []), watches: [timerWatch()] } as NonNullable<Parameters<typeof AwaitingBackgroundCard>[0]["thread"]>
   const body = text(t)
   assert.match(body, /Timers/)
   assert.match(body, /Re-check: tip quiet, install green/)

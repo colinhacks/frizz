@@ -284,7 +284,7 @@ test("a prose tool tail absorbs ordinary calls, and a background launch is what 
       sourceId: "finished-event",
       role: "assistant",
       kind: "event",
-      boundary: true,
+      boundary: "wake",
       text: "Background task finished",
       tools: [],
       parts: [],
@@ -468,7 +468,7 @@ test("the runtime clock counts the live stretch, not the turn", () => {
 
   // A queued steer is pinned to the bottom of the pane, not drawn inline — it interrupts nothing, so it
   // must not become the stretch the clock times.
-  const queued: ChatMessage = { sourceId: "steer", role: "user", text: "also check the tests", tools: [], queued: true, at: "2026-07-30T12:00:11.000Z" }
+  const queued: ChatMessage = { sourceId: "steer", role: "user", text: "also check the tests", tools: [], parts: [], queued: true, at: "2026-07-30T12:00:11.000Z" }
   assert.equal(
     liveRuntimeStartedAt(coalesceToolActivityMessages([settled, pending, queued])),
     "2026-07-30T12:00:00.000Z",
@@ -476,7 +476,7 @@ test("the runtime clock counts the live stretch, not the turn", () => {
 
   // A steer that waited out the turn is drawn under that turn's rest: the stretch it opens begins at the
   // rest, not four seconds earlier when it was typed. A send that answers an older rest keeps its own instant.
-  const rest: ChatMessage = { sourceId: "rest", role: "assistant", kind: "event", boundary: "rest", text: "Agent rested", tools: [], at: "2026-07-30T12:00:15.000Z" }
+  const rest: ChatMessage = { sourceId: "rest", role: "assistant", kind: "event", boundary: "rest", text: "Agent rested", tools: [], parts: [], at: "2026-07-30T12:00:15.000Z" }
   const waited: ChatMessage = { ...queued, restReply: true }
   assert.equal(liveRuntimeStartedAt(coalesceToolActivityMessages([prose, rest, waited])), "2026-07-30T12:00:15.000Z")
   assert.equal(liveRuntimeStartedAt(coalesceToolActivityMessages([prose, rest, { ...waited, queued: false, restReply: undefined }])), "2026-07-30T12:00:15.000Z")
@@ -741,7 +741,7 @@ test("a quiet event line still ends the run it follows", () => {
 
 test("a wake divider is not thinking and still ends the run", () => {
   const boundary: ChatMessage = {
-    sourceId: "wake", role: "assistant", kind: "event", boundary: true,
+    sourceId: "wake", role: "assistant", kind: "event", boundary: "wake",
     text: "Background task «boot» finished", tools: [], parts: [],
   }
   const compact = coalesceToolActivityMessages([

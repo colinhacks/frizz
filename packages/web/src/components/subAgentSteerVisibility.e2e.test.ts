@@ -23,7 +23,7 @@ test("the sub-agent drawer shows native follow-up arrivals and exact Frizz-autho
     // be the readiness signal. The fixture's own button + transcript column are the convergence points.
     await page.goto(`${baseUrl}/subagent-steer-fixture.html?state=rich`, { waitUntil: "domcontentloaded" })
     const opener = await page.waitForSelector("[data-open-drawer]")
-    await opener.click()
+    await opener!.click()
     await page.waitForSelector("[data-transcript-column]")
 
     const transcript = await page.$eval("[data-transcript-column]", (element) => (element as HTMLElement).innerText)

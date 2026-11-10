@@ -268,7 +268,7 @@ test("marked lines, rendered diffs and long blocks draw, copy and open on the sh
     // Two buttons in this block, one per long tab; click the one that is drawn.
     const drawn = await page.evaluateHandle(() =>
       [...document.querySelectorAll<HTMLElement>("[data-case=long-tabs] .md-code-expand")].find((each) => getComputedStyle(each).display !== "none")!)
-    await drawn.asElement()!.click()
+    await drawn.click()
     assert.equal((await readLong("long-tabs")).clamped, false)
     await page.click("[data-case=long-tabs] .md-code-tab:nth-child(1)")
     assert.equal((await readLong("long-tabs")).clamped, true, "opening one tab's block leaves the others shut")

@@ -11,15 +11,14 @@ const row = (id: string, over: Partial<ThreadView> = {}) => ({
   state: "open",
   runtime: "turn-idle",
   needsYou: true,
-  restedAt: "2026-09-30T10:00:00.000Z",
   lastActivityAt: "2026-09-30T10:00:00.000Z",
   subAgents: [],
   bgShells: [],
   ...over,
 } as unknown as ThreadView)
 
-const ask = (id: string, at: string) => row(id, { pendingAsk: { question: "?" } as ThreadView["pendingAsk"], restedAt: at, lastActivityAt: at })
-const rested = (id: string, at: string) => row(id, { restedAt: at, lastActivityAt: at })
+const ask = (id: string, at: string) => row(id, { pendingAsk: { questions: [{ question: "?", options: [] }] }, lastActivityAt: at })
+const rested = (id: string, at: string) => row(id, { lastActivityAt: at })
 const running = (id: string) => row(id, { runtime: "running", needsYou: false })
 
 test("Done opens the next ask before any rested handoff, as the phone board lists them", () => {

@@ -19,7 +19,7 @@ import type { GithubWatchStatus, ThreadWatchView } from "@frizz/shared"
 import { checkCountLine, GithubWatchRow, showsRestingCard, watchCounterLine, watchStatusLine } from "./AwaitingBackgroundCard.tsx"
 
 const status = (over: Partial<GithubWatchStatus> = {}): GithubWatchStatus => ({
-  checks: "running", running: 0, passed: 0, failed: 0, failing: [], merge: "unknown", state: "open",
+  checks: "running", running: 0, passed: 0, failed: 0, skipped: 0, gated: 0, gating: [], failing: [], merge: "unknown", state: "open",
   polledAt: new Date().toISOString(), ...over,
 })
 

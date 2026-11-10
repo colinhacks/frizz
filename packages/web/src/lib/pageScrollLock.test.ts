@@ -7,7 +7,7 @@ function withDom<T>(body: { style: { position?: string; top?: string } }, scroll
   const previous = { window: globals.window, document: globals.document }
   try {
     globals.document = { body } as unknown as Document
-    globals.window = { scrollY } as unknown as Window
+    globals.window = { scrollY } as unknown as typeof window
     return fn()
   } finally {
     globals.window = previous.window

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { ThemePreference } from "../lib/theme.ts"
+
+// What the page's fixture (mermaid-fixture.tsx) puts on `window`.
+declare global {
+  interface Window { __chips?: number[]; __setTheme?: (theme: ThemePreference) => void; __setDoc?: (markdown: string) => void; __doc?: string }
+}
 
 // Runtime coverage for the ```mermaid fence OUTSIDE the transcript: on every surface that renders a
 // worker's Markdown as one string of HTML (components/CodexRichOutput.tsx useMermaidIslands, over

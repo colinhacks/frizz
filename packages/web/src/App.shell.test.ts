@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { nextSidebarPresence } from "./lib/sidebarPresence.ts"
+import { nextSidebarPresence, type SidebarPresence } from "./lib/sidebarPresence.ts"
 
 function board(projectDir: string, options: { owned?: boolean } = {}) {
   return {
@@ -11,7 +11,7 @@ function board(projectDir: string, options: { owned?: boolean } = {}) {
 }
 
 test("desktop sidebar persists through empty live keyframes, drawer lifecycle, routes, reconnects, and viewport changes", () => {
-  let presence = { projectDir: null, hasBeenVisible: false }
+  let presence: SidebarPresence = { projectDir: null, hasBeenVisible: false }
 
   // First populated keyframe mounts the rail. The remaining transitions intentionally do not alter
   // the board's project identity, so none may unmount it merely because a snapshot is temporarily empty.

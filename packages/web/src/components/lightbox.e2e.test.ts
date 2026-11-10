@@ -5,6 +5,11 @@ import { join } from "node:path"
 import test from "node:test"
 import { crc32, deflateSync } from "node:zlib"
 
+// What the page's fixture (lightbox-fixture.tsx) puts on `window`.
+declare global {
+  interface Window { __pageKeys?: string[]; __chips?: number[]; __sheetPicks?: number[] }
+}
+
 // Runtime coverage for the ```lightbox fence (components/Lightbox.tsx): the gallery's justified rows,
 // the viewer's paging and dismissal, its zoom under a mouse and under fingers, the gallery on the cards
 // that render prose as one string of HTML, a loose picture opening the same viewer — and the three things
@@ -459,7 +464,7 @@ test("the zoom buttons, the + − 0 keys and a ctrl-wheel or trackpad pinch zoom
     assert.deepEqual([await disabled("Zoom out"), await disabled("Zoom in")], [true, false], "nothing to zoom out of at fit")
 
     const scales: number[] = []
-    for (const key of ["=", "=", "-", "0"]) {
+    for (const key of ["=", "=", "-", "0"] as const) {
       await page.keyboard.press(key)
       scales.push((await zoomOf(page)).scale)
     }

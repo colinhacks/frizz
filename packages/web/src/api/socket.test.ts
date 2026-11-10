@@ -203,7 +203,6 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     resetTransportFixtures()
     store.connection = "connecting"
     store.socketTranscripts = false
-    store.socketBoardFallback = null
     store.socketTranscriptFallbacks = {}
     const backoff = await import(`./socket.ts?backoff-${Date.now()}`)
     backoff.connectSync(queryClient as never)
@@ -227,7 +226,6 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     resetTransportFixtures()
     store.connection = "connecting"
     store.socketTranscripts = false
-    store.socketBoardFallback = null
     store.socketTranscriptFallbacks = {}
     const transcript = await import(`./socket.ts?transcript-${Date.now()}`)
     transcript.connectSync(queryClient as never)
@@ -321,7 +319,6 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     resetTransportFixtures()
     store.connection = "connecting"
     store.socketTranscripts = false
-    store.socketBoardFallback = null
     store.socketTranscriptFallbacks = {}
     const reloaded = await import(`./socket.ts?reload-${Date.now()}`)
     reloaded.connectSync(queryClient as never)
@@ -344,7 +341,6 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     resetTransportFixtures()
     store.connection = "connecting"
     store.socketTranscripts = false
-    store.socketBoardFallback = null
     store.socketTranscriptFallbacks = {}
     const limited = await import(`./socket.ts?limited-${Date.now()}`)
     limited.connectSync(queryClient as never)
@@ -401,7 +397,6 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     resetTransportFixtures()
     store.connection = "connecting"
     store.socketTranscripts = false
-    store.socketBoardFallback = null
     store.socketTranscriptFallbacks = {}
     const listed = await import(`./socket.ts?projects-${Date.now()}`)
     listed.connectSync(queryClient as never)
@@ -430,6 +425,8 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     resetTransportFixtures()
     FakeEventSource.instances = []
     store.board = null
+    // Read through a function: the assignment above narrows `store.board` to null for the rest of the test.
+    const liveBoard = (): BoardSnapshot | null => store.board
     store.connection = "connecting"
     store.socketTranscriptFallbacks = {}
     reads.length = 0
@@ -439,7 +436,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     assert.equal(reads.length, 1, "the board is read as the page loads, before the socket opens")
     assert.match(reads[0], /\/_frizz\/rpc\/boardState$/)
     await settle()
-    assert.equal(store.board?.projectName, "fixture", "the read is the page's first board")
+    assert.equal(liveBoard()?.projectName, "fixture", "the read is the page's first board")
     const resumeSocket = FakeWebSocket.instances[0]
     resumeSocket.open()
     assert.deepEqual(boardSent(resumeSocket), [], "nothing is named before the server says hello")
@@ -450,7 +447,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     // The server replays the gap; each delta applies in order.
     const thread = (id: string) => ({ id, title: id, status: "active", runtime: "turn-idle", dependsOn: [] })
     resumeSocket.message({ t: "event", event: { type: "board-delta", seq: 6, bootId: "boot-test", upserts: [thread("a") as never], removed: [] } })
-    assert.deepEqual(store.board?.threads.map((t) => t.id), ["a"])
+    assert.deepEqual(liveBoard()?.threads.map((t) => t.id), ["a"])
 
     // A drop keeps the board and its seq: the next socket names seq 6 and no read is made.
     resumeSocket.serverClose()
@@ -460,7 +457,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     again.message({ t: "hello", bootId: "boot-test", seq: 9 })
     assert.deepEqual(boardSent(again), [{ t: "board", bootId: "boot-test", seq: 6 }], "a reconnect resumes from the seq it held")
     assert.equal(reads.length, 1)
-    assert.deepEqual(store.board?.threads.map((t) => t.id), ["a"], "and the board stayed on screen through the drop")
+    assert.deepEqual(liveBoard()?.threads.map((t) => t.id), ["a"], "and the board stayed on screen through the drop")
 
     // The ring has rolled past seq 6: the server says so, the board is read again, and the new seq is
     // named on the same socket.
@@ -468,14 +465,14 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     again.message({ t: "board-resync", reason: "expired" })
     assert.equal(reads.length, 2)
     await settle()
-    assert.deepEqual(store.board?.threads.map((t) => t.id), ["a", "b", "c"])
+    assert.deepEqual(liveBoard()?.threads.map((t) => t.id), ["a", "b", "c"])
     assert.deepEqual(boardSent(again).at(-1), { t: "board", bootId: "boot-test", seq: 9 })
     assert.equal(FakeWebSocket.instances.length, 2, "a resync is not a reconnect")
 
     // A delta that skips a seq is not applied; the board is read again instead.
     again.message({ t: "event", event: { type: "board-delta", seq: 11, bootId: "boot-test", upserts: [thread("skipped") as never], removed: [] } })
     assert.equal(reads.length, 3)
-    assert.ok(!store.board?.threads.some((t) => t.id === "skipped"), "a delta past a gap never lands")
+    assert.ok(!liveBoard()?.threads.some((t) => t.id === "skipped"), "a delta past a gap never lands")
     await settle()
     assert.deepEqual(boardSent(again).at(-1), { t: "board", bootId: "boot-test", seq: 9 })
 
@@ -491,7 +488,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     assert.equal(reads.length, 4)
     await settle()
     assert.deepEqual(boardSent(restarted), [{ t: "board", bootId: "boot-next", seq: 2 }])
-    assert.deepEqual(store.board?.threads.map((t) => t.id), ["fresh"])
+    assert.deepEqual(liveBoard()?.threads.map((t) => t.id), ["fresh"])
     assert.equal(FakeEventSource.instances.length, 0, "the board never sends the page to SSE")
     // The second budget refusal above lands on a cleared latch and so is a new event worth one line —
     // a refusal repeated on a still-latched slug is what must stay silent.

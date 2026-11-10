@@ -102,6 +102,7 @@ test("a ```question sample inside a ```` fence stays prose — no phantom card",
   const text = `${TICK4}\n\`\`\`question\nShip it?\n\n- A. Yes\n- B. No\n\`\`\`\n${TICK4}\n\nTrailing prose.`
   const segs = splitQuestionBlocks(text)
   assert.deepEqual(segs.map((s) => s.kind), ["prose"])
+  assert.equal(segs[0].kind, "prose")
   assert.equal(segs[0].text, text) // the whole thing renders as the code block it is
 })
 

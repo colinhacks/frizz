@@ -49,9 +49,9 @@ test("nothing folds against no registration, and a head too short to mean anythi
 test("allFencesShadowed is true only when every fence in the text restates a registration", () => {
   const one = `Prose first.\n\n\`\`\`question\n${FENCE}\n\`\`\`\n`
   const two = `${one}\n\`\`\`question\nWhich npm dist-tag should 4.5.0 publish under?\n\n- A. latest\n- B. next\n\`\`\`\n`
-  assert.equal(allFencesShadowed(one, [REGISTERED]), true)
-  assert.equal(allFencesShadowed(two, [REGISTERED]), false)
-  assert.equal(allFencesShadowed("No fence here at all.", [REGISTERED]), false)
+  assert.equal(allFencesShadowed(one, [QUESTION]), true)
+  assert.equal(allFencesShadowed(two, [QUESTION]), false)
+  assert.equal(allFencesShadowed("No fence here at all.", [QUESTION]), false)
   assert.equal(allFencesShadowed(one, []), false)
 })
 

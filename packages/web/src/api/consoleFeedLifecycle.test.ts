@@ -84,7 +84,7 @@ const answer = async (projectSlug: string, ids: string[], githubRepo?: string) =
   const at = pendingReads.findLastIndex((read) => read.project === projectSlug)
   assert.ok(at >= 0, `a board read for ${projectSlug} is in flight`)
   const [read] = pendingReads.splice(at, 1)
-  const board = { projectDir: `/fixture/${projectSlug}`, projectName: projectSlug, projectSlug, githubRepo, threads: ids.map(thread), errors: [], warnings: [] } as BoardSnapshot
+  const board = { projectDir: `/fixture/${projectSlug}`, projectName: projectSlug, projectLabel: projectSlug, projectSlug, githubRepo, threads: ids.map(thread), errors: [], warnings: [] } as BoardSnapshot
   read!.resolve(new Response(JSON.stringify({ result: { board, seq: 1, bootId: "boot-test" } }), { status: 200 }))
   await settle()
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { questionClaims } from "./questionAnchor.ts"
 import { refusedFencesByMessage } from "./questionFaults.ts"
-import { questionOwnersByMessage, withQuestionOwners } from "./questionOwners.ts"
+import { questionOwnersByMessage, withQuestionOwners, type OwnerMessage } from "./questionOwners.ts"
 import { placeQuestions, resolveQuestionName } from "./questionShadow.ts"
 import { settledQuestionPositions } from "./settledQuestions.ts"
 
@@ -18,7 +18,7 @@ const spec = (question: string) => ({ handle: "store", question, kind: "question
 
 // Asked at 10:05 and answered; referenced at 10:09 while still answered (a no-op); asked again at 10:12 in
 // the message's SECOND record (7s after the bubble's stamp) with a new question; that one still open.
-const MESSAGES = [
+const MESSAGES: OwnerMessage[] = [
   { role: "user", at: at(0), text: "Move the settings into a real store." },
   { role: "assistant", at: at(5), text: `One call first:\n\n${choice("store", "SQLite or a JSON file?")}` },
   { role: "user", at: at(8), text: "Answers:\n1. SQLite" },

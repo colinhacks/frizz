@@ -274,7 +274,7 @@ test("no context, no change: the body is the question line alone", () => {
 })
 
 test("a card a read-and-answer session can't answer: secret, danger, free text, or a follow-up that is any of those", () => {
-  const choice = { question: "Which?", kind: "question", options: [{ label: "A" }, { label: "B" }] } as const
+  const choice: AskedQuestion = { question: "Which?", kind: "question", options: [{ label: "A" }, { label: "B" }] }
   assert.equal(questionNeedsMachine(choice), false)
   assert.equal(questionNeedsMachine({ ...choice, kind: "multi" }), false)
   assert.equal(questionNeedsMachine({ question: "Name it", kind: "question" }), true)

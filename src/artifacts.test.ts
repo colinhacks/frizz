@@ -683,7 +683,7 @@ test("artifact creation checks the snapshot's own worker-plugin closure, then ty
   failOn(2);
   assert.deepEqual(calls.map((call) => call.args), [
     ["scripts/assert-worker-plugin-closure.mjs", calls[0]!.source],
-    ["run", "typecheck"],
+    ["run", "typecheck:artifact"],
   ]);
   for (const call of calls) {
     assert.match(call.source, /\.source-snapshot-/);
@@ -697,6 +697,13 @@ test("artifact creation checks the snapshot's own worker-plugin closure, then ty
     ),
     []
   );
+});
+
+// The artifact build runs `typecheck:artifact`. It is spelled out beside `typecheck` rather than derived
+// from it, so a package added to one list and not the other would leave an artifact unchecked.
+test("the artifact's typecheck is the workspace's, less the web package's test files", () => {
+  const { scripts } = JSON.parse(readFileSync(resolve(import.meta.dirname, "..", "package.json"), "utf8"));
+  assert.equal(scripts.typecheck, `${scripts["typecheck:artifact"]} packages/web/tsconfig.test.json`);
 });
 
 async function availableLoopbackPort(): Promise<number> {

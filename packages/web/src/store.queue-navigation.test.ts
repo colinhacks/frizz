@@ -50,7 +50,7 @@ test("sidebar queue navigation lands immediately at the card reading line", () =
         fn()
         return 0
       },
-    } as unknown as Window
+    } as unknown as typeof window
 
     assert.equal(scrollToQueueCard("queued-thread"), true)
     assert.deepEqual(scrolls, [{ top: 378, left: 0, behavior: "auto" }])
@@ -94,7 +94,7 @@ test("sidebar queue navigation uses an absolute reading-line target after a narr
       },
       clearTimeout: () => {},
       setTimeout: () => 0,
-    } as unknown as Window
+    } as unknown as typeof window
 
     assert.equal(scrollToQueueCard("queued-thread"), true)
     assert.deepEqual(scrolls, [{ top: 1221, left: 0, behavior: "auto" }])
@@ -132,7 +132,7 @@ test("a queued row clicked under an open drawer dismisses every layer and parks 
       scrollTo: () => assert.fail("a locked page cannot scroll — the landing belongs to the unlock"),
       clearTimeout: () => {},
       setTimeout: () => 0,
-    } as unknown as Window
+    } as unknown as typeof window
 
     store.drawers = [
       { id: 1, kind: "thread", slug: "some-thread" },
@@ -191,7 +191,7 @@ test("the queue arrival ring lands on the bordered card root, never the fade slo
       scrollTo: () => {},
       clearTimeout: () => {},
       setTimeout: (fn: () => void) => { removals.push(fn); return 0 },
-    } as unknown as Window
+    } as unknown as typeof window
 
     assert.equal(scrollToQueueCard("queued-thread"), true)
     assert.deepEqual(rootRinged, [false, true], "restart-clear, then the ring")
@@ -244,7 +244,7 @@ test("re-clicking a queued row inside the flash window replays the ring and resc
       scrollTo: () => assert.fail("an already-landed card must not be re-scrolled"),
       setTimeout: (fn: () => void) => { const id = nextTimer++; timers.set(id, fn); return id },
       clearTimeout: (id: number) => { events.push(`cancel:${id}`); timers.delete(id) },
-    } as unknown as Window
+    } as unknown as typeof window
 
     assert.equal(scrollToQueueCard("re-clicked"), true)
     assert.equal(scrollToQueueCard("re-clicked"), true)
@@ -301,7 +301,7 @@ test("the first card in the queue lands at scrollY 0, and a fading predecessor d
       scrollTo: (options: ScrollToOptions) => scrolls.push(options),
       clearTimeout: () => {},
       setTimeout: () => 0,
-    } as unknown as Window
+    } as unknown as typeof window
 
     assert.equal(scrollToQueueCard("first-thread"), true)
     assert.deepEqual(scrolls, [{ top: 0, left: 0, behavior: "auto" }])

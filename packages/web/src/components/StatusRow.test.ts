@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createElement } from "react"
+import { createElement, type ComponentProps } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router"
@@ -46,7 +46,7 @@ function render(
     createElement(
       QueryClientProvider,
       { client },
-      createElement(MemoryRouter, null, createElement(StatusRow, options.onConsole ? { onConsole: true, projectChip: createElement("button", { "data-chip": "" }) } : null)),
+      createElement(MemoryRouter, null, createElement<NonNullable<ComponentProps<typeof StatusRow>>>(StatusRow, options.onConsole ? { onConsole: true, projectChip: createElement("button", { "data-chip": "" }) } : null)),
     ),
   )
 }

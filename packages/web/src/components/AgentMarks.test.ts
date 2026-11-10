@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createElement } from "react"
+import { createElement, type FunctionComponent } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AgentMarks, NewThreadAgentMarks } from "./AgentMarks.tsx"
@@ -24,7 +24,7 @@ function client(options: { quota?: boolean; backend?: "claude" | "codex" | "acp"
   return queries
 }
 
-const render = (element: Parameters<typeof createElement>[0], props: object, queries = client()) =>
+const render = <P extends {}>(element: FunctionComponent<P>, props: P, queries = client()) =>
   renderToStaticMarkup(createElement(QueryClientProvider, { client: queries }, createElement(element, props)))
 
 test("a new-thread box's gauge follows the model its chip has selected", () => {

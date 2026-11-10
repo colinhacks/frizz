@@ -6,7 +6,7 @@ import { repliedSteps, stepsDoneReplies, stepsReport, withStepsReport } from "./
 // Every shape the prompt box's one send gives a report (ThreadComposerBox `send`): the word alone, the
 // word over a typed note, under the fenced answers' wire, and under the server's registered answers too.
 const FENCED = `${BURIED_ANSWERS_HEADER}\n1. “Which ORM should the docs examples use?” → A. Drizzle`
-const REGISTERED = questionAnswerMessage([{ handle: "changelog", question: "What should the changelog entry say?", chosen: [], text: "Redesigned docs" }])
+const REGISTERED = questionAnswerMessage([{ questionId: "qst_changelog001", handle: "changelog", question: "What should the changelog entry say?", chosen: [], text: "Redesigned docs" }])
 const ALL = [{ text: "Sign in.", done: true }, { text: "Approve it.", done: true }]
 const SOME = [{ text: "Sign in.", done: true }, { text: "Approve it.", done: false }]
 

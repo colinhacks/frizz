@@ -1,5 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { setFaviconBadge } from "./faviconBadge.ts"
+
+// What the page's fixture (favicon-badge-fixture.ts) puts on `window`.
+declare global {
+  interface Window { setFaviconBadge: typeof setFaviconBadge; specimenReady?: boolean }
+}
 
 // Opt-in like the other *.e2e.test.ts here: start `vite` in packages/web and set
 // FRIZZ_FAVICON_BADGE_E2E_URL to its origin, e.g.
