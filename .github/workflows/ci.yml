@@ -1,9 +1,18 @@
 name: ci
 
-# The checks that run without a workspace install, a browser, or a signed-in provider CLI.
-# The full `pnpm test` suite deliberately does NOT run here: it drives a browser and real provider CLIs,
-# so gating on it would fail for reasons unrelated to the change. `release.yml` typechecks the tree
-# before publishing.
+# Two jobs. `check` is what runs with no install at all, in seconds. `test` installs the workspace,
+# typechecks it and runs the suite.
+#
+# The suite did not run here until 2026-11-10, for a reason that had stopped being true: "it drives a
+# browser and real provider CLIs". Every browser test gates itself on an env var nothing here sets,
+# and skips; no test needs a signed-in CLI, a provisioned runtime or anything past loopback (measured
+# in a Linux container with the network cut: 517 of 518 files passed, and the one that failed was a
+# leak in the suite's own harness, since fixed). What the absence cost: six stretches in thirty days
+# with a red test on `main`, three of them found only by whoever cut the next release, and no signal
+# at all on a pull request from a fork.
+#
+# `test` holds no secret and no write permission, so a pull request's code runs with nothing to take.
+# Nothing requires it yet: `release.yml` typechecks the tree itself and does not look at this run.
 
 on:
   push:
@@ -33,3 +42,44 @@ jobs:
 
       - name: Test portable monitors
         run: node --test monitors/*.test.mjs
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # The same three actions at the same commits as release.yml, so this job and the one that
+      # publishes build with the same tools.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.34.9
+
+      # No dependency cache, as in release.yml: a cache is shared with every other workflow here.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "26.x"
+
+      # `lsof` is how the tailer asks whether a background shell still holds its output file
+      # (tailer.ts), and four of its tests run the real one. Nub runs the suite: the sources use
+      # TypeScript that node's own type stripping refuses. Pinned exactly, never a range.
+      - name: Install lsof and nub
+        run: |
+          command -v lsof > /dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq lsof; }
+          npm install -g @nubjs/nub@0.10.0
+          nub --version
+
+      # Also the lockfile check: this is the step six release runs died at.
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      # The whole default glob set, through the wrapper that proves the run was complete and fails a
+      # file that will not exit (scripts/run-tests.mjs). No list of "the files that work in CI": a test
+      # that needs more than this box has skips itself, and says so in the count.
+      - name: Test
+        run: nub run test

@@ -283,7 +283,7 @@ Frizz has its own small vocabulary. Most of it names a feature, so this doubles 
 
 Issues and pull requests are welcome. Fork the repo, branch off `main`, and open the PR against `main` — CI runs on every pull request. Keep **Allow edits by maintainers** checked (GitHub offers it only on forks in a personal account, not an organization), so a follow-up commit from the maintainer can land in your PR rather than separately on `main`.
 
-Three checks run in CI, and they need no install:
+CI runs two jobs on every pull request. The first needs no install:
 
 ```sh
 $ node --test board/*.test.mjs
@@ -291,7 +291,16 @@ $ node scripts/sync-portable-monitors.mjs --check
 $ node --test monitors/*.test.mjs
 ```
 
-Everything else runs locally. Install with `pnpm install`, typecheck with `pnpm typecheck`, and run the full suite with `pnpm test` — that suite drives real agent CLIs and a real browser, which is why CI does not gate on it. Say in the PR what you ran. The suite needs a newer Node than the runtime does: early 22.x point releases (22.15 measured) fail `receipt-bus.test.ts` on a since-fixed test-runner defect, so run it on current 22.x or ≥ 23.4.
+The second installs the workspace, typechecks it and runs the suite. The same commands run locally:
+
+```sh
+$ npm install -g @nubjs/nub   # the suite runs through nub
+$ pnpm install
+$ pnpm typecheck
+$ pnpm test
+```
+
+The browser tests run locally only, with `pnpm test:e2e`, which drives a headless browser. Say in the PR what you ran. The suite needs a newer Node than the runtime does: early 22.x point releases (22.15 measured) fail `receipt-bus.test.ts` on a since-fixed test-runner defect, so run it on current 22.x or ≥ 23.4.
 
 <br/>
 

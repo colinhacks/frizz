@@ -75,8 +75,9 @@ High-impact board actions also go to a machine-wide AUDIT log, `<data>/logs/audi
 once — the launcher sets `FRIZZ_DEBUG` in the child environment, since the child never sees the
 command line. Ctrl-C and a failed boot both print the log path.
 
-Gates: `pnpm run typecheck` and `pnpm test`. CI (`.github/workflows/ci.yml`) runs only the checks that
-need no install or provider CLI; the full suite is local-only by design.
+Gates: `pnpm run typecheck` and `pnpm test`. CI (`.github/workflows/ci.yml`) runs both in its `test`
+job, beside the checks that need no install. The browser tests (`pnpm test:e2e`) are local only, and no
+release waits for the job: `release.yml` typechecks the tree itself.
 
 The suite runs through `scripts/run-tests.mjs` rather than calling node's runner directly, because a
 green run has to prove the whole run happened. Two things can make it lie, and the wrapper answers both
