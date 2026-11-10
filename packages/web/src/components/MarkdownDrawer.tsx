@@ -4,7 +4,7 @@ import { ExternalLink } from "lucide-react"
 import { showToast } from "../store.ts"
 import { fileRpc, localFileUrl } from "../lib/consoleProjects.ts"
 import { useLiveLocalFile } from "../hooks.ts"
-import { copyTextToClipboard } from "../lib/clipboard.ts"
+import { settleLocalOpen } from "../lib/local-file-links.ts"
 import { useInnerHtml } from "../lib/innerHtml.ts"
 import { LOCAL_FILE_POLL_MS, highlightedSource, localFileQuery } from "../lib/localFileQuery.ts"
 import { useLocalFileCodeLinks } from "../lib/localFileCode.ts"
@@ -63,11 +63,7 @@ export function OpenAction({ path }: { path: string }) {
 export function openOutsideFrizz(path: string): Promise<void> {
   return fileRpc(path)
     .openLocalFile({ path })
-    .then(async (result) => {
-      if (result.action !== "copy") return
-      await copyTextToClipboard(result.path)
-      showToast("Copied local path")
-    })
+    .then(settleLocalOpen)
     .catch((error) => showToast(`Could not open local file: ${(error as Error).message.slice(0, 100)}`))
 }
 

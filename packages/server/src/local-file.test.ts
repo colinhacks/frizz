@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events"
 import { execFileSync } from "node:child_process"
-import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LocalFileOpener } from "@frizz/shared"
@@ -17,6 +17,7 @@ import {
   resolveLocalFile,
   resolveOpenableFile,
   resolveWatchableLocalFile,
+  runsWhenOpened,
 } from "./local-file.ts"
 
 interface SpawnCall { command: string; args: readonly string[]; options: Parameters<LocalFileSpawn>[2] }
@@ -244,6 +245,80 @@ test("an editor preference never receives an HTML page: it goes to the system's 
   }
   // The rule is the page's extension, not its bytes: other text still goes to the editor.
   assert.deepEqual(await argvFor(script, "cursor"), ["open", "-a", "Cursor", realpathSync(script)])
+})
+
+// The path in a rendered link is the author's choice: an agent that read hostile text, or a Markdown file
+// in a cloned repository. Until 2026-11-09 a click on one handed ANY regular file under home to
+// `open` / `explorer.exe` / `xdg-open`, which run a `.command`, an executable with no claimed type, a
+// `.bat` or a `.lnk` exactly as a double-click does.
+test("a file that would run is never handed to the system opener: it is revealed instead", { skip: process.platform === "win32" }, async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "frizz-local-file-runs-")))
+  const write = (name: string, body: string | Buffer, mode = 0o644) => {
+    const file = join(root, name)
+    writeFileSync(file, body)
+    chmodSync(file, mode)
+    return file
+  }
+  const binary = Buffer.from([0x00, 0x01, 0x02, 0x03])
+  const source = write("build.ts", "export {}\n")
+  const page = write("options.html", "<!doctype html><p>safe</p>")
+  const tool = write("setup", "#!/bin/sh\necho hi\n", 0o755)
+  const script = write("release.sh", "#!/bin/sh\necho hi\n", 0o755)
+  const command = write("setup.command", "echo hi\n")
+  const settings = write("shell.terminal", "<plist/>")
+  const location = write("docs.webloc", "<plist/>")
+  const batch = write("setup.bat", "echo hi\r\n")
+  const wsh = write("setup.js", "WScript.Echo(1)\n")
+  const entry = write("tool.desktop", "[Desktop Entry]\nExec=sh -c id\n")
+  const installer = write("tool.pkg", binary)
+  const unknown = write("blob.bin", binary)
+  const picture = write("shot.png", binary)
+  const archive = write("bundle.zip", binary)
+
+  // The verdict, per platform. Text with no execute bit and nothing a platform launches is shown.
+  for (const platform of ["darwin", "linux", "win32"] as const) {
+    assert.equal(runsWhenOpened(source, platform), false, `${platform}: a source file`)
+    assert.equal(runsWhenOpened(page, platform), false, `${platform}: a linked HTML page still opens in the browser`)
+    assert.equal(runsWhenOpened(picture, platform), false, `${platform}: a picture`)
+    assert.equal(runsWhenOpened(archive, platform), false, `${platform}: an archive`)
+    assert.equal(runsWhenOpened(installer, platform), true, `${platform}: a binary file no app merely shows`)
+    assert.equal(runsWhenOpened(unknown, platform), true, `${platform}: a binary file nobody thought about`)
+  }
+  for (const platform of ["darwin", "linux"] as const) {
+    assert.equal(runsWhenOpened(tool, platform), true, `${platform}: an executable with no extension`)
+    assert.equal(runsWhenOpened(script, platform), true, `${platform}: the execute bit decides, whatever the extension`)
+    assert.equal(runsWhenOpened(join(root, "gone.txt"), platform), true, `${platform}: a file that cannot be read is not opened`)
+  }
+  for (const file of [command, settings, location]) assert.equal(runsWhenOpened(file, "darwin"), true, file)
+  assert.equal(runsWhenOpened(entry, "linux"), true)
+  for (const file of [batch, wsh]) assert.equal(runsWhenOpened(file, "win32"), true, file)
+  // Each list is its own platform's: a `.js` is a script to Windows Script Host and a text file to macOS.
+  assert.equal(runsWhenOpened(wsh, "darwin"), false)
+  assert.equal(runsWhenOpened(command, "linux"), false)
+  // Windows has no execute bit, and node reports none there, so the bit must not be read from this Mac's.
+  assert.equal(runsWhenOpened(tool, "win32"), false)
+
+  // The opener, end to end. `revealed` tells the page why a file manager appeared.
+  const openWith = async (file: string, opener: LocalFileOpener, platform: NodeJS.Platform, forceSystem = false) => {
+    const calls: SpawnCall[] = []
+    const result = await openLocalFile(file, opener, [root], { platform, forceSystem, spawn: fakeSpawn(calls), env: {}, exists: () => false })
+    return { argv: [calls[0]!.command, ...calls[0]!.args], result }
+  }
+  assert.deepEqual(await openWith(tool, "system", "darwin"), { argv: ["open", "-R", tool], result: { action: "opened", path: tool, revealed: true } })
+  assert.deepEqual(await openWith(command, "system", "darwin"), { argv: ["open", "-R", command], result: { action: "opened", path: command, revealed: true } })
+  assert.deepEqual(await openWith(batch, "system", "win32"), { argv: ["explorer.exe", `/select,${batch}`], result: { action: "opened", path: batch, revealed: true } })
+  assert.deepEqual(await openWith(tool, "system", "linux"), { argv: ["xdg-open", dirname(tool)], result: { action: "opened", path: tool, revealed: true } })
+  // The lightbox's "open in default viewer" names a path too, and takes the same rule.
+  assert.deepEqual((await openWith(tool, "cursor", "darwin", true)).argv, ["open", "-R", tool])
+  // An editor only displays what it is given, so a script still opens there...
+  assert.deepEqual(await openWith(tool, "cursor", "darwin"), { argv: ["open", "-a", "Cursor", tool], result: { action: "opened", path: tool } })
+  // ...and the binary file an editor preference passes on to the system opener is judged like any other.
+  assert.deepEqual((await openWith(installer, "cursor", "darwin")).argv, ["open", "-R", installer])
+  // Everything that only shows is opened as it always was, with no flag.
+  for (const file of [source, page, picture, archive])
+    assert.deepEqual(await openWith(file, "system", "darwin"), { argv: ["open", file], result: { action: "opened", path: file } })
+  // Reveal on Linux is the folder: handing `xdg-open` the file would open it.
+  assert.deepEqual((await openWith(source, "finder", "linux")).argv, ["xdg-open", dirname(source)])
 })
 
 test("local opener refuses relative, outside, directory, and escaping symlink paths", () => {

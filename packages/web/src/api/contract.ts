@@ -342,7 +342,7 @@ export interface Api {
   // Refused for a genuinely live session — archive that one instead.
   forgetThread(input: { slug: string }): Promise<void>
   openExternal(input: { url: string }): Promise<void>
-  openLocalFile(input: { path: string; image?: boolean }): Promise<{ action: "opened" | "copy"; path: string }>
+  openLocalFile(input: { path: string; image?: boolean }): Promise<{ action: "opened" | "copy"; path: string; revealed?: boolean }>
   // A disk-local Markdown file's source, for the built-in reader drawer. Openable-root gated and
   // extension-locked server-side; `truncated` marks a file cut at the read ceiling.
   localMarkdown(input: { path: string }): Promise<{ path: string; markdown: string; truncated: boolean }>

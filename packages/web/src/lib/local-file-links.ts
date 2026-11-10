@@ -165,12 +165,23 @@ function download(path: string): void {
 
 async function open(path: string, image: boolean) {
   try {
-    const result = await fileRpc(path).openLocalFile({ path, ...(image ? { image: true } : {}) })
-    if (result.action === "copy") {
-      await copyTextToClipboard(result.path)
-      showToast("Copied local path")
-    }
+    await settleLocalOpen(await fileRpc(path).openLocalFile({ path, ...(image ? { image: true } : {}) }))
   } catch (error) {
     showToast(`Could not open local file: ${(error as Error).message.slice(0, 100)}`)
+  }
+}
+
+/**
+ * What the page owes the reader after the server answered an open: the path on the clipboard when
+ * the preference is Copy, and a word when the server showed a file it would not open. A file that runs
+ * when opened is revealed instead (server `runsWhenOpened`), and a file manager window with no
+ * explanation reads as the click having gone wrong.
+ */
+export async function settleLocalOpen(result: { action: "opened" | "copy"; path: string; revealed?: boolean }): Promise<void> {
+  if (result.action === "copy") {
+    await copyTextToClipboard(result.path)
+    showToast("Copied local path")
+  } else if (result.revealed) {
+    showToast("Showing this file in its folder. Opening it would run it.")
   }
 }

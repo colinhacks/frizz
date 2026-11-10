@@ -4785,7 +4785,7 @@ export function createRouter(ctx: AppContext) {
     // this gate means the endpoint never becomes arbitrary remote-origin or whole-filesystem access.
     openLocalFile: mutation({
       input: z.object({ path: z.string(), image: z.boolean().optional() }).strict(),
-      output: z.object({ action: z.enum(["opened", "copy"]), path: z.string() }),
+      output: z.object({ action: z.enum(["opened", "copy"]), path: z.string(), revealed: z.boolean().optional() }),
       handler: async ({ input }) => openLocalFile(
         input.path,
         ctx.getSettings().localFileOpener ?? "system",

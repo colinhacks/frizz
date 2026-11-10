@@ -5,7 +5,10 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path"
 import type { LocalFileOpener } from "@frizz/shared"
 import { normalizeLocalPath } from "./local-path.ts"
 
-export type LocalFileOpenResult = { action: "opened"; path: string } | { action: "copy"; path: string }
+// `revealed`: the file was shown in the file manager and NOT opened, because the system opener would
+// have run it (`runsWhenOpened`). Still `opened`, so a dashboard loaded before this field existed reads
+// the answer it has always read.
+export type LocalFileOpenResult = { action: "opened"; path: string; revealed?: true } | { action: "copy"; path: string }
 
 /** The slice of a ChildProcess the opener needs: the two events that settle a spawn, and unref. */
 export interface SpawnedOpener {
@@ -344,7 +347,63 @@ export function localFileOpenCommand(path: string, selected: Exclude<LocalFileOp
   }
   return selected === "cursor" ? { command: "cursor", args: [path] }
     : selected === "vscode" ? { command: "code", args: [path] }
-      : { command: "xdg-open", args: [path] }
+      // No freedesktop command selects a file in the file manager, so reveal opens the folder it is in.
+      // It handed the file itself to `xdg-open` until 2026-11-09, which opened it: the one thing
+      // reveal must not do (see `runsWhenOpened`).
+      : selected === "finder" ? { command: "xdg-open", args: [dirname(path)] }
+        : { command: "xdg-open", args: [path] }
+}
+
+// What the desktop shell LAUNCHES rather than shows, by extension, on each platform. `open`,
+// `explorer.exe` and `xdg-open` do what a double-click does, and for these a double-click runs
+// something: a `.command` opens Terminal and executes, a `.terminal` settings file carries a command
+// string, an internet-location file opens whatever URL it names, a Windows script goes to its
+// interpreter. The Windows list is long because association decides there, and it names every script
+// type an installed interpreter claims (Python, Ruby, Git's sh) as well as the shell's own.
+const LAUNCHED_EXT: Partial<Record<NodeJS.Platform, RegExp>> = {
+  darwin: /\.(?:command|tool|terminal|(?:web|inet|file|afp|ftp|vnc|mail)loc|url|mobileconfig|jnlp)$/i,
+  win32: new RegExp(`\\.(?:${[
+    "bat", "cmd", "com", "exe", "scr", "pif", "lnk", "msi", "msp", "msc", "cpl", "jar", "reg", "inf", "scf", "url", "website",
+    "ps1", "psm1", "psd1", "ps1xml", "vbs", "vbe", "js", "jse", "wsf", "wsh", "wsc", "sct", "hta", "chm", "jnlp",
+    "application", "appref-ms", "settingcontent-ms", "library-ms", "search-ms", "searchconnector-ms", "diagcab", "gadget",
+    "py", "pyw", "pyz", "rb", "pl", "php", "sh", "bash", "ahk", "au3",
+  ].join("|")})$`, "i"),
+  linux: /\.(?:desktop|appimage|run)$/i,
+}
+
+// The binary files the system opener may still have: ones whose app SHOWS them. Pictures, PDFs, sound
+// and video, office documents, and archives (whose app unpacks beside the archive and runs nothing).
+// A binary file outside this list is an installer, a disk image, a compiled program or something
+// nobody has thought about, and all four are revealed.
+const SHOWN_BINARY_EXT = new RegExp(`\\.(?:${[
+  "png", "jpe?g", "gif", "webp", "bmp", "tiff?", "heic", "heif", "avif", "ico", "icns", "psd", "pdf",
+  "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "mp4", "m4v", "mov", "webm", "mkv", "avi",
+  "docx?", "xlsx?", "pptx?", "pages", "numbers", "key", "odt", "ods", "odp", "epub",
+  "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar",
+].join("|")})$`, "i")
+
+/**
+ * Would handing `path` to the system opener RUN it, or might it? Then a click must not: the path in a
+ * rendered link is chosen by whoever wrote the text (an agent that read a hostile page, a Markdown
+ * file in a cloned repository), and a click on prose is consent to look at a file, not to execute it.
+ * The opener only ever gets a file that passes all three tests:
+ *
+ * - no execute bit. macOS runs an executable with no claimed type in Terminal, and git keeps the bit
+ *   through a clone, which carries no quarantine attribute for Gatekeeper to ask about. Windows has no
+ *   such bit (node reports none there), so the extension list carries that platform alone.
+ * - not an extension the platform launches (`LAUNCHED_EXT`).
+ * - text, or a binary file of a kind an app shows (`SHOWN_BINARY_EXT`).
+ */
+export function runsWhenOpened(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (LAUNCHED_EXT[platform]?.test(path)) return true
+  if (platform !== "win32") {
+    try {
+      if ((statSync(path).mode & 0o111) !== 0) return true
+    } catch {
+      return true
+    }
+  }
+  return isBinaryLocalFile(path) && !SHOWN_BINARY_EXT.test(path)
 }
 
 // Open only a previously canonicalized, allowlisted local path. No shell is ever involved; each
@@ -364,7 +423,12 @@ export async function openLocalFile(
   // file the reader would call binary goes where a double-click would send it: the system's own app.
   // An HTML page goes there too — the browser — since nobody clicks a linked page to edit its source.
   const editor = chosen === "cursor" || chosen === "vscode"
-  const selected = editor && (HTML_FILE_EXT.test(path) || isBinaryLocalFile(path)) ? "system" : chosen
+  const routed = editor && (HTML_FILE_EXT.test(path) || isBinaryLocalFile(path)) ? "system" : chosen
+  // The system opener shows a file or runs it, and which is the file's to decide. One that would run
+  // is revealed in the file manager instead, where running it is a second, deliberate act. An editor
+  // only ever displays what it is given, so the rule is the system opener's alone.
+  const revealed = routed === "system" && runsWhenOpened(path, options.platform)
+  const selected = revealed ? "finder" : routed
 
   const spec = localFileOpenCommand(path, selected, options)
   const child = (options.spawn ?? defaultSpawn)(spec.command, spec.args, {
@@ -372,5 +436,5 @@ export async function openLocalFile(
     ...(spec.verbatim ? { windowsVerbatimArguments: true } : {}),
   })
   await awaitOpenerStart(child, spec.command)
-  return { action: "opened", path }
+  return revealed ? { action: "opened", path, revealed: true } : { action: "opened", path }
 }
