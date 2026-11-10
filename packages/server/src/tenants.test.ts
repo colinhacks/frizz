@@ -262,7 +262,10 @@ test("a project's step that is slow to close is named while it is stuck, and hol
     await closing
     assert.equal(stopped.at(-1), "p1:storage")
     assert.equal(said().length, 2)
-    assert.match(said()[1]!.message, /^project slow-one took \d+ms to close: board \d+ms$/)
+    // The stuck step leads, slowest first. On a loaded machine another step can cross the 1ms it takes to
+    // be listed at all (`board 43ms, transports 3ms`, in a whole-suite run at load 44), so any that
+    // follow are allowed.
+    assert.match(said()[1]!.message, /^project slow-one took \d+ms to close: board \d+ms(, [a-z-]+ \d+ms)*$/)
     assert.ok(!log.messages().some((message) => message.includes("quick-one")), "a project that closed at once is not mentioned")
   } finally {
     log.restore()
