@@ -180,6 +180,19 @@ test("a finished sub-agent draws the shell's wake divider, and every sub-agent t
 
     // A grandchild id the tailer cannot resolve degrades to the stated unavailable state, never a
     // dead link and never a blank drawer.
+    // The drawer's text arrives about 5ms after the drawer mounts, and the drawer then slides in for
+    // 200ms. Until it has, this link is past the window's right edge and cannot be pressed ("Node is
+    // either not clickable"). The read above used to take long enough by accident; on 2026-11-10 it
+    // stopped doing so, 4 runs of 4. Wait for the link to come to rest inside the window.
+    await page.waitForFunction(() => {
+      const link = [...document.querySelectorAll("[data-subagent-completion-open]")].at(-1)
+      if (!link) return false
+      const { left, right } = link.getBoundingClientRect()
+      const seen = window as unknown as { nestedLinkLeft?: number }
+      const atRest = seen.nestedLinkLeft === left
+      seen.nestedLinkLeft = left
+      return atRest && right <= innerWidth
+    }, { timeout: 5000, polling: 50 })
     const nestedLink = (await page.$$("[data-subagent-completion-open]")).at(-1)
     await nestedLink!.click()
     await new Promise((r) => setTimeout(r, 900))
