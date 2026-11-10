@@ -22,6 +22,7 @@ import {
 } from "../lib/threadPane.ts"
 import { store } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
+import { ThreadPageZone } from "./ThreadSurface.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { Tooltip } from "./Tooltip.tsx"
 import { RAIL_WIDTH } from "./FocusRail.tsx"
@@ -158,8 +159,11 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       <main
         id="workpane"
         className="h-full min-w-0"
+        // Narrow, the thread shrinks once the sidebar is down to its minimum. It did not until 2026-11-10, so
+        // beside the project rail's 57px at 820px the sidebar's 272 and the thread's 62vw overran the window
+        // by 17px, half of it under the rail and half past the right edge.
         style={{
-          flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + (railShown ? RAIL_WIDTH : 0)}px` : `0 0 min(${PANE_THREAD_PX}px, 62vw)`,
+          flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + (railShown ? RAIL_WIDTH : 0)}px` : `0 1 min(${PANE_THREAD_PX}px, 62vw)`,
         }}
       >
         {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
@@ -246,9 +250,11 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
   //   [gutter] [thread] [side pane]
   // The gutter is /full's centring (LAYOUT_VARS), full screen only and only beside a side pane: in the
   // three columns the thread stands hard against the sidebar and the rail, and alone it is simply centred.
+  // The whole block is the thread's drop zone, as /full's page is (ThreadPageZone): a file dropped on the rail
+  // or in full screen's gutter is this thread's too. Only the sidebar beside it is the board's.
   return (
     <ProjectScope project={keyProject(slug)}>
-      <div
+      <ThreadPageZone
         className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${threeColumns ? "" : sidePane ? "justify-center split:justify-start" : "justify-center"}`}
         style={{
           ...LAYOUT_VARS,
@@ -290,7 +296,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
           )}
         </div>
         {sidePane && thread && <SidePane slug={slug} thread={thread} rail={!railHidden} centredRail />}
-      </div>
+      </ThreadPageZone>
     </ProjectScope>
   )
 }
