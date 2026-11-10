@@ -14,7 +14,7 @@ Press **R** in the terminal running Frizz. A walkthrough offers four ways to rea
     Off                 loopback only  (current)
 ```
 
-Whichever you pick, the board stays bound to loopback. The readout then shows a QR: scanning it trades a single-use code for a session cookie, so the link stops working the moment it is used. Press **L** for a fresh one at any time. A session lasts 30 days, after which the device needs a fresh link.
+Whichever you pick, the board stays bound to loopback, and a frizz.sh subdomain asks for confirmation before it puts the board on the internet. Once the setup is done, the pane shows a QR: scanning it trades a single-use code for a session cookie, so the link stops working the moment it is used. A later launch serves the saved setup without minting a link. Press **L** for one at any time. A session lasts 30 days, after which the device needs a fresh link.
 
 ```sh
 npx frizz --link          # a fresh link for a board that is already running — over SSH, for a headless box

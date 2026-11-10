@@ -121,12 +121,12 @@ try {
   const plain = () => out.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
   pty.onData((chunk) => (out += chunk));
   // Wait for the REMOTE readout, not just the local one. A board with no saved setup says "press R to
-  // reach this board"; one that came up on its saved name offers a sign-in link instead.
+  // reach this board"; one that came up on its saved name names it and offers a sign-in link on L.
   {
     const deadline = Date.now() + 180_000;
     let up = false;
     while (Date.now() < deadline && !up) {
-      up = /fresh sign-in link/.test(plain()) || plain().includes(`${NAME}.frizz.sh`);
+      up = /press L for a sign-in link/.test(plain()) || plain().includes(`${NAME}.frizz.sh`);
       if (!up) await new Promise((r) => setTimeout(r, 2000));
     }
     if (!up) {

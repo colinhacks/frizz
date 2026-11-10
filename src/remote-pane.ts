@@ -434,8 +434,30 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     paint();
   };
 
-  // No form and nothing to ask: the name is minted, so choosing this IS the claim.
+  // No form: the name is minted, so the confirmation before it is the only place to say what it does.
   const claimPrivate = (relayAccess?: RelayAccess) => claimAndServe("", relayAccess, { name: "menu", index: 0 });
+
+  // Putting the board on the internet takes an enter that names it. Until 2026-11-09 this row claimed on
+  // the access answer alone, so a digit and two enters after R made a board public with full control,
+  // and every launch after served it again: the maintainer met his board on a random name picked four
+  // days earlier (maintainer: "This should all be opt-in").
+  const confirmPrivate = (back: Screen, relayAccess?: RelayAccess) => {
+    const access = accessChoice(relayAccess ?? options.current()?.relayAccess);
+    screen = {
+      name: "confirm",
+      lines: [
+        "Put this board on the internet?",
+        "",
+        ...wrap(
+          `Frizz claims a random frizz.sh address that reaches every project on this machine, and serves it on every launch until Off is chosen here. A device gets past its sign-in page only with a single-use link from this terminal, and then has ${access.title.toLowerCase()}: ${access.blurb}.`,
+        ),
+      ],
+      then: () => void claimPrivate(relayAccess),
+      back,
+      keys: "enter claim · esc back",
+    };
+    paint();
+  };
 
   /** Claim `name` (empty mints a random one), then serve it and show the done screen. */
   const claimAndServe = async (name: string, relayAccess: RelayAccess | undefined, back: Screen) => {
@@ -613,7 +635,8 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
             else if (choice.kind === "devices") signOutDevices();
             else if (choice.kind === "access") askAccess(s, changeAccess);
             else if (choice.kind === "private") {
-              if (firstPick) askAccess(s, (access) => void claimPrivate(access));
+              // A board already on a random name is public already, so picking the row again only serves it.
+              if (firstPick) askAccess(s, (access) => confirmPrivate(s, access));
               else void claimPrivate();
             } else if (choice.kind === "frizz") {
               // The one custom name there is to claim is the account's own username: a board already

@@ -255,13 +255,6 @@ if (!internalLaunch) {
 readout?.settle("workspace", "done", launchIntent && launchIntent.kind !== "open" ? "dashboard" : workspace.name);
 const expectedHealth = { projectId: workspace.id, projectDir: workspace.root };
 const launchTarget = workspaceLaunchTarget(workspace);
-/**
- * The first single-use access link, minted once the supervisor is listening.
- *
- * Module-scoped because the supervisor is built inside the launch path while the readout is assembled
- * in another function entirely, and threading one nullable string through that call chain buys nothing.
- */
-let activeAccessLink: { code: string; url: string; expiresAt: number } | null = null;
 /** Set when this start's session-epoch advance signed remote devices out; the readout says so. */
 let sessionNotice: string | null = null;
 /** The keyboard: L for a link, R for the remote-access walkthrough. Held so shutdown can restore the shell. */
@@ -489,7 +482,8 @@ async function runSupervisor(
       // before the keyboard went raw — so without this R stopped working after the first restart.
       onChildExit: () => paneHost?.reclaim(),
     });
-    // The supervisor is listening now, so a code minted here is immediately redeemable.
+    // A saved setup comes back, but no sign-in link is minted with it: one is minted only when asked for,
+    // with L or --link (src/production.ts says why).
     remote = createRemoteController({ host: supervisor, port, log: logger, say: (message) => console.error(`frizz: ${message}`) });
     try {
       await remote.serveSaved();
@@ -500,7 +494,6 @@ async function runSupervisor(
       logger.error("remote", message);
       console.error(`frizz: the saved remote setup could not start: ${message}`);
     }
-    activeAccessLink = remote.origin() ? supervisor.issueAccessLink() : null;
     {
       accessPane = createAccessPane({ issue: () => supervisor.issueAccessLink() });
       const remotePane = createRemotePane({
@@ -840,7 +833,6 @@ async function openOrPrint(
 
   // A reuse did not choose this server's bind address or its proxy origin, so it must not claim either.
   const publicOrigin = reused ? undefined : remote?.origin();
-  const accessLink = publicOrigin && !reused ? activeAccessLink : null;
   const warnings: string[] = [];
   if (sandbox) warnings.push(`Sandbox: everything here is throwaway (${sandbox.home}) and is deleted when this terminal closes.`);
   if (sessionNotice && !reused) warnings.push(sessionNotice);
@@ -849,14 +841,14 @@ async function openOrPrint(
     console.log(`${reused ? "reusing" : "started"} Frizz for ${workspace.root}`);
     console.log(`source: ${sourceLabel()}`);
     console.log(url);
-    if (publicOrigin) console.log(accessLink?.url ?? `${publicOrigin}/`);
+    if (publicOrigin) console.log(`${publicOrigin}/`);
     for (const warning of warnings) console.log(warning);
     return;
   }
   readout.ready(
     [
       { label: "Local", value: boardAddress(url), accent: true },
-      ...(publicOrigin ? [{ label: "Public", value: accessLink?.url ?? `${publicOrigin}/`, accent: true }] : []),
+      ...(publicOrigin ? [{ label: "Public", value: `${publicOrigin}/`, accent: true }] : []),
       ...(launchIntent && launchIntent.kind !== "open"
         ? []
         : [{ label: "Project", value: `${workspace.name} — ${tildePath(workspace.root, home)}` }]),
@@ -870,14 +862,11 @@ async function openOrPrint(
       : options.debug
         ? undefined
         : publicOrigin
-          ? `press L for a fresh sign-in link · R to change how this board is reached · ctrl-c to stop`
+          ? `press L for a sign-in link · R to change how this board is reached · ctrl-c to stop`
           : `press R to reach this board from a phone or another machine · ctrl-c to stop`,
     {
       ...(reused ? { status: `already running on port ${port}` } : {}),
       ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
-      // Scannable, because the point of the link is to reach a phone and nobody types 40 characters
-      // off a terminal. Only when there IS a link — a loopback board has nothing to scan.
-      ...(accessLink ? { qr: renderQrLines(accessLink.url) } : {}),
     }
   );
 }
