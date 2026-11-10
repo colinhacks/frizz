@@ -5,7 +5,7 @@ import { useSnapshot } from "valtio"
 import type { ThreadView as ThreadRow } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { displayTitle, isPinned, orderQueue, queued } from "../groups.ts"
-import { useBoard, useQueuedThreads, useThreadSnapshot, warmTranscript } from "../hooks.ts"
+import { useBoard, useQueueCards, useThreadSnapshot, warmTranscript } from "../hooks.ts"
 import { isConsolePath } from "../lib/base-path.ts"
 import { consoleCardOrder, useConsoleGroup } from "../lib/consoleBoard.ts"
 import { useConsoleProjectList } from "../lib/consoleProjects.ts"
@@ -56,7 +56,9 @@ export function usePaneQueue(): readonly ThreadRow[] {
   const group = useConsoleGroup()
   const projects = useConsoleProjectList(onConsole)
   const order = useSnapshot(prefs).queueOrder
-  const overlaid = useOptimisticallyArchived(useOptimisticallySteered(useQueuedThreads()))
+  // What had a card, not everything queued: a pinned thread's plain report is read off its pinned row and
+  // never queues (lib/consoleBoard holdsCardHere), so the pane neither counts it as waiting nor steps onto it.
+  const overlaid = useOptimisticallyArchived(useOptimisticallySteered(useQueueCards()))
   const slugs = projects.projects.map((p) => p.slug).join("\n")
   return useMemo(() => {
     const items = orderQueue(overlaid.filter(queued), order)
