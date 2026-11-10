@@ -22,6 +22,7 @@ import { primeRoute } from "./lib/router.ts"
 import { stepOffStaleLayerEntries } from "./lib/backDismiss.ts"
 import { innerPath } from "./lib/base-path.ts"
 import { projectScopedQueryKeyHash } from "./lib/queryKeyScope.ts"
+import { boundTranscriptCache } from "./lib/transcriptCacheBound.ts"
 import { parseStandaloneThreadPath } from "./lib/standaloneThreadRoute.ts"
 
 const settingsFixture = typeof window !== "undefined" && window.location.pathname.endsWith("/settings-formatting-fixture.html")
@@ -67,6 +68,8 @@ if (!settingsFixture) {
   // The ONE listener for the control-action wake event, so an accepted restart costs one status read
   // rather than one per surface reading the supervisor — see api/supervisorStatus.ts.
   initSupervisorStatus(queryClient)
+  // The transcripts no surface shows are held to the few most recently seen (lib/transcriptCacheBound.ts).
+  boundTranscriptCache(queryClient)
   initFont()
   initCodeWrap()
   installExternalLinkInterceptor()
