@@ -26,7 +26,7 @@ const SHELL = "components/ThreadSurface.tsx"
 
 test("the thread's contexts, its answering controller and its drop zone are wired in the shell alone", () => {
   // What the shell provides — a provider anywhere else is a second, partial shell.
-  for (const provider of ["ThreadSlugContext.Provider", "QueueDismissContext.Provider", "SendScopeContext.Provider", "<RegisteredAnsweringProvider"]) {
+  for (const provider of ["ThreadSlugContext.Provider", "QueueDismissContext.Provider", "SendScopeContext.Provider", "ComposerSendContext.Provider", "<RegisteredAnsweringProvider"]) {
     assert.deepEqual(filesWith(provider), [SHELL], `${provider} is mounted by ThreadSurface, for every surface at once`)
   }
   // What the shell calls — each also appears in the module that defines it.
@@ -133,4 +133,22 @@ test("the prompt box takes its surface from the shell and has no way to be hande
   assert.equal((box.match(/fileDrop=\{fileDrop\}/g) ?? []).length, 2, "both of its layouts hand the surface's zone to the box")
   // Outside a surface it throws rather than mounting without whatever the shell wires.
   assert.match(sources.get(SHELL)!, /if \(!box\) throw new Error\(/)
+})
+
+// WHAT EVERY MESSAGE IS HANDED KEEPS ITS IDENTITY WHILE ITS CONTENT DOES (lib/sameWhileEqual.ts). A
+// value derived from the messages is a new object on every push, and as a prop of every message it
+// re-rendered all of them: 114 renders over one scripted turn where 18 were needed. No test here can
+// count a render, so this pins the places the count was won.
+test("nothing handed to every message changes on a push that did not move it", () => {
+  const shell = sources.get(SHELL)!
+  assert.match(shell, /const openQuestions = useShared\(source\.openQuestions, replaceEqualDeep\)/, "the rows the board hands over are shared by content, once")
+  assert.match(shell, /const fenceQuestions = useSameWhileEqual\(useFenceQuestions\(/)
+  assert.match(shell, /const homes = useSameWhileEqual\(useMemo\(\(\) => questionHomes\(/)
+  // The message asks whether the prompt box sends through the handle's own context, never the scope's.
+  const sends = sources.get("lib/sendScope.tsx")!
+  assert.match(sends.slice(sends.indexOf("export function usePromptBoxSends")), /^export function usePromptBoxSends\(\): boolean \{\n  const composer = useContext\(ComposerSendContext\)/)
+  // And it is handed no thread: the board replaces that object on every delta, and the message never read it.
+  const view = sources.get("components/ChatView.tsx")!
+  const handed = view.slice(view.indexOf("export function ThreadMessage("), view.indexOf("// Exported so the Queue card reuses the exact same message rendering"))
+  assert.doesNotMatch(handed, /\bthread=\{/)
 })

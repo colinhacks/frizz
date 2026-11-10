@@ -64,6 +64,14 @@ export interface SendScope {
 
 export const SendScopeContext = createContext<SendScope | null>(null)
 
+// THE HANDLE ALONE, for a reader that asks only whether the prompt box sends. Every transcript message
+// asks that (usePromptBoxSends), and the scope above is a new object whenever the staged answers or the
+// transcript move, so a message that read the scope rendered again on every push, through its memo:
+// over one scripted turn the memo let 18 renders through and the message body rendered 57 times
+// (2026-11-10; lib/sameWhileEqual.ts has the whole measurement). The handle is one object for the
+// surface's life, so this context's value never changes.
+export const ComposerSendContext = createContext<ComposerSendHandle | null>(null)
+
 /** One handle for the life of the surface. Created BEFORE useLiveAnswering, which sends through it. */
 export function useComposerSendHandle(): ComposerSendHandle {
   return useState(() => new ComposerSendHandle())[0]
@@ -85,6 +93,6 @@ const absent = () => false
 
 /** Does this surface's prompt box send the staged answers? When it does, no card draws a Send of its own. */
 export function usePromptBoxSends(): boolean {
-  const scope = useContext(SendScopeContext)
-  return useSyncExternalStore(scope?.composer.subscribe ?? never, scope?.composer.present ?? absent, absent)
+  const composer = useContext(ComposerSendContext)
+  return useSyncExternalStore(composer?.subscribe ?? never, composer?.present ?? absent, absent)
 }

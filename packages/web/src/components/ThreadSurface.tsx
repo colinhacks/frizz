@@ -11,13 +11,15 @@ import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
 import { useOpsHeldForTranscript } from "../lib/opsAhead.ts"
 import { placeQuestions, questionHomes, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
+import { sameEntries, sameItems, shareLists, shareMap, useSameWhileEqual, useShared } from "../lib/sameWhileEqual.ts"
 import { useTranscriptHeldForBoard } from "../lib/restAhead.ts"
 import { queuedRunOf, type QueuedRun } from "../lib/restReply.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
-import { SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
+import { ComposerSendContext, SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
 import { latestSignOffs } from "../lib/signOffs.ts"
 import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
+import { replaceEqualDeep } from "@tanstack/react-query"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
@@ -274,9 +276,17 @@ export function useSurfaceOpsThread(thread: ThreadView): ThreadView {
   return held && held.id === thread.id ? held : thread
 }
 
+const sameStepsReply = (a: StepsReply, b: StepsReply) => a === b || (a !== "all" && b !== "all" && a.size === b.size && [...a].every((step) => b.has(step)))
+const shareStepsDone = (previous: ReadonlyMap<number, StepsReply>, next: ReadonlyMap<number, StepsReply>) => shareMap(previous, next, sameStepsReply)
+
 /** One per surface, called by the component that draws the transcript. */
 export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSurfaceOptions = {}): ThreadSurfaceState {
-  const { slug, thread, messages, openQuestions, settledQuestions } = source
+  const { slug, thread, messages } = source
+  // WHAT A MESSAGE IS HANDED KEEPS ITS IDENTITY WHILE ITS CONTENT DOES (lib/sameWhileEqual.ts has the
+  // counts). The board hands over new question rows on every delta of the thread, so the rows are shared
+  // by content here, once; everything below derives from the shared ones and is shared in its turn.
+  const openQuestions = useShared(source.openQuestions, replaceEqualDeep)
+  const settledQuestions = useShared(source.settledQuestions, replaceEqualDeep)
   const { exit, onFilesDropped } = options
   // Created BEFORE the answering controller, which sends through it.
   const composer = useComposerSendHandle()
@@ -310,13 +320,18 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const restingShown = showsRestingCard(thread)
   const fencesLive = questionFencesLive(thread?.spawnedAt)
   const closedSpecs = useClosedQuestionSpecs(thread)
-  const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread, closedSpecs)
-  const shadowedByMessage = useMemo(() => registeredStandingAt(messages, openQuestions), [messages, openQuestions])
-  const placement = useMemo(() => placeQuestions(messages, openQuestions), [messages, openQuestions])
-  const homes = useMemo(() => questionHomes(messages, openQuestions, placement), [messages, openQuestions, placement])
-  const settledPlacement = useMemo(() => settledQuestionPositions(messages, settledQuestions), [messages, settledQuestions])
-  const paired = useMemo(() => pairAllAnswers(messages), [messages])
-  const stepsDone = useMemo(() => stepsDoneReplies(messages), [messages])
+  // Two values go to EVERY message whole; the rest are maps a message reads its own entry of.
+  const fenceQuestions = useSameWhileEqual(useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread, closedSpecs), sameItems)
+  const shadowedByMessage = useShared(useMemo(() => registeredStandingAt(messages, openQuestions), [messages, openQuestions]), shareLists)
+  const placedNow = useMemo(() => placeQuestions(messages, openQuestions), [messages, openQuestions])
+  const placed = useShared(placedNow.placed, shareLists)
+  const placement = useMemo(() => ({ ...placedNow, placed }), [placedNow, placed])
+  const homes = useSameWhileEqual(useMemo(() => questionHomes(messages, openQuestions, placement), [messages, openQuestions, placement]), sameEntries)
+  const settledNow = useMemo(() => settledQuestionPositions(messages, settledQuestions), [messages, settledQuestions])
+  const settledPlaced = useShared(settledNow.placed, shareLists)
+  const settledPlacement = useMemo(() => ({ ...settledNow, placed: settledPlaced }), [settledNow, settledPlaced])
+  const paired = useShared(useMemo(() => pairAllAnswers(messages), [messages]), replaceEqualDeep)
+  const stepsDone = useShared(useMemo(() => stepsDoneReplies(messages), [messages]), shareStepsDone)
   const inFlightAnswers = useMemo(() => unrenderedAnswers(messages, thread?.answersInFlight), [messages, thread?.answersInFlight])
   const opsThread = useOpsHeldForTranscript(thread, messages)
   const run = useMemo(() => queuedRunOf(messages), [messages])
@@ -391,6 +406,7 @@ export function ThreadSurface({
       {/* OUTSIDE the answering provider, whose send reads it. */}
       <QueueDismissContext.Provider value={surface.exit}>
         <SendScopeContext.Provider value={surface.sendScope}>
+        <ComposerSendContext.Provider value={surface.sendScope.composer}>
           <RegisteredAnsweringProvider thread={surface.transcript.thread}>
             <ThreadTranscriptContext.Provider value={surface.transcript}>
               <QueuedRunContext.Provider value={surface.queuedRun}>
@@ -402,6 +418,7 @@ export function ThreadSurface({
               </QueuedRunContext.Provider>
             </ThreadTranscriptContext.Provider>
           </RegisteredAnsweringProvider>
+        </ComposerSendContext.Provider>
         </SendScopeContext.Provider>
       </QueueDismissContext.Provider>
     </ThreadSlugContext.Provider>
