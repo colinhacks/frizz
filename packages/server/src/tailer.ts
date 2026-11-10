@@ -155,6 +155,21 @@ export const DORMANT_SWEEP_MS = 10_000
 // A background SHELL has no such property and is not judged this way at all — see bgShellViews.
 const SUBAGENT_STALE_MS = 15 * 60_000
 
+// THE MACHINE SLEPT, AND EVERY CHILD ON IT SLEPT TOO (2026-11-10). The window above is wall time, and a
+// laptop's maintenance sleep stops every process for about a quarter of an hour at a stretch. On wake
+// the transcript of a child that was working when the lid went dark is 16 minutes old, so it read
+// "stale" the instant the tailer looked: no longer live work, its parent's park refused, and the
+// parent told its fence named "nothing by that name" while the child carried on. Traced on this
+// machine: all 18 such corrections in three weeks had the child's last record and its next one on
+// either side of one sleep (2026-11-03: asleep 19:19:11, awake 19:34:30; the child's records are at
+// 19:18:33 and 19:34:30).
+//
+// The poll looks at least every MAX_POLL_MS, so two looks further apart than this on the wall clock
+// are a suspension, and the window then opens again from the wake: a child gets the same 15 minutes of
+// AWAKE silence it always had. A child that did die in the dark is found that much later, which is the
+// safe direction, and a look that was merely late (a starved event loop) costs the same.
+const SUSPENDED_GAP_MS = 60_000
+
 // A CHILD BLOCKED IN A WAIT IT SIZED ITSELF IS QUIET BY DECLARATION, NOT DEAD (2026-10-03).
 //
 // The window above rested on Claude's 600_000 ms ceiling for a foreground Bash call, and frizz lifted
@@ -3255,6 +3270,10 @@ export interface TailerDeps {
   // a loaded machine it can pre-empt the very scheduling decision under test and the assertion fails
   // for a reason that has nothing to do with the scheduler.
   monotonicNow?: () => number
+  // The clock a SUSPENSION shows on: two looks further apart on it than SUSPENDED_GAP_MS mean this
+  // process, and so the machine, was stopped in between (see noteLook). Real wall time, never `now`,
+  // which a test moves forward on purpose. Injectable so a test can put a sleep between two ticks.
+  suspensionClock?: () => number
   paneDead?: (slug: string) => boolean // injectable liveness (tests)
   // Injectable broker-daemon liveness (tests); defaults to defaultBrokerDaemonAlive, which reads the
   // session's discovery record and probes its pid. A fixture that omits it gets `() => true` when the
@@ -3551,6 +3570,17 @@ function rowIsArchived(row: SessionRow): boolean {
 export function createTailer(deps: TailerDeps): Tailer {
   const now = deps.now ?? Date.now
   const monotonicNow = deps.monotonicNow ?? (() => performance.now())
+  // When this process last came back from a suspension, on the `now` clock; 0 until it has.
+  // See SUSPENDED_GAP_MS. Noted by the poll and by every staleness reading, so whichever of the tailer
+  // and the scheduler's `get` runs first after a wake sees the gap before it judges a child.
+  const suspensionClock = deps.suspensionClock ?? Date.now
+  let lastLookAt = suspensionClock()
+  let awakeSinceMs = 0
+  function noteLook(nowMs: number): void {
+    const at = suspensionClock()
+    if (at - lastLookAt > SUSPENDED_GAP_MS) awakeSinceMs = nowMs
+    lastLookAt = at
+  }
   // A row's liveness comes from its runtime (broker daemon / app-server), never from a screen. A
   // PRE-CUTOVER row has no transport left, so the default answers "dead" — the seam stays injectable
   // for fixtures.
@@ -3840,9 +3870,12 @@ export function createTailer(deps: TailerDeps): Tailer {
   // pays for the read.
   function quietPastWindow(path: string, m: number | undefined, nowMs: number, claudeTranscript = true): boolean {
     if (m === undefined) return true
-    if (nowMs - m <= SUBAGENT_STALE_MS) return false
+    // Silence is counted from the last wake when that is later: nothing could be written while the
+    // machine was stopped (SUSPENDED_GAP_MS).
+    noteLook(nowMs)
+    if (nowMs - Math.max(m, awakeSinceMs) <= SUBAGENT_STALE_MS) return false
     const deadline = claudeTranscript ? blockedUntil(path, m) : undefined
-    return deadline === undefined || nowMs - deadline > SUBAGENT_STALE_MS
+    return deadline === undefined || nowMs - Math.max(deadline, awakeSinceMs) > SUBAGENT_STALE_MS
   }
 
   // The deadline a QUIET child transcript is blocked until, cached per path and invalidated by the
@@ -6275,6 +6308,7 @@ export function createTailer(deps: TailerDeps): Tailer {
   // scheduled wake — writes its row before it does anything else, so the first look after it runs a
   // full tick exactly as before, and no path has to remember to say so.
   function poll(): "skipped" | "ticked" | "swept" {
+    noteLook(now())
     const at = monotonicNow()
     const sweep = at - lastSweepAt >= DORMANT_SWEEP_MS
     if (quiet && at - lastTickAt < QUIET_POLL_MS) {

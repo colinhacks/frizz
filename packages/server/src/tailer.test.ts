@@ -1536,6 +1536,67 @@ test("tailer: surfaces running vs stale sub-agents (via injected mtime) and clea
   assert.ok(h.changes.n > before2, "clearing a sub-agent marks the board dirty")
 })
 
+// ---- the machine slept (2026-11-10) ----
+//
+// A laptop's maintenance sleep stops every process for about a quarter of an hour. On wake a working
+// child's transcript is 16 minutes old, and it read "stale" at the tailer's first look: its parent's
+// park was refused and the parent was told its fence named nothing, while the child carried on. All 18
+// such corrections traced on this machine sat on one sleep each. The window is 15 minutes of AWAKE
+// silence, so it opens again at the wake.
+test("tailer: a child that was quiet only because the machine slept is still running when it wakes", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  fixture(h.logDir, "sid", [IN_FLIGHT, JSON.stringify(dispatch("toolu_bg", "child")), JSON.stringify(launch("toolu_bg", "/tmp/tasks/abc123.output"))])
+  const childMtime = Date.parse("2026-07-01T00:00:02.000Z")
+  // The wall clock a suspension shows on, kept apart from `now` so each can be moved alone.
+  const wall = { ms: 50_000_000 }
+  const t = createTailer({
+    project: { cwdSlug: "x" } as Project,
+    storage: h.storage,
+    bus: h.bus,
+    onChange: () => h.changes.n++,
+    now: () => h.clock.ms,
+    suspensionClock: () => wall.ms,
+    paneDead: () => h.dead.v,
+    sessionLogDir: h.logDir,
+    mtimeMs: () => childMtime,
+  })
+  const state = () => t.get("t")?.subAgents[0]?.state
+  const pass = (ms: number) => { h.clock.ms += ms; wall.ms += ms }
+
+  h.clock.ms = Date.parse("2026-07-01T00:01:00.000Z")
+  t.tick()
+  assert.equal(state(), "running")
+
+  pass(16 * 60_000) // asleep: sixteen minutes go by and nothing looks
+  t.tick()
+  assert.equal(state(), "running", "nothing could be written while the machine was stopped")
+
+  // Awake from here, looked at every few seconds as the poll does. Fourteen minutes of silence is
+  // inside the window; past fifteen the child really has gone quiet.
+  for (let i = 0; i < 14 * 6; i++) { pass(10_000); t.tick() }
+  assert.equal(state(), "running", "14 minutes awake and silent")
+  for (let i = 0; i < 2 * 6; i++) { pass(10_000); t.tick() }
+  assert.equal(state(), "stale", "16 minutes awake and silent: the completion was lost")
+})
+
+test("tailer: without a sleep, 16 minutes of silence is stale however the looks are spaced", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  fixture(h.logDir, "sid", [IN_FLIGHT, JSON.stringify(dispatch("toolu_bg", "child")), JSON.stringify(launch("toolu_bg", "/tmp/tasks/abc123.output"))])
+  const childMtime = Date.parse("2026-07-01T00:00:02.000Z")
+  const wall = { ms: 50_000_000 }
+  const t = createTailer({
+    project: { cwdSlug: "x" } as Project, storage: h.storage, bus: h.bus, onChange: () => h.changes.n++,
+    now: () => h.clock.ms, suspensionClock: () => wall.ms, paneDead: () => h.dead.v, sessionLogDir: h.logDir, mtimeMs: () => childMtime,
+  })
+  h.clock.ms = Date.parse("2026-07-01T00:01:00.000Z")
+  t.tick()
+  // The control: the same sixteen minutes, with the poll looking all the way through them.
+  for (let i = 0; i < 16 * 6; i++) { h.clock.ms += 10_000; wall.ms += 10_000; t.tick() }
+  assert.equal(t.get("t")?.subAgents[0]?.state, "stale")
+})
+
 // ---- a child blocked in a wait it SIZED ITSELF (2026-10-03) ----
 //
 // A sub-agent waiting on a Rust build ran `until grep -q '^DONE' …; do sleep 15; done` under

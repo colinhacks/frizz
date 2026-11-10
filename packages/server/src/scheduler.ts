@@ -1170,6 +1170,12 @@ const SIGNOFF_NUDGE_MAX = 2
  *  The count comes back for an honoured park, a ```question fence that registers, and a message the
  *  human types (evalParkBumpRelease). */
 const PARK_BUMP_MAX = 3
+/** How long SOURCE 12 leaves a park alone after a shell or a sub-agent it names FINISHED under that
+ *  rest. The runtime hands the worker its own completion notice, and Frizz adds a shell's wake, so the
+ *  worker is already on its way back; this is how long that notice gets to start a turn before Frizz
+ *  says the wait is over itself. Over 14 days here 99 of the 110 corrections naming a sub-agent landed
+ *  within this long of the child's own notice, 58 of them within 5s. */
+const OWN_COMPLETION_NOTICE_GRACE_MS = 60_000
 /** The kill switch. Not in the UI — this lands on every live thread at once, so there has to be a way
  *  to stop it that is not a code change. Absent (the default) means ON. */
 const SIGNOFF_NUDGE_SETTING = "signoffNudge"
@@ -2823,7 +2829,29 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         const wake = outbox.get(wakeDeliveryId(row.slug, row.session_id, `${prefix}:${i.value}`))
         return wake?.state === "pending" || wake?.state === "leased"
       }
-      const dead = deadAll.filter((i) => !ownWakeInFlight(i))
+      // A SHELL OR A SUB-AGENT THAT FINISHED UNDER THIS REST IS THE SAME CASE (2026-11-10): the park was
+      // right until the thing it named ended, and the ending wakes the worker by itself. The runtime
+      // delivers a completion notice for both kinds, and SOURCE 10 adds a shell's own wake. But the fold
+      // learns of the ending from the provider's stream, ahead of the notice reaching the transcript, so
+      // for a second or two the thread is idle on a fence naming finished work, and a correction queued
+      // then lands beside the notice. That was the most frequent correction Frizz sent. So an item that
+      // finished after the rest began counts as accounted for OWN_COMPLETION_NOTICE_GRACE_MS. A notice
+      // that never comes leaves the thread idle on the same rest, and the correction goes out then,
+      // saying the work finished. One that finished BEFORE the rest was named by mistake, and is
+      // corrected at once as before.
+      const restBeganMs = Date.parse(spokeAt)
+      const finishedUnderRest = new Map<string, number>()
+      for (const ended of [...(tele.retiredShells ?? []), ...(tele.retiredSubAgents ?? [])]) {
+        const at = Date.parse(ended.finishedAt ?? "")
+        if (!Number.isFinite(at) || at <= restBeganMs) continue
+        for (const h of [ended.taskId, ended.id, ended.label]) if (h) finishedUnderRest.set(h, Math.max(at, finishedUnderRest.get(h) ?? 0))
+      }
+      const ownNoticeInFlight = (i: { kind: string; value: string }): boolean => {
+        if (i.kind !== "shell" && i.kind !== "agent") return false
+        const at = finishedUnderRest.get(i.value)
+        return at !== undefined && nowMs - at < OWN_COMPLETION_NOTICE_GRACE_MS
+      }
+      const dead = deadAll.filter((i) => !ownWakeInFlight(i) && !ownNoticeInFlight(i))
       const expiresAt = parkExpiresAt(park, Date.parse(spokeAt))
       const expired = expiresAt !== null && nowMs >= expiresAt
       // NAMES NOTHING — the loudest case, and it was the silent one. A fence carrying only `for:` and
@@ -2952,6 +2980,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         if (a.state !== "rested") continue
         for (const h of [a.taskId, a.id, a.label]) if (h) finishedHandles.add(h)
       }
+      // …and `rested` is only the child that returned with work of its own still running under it. An
+      // ordinary finished child leaves `subAgents` for the retired ring (tailer.ts retireToRing), which
+      // this did not read until 2026-11-10: the sub-agent that had just returned, the usual case, was
+      // told "nothing by that name".
+      for (const a of tele.retiredSubAgents ?? []) {
+        for (const h of [a.taskId, a.id, a.label]) if (h) finishedHandles.add(h)
+      }
       // A DEMOTED shell is a third case, neither finished nor missing: frizz has its launch, saw no
       // completion notice, and can no longer find its process (tailer.ts probeShellsAlive). Calling that
       // "nothing by that name" sent a worker hunting for a typo in an id it had copied exactly — and,
@@ -2960,6 +2995,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       for (const sh of tele.bgShells ?? []) {
         if (sh.state !== "stale") continue
         for (const h of [sh.taskId, sh.id, sh.label]) if (h) staleShellHandles.add(h)
+      }
+      // A sub-agent Frizz demoted to `stale` is the same third case: its launch is known, no completion
+      // notice came, and its transcript has not moved for the whole window (tailer.ts SUBAGENT_STALE_MS).
+      // That is a child to go and look at, not a mistyped id.
+      const staleAgentHandles = new Set<string>()
+      for (const a of tele.subAgents ?? []) {
+        if (a.state !== "stale") continue
+        for (const h of [a.taskId, a.id, a.label]) if (h) staleAgentHandles.add(h)
       }
       const firedTimers = new Set(
         deps.storage.listThreadTimers(row.slug).filter((t) => t.state === "fired").map((t) => t.id),
@@ -2992,6 +3035,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           ? "FINISHED — its result is waiting for you"
           : i.kind === "shell" && staleShellHandles.has(i.value)
           ? "GONE WITHOUT A COMPLETION NOTICE — frizz knows this shell, but nothing holds its output file and no process it could be is still running; read its output to see how it ended"
+          : i.kind === "agent" && staleAgentHandles.has(i.value)
+          ? "QUIET WITHOUT A COMPLETION NOTICE — Frizz knows this sub-agent, but its transcript has not moved in 15m and nothing said it finished; it may be stuck or gone, so look at it before you wait on it again or start it over"
           : i.kind === "pr"
           ? "NOT REGISTERED — register it with `frizzctl watch-pr add` first, then name it here"
           : i.kind === "issue"
@@ -3978,7 +4023,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         }, nowMs).delivery
         log(`waker: queued ${row.slug} — ${item.reason}`)
         checkpoint("after-enqueue", item)
-        return // one durable wake per thread per pass; the next tick takes the next shell
+        // One durable wake per THREAD per pass; the next tick takes this thread's next shell. This was a
+        // `return` until 2026-11-10, which ended the pass for every other thread as well: with several
+        // threads' shells finishing together, each further thread waited one more tick for its wake.
+        break
       }
     }
   }

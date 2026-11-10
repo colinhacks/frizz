@@ -3000,6 +3000,19 @@ const retiredShell = (finishedAt: string) => ({
   id: "toolu_sh", taskId: "bzvtnt3ig", label: "dev server", status: "completed" as const, finishedAt,
 })
 
+test("shell: every thread whose shell finished is woken in the same pass, not one thread a tick", async () => {
+  const h = harness()
+  for (const slug of ["a", "b", "c"]) h.storage.upsertSession(row(slug))
+  const rested = iso(h.clock.ms)
+  const retired = retiredShell(iso(h.clock.ms + 5_000))
+  h.clock.ms += 10_000
+  const s = h.make()
+  for (const slug of ["a", "b", "c"]) h.tele.set(slug, { ...tele(), lastAssistantAt: rested, retiredShells: [retired] })
+  await s.tick()
+  const woken = (h.storage.db.prepare("SELECT thread_slug FROM wake_delivery WHERE fence_id LIKE 'shell:%' ORDER BY thread_slug").all() as { thread_slug: string }[]).map((r) => r.thread_slug)
+  assert.deepEqual(woken, ["a", "b", "c"], "the pass used to stop at the first thread it woke")
+})
+
 test("shell: a thread that signed off done is not woken when a shell it walked away from exits — fenced or registered", async () => {
   const h = harness()
   h.storage.upsertSession(row("d"))

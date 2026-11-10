@@ -224,7 +224,7 @@ test("own background work does both — it cards AND it leaves the queue", () =>
 // blocking call that starved its own notification, a timer written in the past. Each one left a thread
 // looking parked forever, and frizz said nothing.
 
-function parkHarness(hints: FenceView["hints"], opts: { shells?: any[]; agents?: any[]; restedAt?: string; body?: string; retired?: any[]; prWatch?: { owner: string; repo: string; number: number }; spawnedAt?: string } = {}) {
+function parkHarness(hints: FenceView["hints"], opts: { shells?: any[]; agents?: any[]; restedAt?: string; body?: string; retired?: any[]; retiredAgents?: any[]; prWatch?: { owner: string; repo: string; number: number }; spawnedAt?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-park-"))
   const storage = createStorage(join(dir, "ui.db"), "p")
   storage.setSetting("signoffNudge", "off") // isolate SOURCE 12 from the nudge
@@ -265,6 +265,7 @@ function parkHarness(hints: FenceView["hints"], opts: { shells?: any[]; agents?:
         subAgents: opts.agents ?? [],
         bgShells: opts.shells ?? [],
         retiredShells: opts.retired ?? [],
+        retiredSubAgents: opts.retiredAgents ?? [],
         pendingQuestion: false,
         permPrompt: false,
         lastFence: { kind: "awaiting", body: opts.body ?? "", hints },
@@ -679,6 +680,22 @@ test("a park on a shell frizz demoted to stale says it is gone without a notice,
   } finally { h.close() }
 })
 
+// …and so is a sub-agent whose transcript went quiet for the whole staleness window with no notice: Frizz
+// has its launch, so "nothing by that name" is false, and the worker's next move is to look at the child.
+test("a park on a sub-agent that went quiet says so, not that the id is unknown", async () => {
+  const h = parkHarness([{ kind: "agent", value: "a01b2d20b32feab11" }, { kind: "for", value: "2h" }], {
+    agents: [{ id: "toolu_A", taskId: "a01b2d20b32feab11", label: "the reviewer", startedAt: AT, state: "stale" }],
+  })
+  try {
+    await h.s.tick()
+    const msg = h.queued()[0].message
+    assert.match(msg, /`agents: \[a01b2d20b32feab11\]` — QUIET WITHOUT A COMPLETION NOTICE/)
+    assert.match(msg, /look at it before you wait on it again or start it over/)
+    assert.doesNotMatch(msg, /nothing by that name/)
+    assert.doesNotMatch(msg, /has FINISHED/, "no notice arrived, so nothing says it finished")
+  } finally { h.close() }
+})
+
 test("a park naming something that never existed still reads as a wrong fence", async () => {
   const h = parkHarness([{ kind: "shell", value: "bGHOST" }, { kind: "for", value: "2h" }], { shells: [] })
   try {
@@ -753,6 +770,91 @@ test("a park on a RETURNED sub-agent named by its runtime agentId reads as finis
     const msg = h.queued()[0].message
     assert.match(msg, /has FINISHED/)
     assert.doesNotMatch(msg, /nothing by that name/)
+  } finally { h.close() }
+})
+
+// THE USUAL RETURNED CHILD IS IN THE RETIRED RING, not `rested`: the fold keeps a returned child among the
+// live rows only while work of its own is still running under it. Until 2026-11-10 SOURCE 12 never read
+// the ring, so the sub-agent a worker had just been waiting for was "nothing by that name": 104 of the
+// 274 corrections Frizz sent in 14 days.
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+const RETURNED = { id: "toolu_A", taskId: "a01b2d20b32feab11", label: "the reviewer", status: "completed" as const }
+
+test("a park naming a sub-agent that returned BEFORE the rest reads as finished, by any of its names", async () => {
+  for (const name of ["a01b2d20b32feab11", "toolu_A", "the reviewer"]) {
+    const h = parkHarness([{ kind: "agent", value: name }, { kind: "for", value: "2h" }], {
+      restedAt: ago(60_000),
+      retiredAgents: [{ ...RETURNED, finishedAt: ago(5 * 60_000) }],
+    })
+    try {
+      await h.s.tick()
+      const rows = h.queued()
+      assert.equal(rows.length, 1, `${name}: naming finished work is still corrected, and at once`)
+      assert.match(rows[0].message, /has FINISHED/)
+      assert.match(rows[0].message, new RegExp(`\\[${name}\\]\` — FINISHED — its result is waiting for you`))
+      assert.doesNotMatch(rows[0].message, /nothing by that name/)
+    } finally { h.close() }
+  }
+})
+
+// THE PARK ITS OWN COMPLETION ENDED. The fold hears a child end from the provider's stream a moment
+// before the runtime's notice reaches the transcript, and in that moment the thread is idle on a fence
+// naming finished work. Measured over the same 14 days: 58 of 110 such corrections were queued within 5s
+// of the child's own notice and 41 more within a minute, each one a second message about a wait that had
+// ended correctly and was already waking its worker.
+test("a park whose sub-agent has just returned is left to the runtime's own notice", async () => {
+  const h = parkHarness([{ kind: "agent", value: "a01b2d20b32feab11" }, { kind: "for", value: "2h" }], {
+    restedAt: ago(17 * 60_000),
+    retiredAgents: [{ ...RETURNED, finishedAt: ago(2_000) }],
+  })
+  try {
+    await h.s.tick()
+    assert.deepEqual(h.queued(), [], "the child's completion is waking the worker; Frizz adds nothing")
+    assert.deepEqual(h.sent, [])
+  } finally { h.close() }
+})
+
+test("a park whose shell has just finished gets the shell's own wake, and no correction beside it", async () => {
+  const h = parkHarness([{ kind: "shell", value: "bzvtnt3ig" }, { kind: "for", value: "2h" }], {
+    restedAt: ago(17 * 60_000),
+    retired: [{ id: "toolu_x", taskId: "bzvtnt3ig", label: "the suite", status: "completed", finishedAt: ago(2_000) }],
+  })
+  try {
+    await h.s.tick()
+    const rows = h.queued()
+    assert.deepEqual(rows.map((r) => r.fence_id.split(":")[0]), ["shell"], "one wake: the shell finishing")
+    assert.doesNotMatch(rows[0].message, /parked on/)
+  } finally { h.close() }
+})
+
+test("a completion notice that never arrives is not the end of it: the worker is told the work finished", async () => {
+  const h = parkHarness([{ kind: "agent", value: "a01b2d20b32feab11" }, { kind: "for", value: "2h" }], {
+    restedAt: ago(17 * 60_000),
+    retiredAgents: [{ ...RETURNED, finishedAt: ago(90_000) }],
+  })
+  try {
+    await h.s.tick()
+    const rows = h.queued()
+    assert.equal(rows.length, 1, "still idle on the same rest a minute and a half on: the thread must come back")
+    assert.match(rows[0].message, /has FINISHED/)
+    assert.match(rows[0].message, /Do NOT relaunch the same work/)
+    assert.doesNotMatch(rows[0].message, /nothing by that name/)
+  } finally { h.close() }
+})
+
+test("a just-returned sub-agent does not excuse a wrong name beside it", async () => {
+  const h = parkHarness([
+    { kind: "agent", value: "a01b2d20b32feab11" },
+    { kind: "agent", value: "aGHOST" },
+    { kind: "for", value: "2h" },
+  ], { restedAt: ago(17 * 60_000), retiredAgents: [{ ...RETURNED, finishedAt: ago(2_000) }] })
+  try {
+    await h.s.tick()
+    const rows = h.queued()
+    assert.equal(rows.length, 1, "the unknown id is corrected now")
+    assert.match(rows[0].message, /`agents: \[a01b2d20b32feab11\]` — FINISHED — its result is waiting for you/)
+    assert.match(rows[0].message, /`agents: \[aGHOST\]` — NOT RUNNING \(nothing by that name\)/)
+    assert.doesNotMatch(rows[0].message, /has FINISHED/, "not everything it named finished, so this is the wrong-fence wording")
   } finally { h.close() }
 })
 
