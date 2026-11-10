@@ -677,6 +677,31 @@ test("concurrent follow-ups to a daemon-less thread share ONE cold resume, and b
   }
 })
 
+// A SERVER BOOTS ON A MACHINE WITH NO `claude`. The bridge is built during context creation, and it
+// used to resolve its executable right there: with the bare name and none on PATH, that threw out of
+// context creation and nothing started at all. Both shapes a caller can hand it are built, and each
+// names the missing executable when a thread is started, which is the only thing that needs one.
+// Negative control: resolving a fixed name at construction throws from the first line of the loop body.
+test("a bridge whose claude is nowhere on PATH is built, and says so only when a thread is started", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cbrk-no-claude-"))
+  const env = { PATH: join(dir, "nothing-here"), HOME: dir }
+  try {
+    for (const executablePath of ["claude", () => "claude"]) {
+      const bridge = createClaudeAgentBrokerBridge({ stateDir: dir, executablePath, env })
+      try {
+        await assert.rejects(
+          bridge.spawnDispatch({ threadSlug: "no-claude-here", sessionId: randomUUID(), cwd: dir, prompt: "start", permissionMode: "default" }),
+          /could not resolve 'claude' to an absolute executable path on PATH/u,
+        )
+      } finally {
+        bridge.close()
+      }
+    }
+  } finally {
+    await rmEventually(dir)
+  }
+})
+
 // A character the wire cannot carry used to cost the operator the whole send: the bridge refused it
 // with "This message holds a control or incomplete character frizz can't send. Edit and resend.", and
 // the human was left hunting an invisible character through their own paste (maintainer 2026-10-13:

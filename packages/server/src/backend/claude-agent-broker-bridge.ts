@@ -388,9 +388,17 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
   // Resolve the claude executable to an ABSOLUTE path: the SDK the forked daemon runs rejects a bare
   // name (unlike an execvp of the CLI, which resolves it on PATH), and a bare "claude" is the default
   // on a promoted artifact. A fixed path resolves once; a reader resolves at each fork (see the deps).
-  const fixedExecutable = typeof deps.executablePath === "string" ? resolveClaudeExecutableAbsolute(deps.executablePath, deps.env) : undefined
+  //
+  // AT A FORK, NEVER HERE. This bridge is built while the server's context is, and a bare name that is
+  // nowhere on PATH (what FRIZZ_RUNTIMES=path, a platform with no published build and a failed
+  // provision all hand it) used to throw from this line: the whole server refused to boot, for someone
+  // who runs only Codex, OpenCode or an ACP agent too. A machine with no `claude` cannot start a Claude
+  // thread, and that is all it cannot do.
+  let fixedExecutable: string | undefined
   const executablePathNow = (): string =>
-    fixedExecutable ?? resolveClaudeExecutableAbsolute((deps.executablePath as () => string)(), deps.env)
+    typeof deps.executablePath === "string"
+      ? (fixedExecutable ??= resolveClaudeExecutableAbsolute(deps.executablePath, deps.env))
+      : resolveClaudeExecutableAbsolute(deps.executablePath(), deps.env)
 
   // Pending tool-permission escalations awaiting a human dashboard decision, keyed by interaction id.
   // The daemon holds the actual canUseTool promise (and re-delivers it on reconnect), so this only needs
