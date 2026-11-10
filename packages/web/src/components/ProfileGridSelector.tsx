@@ -1,5 +1,5 @@
 import * as RadixMenu from "@radix-ui/react-dropdown-menu"
-import { ChevronDown, Loader2 } from "lucide-react"
+import { Check, ChevronDown, Loader2 } from "lucide-react"
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import {
   moveProfileGridSelection,
@@ -10,11 +10,13 @@ import {
   profileGridDisplayLabel,
   profileGridDisplayParts,
   profileGridEffortLabel,
+  profileGridResolveSelection,
   profileGridSelectionFromKey,
   profileGridSelectionKey,
   profileGridSelectionKnown,
   profileGridTemplateColumns,
   type ProfileGridGroup,
+  type ProfileGridOption,
   type ProfileGridMoveKey,
   type ProfileGridDisplayParts,
   type ProfileGridSelection,
@@ -200,7 +202,8 @@ function DesktopProfileGridSelector({
     if (currentKey === committedKeyRef.current) committedKeyRef.current = undefined
   }, [currentKey])
 
-  function commitSelection(selection: ProfileGridSelection) {
+  function commitSelection(picked: ProfileGridSelection) {
+    const selection = profileGridResolveSelection(groups, picked)
     const key = profileGridSelectionKey(selection)
     if (committedKeyRef.current === key) return
     committedKeyRef.current = key
@@ -285,6 +288,19 @@ function DesktopProfileGridSelector({
                   )}
                 </div>
               )}
+              {group.layout === "dropdown" ? (
+                <ProfileGridDropdownRow
+                  group={group}
+                  value={value}
+                  typography={typography}
+                  menuZClass={menuZClass}
+                  onPick={(selection) => {
+                    commitSelection(selection)
+                    unregisterOpenRef.current?.()
+                    closeFromRegistry()
+                  }}
+                />
+              ) : (
               <RadixMenu.RadioGroup
                 value={currentKey}
                 // RadioGroup keeps keyboard selection semantic. Pointer activation also commits
@@ -406,6 +422,7 @@ function DesktopProfileGridSelector({
                   </div>
                 ))}
               </RadixMenu.RadioGroup>
+              )}
               {group !== groups.at(-1) && <RadixMenu.Separator className="my-1 h-px bg-border" />}
             </RadixMenu.Group>
           ))}
@@ -447,5 +464,131 @@ function DesktopProfileGridSelector({
         </RadixMenu.Content>
       </RadixMenu.Portal>
     </RadixMenu.Root>
+  )
+}
+
+// A DROPDOWN group's band in the menu (lib/profileGrid.ts `layout`): its model and its level as two
+// dropdowns under the heading, where a grid group has a row per model. OpenCode is the one such group,
+// with every model of every provider the person's OpenCode holds keys for, and per-model levels the
+// grid's columns cannot hold (lib/opencodeProfile.ts).
+//
+// RADIX SUBMENUS, not the app's Select. A Select is a menu of its own, and inside this one it closed the
+// moment the pointer left its trigger for its list: Radix focuses the outer menu's content when the pointer
+// leaves an item, which a second menu reads as focus moving outside it (AgentSettingsPopover hit the same,
+// for a popover). A submenu is part of this menu: the pointer's path to it is allowed for, the arrow keys
+// reach it, and a pick commits and closes the whole menu exactly as a grid cell does.
+function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }: {
+  group: ProfileGridGroup
+  value?: Partial<ProfileGridSelection>
+  typography: string
+  menuZClass: string
+  onPick: (selection: ProfileGridSelection) => void
+}) {
+  const chosen = value?.provider === group.id
+  const option = (chosen ? group.options.find((candidate) => candidate.model === value?.model) : undefined) ?? group.options[0]
+  if (!option) return null
+  const effort = chosen && option.efforts.includes(value?.effort ?? "") ? value?.effort ?? "" : ""
+  const levels = option.efforts.length > 1 || option.efforts.some(Boolean)
+  // The chosen group's two dropdowns wear the checked cell's look, so the band says it is what runs. Through
+  // a `data-chosen` variant, as the cell's is through `data-[state=checked]`: a plain `border-accent/70` loses
+  // to the cell's own `border-transparent` and `text-muted`, and drew a dim olive box with grey text.
+  const chosenAttr = chosen ? { "data-chosen": "" } : {}
+  const sections: { label: string; options: ProfileGridOption[] }[] = []
+  for (const candidate of group.options) {
+    const label = candidate.section ?? ""
+    const section = sections.find((entry) => entry.label === label) ?? sections[sections.push({ label, options: [] }) - 1]!
+    section.options.push(candidate)
+  }
+  // A provider heading only sorts a list of several: with one provider it would repeat the band's own.
+  const providerHeadings = sections.filter((section) => section.label).length > 1
+  const subContent = `profile-grid-submenu ${menuZClass} ${OPAQUE_SURFACE_BASE} max-h-[min(320px,var(--radix-dropdown-menu-content-available-height))] min-w-[11rem] max-w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-lg p-1 ${typography}`
+  const item = `relative flex w-full min-w-0 cursor-pointer select-none items-center gap-1.5 overflow-hidden rounded-md py-1 pl-2 pr-7 text-left text-muted outline-none data-[highlighted]:bg-panel-2 data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg ${typography}`
+  const trigger = `profile-grid-dropdown ${PROFILE_GRID_CELL_CLASS} gap-[3px] data-[state=open]:border-border data-[state=open]:bg-panel-2 data-[state=open]:text-fg data-[chosen]:border-accent/70 data-[chosen]:bg-accent/10 data-[chosen]:font-medium data-[chosen]:text-fg data-[chosen]:ring-1 data-[chosen]:ring-inset data-[chosen]:ring-accent/90`
+  const indicator = (
+    <RadixMenu.ItemIndicator className="pointer-events-none absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center text-accent">
+      <Check size={13} />
+    </RadixMenu.ItemIndicator>
+  )
+  return (
+    <div data-profile-grid-dropdowns={group.id} className="flex w-max max-w-full items-center gap-1 py-0.5">
+      <RadixMenu.Sub onOpenChange={(open) => { if (open) group.onRequestOptions?.() }}>
+        <RadixMenu.SubTrigger
+          aria-label={`${group.label} model`}
+          {...chosenAttr}
+          title={option.hint ? `${option.label}: ${option.hint}` : option.label}
+          className={`${trigger} max-w-[15rem]`}
+        >
+          <span className="min-w-0 truncate">
+            {option.label}
+            {option.hint && <span className="text-muted-55"> {option.hint}</span>}
+          </span>
+          <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-fg/65" />
+        </RadixMenu.SubTrigger>
+        <RadixMenu.Portal>
+          <RadixMenu.SubContent sideOffset={6} alignOffset={-4} collisionPadding={8} aria-label={`${group.label} models`} className={subContent}>
+            <RadixMenu.RadioGroup value={option.model}>
+              {sections.map((section, index) => (
+                <RadixMenu.Group key={section.label || `s${index}`}>
+                  {index > 0 && !providerHeadings && <RadixMenu.Separator className="mx-1 my-1 h-px bg-border" />}
+                  {section.label && providerHeadings && (
+                    <RadixMenu.Label className="truncate px-2 pb-0.5 pt-2 text-left font-medium tracking-[0.07em] text-muted-55">{section.label}</RadixMenu.Label>
+                  )}
+                  {section.options.map((candidate) => (
+                    <RadixMenu.RadioItem
+                      key={candidate.model}
+                      value={candidate.model}
+                      textValue={candidate.label}
+                      title={candidate.model}
+                      // Keeps the level when the new model offers it, else the model's own default.
+                      onSelect={(event) => {
+                        event.preventDefault()
+                        onPick({ provider: group.id, model: candidate.model, effort: candidate.efforts.includes(effort) ? effort : "" })
+                      }}
+                      className={item}
+                    >
+                      <span className="min-w-0 truncate">
+                        {candidate.label}
+                        {candidate.hint && <span className="text-muted-55"> {candidate.hint}</span>}
+                      </span>
+                      {indicator}
+                    </RadixMenu.RadioItem>
+                  ))}
+                </RadixMenu.Group>
+              ))}
+            </RadixMenu.RadioGroup>
+            {group.loading && <div className="flex items-center gap-1.5 px-2 py-1 text-muted-60"><Loader2 aria-hidden="true" size={11} className="animate-spin" />Loading models…</div>}
+            {group.notice && <div className="w-0 min-w-full px-2 py-1 text-muted-60 [font-variant-caps:normal]">{group.notice}</div>}
+          </RadixMenu.SubContent>
+        </RadixMenu.Portal>
+      </RadixMenu.Sub>
+      {levels && (
+        <RadixMenu.Sub>
+          <RadixMenu.SubTrigger aria-label={`${group.label} reasoning level`} title="This model's reasoning level, in its own words" className={trigger} {...chosenAttr}>
+            <span className="min-w-0 truncate">{profileGridEffortLabel(effort)}</span>
+            <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-fg/65" />
+          </RadixMenu.SubTrigger>
+          <RadixMenu.Portal>
+            <RadixMenu.SubContent sideOffset={6} alignOffset={-4} collisionPadding={8} aria-label={`${group.label} reasoning levels`} className={subContent}>
+              <RadixMenu.RadioGroup value={effort || "__default__"}>
+                {option.efforts.map((level) => (
+                  <RadixMenu.RadioItem
+                    key={level || "__default__"}
+                    value={level || "__default__"}
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      onPick({ provider: group.id, model: option.model, effort: level })
+                    }}
+                    className={item}
+                  >
+                    <span className="min-w-0 truncate">{profileGridEffortLabel(level)}</span>
+                    {indicator}
+                  </RadixMenu.RadioItem>
+                ))}
+              </RadixMenu.RadioGroup>
+            </RadixMenu.SubContent>
+          </RadixMenu.Portal>
+        </RadixMenu.Sub>
+      )}
+    </div>
   )
 }

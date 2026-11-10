@@ -4,6 +4,7 @@ import { Check, ChevronDown, Loader2 } from "lucide-react"
 import {
   profileGridDisplayParts,
   profileGridEffortLabel,
+  profileGridResolveSelection,
   profileGridSelectionKey,
   profileGridSelectionKnown,
   type ProfileGridGroup,
@@ -36,7 +37,9 @@ import { Z_POPOVER } from "../lib/layers.ts"
 // then "high", then its first level. A model with no effort axis (an ACP agent) carries "".
 function effortFor(option: ProfileGridOption, current: string | undefined): string {
   if (option.efforts.length === 0) return ""
-  if (current && option.efforts.includes(current)) return current
+  if (current !== undefined && option.efforts.includes(current)) return current
+  // An OpenCode model lists "" (its own default level) first: never pick a level for it.
+  if (option.efforts.includes("")) return ""
   if (option.defaultEffort && option.efforts.includes(option.defaultEffort)) return option.defaultEffort
   if (option.efforts.includes("high")) return "high"
   return option.efforts[0] ?? ""
@@ -44,6 +47,8 @@ function effortFor(option: ProfileGridOption, current: string | undefined): stri
 
 function ModelName({ option }: { option: ProfileGridOption }) {
   const suffix = option.edition ? ` ${option.edition}` : ""
+  // OpenCode's "Default" row names the model it stands for, dimmed as a version is.
+  if (option.hint) return <>{option.label} <span className="text-edition">{option.hint}</span></>
   if (!suffix || !option.label.endsWith(suffix)) return <>{option.label}</>
   return <>{option.label.slice(0, -suffix.length)} <span className="text-edition">{option.edition}</span></>
 }
@@ -79,7 +84,7 @@ export function MobileModelSheet({
     const changed = !value?.model || !known || profileGridSelectionKey({ provider: selection.provider ?? "", model: selection.model ?? "", effort: selection.effort ?? "" })
       !== profileGridSelectionKey({ provider: value.provider ?? "", model: value.model, effort: value.effort ?? "" })
     if (known && changed && selection.provider && selection.model) {
-      onValueChange({ provider: selection.provider, model: selection.model, effort: selection.effort ?? "" })
+      onValueChange(profileGridResolveSelection(groups, { provider: selection.provider, model: selection.model, effort: selection.effort ?? "" }))
     }
     onClose()
   }
@@ -87,6 +92,13 @@ export function MobileModelSheet({
   const checkedOption = groups
     .find((group) => group.id === draft.provider)
     ?.options.find((option) => option.model === draft.model)
+
+  // A dropdown group (OpenCode) lists its models only once it is the one being chosen from, since reading
+  // the list starts OpenCode's service (hooks/useOpencodeModels.ts).
+  const draftGroup = groups.find((group) => group.id === draft.provider)
+  useEffect(() => {
+    if (draftGroup?.layout === "dropdown") draftGroup.onRequestOptions?.()
+  }, [draftGroup])
 
   // A RADIX DIALOG, not a bare portal: the sheet opens from inside other modal layers — the thread
   // drawer and the new-thread page are both Radix dialogs, which make everything outside themselves
@@ -142,13 +154,20 @@ export function MobileModelSheet({
                     </button>
                   )
                 })}
+                {/* 18px of row padding, the 78px provider column and the row's 12px gap: under the model names. */}
+                {(group.loading || group.notice) && (
+                  <div className="flex items-center gap-2 py-2 pl-[108px] pr-[18px] text-[13px] text-muted">
+                    {group.loading && <Loader2 aria-hidden size={13} className="shrink-0 animate-spin" />}
+                    {group.loading ? "Loading models…" : group.notice}
+                  </div>
+                )}
               </div>
             ))}
             {groups.every((group) => group.options.length === 0) && (
               <div className="px-[18px] py-3 text-[14px] text-muted">No models available</div>
             )}
             <div className="px-[18px] pb-1.5 pt-4 text-[16px] font-semibold text-fg">Effort</div>
-            {checkedOption && checkedOption.efforts.length > 0 ? (
+            {checkedOption && checkedOption.efforts.some(Boolean) ? (
               // ONE row, as the design draws it. A provider with a ceiling offers six levels, which is wider
             // than the phone at a tappable size, so the row scrolls sideways rather than wrapping — the
             // clipped last chip is the cue that there is more.

@@ -8,6 +8,15 @@ export interface ProfileGridOption {
   edition?: string
   efforts: readonly string[]
   defaultEffort?: string
+  /** A DROPDOWN group's subheading for this option: OpenCode's provider ("opencode", "anthropic"). */
+  section?: string
+  /** Dim text after the label in a list, never in the trigger: OpenCode's default row names its model. */
+  hint?: string
+  /** What the trigger reads when this option is chosen, where it differs from the list's label. */
+  triggerLabel?: string
+  /** An alias for another option's model (OpenCode's "Default" names its default model): choosing one of
+   *  its non-default levels stores that model, since a level belongs to a model, not to a default. */
+  aliasOf?: string
 }
 
 export interface ProfileGridGroup {
@@ -16,6 +25,22 @@ export interface ProfileGridGroup {
   options: readonly ProfileGridOption[]
   /** Draws an Experimental chip beside the group's name. */
   experimental?: boolean
+  /** `dropdown`: the menu draws a model dropdown and an effort dropdown for this group instead of grid
+   *  rows, for a provider whose models and efforts are too many, and too unlike the grid's columns, to
+   *  lay out as a matrix (OpenCode). The phone's sheet lists its options as it lists any group's. */
+  layout?: "grid" | "dropdown"
+  /** The options are still being fetched. */
+  loading?: boolean
+  /** Why the options could not be listed, shown in the group's dropdown. */
+  notice?: string
+  /** Asks for the options. Called when the group's model list is opened, so a provider whose list costs
+   *  something to read (OpenCode starts its service to answer) is never asked merely because a menu opened. */
+  onRequestOptions?: () => void
+}
+
+/** The groups the effort matrix lays out: every group but a dropdown one. */
+export function profileGridMatrixGroups(groups: readonly ProfileGridGroup[]): ProfileGridGroup[] {
+  return groups.filter((group) => group.layout !== "dropdown")
 }
 
 export interface ProfileGridSelection {
@@ -47,6 +72,8 @@ export function profileGridTemplateColumns(columnCount: number): string {
 // The product's own word for an effort level, as the picker's cells print it: "X-high" for xhigh, the
 // rest capitalised ("Low", "Ultracode"). Shared by the desktop grid and the phone's model sheet.
 export function profileGridEffortLabel(effort: string): string {
+  // "" is a model's own default level, which is what an OpenCode model runs on until a level is picked.
+  if (effort === "") return "Default"
   if (effort === "xhigh") return "X-high"
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
@@ -64,7 +91,7 @@ const CEILING_EFFORTS = ["ultra", "ultracode"]
 const EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", ...CEILING_EFFORTS]
 
 export function profileGridEfforts(groups: readonly ProfileGridGroup[]): string[] {
-  const efforts = new Set(groups.flatMap((group) => group.options.flatMap((option) => option.efforts)))
+  const efforts = new Set(profileGridMatrixGroups(groups).flatMap((group) => group.options.flatMap((option) => option.efforts)))
   return [...efforts].sort((a, b) => {
     const ai = EFFORT_ORDER.indexOf(a)
     const bi = EFFORT_ORDER.indexOf(b)
@@ -102,6 +129,13 @@ export function profileGridSelections(groups: readonly ProfileGridGroup[]): Prof
     model: option.model,
     effort,
   }))))
+}
+
+/** The selection to store for a pick: an alias option's model with a level of its own becomes its target. */
+export function profileGridResolveSelection(groups: readonly ProfileGridGroup[], selection: ProfileGridSelection): ProfileGridSelection {
+  if (!selection.effort) return selection
+  const option = groups.find((group) => group.id === selection.provider)?.options.find((candidate) => candidate.model === selection.model)
+  return option?.aliasOf ? { ...selection, model: option.aliasOf } : selection
 }
 
 export function profileGridSelectionKey(selection: ProfileGridSelection): string {
@@ -153,7 +187,7 @@ export function profileGridDisplayParts(
 ): ProfileGridDisplayParts {
   if (!selection?.model && !selection?.effort) return { name: placeholder }
   const option = groups.flatMap((group) => group.options).find((candidate) => candidate.model === selection.model)
-  const label = modelLabel ?? option?.label ?? selection.model ?? "Model unknown"
+  const label = modelLabel ?? option?.triggerLabel ?? option?.label ?? selection.model ?? "Model unknown"
   const edition = modelLabel ? TRAILING_EDITION.exec(modelLabel)?.[1] : option?.edition
   const split = edition !== undefined && label.endsWith(` ${edition}`)
   // A Claude thread records its resolved model in the provider transcript but never the launch effort,
@@ -188,7 +222,7 @@ export function moveProfileGridSelection(
 ): ProfileGridSelection | null {
   const columns = profileGridColumns(groups)
   const columnOf = (effort: string) => columns.findIndex((column) => column.includes(effort))
-  const rows = groups.flatMap((group) => group.options.map((option) => ({ provider: group.id, option })))
+  const rows = profileGridMatrixGroups(groups).flatMap((group) => group.options.map((option) => ({ provider: group.id, option })))
   const rowIndex = rows.findIndex((row) => row.provider === current.provider && row.option.model === current.model)
   if (rowIndex === -1) return null
   const row = rows[rowIndex]!

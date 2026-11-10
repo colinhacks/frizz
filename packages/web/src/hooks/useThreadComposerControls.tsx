@@ -10,13 +10,14 @@ import { showToast, store } from "../store.ts"
 import { useThreadSnapshot } from "../hooks.ts"
 import { ProfileGridSelector } from "../components/ProfileGridSelector.tsx"
 import { AcpModelSelect } from "../components/AcpModelSelect.tsx"
-import { OpencodeModelSelect } from "../components/OpencodeModelSelect.tsx"
 import { AgentMarks } from "../components/AgentMarks.tsx"
 import { Select } from "../components/ui/Select.tsx"
 import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, OPENCODE_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
 import { useIsMobile } from "../lib/mobile.ts"
+import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "../lib/opencodeProfile.ts"
+import { useOpencodeModels } from "./useOpencodeModels.ts"
 
 // One control strip for every place a registered thread can be steered: the model/effort selector, and
 // — for a Claude thread — the Auto/Bypass permission picker beside it. This lives outside the component
@@ -59,8 +60,8 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const upgrade = useMutation({
     mutationFn: (sessionId: string) => rpc.upgradeThreadModel({ slug, sessionId }),
   })
-  // Below the phone breakpoint the row holds three selects, Stop and the marks on one line only if Stop
-  // drops its word and the variant shows once one is chosen (420px, 2026-11-06: the row overran the box).
+  // Below the phone breakpoint Stop drops its word, so the row holds the model, Stop and the marks on one
+  // line (420px, 2026-11-06: the row overran the box).
   const phone = useIsMobile()
   const stopTurn = useMutation({
     mutationFn: (sessionId: string) => rpc.stopThreadTurn({ slug, sessionId }),
@@ -80,6 +81,8 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   // Asked of the thread's own project — named by its key on the Console (lib/threadKey.ts).
   const agentsProject = thread ? keyProject(thread.id) : undefined
   const acpAgents = useQuery({ queryKey: scopedKey(["acpAgents"], agentsProject), queryFn: () => rpcFor(agentsProject).acpAgents(), enabled: Boolean(thread) && backend === "acp" })
+  // An OpenCode thread's model menu lists what its service offers. Above the early return for the reason above.
+  const opencodeModels = useOpencodeModels(agentsProject, Boolean(thread) && backend === "opencode")
 
   // Legacy/rowless and foreign transcripts have no Frizz-owned runtime profile to mutate. Keep their
   // existing composer behavior, but never render a misleading disabled control.
@@ -158,8 +161,8 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   }
 
   // The model control, shared by the desktop strip and the phone's tools: the grid selector for a
-  // Claude or Codex thread (a chip and a sheet on the phone — ProfileGridSelector branches itself),
-  // the agent's model dropdown for an ACP thread.
+  // Claude, Codex or OpenCode thread (a chip and a sheet on the phone — ProfileGridSelector branches
+  // itself), the agent's model dropdown for an ACP thread.
   const profileControl = (
     <>
       {(backend === "claude" || backend === "codex") && (
@@ -211,15 +214,27 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           className="max-w-[20rem]"
         />
       )}
-      {/* Like an ACP thread, one control: the model, and its variant beside it when it has any. */}
+      {/* The same selector as a Claude or Codex thread's, holding only OpenCode's group: its model and
+          reasoning-level dropdowns (lib/opencodeProfile.ts). The level rides in the model slug, so the
+          profile write carries no effort. */}
       {backend === "opencode" && (
-        <OpencodeModelSelect
-          compact={phone}
-          value={optimisticProfile?.model ?? model}
-          onValueChange={(slug) => changeProfile({ model: slug, effort: "" })}
+        <ProfileGridSelector
+          groups={[opencodeProfileGroup({
+            models: opencodeModels.models,
+            loading: opencodeModels.loading,
+            saved: model,
+            onRequestOptions: opencodeModels.request,
+          })]}
+          value={opencodeSelection(model)}
+          pending={optimisticProfile ? opencodeSelection(optimisticProfile.model) : undefined}
+          onValueChange={(selection) => changeProfile({ model: opencodeSlugOf(selection), effort: "" })}
+          ariaLabel="Thread model and effort"
+          menuAriaLabel="Choose OpenCode model and effort"
+          title="This thread's OpenCode model and reasoning level"
           disabled={busy}
+          compact
           side="top"
-          className="max-w-[16rem]"
+          className="max-w-[20rem]"
         />
       )}
     </>

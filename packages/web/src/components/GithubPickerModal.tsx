@@ -7,12 +7,11 @@ import { showToast } from "../store.ts"
 import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
-import { OpencodeModelSelect } from "./OpencodeModelSelect.tsx"
 import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
-import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
+import { dispatchProfileGroups, dispatchProfileUpdate, dispatchProfileValue } from "../lib/dispatchPreferences.ts"
 import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z, OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z } from "../lib/overlaySurface.ts"
 import { buildGithubBatchInput, dispatchProfileError } from "../lib/githubDispatch.ts"
 import { GITHUB_PICKER_TITLE, useGithubStatus } from "./GithubTrigger.tsx"
@@ -59,7 +58,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   // below writes it, so choosing here also becomes the composer's next default (one profile, not a
   // picker-local copy that silently diverges). A Codex cache refresh can invalidate the saved pair
   // while the picker is open; the final revalidation below then fails closed rather than downgrading.
-  const { resolved, codexList, claudeList, acpList, firstGroup, loadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, firstGroup, opencode, loadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — the triage prompt just edited in the settings panel, a
   // compaction window picked in the selector — must land before a batch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -185,7 +184,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   const n = selected.size
   // Stable identity: ProfileGridSelector memoizes off `groups`, and this modal re-renders on every
   // row toggle.
-  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup), [codexList, acpList, claudeList, firstGroup])
+  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode), [codexList, acpList, claudeList, firstGroup, opencode])
   const acpAgent = resolved?.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
   const profile: DispatchProfileSnapshot | undefined = resolved
     ? { backend: resolved.backend, model: resolved.model, effort: (resolved.effort || undefined) as DispatchProfileSnapshot["effort"] }
@@ -368,13 +367,8 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
               <ProfileGridSelector
                 groups={profileGroups}
                 agentSettings
-                value={resolved ? { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort } : undefined}
-                onValueChange={(selection) => saveProfile({
-                  field: "profile",
-                  backend: selection.provider as DispatchProfileSnapshot["backend"],
-                  model: selection.model,
-                  effort: selection.effort as DispatchInput["effort"] & string,
-                })}
+                value={resolved ? dispatchProfileValue(resolved) : undefined}
+                onValueChange={(selection) => saveProfile(dispatchProfileUpdate(selection))}
                 placeholder={loadError ? "Profile unavailable" : "Profile loading…"}
                 ariaLabel="Model and effort"
                 title={dispatchBlocked ?? "Model and reasoning effort for every thread this batch starts"}
@@ -386,15 +380,6 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
                 className="max-w-[min(21rem,60vw)]"
               />
-              {resolved?.backend === "opencode" && (
-                <OpencodeModelSelect
-                  value={resolved.opencodeModel}
-                  onValueChange={(slug) => saveProfile({ field: "model", backend: "opencode", value: slug })}
-                  side="top"
-                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
-                  className="max-w-[min(14rem,30vw)]"
-                />
-              )}
               {resolved?.backend === "opencode" && <ExperimentalChip className="shrink-0" />}
               {acpAgent && (
                 <AcpModelSelect

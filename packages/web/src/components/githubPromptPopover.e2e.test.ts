@@ -164,6 +164,17 @@ test("a native OpenCode profile reads as experimental in the panel and on the me
     await page.click(SELECTOR)
     await page.waitForSelector(".profile-grid-menu")
     assert.deepEqual(await chip(".profile-grid-menu"), { text: "Experimental", caps: "normal" })
+
+    // OpenCode's models are a dropdown under its heading, not rows of the grid, and a pick saves the model.
+    assert.equal(await page.$eval('[aria-label="OpenCode model"]', (el) => el.textContent), "Default Big Pickle")
+    await page.hover('[aria-label="OpenCode model"]')
+    await page.click('[aria-label="OpenCode model"]')
+    await page.waitForFunction(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].some((el) => el.textContent === "Flint 40B Free"), { timeout: 10_000 })
+    await page.evaluate(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].find((el) => el.textContent === "Flint 40B Free")!.setAttribute("data-pick", ""))
+    await page.click(".profile-grid-submenu [data-pick]")
+    await page.waitForFunction(() => !document.querySelector(".profile-grid-menu"), { timeout: 5000 })
+    const writes = await page.evaluate(() => (window as unknown as { githubPickerRangeFixture: Fixture }).githubPickerRangeFixture.preferenceWrites)
+    assert.deepEqual(writes.at(-1), { field: "profile", backend: "opencode", model: "opencode:opencode/flint-40b-free" })
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()

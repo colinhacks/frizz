@@ -115,7 +115,17 @@ window.fetch = async (input, init) => {
   }
   if (url.pathname === "/_frizz/rpc/codexModels") return json(codexModels)
   if (url.pathname === "/_frizz/rpc/acpAgents") return json(opencode ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }] : [])
-  if (url.pathname === "/_frizz/rpc/opencodeModels") return json({ models: [] })
+  // Two of OpenCode's free models, one with reasoning levels, for the menu's OpenCode dropdowns.
+  if (url.pathname === "/_frizz/rpc/opencodeModels") {
+    return json({
+      available: true,
+      defaultModel: "opencode:opencode/big-pickle",
+      models: [
+        { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+        { providerID: "opencode", id: "flint-40b-free", name: "Flint 40B Free", variants: ["low", "high"] },
+      ],
+    })
+  }
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json(preferences)
   if (url.pathname === "/_frizz/rpc/dispatchPreferenceSet") {
     preferenceWrites.push(JSON.parse(String(init?.body ?? "{}")))
