@@ -585,6 +585,28 @@ export function serveStatic(distDir: string, req: IncomingMessage, res: ServerRe
   }
 }
 
+/**
+ * The first line a server writes about itself: the release it is (the launcher names it in
+ * FRIZZ_STABLE_ARTIFACT, as `npm:frizz-server@<version>` or a source build's digest), and what it
+ * runs on. Exported for its test.
+ */
+export function describeServerStart(env: NodeJS.ProcessEnv, dev: boolean, runtime: Pick<NodeJS.Process, "pid" | "version" | "platform" | "arch"> = process): string {
+  const artifact = env.FRIZZ_STABLE_ARTIFACT?.replace(/^npm:/u, "")
+  const what = artifact ?? (dev ? "from source" : "of an unnamed build")
+  return `Frizz server ${what} starting: pid ${runtime.pid}, node ${runtime.version}, ${runtime.platform} ${runtime.arch}`
+}
+
+/**
+ * A boot's cost in one line, slowest phase first and the ones under 10ms left out: `boot 1.38s:
+ * runtimes 612ms, tailer producer 420ms, database 31ms`. Durations in the house spelling
+ * (web lib/durationLabels.ts). Exported for its test.
+ */
+export function describeBootTimings(totalMs: number, phases: ReadonlyArray<readonly [string, number]>): string {
+  const spell = (ms: number) => (ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(2)}s`)
+  const worth = phases.filter(([, ms]) => ms >= 10).sort((a, b) => b[1] - a[1])
+  return `boot ${spell(totalMs)}${worth.length ? `: ${worth.map(([name, ms]) => `${name} ${spell(ms)}`).join(", ")}` : ""}`
+}
+
 export async function startServer(opts: StartOptions = {}): Promise<StartedServer> {
   const runtime: StartServerRuntime = { ...defaultStartServerRuntime, ...opts.runtime }
   const port = opts.port ?? DEFAULT_PORT
@@ -988,6 +1010,9 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     error: (line) => console.error(line),
   })
 
+  // What each phase of this boot cost, for the one line that says so once the port is listening.
+  const bootStartedAt = performance.now()
+  const phaseTimings: Array<[ServerStartupPhase, number]> = []
   const phase = async <T>(
     name: ServerStartupPhase,
     operation: () => T | Promise<T>,
@@ -995,12 +1020,20 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
   ): Promise<T> => {
     startupPhase = name
     bootProgress(name)
+    const startedAt = performance.now()
     const value = await operation()
+    phaseTimings.push([name, performance.now() - startedAt])
     // Publish a newly-created resource to the rollback ledger before an injected post-phase failure.
     commit?.(value)
     await runtime.afterPhase?.(name)
     return value
   }
+  // WHICH SERVER THIS IS, in the log, from the server itself. A run log belongs to the launcher, which
+  // outlives every server it starts: one on the maintainer's machine opened with `Frizz launcher
+  // 0.13.15 starting` and then served 0.15.46, 0.15.47 and 0.15.48 without naming any of them, so
+  // "which version was this" could not be answered from the file. The launcher says what it started
+  // only from the build that learned to; this line is written whichever launcher is running.
+  frizzLog.info("server", describeServerStart(process.env, opts.dev === true))
 
   try {
     // The launch lease above fences the folder this server runs on against another launch; the claim
@@ -1336,6 +1369,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
       "server",
       `control plane listening on 127.0.0.1:${port} (${opts.dev ? "dev" : "prod"}) — project ${ctx.project.name}`,
     )
+    frizzLog.info("server", describeBootTimings(performance.now() - bootStartedAt, phaseTimings))
 
     startupPhase = "signal handlers"
     if (!opts.requestOwnerStop) {

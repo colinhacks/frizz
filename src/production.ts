@@ -640,6 +640,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
         if (!plan) { updateAvailable = false; updateVersion = undefined; return { state: "failed" as const, message: `Frizz ${active.version} is already current` }; }
         updateAvailable = true;
         updateVersion = plan.latestVersion;
+        logger.info("launcher", `update: installing Frizz server ${plan.latestVersion} while ${active.version} serves`);
         // Install while the current server serves. Selection remains provisional until the new
         // child is ready; the durable launcher, listener, terminal and tunnels never move.
         pending = await store.prepare(plan.latestVersion);
@@ -657,6 +658,9 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       updateVersion = undefined;
     },
     rollbackUpdate: () => {
+      // Also called when nothing was prepared (already current, a failed install): no line for those.
+      if (pending || active.id !== previous.id)
+        logger.warn("launcher", `update rolled back: serving Frizz server ${previous.version} again, not ${(pending ?? active).version}`);
       if (active.id !== previous.id) store.commit(previous);
       active = previous;
       pending = undefined;
@@ -734,6 +738,9 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   void supervisor.stopRequested.then(stop);
   await supervisor.firstBoot;
   store.commit(active);
+  // In the log as well as on the terminal: a run log opens with the launcher's version and went on to
+  // serve whatever the store selected without ever naming it.
+  logger.info("launcher", `serving Frizz server ${active.version} (launcher ${PACKAGE_VERSION})`);
   activityReadout?.notice("done", "Server", `${active.version} · launcher ${PACKAGE_VERSION}`);
   const heldSessions = liveSessions(sessions.directory).length;
   if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · frizz --sessions lists them`);

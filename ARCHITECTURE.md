@@ -60,6 +60,15 @@ stay silent on a terminal the launcher is repainting without losing anything it 
 Retention keeps 20 runs and nothing older than 14 days; a single file stops at 32 MB.
 `FRIZZ_LOG_PATH` overrides the location (a directory or an exact `.log` file).
 
+A run is a launcher's whole life, which is days and several servers, so the file says what a reader who
+was not there needs (since 2026-11-10). A record carries a clock and no date: each process writes the
+local date on a line of its own, `--- 2026-11-10 ---`, before its first record and before the first of
+every later day (`isLogDayLine` tells one from a record). Every server names itself as it starts,
+`Frizz server frizz-server@0.15.48 starting: pid …, node …, darwin arm64`, from the artifact its
+launcher handed it, and ends its boot with one line of phase timings, `boot 1.38s: context 1.20s,
+runtimes 612ms, …`. The launcher writes which server it is serving, and an update writes its own beats
+(asked for, what it installed, committed or rolled back), which used to reach the terminal alone.
+
 High-impact board actions also go to a machine-wide AUDIT log, `<data>/logs/audit.jsonl` (`~/.frizz/logs/audit.jsonl` on a legacy layout), one JSON line each at mode 0600 and never pruned: every project add (typed or picked) and remove, every dispatch (including each thread a GitHub batch starts, an adopted thread, and one a worker starts with `frizzctl spawn-thread`, which also writes a `spawnThread` line on the worker's own project and names it as `spawnedBy` on the dispatch, with the permission mode the new thread was started in), every follow-up and sub-agent steer, every question answer and interaction decision, and every change to a thread's permission mode or to Settings (the names of the settings that changed; the value only for the permission default and the file opener), refused or not. Each line names the project and thread, the outcome, and the request origin: `public` (the declared public origin — a frizz.sh relay or a tunnel), `network` (an exposed `--host` bind), `loopback`, or `direct` (past the launcher's proxy, as a worker's `frizzctl` calls), plus the peer address, the client address a public origin claims, the board session's RECORD id (the one `frizz --sessions` lists and `--sign-out` takes, never the cookie) and the device label. Typed text is a character count and a SHA-256; a secret answer is not recorded at all. The child cannot tell who called once the proxy rewrites Host and Origin, so the proxy stamps `x-frizz-caller` on every request it forwards, replacing any copy the client sent (`restart-supervisor.ts`, `audit.ts`). It exists because a session stolen through a backdoored relay added `/private/tmp`, dispatched workers into it and removed it on 2026-10-08, and nothing recorded which device did it.
 
 `--debug` streams that same feed to the terminal instead of the compact readout, in every process at

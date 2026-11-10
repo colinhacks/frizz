@@ -549,6 +549,8 @@ class Supervisor implements DevSupervisor {
   private readonly logLine: (line: string) => void
   private readonly errorLine: (line: string) => void
   private readonly onActivity?: (event: SupervisorActivity) => void
+  /** The server release the launcher has selected right now, where the launcher says. */
+  private readonly servingVersion: () => string | undefined
   private readonly onChildExit?: () => void
   /** Suppresses activity beats until the first boot has settled; until then the readout owns the terminal. */
   private booted = false
@@ -620,6 +622,7 @@ class Supervisor implements DevSupervisor {
     this.logLine = opts.log ?? ((line) => frizzLog.info("supervisor", stripPrefix(line)))
     this.errorLine = opts.error ?? ((line) => frizzLog.error("supervisor", stripPrefix(line)))
     this.onActivity = opts.onActivity
+    this.servingVersion = typeof opts.version === "function" ? opts.version : () => opts.version as string | undefined
     this.onChildExit = opts.onChildExit
     this.updateRestart = opts.updateRestart
     this.updateMode = opts.updateMode ?? "durableReexec"
@@ -888,13 +891,13 @@ class Supervisor implements DevSupervisor {
     // for a minute and then jump straight to "restarting". The copy names neither, because this
     // beat cannot know which: it read "preparing the new build" for the registry launcher's npm
     // install (audit 2026-09-11, finding 6). The hook's own message, which does know, follows it.
-    this.emitActivity("updating", "preparing the update — the running Frizz is untouched until it is ready")
+    this.announceUpdate("updating", "preparing the update — the running Frizz is untouched until it is ready")
     const candidate = await this.updateRestart()
     if (candidate.state !== "ready") {
-      this.emitActivity("failed", candidate.message ?? "the update could not be prepared")
+      this.announceUpdate("failed", candidate.message ?? "the update could not be prepared")
       return candidate
     }
-    if (candidate.message) this.emitActivity("updating", candidate.message)
+    if (candidate.message) this.announceUpdate("updating", candidate.message)
     if (!this.durableReexec) {
       return this.failDurableUpdate(
         "Update & Restart requires a durable supervisor handoff; the current supervisor was left running",
@@ -937,7 +940,7 @@ class Supervisor implements DevSupervisor {
       // A watcher restart already in flight may be awaiting a private-port allocation. Let it drain
       // out under the exclusive update flag before selecting/spawning the candidate.
       await this.restartCompletion
-      this.emitActivity("updating", "preparing the new build — the running one is untouched until it is ready")
+      this.announceUpdate("updating", "preparing the new build — the running one is untouched until it is ready")
       let prepared: RestartResult
       try {
         prepared = await this.updateRestart!()
@@ -948,7 +951,7 @@ class Supervisor implements DevSupervisor {
         return this.failChildUpdate(prepared.message ?? "the update could not be prepared", false)
       }
       if (this.closed) return this.failChildUpdate("Frizz supervisor stopped while preparing the update", false)
-      if (prepared.message) this.emitActivity("updating", prepared.message)
+      if (prepared.message) this.announceUpdate("updating", prepared.message)
       // Do not run two server children. The old generation owns the shared runtime resources until
       // this exact drain completes; only then may the prepared launch provider select its candidate.
       this.handoffDraining = true
@@ -978,6 +981,9 @@ class Supervisor implements DevSupervisor {
       }
       this.updateCandidate = null
       this.lastRestartFailure = undefined
+      // The selection has moved and the new server is the one answering: the line a reader looks for.
+      const serving = this.servingVersion()
+      this.logLine(`[frizz] update committed${serving ? `: now serving ${serving}` : ""}`)
       return { state: "ready" }
     } finally {
       this.updateChildRunning = false
@@ -1270,6 +1276,20 @@ class Supervisor implements DevSupervisor {
         settleSpawn(false)
       })
     })
+  }
+
+  /**
+   * A beat of an UPDATE, to the terminal and to the run log.
+   *
+   * A restart and a failure are written where they happen, through logLine and errorLine. An update's
+   * own beats went to the terminal alone, because nothing writes a status for them: so a run log went
+   * from a shutdown warning straight to the next boot, with no line to say an update had been asked
+   * for, what it installed, or that it could not be prepared.
+   */
+  private announceUpdate(kind: "updating" | "failed", message: string): void {
+    if (kind === "failed") this.errorLine(`[frizz] update failed: ${message}`)
+    else this.logLine(`[frizz] update: ${message}`)
+    this.emitActivity(kind, message)
   }
 
   /**

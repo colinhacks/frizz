@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { registeredTenantHealth, splitTenantRequest, unknownProjectPage } from "./index.ts"
+import { describeBootTimings, describeServerStart, registeredTenantHealth, splitTenantRequest, unknownProjectPage } from "./index.ts"
 
 // A project slug and one of Frizz's own route names occupy the same position, so `/_frizz/rpc/board`
 // and `/_frizz/nub/rpc/board` are indistinguishable until you know which slugs exist. The registry
@@ -98,4 +98,25 @@ test("unknownProjectPage names the slug of a project page that does not exist", 
   assert.equal(unknownProjectPage("/project", known), undefined, "no slug to be missing")
   assert.equal(unknownProjectPage("/project/", known), undefined)
   assert.equal(unknownProjectPage("/assets/index-D2Pc7U9B.js", known), undefined, "a bundle, not a page")
+})
+
+// A run log belongs to the launcher, which outlives every server it starts, so the server names itself.
+test("describeServerStart names the release the launcher started, and what it runs on", () => {
+  const on = { pid: 4242, version: "v26.11.1", platform: "darwin", arch: "arm64" } as const
+  assert.equal(
+    describeServerStart({ FRIZZ_STABLE_ARTIFACT: "npm:frizz-server@0.15.48" }, false, on),
+    "Frizz server frizz-server@0.15.48 starting: pid 4242, node v26.11.1, darwin arm64",
+  )
+  // A build from a checkout is named by its digest, which is all the launcher has for it.
+  assert.match(describeServerStart({ FRIZZ_STABLE_ARTIFACT: "9f3c2a71d0" }, true, on), /^Frizz server 9f3c2a71d0 starting: /u)
+  assert.match(describeServerStart({}, true, on), /^Frizz server from source starting: /u)
+  assert.match(describeServerStart({}, false, on), /^Frizz server of an unnamed build starting: /u)
+})
+
+test("describeBootTimings is one line: the total, then each phase worth reading, slowest first", () => {
+  assert.equal(
+    describeBootTimings(1_384, [["launch ownership", 3.2], ["runtimes", 612.4], ["database", 31], ["tailer producer", 420], ["HTTP listen", 9.9], ["context", 1_204.6]]),
+    "boot 1.38s: context 1.20s, runtimes 612ms, tailer producer 420ms, database 31ms",
+  )
+  assert.equal(describeBootTimings(42, [["launch ownership", 3], ["database", 4]]), "boot 42ms", "nothing worth listing")
 })

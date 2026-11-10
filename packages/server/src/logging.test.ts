@@ -8,6 +8,7 @@ import {
   createLogger,
   defaultLogRoot,
   formatFeedLine,
+  isLogDayLine,
   latestLogPath,
   logEnvironment,
   pruneRunLogs,
@@ -61,6 +62,56 @@ test("FRIZZ_LOG_PATH accepts either a directory or an exact file", () => {
   )
 })
 
+/** A run log's records, without the date lines each process writes between them. */
+const recordsIn = (file: string) => readFileSync(file, "utf8").split("\n").filter((line) => line && !isLogDayLine(line))
+
+// A file covers a launcher's whole run, which is days, and a record carries a clock and no date. The
+// instants are built from LOCAL date parts, because the date written is the local one.
+test("each process dates the file before its first record, and again at each midnight it writes past", () => {
+  const dir = scratch()
+  try {
+    const file = join(dir, "run.log")
+    let at = new Date(2026, 10, 6, 23, 59, 58).getTime()
+    const supervisor = createLogger({ file, now: () => at })
+    const child = createLogger({ file, owner: false, now: () => at })
+    supervisor.info("launcher", "starting")
+    child.info("server", "listening")
+    supervisor.info("launcher", "still the sixth")
+    at = new Date(2026, 10, 7, 0, 0, 1).getTime()
+    child.warn("server", "first of the seventh")
+    child.info("server", "second of the seventh")
+    at = new Date(2026, 10, 9, 8, 0, 0).getTime() // two quiet days later
+    supervisor.info("launcher", "the ninth")
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean)
+    const shape = lines.map((line) => (isLogDayLine(line) ? line : line.replace(/^\S+\s+\S+\s+\S+\s+/u, "")))
+    assert.deepEqual(shape, [
+      "--- 2026-11-06 ---", "starting",
+      "--- 2026-11-06 ---", "listening", // the child's own first record: a restarted server is always dated
+      "still the sixth",
+      "--- 2026-11-07 ---", "first of the seventh", "second of the seventh",
+      "--- 2026-11-09 ---", "the ninth",
+    ])
+    // A record is the line it always was, so the terminal feed still matches the file.
+    assert.match(lines[1]!, /^23:59:58\.000 {2}INFO {3}launcher {6}starting$/u)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a date line counts against the cap like any other byte", () => {
+  const dir = scratch()
+  try {
+    const file = join(dir, "run.log")
+    // The record alone is 40 bytes and would fit; its date line is 19 more.
+    const logger = createLogger({ file, maxBytes: 50 })
+    logger.info("tailer", "tick")
+    const written = readFileSync(file, "utf8")
+    assert.equal(written, "--- log truncated at 50 bytes ---\n", "the date line and the record together are past it, so neither is written")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("records land on disk in a human-readable, aligned form", () => {
   const dir = scratch()
   try {
@@ -68,7 +119,7 @@ test("records land on disk in a human-readable, aligned form", () => {
     const logger = createLogger({ file, now: () => Date.UTC(2026, 6, 31, 12, 0, 0) })
     logger.info("launcher", "workspace frizz")
     logger.error("supervisor", "child exited")
-    const written = readFileSync(file, "utf8").split("\n").filter(Boolean)
+    const written = recordsIn(file)
     assert.equal(written.length, 2)
     assert.match(written[0]!, /INFO {2}\s+launcher\s+workspace frizz$/)
     assert.match(written[1]!, /ERROR\s+supervisor\s+child exited$/)
@@ -170,7 +221,7 @@ test("two processes appending to one file interleave without losing a record", (
       supervisor.info("supervisor", `s${index}`)
       child.info("dev-child", `c${index}`)
     }
-    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean)
+    const lines = recordsIn(file)
     assert.equal(lines.length, 100, "every record from both writers survives")
     assert.equal(lines.filter((line) => line.includes("dev-child")).length, 50)
   } finally {
@@ -198,6 +249,8 @@ test("a crash record can be written without owning a logger", () => {
     const file = join(dir, "nested", "run.log")
     appendCrashRecord(file, "workspace resolution failed: not a git repository")
     assert.match(readFileSync(file, "utf8"), /ERROR\s+crash\s+workspace resolution failed/)
+    // Always under its own date: a crash is read a day later, by someone who was not there.
+    assert.match(readFileSync(file, "utf8"), /^--- \d{4}-\d\d-\d\d ---\n\d\d:\d\d:\d\d\.\d{3} {2}ERROR/u)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -229,7 +282,7 @@ test("the terminal feed and the disk log agree, character for character", () => 
     const record = { at: Date.now(), level: "warn" as const, scope: "tailer", message: "slow tick" }
     const logger = createLogger({ file, now: () => record.at })
     logger.warn(record.scope, record.message)
-    assert.equal(formatFeedLine(record), readFileSync(file, "utf8").trimEnd())
+    assert.deepEqual(recordsIn(file), [formatFeedLine(record)])
     assert.match(formatFeedLine(record), /^\d\d:\d\d:\d\d\.\d\d\d {2}WARN {3}tailer {8}slow tick$/)
   } finally {
     rmSync(dir, { recursive: true, force: true })

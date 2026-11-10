@@ -146,6 +146,28 @@ export function pruneRunLogs(dir: string, keep = RETAINED_RUNS, days = RETAINED_
   }
 }
 
+// A LINE CARRIES A CLOCK AND NO DATE, AND ONE FILE COVERS A LAUNCHER'S WHOLE RUN, which is days: a log
+// on the maintainer's machine ran 11,878 lines over nine days and wrapped midnight nine times with
+// nothing to say so, and "what day was this" is the first thing anyone reading someone else's log asks.
+// So each process writes the local date on a line of its own before its first record, and again before
+// the first record of every later day. A line of its own rather than a date in every record: the
+// terminal feed prints these same lines (formatFeedLine), where a date on each would be noise, and the
+// launcher and the server it runs are released apart, so a new column would misalign the file for as
+// long as one of them is the older build. Each process marks its own days, so a file carries one line
+// per process per day, and a server's first line after a restart or an update always has its date.
+const DAY_LINE = /^--- \d{4}-\d\d-\d\d ---$/u
+
+/** Whether a line of a run log is one of its date lines rather than a record. */
+export function isLogDayLine(line: string): boolean {
+  return DAY_LINE.test(line)
+}
+
+function localDay(at: number): string {
+  const date = new Date(at)
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 function formatDiskLine(record: LogRecord): string {
   const at = new Date(record.at)
   const pad = (value: number, width = 2) => String(value).padStart(width, "0")
@@ -215,6 +237,8 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     linkLatest(dir, path)
   }
   let written = 0
+  /** The local day this process last dated the file with. See A LINE CARRIES A CLOCK AND NO DATE. */
+  let day: string | undefined
   const listeners = new Set<(record: LogRecord) => void>()
 
   const emit = (recordLevel: LogLevel, scope: string, message: string) => {
@@ -222,7 +246,9 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     const record: LogRecord = { at: now(), level: recordLevel, scope, message }
     if (fd !== null) {
       try {
-        const line = formatDiskLine(record)
+        const today = localDay(record.at)
+        // One write, so another process's record cannot land between the date and the record it dates.
+        const line = `${today === day ? "" : `--- ${today} ---\n`}${formatDiskLine(record)}`
         if (written + line.length > maxBytes) {
           // Stop rather than grow without bound; a wedged subsystem can emit forever.
           writeSync(fd, `--- log truncated at ${maxBytes} bytes ---\n`)
@@ -230,6 +256,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
         } else {
           writeSync(fd, line)
           written += line.length
+          day = today
         }
       } catch {
         // The descriptor went away (disk full, directory removed). Stop trying; keep the process alive.
@@ -381,7 +408,10 @@ export function captureLogRecords(): { records: LogRecord[]; messages: () => str
 export function appendCrashRecord(path: string, message: string): void {
   try {
     mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 })
-    appendFileSync(path, formatDiskLine({ at: Date.now(), level: "error", scope: "crash", message }), {
+    // Dated every time: nothing here knows what the file's last date line says, and a crash is the
+    // record somebody goes looking for a day later.
+    const at = Date.now()
+    appendFileSync(path, `--- ${localDay(at)} ---\n${formatDiskLine({ at, level: "error", scope: "crash", message })}`, {
       mode: 0o600,
     })
   } catch {

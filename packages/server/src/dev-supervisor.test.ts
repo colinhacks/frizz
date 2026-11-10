@@ -743,6 +743,7 @@ test("child-only Update & Restart commits one stable child without replacing its
   let prepares = 0
   let commits = 0
   let rollbacks = 0
+  const logged: string[] = []
   let supervisor: DevSupervisor | undefined
   try {
     supervisor = await startDevSupervisor({
@@ -751,10 +752,11 @@ test("child-only Update & Restart commits one stable child without replacing its
       updateMode: "child",
       updateReadyTimeoutMs: 500,
       updateStabilizeMs: 20,
-      updateRestart: async () => { prepares++; selected = "new"; return { state: "ready" } },
+      updateRestart: async () => { prepares++; selected = "new"; return { state: "ready", message: "Frizz new is installed and compatible" } },
       commitUpdate: () => { commits++; active = selected },
       rollbackUpdate: () => { rollbacks++; selected = active },
-      log: () => {}, error: () => {},
+      version: () => active,
+      log: (line) => logged.push(line), error: () => {},
     })
     const first = await supervisor.firstBoot
     assert.match((await fetch(`http://127.0.0.1:${port}/_frizz/control/status`, { headers: { origin: `http://127.0.0.1:${port}` } })).statusText, /OK/)
@@ -776,6 +778,14 @@ test("child-only Update & Restart commits one stable child without replacing its
     assert.deepEqual({ prepares, commits, rollbacks, active }, { prepares: 1, commits: 1, rollbacks: 0, active: "new" })
     const lines = readFileSync(events, "utf8").trim().split("\n")
     assert.ok(lines.findIndex((line) => line.startsWith("stop:old:")) < lines.findIndex((line) => line.startsWith("start:new:")), "old child exits before candidate starts")
+    // The run log says an update was asked for, what it installed, and which server answers now. These
+    // went to the terminal alone, so a log read afterwards showed a restart and nothing about why.
+    const update = logged.filter((line) => line.startsWith("[frizz] update"))
+    assert.deepEqual(update, [
+      "[frizz] update: preparing the new build — the running one is untouched until it is ready",
+      "[frizz] update: Frizz new is installed and compatible",
+      "[frizz] update committed: now serving new",
+    ])
   } finally {
     await supervisor?.close()
     owner.release()
