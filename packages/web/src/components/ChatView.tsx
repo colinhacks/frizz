@@ -65,6 +65,7 @@ import { prefs } from "../lib/prefs.ts"
 import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
 import { isVisualizationThemeAck, visualizationThemeMessage } from "../lib/visualizationThemeProtocol.ts"
 import { canAdoptThread } from "../lib/adoption.ts"
+import { emptyTranscriptState } from "../lib/emptyTranscript.ts"
 import { THREAD_HEADER_CLASS, THREAD_HEADER_CONTROLS_CLASS, THREAD_HEADER_TITLE_CLASS } from "../lib/threadHeaderLayout.ts"
 import { SheetClose } from "./ui/SheetHeader.tsx"
 import { ThreadActionBar } from "./ThreadActionBar.tsx"
@@ -305,6 +306,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   // state (not a ref) so the portal renders as soon as the node mounts.
   const [jumpOverlay, setJumpOverlay] = useState<HTMLDivElement | null>(null)
   const count = q.data?.messages.length ?? 0
+  const empty = emptyTranscriptState({ pending: q.isPending, failed: q.isError }, { running, adoptable: canAdoptThread(thread) })
 
   const loadEarlier = useCallback(async () => {
     if (loadingEarlierRef.current) return
@@ -408,16 +410,14 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           surface reached once the drawer and the full-screen page both virtualized. */}
       <div className="flex min-h-full flex-col px-6 py-5">
         <div className="flex-1 flex items-center justify-center text-sm text-muted">
-          {q.isPending ? (
-            // The transcript hasn't loaded YET — `count` is 0 only because `q.data` is still
-            // undefined, not because the session is empty. For a long-running chat the initial
-            // fetch/parse of a large transcript can take a beat, and claiming "Session starting…"
-            // there is wrong (it may have been running for hours). Show a neutral load state until
-            // the query resolves and we actually know whether there are messages.
+          {/* Which of the five, and why in that order: lib/emptyTranscript.ts. */}
+          {empty === "loading" ? (
             <span className="flex items-center gap-2"><Dots /> Loading…</span>
-          ) : running ? (
+          ) : empty === "failed" ? (
+            <TranscriptReadFailed error={q.error} retry={() => q.refetch()} />
+          ) : empty === "starting" ? (
             <span className="flex items-center gap-2"><Dots /> Session starting…</span>
-          ) : canAdoptThread(thread) ? (
+          ) : empty === "adopt" ? (
             // A thread frizz never originated (pre-existing .frizz board): no session, no
             // transcript. Cold-adopt it — a fresh worker reads the thread FILE and continues;
             // per the frizz contract the doc, not the conversation, is the durable context.
@@ -558,6 +558,33 @@ export function TranscriptSyncFallbackBanner({ fallback, isFetching, onRefresh, 
       </button>
       <button type="button" onClick={onRetryLive} className="shrink-0 rounded-md border border-border px-2 py-1 text-[11px] text-fg/90 transition-colors hover:bg-panel">
         Retry live
+      </button>
+    </div>
+  )
+}
+/**
+ * The transcript's read failed and there is nothing to draw: say that, and why. When the server answers
+ * again the transcript arrives by itself, pushed on the socket; Retry is for a read that failed with the
+ * server up. It reads "Retrying…" only for a retry the reader asked for, so the hook's own background
+ * reads do not make the line flicker.
+ */
+function TranscriptReadFailed({ error, retry }: { error: unknown; retry: () => Promise<unknown> }) {
+  const [retrying, setRetrying] = useState(false)
+  const reason = (error instanceof Error ? error.message : String(error ?? "")).slice(0, 200)
+  return (
+    <div data-transcript-read-failed role="status" className="text-center">
+      <p>Could not load this conversation.</p>
+      {reason && <p className="font-mono-keep mt-1.5 break-words text-[11.5px]">{reason}</p>}
+      <button
+        type="button"
+        disabled={retrying}
+        className="btn-ghost mt-3 border border-border text-[12px] disabled:opacity-40"
+        onClick={() => {
+          setRetrying(true)
+          void retry().finally(() => setRetrying(false))
+        }}
+      >
+        {retrying ? "Retrying…" : "Retry"}
       </button>
     </div>
   )
