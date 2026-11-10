@@ -89,8 +89,8 @@ export type NormalizedEvent =
   | { kind: "context-usage"; at?: string; tokens: number; window?: number }
 
 // The shape a backend's fold produces per session — the SAME shape board.ts already consumes as
-// SessionTelemetry, minus `permPrompt` (which is sniffed off a live terminal screen, not folded from
-// the transcript).
+// SessionTelemetry, minus `permPrompt` (which is read off the worker's permission marker, not folded
+// from the transcript).
 // A documented contract for what every backend's fold must surface; Phase-1 Claude realizes it as
 // SessionTelemetry directly (see tailer.get()).
 export interface NormalizedTail {

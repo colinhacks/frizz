@@ -2,8 +2,9 @@
 // @ts-check
 // PermissionRequest hook on ExitPlanMode (frizz) — a frizz worker runs under a dashboard, not a
 // live chat, so the plan-APPROVAL prompt (shown when the model calls ExitPlanMode to present a plan
-// and ask to proceed) would hang the session invisibly. Deny it and redirect the worker to encode
-// its plan/ask in the thread file instead.
+// and ask to proceed) would hang the session invisibly. Deny it and redirect the worker: proceed if
+// the plan is settled, write it to a durable plan file if the plan is the deliverable, and ask in a
+// ```question fence if it needs a human call first (the `reason` below, word for word).
 //
 // WHY PermissionRequest, not PreToolUse: ExitPlanMode is a PERMISSION surface, not a plain tool —
 // it is denied via PermissionRequest (AskUserQuestion, a real tool, is denied via PreToolUse in the
@@ -14,7 +15,7 @@
 //
 // PLAN-MODE SOFTLOCK — why this denies UNCONDITIONALLY when gated: a session genuinely IN plan mode
 // is read-only until ExitPlanMode is approved, so denying ExitPlanMode there would SOFTLOCK it
-// (can't exit → can't edit → can't even follow the "write to the thread" redirect). This hook does not
+// (can't exit → can't edit → can't even follow the redirect and write the plan file). This hook does not
 // branch on the session's mode. (An earlier note here claimed the PermissionRequest input carries no
 // permission-mode signal — that is FALSE and was corrected 2026-07-25: the payload carries
 // `permission_mode`, `tool_name`, and `tool_input`, which is exactly what the sibling perm-policy.mjs

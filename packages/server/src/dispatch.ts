@@ -473,8 +473,9 @@ export function scratchpadOrientation(sessionId: string, kind: BackendKind = "cl
 // every worker frizz dispatched here lost the last 4,522 — beginning exactly at "## Git: land on
 // local `main` — NEVER open a pull request", the rule CLAUDE.md calls the most-violated one in the
 // repo. The marker says `[FRIZZ.md truncated]`, and nobody reads their own system prompt to find it.
-// 24,000 characters is ~6k tokens, against a contract already several times that, and it clears the
-// real file with 45% headroom. `frizzConfigBlock injects this repo's own FRIZZ.md IN FULL` fails
+// 24,000 characters is ~6k tokens, against a contract already several times that. It cleared the real
+// file with 45% headroom when it was set; the file has since grown to within 1% of it (23,845
+// characters on 2026-11-10). `frizzConfigBlock injects this repo's own FRIZZ.md IN FULL` fails
 // LOUDLY the next time the file outgrows it, which is the actual guard — the number is only a number.
 const FRIZZ_MD_MAX_CHARS = 24_000
 const FRIZZ_MD_MAX_BYTES = 64 * 1024

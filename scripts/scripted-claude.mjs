@@ -36,8 +36,9 @@
 //                  for `thinkms` (default 2000) before the first call
 //   gapms=MS       the model's pause between a tool result and its next call (default 0) — the inter-call
 //                  gap where the slot reads `Ran N tool calls. Thinking…`
-//   reply=question ends every later turn on a question fence too, each under a new id (an id is spent
-//                  for the life of the thread), the way `ending=question` ends the first
+//   reply=question ends every later turn on a question fence too, each under a new id (the one before
+//                  it may still be open, and an id names one open question), the way `ending=question`
+//                  ends the first
 //   agents=N       BACKGROUND SUB-AGENTS the first turn dispatches before its Bash calls (default 0): an
 //                  `Agent` tool_use with run_in_background, its "Async agent launched successfully" ack, its
 //                  own sidechain transcript (`<session>/subagents/agent-<id>.jsonl` + `.meta.json`) that it
