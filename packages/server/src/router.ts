@@ -1774,8 +1774,11 @@ export function createRouter(ctx: AppContext) {
   // A release that throws leaves that message `failed` with its words kept (keepFailedFollowUp), which
   // is the same Retry / Edit / Dismiss the operator gets for any send that did not land.
   const releasingHeld = new Set<string>()
+  // Set when the context this router was built on stops (below, where the sweep is armed). Nothing is
+  // released after that: the project is closing or already closed, and a release reads its storage.
+  let contextEnded = false
   async function releaseHeldFollowUps(slug: string, opts: { force?: boolean } = {}): Promise<number> {
-    if (releasingHeld.has(slug)) return 0
+    if (contextEnded || releasingHeld.has(slug)) return 0
     const row = ctx.storage.getSession(slug)
     if (!row) { heldSlugs.delete(slug); return 0 }
     const items = parseDeliveryLedger(row.delivery_ledger)
@@ -1820,6 +1823,7 @@ export function createRouter(ctx: AppContext) {
   let heldSweep: ReturnType<typeof setInterval> | null = null
   const HELD_SWEEP_MS = 5_000
   function watchHeld(slug: string): void {
+    if (contextEnded) return
     heldSlugs.add(slug)
     if (heldSweep) return
     heldSweep = setInterval(() => {
@@ -1835,9 +1839,22 @@ export function createRouter(ctx: AppContext) {
   for (const row of Array.isArray(bootRows) ? (bootRows as ReturnType<typeof ctx.storage.allSessions>) : []) {
     if (row.delivery_ledger?.includes('"held"') && heldDeliveries(ctx.storage, row.slug).length > 0) watchHeld(row.slug)
   }
-  ctx.bus?.subscribe((event) => {
+  const stopWatchingRests = ctx.bus?.subscribe((event) => {
     if (event.type !== "notify" || event.kind !== "turn-done" || !heldSlugs.has(event.slug)) return
     setTimeout(() => void releaseHeldFollowUps(event.slug), 0).unref?.()
+  })
+  // AND THE SWEEP ENDS WITH ITS CONTEXT. Nothing stopped it before: a project deactivated with a message
+  // still held kept this clock, and every five seconds it read a project that was no longer open, to
+  // deliver a message into it. In the router's own tests it read a closed database and rejected with
+  // nobody listening, four times per test once the file ran past twenty seconds, which failed the file
+  // on a slow machine after every test in it had passed. What is held stays in the ledger: the boot
+  // rows above arm the sweep again when the project is next opened.
+  ctx.endWithContext?.(() => {
+    contextEnded = true
+    heldSlugs.clear()
+    if (heldSweep) clearInterval(heldSweep)
+    heldSweep = null
+    stopWatchingRests?.()
   })
   // A message the ACP bridge was queueing on a session that stopped, or lost its agent, under it. The
   // ledger holds it from here, durably: the release opens the session again and delivers it once the

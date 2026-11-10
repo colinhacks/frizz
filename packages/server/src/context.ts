@@ -226,6 +226,10 @@ export interface AppContext {
   // Detach storage-owned observers before board/storage teardown. Idempotent and synchronous so a
   // deferred interaction notification cannot enqueue fresh board work during the shutdown drain.
   stopSubscriptions(): void
+  // For what is built ON a context after it exists and must end when it does: the router's sweep for
+  // held messages. `stopSubscriptions` runs `end` with the context's own observers; registered after
+  // the stop, it runs at once.
+  endWithContext(end: () => void): void
   getSettings: () => Settings
   setSettings: (s: Settings) => Settings
   resetSettings: () => Settings
@@ -1402,6 +1406,10 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     probeIssue: probeIssueReadable,
     commandWatches,
     stopSubscriptions,
+    endWithContext: (end) => {
+      if (subscriptionsStopped) end()
+      else contextUnsubscribers.push(end)
+    },
     backendFor,
     getSettings: () => getSettings(storage, home),
     setSettings: (s) => setSettings(storage, s, home),

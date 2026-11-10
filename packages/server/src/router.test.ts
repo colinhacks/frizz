@@ -187,6 +187,14 @@ function harness(tailer: Tailer = noopTailer, acpBridge?: unknown) {
   const backend = createClaudeBackend({ logDir: join(dir, "logs") })
   const settings = { permissionMode: "auto" } as unknown as Settings
   let adoptCalls = 0
+  // What the router asks to have ended with its context: its sweep for held messages. A real context
+  // runs these in stopSubscriptions, before its storage closes. Every test here ends on
+  // `h.storage.close()`, so that is where they run, and a test that leaves a message held leaves no
+  // five-second clock reading a closed database behind it.
+  const ending: (() => void)[] = []
+  const endContext = () => { for (const end of ending.splice(0)) end() }
+  const closeStorage = storage.close
+  storage.close = () => { endContext(); closeStorage() }
   // createRouter is lazy: unrelated procedures do not read the omitted context fields. Keep this
   // focused on the permission route's real storage/board/backend dependencies.
   const ctx = {
@@ -201,6 +209,7 @@ function harness(tailer: Tailer = noopTailer, acpBridge?: unknown) {
     // The tailer's turn-done notification rides this, and a held ("Send to queue") message is released on it.
     bus: new Bus(),
     backendFor: () => backend,
+    endWithContext: (end: () => void) => void ending.push(end),
     getSettings: () => settings,
     dispatcher: {
       dispatch: async () => ({ slug: "dispatched", sessionId: "sid-dispatched" }),
@@ -237,7 +246,7 @@ function harness(tailer: Tailer = noopTailer, acpBridge?: unknown) {
     } satisfies ThreadView)
   // `ctx` is exposed so a test can install an optional collaborator (e.g. codexAppServer) after
   // construction; createRouter closes over the object and reads those fields per-call, not at build time.
-  return { dir, ctx, storage, board, snapshot, router: createRouter(ctx), addExitedThread, refreshes: () => refreshes, adoptCalls: () => adoptCalls }
+  return { dir, ctx, storage, board, snapshot, router: createRouter(ctx), addExitedThread, refreshes: () => refreshes, adoptCalls: () => adoptCalls, endContext }
 }
 
 // `archived` is a LEGACY column, and writing it is not archiving. `effectiveSessionState` (board.ts)
@@ -2461,6 +2470,41 @@ test("steering past a held message leaves it held", async () => {
   await h.router.followUp.handler({ input: { slug, sessionId: sid, message: "now", deliveryId: "d-steer" } })
   assert.deepEqual(sent.map((s) => s.deliveryId), ["d-steer"])
   assert.deepEqual(ledger().map((i) => [i.id, i.state]), [["d-hold", "held"], ["d-steer", "enqueued"]])
+  h.storage.close()
+})
+
+// The sweep is the clock that releases a held message when no rest edge is left to do it. It belongs to
+// the context the router was built on, and until it ended with that context it outlived it: this file's
+// own tests left thirteen of them reading closed databases.
+test("the sweep for held messages ends with its context, and nothing is released after", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] })
+  const { h, slug, sid, sent, ledger, setTurn } = holdHarness()
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, message: "after this", deliveryId: "d-hold", hold: true } })
+  let reads = 0
+  const getSession = h.storage.getSession
+  h.storage.getSession = (...args: Parameters<typeof getSession>) => { reads++; return getSession(...args) }
+  // The control: while the context lives, the sweep looks at the thread every five seconds.
+  t.mock.timers.tick(5_000)
+  assert.ok(reads >= 1, "the sweep is running")
+  assert.equal(sent.length, 0, "and the turn is still in flight, so nothing goes")
+
+  h.endContext()
+  reads = 0
+  setTurn("idle")
+  ;(h.ctx as unknown as { bus: Bus }).bus.publish({ type: "notify", slug, kind: "turn-done", title: slug, body: "" })
+  t.mock.timers.tick(20_000)
+  await Promise.resolve()
+  assert.equal(reads, 0, "neither the clock nor a rest reads the project again")
+  assert.equal(sent.length, 0, "and the held message is not delivered into a project that is closing")
+  h.storage.getSession = getSession
+  assert.deepEqual(ledger().map((i) => [i.id, i.state]), [["d-hold", "held"]], "it is still held, for the next time the project opens")
+  // A send that arrives after the end arms nothing either.
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, message: "and this", deliveryId: "d-late", hold: true } }).catch(() => {})
+  reads = 0
+  h.storage.getSession = (...args: Parameters<typeof getSession>) => { reads++; return getSession(...args) }
+  t.mock.timers.tick(20_000)
+  assert.equal(reads, 0, "a late send does not start the clock again")
+  h.storage.getSession = getSession
   h.storage.close()
 })
 
