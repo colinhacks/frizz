@@ -11,6 +11,9 @@
 // Usage:
 //   nub scripts/adhoc-stack.mjs [--port=4930] [--project=/abs/dir] [--claude-bin=/abs/bin] [--wakers] [--reaper] [--prime] [--keep] [--home=/abs] [--seed] [--prod [--web-dist=/abs]]
 //
+// `--project` names a project ROOT: a Git repository, or a folder with no project above it. A folder
+// inside another project is refused, because the server would serve the one above (lib/adhoc-project.mjs).
+//
 // `--prod` serves the web app from `packages/web/dist` (run `nub run build` in packages/web first) instead
 // of the Vite dev server. A timing taken through Vite measures React's development build and valtio's
 // debug paths as much as the app; a cost a user pays is measured on the production bundle.
@@ -20,11 +23,12 @@
 // It prints ONE json line to stdout: {"url","port","home","project"} once /health is green,
 // then stays up until SIGINT/SIGTERM, deleting the temp HOME on exit (unless --keep). Run it with Bash
 // run_in_background:true, parse that json line, then drive the url with Chrome DevTools MCP or shot.mjs.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, unlinkSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { frizzPaths, projectStateDir } from "../packages/server/src/frizz-paths.ts"
 import { adhocFrizzRoot } from "./lib/adhoc-frizz-root.mjs"
+import { adhocProjectRefusal } from "./lib/adhoc-project.mjs"
 
 const args = process.argv.slice(2)
 const flag = (k) => args.includes(`--${k}`)
@@ -231,6 +235,18 @@ function stopSandboxOpencodeService() {
 process.on("SIGINT", () => stop(0))
 process.on("SIGTERM", () => stop(0))
 process.on("uncaughtException", (e) => { console.error("[adhoc-stack] uncaught", e); stop(1) })
+
+// Asked after the HOME is set, because the resolver stops climbing at the HOME it finds, and before
+// anything boots, because the folder it would name instead is a real one (lib/adhoc-project.mjs).
+{
+  const { resolveProjectDir } = await import("../packages/server/src/project.ts")
+  const refusal = adhocProjectRefusal({ given: realpathSync(process.cwd()), served: resolveProjectDir(), explicit: opt("project", undefined) !== undefined })
+  if (refusal) {
+    console.error(`[adhoc-stack] ${refusal}`)
+    cleanup()
+    process.exit(1)
+  }
+}
 
 const { startServer } = await import("../packages/server/src/index.ts")
 try {

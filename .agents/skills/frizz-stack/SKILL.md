@@ -45,6 +45,11 @@ Flags: `--port=N`, `--project=/abs/dir` (defaults to the frizz repo), `--also-pr
 § A real Claude worker), `--wakers`, `--reaper`,
 `--prime`, `--keep`, `--home=/abs`, `--seed`.
 
+`--project` names a project ROOT: a Git repository, or a folder with no project above it. A plain folder
+inside another project is refused, because the server would serve the project above it and run workers
+there (a scratch folder under a real project did exactly that until 2026-11-10). `git init` in the folder
+makes it its own project.
+
 `--home=/abs` reuses a sandbox a previous `--keep` run left behind, which is the only way to verify
 anything that happens at BOOT against state that already exists — a schema migration, a registry repair,
 resume/recovery. It implies `--keep`: a HOME you were handed is never one this run may delete.
