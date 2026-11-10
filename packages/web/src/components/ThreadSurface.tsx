@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, type ComponentPropsWithRef, type ReactElement, type RefObject } from "react"
+import { createContext, useContext, useEffect, useMemo, type ComponentPropsWithRef, type ReactElement } from "react"
 import { questionFencesLive } from "@frizz/shared"
 import type { BgShellView, RegisteredQuestionView, ThreadView } from "@frizz/shared"
 import type { ChatMessage } from "../hooks.ts"
@@ -22,6 +22,7 @@ import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
+import { useThreadPageZone } from "./ThreadPageZone.tsx"
 import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useClosedQuestionSpecs, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 
 // THE THREAD SURFACE — the one shell around a thread, wherever it is drawn. A thread is drawn in three
@@ -31,7 +32,8 @@ import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useF
 // decides. Everything that is true of THE THREAD rather than of a layout is wired here, once:
 //
 //   · the file drop zone: a file dropped anywhere on the surface goes into its prompt box (lib/fileDrop).
-//     On a page that IS one thread — the full-screen page — "anywhere" is the whole page (ThreadPageZone),
+//     On a page that IS one thread — the full-screen page, the board's pane — "anywhere" is the whole page
+//     (ThreadPageZone, in its own module so the board's first paint can mount it without this one),
 //   · the one send: the prompt box's handle and the scope its Send gathers answers through (lib/sendScope),
 //   · the fenced-question controller (lib/answering useLiveAnswering) and the registered questions'
 //     shared answering state (RegisteredAnsweringProvider),
@@ -225,34 +227,6 @@ export interface ThreadSurfaceBox {
 
 const ThreadSurfaceBoxContext = createContext<ThreadSurfaceBox | null>(null)
 const ThreadTranscriptContext = createContext<ThreadTranscript | null>(null)
-type ZoneHandlers = FileDropZone["handlers"]
-const ThreadPageZoneContext = createContext<RefObject<ZoneHandlers | null> | null>(null)
-
-/** A PAGE THAT IS ONE THREAD takes a dropped file anywhere on it. The full-screen page draws its thread
- *  in a column with a gutter on one side and a rail on the other, and at a desktop width the column is
- *  about half of what the reader sees. A file dropped on the other half missed the thread's surface, so
- *  the browser opened it in place of the app — on the one page where "drop it anywhere" can only mean
- *  this thread. So that page's root is this element: it is the drop zone, and the thread surface drawn
- *  inside it hands its zone up here instead of binding it on its own root (one zone, so a drop in the
- *  column is not taken twice). A sheet opened over the page is not inside this element, so a file
- *  dropped on a drawer still goes to that drawer's own thread. */
-export function ThreadPageZone({ children, ...root }: Omit<ComponentPropsWithRef<"div">, "onDragOver" | "onDragLeave" | "onDrop">): ReactElement {
-  const zone = useRef<ZoneHandlers | null>(null)
-  return (
-    <ThreadPageZoneContext.Provider value={zone}>
-      <div
-        {...root}
-        data-thread-page-zone
-        onDragOver={(e) => zone.current?.onDragOver(e)}
-        onDragLeave={(e) => zone.current?.onDragLeave(e)}
-        onDrop={(e) => zone.current?.onDrop(e)}
-      >
-        {children}
-      </div>
-    </ThreadPageZoneContext.Provider>
-  )
-}
-
 /** The thread's prompt box reads its surface here. It throws rather than degrade: a prompt box mounted
  *  outside the shell would silently lack whatever the shell wires, which is the defect this exists to end. */
 export function useThreadSurfaceBox(): ThreadSurfaceBox {
@@ -378,7 +352,7 @@ export function ThreadSurface({
 } & Omit<ComponentPropsWithRef<"div">, "onDragOver" | "onDragLeave" | "onDrop">): ReactElement {
   // Inside a page that is this thread's alone, the PAGE is the zone (ThreadPageZone): the handlers go
   // up to it, and this root binds none. Handed over after every render, since they close over it.
-  const pageZone = useContext(ThreadPageZoneContext)
+  const pageZone = useThreadPageZone()
   // ⌘⏎ for Send now, after whatever the surface itself does with the key: the queue card's root sends
   // answers staged on its cards on the same chord, and those come first.
   const sendNowKey = useSendNowKey(surface.slug, surface.queuedRun)
