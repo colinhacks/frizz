@@ -9,6 +9,7 @@ import { parseClaudeUsage, parseClaudeUsageOutput, tokenFromCredentialsJson, rea
 import { recordObservedClaudeQuota, resetObservedClaudeQuotaThrottle } from "./claude-quota-observed.ts"
 import { frizzRoots, resetFrizzRoots } from "../frizz-paths.ts"
 import { readQuota } from "../quota.ts"
+import { deferRuntime, ensureRuntime, resetDeferredRuntimes } from "../runtime-deferral.ts"
 
 // ---- Codex rollout parsing ----
 
@@ -364,6 +365,27 @@ test("codex quota: a machine that is not signed in to Codex never starts an app-
   const q = await readCodexQuota(home, bin, { now: () => 3 * 60 * MIN + 2, force: true })
   assert.equal(q.windows[0]?.usedPercent, 17)
   assert.equal(await starts(), 1)
+}))
+
+test("codex quota: a runtime still waiting for its first thread is not started, and no deadline is spent on it", { skip: process.platform === "win32" }, () => withCodexStandIn(true, async (home, bin, starts, signIn) => {
+  // Signed in after a boot that left Codex for its first thread: the pin is not on disk yet.
+  await signIn("acct-1")
+  deferRuntime("codex", async () => {})
+  try {
+    for (const at of [0, 61 * SEC, 10 * MIN]) {
+      await readCodexQuota(home, bin, { now: () => at })
+      await readCodexQuota(home, bin, { now: () => at + 1, force: true })
+    }
+    assert.equal(await starts(), 0)
+    // The thread that brings the pin down, and then the very next poll past the memo reads live:
+    // nothing above counted as a failed read, so there is no backoff to wait out.
+    await ensureRuntime("codex")
+    const q = await readCodexQuota(home, bin, { now: () => 10 * MIN + 61 * SEC })
+    assert.equal(q.windows[0]?.usedPercent, 17)
+    assert.equal(await starts(), 1)
+  } finally {
+    resetDeferredRuntimes()
+  }
 }))
 
 test("codex quota: a healthy reading is shared for a minute, and callers that arrive together join one read", { skip: process.platform === "win32" }, () => withCodexStandIn(true, async (home, bin, starts, signIn) => {

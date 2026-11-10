@@ -76,9 +76,10 @@ export async function readClaudeAuthState(configDir = claudeConfigDir()): Promis
 }
 
 // What the two readers above cannot see, and Claude Code would still sign in with: a key or a cloud route
-// in the environment, or an `apiKeyHelper` in its settings. The CLI confirmation below is what catches
-// these on a machine that has the binary. shouldDeferRuntimes runs before any binary exists, so it asks
-// here, and a machine with one of these provisions at boot.
+// in the environment, the same in the `env` block of its settings (where a Bedrock or Vertex setup
+// usually lives, and which Claude Code applies to itself at start), or an `apiKeyHelper` there. The CLI
+// confirmation below is what catches these on a machine that has the binary. shouldDeferRuntimes runs
+// before any binary exists, so it asks here, and a machine with one of these provisions at boot.
 const CLAUDE_CREDENTIAL_ENV = [
   "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
   "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
@@ -86,7 +87,10 @@ const CLAUDE_CREDENTIAL_ENV = [
 export function readClaudeOtherCredential(env: NodeJS.ProcessEnv = process.env, configDir = claudeConfigDir()): boolean {
   if (CLAUDE_CREDENTIAL_ENV.some((name) => env[name])) return true
   try {
-    return Boolean((JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { apiKeyHelper?: unknown }).apiKeyHelper)
+    const settings = JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { apiKeyHelper?: unknown; env?: unknown } | null
+    if (settings?.apiKeyHelper) return true
+    const block = settings?.env && typeof settings.env === "object" ? (settings.env as Record<string, unknown>) : {}
+    return CLAUDE_CREDENTIAL_ENV.some((name) => block[name])
   } catch (err) {
     // No settings file is the ordinary case. One that cannot be read is an answer we do not have.
     return (err as NodeJS.ErrnoException).code !== "ENOENT"

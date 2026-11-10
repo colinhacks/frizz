@@ -493,6 +493,18 @@ test("a Claude credential only Claude Code itself can see counts against deferri
     assert.equal(readClaudeOtherCredential({}, dir), false)
     writeFileSync(join(dir, "settings.json"), JSON.stringify({ apiKeyHelper: "op read x" }))
     assert.equal(readClaudeOtherCredential({}, dir), true)
+    // A Bedrock or Vertex setup usually lives in the settings' `env` block, which Claude Code applies to
+    // itself at start: the same names as the real environment, and nothing else in the block.
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: "1", AWS_REGION: "us-east-1" } }))
+    assert.equal(readClaudeOtherCredential({}, dir), true)
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ env: { ANTHROPIC_API_KEY: "x" } }))
+    assert.equal(readClaudeOtherCredential({}, dir), true)
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ env: { AWS_REGION: "us-east-1", ANTHROPIC_API_KEY: "" } }))
+    assert.equal(readClaudeOtherCredential({}, dir), false)
+    for (const odd of ["null", "[]", JSON.stringify({ env: "x" }), JSON.stringify({ env: null })]) {
+      writeFileSync(join(dir, "settings.json"), odd)
+      assert.equal(readClaudeOtherCredential({}, dir), false, odd)
+    }
     writeFileSync(join(dir, "settings.json"), "{ not json")
     assert.equal(readClaudeOtherCredential({}, dir), true, "an unreadable answer provisions as today")
   } finally {

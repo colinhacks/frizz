@@ -2,8 +2,9 @@
 //
 // A machine signed out of both Claude and Codex with OpenCode on PATH has no use for either runtime
 // yet, and first boot used to cost it 698 MB and a Claude Code start that wrote `~/.claude` under its
-// HOME. So runtimes.ts registers each pin here instead of fetching it (shouldDeferRuntimes says when),
-// and the first dispatch or cold resume on that backend brings it down through ensureRuntime.
+// HOME. A machine signed out of Codex alone has no use for Codex's, and that is most of them. So
+// runtimes.ts registers such a pin here instead of fetching it (shouldDeferRuntimes says which), and the
+// first dispatch or cold resume on that backend brings it down through ensureRuntime.
 //
 // The bin every consumer holds is a plain string, captured all over the context, so it does not change:
 // it is the path the pin will have once it lands (runtimes.ts pinnedBinaryPath). What changes is whether

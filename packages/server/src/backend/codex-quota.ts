@@ -6,6 +6,7 @@ import type { ProviderQuota, QuotaWindow } from "@frizz/shared"
 import { defaultCodexHome } from "./codex.ts"
 import { resolveCodexExecutable } from "./codex-executable.ts"
 import { readCodexAccountId, readCodexAuthState } from "./auth-status.ts"
+import { isRuntimeDeferred } from "../runtime-deferral.ts"
 // The SAME handshake identity the dispatch path uses, so the app-server sees one consistent client.
 import { CLIENT_INFO, CLIENT_CAPABILITIES } from "./codex-app-server.ts"
 
@@ -433,7 +434,10 @@ async function refreshCodexQuota(state: CodexQuotaState, codexHome: string, code
     state.retryAt = 0
   }
   let quota: ProviderQuota | undefined
-  if (credential !== SIGNED_OUT && (force || now >= state.retryAt)) {
+  // A runtime still waiting for its first thread (runtime-deferral.ts) is not on disk to be started, and
+  // a chip is no reason to fetch it. Not a failed read either: nothing was asked, so no backoff is spent
+  // and the first poll after the thread that brings it down gets its reading.
+  if (credential !== SIGNED_OUT && !isRuntimeDeferred("codex") && (force || now >= state.retryAt)) {
     try {
       quota = await queryCodexRateLimits(codexHome, codexBin)
     } catch {

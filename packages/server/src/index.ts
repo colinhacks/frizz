@@ -1010,8 +1010,9 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // The executables every backend below will run. First boot on a machine downloads the pins (a few
     // hundred MB, once per pin), and the launcher's readout follows it through bootProgress; after
     // that the phase is a marker read. An explicit executable skips it; a failure falls back to PATH
-    // with a warning rather than refusing to boot (runtimes.ts). A machine signed out of both with
-    // OpenCode on PATH fetches nothing here: each pin waits for its first thread.
+    // with a warning rather than refusing to boot (runtimes.ts). A backend this machine is signed out
+    // of fetches nothing here, and its pin waits for its first thread: shouldDeferRuntimes says which,
+    // and why Claude Code waits less readily than Codex.
     runtimes = await phase("runtimes", async () => runtime.resolveRuntimes({
       claudeBin: opts.claudeBin,
       codexBin: opts.codexBin,

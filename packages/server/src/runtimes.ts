@@ -35,8 +35,11 @@
 // sandbox HOME at the machine's real copies for the same reason). `FRIZZ_RUNTIMES_REGISTRY` names
 // another npm registry, a mirror or a verification's own, and the integrity check still applies.
 //
-// A MACHINE WITH NO USE FOR EITHER YET waits: signed out of both with OpenCode on PATH, boot fetches
-// nothing and the first thread on a backend brings its pin down (shouldDeferRuntimes, runtime-deferral.ts).
+// A RUNTIME THIS MACHINE HAS NO USE FOR YET waits, and the first thread on that backend brings its pin
+// down (shouldDeferRuntimes, runtime-deferral.ts). Codex waits whenever Codex is signed out, which is
+// every machine that only uses Claude: until 2026-11-10 those fetched 350 MB of Codex at first boot and
+// again at every Codex pin. Claude Code waits only on a machine signed out of both with OpenCode on
+// PATH, because its signed-out verdict is not final until its own CLI confirms it (auth-status.ts).
 // One difference from a boot download: a failed fetch has no PATH fallback, because every consumer
 // already holds the pin's path. That thread's dispatch fails naming the download, and the next retries.
 //
@@ -708,8 +711,11 @@ export interface ResolveRuntimesOptions {
   log?: (level: "info" | "warn", message: string) => void
   /** Boot-progress hook; the message names the backend. */
   onProgress?: (backend: RuntimeBackend, message: string) => void
-  /** Fetch nothing now: register each pin to come down on its first thread (runtime-deferral.ts). */
-  defer?: boolean
+  /**
+   * Fetch nothing now for these backends: register the pin to come down on its first thread
+   * (runtime-deferral.ts). `true` is both of them.
+   */
+  defer?: boolean | Partial<DeferRuntimes>
   /** Seams for the Windows failure modes (tests): see ProvisionOptions.rename and SweepRuntimesDeps.rm. */
   rename?: ProvisionOptions["rename"]
   rm?: SweepRuntimesDeps["rm"]
@@ -733,7 +739,7 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
   const provision = (onProgress: (message: string) => void) => provisionRuntime(backend, {
     root, coordinates, fetch: options.fetch, registry, rename: options.rename, onProgress,
   })
-  if (options.defer) {
+  if (typeof options.defer === "object" ? options.defer[backend] : options.defer) {
     const bin = provisionedBinary(backend, root, coordinates.label) ?? pinnedBinaryPath(backend, root, coordinates)
     deferRuntime(backend, async (onProgress) => {
       const provisioned = await provision(onProgress)
@@ -796,19 +802,34 @@ export interface ShouldDeferRuntimesDeps {
   readCodexAuth?: () => ProviderAuth
 }
 
+/** Which backends' runtimes a boot leaves for their first thread. */
+export type DeferRuntimes = Record<RuntimeBackend, boolean>
+
 /**
- * Should this boot leave both runtimes for their first thread? Only on a positive answer to all of it:
- * OpenCode on PATH, and a clean "signed-out" from BOTH providers. Anything uncertain answers no, and
- * that machine provisions at boot as it always has. Checks the cheap PATH walk first, so a machine
- * with no OpenCode pays nothing.
+ * Which runtimes should this boot leave for their first thread? Each only on a positive answer, so a
+ * machine Frizz cannot read provisions at boot as it always has.
+ *
+ * CODEX waits whenever Codex is signed out: no auth.json and no key in the environment, the same
+ * reader and the same verdict the dispatch gate refuses a Codex thread on (readCodexAuthState). That
+ * verdict is final without the binary, so nothing can be starting a Codex thread that this holds up,
+ * and signing in later costs the first Codex thread its download, under the composer's toast.
+ *
+ * CLAUDE CODE waits only with Codex signed out as well and OpenCode on PATH, the machine that has
+ * another agent to use and no sign of this one. Its signed-out verdict is NOT final: the gate confirms
+ * a local signed-out by starting the CLI, which sees credentials the readers here do not, and a
+ * deferred runtime skips that confirmation. A machine wrongly judged signed out is then offered a
+ * sign-in that never clears, so this stays as narrow as it was. Widening it to every machine signed in
+ * to Codex alone needs the sign-in dialog's re-check to bring the runtime down and ask first.
  */
-export async function shouldDeferRuntimes(deps: ShouldDeferRuntimesDeps = {}): Promise<boolean> {
+export async function shouldDeferRuntimes(deps: ShouldDeferRuntimesDeps = {}): Promise<DeferRuntimes> {
   const env = deps.env ?? process.env
-  if (env[RUNTIMES_MODE_ENV] === "path") return false
-  if (!(deps.findOpenCode ?? ((e) => findOnPath("opencode", e)))(env)) return false
-  if ((deps.readCodexAuth ?? readCodexAuthState)() !== "signed-out") return false
-  if ((deps.readClaudeOther ?? readClaudeOtherCredential)(env)) return false
-  return (await (deps.readClaudeAuth ?? readClaudeAuthState)().catch((): ProviderAuth => "unknown")) === "signed-out"
+  if (env[RUNTIMES_MODE_ENV] === "path") return { claude: false, codex: false }
+  if ((deps.readCodexAuth ?? readCodexAuthState)() !== "signed-out") return { claude: false, codex: false }
+  const claude =
+    Boolean((deps.findOpenCode ?? ((e) => findOnPath("opencode", e)))(env)) &&
+    !(deps.readClaudeOther ?? readClaudeOtherCredential)(env) &&
+    (await (deps.readClaudeAuth ?? readClaudeAuthState)().catch((): ProviderAuth => "unknown")) === "signed-out"
+  return { claude, codex: true }
 }
 
 /** Resolve both backends, in parallel. Never throws: the fallback for every failure is PATH. */

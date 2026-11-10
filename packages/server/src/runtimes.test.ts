@@ -448,19 +448,52 @@ const signedOutEverywhere: ShouldDeferRuntimesDeps = {
   readCodexAuth: () => "signed-out",
 }
 
-test("defer: only signed out of both with OpenCode on PATH", async () => {
-  assert.equal(await shouldDeferRuntimes(signedOutEverywhere), true)
-  const stays: Array<[string, ShouldDeferRuntimesDeps]> = [
-    ["no OpenCode", { findOpenCode: () => undefined }],
+test("defer: Codex whenever Codex is signed out, and Claude Code only signed out of both with OpenCode on PATH", async () => {
+  assert.deepEqual(await shouldDeferRuntimes(signedOutEverywhere), { claude: true, codex: true })
+  // The machine that only uses Claude, which is most of them: no Codex download, at boot or at a pin.
+  const codexOnly: Array<[string, ShouldDeferRuntimesDeps]> = [
     ["signed in to Claude", { readClaudeAuth: async () => "authed" }],
-    ["signed in to Codex", { readCodexAuth: () => "authed" }],
+    ["signed in to Claude, with no OpenCode", { readClaudeAuth: async () => "authed", findOpenCode: () => undefined }],
+    ["signed out of both, with no OpenCode", { findOpenCode: () => undefined }],
     ["a Claude credential the readers cannot see", { readClaudeOther: () => true }],
     ["Claude auth unreadable", { readClaudeAuth: async () => "unknown" }],
     ["Claude auth threw", { readClaudeAuth: async () => { throw new Error("security timed out") } }],
+  ]
+  for (const [name, change] of codexOnly) assert.deepEqual(await shouldDeferRuntimes({ ...signedOutEverywhere, ...change }), { claude: false, codex: true }, name)
+  // Claude Code never waits on a machine that can use Codex: its signed-out verdict needs its own CLI.
+  const neither: Array<[string, ShouldDeferRuntimesDeps]> = [
+    ["signed in to Codex", { readCodexAuth: () => "authed" }],
     ["Codex auth unreadable", { readCodexAuth: () => "unknown" }],
     ["the test runner's FRIZZ_RUNTIMES=path", { env: { FRIZZ_RUNTIMES: "path" } }],
   ]
-  for (const [name, change] of stays) assert.equal(await shouldDeferRuntimes({ ...signedOutEverywhere, ...change }), false, name)
+  for (const [name, change] of neither) assert.deepEqual(await shouldDeferRuntimes({ ...signedOutEverywhere, ...change }), { claude: false, codex: false }, name)
+})
+
+test("defer: with Codex alone waiting, boot fetches Claude Code and asks the registry nothing about Codex", async (t) => {
+  t.after(resetDeferredRuntimes)
+  const root = scratch()
+  const claude = runtimeCoordinates("claude")!
+  const codex = runtimeCoordinates("codex")!
+  const triple = pinnedBinaryPath("codex", root, codex).split("/").at(-3)!
+  registry.set(claude.pkg, claude.packageVersion, tarball([{ name: `package/${claude.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]))
+  registry.set(codex.pkg, codex.packageVersion, tarball([{ name: `package/vendor/${triple}/bin/${codex.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]))
+  const before = registry.requests.length
+  const got = await resolveRuntimes({ env: {}, root, registry: registry.url, defer: { claude: false, codex: true } })
+  const asked = registry.requests.slice(before)
+
+  assert.equal(got.claude.source, "provisioned")
+  assert.equal(existsSync(got.claude.bin), true, "Claude Code is ready at boot, as it always was")
+  assert.equal(isRuntimeDeferred("claude"), false)
+  assert.equal(got.codex.source, "deferred")
+  assert.equal(got.codex.version, codex.label)
+  assert.equal(isRuntimeDeferred("codex"), true)
+  assert.equal(existsSync(join(root, "codex", codex.label)), false)
+  assert.ok(asked.length > 0 && asked.every((url) => !url.includes("codex")), asked.join("\n"))
+
+  await ensureRuntime("codex")
+  assert.equal(existsSync(got.codex.bin), true, "signing in later costs the first Codex thread its download")
+  assert.equal(isRuntimeDeferred("codex"), false)
+  rmSync(root, { recursive: true, force: true })
 })
 
 test("defer: boot touches no registry, and the first need brings down exactly that backend at the path everyone holds", async (t) => {
