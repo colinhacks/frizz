@@ -184,6 +184,20 @@ test("the greyed control's popover says an update was undone, and which, once th
   assert.doesNotMatch(offered, /undone|kept stopping/)
 })
 
+// The launcher is the one part of Frizz the Update button cannot replace, and nothing told a running
+// board that a newer one existed. The popover says how to get it, under whatever else it says.
+test("the popover says a newer launcher exists, and how to get it, in every state", () => {
+  const sentence = /The npx frizz command has a newer version, 0\.13\.2\. Stop Frizz and run npx frizz again to get it\./
+  for (const state of [{ update: true, version: "0.5.0", updateVersion: "0.5.1" }, { update: false, current: true, version: "0.5.0" }, { update: false, current: true, version: "0.5.0", rejected: "0.5.1" }]) {
+    const html = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, ...state, launcherUpdate: "0.13.2" }))
+    assert.match(html, sentence)
+    assert.equal((html.match(/<p /g) ?? []).length, 2, "its own paragraph, under the state's sentence")
+    const without = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, ...state }))
+    assert.doesNotMatch(without, /npx frizz/)
+    assert.equal((without.match(/<p /g) ?? []).length, 1)
+  }
+})
+
 // The greyed button offers no verb; this plain-restart spelling survives only for a failure card that
 // stays on screen after an answer flips `updateAvailable` off.
 test("the plain restart popover names itself as a restart, not an update", () => {

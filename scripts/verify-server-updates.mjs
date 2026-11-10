@@ -261,6 +261,9 @@ try {
   delete manifest.frizzServer.minimum
   delete manifest.devDependencies; delete manifest.scripts; delete manifest.pnpm
   const shellRelease = pack(shellDir, manifest)
+  // A newer launcher than the one every scenario runs, for the registry to name when a scenario makes
+  // it the latest. Nothing downloads it: a running launcher only asks which version is the latest.
+  packages.get("frizz").releases.set("0.13.1", { ...shellRelease, manifest: { ...manifest, version: "0.13.1" } })
   const legacyTarball = argument("legacy-tarball")
   if (legacyTarball) {
     const tarball = readFileSync(legacyTarball)
@@ -582,8 +585,35 @@ try {
   await api.query("board")
   record("crash-before-commit-recovered", { pid: shellPid })
   await stopShell("SIGKILL")
+  // This launch finds a newer launcher on the registry. No button installs one into a running launcher,
+  // and until now nothing said one existed: the log, the terminal and the page's popover each say so.
+  packages.get("frizz").latest = "0.13.1"
+  const noticed = `launcher-${processes.length}`
   await launch(); await healthy("0.13.7")
   record("committed-selection-survived-launcher-crash", { pid: shellPid })
+  const behind = await until("the launcher sees the newer launcher", async () => { const value = await status(); return value.launcherUpdate === "0.13.1" && value }, 60_000)
+  assert.equal(behind.launcherVersion, "0.13.0")
+  await until("the newer launcher is in the log", () => /Frizz launcher 0\.13\.1 is available and this one is 0\.13\.0: stop Frizz and run npx frizz again to get it/u.test(launcherLogs()))
+  await until("the newer launcher is on the terminal", () => /frizz: launcher — 0\.13\.1 is available · stop Frizz and run npx frizz again to get it/u.test(readFileSync(join(out, `${noticed}.log`), "utf8")), 30_000)
+  await page.setViewport({ width: 1280, height: 850, deviceScaleFactor: 2 })
+  await page.reload({ waitUntil: "networkidle2" })
+  await page.waitForSelector('button[aria-describedby="update-restart-popover"]', { visible: true, timeout: 30_000 })
+  // The picture is only evidence if the popover is still up once it is taken: a page that redraws under
+  // a still pointer drops its hover, and the first run of this step photographed a bare board.
+  let shots = 0
+  await until("the popover outlives its own picture", async () => {
+    shots += 1
+    await page.mouse.move(1000, 800)
+    await page.hover('button[aria-describedby="update-restart-popover"]')
+    await page.waitForSelector("#update-restart-popover [data-launcher-update]", { visible: true, timeout: 5000 })
+    assert.equal(await page.$eval("#update-restart-popover [data-launcher-update]", (element) => element.textContent), "The npx frizz command has a newer version, 0.13.1. Stop Frizz and run npx frizz again to get it.")
+    await delay(400)
+    await page.screenshot({ path: join(out, "newer-launcher-desktop.png"), captureBeyondViewport: false })
+    return page.$eval("#update-restart-popover [data-launcher-update]", (element) => element.getBoundingClientRect().height > 0).catch(() => false)
+  }, 60_000)
+  await page.mouse.move(1000, 800)
+  packages.get("frizz").latest = "0.13.0"
+  record("newer-launcher-noticed", { status: behind, shots })
   await stopShell()
   const saved = selected()
   rmSync(join(home, "cache/frizz/server-releases", createHash("sha256").update(saved.package).digest("hex").slice(0, 16), saved.id), { recursive: true })

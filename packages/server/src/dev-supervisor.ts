@@ -205,6 +205,8 @@ export interface DevSupervisorOptions {
   updateProbationMs?: number
   /** The version `revertUpdate` last went back from, if any; see RestartSupervisorProxy. */
   rejectedUpdate?: () => string | undefined
+  /** A newer launcher version the registry has, if the launcher saw one; see RestartSupervisorProxy. */
+  launcherUpdate?: () => string | undefined
   /**
    * Replace the durable owner after a successful immutable update.  This is deliberately separate
    * from a child recycle: a promoted artifact also contains the CLI/supervisor implementation.
@@ -697,6 +699,7 @@ class Supervisor implements DevSupervisor {
       launcherVersion: opts.launcherVersion,
       updateVersion: opts.updateVersion,
       rejectedUpdate: opts.rejectedUpdate,
+      launcherUpdate: opts.launcherUpdate,
       dev: opts.dev,
       status: () => {
         // The proxy reports THIS answer, not its own acknowledged transition, while an update is in

@@ -576,6 +576,31 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   let updateVersion: string | undefined;
   /** The last probe failure written to the log, so a probe that fails every half hour says so once. */
   let probeFailure: string | undefined;
+  // A newer LAUNCHER, when npm has one. Nothing replaces a running launcher but stopping it and
+  // running `npx frizz` again, and nothing said so: a board measured on 2026-11-09 had been up for
+  // three days and through two shell releases. The same half-hourly probe asks, and each newer
+  // version is said once: in the log, on the terminal once the boot readout is done, and in the
+  // status the page reads.
+  let launcherUpdate: string | undefined;
+  let launcherAnnounced: string | undefined;
+  let launcherNoticeReady = false;
+  const shellPackage = typeof (manifest as { name?: unknown }).name === "string" ? (manifest as { name: string }).name : "frizz";
+  const announceLauncherUpdate = (): void => {
+    if (!launcherNoticeReady || !launcherUpdate || launcherUpdate === launcherAnnounced) return;
+    launcherAnnounced = launcherUpdate;
+    activityReadout?.notice("progress", "Launcher", `${launcherUpdate} is available · stop Frizz and run npx frizz again to get it`);
+  };
+  const refreshLauncherUpdate = async (): Promise<void> => {
+    try {
+      const latest = (await planRegistryUpdate(shellPackage, PACKAGE_VERSION, installer))?.latestVersion;
+      if (latest && latest !== launcherUpdate)
+        logger.info("launcher", `Frizz launcher ${latest} is available and this one is ${PACKAGE_VERSION}: stop Frizz and run npx frizz again to get it`);
+      launcherUpdate = latest;
+      announceLauncherUpdate();
+    } catch {
+      // The server's probe has already written why npm could not be asked.
+    }
+  };
   const refreshUpdateAvailable = async (): Promise<void> => {
     try {
       const checkedVersion = active.version;
@@ -594,6 +619,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       if (message !== probeFailure) logger.warn("launcher", `could not check npm for a newer Frizz server: ${message}`);
       probeFailure = message;
     }
+    await refreshLauncherUpdate();
   };
   void refreshUpdateAvailable();
   const updateAvailablePoll = setInterval(() => void refreshUpdateAvailable(), 30 * 60 * 1000);
@@ -700,6 +726,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       updateVersion = undefined;
     },
     rejectedUpdate: () => rejected,
+    launcherUpdate: () => launcherUpdate,
   });
   publishStableServerAddress(serverOwner, port);
   // A saved setup comes back, but no sign-in link is minted with it: one is minted only when asked for,
@@ -778,6 +805,8 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   // serve whatever the store selected without ever naming it.
   logger.info("launcher", `serving Frizz server ${active.version} (launcher ${PACKAGE_VERSION})`);
   activityReadout?.notice("done", "Server", `${active.version} · launcher ${PACKAGE_VERSION}`);
+  launcherNoticeReady = true;
+  announceLauncherUpdate();
   const heldSessions = liveSessions(sessions.directory).length;
   if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · frizz --sessions lists them`);
   // The execve'd generation prints no boot block (it is not an interactive launch), so this one line

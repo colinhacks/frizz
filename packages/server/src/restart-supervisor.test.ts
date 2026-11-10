@@ -290,6 +290,7 @@ test("status names the running and newer versions only when the launcher supplie
   const port = await freePort()
   let observed: string | undefined
   let running = "0.4.2"
+  let newerLauncher: string | undefined
   const proxy = new RestartSupervisorProxy({
     port,
     childPort: () => current.port,
@@ -297,6 +298,7 @@ test("status names the running and newer versions only when the launcher supplie
     version: () => running,
     launcherVersion: "0.4.0",
     updateVersion: () => observed,
+    launcherUpdate: () => newerLauncher,
   })
   const barePort = await freePort()
   const bare = new RestartSupervisorProxy({
@@ -311,12 +313,15 @@ test("status names the running and newer versions only when the launcher supplie
     assert.match(before, /"version":"0\.4\.2"/)
     assert.match(before, /"launcherVersion":"0\.4\.0"/)
     assert.doesNotMatch(before, /"updateVersion"/, "no observed newer version yet")
+    assert.doesNotMatch(before, /"launcherUpdate"/, "and no newer launcher seen")
+    newerLauncher = "0.4.1"
+    assert.match((await get(port, SUPERVISOR_STATUS_PATH)).body, /"launcherUpdate":"0\.4\.1"/, "a newer launcher is named once the launcher has seen one")
     observed = "0.5.0"
     assert.match((await get(port, SUPERVISOR_STATUS_PATH)).body, /"updateVersion":"0\.5\.0"/)
     running = "0.4.3"
     assert.match((await get(port, SUPERVISOR_STATUS_PATH)).body, /"version":"0\.4\.3"/, "a child-only commit can update the running version without replacing the listener")
     const versionless = (await get(barePort, SUPERVISOR_STATUS_PATH)).body
-    assert.doesNotMatch(versionless, /"version"|"launcherVersion"|"updateVersion"/, "frizz-dev/legacy stays byte-identical")
+    assert.doesNotMatch(versionless, /"version"|"launcherVersion"|"updateVersion"|"launcherUpdate"/, "frizz-dev/legacy stays byte-identical")
   } finally {
     await proxy.close().catch(() => undefined)
     await bare.close().catch(() => undefined)

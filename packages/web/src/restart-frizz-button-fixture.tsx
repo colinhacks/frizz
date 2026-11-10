@@ -23,7 +23,9 @@ window.fetch = async (input, init) => {
     const offer = params.has("rejected")
       ? { updateAvailable: false, ...versions, updateVersion: undefined, rejectedUpdate: "0.5.0" }
       : { updateAvailable: !params.has("current"), ...versions }
-    return new Response(JSON.stringify({ protocol: 1, state: "ready", updateRestart: true, ...offer }), {
+    // ?launcher adds a newer launcher than the one running, in whichever state the rest of the query asks for.
+    const launcher = params.has("launcher") ? { launcherUpdate: "0.13.2" } : {}
+    return new Response(JSON.stringify({ protocol: 1, state: "ready", updateRestart: true, ...offer, ...launcher }), {
       headers: { "content-type": "application/json" },
     })
   }

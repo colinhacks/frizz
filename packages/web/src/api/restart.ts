@@ -39,6 +39,12 @@ export interface FrizzSupervisorStatus {
    */
   rejectedUpdate?: string
   /**
+   * A newer version of the launcher (the `npx frizz` command, `launcherVersion` above) that npm has.
+   * No button can install it: a running launcher is replaced only by stopping Frizz and starting it
+   * again, which is what the popover says. Sent only when the launcher has seen one.
+   */
+  launcherUpdate?: string
+  /**
    * An UPDATE's prepare phase — frizz-dev's source build, the registry launcher's npm install — during
    * which the supervisor deliberately keeps reporting "ready" (the old child is untouched and serving)
    * and stamps it so. Additive and absent otherwise. The client reads nothing off it today: a "ready"

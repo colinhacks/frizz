@@ -150,6 +150,12 @@ export interface RestartSupervisorProxyOptions {
    */
   rejectedUpdate?: () => string | undefined
   /**
+   * A newer version of the LAUNCHER package than the one running, once the launcher has seen one on
+   * the registry. Nothing can install it into a running launcher: it is there so the page can say
+   * that stopping Frizz and starting it again gets it. A cheap read of a cached value.
+   */
+  launcherUpdate?: () => string | undefined
+  /**
    * Is this Frizz a DEVELOPMENT build — launched from a source checkout by `frizz-dev` (src/index.ts)
    * or `pnpm dev` (server/src/dev.ts), rather than the published `frizz` bin (src/production.ts)?
    *
@@ -545,10 +551,11 @@ export class RestartSupervisorProxy {
     await Promise.all(closed)
   }
 
-  private status(): { state: RestartControlState; message?: string; artifactDigest?: string; preparing?: boolean; updateRestart: boolean; updateAvailable?: boolean; version?: string; launcherVersion?: string; updateVersion?: string; rejectedUpdate?: string; dev?: boolean } {
+  private status(): { state: RestartControlState; message?: string; artifactDigest?: string; preparing?: boolean; updateRestart: boolean; updateAvailable?: boolean; version?: string; launcherVersion?: string; updateVersion?: string; rejectedUpdate?: string; launcherUpdate?: string; dev?: boolean } {
     const delegated = this.options.status?.()
     const updateVersion = this.options.updateVersion?.()
     const rejectedUpdate = this.options.rejectedUpdate?.()
+    const launcherUpdate = this.options.launcherUpdate?.()
     const version = typeof this.options.version === "function" ? this.options.version() : this.options.version
     const owner = { state: this.state, ...(this.message ? { message: this.message } : {}) }
     // A RESTART drains the child the moment it is accepted, so the owner's acknowledged transition
@@ -584,6 +591,7 @@ export class RestartSupervisorProxy {
       ...(updateVersion ? { updateVersion } : {}),
       // Sent only once it has happened, so every other launcher's payload stays as it was.
       ...(rejectedUpdate ? { rejectedUpdate } : {}),
+      ...(launcherUpdate ? { launcherUpdate } : {}),
       // Sent only when TRUE, so a published Frizz's payload is byte-identical to what it sends today
       // and an older client is unaffected. Absent therefore means "not a development build".
       ...(this.options.dev ? { dev: true } : {}),

@@ -62,6 +62,12 @@ const currentCopy = "There is no newer version of Frizz to install."
 // .rejectedUpdate). The control is greyed as when up to date, and "nothing newer to install" would be
 // false: there is something newer, and it did not stay up.
 export const UPDATE_UNDONE = "Update undone"
+// The command that started Frizz has a newer version too (FrizzSupervisorStatus.launcherUpdate), and
+// the Update button cannot reach it: that process holds the port, the terminal and the remote address,
+// and only starting it again replaces it. So the popover says how, under whatever else it says. Not
+// on the phone's row: a phone cannot stop the terminal Frizz runs in.
+const launcherCopy = (latest: string) =>
+  `The npx frizz command has a newer version, ${latest}. Stop Frizz and run npx frizz again to get it.`
 const undoneCopy = (rejected: string, version: string | undefined) =>
   `Frizz ${rejected} kept stopping after it was installed, so ${version ?? "the version before it"} is running again. The next version will be offered here.`
 
@@ -169,6 +175,7 @@ export function UpdateRestartPopover({
   version,
   updateVersion,
   rejected,
+  launcherUpdate,
 }: {
   open: boolean
   update: boolean
@@ -180,6 +187,8 @@ export function UpdateRestartPopover({
   updateVersion?: string
   /** A version the launcher installed and went back from. Read only while nothing is offered. */
   rejected?: string
+  /** A newer version of the launcher itself, which only starting Frizz again installs. */
+  launcherUpdate?: string
 }) {
   if (!open) return null
   const undone = current ? rejected : undefined
@@ -210,6 +219,7 @@ export function UpdateRestartPopover({
         </div>
       </div>
       <p className="relative mt-2.5 text-[12px] leading-relaxed text-muted">{undone ? undoneCopy(undone, version) : current ? currentCopy : update ? (newer ? newerVersionCopy : updateCopy) : restartCopy}</p>
+      {launcherUpdate && <p data-launcher-update className="relative mt-2 text-[12px] leading-relaxed text-muted">{launcherCopy(launcherUpdate)}</p>}
     </div>
   )
 }
@@ -448,6 +458,8 @@ export function useUpdateRestart() {
     updateVersion: versions.updateVersion,
     /** A version the launcher went back from, while it is still the newest one there is. */
     rejected: status?.rejectedUpdate,
+    /** A newer launcher version than the one running, when npm has one. */
+    launcherUpdate: status?.launcherUpdate,
     shownError,
     outcome,
     dismiss: () => setDismissed(shownError),
@@ -525,7 +537,7 @@ export function RestartFrizzButton() {
         </AnchoredPanel>
       ) : open ? (
         <AnchoredPanel>
-          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} rejected={control.rejected} />
+          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} rejected={control.rejected} launcherUpdate={control.launcherUpdate} />
         </AnchoredPanel>
       ) : null}
     </div>
