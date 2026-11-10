@@ -1530,6 +1530,19 @@ export function userMessageText(content: unknown): string {
   return parts.join("\n")
 }
 
+// Record the wakes a piece of delivered text carries (FoldState.wakeTokens). Called for the two things a
+// worker is handed: a user turn, and a message that left the queue mid-turn. Never for a tool result,
+// which can quote any token the worker has read. Anywhere in the text, as the scheduler's own check
+// always was: several wakes merged into one turn each bring their token.
+const WAKE_TOKEN_RE = /<!-- frizz-wake:([A-Za-z0-9_-]+) -->/g
+const WAKE_TOKENS_MAX = 64
+function noteWakeTokens(state: FoldState, text: unknown): void {
+  if (typeof text !== "string" || !text.includes("<!-- frizz-wake:")) return
+  let seen = state.wakeTokens ?? []
+  for (const [, id] of text.matchAll(WAKE_TOKEN_RE)) seen = [...seen.filter((known) => known !== id), id!]
+  state.wakeTokens = seen.slice(-WAKE_TOKENS_MAX)
+}
+
 // Flatten a tool_result's `content` (an array of {type:"text", text} blocks, or a bare string) into
 // one string so we can regex the launch metadata out of it. Defensive: anything unexpected → "".
 function toolResultText(content: unknown): string {
@@ -2735,6 +2748,8 @@ export function applyRecord(state: TailState, rec: Record): void {
     // classifier, so the two projections cannot drift again — but the chat draws Frizz's own deliveries
     // too, so it is only the first gate. The question asks the narrower one below the row-order key.
     state.lastAssistantAllDone = false
+    // Whatever kind of turn this is, the worker now holds its text: a wake's token in it is that wake arriving.
+    noteWakeTokens(state, userMessageText(rec.message?.content))
     // A tool result answers a call made in the same message, so that fence was never the thread's last word.
     if (isRealUserMessage(rec.message?.content)) settleHumanSteps(state, userText)
     state.lastFence = undefined
@@ -2788,6 +2803,7 @@ export function applyRecord(state: TailState, rec: Record): void {
   // no user record follows it, so `lastUserAt` stays where it was (FoldState.lastMidTurnDeliveryAt).
   if (type === "attachment" && typeof rec.timestamp === "string" && isPromptDeliveryAttachment(rec.attachment)) {
     state.lastMidTurnDeliveryAt = rec.timestamp
+    noteWakeTokens(state, rec.attachment?.prompt)
   }
   // Sub-agent completion rides queue-operation AND attachment records (each a <task-notification>
   // carrier — see notificationText), so it's checked for EVERY record regardless of type (the helper
@@ -2959,6 +2975,7 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.lastAssistantAllDone = false
       settleHumanSteps(state, ev.text ?? "")
       state.lastFence = undefined
+      noteWakeTokens(state, ev.text)
       if (!ev.synthetic) {
         // …and the QUESTION is the human's to discharge, so it never clears unconditionally. Codex's
         // twin of the claude defect in applyRecord: a synthetic turn that nobody typed was answering the
@@ -6408,7 +6425,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

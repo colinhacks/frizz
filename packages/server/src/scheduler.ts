@@ -1634,7 +1634,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (row.state === "archived" || row.archived === 1) return "superseded"
     const tele = isLimitFenceId(item.fenceId) ? limitTelemetry(row) : deps.tailer.get(item.slug)
     if (!tele) return "unknown"
-    if (tele.lastUserText?.includes(wakeDeliveryToken(item.id))) return "confirmed"
+    // THE TOKEN IS THE CONFIRMATION: the fold saw this wake's own token in what the worker was handed.
+    // `wakeTokens` is filled on every backend; `lastUserText` is the older form of the same evidence,
+    // kept on the normalized fold only (FoldState.wakeTokens has the history).
+    if (tele.wakeTokens?.includes(item.id) || tele.lastUserText?.includes(wakeDeliveryToken(item.id))) return "confirmed"
     // A limit wake is bound to its interruption, not to a fence: it stays deliverable exactly as long
     // as THAT limit fault is still the thread's live tail state. The fault clears on the first user
     // record, so a delivery that reached the worker before the process died reads as superseded on the next

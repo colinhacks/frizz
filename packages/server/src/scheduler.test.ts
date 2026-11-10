@@ -8,7 +8,7 @@ import { createStorage, type Storage, type SessionRow } from "./storage.ts"
 import { ANSWER_REOFFER_BACKOFF_MS, createScheduler, enqueueInterruptEndedWake, parsePrRef, ghPrViewArgs, evalRollup, parseGithubReviewActivities, isBotGithubActor, MID_TURN_HOLD_MAX_MS, type GithubReviewActivity, type PrRef, type PrStatus } from "./scheduler.ts"
 import { createGithubReviewFetcher, type GithubReviewFetchResult } from "./github-review.ts"
 import { createWakeDeliveryStore, WAKE_QUIET_WINDOW_MS } from "./wake-store.ts"
-import type { Tailer, SessionTelemetry, FenceView, TurnState, BgShellView } from "./tailer.ts"
+import { applyRecord, newTailState, type Tailer, type SessionTelemetry, type FenceView, type TurnState, type BgShellView } from "./tailer.ts"
 
 // ---- pure helpers ----
 
@@ -526,6 +526,36 @@ test("answers: the transcript token marks them delivered; a process that dies wi
   h.tele.set("t", { ...tele(), lastUserText: `${h.resumes[1].message}\n\n${wakeDeliveryToken(h.resumes[1].deliveryId!)}` })
   await s.tick()
   assert.equal(h.storage.getThreadQuestion("qst_1")?.delivered, 1)
+})
+
+// THE REAL FOLD, not a telemetry object written by hand: the five tests that set `lastUserText`
+// themselves all passed while no Claude thread had ever had a wake confirmed by its token, because the
+// Claude fold never wrote that field. This one feeds the record a broker thread's transcript really
+// gets through `applyRecord` and hands the scheduler what comes out.
+test("answers: on a Claude thread the wake's token in the transcript confirms it at the next tick, not when the grace window closes", async () => {
+  const h = harness()
+  h.storage.upsertSession(row("t"))
+  askQ(h, "t", "qst_1", "Which store?")
+  h.tele.set("t", tele())
+  const s = h.make({ wakeRuntimeState: () => "alive", confirmGraceMs: 60_000 })
+  answerQ(h, "qst_1", "Which store?")
+  await s.tick()
+  assert.equal(h.resumes.length, 1)
+  h.clock.ms += 2_000
+  await s.tick()
+  assert.equal(h.storage.getThreadQuestion("qst_1")?.delivered, 0, "sent, and nothing yet says the worker has it")
+
+  const fold = newTailState("t", "sid-t", "/x")
+  applyRecord(fold, {
+    type: "user", timestamp: new Date(h.clock.ms).toISOString(),
+    message: { role: "user", content: `${h.resumes[0].message}\n\n${wakeDeliveryToken(h.resumes[0].deliveryId!)}` },
+  } as never)
+  h.tele.set("t", { ...tele(), wakeTokens: fold.wakeTokens })
+  h.clock.ms += 2_000
+  await s.tick()
+  assert.equal(h.storage.getThreadQuestion("qst_1")?.delivered, 1, "58 seconds before the window would have closed")
+  await s.tick()
+  assert.equal(h.resumes.length, 1, "and it is not sent again")
 })
 
 test("answers: an ABANDONED wake leaves them undelivered and is not retried on every tick", async () => {

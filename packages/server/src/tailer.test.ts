@@ -455,8 +455,10 @@ test("a Frizz wake cannot answer a legacy ```question; the human typing does, on
   applyRecord(s, { type: "user", timestamp: "2026-07-01T00:00:05.000Z", message: { content: wake } })
   assert.equal(s.lastAssistantHasQuestion, true, "a shell's completion answers nothing")
   assert.equal(s.lastUserAt, "2026-07-01T00:00:05.000Z", "the wake still moves the row-order key")
+  assert.deepEqual(s.wakeTokens, ["w1"], "and its token is what confirms the delivery")
   applyRecord(s, { type: "user", timestamp: "2026-07-01T00:00:09.000Z", message: { content: "B" } })
   assert.equal(s.lastAssistantHasQuestion, false, "the human answered")
+  assert.deepEqual(s.wakeTokens, ["w1"], "a later message does not take the wake's arrival back")
 
   const c = newTailState("c", "sid", "/x")
   applyEvent(c, { kind: "user-message", at: "2026-07-01T00:00:00.000Z", text: "move the settings", synthetic: false })
@@ -465,8 +467,40 @@ test("a Frizz wake cannot answer a legacy ```question; the human typing does, on
   assert.equal(c.lastAssistantHasQuestion, true, "a shell's completion answers nothing (normalized)")
   assert.equal(c.lastUserAt, "2026-07-01T00:00:05.000Z")
   assert.equal(c.lastUserText, wake, "delivery confirmation still sees the wake's token")
+  assert.deepEqual(c.wakeTokens, ["w1"])
   applyEvent(c, { kind: "user-message", at: "2026-07-01T00:00:09.000Z", text: "B", synthetic: false })
   assert.equal(c.lastAssistantHasQuestion, false, "the human answered (normalized)")
+  assert.deepEqual(c.wakeTokens, ["w1"], "the one string a later message overwrites is not the record of it")
+})
+
+// The scheduler confirms a sent wake by finding its token in what the worker was handed. Until
+// 2026-11-10 it looked in `lastUserText`, which the Claude fold never wrote: over 30 days of one
+// machine's outbox, none of 3,074 delivered wakes was confirmed by its token. Each settled when its 60s
+// window closed, on the guess that a live daemon had read it.
+test("the Claude fold records every wake the worker is handed: a turn's, a merged turn's, and one that left the queue mid-turn", () => {
+  const s = newTailState("t", "sid", "/x")
+  const turn = (content: unknown, at: string) => applyRecord(s, { type: "user", timestamp: at, message: { role: "user", content } } as never)
+  turn(`⏰ Your timer fired.\n\n${wakeDeliveryToken("timer-1")}`, "2026-11-09T12:00:00.000Z")
+  assert.deepEqual(s.wakeTokens, ["timer-1"], "a string body")
+  turn([{ type: "text", text: `Two things at once.\n\n${wakeDeliveryToken("pr-2")}\n\n${wakeDeliveryToken("shell-3")}` }], "2026-11-09T12:01:00.000Z")
+  assert.deepEqual(s.wakeTokens, ["timer-1", "pr-2", "shell-3"], "a text-block body, and each wake merged into one turn")
+  // Mid-turn the message reaches the model as an attachment and no user record follows it.
+  applyRecord(s, { type: "assistant", timestamp: "2026-11-09T12:02:00.000Z", message: { content: [{ type: "tool_use", id: "toolu_x", name: "Bash", input: { command: "sleep 30" } }] } } as never)
+  applyRecord(s, {
+    type: "attachment", timestamp: "2026-11-09T12:02:10.000Z",
+    attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: `A heartbeat.\n\n${wakeDeliveryToken("beat-4")}` },
+  } as never)
+  assert.deepEqual(s.wakeTokens, ["timer-1", "pr-2", "shell-3", "beat-4"])
+  // A tool result can quote any token the worker has read; it is not the worker being handed a wake.
+  applyRecord(s, { type: "user", timestamp: "2026-11-09T12:02:20.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_x", content: `grep: ${wakeDeliveryToken("quoted-5")}` }] } } as never)
+  assert.deepEqual(s.wakeTokens, ["timer-1", "pr-2", "shell-3", "beat-4"])
+  // Bounded, newest kept, and replaced rather than mutated so a telemetry read holds what it was given.
+  const before = s.wakeTokens
+  for (let i = 0; i < 80; i++) turn(`again\n\n${wakeDeliveryToken(`n${i}`)}`, "2026-11-09T12:03:00.000Z")
+  assert.equal(s.wakeTokens?.length, 64)
+  assert.equal(s.wakeTokens?.at(-1), "n79")
+  assert.equal(s.wakeTokens?.includes("timer-1"), false)
+  assert.deepEqual(before, ["timer-1", "pr-2", "shell-3", "beat-4"])
 })
 
 // The runtime merges a message queued behind a running turn into the record that delivers it, and one

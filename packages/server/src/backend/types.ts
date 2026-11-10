@@ -128,7 +128,10 @@ export interface NormalizedTail {
   humanSteps?: HumanStep[]
   // When Frizz last delivered a ```question fence correction — see FoldState.questionCorrectedAt.
   questionCorrectedAt?: string
-  lastUserText?: string // the newest drawn user turn's text, Frizz's deliveries included (confirms wake-token delivery)
+  lastUserText?: string // the newest drawn user turn's text, where the backend's fold keeps it (the normalized one)
+  // The wakes that REACHED the worker: the delivery id of every wake token the transcript carries, newest
+  // last. What the scheduler confirms a sent wake by, on every backend (FoldState.wakeTokens).
+  wakeTokens?: readonly string[]
   // The FIRST genuine human turn. Read by the board to NAME an external session whose harness has not
   // named it — see foreignThreadView. Optional everywhere: a transcript with no human turn has none.
   firstUserText?: string
@@ -253,6 +256,14 @@ export interface FoldState {
   // SOURCE 14 reports only the ones after it.
   questionCorrectedAt?: string
   lastUserText?: string // exact text of that same turn when the backend records it — a wake's carries its delivery token
+  // THE WAKES THE WORKER WAS HANDED: the delivery id out of each `<!-- frizz-wake:<id> -->` token in a
+  // user turn or a mid-turn delivery, newest last, bounded (tailer.ts noteWakeTokens). Both folds fill
+  // it. Until 2026-11-10 the scheduler confirmed a sent wake by `lastUserText`, which only the
+  // normalized fold wrote, so on a Claude thread no wake was ever confirmed by its token: every one
+  // settled when its 60s window closed, on the guess that a live daemon had read it. And a later
+  // message overwrote the one string on the other backends. Replaced, never mutated, so a telemetry
+  // read that holds the old array still holds what it was given.
+  wakeTokens?: readonly string[]
   // The FIRST genuine human turn, kept forever — set once and never overwritten. It is what names an
   // EXTERNAL session (one of the human's own terminals) when its harness has not named it: both
   // Claude Code's and Codex's own resume pickers fall back to exactly this, verified by driving each
