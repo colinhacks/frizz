@@ -1442,7 +1442,7 @@ function projectSegment() {
   }
 }
 
-/** The `spawn_thread` handler: POST /_frizz/rpc/dispatch, return the worker-facing result text.
+/** The `spawn_thread` handler: POST `spawnThread` as the calling thread, return the worker-facing result text.
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function spawnThread(args) {
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : ""
@@ -1455,30 +1455,27 @@ async function spawnThread(args) {
   const effort = typeof args.effort === "string" ? args.effort.trim() : ""
   if (!effort) throw new Error("`effort` is required — choose one by complexity (low/medium/high/xhigh/max). There is no default.")
 
-  // THE WAY BACK. A spawned thread starts with nothing but this prompt, so without its spawner's slug it
-  // could not `steer` anything back even when asked to — the footer names it, once, at the end.
-  const parent = process.env.FRIZZ_THREAD_SLUG || process.env.FRIZZ_THREAD
-  const footer = parent
-    ? `\n\n---\nSpawned by the Frizz thread \`${parent}\`. If this prompt asks for results back, or you find ` +
-      `something that thread must know, send it there with \`frizzctl steer ${parent} --message-file <file|->\`.`
-    : ""
   /** @type {Record<string, unknown>} */
-  const body = { prompt: prompt + footer, model, effort }
+  const body = { prompt, model, effort }
   if (typeof args.title === "string" && args.title.trim()) body.title = args.title.trim()
   if (args.backend === "claude" || args.backend === "codex") body.backend = args.backend
-
-  // ANOTHER PROJECT'S BOARD goes through OUR project's `spawnThread`, as a steer does: the server checks
-  // that we are a real thread, finds the project, and writes the footer itself, because it knows our
-  // project's slug and we hold only its id.
   const rawProject = typeof args.project === "string" ? args.project.trim() : ""
-  if (rawProject) {
-    const project = decodeURIComponent(PROJECT_SEGMENT.exec(rawProject)?.[1] ?? rawProject)
-    const { prompt: _withFooter, ...rest } = body
-    const result = (await callRpc("spawnThread", { ...rest, prompt, from: threadSlug(), project }))?.result
+
+  // A THREAD'S SPAWN GOES THROUGH ITS OWN PROJECT'S `spawnThread`, for this board or another project's.
+  // The server checks that we are a real thread, starts the new one no looser than we run, records who
+  // asked for it, and writes the footer that tells it how to steer back (it knows our project's slug and
+  // we hold only its id). Until 2026-11-10 a same-project spawn posted `dispatch` itself, which knows no
+  // caller: the new thread took the Settings default whatever this thread's own permission mode was.
+  const parent = process.env.FRIZZ_THREAD_SLUG || process.env.FRIZZ_THREAD
+  if (parent || rawProject) {
+    const project = rawProject ? decodeURIComponent(PROJECT_SEGMENT.exec(rawProject)?.[1] ?? rawProject) : undefined
+    const result = (await callRpc("spawnThread", { ...body, from: threadSlug(), ...(project ? { project } : {}) }))?.result
     if (typeof result?.slug !== "string" || !result.slug) throw new Error(`spawnThread returned no slug: ${JSON.stringify(result)?.slice(0, 300)}`)
     return spawnedReceipt(result.slug, typeof body.title === "string" ? body.title : result.slug, result.project)
   }
 
+  // NO THREAD IS CALLING (the command run from a person's own terminal): a plain dispatch to the board
+  // this checkout belongs to, at the Settings default, with nobody to steer back to.
   const port = serverLockPort()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS)

@@ -354,8 +354,9 @@ test("the caller is the environment's thread and nothing a command line can say"
   }
 })
 
-// `spawn-thread --project` goes to OUR project's `spawnThread`, never to the other project's `dispatch`:
-// our project verifies the caller and writes the footer, because it knows our slug and we hold its id.
+// `spawn-thread` goes to OUR project's `spawnThread`, with or without `--project`, and never to a
+// `dispatch`: our project verifies the caller, starts the new thread no looser than the caller runs, and
+// writes the footer, because it knows our slug and we hold its id.
 test("`spawn-thread --project` asks our own project, with the raw prompt, and links the thread into the other one", async () => {
   const fake = await fakeFrizz()
   try {
@@ -374,13 +375,20 @@ test("`spawn-thread --project` asks our own project, with the raw prompt, and li
     await run(["spawn-thread", "--project", "http://localhost:9393/project/nub/thread/some-thread/full", "--model", "opus", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
     assert.equal(fake.seen[0]?.body.project, "nub")
 
-    // With no project, the spawn is the same-project `dispatch` it always was, footer and all.
+    // With no project it is the same call naming none: a `dispatch` knows no caller, so until
+    // 2026-11-10 a same-project spawn started at the Settings default whatever its spawner ran as.
     fake.seen.length = 0
     const local = await run(["spawn-thread", "--model", "opus", "--effort", "high", "--prompt", "x"], { env: worker(fake, "the-caller") })
     assert.equal(local.code, 0, local.stderr)
-    assert.equal(fake.seen[0]?.url, "/_frizz/proj-1/rpc/dispatch")
-    assert.match(fake.seen[0]?.body.prompt, /Spawned by the Frizz thread `the-caller`\. .*`frizzctl steer the-caller --message-file <file\|->`\.$/s)
+    assert.deepEqual(fake.seen, [{ url: "/_frizz/proj-1/rpc/spawnThread", body: { model: "opus", effort: "high", prompt: "x", from: "the-caller" } }])
     assert.match(local.stdout, /\(\/thread\/spawned-child\)/)
+
+    // Only a shell with no thread at all (a person's own terminal) dispatches plainly: nobody is asking.
+    fake.seen.length = 0
+    const terminal = await run(["spawn-thread", "--model", "opus", "--effort", "high", "--prompt", "x"], { env: { FRIZZ_STATE_DIR: fake.stateDir } })
+    assert.equal(terminal.code, 0, terminal.stderr)
+    assert.equal(fake.seen[0]?.url.endsWith("/rpc/dispatch"), true)
+    assert.equal(fake.seen[0]?.body.prompt, "x")
 
     // The other project's board takes a real caller: a shell with no thread has none to send.
     fake.seen.length = 0

@@ -60,7 +60,9 @@ function tenant(home: string, id: string, name: string) {
   const storage = createStorage(join(dir, "ui.db"), id)
   const snapshot = { threads: [] } as unknown as BoardSnapshot
   const board = { refresh: () => snapshot, snapshot: async () => snapshot } as unknown as BoardManager
-  const dispatched: Array<{ input: DispatchInput; backend: unknown }> = []
+  const dispatched: Array<{ input: DispatchInput; backend: unknown; permissionMode: unknown }> = []
+  // What Settings holds for new threads on this machine: the shipped default until a test says otherwise.
+  const settings = { permissionMode: "auto" }
   const audited: AuditRecord[] = []
   const tenants: Array<ReturnType<NonNullable<AppContext["activeTenants"]>>[number]> = []
   const ctx = {
@@ -68,20 +70,21 @@ function tenant(home: string, id: string, name: string) {
     transcriptChange: new Emitter<string[]>(),
     bus: new Bus(),
     dispatcher: {
-      dispatch: async (input: DispatchInput, opts: { backend?: unknown }) => {
-        dispatched.push({ input, backend: opts.backend })
+      dispatch: async (input: DispatchInput, opts: { backend?: unknown; permissionMode?: unknown }) => {
+        dispatched.push({ input, backend: opts.backend, permissionMode: opts.permissionMode })
         return { slug: `new-in-${name}`, sessionId: `sid-new-in-${name}` }
       },
     },
     audit: { append: (record: AuditRecord) => void audited.push(record) },
     activeTenants: () => tenants,
+    getSettings: () => settings,
   } as unknown as AppContext
   const router = createRouter(ctx)
-  const thread = (slug: string, title?: string) => {
-    storage.upsertSession(row(slug))
+  const thread = (slug: string, title?: string, runs: Partial<Pick<SessionRow, "permission_mode" | "permission_pending" | "backend">> = {}) => {
+    storage.upsertSession({ ...row(slug), ...runs })
     if (title) storage.setTitle(slug, title)
   }
-  return { project, storage, ctx, router, dispatched, audited, tenants, thread }
+  return { project, storage, ctx, router, dispatched, audited, tenants, thread, settings }
 }
 
 /** Open every tenant in every other's view, the way the server's tenant map lists them. */
@@ -106,8 +109,9 @@ test("a spawn naming another project is dispatched by THAT project's router, wit
   assert.deepEqual(made, { slug: "new-in-nub", sessionId: "sid-new-in-nub", project: "nub" })
   assert.equal(frizz.dispatched.length, 0, "nothing starts on the spawner's own board")
   assert.equal(nub.dispatched.length, 1)
-  const [{ input, backend }] = nub.dispatched
+  const [{ input, backend, permissionMode }] = nub.dispatched
   assert.equal(backend, "claude")
+  assert.equal(permissionMode, "auto", "a spawner with no recorded mode binds nothing: the Settings default")
   assert.deepEqual({ ...input, prompt: undefined }, { model: "opus", effort: "high", title: "Bump the SDK", backend: "claude", prompt: undefined })
   assert.equal(
     input.prompt,
@@ -144,7 +148,53 @@ test("a project named by registry id is the same project, and naming your own is
   assert.deepEqual(own, { slug: "new-in-frizz", sessionId: "sid-new-in-frizz" }, "no project in the receipt: the thread is beside the spawner")
   assert.equal(frizz.dispatched.length, 1)
   assert.match(frizz.dispatched[0].input.prompt, /Spawned by the Frizz thread `sender`\. .*`frizzctl steer sender --message-file <file\|->`\.$/s,
-    "a same-project footer names no project, as the command's own footer does not")
+    "a same-project footer names no project")
+
+  // And so is naming none at all, which is what `frizzctl spawn-thread` sends without `--project`.
+  const bare = await frizz.router.spawnThread.handler({ input: { ...ask, from: "sender" } })
+  assert.deepEqual(bare, { slug: "new-in-frizz", sessionId: "sid-new-in-frizz" })
+  assert.equal(frizz.dispatched.length, 2)
+  assert.equal(frizz.dispatched[1].input.prompt, frizz.dispatched[0].input.prompt)
+  const landed = frizz.audited.filter((r) => r.action === "dispatch").at(-1)
+  assert.deepEqual(landed?.detail?.spawnedBy, { thread: "sender" }, "the board's own log names who asked")
+})
+
+// `frizzctl` is pre-approved in every permission mode, so a spawn is one command a worker runs unasked.
+// Until 2026-11-10 the new thread took the Settings default whatever its spawner ran as: on a machine
+// set to Bypass, a thread narrowed to `default` started a Bypass thread on a prompt it wrote itself.
+test("a spawned thread starts no looser than the thread that asked for it, on its own harness", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("narrowed", undefined, { permission_mode: "default" })
+  frizz.thread("classified", undefined, { permission_mode: "auto" })
+  frizz.thread("raised", undefined, { permission_mode: "bypassPermissions" })
+  frizz.thread("narrowing", undefined, { permission_mode: "bypassPermissions", permission_pending: "acceptEdits" })
+  const spawn = async (from: string, over: { backend?: "claude" | "codex"; project?: string } = {}, on = frizz) => {
+    await frizz.router.spawnThread.handler({ input: { ...ask, from, ...over } })
+    return on.dispatched.at(-1)!.permissionMode
+  }
+
+  // A machine whose Settings default is Bypass: the spawner's own mode is the tighter one.
+  frizz.settings.permissionMode = "bypassPermissions"
+  nub.settings.permissionMode = "bypassPermissions"
+  assert.equal(await spawn("narrowed"), "default")
+  assert.equal(await spawn("classified"), "auto")
+  assert.equal(await spawn("raised"), "bypassPermissions")
+  assert.equal(await spawn("narrowing"), "acceptEdits", "a change the operator made mid-turn already binds")
+  assert.equal(await spawn("narrowed", { project: "nub" }, nub), "default", "and it binds on another project's board too")
+  const landed = nub.audited.find((r) => r.action === "dispatch")
+  assert.equal(landed?.detail?.permissionMode, "default", "the log says what the thread was started as")
+
+  // The shipped default: a thread raised by hand does not pass that on.
+  frizz.settings.permissionMode = "auto"
+  assert.equal(await spawn("raised"), "auto")
+  assert.equal(await spawn("narrowed"), "default")
+
+  // The other harness takes its own dispatch default, as a child thread does: the modes do not map
+  // across, and a Codex mode below Bypass is a sandbox that cannot reach `frizzctl`.
+  assert.equal(await spawn("narrowed", { backend: "codex" }), "bypassPermissions")
 })
 
 test("a registered project nobody has opened yet is opened for the spawn, as a request to it would be", async (t) => {

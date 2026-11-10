@@ -188,7 +188,7 @@ import {
   AcpAgentModels,
   AcpAgentModelsInput,
 } from "@frizz/shared"
-import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
+import { type AppContext, type ThreadInbox, type ThreadPermission, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
 import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command-watch.ts"
 import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
@@ -224,7 +224,7 @@ import { listBoardThreads } from "./thread-listing.ts"
 import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
 import { createGithubHovercardService } from "./github-hovercard.ts"
 import { cancelGithubSignIn, clearGithubCredential, githubAppClientId, githubCredentialStatus, githubSignInState, startGithubSignIn } from "./github-credential.ts"
-import { slugify, resolveSlug, resolveLegacyThreadFile, claudeContractOptions, claudeWorkerSystemPrompt, coldResumePermission } from "./dispatch.ts"
+import { slugify, resolveSlug, resolveLegacyThreadFile, claudeContractOptions, claudeWorkerSystemPrompt, coldResumePermission, permissionIsTighter, spawnedThreadPermission } from "./dispatch.ts"
 import { readCodexModels } from "./backend/codex-models.ts"
 import { peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { deliverableInputText } from "./backend/claude-agent-sdk-protocol.ts"
@@ -1027,15 +1027,33 @@ export function createRouter(ctx: AppContext) {
       target.state === "archived" || target.archived === 1 ? "reopened"
       : ctx.tailer.get(sent.to)?.turn === "in-flight" ? "running"
       : "resting"
-    await deliverFollowUp({ slug: sent.to, sessionId: target.session_id, message: formatThreadMessage(sent.from, sent.message) })
+    // A MESSAGE FROM A TIGHTER THREAD SAYS SO. `frizzctl steer` runs unasked in every mode, so a thread
+    // the human narrowed can put its words into one that asks nobody, and the receiver cannot tell: the
+    // envelope names a colleague. Same harness only, because the modes do not compare across harnesses
+    // (dispatch.ts PERMISSION_LATITUDE), so a Claude thread instructing a Codex one is not marked.
+    const receiver = threadPermissionOf(target)
+    const tighter = sent.sender?.permissionMode && receiver.permissionMode && sent.sender.backend === receiver.backend
+      && permissionIsTighter(sent.sender.permissionMode, receiver.permissionMode)
+      ? { sender: sent.sender.permissionMode, receiver: receiver.permissionMode }
+      : undefined
+    await deliverFollowUp({ slug: sent.to, sessionId: target.session_id, message: formatThreadMessage(sent.from, sent.message, { tighter }) })
     return { slug: target.slug, title: threadTitleOf(target), delivery }
   }
   ctx.threadInbox = receiveThreadMessage
 
-  // THE RECEIVING HALF OF `frizzctl spawn-thread --project`: this project's own dispatch, for a worker in
-  // another project (or this one, naming it). Audited HERE as a `dispatch` naming the spawner, because
-  // this is the board the thread lands on, and so the log a reader of this project checks first.
-  function spawnForThread({ from, input }: Parameters<ThreadSpawner>[0]): Promise<{ slug: string; sessionId: string }> {
+  /** What a thread runs as: its harness, and the mode it is in or about to be in (a change the operator
+   *  made mid-turn is `permission_pending` until the worker takes it). */
+  function threadPermissionOf(row: { backend?: string | null; permission_mode?: string | null; permission_pending?: string | null }): ThreadPermission {
+    const mode = PermissionMode.safeParse(row.permission_pending ?? row.permission_mode)
+    return { backend: (row.backend ?? "claude") as ThreadPermission["backend"], ...(mode.success ? { permissionMode: mode.data } : {}) }
+  }
+
+  // THE RECEIVING HALF OF `frizzctl spawn-thread`: this project's own dispatch, for a worker in this
+  // project or another one. Audited HERE as a `dispatch` naming the spawner, because this is the board
+  // the thread lands on, and so the log a reader of this project checks first. The new thread starts no
+  // looser than the thread that asked for it (dispatch.ts spawnedThreadPermission).
+  function spawnForThread({ from, input, spawner }: Parameters<ThreadSpawner>[0]): Promise<{ slug: string; sessionId: string }> {
+    const permissionMode = spawnedThreadPermission(input.backend ?? "claude", spawner, ctx.getSettings())
     return audit(
       "dispatch",
       {
@@ -1043,9 +1061,10 @@ export function createRouter(ctx: AppContext) {
         detail: {
           prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null,
           spawnedBy: { thread: from.slug, ...(from.project ? { project: from.project } : {}) },
+          permissionMode,
         },
       },
-      () => ctx.dispatcher.dispatch(input, { backend: input.backend }),
+      () => ctx.dispatcher.dispatch(input, { backend: input.backend, permissionMode }),
       (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId } }),
     )
   }
@@ -3023,48 +3042,50 @@ export function createRouter(ctx: AppContext) {
           if (input.from === input.to) {
             throw new Error("That is your own thread. `frizzctl steer` messages ANOTHER thread; to keep a note for yourself, write it to your scratch directory")
           }
-          return receiveThreadMessage({ from: { slug: sender.slug, title: threadTitleOf(sender) }, to: input.to, message: input.message })
+          return receiveThreadMessage({ from: { slug: sender.slug, title: threadTitleOf(sender) }, to: input.to, message: input.message, sender: threadPermissionOf(sender) })
         }
         const from = { slug: sender.slug, title: threadTitleOf(sender), project: projectSlugOf(ctx.project.id) }
-        const receipt = await target.inbox({ from, to: input.to, message: input.message })
+        const receipt = await target.inbox({ from, to: input.to, message: input.message, sender: threadPermissionOf(sender) })
         return { ...receipt, project: target.project }
       }),
     }),
 
-    // ONE WORKER STARTING A THREAD ON ANOTHER PROJECT'S BOARD — `frizzctl spawn-thread --project`
-    // (maintainer 2026-10-28, after steer had crossed projects and spawn had not). A spawn with no
-    // project still goes straight to this project's `dispatch`. This one lands on the SENDER's project, as
-    // a steer does, which verifies the sender and finds the named project (openProjectNamed); that
+    // ONE WORKER STARTING A THREAD — `frizzctl spawn-thread`, on its own board or, with `--project`,
+    // another project's (maintainer 2026-10-28, after steer had crossed projects and spawn had not). Until
+    // 2026-11-10 a spawn with no project went straight to this project's `dispatch`, which knows no
+    // sender: the new thread took the Settings default whatever its spawner ran as, and the audit line
+    // named nobody. Every spawn now lands on the SENDER's project, as a steer does, which verifies the
+    // sender, reads what it runs as, and finds the named project if there is one (openProjectNamed); that
     // project's router then dispatches it (AppContext.threadSpawner), so the thread, its worker's cwd, its
     // board and its audit record are all that project's. The footer telling the new thread how to steer
-    // back is written HERE because only the server knows the sender's project slug — the worker holds its
-    // registry id. The same-project footer is the command's own (frizz-tools.mjs `spawnThread`), and the
-    // two say the same sentence.
+    // back is written HERE, because only the server knows the sender's project slug — the worker holds
+    // its registry id.
     spawnThread: mutation({
       input: SpawnThreadInput,
       output: SpawnThreadResult,
       handler: ({ input }) => audit("spawnThread", {
         project: thisProject,
         thread: input.from,
-        detail: { toProject: input.project, prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
+        detail: { ...(input.project ? { toProject: input.project } : {}), prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
       }, async () => {
         const sender = ctx.storage.getSession(input.from)
         if (!sender) throw new Error(`the calling thread ${input.from} is not registered in this project`)
         // A registered project nobody has opened yet is opened now, as a request addressed to it would
         // be: a steer needs a thread that already exists, but a spawn exists to start work there.
-        const named = findProjectBySegment(input.project)
+        const named = input.project ? findProjectBySegment(input.project) : undefined
         if (named && named.id !== ctx.project.id && !otherOpenProjects().some((open) => open.project.id === named.id)) {
           await ctx.openProject?.(named.id)
         }
-        const open = openProjectNamed(input.project, "no thread can be started there from here")
+        const open = input.project ? openProjectNamed(input.project, "no thread can be started there from here") : undefined
         if (open && !open.threadSpawner) {
           throw new Error(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking new threads yet; retry in a moment`)
         }
         const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender), ...(open ? { project: projectSlugOf(ctx.project.id) } : {}) }
         const { from: _from, project: _project, ...rest } = input
         const dispatch = { ...rest, prompt: input.prompt + spawnedThreadFooter(from) }
-        if (!open) return spawnForThread({ from, input: dispatch })
-        const made = await open.threadSpawner!({ from, input: dispatch })
+        const spawner = threadPermissionOf(sender)
+        if (!open) return spawnForThread({ from, input: dispatch, spawner })
+        const made = await open.threadSpawner!({ from, input: dispatch, spawner })
         return { ...made, project: projectSlugOf(open.project.id) }
       }, (result: SpawnThreadResult) => ({ detail: { spawned: result.slug, ...(result.project ? { spawnedIn: result.project } : {}) } })),
     }),

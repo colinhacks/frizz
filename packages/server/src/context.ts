@@ -45,7 +45,7 @@ import { readThreadTranscript } from "./transcript.ts"
 import { createAcpBridge, type AcpBridge } from "./backend/acp-bridge.ts"
 import { readClaudeAuthState, readClaudePreflightAuth, readCodexAuthState, readCodexBinaryState } from "./backend/auth-status.ts"
 import { launchPrefixArgv, launchPrefixAwareAuth } from "./backend/launch-prefix.ts"
-import { frizzCliEnv, withFrizzCliOnPath, type AgentBackend } from "./backend/types.ts"
+import { frizzCliEnv, withFrizzCliOnPath, type AgentBackend, type BackendKind } from "./backend/types.ts"
 import { sanitizeProviderChildEnvironment } from "./backend/claude-agent-sdk.ts"
 import { commandWatchEnvironment, createCommandWatchService, type CommandWatchService } from "./command-watch.ts"
 import { needsFreshProcessForLimit } from "./backend/usage-limit.ts"
@@ -153,13 +153,19 @@ export class ContextStartupError extends Error {
 }
 
 // The wired singletons every request handler shares. Built once at boot in createContext.
+/** What a calling thread runs as, read off its row by its own project's router: the harness, and the
+ *  permission mode when the row records one. A spawn starts no looser than it, and a message from a
+ *  tighter thread says so (dispatch.ts spawnedThreadPermission, router.ts receiveThreadMessage). */
+export type ThreadPermission = { backend: BackendKind; permissionMode?: PermissionMode }
 /** Deliver one `<thread-message>` into a thread of THIS project: the sender is already verified by the
- *  sending project's router, and `from.project` is set because it is never this one. */
-export type ThreadInbox = (sent: { from: ThreadMessageSender; to: string; message: string }) => Promise<SteerThreadResult>
+ *  sending project's router, and `from.project` is set because it is never this one. `sender` is what
+ *  that thread runs as. */
+export type ThreadInbox = (sent: { from: ThreadMessageSender; to: string; message: string; sender?: ThreadPermission }) => Promise<SteerThreadResult>
 /** Start one thread on THIS project's board for a worker in ANOTHER project (`frizzctl spawn-thread
  *  --project`). The spawner is already verified by its own project's router, which also wrote the
- *  footer naming it into `input.prompt`; `from` is recorded with the dispatch. */
-export type ThreadSpawner = (spawn: { from: ThreadMessageSender; input: DispatchInput }) => Promise<{ slug: string; sessionId: string }>
+ *  footer naming it into `input.prompt`; `from` is recorded with the dispatch, and `spawner` is what
+ *  binds the new thread's permission mode. */
+export type ThreadSpawner = (spawn: { from: ThreadMessageSender; input: DispatchInput; spawner?: ThreadPermission }) => Promise<{ slug: string; sessionId: string }>
 
 export interface AppContext {
   // Random per-process id minted at boot. It rides every board/board-delta SSE frame and the

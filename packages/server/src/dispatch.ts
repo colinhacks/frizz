@@ -534,6 +534,40 @@ export function workerDispatchPermission(kind: BackendKind, settings: Pick<Setti
   return WORKER_DISPATCH_PERMISSION[kind]
 }
 
+// How much a mode lets a worker do unasked, tightest first: `plan` changes nothing, `default` asks before
+// every edit and command, `acceptEdits` asks before commands, `auto` asks a classifier, and
+// `bypassPermissions` asks nobody. The names are one harness's: a Codex mode below `bypassPermissions`
+// is a sandbox, not a prompt (codexSandbox), so two modes are only ever compared ON ONE HARNESS.
+const PERMISSION_LATITUDE: Record<PermissionMode, number> = { plan: 0, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 }
+
+/** Is `mode` strictly tighter than `than`? Both are modes of the same harness. */
+export function permissionIsTighter(mode: PermissionMode, than: PermissionMode): boolean {
+  return PERMISSION_LATITUDE[mode] < PERMISSION_LATITUDE[than]
+}
+
+// The mode a thread STARTED BY ANOTHER THREAD launches with (`frizzctl spawn-thread`).
+//
+// NO LOOSER THAN ITS SPAWNER, on the spawner's own harness. `frizzctl` is pre-approved for every worker
+// (allowedTools above), so a spawn is one command that runs unasked in any mode, and until 2026-11-10 it
+// started the new thread at the Settings default whatever the spawner's own mode was: on a machine whose
+// default is Bypass, a thread the human had narrowed to `default` could start a Bypass thread on a prompt
+// of its own writing and hand it the work its own mode would have asked about. The tighter of the two
+// wins, so a spawn never loosens anything, and a thread raised above the default by hand does not pass
+// that on either.
+//
+// On the OTHER harness the new thread takes that harness's own dispatch default, as a child thread does
+// (router.ts spawnChild): the modes do not map across, and a Codex mode below Bypass cuts the worker off
+// from `frizzctl`. A spawner with no recorded mode (a row older than the column) binds nothing.
+export function spawnedThreadPermission(
+  kind: BackendKind,
+  spawner: { backend: BackendKind; permissionMode?: PermissionMode } | undefined,
+  settings: Pick<Settings, "permissionMode">,
+): PermissionMode {
+  const floor = workerDispatchPermission(kind, settings)
+  if (!spawner?.permissionMode || spawner.backend !== kind) return floor
+  return permissionIsTighter(spawner.permissionMode, floor) ? spawner.permissionMode : floor
+}
+
 // The mode a Claude row COLD-RESUMES with. A persisted per-thread mode always wins; a row with none — a
 // terminal session promoted before adoptSession stamped one — takes the dispatch floor instead of
 // falling through to the bridge's `"default"`, Claude's prompt-on-everything mode, which the worker's

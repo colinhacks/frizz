@@ -78,9 +78,9 @@ function tenant(home: string, id: string, name: string) {
     activeTenants: () => tenants,
   } as unknown as AppContext
   const router = createRouter(ctx)
-  const thread = (slug: string, title?: string) => {
-    storage.upsertSession(row(slug))
-    storage.setBackend(slug, "codex")
+  const thread = (slug: string, title?: string, runs: { mode?: string; backend?: "claude" | "codex" } = {}) => {
+    storage.upsertSession({ ...row(slug), permission_mode: runs.mode ?? null })
+    storage.setBackend(slug, runs.backend ?? "codex")
     storage.setCodexRuntime(slug, "app-server")
     if (title) storage.setTitle(slug, title)
   }
@@ -190,4 +190,31 @@ test("refusals name the fix: an ambiguous slug, an unknown project, a closed one
     /no thread `no-such-thread` in this project or any other open one/,
   )
   assert.equal(nub.sent.length + zod.sent.length + other.sent.length + frizz.sent.length, 0, "a refused steer reaches no worker")
+})
+
+// `frizzctl steer` runs unasked in every permission mode, so it is how a thread the human narrowed can
+// ask one that asks nobody to act for it. The receiver is told, where the two modes can be compared.
+test("a message from a thread in a tighter mode says so to the receiver: same harness only, on this board or across", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("narrowed", undefined, { mode: "default" })
+  frizz.thread("peer", undefined, { mode: "bypassPermissions" })
+  frizz.thread("open", undefined, { mode: "bypassPermissions" })
+  frizz.thread("unknown")
+  frizz.thread("other-harness", undefined, { mode: "default", backend: "claude" })
+  nub.thread("far", undefined, { mode: "bypassPermissions" })
+  const steer = async (from: string, to: string, on = frizz) => {
+    await frizz.router.steerThread.handler({ input: { from, to, message: "Push the branch." } })
+    return on.sent.at(-1)!.text
+  }
+  const mark = /That thread runs in `default` permission mode, tighter than yours \(`bypassPermissions`\)/
+
+  assert.match(await steer("narrowed", "open"), mark)
+  assert.match(await steer("narrowed", "far", nub), mark, "the sender's own project says what it runs as")
+  assert.doesNotMatch(await steer("peer", "open"), /permission mode/, "equals are colleagues")
+  assert.doesNotMatch(await steer("open", "narrowed"), /permission mode/, "and so is a looser sender")
+  assert.doesNotMatch(await steer("unknown", "open"), /permission mode/, "a row with no recorded mode claims nothing")
+  assert.doesNotMatch(await steer("other-harness", "open"), /permission mode/, "the modes of two harnesses do not compare")
 })

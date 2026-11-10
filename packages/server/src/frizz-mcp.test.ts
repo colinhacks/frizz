@@ -220,9 +220,11 @@ test("`spawn_thread` POSTs the real dispatch RPC and returns the thread's drawer
   }
 })
 
-// THE WAY BACK: a spawned thread starts with nothing but its prompt, so the shim names the spawner at
-// the end of it — without that slug the child could not `steer` its results back even when asked to.
-test("`spawn_thread` names the spawning thread at the end of the prompt, so the child can steer back", async () => {
+// WHO IS ASKING: a spawn goes to the calling thread's own project as `spawnThread`, naming the caller,
+// and never to `dispatch`, which knows none. The server starts the new thread no looser than its spawner
+// and writes the footer that tells it how to steer back (router.cross-project-spawn.test.ts), so the
+// shim sends the task untouched.
+test("`spawn_thread` asks as the CALLING thread, with the task untouched: the server binds the new thread to its spawner", async () => {
   const seen: Array<{ url: string; body: any }> = []
   const http = createServer((req, res) => {
     let body = ""
@@ -244,10 +246,8 @@ test("`spawn_thread` names the spawning thread at the end of the prompt, so the 
     rpc.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "spawn_thread", arguments: { prompt: "do the thing", model: "opus", effort: "high" } } })
     const call = await rpc.next(2)
     assert.equal(call.result.isError, undefined)
-    const prompt: string = seen[0].body.prompt
-    assert.ok(prompt.startsWith("do the thing\n\n---\n"), "the task comes first, untouched")
-    assert.match(prompt, /Spawned by the Frizz thread `the-coordinator`/)
-    assert.match(prompt, /send it there with `frizzctl steer the-coordinator --message-file <file\|->`/)
+    assert.match(seen[0].url, /\/rpc\/spawnThread$/)
+    assert.deepEqual(seen[0].body, { prompt: "do the thing", model: "opus", effort: "high", from: "the-coordinator" })
     // …and the spawner is told the child can now reach it, and how to reach the child.
     assert.match(call.result.content[0].text, /It knows your slug/)
     assert.match(call.result.content[0].text, /with `frizzctl steer spawned-child`/)
@@ -380,7 +380,7 @@ test("the tools address the CALLING project's RPC, at the lock the singleton act
     // on spawn's: a timer armed on the launcher's board would fire into a thread that is not ours.
     rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "timer", arguments: { action: "list" } } })
     assert.equal((await rpc.next(3)).result.isError, undefined)
-    assert.deepEqual(seen, [`/_frizz/${projectId}/rpc/dispatch`, `/_frizz/${projectId}/rpc/listOwnThreadTimers`])
+    assert.deepEqual(seen, [`/_frizz/${projectId}/rpc/spawnThread`, `/_frizz/${projectId}/rpc/listOwnThreadTimers`])
   } finally {
     rpc.kill()
     http.close()
