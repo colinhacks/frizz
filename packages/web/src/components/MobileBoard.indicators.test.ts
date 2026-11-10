@@ -42,7 +42,7 @@ for (const { name, over, glyph, spins } of cases) {
     // Pin mobile's delegation to the desktop renderer, not a second copy of its glyph rules.
     assert.ok(mobile.includes(desktop), "the exact desktop glyph, geometry and tone")
     assert.ok(mobile.includes(glyph), "the expected state symbol")
-    assert.equal(mobile.includes("<animate"), spins, "only moving work spins")
+    assert.equal(mobile.includes("data-box-spinner"), spins, "only moving work spins")
     assert.match(mobile, /role="img" aria-label="[^"]+"/, "the state is spoken on touch devices")
   })
 }

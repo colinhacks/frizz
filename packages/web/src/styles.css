@@ -533,6 +533,28 @@ body {
   0%, 100% { opacity: 0; }
   50% { opacity: 1; }
 }
+/* A dot scrolled out of view holds still (lib/offscreenPause.ts sets the attribute). An infinite pulse
+   nobody can see still costs a frame every vsync, and Chrome culls none of it: the Console's 16 dots,
+   all below the fold, held the idle page at 7-8% of a core against 0.8% with them paused (2026-11-09).
+   Paused, not removed, so a dot scrolling back in resumes from the phase it stopped at. */
+.frizz-live-dot[data-offscreen],
+.frizz-live-dot[data-offscreen]::before,
+.frizz-live-dot[data-offscreen]::after {
+  animation-play-state: paused;
+}
+/* The rail's spinner (components/BoxSpinner.tsx): a bright segment travelling the rounded box's
+   perimeter, 50 → 0 on a 50-unit dash cycle, linear, one lap per 1.1s. stroke-dashoffset cannot run on
+   the GPU, so this ticks on the main thread while it is visible; off screen it holds still like the dot. */
+.frizz-box-spinner-lap {
+  animation: frizz-box-spinner-lap 1.1s linear infinite;
+}
+[data-offscreen] .frizz-box-spinner-lap {
+  animation-play-state: paused;
+}
+@keyframes frizz-box-spinner-lap {
+  from { stroke-dashoffset: 50; }
+  to { stroke-dashoffset: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .frizz-live-dot { animation: none; background: transparent; border: 2px solid var(--live-dot); }
   .frizz-live-dot::before,

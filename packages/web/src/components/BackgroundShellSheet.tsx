@@ -11,6 +11,7 @@ import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { BLOCK_RADIUS } from "./TranscriptCard.tsx"
 import { CodeBody } from "./CodeBody.tsx"
 import { DrawerStopCheck } from "./DrawerStopCheck.tsx"
+import { LiveDot } from "./LiveDot.tsx"
 
 // Shared by the command block and its no-command fallback so the two cannot drift apart.
 const commandBlockClass = `font-mono-keep overflow-x-auto whitespace-pre-wrap break-words ${BLOCK_RADIUS} border border-border bg-bg/75 px-4 py-2.5 text-[12px] leading-relaxed text-fg/85`
@@ -278,7 +279,7 @@ function OutputSheet({
                 <section>
                   <div className="mb-2 flex items-center gap-2">
                     <h2 className="petite-caps text-[10px] text-muted-65">Output</h2>
-                    {running && <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator={kind === "monitor" ? "monitor-drawer" : "shell-drawer"} />}
+                    {running && <LiveDot aria-hidden hue="shell" data-running-indicator={kind === "monitor" ? "monitor-drawer" : "shell-drawer"} />}
                     {truncated && <span className="text-[10.5px] text-muted-50">Showing latest 512 KB</span>}
                   </div>
                   {output ? (

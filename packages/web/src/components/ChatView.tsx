@@ -19,6 +19,7 @@ import { splitThreadKey } from "../lib/threadKey.ts"
 import { DiffBlock, PathLink } from "./DiffBlock.tsx"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { CodeBody } from "./CodeBody.tsx"
+import { LiveDot } from "./LiveDot.tsx"
 import { resolveFileLanguage } from "../lib/syntaxHighlight.ts"
 import { TodoBlock } from "./TodoBlock.tsx"
 import { followUpParentsIn, splitMessageQuestions, parseQuestionBlock, type QuestionKind, type BlockAnswer, type MessageAnswering } from "../lib/questionBlocks.ts"
@@ -2364,11 +2365,11 @@ function ToolLiveMark({ status, backgroundState, liveBackgroundState, startedAt 
   // to unlearn. `pending && background` is the fallback: detached, but no live op correlated to it.
   const mark =
     liveBackgroundState === "running" ? (
-      <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="tool-disclosure" />
+      <LiveDot aria-hidden hue="shell" data-running-indicator="tool-disclosure" />
     ) : liveBackgroundState === "stale" ? (
       <span className={CHILD_STALE_DOT_CLASS} title={CHILD_STALE_SHELL_TITLE} />
     ) : hasRunningToolIndicator(status, backgroundState) || foregroundRunning ? (
-      <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="tool-disclosure" />
+      <LiveDot aria-hidden hue="shell" data-running-indicator="tool-disclosure" />
     ) : null
   if (!mark) return null
   return <span className="frizz-tool-mark">{mark}</span>
@@ -2902,7 +2903,7 @@ export function AgentBlock({
   // row in the transcript, and the runtime in the right-hand column is what says it ran and stopped.
   const mark =
     running ? (
-      <span aria-hidden className="frizz-live-dot frizz-live-dot--agent" data-running-indicator="subagent-disclosure" />
+      <LiveDot aria-hidden hue="agent" data-running-indicator="subagent-disclosure" />
     ) : live?.state === "stale" ? (
       <span className={CHILD_STALE_DOT_CLASS} title={CHILD_STALE_TITLE} />
     ) : live?.state === "rested" ? (
