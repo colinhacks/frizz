@@ -1072,6 +1072,41 @@ test("a Bash that \"send now\" moved to the background stays pending, shows the 
   assert.equal(parseTranscript([launch, handoff, pushed, notification].join("\n"))[0].tools[0].status, "completed", "the build's own completion ends the card")
 })
 
+// What says a command was detached is the record's structured result, as in the tailer (tailer.test.ts
+// "a handoff that follows the command's own output…"): the text is the command's output with the notice
+// appended, so the notice can follow output, and output can quote the notice.
+test("a handoff that follows the command's own output still detaches the card, and output that only quotes the notice does not", () => {
+  const call = (id: string, command: string) => JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-11-09T00:00:00.000Z",
+    message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Bash", input: { command, description: "Run it", timeout: 590000 } }] },
+  })
+  const result = (id: string, content: string, toolUseResult: unknown) => JSON.stringify({
+    type: "user", timestamp: "2026-11-09T00:10:00.000Z", toolUseResult,
+    message: { content: [{ type: "tool_result", tool_use_id: id, content }] },
+  })
+  const notice = (taskId: string) => `Command did not complete within its 590s timeout and was moved to the background (ID: ${taskId}). Output is being written to: /tmp/tasks/${taskId}.output. You will be notified when it completes.`
+
+  // Printed first, then outlived its timeout: 26 of the 56 real handoffs in one project's newest sessions.
+  const printed = "✔ boots (12ms)\n✔ folds (40ms)"
+  const after = [call("bash-suite", "nub run test"), result("bash-suite", `${printed}\n\n${notice("bq7k2m9xa")}`, { stdout: printed, stderr: "", interrupted: false, backgroundTaskId: "bq7k2m9xa" })]
+  const detached = parseTranscript(after.join("\n"))[0].tools[0]
+  assert.equal(detached.status, "pending", "still running, whatever its text opens with")
+  assert.equal(detached.backgroundState, "background")
+  assert.equal(detached.shellId, "bash-suite")
+  const done = JSON.stringify({
+    type: "attachment", timestamp: "2026-11-09T00:20:00.000Z",
+    attachment: { type: "queued_command", commandMode: "task-notification", prompt: "<task-notification>\n<task-id>bq7k2m9xa</task-id>\n<status>completed</status>\n<summary>Background command \"Run it\" completed (exit code 0)</summary>\n</task-notification>" },
+  })
+  assert.equal(parseTranscript([...after, done].join("\n"))[0].tools[0].status, "completed", "and its own notification, by task id alone, ends it")
+
+  // `cat` on a file whose first line is the notice: the harness described the result and named no task.
+  const quoted = `${notice("zzzzzzzzz")}\nthe rest of the notes`
+  const read = parseTranscript([call("bash-cat", "cat notes.txt"), result("bash-cat", quoted, { stdout: quoted, stderr: "", interrupted: false })].join("\n"))[0].tools[0]
+  assert.equal(read.status, "completed", "an ordinary finished command, not a card that spins for good")
+  assert.notEqual(read.backgroundState, "background")
+})
+
 test("a `stopped` RECOVERY notification back-fills EVERY orphaned card it names (task-ids only)", () => {
   // A new session's recovery record carries one block naming every orphan by runtime task-id, NO
   // tool-use-ids, status "stopped". Both cards must end (cancelled), not just the first.

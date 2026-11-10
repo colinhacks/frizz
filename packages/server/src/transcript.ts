@@ -1689,7 +1689,20 @@ function interruptCutToolResult(text: string): boolean {
 // cancelled and has not failed. It is now a detached shell that will notify on exit, exactly like one
 // launched with `run_in_background`. Kept in lockstep with the tailer's AUTO_BACKGROUND_ACK_RE, which
 // quotes both wordings.
-function autoBackgroundedToolResult(text: string): boolean {
+//
+// WHAT SAYS SO IS THE RECORD'S STRUCTURED RESULT, NOT THE SENTENCE (tailer.ts backgroundHandoff has the
+// measurements): the text is the command's output with the notice appended, so the notice follows
+// whatever the command had printed, and a command can print the notice itself. Read off the text alone,
+// a handoff after output drew its card COMPLETED and its real completion landed on nothing, and `cat`
+// on a file that opened with the sentence drew a card that spun for good. The text decides only for a
+// record that carries no structured result at all. Returns the handoff's task id where the harness
+// gave one, `true` where only the text says so, and `false` otherwise.
+function autoBackgroundedToolResult(rec: Raw, text: string): string | boolean {
+  const result = rec.toolUseResult as unknown
+  if (result !== undefined) {
+    const id = result && typeof result === "object" ? (result as { backgroundTaskId?: unknown }).backgroundTaskId : undefined
+    return typeof id === "string" && id.length > 0 ? id : false
+  }
   return /^\s*Command (?:did not complete within its .{0,40}?and )?was moved to the background/.test(text)
 }
 
@@ -1754,7 +1767,12 @@ function attachToolResults(
     // shell went into the background, and its real completion landed on nothing — the transcript half of
     // "a background bash script completed, but it did not resume the agent" (2026-07-30).
     const promoted = entry.calls[0]
-    if (promoted && text && autoBackgroundedToolResult(text) && b.is_error !== true) {
+    // Only a Bash card that is not already a background one: a `run_in_background` launch carries the
+    // same structured id, and is registered at its dispatch.
+    const handoff = promoted && text && b.is_error !== true && entry.name === "Bash" && promoted.backgroundState !== "background"
+      ? autoBackgroundedToolResult(rec, text)
+      : false
+    if (promoted && handoff) {
       for (const call of entry.calls) {
         call.backgroundState = "background"
         // Same launch key as a deliberate background launch — the tailer parks an auto-backgrounded
@@ -1798,6 +1816,7 @@ function attachToolResults(
       // carry both, and a field cannot drift the way an English sentence can); the regex mirrors the
       // tailer so a shape that only ever spells it out still correlates.
       const taskId =
+        (typeof handoff === "string" ? handoff : undefined) ?? // the harness's own id outranks one the output printed
         text?.match(/Command running in background with ID:\s*(\S+)/)?.[1]?.replace(/\.$/, "") ??
         text?.match(/was moved to the background \(ID:\s*([^)\s]+)\)/)?.[1] ??
         text?.match(/Monitor started \(task\s+(\w+)/)?.[1] ??
