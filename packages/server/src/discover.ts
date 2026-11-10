@@ -8,10 +8,10 @@ import { dirname, join } from "node:path"
 // when the file is ABSENT (a worker that failed to write it) or, hypothetically, MOVED (a `--fork-session`
 // re-id, which frizz does not use today), the read side has no recovery and the row strands.
 //
-// Every frizz worker's transcript CONTENT carries a built-in discovery key: its scratchpad path
-// `threads/<pinnedId>/scratch.md`, baked into the first user message (dispatch.ts composePrompt) AND re-injected
-// in the per-turn system prompt (scratchpadOrientation), so it survives compaction and would survive a
-// fork. The pinnedId there is the ORIGINAL session id regardless of any filename drift. So to find a
+// Every frizz worker's transcript CONTENT carries a built-in discovery key: its scratch-directory path
+// `threads/<pinnedId>/`, baked into the first user message (dispatch.ts composePrompt) and, for a Claude
+// worker, into what its SessionStart hooks inject at every start, resume and compaction, so it would
+// survive a fork. The pinnedId there is the ORIGINAL session id regardless of any filename drift. So to find a
 // session's real transcript we scan the project log dir for a *.jsonl whose HEAD contains that sentinel;
 // newest match wins.
 //
@@ -19,8 +19,8 @@ import { dirname, join } from "node:path"
 // to `undefined` (no match), NEVER throws.
 
 // Only the file HEAD is read: the scratchpad sentinel appears in the FIRST user message (the very top of
-// the transcript) and again in the re-injected system prompt near each turn, so the opening chunk is
-// sufficient and bounds the per-file cost — critical since a live transcript can be tens of MB.
+// the transcript), so the opening chunk is sufficient and bounds the per-file cost — critical since a
+// live transcript can be tens of MB.
 const HEAD_BYTES = 128 * 1024
 // Never consider a transcript older than this — discovery is for a LIVE thread whose file drifted, and
 // scanning ancient logs only invites a false match. Generous vs. a real session's activity cadence.

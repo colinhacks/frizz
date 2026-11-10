@@ -1266,3 +1266,12 @@ Colin, on whether agents can read their own CI logs: *"Perhaps we should be prov
 - **`frizzGithubWorkerEnv` now asks whether the move costs a write.** Keyward on PATH: it doesn't. No Keyward and a sign-in of the operator's own: it would, so the worker keeps that sign-in, as before. No Keyward and no sign-in: there is no write to lose.
 - **Whether `gh` has a sign-in comes from its token variables and `hosts.yml`, never from running it.** This runs on every worker start. `hosts.yml` names a keychain-held sign-in as well, so nothing here can raise a keychain prompt. A sign-in to any host counts, because the move would hide it just the same, and an expired one counts, which leaves that machine as it was.
 - **The hook's read-only block has a second form for this machine.** It tells the worker to hand a write to the human as steps. The first form names a `keyward` that isn't there.
+
+## 2026-11-10: a Claude worker's system prompt names no session, so threads share its cache
+
+Claude Code sends the appended system prompt as one cached block, and a block is read from the cache only when every byte matches. The scratch line (`SCRATCH DIRECTORY: .frizz/threads/<session id>/ …`) sat between the contract and `FRIZZ.md`, so one line of the block differed per thread and every thread's first call wrote the whole block again.
+
+- **`claudeWorkerSystemPrompt` is the contract and `FRIZZ.md`, and takes no session id.** Measured with two real Haiku workers dispatched one after the other on a throwaway project: with the line, both read 12,807 tokens and wrote 53,237 on their first call; without it the second read 43,924 and wrote 21,928.
+- **The path reaches a Claude worker from three other places.** The first user message, and `session-seed.mjs` and `scratchpad.mjs` on every SessionStart: a startup, a resume, a clear and a compaction. On a cold resume of a real worker both hooks ran and named it. The contract's own sentence already sends the worker there ("exact path in your session-start context").
+- **Codex, ACP and OpenCode keep the line.** They have no hook that runs when a session starts.
+- **It reaches new threads only.** Claude Code keeps a thread's first system prompt across a resume.

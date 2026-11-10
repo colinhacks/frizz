@@ -378,10 +378,14 @@ test("dispatch: creates an EMPTY scratch dir (not a thread file), argv carries i
   assert.ok(existsSync(scratchDir), "scratch directory created")
   assert.deepEqual(readdirSync(scratchDir), [], "nothing is provisioned inside it")
 
-  // argv: the SCRATCH orientation rides the system prompt; the user message carries the path + TASK
-  // and NONE of the retired thread-ownership contract.
+  // argv: the system prompt names NO session, so that a second thread sends the very same text and
+  // reads the first one's cached block (claudeWorkerSystemPrompt); the user message carries the path +
+  // TASK and NONE of the retired thread-ownership contract.
   const cmd = h.spawned[0].cmd
-  assert.ok(systemPromptOf(cmd).includes(`SCRATCH DIRECTORY: .frizz/threads/${sessionId}/`))
+  assert.ok(!systemPromptOf(cmd).includes(sessionId), "nothing of this thread in the system prompt")
+  const second = await h.dispatcher.dispatch({ prompt: "Do another thing.", model: "opus", effort: "high" })
+  assert.notEqual(second.sessionId, sessionId)
+  assert.equal(systemPromptOf(h.spawned[1].cmd), systemPromptOf(cmd), "two threads, one system prompt")
   const userPrompt = cmd[cmd.length - 1]
   assert.ok(userPrompt.includes(`.frizz/threads/${sessionId}/`))
   assert.ok(userPrompt.endsWith("\n\nDo the thing.")) // the task is the tail, directly below the banner
@@ -409,9 +413,11 @@ test("adopt: requires the legacy file, provisions a scratch dir, orientation is 
   // A scratch directory is provisioned even for an adopted thread.
   assert.ok(existsSync(join(h.dir, ".frizz", "threads", sessionId)))
 
-  // System prompt: scratch orientation + the adoption note framing the file as CONTEXT, not a contract.
+  // System prompt: the adoption note framing the file as CONTEXT, not a contract. The scratch
+  // directory's path rides the first message, as on a dispatch.
   const sys = systemPromptOf(h.spawned[0].cmd)
-  assert.ok(sys.includes(`SCRATCH DIRECTORY: .frizz/threads/${sessionId}/`))
+  assert.ok(!sys.includes(sessionId))
+  assert.ok(h.spawned[0].cmd.at(-1)!.includes(`.frizz/threads/${sessionId}/`))
   assert.ok(sys.includes("CONTEXT, not a contract"))
   assert.ok(sys.includes("adopt-fixture.md"))
   const row = h.storage.getSession(slug)

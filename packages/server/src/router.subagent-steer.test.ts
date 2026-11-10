@@ -599,7 +599,7 @@ test("the × STOPS a background shell for real, retires the row, and TELLS the w
     assert.equal(h.notices[0]!.permissionMode, "auto", "the dispatch floor, not undefined → default")
     // …and for the same race, the worker contract: a fork without it is a worker with no contract for
     // as long as that daemon lives, because every later message reconnects to it.
-    assert.equal(h.notices[0]!.appendSystemPrompt, claudeWorkerSystemPrompt("sid-t", h.ctx.project.dir), "the notice carries the worker system prompt")
+    assert.equal(h.notices[0]!.appendSystemPrompt, claudeWorkerSystemPrompt(h.ctx.project.dir), "the notice carries the worker system prompt")
   } finally {
     h.cleanup()
   }

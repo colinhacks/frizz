@@ -363,9 +363,10 @@ export function scratchpadHookScript(): string | undefined {
 
 // The first USER message a dispatched agent receives: scratch-directory orientation + custom
 // instructions + task. Session-first (2026-07-09) — the old thread-ownership contract is REPLACED by
-// this orientation (a new dispatch owns no .frizz file). The fixed worker prompt (workerPrompt.ts) and
-// the same scratch line at SYSTEM level travel via --append-system-prompt (see buildClaudeCommand) so
-// they survive compaction and re-apply on resume; this composes the visible-message half.
+// this orientation (a new dispatch owns no .frizz file). The fixed worker prompt (workerPrompt.ts)
+// travels at SYSTEM level, so it survives compaction and re-applies on resume; this composes the
+// visible-message half. It is the first of the places a worker is told its scratch directory's path,
+// and for Claude the only one at dispatch besides the SessionStart hooks (claudeWorkerSystemPrompt).
 export function composePrompt(sessionId: string, prompt: string, kind: BackendKind = "claude"): string {
   // The sub-agent clause is the ONE thing that differs between backends here: Claude's children are
   // dispatched with a prompt this worker writes, so it must be told to name the directory in it; codex's
@@ -385,13 +386,23 @@ export function composePrompt(sessionId: string, prompt: string, kind: BackendKi
   return `${scratch}${handoff}\n\n\n${DISPATCH_TASK_BANNER_MARKER}${prompt}`
 }
 
-// The appended SYSTEM prompt a broker Claude worker runs under: the worker contract, the scratch line
-// and the project's FRIZZ.md. Compaction never touches it — it is not a message — but a cold resume
-// forks the daemon with whatever its caller passed, and a fork without it is a worker with no contract
-// for as long as that daemon lives: every later follow-up reconnects to it and its own copy is
-// ignored. So every caller that can reach the bridge's `followUp` builds it here.
-export function claudeWorkerSystemPrompt(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
-  return [loadWorkerPrompt("claude", contract), scratchpadOrientation(sessionId, "claude"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+// The appended SYSTEM prompt a broker Claude worker runs under: the worker contract and the project's
+// FRIZZ.md. Compaction never touches it — it is not a message — but a cold resume forks the daemon with
+// whatever its caller passed, and a fork without it is a worker with no contract for as long as that
+// daemon lives: every later follow-up reconnects to it and its own copy is ignored. So every caller
+// that can reach the bridge's `followUp` builds it here.
+//
+// IT NAMES NO SESSION, AND MUST NOT: it takes no session id so that it cannot. Claude Code sends it as
+// one cached block, and a block is read from the cache only when it is byte-identical, so the same
+// text from every thread of a project (same contract options, same FRIZZ.md) is written once and read
+// by the rest. Until 2026-11-10 the scratch line sat between the contract and FRIZZ.md with the
+// thread's session id in it: one line in 1,400 differed, and every thread's first call wrote the
+// whole block afresh (about 40k tokens here) instead of reading it. The path still reaches a Claude
+// worker three ways, none of them in the cached block: the first user message (composePrompt), and
+// session-seed.mjs and scratchpad.mjs on every SessionStart, which is a startup, a resume, a clear
+// and a compaction. Codex, ACP and OpenCode keep the line: they have no such hook.
+export function claudeWorkerSystemPrompt(projectDir: string, contract: WorkerContractOptions = {}): string {
+  return [loadWorkerPrompt("claude", contract), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The codex twin: the `baseInstructions` a Codex worker's thread runs under. Sent with its
@@ -426,8 +437,9 @@ export function opencodeWorkerContract(sessionId: string, projectDir: string, co
   return [loadWorkerPrompt("opencode", contract), scratchpadOrientation(sessionId, "opencode"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
-// The SYSTEM-level scratch-directory orientation (survives compaction, rebuilds on every resume).
-// Passed as extraSystemPrompt on dispatch, adopt, AND the followUp resume path.
+// The SYSTEM-level scratch-directory orientation (survives compaction, rebuilds on every resume), for
+// the backends with no SessionStart hook to carry the path: Codex, ACP and OpenCode. A Claude worker's
+// system prompt leaves it out, see claudeWorkerSystemPrompt.
 //
 // It names the POST-COMPACTION trigger as an available capability, never a prescription (maintainer
 // 2026-08-28: say the directory is there if the worker wants it and that the goal hooks exist — do
@@ -1341,7 +1353,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error("Claude session broker is unavailable; cannot start this thread.")
           }
-          const appendSystemPrompt = claudeWorkerSystemPrompt(sessionId, deps.project.dir, claudeContractOptions(permissionMode, settings))
+          const appendSystemPrompt = claudeWorkerSystemPrompt(deps.project.dir, claudeContractOptions(permissionMode, settings))
           try {
             await bridge.spawnDispatch({
               threadSlug: slug,
@@ -1619,7 +1631,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
           cwd: deps.project.dir,
           prompt,
           permissionMode,
-          appendSystemPrompt: [claudeWorkerSystemPrompt(sessionId, deps.project.dir, claudeContractOptions(permissionMode, settings)), adoption].filter(Boolean).join("\n\n"),
+          appendSystemPrompt: [claudeWorkerSystemPrompt(deps.project.dir, claudeContractOptions(permissionMode, settings)), adoption].filter(Boolean).join("\n\n"),
           model: settings.model,
           effort: settings.effort,
         })

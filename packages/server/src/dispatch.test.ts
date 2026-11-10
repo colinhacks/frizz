@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join, dirname, isAbsolute } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { DISPATCH_TASK_BANNER_MARKER } from "@frizz/shared"
-import { buildClaudeCommand, claudeContractOptions, launchableWorkerPluginDir, loadWorkerPrompt, composePrompt, monitorScriptsDir, resolveWorkerPluginDir, scratchpadOrientation, workerPluginDir, frizzConfigBlock, workerDispatchPermission, WORKER_DISPATCH_PERMISSION } from "./dispatch.ts"
+import { acpWorkerContract, buildClaudeCommand, claudeContractOptions, claudeWorkerSystemPrompt, codexWorkerBaseInstructions, opencodeWorkerContract, launchableWorkerPluginDir, loadWorkerPrompt, composePrompt, monitorScriptsDir, resolveWorkerPluginDir, scratchpadOrientation, workerPluginDir, frizzConfigBlock, workerDispatchPermission, WORKER_DISPATCH_PERMISSION } from "./dispatch.ts"
 import { parseTranscript } from "./transcript.ts"
 import { FRIZZ_MCP } from "./backend/types.ts"
 
@@ -229,11 +229,27 @@ test("frizzConfigBlock: a non-regular FRIZZ.md (a directory) injects nothing", (
 test("frizzConfigBlock composes AFTER the worker contract (override position) in the system prompt", () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-md-order-"))
   writeFileSync(join(dir, "FRIZZ.md"), "PROJECT-NORM-SENTINEL")
-  const sessionId = "frizz-md-order"
-  const system = [loadWorkerPrompt("claude"), scratchpadOrientation(sessionId, "claude"), frizzConfigBlock(dir)]
-    .filter(Boolean)
-    .join("\n\n")
-  assert.ok(system.indexOf("PROJECT-NORM-SENTINEL") > system.indexOf("Defer to the project's own norms"))
+  for (const system of [claudeWorkerSystemPrompt(dir), codexWorkerBaseInstructions("frizz-md-order", dir)]) {
+    assert.ok(system.indexOf("PROJECT-NORM-SENTINEL") > system.indexOf("Defer to the project's own norms"))
+  }
+})
+
+// Claude Code sends the appended system prompt as one cached block, and a block is read from the cache
+// only when every byte of it matches. With the thread's session id in it (the scratch line, until
+// 2026-11-10) one line in 1,400 differed, and every thread's first call wrote the whole block afresh.
+test("a Claude worker's system prompt names no session, so every thread of a project sends the same block", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-system-prompt-"))
+  writeFileSync(join(dir, "FRIZZ.md"), "PROJECT-NORM-SENTINEL")
+  const claude = claudeWorkerSystemPrompt(dir)
+  assert.equal(claude, `${loadWorkerPrompt("claude")}\n\n${frizzConfigBlock(dir)}`, "the contract and FRIZZ.md, and nothing of one thread's")
+  assert.doesNotMatch(claude, /SCRATCH DIRECTORY:/)
+  assert.deepEqual([...claude.matchAll(/\.frizz\/threads\/([^/]+)\//g)].map((m) => m[1]), ["<session-id>"], "the one path it gives is the generic one")
+  // …which sends the worker to where the real one is: what the SessionStart hooks inject (see
+  // scratchpad-hook.test.ts, "both session-start hooks name the scratch directory").
+  assert.match(claude, /exact path in your session-start context/)
+  // No hook hands these backends the path when a session starts, so their system text keeps it.
+  const others = { codex: codexWorkerBaseInstructions("sid-1", dir), acp: acpWorkerContract("sid-1", dir), opencode: opencodeWorkerContract("sid-1", dir) }
+  for (const [kind, text] of Object.entries(others)) assert.match(text, /SCRATCH DIRECTORY: \.frizz\/threads\/sid-1\//, kind)
 })
 
 test("artifact worker resolver finds runtime/cc-worker through pnpm's nested module store", () => {

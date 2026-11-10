@@ -336,6 +336,32 @@ test("the nudge is silent when the transcript carries no readable usage", () => 
   assert.equal(runHook(dir, ["--mode=nudge"], { session_id: SID }), "")
 })
 
+// A Claude worker's SYSTEM prompt does not carry its scratch directory's path: it names no session, so
+// that every thread sends the same cached block (claudeWorkerSystemPrompt in dispatch.ts). Once the
+// first user message has been compacted away these two hooks are what hands the path back, so each says
+// it at every kind of session start.
+test("both session-start hooks name the scratch directory on a startup, a resume, a clear and a compaction", () => {
+  const dir = newProject()
+  const seedHook = join(here, "../../../cc-worker/hooks/session-seed.mjs")
+  for (const source of ["startup", "resume", "clear", "compact"]) {
+    const pad = additionalContext(runHook(dir, ["--mode=session-start"], { session_id: SID, source }))
+    assert.ok(pad.includes(`\`.frizz/threads/${SID}/\``), `scratchpad.mjs on a ${source}: ${pad.slice(0, 160)}`)
+    const seed = additionalContext(
+      execFileSync("node", [seedHook], {
+        input: JSON.stringify({ session_id: SID, source }),
+        encoding: "utf8",
+        env: { ...process.env, CLAUDE_PROJECT_DIR: dir, FRIZZ_THREAD: "some-thread" },
+      }),
+    )
+    assert.ok(seed.includes(`SCRATCH DIRECTORY (OPTIONAL): \`.frizz/threads/${SID}/\``), `session-seed.mjs on a ${source}: ${seed.slice(0, 160)}`)
+  }
+  for (const matcher of ["startup", "resume", "clear", "compact"]) {
+    const cfg = JSON.parse(readFileSync(join(here, "../../../cc-worker/hooks/hooks.json"), "utf8")) as { hooks: { SessionStart: { matcher?: string; hooks: { command: string }[] }[] } }
+    const entry = cfg.hooks.SessionStart.find((e) => e.matcher === matcher)
+    assert.ok(entry?.hooks.some((h) => h.command.includes("session-seed.mjs")), `session-seed.mjs is registered for a ${matcher}`)
+  }
+})
+
 test("hooks.json wires every channel, and no stale carryover registration survives", () => {
   const raw = readFileSync(join(here, "../../../cc-worker/hooks/hooks.json"), "utf8")
   assert.doesNotMatch(raw, /carryover/, "the separate carryover doc was collapsed into the scratchpad")

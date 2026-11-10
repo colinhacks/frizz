@@ -538,7 +538,7 @@ export function deliverClaudeBrokerWake(deps: {
   freshProcess?: boolean
 }): Promise<void> {
   const { bridge, slug, cwd, row, settings, deliveryMessage, freshProcess } = deps
-  const appendSystemPrompt = claudeWorkerSystemPrompt(row.session_id, cwd, claudeContractOptions(coldResumePermission(row, settings), settings))
+  const appendSystemPrompt = claudeWorkerSystemPrompt(cwd, claudeContractOptions(coldResumePermission(row, settings), settings))
   return bridge.followUp({
     threadSlug: slug,
     sessionId: row.session_id,
