@@ -45,6 +45,11 @@
 // download, but both installers prune those directories on their own schedule, and a pin that can
 // vanish under a running server is a worse failure than a download.
 //
+// CLAUDE CODE FLOATS PAST ITS PIN since 2026-11-09 (claude-float.ts). The bundled build above is the
+// FLOOR: a server checks npm hourly and moves to the newest Claude Code on the bundled build's
+// `major.minor` line once the bundled SDK has spoken to it, recording it in `<root>/claude-float.json`
+// so the next boot starts there (readClaudeFloat). Codex stays on its audited pin.
+//
 // THE SWEEP IS LEASE-AWARE since 2026-09-10, because it was itself the "pin that can vanish under a
 // running server": a source-tree stack pinned to 2.1.268 booted against the machine's real root and
 // retired `claude/2.1.267/` while the running 0.12.9 server still forked every broker from it — every
@@ -156,10 +161,80 @@ export function runtimeCoordinates(
   if (!["darwin", "linux", "win32"].includes(platform) || !["x64", "arm64"].includes(arch)) return undefined
   const exe = platform === "win32" ? ".exe" : ""
   if (backend === "claude") {
-    const key = `${platform}-${arch}${platform === "linux" && musl ? "-musl" : ""}`
-    return { pkg: `@anthropic-ai/claude-agent-sdk-${key}`, packageVersion: CLAUDE_AGENT_SDK_VERSION, label: CLAUDE_CODE_VERSION, binary: `claude${exe}` }
+    return { pkg: `@anthropic-ai/claude-agent-sdk-${claudePlatformKey(platform, arch, musl)}`, packageVersion: CLAUDE_AGENT_SDK_VERSION, label: CLAUDE_CODE_VERSION, binary: `claude${exe}` }
   }
   return { pkg: "@openai/codex", packageVersion: `${CODEX_VERSION}-${platform}-${arch}`, label: CODEX_VERSION, binary: `codex${exe}` }
+}
+
+function claudePlatformKey(platform: NodeJS.Platform, arch: string, musl: boolean): string {
+  return `${platform}-${arch}${platform === "linux" && musl ? "-musl" : ""}`
+}
+
+/**
+ * The npm coordinates of one Claude Code release on one platform, for a server that moves past its
+ * bundled build (claude-float.ts). Not the SDK's platform package, which is versioned by the SDK: the
+ * CLI's own `@anthropic-ai/claude-code-<platform>` is versioned by Claude Code and carries the same
+ * binary at its root (2.1.321's was byte-identical to the SDK's, checked 2026-11-09), so it lands in
+ * the same `<root>/claude/<version>/claude` layout as the bundled pin.
+ */
+export function claudeReleaseCoordinates(
+  version: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  musl: boolean = isMusl(),
+): RuntimeCoordinates | undefined {
+  if (!["darwin", "linux", "win32"].includes(platform) || !["x64", "arm64"].includes(arch)) return undefined
+  return { pkg: `@anthropic-ai/claude-code-${claudePlatformKey(platform, arch, musl)}`, packageVersion: version, label: version, binary: platform === "win32" ? "claude.exe" : "claude" }
+}
+
+/** `2.1.321` → [2, 1, 321]; anything but three plain numbers (a prerelease, a typo) is undefined. */
+export function parseReleaseVersion(version: string): [number, number, number] | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version)
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined
+}
+
+/** Is `candidate` a later release on the same `major.minor` line as `base`? */
+export function isLaterOnLine(candidate: string, base: string): boolean {
+  const a = parseReleaseVersion(candidate)
+  const b = parseReleaseVersion(base)
+  return !!a && !!b && a[0] === b[0] && a[1] === b[1] && a[2] > b[2]
+}
+
+/** Where a server records the Claude Code it moved to, so the next boot starts on it with no fetch. */
+export function claudeFloatStatePath(root: string): string {
+  return join(root, "claude-float.json")
+}
+
+/** The verified build a previous server moved to, when it is still on disk and later than `bundled`. */
+export function readClaudeFloat(root: string, bundled: string = CLAUDE_CODE_VERSION): { label: string; bin: string } | undefined {
+  let label: unknown
+  try {
+    label = (JSON.parse(readFileSync(claudeFloatStatePath(root), "utf8")) as { label?: unknown }).label
+  } catch {
+    return undefined
+  }
+  if (typeof label !== "string" || !isLaterOnLine(label, bundled)) return undefined
+  const bin = provisionedBinary("claude", root, label)
+  return bin ? { label, bin } : undefined
+}
+
+/** Record (or, with no label, clear) the build this machine's servers should start on. */
+export function writeClaudeFloat(root: string, label: string | undefined): void {
+  const path = claudeFloatStatePath(root)
+  if (label === undefined) {
+    rmSync(path, { force: true })
+    return
+  }
+  mkdirSync(root, { recursive: true })
+  const partial = `${path}.${process.pid}`
+  writeFileSync(partial, `${JSON.stringify({ label, at: new Date().toISOString() })}\n`, "utf8")
+  renameSync(partial, path)
+}
+
+/** Is floating switched off? `FRIZZ_CLAUDE_FLOAT=0` keeps a server on its bundled Claude Code. */
+export const CLAUDE_FLOAT_ENV = "FRIZZ_CLAUDE_FLOAT"
+export function claudeFloatEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[CLAUDE_FLOAT_ENV] !== "0"
 }
 
 /**
@@ -580,7 +655,8 @@ const defaultSweepRm = (path: string): void => rmSync(path, { recursive: true, f
  * another process). Returns what it removed and what it kept, for the log. Never throws for one
  * entry's sake: an entry the OS refuses to remove is reported as kept, and the sweep goes on.
  */
-export function sweepRuntimes(backend: RuntimeBackend, root: string, keepLabel: string, now = Date.now(), deps: SweepRuntimesDeps = {}): RuntimeSweep {
+export function sweepRuntimes(backend: RuntimeBackend, root: string, keepLabel: string | readonly string[], now = Date.now(), deps: SweepRuntimesDeps = {}): RuntimeSweep {
+  const keep = new Set(typeof keepLabel === "string" ? [keepLabel] : keepLabel)
   const rm = deps.rm ?? defaultSweepRm
   const backendDir = join(root, backend)
   let entries: string[]
@@ -591,7 +667,7 @@ export function sweepRuntimes(backend: RuntimeBackend, root: string, keepLabel: 
   }
   const sweep: RuntimeSweep = { removed: [], kept: [] }
   for (const entry of entries) {
-    if (entry === keepLabel) continue
+    if (keep.has(entry)) continue
     const full = join(backendDir, entry)
     if (entry.startsWith(".partial-")) {
       try {
@@ -666,7 +742,9 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
       if (provisioned.bin !== bin) throw new Error(`${coordinates.pkg} unpacked its binary at ${provisioned.bin}, not ${bin}`)
       leaseRuntime(provisioned.bin, "server")
     })
-    sweepSuperseded(backend, root, coordinates.label, options)
+    // A recorded later build is kept for the boot that provisions: this one starts nothing on it.
+    const recorded = backend === "claude" ? readClaudeFloat(root, coordinates.label)?.label : undefined
+    sweepSuperseded(backend, root, recorded ? [coordinates.label, recorded] : coordinates.label, options)
     return { bin, source: "deferred", version: coordinates.label }
   }
   let provisioned: Provisioned
@@ -678,11 +756,15 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
     return { bin: bare, source: "path", version: "unknown", note }
   }
   if (provisioned.fetched) log("info", `runtimes: provisioned ${backend} ${provisioned.label} at ${provisioned.bin}`)
+  // A later Claude Code this machine already moved to and verified (claude-float.ts) is where a boot
+  // starts, from disk and with no fetch. The bundled pin stays provisioned beside it as the fallback.
+  const floated = backend === "claude" && claudeFloatEnabled(env) ? readClaudeFloat(root, coordinates.label) : undefined
   // Lease BEFORE sweeping: another Frizz on this machine (a stack booted from a source tree with a
   // newer pin, the successor of an in-place update) sweeps on ITS boot, and this is what tells it
   // the pin resolved here is still in use.
-  leaseRuntime(provisioned.bin, "server")
-  sweepSuperseded(backend, root, coordinates.label, options)
+  leaseRuntime(floated?.bin ?? provisioned.bin, "server")
+  sweepSuperseded(backend, root, floated ? [coordinates.label, floated.label] : coordinates.label, options)
+  if (floated) return { bin: floated.bin, source: "provisioned", version: floated.label, note: `moved past the bundled ${coordinates.label}` }
   return { bin: provisioned.bin, source: "provisioned", version: provisioned.label }
 }
 
@@ -692,7 +774,7 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
 // PATH — which on a machine without an npm claude is "could not resolve 'claude'" at boot (Windows
 // audit 2026-09-11, finding 2). sweepRuntimes itself now keeps rather than throws, and this catch
 // is the backstop for whatever else it might do.
-function sweepSuperseded(backend: RuntimeBackend, root: string, label: string, options: ResolveRuntimesOptions): void {
+export function sweepSuperseded(backend: RuntimeBackend, root: string, label: string | readonly string[], options: Pick<ResolveRuntimesOptions, "log" | "rm">): void {
   const log = options.log ?? (() => {})
   try {
     const sweep = sweepRuntimes(backend, root, label, Date.now(), { rm: options.rm })

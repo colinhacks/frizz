@@ -4,6 +4,20 @@ Frizz provisions its own Claude Code and its own Codex — one pin per backend, 
 
 **A stale pin is a broken worker, not a cautious one.** Both vendors enforce minimums server-side, so lag shows up as a hard failure rather than as missing polish. The first provisioned Claude Code refused the default model outright — `400 Claude Code 2.1.207 does not support this model; version 2.1.251 or newer is required` — and the 0.146 Codex pin could never offer `gpt-6-astra`, because the catalogue server omits a model from any client below its `minimal_client_version`. Both vendors ship every couple of days, so the pins need a standing watch rather than a bump when someone notices.
 
+## Claude Code floats past its pin (since 2026-11-09)
+
+A server no longer waits for a release to run a newer Claude Code. The maintainer chose this on 2026-11-09, after Fable 5.2 reached users only through a pin bump, a release, npm's review and a click on Update. [`claude-float.ts`](../packages/server/src/claude-float.ts) checks npm an hour apart (the first a minute after boot) and moves the server to the newest `@anthropic-ai/claude-code-<platform>` on the bundled build's `major.minor` line. The new build is adopted only after it reports its version and the bundled SDK has opened a session on it and read its models. New threads, resumes, the model picker and the quota read then use it, and running daemons keep the build they were forked on. The adopted build is recorded in `<runtimes>/claude-float.json`, so a restart boots straight onto it.
+
+| Case | What happens |
+| --- | --- |
+| npm's `latest` is a later 2.1.x | The server moves to it within the hour. |
+| `latest` moves back (a pulled release) | The server follows it down, never below the bundled build. |
+| `latest` is a new line (2.2.0) | The server stays on the newest 2.1.x; 2.2 waits for a release that bundles it. |
+| The new build fails verification | The server stays where it is and tries that build again a day later. |
+| `FRIZZ_CLAUDE_FLOAT=0`, an explicit executable, `FRIZZ_RUNTIMES=path`, or a deferred runtime | The bundled build, as before. |
+
+**The pin is still bumped, now as the floor.** It is what a new install runs for its first minute, what an offline machine runs, and the SDK every newer build is driven by. An SDK 17 releases behind (0.3.304) drove 2.1.321 through a model list and a Bash turn on 2026-11-09, but that gap only grows, so keep it current. The log-format gate below tests the newest build on the line that has written a session here, which is the build new threads run. `scripts/verify-claude-float.mjs` drives a real stack through a move, a worker on each side of it, and a restart.
+
 ## The daily check
 
 ```

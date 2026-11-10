@@ -10,7 +10,9 @@ import {
   profileGridDisplayLabel,
   profileGridDisplayParts,
   profileGridEffortLabel,
+  profileGridListedOptions,
   profileGridResolveSelection,
+  profileGridShownModel,
   profileGridSelectionFromKey,
   profileGridSelectionKey,
   profileGridSelectionKnown,
@@ -485,7 +487,10 @@ function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }
   onPick: (selection: ProfileGridSelection) => void
 }) {
   const chosen = value?.provider === group.id
-  const option = (chosen ? group.options.find((candidate) => candidate.model === value?.model) : undefined) ?? group.options[0]
+  // The bare configured model shows as its own model's row (profileGridListedOptions).
+  const listed = profileGridListedOptions(group)
+  const shownModel = profileGridShownModel(group, chosen ? value?.model : group.options[0]?.model)
+  const option = group.options.find((candidate) => candidate.model === shownModel) ?? listed[0]
   if (!option) return null
   const effort = chosen && option.efforts.includes(value?.effort ?? "") ? value?.effort ?? "" : ""
   const levels = option.efforts.length > 1 || option.efforts.some(Boolean)
@@ -494,7 +499,7 @@ function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }
   // to the cell's own `border-transparent` and `text-muted`, and drew a dim olive box with grey text.
   const chosenAttr = chosen ? { "data-chosen": "" } : {}
   const sections: { label: string; options: ProfileGridOption[] }[] = []
-  for (const candidate of group.options) {
+  for (const candidate of listed) {
     const label = candidate.section ?? ""
     const section = sections.find((entry) => entry.label === label) ?? sections[sections.push({ label, options: [] }) - 1]!
     section.options.push(candidate)
@@ -515,13 +520,10 @@ function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }
         <RadixMenu.SubTrigger
           aria-label={`${group.label} model`}
           {...chosenAttr}
-          title={option.hint ? `${option.label}: ${option.hint}` : option.label}
+          title={option.label}
           className={`${trigger} max-w-[15rem]`}
         >
-          <span className="min-w-0 truncate">
-            {option.label}
-            {option.hint && <span className="text-muted-55"> {option.hint}</span>}
-          </span>
+          <span className="min-w-0 truncate">{option.label}</span>
           <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-fg/65" />
         </RadixMenu.SubTrigger>
         <RadixMenu.Portal>
@@ -546,10 +548,7 @@ function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }
                       }}
                       className={item}
                     >
-                      <span className="min-w-0 truncate">
-                        {candidate.label}
-                        {candidate.hint && <span className="text-muted-55"> {candidate.hint}</span>}
-                      </span>
+                      <span className="min-w-0 truncate">{candidate.label}</span>
                       {indicator}
                     </RadixMenu.RadioItem>
                   ))}
