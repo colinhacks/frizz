@@ -288,6 +288,10 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
     messages,
     exit
       ? () => {
+          if (exit.sent) {
+            exit.sent()
+            return
+          }
           ;(document.activeElement as HTMLElement | null)?.blur()
           exit.dismiss()
         }
@@ -354,7 +358,8 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const dismiss = exit?.dismiss
   const cancel = exit?.cancel
   // Stable while the two callbacks are, so the fence buttons reading it do not re-render every frame.
-  const stableExit = useMemo<SurfaceExit | null>(() => (dismiss && cancel ? { dismiss, cancel } : null), [dismiss, cancel])
+  const sent = exit?.sent
+  const stableExit = useMemo<SurfaceExit | null>(() => (dismiss && cancel ? { dismiss, cancel, sent } : null), [dismiss, cancel, sent])
   return { slug, answering, transcript, promptBoxSends, fileOver: drop.over, queuedRun, exit: stableExit, sendScope, zone: drop.handlers, box }
 }
 

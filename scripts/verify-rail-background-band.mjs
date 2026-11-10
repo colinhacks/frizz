@@ -193,7 +193,7 @@ try {
       return {
         glyph: row?.querySelector("[data-rail-glyph]")?.getAttribute("data-rail-glyph") ?? null,
         hasDot: !!row?.querySelector(".frizz-rail-dot"),
-        hasSpinner: !!row?.querySelector("svg animate"),
+        hasSpinner: !!row?.querySelector("svg[data-box-spinner]"),
       }
     }, slug)
     const ctrl = await read(CTRL_SLUG)
@@ -224,7 +224,7 @@ try {
       return {
         glyph: mark?.getAttribute("data-rail-glyph") ?? null,
         hasDot: !!row?.querySelector(".frizz-rail-dot"),
-        hasSpinner: !!row?.querySelector("svg animate"),
+        hasSpinner: !!row?.querySelector("svg[data-box-spinner]"),
         inRunningBand,
       }
     }, SLUG)

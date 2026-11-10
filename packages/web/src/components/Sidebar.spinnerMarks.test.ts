@@ -17,7 +17,7 @@ import { sessionIndicatorFor } from "./Sidebar.tsx"
 // in the Running band. A queued rest stands still whatever is running behind it, and a `watching` rest
 // stands still in Snoozed (maintainer 2026-10-03: a watcher "shouldn't show up as actively running").
 //
-// The spinner is identified by its <animate> child — the one element in the family that only the
+// The spinner is identified by its `data-box-spinner` attribute — the one mark in the family that only the
 // BoxSpinner renders — and the inner marks by lucide's stamped class or the dot's own class. Asserting
 // on rendered markup rather than on element types is what pins the COMPOSITION: an ellipsis and a
 // spinner both present is a different picture from either alone.
@@ -47,7 +47,7 @@ const prWatch = (github?: Record<string, unknown>) => [{
 }]
 
 const markup = (over: Partial<ThreadView>) => renderToStaticMarkup(sessionIndicatorFor({ ...base, ...over } as ThreadView).node)
-const spins = (html: string) => html.includes("<animate ")
+const spins = (html: string) => html.includes("data-box-spinner")
 
 test("own turn running: the empty spinner, nothing inside", () => {
   const html = markup({ runtime: "running" })

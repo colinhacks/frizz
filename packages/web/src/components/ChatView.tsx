@@ -19,6 +19,7 @@ import { splitThreadKey } from "../lib/threadKey.ts"
 import { DiffBlock, PathLink } from "./DiffBlock.tsx"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { CodeBody } from "./CodeBody.tsx"
+import { LiveDot } from "./LiveDot.tsx"
 import { resolveFileLanguage } from "../lib/syntaxHighlight.ts"
 import { TodoBlock } from "./TodoBlock.tsx"
 import { followUpParentsIn, splitMessageQuestions, parseQuestionBlock, type QuestionKind, type BlockAnswer, type MessageAnswering } from "../lib/questionBlocks.ts"
@@ -29,14 +30,15 @@ import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx
 import { providerNameFor } from "./providerMark.ts"
 import { answersNote, isAnswersMessage, parseAnswersCard, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
-import { fenceStandsFor, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
+import { fenceStandsFor, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
+import { previousUserBoundary } from "../lib/transcriptPagination.ts"
 import { FrizzWake } from "./FrizzWake.tsx"
 import { LinkifiedText } from "./LinkifiedText.tsx"
 import { parseSentContext, splitProseByTokens, tokenLabel, type SentContextItem } from "../lib/composerContext.ts"
 import { AnswersCard } from "./AnswersCard.tsx"
 import { DividerQuotedTitle, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
 import { usePromptBoxSends } from "../lib/sendScope.tsx"
-import { QueueDismissContext, QueuedRunContext, ThreadSlugContext } from "../lib/threadContexts.ts"
+import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { ThreadSurface, useThreadMessages, useThreadSurface, useThreadTranscript, type ThreadTranscript } from "./ThreadSurface.tsx"
 import { useIsMobile } from "../lib/mobile.ts"
@@ -52,7 +54,7 @@ import { useUnqueueFollowUp, useUnqueueSupported } from "../lib/unqueueFollowUp.
 import { useFailedDeliveryActions } from "../lib/failedDelivery.ts"
 import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending, useThreadCanSteer } from "../lib/deliverQueuedNow.ts"
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
-import { lastAskIndex, messagePresentationText } from "../lib/messagePresentation.ts"
+import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
 import type { StepsReply } from "../lib/stepsAnswer.ts"
@@ -174,13 +176,25 @@ function useChildDrillSlug(): string | null {
 // desktop chrome on every width; a phone never links to it. (Desktop had a lifecycle footer under the
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
-export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean }) {
+/** What the one-thread pane hands the thread view it hosts: where acting on the thread takes
+ *  the human, whether the header offers full screen, whether the rail stands beside it (full screen or in
+ *  the three columns, unless the human put it away), and whether the thread was in the queue when it was
+ *  opened, which draws it as its card does. */
+export interface ThreadPaneHooks {
+  exit: SurfaceExit
+  expand: boolean
+  railBeside?: boolean
+  queueWindow?: boolean
+}
+
+export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
   const thread = useThreadSnapshot(slug)
   const phone = useIsMobile() && onClose !== undefined
   // THE RAIL IS BESIDE THIS THREAD — the /full page's own column (`showReturnToQueue` is passed by
   // StandaloneThreadPage alone), at a width that draws its side pane. `splitFileViewer` is that width:
   // the page sets it off the same SPLIT_MIN_PX the `split:` variant shows the pane at. A thread opened
-  // in a drawer over /full is not the rail's thread, so it keeps its own ops strip.
+  // in a drawer over /full is not the rail's thread, so it keeps its own ops strip. The one-thread pane
+  // says for itself (`pane.railBeside`), because it can put the rail away.
   const { splitFileViewer } = useSnapshot(store)
   // The header is handed to ChatView, which owns the thread's surface (ThreadSurface): the surface is
   // the whole thread, header included, as the queue card's is.
@@ -188,17 +202,18 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
     <ChatView
       slug={slug}
       phone={phone}
-      railBeside={showReturnToQueue && splitFileViewer}
+      railBeside={(pane ? pane.railBeside === true : showReturnToQueue) && splitFileViewer}
+      pane={pane}
       header={phone ? (
         <MobileThreadHeader slug={slug} onClose={onClose} />
       ) : (
-        <ThreadHeader slug={slug} onStatusApplied={onStatusApplied} onClose={onClose} showReturnToQueue={showReturnToQueue} />
+        <ThreadHeader slug={slug} onStatusApplied={onStatusApplied} onClose={onClose} showReturnToQueue={showReturnToQueue} pane={pane} />
       )}
     />
   )
 }
 
-function ChatView({ slug, phone = false, railBeside = false, header }: { slug: string; phone?: boolean; railBeside?: boolean; header: ReactNode }) {
+function ChatView({ slug, phone = false, railBeside = false, header, pane }: { slug: string; phone?: boolean; railBeside?: boolean; header: ReactNode; pane?: ThreadPaneHooks }) {
   const boardThread = useThreadSnapshot(slug)
   // Freshness is centrally managed (transcript-live.ts keeps every observed transcript live); `poll`
   // only gates the SSE-fallback interval for a running thread.
@@ -222,6 +237,17 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
     [phone, openQuestions],
   )
   const [answerSheetOpen, setAnswerSheetOpen] = useState(false)
+  // A QUEUED THREAD OPENS AS ITS CARD DOES (the one-thread pane, maintainer 2026-11-09): from the human's
+  // most recent steer on, with what is above it one click away. Decided once, when the transcript lands,
+  // and held by id for as long as the thread stays open, so a reply sent from here adds to what is on
+  // screen rather than cutting the window at itself. Undefined until then; null is the whole transcript.
+  const [windowStartId, setWindowStartId] = useState<string | null | undefined>(undefined)
+  if (pane?.queueWindow && windowStartId === undefined && messages.length > 0) {
+    const at = lastHumanTurnIndex(messages)
+    setWindowStartId(at > 0 ? messages[at]?.sourceId ?? null : null)
+  }
+  // Trimmed off the head of a long thread's live window, the anchor is gone: show everything still held.
+  const windowStart = windowStartId ? Math.max(0, messages.findIndex((m) => m.sourceId === windowStartId)) : 0
   // A read-and-answer session's sheet steps through what it may answer. The rest stay in the list, saying where.
   const readAndAnswerHost = useReadAndAnswerHost()
   const sheetQuestions = useMemo(
@@ -259,7 +285,7 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
   // message carries, which answers it pairs with. This component decides only how the drawer and the
   // full-screen page lay those out. `messages` and `presentationMessages` share their indices, so the
   // model's answers address the rows below directly.
-  const surface = useThreadSurface({ slug, thread, messages, openQuestions, settledQuestions })
+  const surface = useThreadSurface({ slug, thread, messages, openQuestions, settledQuestions }, pane ? { exit: pane.exit } : undefined)
   const { inFlightAnswers } = surface.transcript
   // Question-block interactivity in the thread view: EVERY ask stays answerable, wherever it sits —
   // scroll back to a question a sub-agent return / the agent's own continuation buried and answer it in
@@ -299,6 +325,12 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
       setLoadingEarlier(false)
     }
   }, [q, queryClient, slug])
+  // The window opens back one steer at a time, as the card's does, and only then reaches for the server.
+  const showEarlier = useCallback(() => {
+    if (windowStart === 0) return void loadEarlier()
+    const boundary = previousUserBoundary(messages, windowStart)
+    setWindowStartId(boundary !== null && boundary > 0 ? messages[boundary]?.sourceId ?? null : null)
+  }, [loadEarlier, messages, windowStart])
 
   return (
     <ThreadSurface surface={surface} className="flex-1 min-h-0 flex flex-col">
@@ -350,9 +382,12 @@ function ChatView({ slug, phone = false, railBeside = false, header }: { slug: s
           beforeCursor={q.data?.beforeCursor}
           loadingEarlier={loadingEarlier}
           earlierError={earlierError}
-          loadEarlier={() => void loadEarlier()}
+          loadEarlier={showEarlier}
           jumpOverlay={jumpOverlay}
-          openAtLastMessage={phone && !running}
+          openAtLastMessage={(phone || pane !== undefined) && !running}
+          windowStart={windowStart}
+          openAtTop={pane?.queueWindow === true}
+          sentAt={pane ? steerStamp : undefined}
         />
       ) : (
       <>
@@ -616,6 +651,7 @@ export function RuntimeStatusLadder({
   liveToolRun,
   onRestingExit,
   onRestingExitFailed,
+  onRestingReplied,
   wrap,
 }: {
   state: RuntimeStatusState
@@ -630,6 +666,8 @@ export function RuntimeStatusLadder({
    *  server declines. RuntimeStatusSlot passes the surface's exit; off the queue there is none. */
   onRestingExit?: () => void
   onRestingExitFailed?: () => void
+  /** The steps reply where a send does not dismiss (the one-thread pane). */
+  onRestingReplied?: () => void
   /** The queue card's narrower column: the done card wraps its prose there (FenceCard `wrap`). */
   wrap?: boolean
 }) {
@@ -648,7 +686,7 @@ export function RuntimeStatusLadder({
     case "snooze":
       return <SnoozeCard thread={thread!} />
     case "resting":
-      return <AwaitingBackgroundCard thread={thread!} onSnooze={onRestingExit} onSnoozeFailed={onRestingExitFailed} onReplied={onRestingExit} onReplyFailed={onRestingExitFailed} />
+      return <AwaitingBackgroundCard thread={thread!} onSnooze={onRestingExit} onSnoozeFailed={onRestingExitFailed} onReplied={onRestingReplied ?? onRestingExit} onReplyFailed={onRestingExitFailed} />
     // THE THREAD'S OWN ENDING, for a sign-off that came in as a tool call rather than a fence: the same
     // card the fence draws, in the slot the fence would have occupied at the transcript's end. Below
     // everything because `done` refuses while anything above could still be true — an open question or an
@@ -752,6 +790,7 @@ export function RuntimeStatusSlot({ tail, wrap }: { tail: RuntimeTail; wrap?: bo
         liveToolRun={tail.liveToolRun}
         onRestingExit={exit?.dismiss}
         onRestingExitFailed={exit?.cancel}
+        onRestingReplied={exit?.sent}
         wrap={wrap}
       />
       {thread?.permPolicy ? (
@@ -780,6 +819,9 @@ function VirtualizedThreadTranscript({
   loadEarlier,
   jumpOverlay,
   openAtLastMessage = false,
+  windowStart = 0,
+  openAtTop = false,
+  sentAt,
 }: {
   slug: string
   transcriptRef: React.RefObject<HTMLDivElement | null>
@@ -800,15 +842,27 @@ function VirtualizedThreadTranscript({
   // The phone opens a thread at rest on the START of its last message rather than the end of it — see
   // the initial-scroll effect below. Read once, when the transcript first lands.
   openAtLastMessage?: boolean
+  // The one-thread pane's queue window: the first message drawn, by index into `messages`. It
+  // reads from the top down, as the queue card does, and `sentAt` brings a reply back into view from there.
+  windowStart?: number
+  openAtTop?: boolean
+  sentAt?: number
 }) {
   // What the thread says about each message, from the surface this transcript is drawn in — the same
   // model the queue card reads. `messages` here is the presentation list, which shares its indices with
   // the list the model was built over.
   const transcript = useThreadTranscript()
-  const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, placement, settledPlacement, openQuestions } = transcript
+  const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
+  // A marker in a message above the window has no message to render in, so its card goes back to its
+  // anchor group, as on the queue card.
+  const placement = useMemo(() => placedFrom(transcript.placement, windowStart), [transcript.placement, windowStart])
   // Presentation-only coalescing: provider batching must not mint one loader per pure tool turn. Original
-  // indices ride beside the display message, so paired answers keep addressing server truth.
-  const coalescedActivityMessages = useMemo(() => coalesceToolActivityMessages(messages), [messages])
+  // indices ride beside the display message, so paired answers keep addressing server truth. Everything
+  // below draws from this list, so the window is cut here; the steer it opens on ends any run before it.
+  const coalescedActivityMessages = useMemo(() => {
+    const entries = coalesceToolActivityMessages(messages)
+    return windowStart > 0 ? entries.filter((entry) => entry.messageIndex >= windowStart) : entries
+  }, [messages, windowStart])
   // A live tool run belongs to the runtime slot, never to history; once it settles the whole run returns
   // as one `Ran N tool calls` disclosure. Then the rest hairlines that only restate their surroundings
   // drop out (isRedundantRestDivider) — LAST, so "the next thing the reader sees" is what this list
@@ -856,9 +910,9 @@ function VirtualizedThreadTranscript({
       return rowIdx
     }
     const unplaced = openQuestions.filter((q) => !placement.placedIds.has(q.id))
-    // `from: 0`: a question the human has typed past, asked above the loaded window, is not hoisted over
+    // `from`: a question the human has typed past, asked above what this draws, is not hoisted over
     // everything — it draws where its message is once that is loaded (lib/questionAnchor questionsByAnchor).
-    for (const [anchor, group] of questionsByAnchor(messages, unplaced, { from: 0 })) {
+    for (const [anchor, group] of questionsByAnchor(messages, unplaced, { from: windowStart })) {
       if (anchor >= tailAnchor) { tail.push(...group); continue }
       const rowIdx = rowOf(anchor)
       const at = byRow.get(rowIdx)
@@ -877,7 +931,7 @@ function VirtualizedThreadTranscript({
       if (!byRow.has(rowIdx)) byRow.set(rowIdx, [])
     }
     return { byRow, tail, tailSend, sendRows }
-  }, [messageRows, messages, openQuestions, placement])
+  }, [messageRows, messages, openQuestions, placement, windowStart])
   // The ANSWERED questions' anchors, keyed into `messageRows` the same way: the last row at or before
   // the anchor. No tail special case — a settled card is not an ask, so it never rides the
   // interactions row; anchored at the last message it simply follows that message's row.
@@ -899,7 +953,7 @@ function VirtualizedThreadTranscript({
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
     if (transportFallback) next.push({ key: "transport-fallback", kind: "transport-fallback" })
-    if (hasEarlier || loadingEarlier || earlierError) {
+    if (hasEarlier || loadingEarlier || earlierError || windowStart > 0) {
       next.push({ key: `earlier-history:${beforeCursor ?? "complete"}`, kind: "earlier-history" })
     }
     const before = questionGroups.byRow.get(-1)
@@ -931,7 +985,7 @@ function VirtualizedThreadTranscript({
     })
     if (previousQueued) next.push({ key: "queued-send-now", kind: "queued-send-now" })
     return next
-  }, [beforeCursor, earlierError, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, questionGroups, settledByRow, transportFallback])
+  }, [beforeCursor, earlierError, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, questionGroups, settledByRow, transportFallback, windowStart])
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
@@ -1097,13 +1151,15 @@ function VirtualizedThreadTranscript({
       ? rows.reduce((found, row, index) => (row.kind === "message" && row.messageIndex <= lastAgentIdx && row.message.role === "assistant" && row.message.kind !== "event" ? index : found), -1)
       : -1
     let frame = requestAnimationFrame(() => {
-      if (!anchor && lastMessageRow >= 0) {
+      if (!anchor && (openAtTop || lastMessageRow >= 0)) {
         // The fullscreen hand-off's two steps and its hold, aimed at a row's top instead of a remembered
         // screen height: mount the row, release tail-follow, then re-align every frame while the rows
         // around it correct from their estimates. The hold is longer than the hand-off's because nothing
         // above this row has ever been measured on a cold open; a touch on the scroller ends it at once.
-        const rowKey = rows[lastMessageRow].key
-        virtualizer.scrollToIndex(lastMessageRow, { align: "start", behavior: "instant" })
+        // The queue's window aims at the top of the list instead of a row: its opening steer, read down.
+        const rowKey = openAtTop ? null : rows[lastMessageRow].key
+        if (openAtTop) transcriptRef.current?.scrollTo({ top: 0 })
+        else virtualizer.scrollToIndex(lastMessageRow, { align: "start", behavior: "instant" })
         followingTailRef.current = false
         setAtEnd(false)
         tailReadyRef.current = true
@@ -1126,8 +1182,12 @@ function VirtualizedThreadTranscript({
             }
             return
           }
-          const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(rowKey)}"]`)
-          if (row) scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+          if (rowKey === null) {
+            scroller.scrollTop = 0
+          } else {
+            const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(rowKey)}"]`)
+            if (row) scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+          }
           openHoldFrameRef.current = requestAnimationFrame(hold)
         }
         hold()
@@ -1165,6 +1225,20 @@ function VirtualizedThreadTranscript({
     return () => cancelAnimationFrame(frame)
   }, [alignToScreenTop, rows.length, slug, transcriptKey, virtualizer])
   useEffect(() => () => cancelAnimationFrame(openHoldFrameRef.current), [])
+
+  // A reply sent from the top of the queue's window lands below everything the reader has not scrolled to,
+  // so the send takes them there. The stamp already standing when the thread opened is someone's old send.
+  const sentAtRef = useRef(sentAt)
+  useEffect(() => {
+    const changed = sentAt !== sentAtRef.current
+    sentAtRef.current = sentAt
+    const scroller = transcriptRef.current
+    if (!changed || sentAt === undefined || !scroller) return
+    anchorRestoreUntilRef.current = 0
+    followingTailRef.current = true
+    setAtEnd(true)
+    scroller.scrollTop = scroller.scrollHeight
+  }, [sentAt, transcriptRef])
 
   // Where the reader is actually looking: the first row whose box reaches the pane top, and the offset
   // it sits at.
@@ -1425,7 +1499,8 @@ function VirtualizedThreadTranscript({
         armed: nearTopLoadArmedRef.current,
         scrollTop: scroller.scrollTop,
         readerMoved: tailReadyRef.current && readerMovedRef.current,
-        hasEarlier,
+        // While the queue's window is cut, more of the thread is the reader's to ask for, as on the card.
+        hasEarlier: hasEarlier && windowStart === 0,
         loading: loadingEarlier,
       })
       nearTopLoadArmedRef.current = gate.armed
@@ -1471,7 +1546,7 @@ function VirtualizedThreadTranscript({
       scroller.removeEventListener("pointerdown", markPointerIntent)
       scroller.removeEventListener("keydown", markKeyboardIntent)
     }
-  }, [hasEarlier, loadingEarlier, requestEarlier, syncTailFollow, transcriptRef])
+  }, [hasEarlier, loadingEarlier, requestEarlier, syncTailFollow, transcriptRef, windowStart])
 
   const virtualItems = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()
@@ -1586,7 +1661,7 @@ function JumpToLatest({ overlay, hidden, onJump }: { overlay: HTMLElement | null
 // shared HeaderActions closed by the two lifecycle verbs, snooze and mark as done (ThreadLifecycleActions)
 // — the same strip the queue card's header draws. It carried a Chat|Doc tab strip until 2026-08-06; see
 // ThreadView for why that went.
-export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue = false }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean }) {
+export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
   const thread = useThreadSnapshot(slug)
   const markComplete = useMutation({ mutationFn: () => rpc.markComplete({ slug }) })
   // The "Frizz document" header affordance opens .frizz/<slug>.md (threadBody). Many session threads have
@@ -1637,16 +1712,16 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
             // The fullscreen door, in the slot the queue card's sits in (before Retry) — only where there
             // is a drawer to leave, since the /full page is already there. The drawer mounted its own
             // after the whole strip until 2026-10-09, so the icon sat on the other side of Retry here.
-            expand={Boolean(onClose)}
+            expand={Boolean(onClose) || pane?.expand === true}
             onDoc={hasDoc ? () => pushDrawer("doc", thread.id) : undefined}
-            onDone={() => markComplete.mutate(undefined, { onSuccess: onStatusApplied })}
+            onDone={() => markComplete.mutate(undefined, { onSuccess: onStatusApplied ?? pane?.exit.dismiss })}
             doneBusy={markComplete.isPending}
             onStatusApplied={onStatusApplied}
           />
           {/* Snooze leaves the drawer the way Mark as done does — both take the thread off the reader's
               plate, and the queue card leaves on both (maintainer 2026-10-09). The snooze left the drawer
               open until then. */}
-          <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied} onSnoozed={onStatusApplied} />
+          <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied ?? pane?.exit.dismiss} onDismissCancel={pane?.exit.cancel} onSnoozed={onStatusApplied ?? pane?.exit.dismiss} />
         </div>
       </div>
     </header>
@@ -2364,11 +2439,11 @@ function ToolLiveMark({ status, backgroundState, liveBackgroundState, startedAt 
   // to unlearn. `pending && background` is the fallback: detached, but no live op correlated to it.
   const mark =
     liveBackgroundState === "running" ? (
-      <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="tool-disclosure" />
+      <LiveDot aria-hidden hue="shell" data-running-indicator="tool-disclosure" />
     ) : liveBackgroundState === "stale" ? (
       <span className={CHILD_STALE_DOT_CLASS} title={CHILD_STALE_SHELL_TITLE} />
     ) : hasRunningToolIndicator(status, backgroundState) || foregroundRunning ? (
-      <span aria-hidden className="frizz-live-dot frizz-live-dot--shell" data-running-indicator="tool-disclosure" />
+      <LiveDot aria-hidden hue="shell" data-running-indicator="tool-disclosure" />
     ) : null
   if (!mark) return null
   return <span className="frizz-tool-mark">{mark}</span>
@@ -2902,7 +2977,7 @@ export function AgentBlock({
   // row in the transcript, and the runtime in the right-hand column is what says it ran and stopped.
   const mark =
     running ? (
-      <span aria-hidden className="frizz-live-dot frizz-live-dot--agent" data-running-indicator="subagent-disclosure" />
+      <LiveDot aria-hidden hue="agent" data-running-indicator="subagent-disclosure" />
     ) : live?.state === "stale" ? (
       <span className={CHILD_STALE_DOT_CLASS} title={CHILD_STALE_TITLE} />
     ) : live?.state === "rested" ? (

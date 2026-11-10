@@ -27,13 +27,23 @@ class FakeWebSocket {
     this.url = String(url)
     FakeWebSocket.instances.push(this)
   }
+  readonly sent: unknown[] = []
   // What a proxy that refuses the upgrade looks like from the page: an error, then a close, never an open.
   refuse(): void {
     this.readyState = FakeWebSocket.CLOSED
     this.onerror?.({})
     this.onclose?.({})
   }
-  send(): void {}
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN
+    this.onopen?.({})
+  }
+  receive(msg: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(msg) })
+  }
+  send(data: string): void {
+    this.sent.push(JSON.parse(data))
+  }
   close(): void {
     this.readyState = FakeWebSocket.CLOSED
   }
@@ -45,20 +55,24 @@ const settle = async () => {
 }
 const ok = (result: unknown) => Promise.resolve(new Response(JSON.stringify({ result }), { status: 200 }))
 
-test("a Console feed whose /ws never opens polls its project's deltas, applies them, and reads the board again on a resync", async () => {
+test("a Console feed whose /ws never opens polls its project's deltas, applies them, reads the board again on a resync, and tries /ws again until one opens", async () => {
   const globals = new Map<PropertyKey, PropertyDescriptor | undefined>()
   const install = (key: PropertyKey, value: unknown) => {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value })
   }
-  // Timers run when the test says, so "one poll" is one call of runTimers().
+  // Timers run when the test says, so "one poll" is one call of runTimers(): every timer due within a
+  // poll's wait. A feed's next try at /ws waits longer, and runs only when the test asks (runProbes).
   let timers: { fn: () => void; delay: number }[] = []
-  const runTimers = async () => {
-    const due = timers
-    timers = []
+  const runWithin = async (min: number, max: number) => {
+    const due = timers.filter((t) => t.delay >= min && t.delay <= max)
+    timers = timers.filter((t) => !due.includes(t))
     for (const t of due) t.fn()
     await settle()
   }
+  const runTimers = () => runWithin(0, 1_500)
+  const runProbes = () => runWithin(5_000, 60_000)
+  const probeWaits = () => timers.filter((t) => t.delay >= 5_000).map((t) => t.delay)
   // The server: each project's board and its deltas, answered by procedure.
   const boards = new Map<string, { threads: ThreadView[]; seq: number }>([["alpha", { threads: [thread("a")], seq: 4 }], ["beta", { threads: [thread("b")], seq: 9 }]])
   const asked: { project: string; proc: string; input?: { bootId: string; seq: number } }[] = []
@@ -98,11 +112,12 @@ test("a Console feed whose /ws never opens polls its project's deltas, applies t
     await settle()
     assert.deepEqual(titles(), ["alpha~a:a", "beta~b:b"], "both boards load over HTTP, socket or none")
 
-    // Both sockets are refused. Nothing is applied yet, and nothing reconnects them.
+    // Both sockets are refused. Nothing is applied yet, and nothing reconnects them within a poll's wait.
     for (const ws of FakeWebSocket.instances) ws.refuse()
     const sockets = FakeWebSocket.instances.length
     await runTimers()
-    assert.equal(FakeWebSocket.instances.length, sockets, "a feed that fell back does not knock on /ws again")
+    assert.equal(FakeWebSocket.instances.length, sockets, "a feed that fell back does not knock on /ws again at the poll's pace")
+    assert.deepEqual(probeWaits(), [5_000, 5_000], "each tries /ws again once, after a wait")
     const polls = asked.filter((a) => a.proc === "boardDeltas")
     assert.deepEqual(polls.map((p) => [p.project, p.input]).sort(), [["alpha", { bootId: "boot-test", seq: 4 }], ["beta", { bootId: "boot-test", seq: 9 }]], "each project is asked for the deltas after the board it holds")
     assert.equal(store.connection, "open", "a polled board is a live one")
@@ -127,6 +142,28 @@ test("a Console feed whose /ws never opens polls its project's deltas, applies t
     deltaAnswer = () => ({ bootId: "boot-test", deltas: [] })
     await runTimers()
     assert.deepEqual(asked.filter((a) => a.proc === "boardDeltas" && a.project === "beta").at(-1)?.input, { bootId: "boot-test", seq: 900 })
+
+    // THE FALLBACK IS NOT FOR GOOD. A socket closed before it opened is also a server still starting, and
+    // the page is never reloaded across a restart: each feed tries /ws again, alpha's path still refuses
+    // and waits twice as long for its next try, and beta's opens and takes over from the poll.
+    const beforeProbes = FakeWebSocket.instances.length
+    await runProbes()
+    const probes = FakeWebSocket.instances.slice(beforeProbes)
+    assert.deepEqual(probes.map((ws) => new URL(ws.url).pathname.split("/")[2]).sort(), ["alpha", "beta"], "each fallen-back feed tried its own /ws")
+    const [alphaProbe, betaProbe] = ["alpha", "beta"].map((p) => probes.find((ws) => ws.url.includes(`/${p}/`))!)
+    alphaProbe!.refuse()
+    assert.deepEqual(probeWaits(), [10_000], "a refused try waits twice as long for the next")
+    betaProbe!.open()
+    betaProbe!.receive({ t: "hello", bootId: "boot-test", seq: 900 })
+    assert.deepEqual(betaProbe!.sent.find((m) => (m as { t: string }).t === "board"), { t: "board", bootId: "boot-test", seq: 900 }, "the socket resumes from the board the poll kept")
+    const polled = (project: string) => asked.filter((a) => a.proc === "boardDeltas" && a.project === project).length
+    const [alphaPolls, betaPolls] = [polled("alpha"), polled("beta")]
+    await runTimers()
+    await runTimers()
+    assert.equal(polled("beta"), betaPolls, "beta's poll stopped once its socket opened")
+    assert.equal(polled("alpha"), alphaPolls + 2, "alpha, still refused, polls on")
+    betaProbe!.receive({ t: "event", event: { type: "board-delta", seq: 901, bootId: "boot-test", upserts: [thread("b", "over the socket")], removed: [] } })
+    assert.ok(titles()!.includes("beta~b:over the socket"), "and beta's deltas now come down the socket")
 
     // Leaving the Console stops every poll.
     feed.stopConsoleFeed()

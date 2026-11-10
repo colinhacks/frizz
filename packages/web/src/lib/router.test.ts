@@ -12,6 +12,7 @@ function at(url: string): Location {
 
 function resetStore(): void {
   store.drawers = []
+  store.paneSlug = null
   store.view = "todos"
   store.routeThreadSlug = null
   store.board = null
@@ -23,8 +24,10 @@ function boardWith(threads: Array<{ id: string; needsYou?: boolean }>): void {
 }
 
 // The queue card the URL should land on when the thread is already queued. `null` = no card mounted,
-// which is how a non-queued (or not-yet-rendered) thread falls through to the drawer.
-function mountQueueCard(slug: string | null): () => void {
+// which is how a non-queued (or not-yet-rendered) thread falls through to the drawer. With `phone` the
+// viewport is a phone's, where a thread is a drawer: with an address bar to read, a desktop board shows
+// threads in its one-thread pane instead (store.ts paneEnabled).
+function mountQueueCard(slug: string | null, { phone = false }: { phone?: boolean } = {}): () => void {
   const globals = globalThis as typeof globalThis & { window?: Window; document?: Document; CSS?: typeof CSS }
   const previous = { window: globals.window, document: globals.document, CSS: globals.CSS }
   const card = {
@@ -43,6 +46,7 @@ function mountQueueCard(slug: string | null): () => void {
     scrollTo: () => {},
     clearTimeout: () => {},
     setTimeout: () => 0,
+    ...(phone ? { matchMedia: () => ({ matches: true, addEventListener: () => {} }) } : null),
   } as unknown as Window
   return () => Object.assign(globals, previous)
 }
@@ -338,7 +342,8 @@ test("the unprefixed drawer address takes its project prefix without a history e
 // one-drawer policy replaced A with B, so Back lands on A's entry with A gone and B still on top. The
 // router used to park A and leave B up, and the store→URL sync then pushed B's URL over A's (and
 // settling A pushed A's over that): every Back press grew the history by two and flipped between the
-// threads, on the phone and the desktop alike. Back must be a pure pop: no write, and A on top.
+// threads, on the phone and the desktop alike. Back must be a pure pop: no write, and A on top. (The
+// desktop board's pane has the same rule, in the test below this one.)
 test("Back onto a thread a lateral move replaced pops without writing history", async () => {
   resetStore()
   const globals = globalThis as typeof globalThis & { location?: Location }
@@ -350,7 +355,7 @@ test("Back onto a thread a lateral move replaced pops without writing history", 
     writes.push({ path, replace })
     globals.location = at(path)
   })
-  const restore = mountQueueCard(null)
+  const restore = mountQueueCard(null, { phone: true })
   try {
     boardWith([{ id: "thread-a" }, { id: "thread-b" }])
     pushDrawer("thread", "thread-a")
@@ -385,8 +390,54 @@ test("Back onto a thread a lateral move replaced pops without writing history", 
   }
 })
 
+// THE ONE-THREAD PANE keeps the same rule on a desktop board: each thread a row or a link brings up is a
+// history entry, and Back is a pure pop onto the thread before it, then onto the board.
+test("in the board's pane, Back onto the thread before pops without writing history", async () => {
+  resetStore()
+  const globals = globalThis as typeof globalThis & { location?: Location }
+  const previous = globals.location
+  const writes: Array<{ path: string; replace: boolean }> = []
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  globals.location = { pathname: "/", search: "" } as unknown as Location
+  const stop = startRouter((path, { replace }) => {
+    writes.push({ path, replace })
+    globals.location = at(path)
+  })
+  const restore = mountQueueCard(null)
+  try {
+    boardWith([{ id: "thread-a" }, { id: "queued-b", needsYou: true }])
+    pushDrawer("thread", "thread-a")
+    await settle()
+    openThread("queued-b")
+    await settle()
+    assert.equal(store.drawers.length, 0, "the pane, not a drawer")
+    assert.equal(store.paneSlug, "queued-b")
+    assert.deepEqual(writes, [{ path: "/?thread=thread-a", replace: false }, { path: "/?thread=queued-b", replace: false }])
+
+    writes.length = 0
+    globals.location = { pathname: "/", search: "?thread=thread-a" } as unknown as Location
+    primeRoute("/", "?thread=thread-a")
+    await settle()
+    resolveRoutedThread()
+    await settle()
+    assert.deepEqual(writes, [], "Back pushes nothing — it was a pop")
+    assert.equal(store.paneSlug, "thread-a")
+
+    globals.location = { pathname: "/", search: "" } as unknown as Location
+    primeRoute("/")
+    await settle()
+    assert.deepEqual(writes, [])
+    assert.equal(store.paneSlug, null, "the board, with the pane offering the first item")
+  } finally {
+    stop()
+    restore()
+    globals.location = previous
+    resetStore()
+  }
+})
+
 // A link (or a sidebar row, the palette, a notification) from inside thread A's drawer to a QUEUED
-// thread B: B's surface is its card in the main column, so the door dismisses A's drawer and scrolls
+// thread B, where the pane is off and a queued thread's surface is its card: B's surface is its card in the main column, so the door dismisses A's drawer and scrolls
 // there. The URL then reads the board — but that is a NAVIGATION, not a close. Replacing A's entry with
 // the board left two board entries in a row, so the next Back did nothing visible and A was unreachable
 // (desktop, 2026-10-08). It must push, so Back returns to A; and settling a routed `?thread=<queued>`
@@ -402,7 +453,7 @@ test("following a door to a queued thread's card pushes, so Back returns to the 
     writes.push({ path, replace })
     globals.location = at(path)
   })
-  const restore = mountQueueCard("queued-b")
+  const restore = mountQueueCard("queued-b", { phone: true })
   try {
     boardWith([{ id: "thread-a" }, { id: "queued-b", needsYou: true }])
     openThread("thread-a")

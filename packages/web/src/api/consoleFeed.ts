@@ -48,6 +48,12 @@ import { writeTranscriptPush } from "./transcript-push.ts"
 // invalidations and the project list's change notice. That is the degraded mode — the board stays live.
 // Measured through a proxy that refuses upgrades, a rename on either project showed within one poll.
 // (Until 2026-10-15 the Console had no fallback at all: its boards loaded over HTTP and then never moved.)
+//
+// A FEED THAT FELL BACK KEEPS TRYING /ws, on a backoff, and stops polling the moment a try opens. A socket
+// that closes before it opens is also what a server still starting up looks like, and the page is never
+// reloaded across a restart (api/boot.ts), so a Console loaded mid-restart fell back for good: every
+// project polled every POLL_MS for as long as the tab lived, about 14 requests a second across 21
+// projects, ~5% of a core in the browser and the same requests' cost on the server (2026-11-09).
 
 const HEARTBEAT_TIMEOUT = 35_000
 // The same drip api/socket.ts replays with: the server budgets transcript reads per origin per project.
@@ -56,6 +62,10 @@ const REPLAY_MS = 700
 const MAX_BUDGET_RETRIES = 5
 // How often a feed whose /ws never opened asks for its project's deltas (see the header).
 const POLL_MS = 1_500
+// How long such a feed waits before it tries /ws again, doubling on each refusal up to the cap. A path
+// that really refuses upgrades costs one failed upgrade a minute; the poll it replaces asks 40 times.
+const PROBE_FIRST_MS = 5_000
+const PROBE_MAX_MS = 60_000
 
 let qc: QueryClient | null = null
 const feeds = new Map<string, ProjectFeed>()
@@ -134,8 +144,11 @@ class ProjectFeed {
   private confirmed = false
   // This project's /ws never opened, so its deltas are polled for (the header). Kept across a restart:
   // it describes the path to this server, not one start of the feed — as api/socket.ts's `fellBack`.
+  // Left only when a later try at /ws opens (`probe`).
   private fellBack = false
   private pollTimer: ReturnType<typeof setTimeout> | null = null
+  private probeTimer: ReturnType<typeof setTimeout> | null = null
+  private probeDelay = PROBE_FIRST_MS
   private polling = false
   private protocolReady = false
   private failures = 0
@@ -169,9 +182,13 @@ class ProjectFeed {
     this.connect()
   }
 
-  connect(): void {
+  /** Open this project's /ws — or, for a feed that fell back, poll, unless this is its next try (`probe`). */
+  connect(probe = false): void {
     if (this.closed || this.ws) return
-    if (this.fellBack) return this.schedulePoll(0)
+    if (this.fellBack && !probe) {
+      this.scheduleProbe()
+      return this.schedulePoll(0)
+    }
     const sock = new WebSocket(`${location.origin.replace(/^http/, "ws")}${projectApiBase(this.project)}/ws`)
     this.ws = sock
     this.protocolReady = false
@@ -179,6 +196,7 @@ class ProjectFeed {
     sock.onopen = () => {
       this.confirmed = true
       this.lastMsg = Date.now()
+      if (this.fellBack) this.leaveFallback()
       if (this.reconnectTimer) {
         clearTimeout(this.reconnectTimer)
         this.reconnectTimer = null
@@ -251,6 +269,11 @@ class ProjectFeed {
   checkHealth(now: number, force = false): void {
     if (this.closed) return
     if (this.fellBack) {
+      // A try at /ws that neither opened nor closed is given up on, as a socket gone quiet is.
+      if (this.ws && now - this.lastMsg > HEARTBEAT_TIMEOUT) {
+        this.dropSocket()
+        this.fallBack()
+      }
       if (force) this.schedulePoll(0)
       return
     }
@@ -286,9 +309,9 @@ class ProjectFeed {
     this.closed = true
     this.dropSocket()
     this.resume.reset()
-    for (const timer of [this.reconnectTimer, this.replayTimer, this.pollTimer]) if (timer) clearTimeout(timer)
+    for (const timer of [this.reconnectTimer, this.replayTimer, this.pollTimer, this.probeTimer]) if (timer) clearTimeout(timer)
     for (const timer of this.budgetTimers.values()) clearTimeout(timer)
-    this.reconnectTimer = this.replayTimer = this.pollTimer = null
+    this.reconnectTimer = this.replayTimer = this.pollTimer = this.probeTimer = null
     this.budgetTimers.clear()
     const board = store.board ?? staged
     if (board) dropProject(board, this.project)
@@ -296,13 +319,32 @@ class ProjectFeed {
     for (const slug of this.subs.keys()) delete store.socketTranscriptFallbacks[threadKey(this.project, slug)]
   }
 
-  /** Stop trying /ws for this project and poll for its deltas instead (the header). */
+  /** Poll for this project's deltas instead (the header), and try /ws again later. A second call is a refused try. */
   private fallBack(): void {
-    if (this.fellBack) return
-    this.fellBack = true
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
-    this.schedulePoll(0)
+    if (this.fellBack) this.probeDelay = Math.min(this.probeDelay * 2, PROBE_MAX_MS)
+    else {
+      this.fellBack = true
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+      this.schedulePoll(0)
+    }
+    this.scheduleProbe()
+  }
+
+  private scheduleProbe(): void {
+    if (this.closed || this.probeTimer) return
+    this.probeTimer = setTimeout(() => {
+      this.probeTimer = null
+      if (this.fellBack) this.connect(true)
+    }, this.probeDelay)
+  }
+
+  /** A try at /ws opened: the socket carries this project from here, resuming from the board the poll kept. */
+  private leaveFallback(): void {
+    this.fellBack = false
+    this.probeDelay = PROBE_FIRST_MS
+    for (const timer of [this.pollTimer, this.probeTimer]) if (timer) clearTimeout(timer)
+    this.pollTimer = this.probeTimer = null
   }
 
   private schedulePoll(delay = POLL_MS): void {
@@ -318,14 +360,15 @@ class ProjectFeed {
   }
 
   private async poll(): Promise<void> {
-    if (this.closed || this.polling) return
+    if (this.closed || this.polling || !this.fellBack) return
     // Nothing to carry forward until the board is read (BoardResume reads it, and retries a failure).
     const held = this.boot !== null && this.seq >= 0 ? { bootId: this.boot, seq: this.seq } : null
     if (!held) return this.schedulePoll()
     this.polling = true
     try {
       const out = await rpcFor(this.project).boardDeltas(held)
-      if (this.closed || !isConsolePath()) return
+      // A socket that opened meanwhile resumes from the board held when it said hello; this answer is its.
+      if (this.closed || !isConsolePath() || !this.fellBack) return
       noteServerBootId(out.bootId)
       this.failures = 0
       if (this.state !== "open") this.setState("open")
@@ -335,11 +378,13 @@ class ProjectFeed {
       if ("resync" in out) this.resume.resync()
       else for (const event of out.deltas) this.handleEvent(event)
     } catch {
-      this.failures++
-      this.setState(this.failures > 3 ? "closed" : "connecting")
+      if (this.fellBack) {
+        this.failures++
+        this.setState(this.failures > 3 ? "closed" : "connecting")
+      }
     } finally {
       this.polling = false
-      this.schedulePoll()
+      if (this.fellBack) this.schedulePoll()
     }
   }
 

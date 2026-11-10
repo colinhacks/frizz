@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { pauseWhileOffscreen } from "../lib/offscreenPause.ts"
 
 // THE shared rounded-rect checkbox geometry — the ONE outer shape every rail status glyph sits in, and
 // the shape the in-progress spinner traces. Lives in its own module because BOTH the sidebar's
@@ -25,12 +26,16 @@ export function BoxSpinner({ size = STATUS_BOX, children }: { size?: number; chi
   // inset the path by 0.5 (x=0.5, w=14) so the stroke's outer edge lands on the box edge, and rx=3.5
   // (4px outer radius minus the 0.5 half-stroke). Perimeter of that rounded rect ≈ 50, so the dash sum
   // stays 50. The faint base outline is toned to the checkbox's border-muted/45 weight.
+  //
+  // THE SEGMENT TRAVELS BY A CSS ANIMATION (`.frizz-box-spinner-lap`, styles.css), NOT SMIL. It was an
+  // <animate> on stroke-dashoffset until 2026-11-09, the same motion (50 → 0, linear, 1.1s, forever), but
+  // Chrome runs SMIL as a full style pass per frame and never stops it off screen: ten spinners cost an
+  // idle page ~14% of a core on screen and ~12% scrolled away; the same ten as CSS cost ~9%, and 0 paused
+  // off screen (pauseWhileOffscreen). `data-box-spinner` is the hook a test or script finds it by.
   const svg = (
-    <svg width={size} height={size} viewBox="0 0 15 15" aria-hidden className="block text-muted-85">
+    <svg ref={pauseWhileOffscreen} width={size} height={size} viewBox="0 0 15 15" aria-hidden className="block text-muted-85" data-box-spinner>
       <rect x="0.5" y="0.5" width="14" height="14" rx="3.5" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1" />
-      <rect x="0.5" y="0.5" width="14" height="14" rx="3.5" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeDasharray="11 39">
-        <animate attributeName="stroke-dashoffset" from="50" to="0" dur="1.1s" repeatCount="indefinite" />
-      </rect>
+      <rect x="0.5" y="0.5" width="14" height="14" rx="3.5" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeDasharray="11 39" className="frizz-box-spinner-lap" />
     </svg>
   )
   if (children === undefined || children === null || children === false) return svg

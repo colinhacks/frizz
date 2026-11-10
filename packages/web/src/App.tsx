@@ -17,6 +17,8 @@ import { MobileBoard } from "./components/MobileBoard.tsx"
 import { useIsMobile } from "./lib/mobile.ts"
 import { DrawerStack } from "./components/DrawerStack.tsx"
 import { TodosView } from "./components/TodosView.tsx"
+import { PaneLayout } from "./components/ThreadPane.tsx"
+import { setPaneFolded } from "./lib/threadPane.ts"
 import { NewThreadDialog } from "./components/NewThreadModal.tsx"
 import { GithubPickerModal } from "./components/GithubPickerModal.tsx"
 import { useGithubStatus } from "./components/GithubTrigger.tsx"
@@ -231,6 +233,10 @@ export function App() {
               tuned 52px by ~1530px, where the pair has margins to spare. Wide layouts are unchanged.
           The classes are lib/boardColumns.ts's: the home switcher lays out an empty copy of this pair to
           find the top-left corner of the Console's sidebar, where it sits. */}
+      {/* THE ONE-THREAD PANE. A brand-new project keeps its centered first-task view below. */}
+      {board && snap.view === "todos" && !(boardEmpty && !onConsole) ? (
+        <PaneLayout sidebar={<ErrorBoundary label="the sidebar">{onConsole ? <ConsoleSidebar /> : <Sidebar />}</ErrorBoundary>} />
+      ) : (
       <div className={`${BOARD_PAIR_CLASS} min-h-screen`}>
         {/* A genuinely fresh project keeps its centered first-task view. Once this project has had a
             Frizz-owned thread, the sidebar remains mounted through transient empty keyframes;
@@ -270,6 +276,7 @@ export function App() {
           )}
         </main>
       </div>
+      )}
       {/* Until the first board snapshot lands, the mark writing itself (FrizzLoader), centred on the
           PAGE — the box beside the project rail, one window tall — not on the workpane. It sat in the
           workpane until 2026-11-02, and a reload with the sidebar column reserved put it 269px right of
@@ -285,7 +292,7 @@ export function App() {
 
       {/* The side-drawer STACK — and the Escape chain that unwinds it — lives in <DrawerStack> so the
           standalone `/thread/<slug>` page can mount the identical thing. See DrawerStack.tsx. */}
-      <DrawerStack />
+      <DrawerStack onEscapeAtRest={() => { if (store.paneSlug) setPaneFolded(false) }} />
       {snap.showSettings && <SettingsDrawer offerUpdate />}
       {snap.showNewThread && <NewThreadDialog onClose={() => { store.showNewThread = false }} />}
       {snap.showGithubPicker && <GithubPickerModal onClose={closeGithubPicker} />}

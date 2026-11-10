@@ -133,6 +133,50 @@ test("get: a thread with a sub-agent is re-derived on every call — the clock a
   } finally { f.close() }
 })
 
+test("get: the codex bridge's background commands keep a CODEX thread live between ticks, and no other", () => {
+  // The board builds every thread's view on every change, and a re-derivation it did not need is one per
+  // thread per build. The bridge's execs are the reason a codex thread is re-derived without a tick; a
+  // Claude thread can never hold one, so it must not pay for them.
+  const root = mkdtempSync(join(tmpdir(), "frizz-tele-memo-codex-"))
+  const logDir = join(root, "-a-project")
+  mkdirSync(logDir)
+  const storage = createStorage(join(root, "ui.db"), "p")
+  const execs = new Map<string, { processId: string; command?: string; startedAtMs: number }[]>()
+  const asked: string[] = []
+  const tailer = createTailer({
+    project: { cwdSlug: "x" } as Project,
+    storage,
+    bus: new Bus(),
+    onChange: () => {},
+    sessionLogDir: logDir,
+    brokerDaemonAlive: () => true,
+    shellAlive: () => true,
+    codexBackgroundExecs: (slug) => { asked.push(slug); return execs.get(slug) ?? [] },
+  })
+  try {
+    for (const [slug, backend] of [["claude-thread", "claude"], ["codex-thread", "codex"]] as const) {
+      storage.upsertSession(row(slug, `sid-${slug}`))
+      storage.setBackend(slug, backend)
+      if (backend === "claude") storage.setClaudeRuntime(slug, "broker")
+      else storage.setCodexRuntime(slug, "app-server")
+      writeFileSync(join(logDir, `sid-${slug}.jsonl`), [prompt(0), reply(2, "resting")].map((l) => l + "\n").join(""))
+    }
+    tailer.tick()
+    const claude = tailer.get("claude-thread")!
+    asked.length = 0
+    for (let i = 0; i < 5; i++) assert.equal(tailer.get("claude-thread"), claude)
+    assert.deepEqual(asked, [], "five builds' worth of reads asked the bridge nothing about a Claude thread")
+
+    // A codex command starts. Nothing on disk moves and no tick runs; the next read must show it.
+    execs.set("codex-thread", [{ processId: "p1", command: "npm test", startedAtMs: Date.parse(at(3)) }])
+    assert.equal(tailer.get("codex-thread")!.bgShells.length, 1, "the codex thread's new command reached the board without a tick")
+  } finally {
+    tailer.stop()
+    storage.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test("get: dismissing an op re-derives without waiting for a tick", () => {
   const f = fixture()
   try {

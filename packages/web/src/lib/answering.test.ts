@@ -206,7 +206,7 @@ test("sendMessage composes the caller's own onRollback ahead of the failure tail
   )
 })
 
-test("the queue card wires the reversal; the thread page does not", () => {
+test("the queue card and the board's pane wire the reversal; the drawer and the thread page do not", () => {
   const todos = readFileSync(new URL("../components/TodosView.tsx", import.meta.url), "utf8")
   const chat = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8")
   const shell = readFileSync(new URL("../components/ThreadSurface.tsx", import.meta.url), "utf8")
@@ -215,7 +215,9 @@ test("the queue card wires the reversal; the thread page does not", () => {
   assert.match(todos, /const cancelThisCard = useCallback\(\(\) => onUnresolve\(thread\.id\)/, "the card can reinstate itself")
   assert.match(todos, /exit: \{ dismiss: dismissThisCard, cancel: cancelThisCard \}/, "…and hands that to its surface")
   assert.match(shell, /\{ onSendFailed: exit\?\.cancel, composer \}/, "the shell reinstates a surface whose send was refused")
-  // The thread page has no card to reinstate, so it names no exit at all.
-  assert.match(chat, /const surface = useThreadSurface\(\{ slug, thread, messages, openQuestions, settledQuestions \}\)\n/, "the thread page must not wire a card reversal it has no card for")
+  // The thread view names an exit only when the one-thread pane hosts it: there a dismissal brings up the
+  // next thread and a refused one brings this one back (ThreadPane.tsx). In a drawer or on the thread page
+  // there is nothing to reinstate, so it names none.
+  assert.match(chat, /const surface = useThreadSurface\(\{ slug, thread, messages, openQuestions, settledQuestions \}, pane \? \{ exit: pane\.exit \} : undefined\)\n/, "only the pane's thread wires a reversal")
   assert.ok(!/onSendFailed/.test(chat))
 })

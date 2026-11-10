@@ -369,7 +369,7 @@ function useTurnRelease(record: InteractionRecord, siblings: readonly Interactio
       if (!lastOpen) return
       releasedThreads.add(slug)
       markSteered(slug)
-      queueDismiss?.dismiss()
+      ;(queueDismiss?.sent ?? queueDismiss?.dismiss)?.()
     },
     // A failed response puts its request back, and with it any release a later response made on the
     // strength of it: the turn is still blocked on this one.

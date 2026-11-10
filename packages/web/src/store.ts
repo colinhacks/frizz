@@ -8,9 +8,10 @@ import { closeDrawerAnimated, focusDrawer } from "./lib/overlays.ts"
 import { isPageScrollLocked, pageScrollY, requestScrollAfterUnlock } from "./lib/pageScrollLock.ts"
 import { holdQueueCardLanding } from "./lib/queueLandingHold.ts"
 import { resolveThreadRoute } from "./lib/threadRouteState.ts"
-import { standaloneThreadHref } from "./lib/standaloneThreadRoute.ts"
+import { parseStandaloneThreadPath, standaloneThreadHref } from "./lib/standaloneThreadRoute.ts"
 import { ownedByThisPage } from "./lib/projectOwnership.ts"
-import { isConsolePath } from "./lib/base-path.ts"
+import { innerPath, isConsolePath } from "./lib/base-path.ts"
+import { isMobileViewport } from "./lib/mobile.ts"
 import { holdsCardHere } from "./lib/consoleBoard.ts"
 import { CONSOLE_TOP_PX } from "./lib/homeView.ts"
 import { bareSlug, splitThreadKey } from "./lib/threadKey.ts"
@@ -180,6 +181,9 @@ export const store = proxy({
   // The router parks the slug here and App resolves it the first render the board is authoritative
   // (see resolveRoutedThread). Snoozed slugs keep the address bar on ?thread=<slug> meanwhile.
   routeThreadSlug: null as string | null,
+  // THE ONE-THREAD PANE: the thread the board's right-hand column shows, chosen by a sidebar row or by
+  // moving through the queue. Null is the prompt to open the first item (ThreadPane.tsx).
+  paneSlug: null as string | null,
   // The slug whose BOARD surface (thread drawer or queue card) is currently wearing
   // `view-transition-name: thread-chat`, so the /full page's thread column has somewhere to morph
   // back into when the fullscreen page is left for the board (browser Back, or the collapse icon).
@@ -324,7 +328,26 @@ function openOrRaiseDrawer(next: Omit<Drawer, "id" | "closing" | "openedAt">): v
 }
 
 export function pushDrawer(kind: "thread" | "doc", slug: string, opts?: { routed?: boolean }): void {
+  if (kind === "thread" && paneEnabled()) {
+    showInPane(slug)
+    return
+  }
   openOrRaiseDrawer({ kind, slug, routed: opts?.routed })
+}
+
+// THE ONE-THREAD PANE: on a desktop board a thread opens in the right-hand column, never in a
+// sheet over it. The phone keeps its own shell and its sheets; the /full page has no pane to show one in,
+// so a link there still opens a drawer.
+export function paneEnabled(): boolean {
+  if (typeof location === "undefined" || typeof window === "undefined") return false
+  // A status list has no pane to show a thread in, so a thread there opens in a drawer.
+  return !isMobileViewport() && store.view === "todos" && parseStandaloneThreadPath(innerPath()) === null
+}
+
+export function showInPane(slug: string): void {
+  const open = store.drawers.filter((d) => !d.closing).map((d) => d.id)
+  if (open.length) closeDrawersById(open)
+  store.paneSlug = slug
 }
 
 // Open a sub-agent's transcript as a new drawer layer OVER whatever's on top (typically the thread it
@@ -655,7 +678,7 @@ export function topThreadSlug(): string | null {
     const d = store.drawers[i]
     if (d.kind === "thread" && !d.closing) return d.slug
   }
-  return null
+  return store.paneSlug
 }
 
 // THE DOOR. Every board that reaches the UI comes through one of these two functions, so this is where
@@ -763,6 +786,7 @@ export function resetProjectState() {
   store.filePanels = []
   store.composerContext = {}
   store.routeThreadSlug = null
+  store.paneSlug = null
   store.socketTranscriptFallbacks = {}
   store.showSettings = false
   store.showNewThread = false

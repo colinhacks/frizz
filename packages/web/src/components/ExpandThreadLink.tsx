@@ -2,6 +2,8 @@ import { useContext, useRef, type MouseEvent } from "react"
 import { QueryClientContext } from "@tanstack/react-query"
 import { Maximize2 } from "lucide-react"
 import { warmTranscript } from "../hooks.ts"
+import { paneEnabled } from "../store.ts"
+import { foldPane } from "../lib/threadPane.ts"
 import { captureFullscreenEnterAnchor, rememberFullscreenOrigin } from "../lib/fullscreenHandoff.ts"
 import { armFullscreenMorph } from "../lib/fullscreenMorph.ts"
 import { spaNavigate } from "../lib/router.ts"
@@ -35,6 +37,12 @@ export function ExpandThreadLink({ slug, size = 14, className, label = "Open ful
     event.stopPropagation()
     if (!isPlainLeftClick(event)) return
     event.preventDefault()
+    // THE PANE: full screen is the same page with the sidebar put away, not a navigation.
+    // ⌘-click and the address stay what they were, for a /full tab of its own.
+    if (paneEnabled()) {
+      foldPane(slug)
+      return
+    }
     const animate = !prefersReducedMotion()
     // The chat surface this door sits in: the drawer's panel, or the queue card's shell. It is both
     // what the transition morphs and what the reader's place is measured against, so it is read once

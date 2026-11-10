@@ -37,7 +37,7 @@ import { useQuery } from "@tanstack/react-query"
  * without either column having to change size to get there.
  */
 const PANE_W = `max(50%, calc(100% - ${SHEET_BASE_WIDTH}px))`
-const LAYOUT_VARS = {
+export const LAYOUT_VARS = {
   "--full-thread": `min(${SHEET_BASE_WIDTH}px, ${PANE_W})`,
   // Below the split there is no rail and no viewer, so the column simply takes the page under the cap
   // — which is the DRAWER's width, so the two surfaces agree and the morph between them is a translate.
@@ -230,17 +230,21 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
 // nothing is open — so the viewer's own width is a constant and it never re-wraps a line of code to
 // arrive. The rail stays MOUNTED under the pane — its live rows keep polling — but goes inert, so
 // nothing hidden can take focus or a click. Readers stay mounted under each new layer, including
-// during its slide-out, so dismissing a file reveals exactly the reading position beneath it.
-function SidePane({ slug, thread }: { slug: string; thread: ThreadView }) {
+// during its slide-out, so dismissing a file reveals exactly the reading position beneath it. Without
+// `rail` (the one-thread pane with its rail put away) the region holds files alone, over nothing, and
+// `centredRail` is that pane's rail centred in the window (FocusRail `centred`).
+export function SidePane({ slug, thread, rail = true, centredRail = false }: { slug: string; thread: ThreadView; rail?: boolean; centredRail?: boolean }) {
   const snap = useSnapshot(store)
   return (
     <div
       data-side-pane
       className="relative hidden h-full w-[var(--full-pane)] min-h-0 min-w-0 shrink-0 grow-0 overflow-hidden split:block"
     >
-      <div inert={snap.filePanels.length > 0 ? true : undefined} className="h-full min-h-0">
-        <FocusRail thread={thread} />
-      </div>
+      {rail && (
+        <div inert={snap.filePanels.length > 0 ? true : undefined} className="h-full min-h-0">
+          <FocusRail thread={thread} centred={centredRail} />
+        </div>
+      )}
       {snap.filePanels.map((panel, i) => (
         <FilePaneLayer
           key={panel.id}

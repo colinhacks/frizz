@@ -5,11 +5,17 @@ import type { ProfileGridGroup, ProfileGridOption, ProfileGridSelection } from "
 // the route `opencode models` itself prints from), across every provider the person holds keys for, and
 // each model has its own reasoning levels ("variants": `minimal`, `xhigh`, `none`), which line up with
 // neither each other nor the menu's effort columns. So the group is a DROPDOWN group: the desktop menu
-// draws a model dropdown and an effort dropdown under the OpenCode heading, the trigger reads the model
-// like any other ("Big Pickle › high"), and the phone's sheet lists the models as rows with each one's
-// levels as its effort chips (maintainer 2026-11-09: "For opencode, it should be a dropdown because
-// opencode obviously supports many models and many effort levels"). A separate model pill stood to the
-// right of the trigger until then, where it read as the effort or the permission.
+// draws a model dropdown and an effort dropdown under the OpenCode heading, and the phone's sheet lists
+// the models as rows with each one's levels as its effort chips (maintainer 2026-11-09: "For opencode, it
+// should be a dropdown because opencode obviously supports many models and many effort levels"). A
+// separate model pill stood to the right of the trigger until then, where it read as the effort or the
+// permission.
+//
+// The trigger reads "OpenCode" and then the model name in the edition ink, the way a Claude trigger reads
+// "Opus" and then "5.5" (maintainer, same day: "Let's have OpenCode be in that chip as well, kind of in
+// the same way that we have Opus, but then the whole model name is in that lighter gray font"). The bare
+// `opencode:` is OpenCode's own configured model; it has no "Default" row, because the list shows that
+// model by name and checks it ("what is the point of having the word 'default' in that dropdown").
 //
 // A selection is the model slug WITHOUT its variant, with the variant as the effort ("" for the model's
 // own default), and the stored slug puts them back together: `opencode:<provider>/<id>#<variant>`.
@@ -43,20 +49,21 @@ export function opencodeProfileGroup({ models, loading = false, saved, onRequest
   const defaultRef = opencodeModelRef(models?.defaultModel)
   const defaultListed = defaultRef ? listed.find((model) => model.providerID === defaultRef.providerID && model.id === defaultRef.id) : undefined
   const defaultName = defaultRef ? defaultListed?.name ?? `${defaultRef.providerID}/${defaultRef.id}` : undefined
+  const named = (name: string | undefined) => ({ triggerLabel: "OpenCode", ...(name ? { triggerEdition: name } : {}) })
+  // The configured model. Once the list names it, the list shows that model's own row in its place
+  // (`aliasOf`), so this row is seen only before the list arrives, or when OpenCode could not list it.
   const options: ProfileGridOption[] = [{
     model: OPENCODE_MODEL_PREFIX,
-    label: "Default",
-    // The default is whatever the person's OpenCode config picks, so the row and the trigger name it. Its
-    // levels are that model's, and choosing one stores the model itself (`aliasOf`).
-    ...(defaultName ? { hint: defaultName } : {}),
-    triggerLabel: defaultName ?? "OpenCode",
+    label: defaultName ?? "Configured model",
+    ...named(defaultName),
     efforts: ["", ...(defaultListed?.variants ?? [])],
-    ...(defaultRef ? { aliasOf: opencodeModelSlug({ providerID: defaultRef.providerID, id: defaultRef.id }) } : {}),
+    ...(defaultListed ? { aliasOf: opencodeModelSlug({ providerID: defaultListed.providerID, id: defaultListed.id }) } : {}),
   }]
   for (const model of listed) {
     options.push({
       model: opencodeModelSlug({ providerID: model.providerID, id: model.id }),
       label: model.name,
+      ...named(model.name),
       section: model.providerID,
       efforts: ["", ...model.variants],
     })
@@ -68,12 +75,12 @@ export function opencodeProfileGroup({ models, loading = false, saved, onRequest
     const name = `${savedRef.providerID}/${savedRef.id}`
     if (index === -1) {
       const gone = Boolean(models && !loading && !models.error)
-      options.push({ model, label: gone ? `${name} (unavailable)` : name, triggerLabel: name, efforts: ["", ...(savedRef.variant ? [savedRef.variant] : [])] })
+      options.push({ model, label: gone ? `${name} (unavailable)` : name, ...named(name), efforts: ["", ...(savedRef.variant ? [savedRef.variant] : [])] })
     } else if (savedRef.variant && !options[index]!.efforts.includes(savedRef.variant)) {
       options[index] = { ...options[index]!, efforts: [...options[index]!.efforts, savedRef.variant] }
     }
   }
-  const notice = models?.error ? `OpenCode did not list its models (${models.error}); threads run on its default` : undefined
+  const notice = models?.error ? `OpenCode did not list its models (${models.error}); threads run on its configured model` : undefined
   return {
     id: "opencode",
     label: "OpenCode",

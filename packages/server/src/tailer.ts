@@ -3163,8 +3163,11 @@ export interface Tailer {
    * adaptive poll uses, so it is safe to call on every runtime event. Called by the Claude broker's
    * event ingest (backend/claude-runtime-ingest.ts); a tailer nobody nudges behaves exactly as before.
    * Optional for the same reason `dismissOp` is — a narrow test stub of this interface need not have it.
+   *
+   * Naming the thread confines the look to it: the event says which thread changed, and the rest of the
+   * board is the poll's. Without a slug it is a whole tick, as it always was.
    */
-  nudge?(): void
+  nudge?(slug?: string): void
 }
 
 export interface TailerDeps {
@@ -5574,17 +5577,23 @@ export function createTailer(deps: TailerDeps): Tailer {
   // `sweep: false` leaves the dormant rows alone (see `dormant`) and `scan: true` reads the foreign
   // set now rather than on its tick count; both are the scheduler's to choose (see `poll`). The
   // defaults are the whole board, which is what every direct caller means by a tick.
-  function tick(opts: { sweep?: boolean; scan?: boolean } = {}): void {
-    const sweep = opts.sweep ?? true
+  //
+  // `only` is a NARROW tick: the named threads and nothing else — what a nudge runs, because the event
+  // that sent it names the one thread that changed. It reads no other row, no foreign session, and
+  // leaves the whole-board bookkeeping (`quiet`, the registry snapshot, the prime flag, the sweep clock)
+  // to the poll, which goes on looking at everything else on its own cadence. See `nudge` for what a
+  // whole-board tick per event cost.
+  function tick(opts: { sweep?: boolean; scan?: boolean; only?: ReadonlySet<string> } = {}): void {
+    const only = opts.only
+    const sweep = !only && (opts.sweep ?? true)
     // Discover sessions from the registry so dispatch/resume/restart all "just work" — a new row
     // starts being tailed on the next tick; a finished row keeps its final derived state.
     let dirty = false
     // Any row this tick left with something still in motion — see `settled`, and `quiet` below.
     let unsettled = false
-    // Any session whose provider events have outrun its transcript this tick → ask for another look
-    // once the tick finishes (see chaseRuntime). One flag for the whole board: the nudge is coalesced
-    // anyway, so per-session bookkeeping would buy nothing.
-    let chaseWanted = false
+    // Sessions whose provider events have outrun their transcript this tick → each is looked at again
+    // once the tick finishes (see chaseRuntime), on its own.
+    const chase = new Set<string>()
     // Slugs whose JSONL advanced this tick (offset moved) → their transcript may have changed. Fed to the
     // /ws transcript producer at the end so it pushes only for genuinely-changed threads.
     const transcriptDirty: string[] = []
@@ -5593,7 +5602,9 @@ export function createTailer(deps: TailerDeps): Tailer {
     // The registered states this tick read (see touchState), re-validated once it is done with them.
     const visited: Array<[TailState, SessionRow]> = []
     const rows = deps.storage.allSessions()
-    rowsAtLastTick = rows
+    // Only a whole-board tick answers "has the registry moved since anything looked?" (rowsMoved): a
+    // narrow one read the other rows without looking at them.
+    if (!only) rowsAtLastTick = rows
     // ARCHIVED ROWS PRIME LAST. Priming is bounded per tick, so on a cold board the registry's order
     // decides who converges first — and a long-lived board is overwhelmingly archive. The maintainer's
     // board on 2026-08-16: 464 rows, 459 of them archived, 5 on the live board. Priming in row order
@@ -5617,7 +5628,9 @@ export function createTailer(deps: TailerDeps): Tailer {
     // Newly-primed rows this tick, and whether the bound cut the pass short (see MAX_PRIME_ROWS_PER_TICK).
     let primedRows = 0
     const tickStartedMs = monotonicNow()
-    primeIncomplete = false
+    // A narrow tick can only ADD to the cold rows the poll still owes (it may defer the one it names); it
+    // never saw the rest, so it cannot say they are done.
+    if (!only) primeIncomplete = false
     // THE PRIME BOUND. Asked at TWO gates in the loop below — once before a cold row is SET UP at all,
     // and once more where the fold itself begins — so it has to be one predicate rather than two copies
     // that can drift. `primedRows` is read live, not captured.
@@ -5633,6 +5646,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       primedRows >= MAX_PRIME_ROWS_PER_TICK ||
       (primedRows > 0 && monotonicNow() - tickStartedMs > PRIME_BUDGET_MS)
     for (const row of rows) {
+      if (only && !only.has(row.slug)) continue
       if (primeProgress && primed % PRIME_PROGRESS_EVERY === 0) primeProgress(primed, rows.length)
       primed++
       // Per-row backend + the DISCOVERED transcript stem. Both backends decouple the transcript id from
@@ -5656,8 +5670,9 @@ export function createTailer(deps: TailerDeps): Tailer {
         known.nativeSessionId === nativeId &&
         known.runtimeGeneration === runtimeGeneration
       let state = keepable ? known : undefined
-      // Before anything that touches the disk: between sweeps a dormant row is not read at all.
-      if (!sweep && state && dormant(row, state)) continue
+      // Before anything that touches the disk: between sweeps a dormant row is not read at all. A row a
+      // narrow tick names is read whatever it looks like: an event just said it moved.
+      if (!sweep && !only && state && dormant(row, state)) continue
       // THE BOUND IS ASKED BEFORE THE SETUP, NOT ONLY BEFORE THE FOLD (2026-09-04).
       //
       // Everything between here and the prime below is PER-ROW work that a deferred row used to pay in
@@ -5864,7 +5879,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       }
       // The bytes just folded may have carried a restart that supersedes an operator's ×.
       drainUnretiredOps(state, row)
-      if (chaseRuntime(row, state, state.offset !== prevOffset, nowMs)) chaseWanted = true
+      if (chaseRuntime(row, state, state.offset !== prevOffset, nowMs)) chase.add(row.slug)
 
       // turn transition (in-flight → idle): a completed turn. Mark unread + notify, gated on
       // last_read_at so a turn the user has already scrolled past doesn't re-badge.
@@ -5968,35 +5983,38 @@ export function createTailer(deps: TailerDeps): Tailer {
     }
 
     // FOREIGN threads: refresh the fresh set on a scan tick (a change in membership/order is itself
-    // dirty), then tail every fresh one (reusing the cached set between scans).
-    if (opts.scan || foreignScanTick % FOREIGN_SCAN_EVERY === 0) {
-      // BOTH agents' terminals, tagged with the backend that has to FOLD each one — a rollout put
-      // through the Claude parser yields a silent empty thread, not an error. Claude first so that if
-      // the two ever exceed the cap together it is the codex tail that is dropped: Claude's scan is the
-      // one that reads a directory frizz itself writes to, so it is never speculative.
-      const next = [
-        ...scanForeign(nowMs).map((f) => ({ ...f, backend: "claude" as const })),
-        ...scanForeignCodex(nowMs).map((f) => ({ ...f, backend: "codex" as const })),
-      ].slice(0, FOREIGN_MAX)
-      if (!sameForeign(next, foreignFresh)) dirty = true
-      foreignFresh = next
-    }
-    foreignScanTick++
-    for (const f of foreignFresh) {
-      let state = foreignStates.get(f.id)
-      if (!state) {
-        state = newTailState(f.id, f.id, f.path, true) // slug = session id = thread id for a foreign thread
-        hydrateFromCache(state, null, f.id)
-        foreignStates.set(f.id, state)
+    // dirty), then tail every fresh one (reusing the cached set between scans). Never on a narrow tick:
+    // no event names a foreign thread, and counting nudges here put the scan on the event rate.
+    if (!only) {
+      if (opts.scan || foreignScanTick % FOREIGN_SCAN_EVERY === 0) {
+        // BOTH agents' terminals, tagged with the backend that has to FOLD each one — a rollout put
+        // through the Claude parser yields a silent empty thread, not an error. Claude first so that if
+        // the two ever exceed the cap together it is the codex tail that is dropped: Claude's scan is the
+        // one that reads a directory frizz itself writes to, so it is never speculative.
+        const next = [
+          ...scanForeign(nowMs).map((f) => ({ ...f, backend: "claude" as const })),
+          ...scanForeignCodex(nowMs).map((f) => ({ ...f, backend: "codex" as const })),
+        ].slice(0, FOREIGN_MAX)
+        if (!sameForeign(next, foreignFresh)) dirty = true
+        foreignFresh = next
       }
-      // The HARNESS's own name for the thread, which claude records inside the transcript (`ai-title`,
-      // folded like any other record) and codex keeps in a sidecar the fold cannot see. Assigning it
-      // here puts both backends on the one field the board already reads. Re-applied every tick rather
-      // than only on creation, because codex writes the sidecar entry AFTER the rollout exists.
-      if (f.title && state.aiTitle !== f.title) state.aiTitle = f.title
-      if (tailForeign(state, nowMs, transcriptDirty, resolveBackend(f.backend))) dirty = true
-      // A terminal session mid-turn is about to write again, and nothing will say so.
-      if (state.turn !== "idle") unsettled = true
+      foreignScanTick++
+      for (const f of foreignFresh) {
+        let state = foreignStates.get(f.id)
+        if (!state) {
+          state = newTailState(f.id, f.id, f.path, true) // slug = session id = thread id for a foreign thread
+          hydrateFromCache(state, null, f.id)
+          foreignStates.set(f.id, state)
+        }
+        // The HARNESS's own name for the thread, which claude records inside the transcript (`ai-title`,
+        // folded like any other record) and codex keeps in a sidecar the fold cannot see. Assigning it
+        // here puts both backends on the one field the board already reads. Re-applied every tick rather
+        // than only on creation, because codex writes the sidecar entry AFTER the rollout exists.
+        if (f.title && state.aiTitle !== f.title) state.aiTitle = f.title
+        if (tailForeign(state, nowMs, transcriptDirty, resolveBackend(f.backend))) dirty = true
+        // A terminal session mid-turn is about to write again, and nothing will say so.
+        if (state.turn !== "idle") unsettled = true
+      }
     }
 
     // Persist the prime cache. The FIRST tick always flushes (that is the boot the next one inherits);
@@ -6011,14 +6029,20 @@ export function createTailer(deps: TailerDeps): Tailer {
     if (transcriptDirty.length) deps.onTranscriptChange?.(transcriptDirty)
 
     // What this tick found, for the scheduler. Quiet takes a tick that moved NOTHING as well as a
-    // board with nothing in motion, so the tick after any change is still a prompt one.
-    quiet = !unsettled && !dirty && transcriptDirty.length === 0 && !chaseWanted && !primeIncomplete
-    lastTickAt = monotonicNow()
-    if (sweep) lastSweepAt = lastTickAt
+    // board with nothing in motion, so the tick after any change is still a prompt one. A narrow tick
+    // can end a quiet spell but never start one, and the poll's clock is the whole board's.
+    const moved = unsettled || dirty || transcriptDirty.length > 0 || chase.size > 0 || primeIncomplete
+    if (only) {
+      if (moved) quiet = false
+    } else {
+      quiet = !moved
+      lastTickAt = monotonicNow()
+      if (sweep) lastSweepAt = lastTickAt
+    }
 
-    // A session's provider events have outrun its transcript — look again shortly. Last, so it can
-    // never delay this tick's board push.
-    if (chaseWanted) nudge()
+    // A session's provider events have outrun its transcript — look at it again shortly. Last, so it
+    // can never delay this tick's board push.
+    for (const slug of chase) nudge(slug)
   }
 
   // in-flight → idle: the turn finished. Badge unread if this completion post-dates the last read,
@@ -6129,17 +6153,21 @@ export function createTailer(deps: TailerDeps): Tailer {
   // Duration of the most recent tick — read by the self-scheduling poll below so a tick that costs more
   // than its own period yields the event loop for at least as long as it just held it.
   let lastTickMs = 0
+  // …and of the most recent WHOLE-BOARD tick, which is what spaces the poll: a cheap narrow tick in
+  // between says nothing about what the next look at the whole board will cost.
+  let lastFullTickMs = 0
   // Set by a tick that hit MAX_PRIME_ROWS_PER_TICK — there are still cold rows waiting. scheduleTick
   // re-arms immediately in that case so a cold board converges in a burst of short ticks rather than
   // one row-block per second.
   let primeIncomplete = false
-  function tickWithBudget(opts?: { sweep?: boolean; scan?: boolean }): void {
+  function tickWithBudget(opts?: { sweep?: boolean; scan?: boolean; only?: ReadonlySet<string> }): void {
     const started = monotonicNow()
     try {
       tick(opts)
     } finally {
       const elapsed = monotonicNow() - started
       lastTickMs = elapsed
+      if (!opts?.only) lastFullTickMs = elapsed
       lastTickEndedAtMs = now()
       if (elapsed > POLL_MS) {
         overBudgetTicks++
@@ -6200,7 +6228,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // ticks, not a stall. setImmediate-scale rather than 0 so I/O and pending RPCs interleave.
     const delay = primeIncomplete
       ? 1
-      : Math.min(MAX_POLL_MS, Math.max(POLL_MS, Math.round(lastTickMs)))
+      : Math.min(MAX_POLL_MS, Math.max(POLL_MS, Math.round(lastFullTickMs)))
     timer = setTimeout(() => {
       timer = null
       // Behind the other projects' ticks, with the sockets between them (loop-turns.ts). Skipped if a nudge
@@ -6231,12 +6259,24 @@ export function createTailer(deps: TailerDeps): Tailer {
   //  * DUTY-CYCLE PRESERVING. scheduleTick deliberately bounds the tailer at ~50% of the event loop by
   //    never starting a tick sooner than the last one cost. The nudge inherits that exact floor, so a
   //    chatty session can never starve RPCs and board pushes the way a fixed interval could.
+  //  * NARROW. The event names its thread, and the tick it buys reads THAT thread. It used to read the
+  //    whole board: one working thread made every row in its project re-derive on the event rate, up to
+  //    forty times a second, and the foreign scan rode the same count. Profiled on the maintainer's live
+  //    server (2026-11-09, 19 projects, 73 live threads): the tailer held 16% of the main thread, and
+  //    nudged ticks were 15 points of it. The rest of the board is the poll's, on its own cadence.
   const NUDGE_MS = 25
   let nudgeTimer: NodeJS.Timeout | null = null
   let lastTickEndedAtMs = 0
+  // What the pending nudge will look at: the threads named since it was armed, or the whole board once
+  // any caller named none.
+  const nudged = new Set<string>()
+  let nudgedWhole = false
 
-  function nudge(): void {
-    if (stopped || nudgeTimer) return
+  function nudge(slug?: string): void {
+    if (stopped) return
+    if (slug === undefined) nudgedWhole = true
+    else nudged.add(slug)
+    if (nudgeTimer) return
     // Same floor scheduleTick uses: at least NUDGE_MS, and never sooner after the previous tick than
     // that tick cost to run.
     const earliest = lastTickEndedAtMs + Math.max(NUDGE_MS, Math.round(lastTickMs))
@@ -6246,6 +6286,16 @@ export function createTailer(deps: TailerDeps): Tailer {
       if (stopped) return
       takeLoopTurn(() => {
         if (stopped) return
+        const whole = nudgedWhole
+        const only = whole ? undefined : new Set(nudged)
+        nudgedWhole = false
+        nudged.clear()
+        if (only) {
+          // A narrow tick runs BESIDE the poll, never instead of it: the poll is what keeps looking at
+          // the rows no event names.
+          try { tickWithBudget({ only }) } catch (error) { reportTickFailure(error) }
+          return
+        }
         // Take over the poll's slot rather than running alongside it: clear the pending scheduled tick,
         // run now, then restart the regular cadence from this moment.
         if (timer) { clearTimeout(timer); timer = null }
@@ -6339,14 +6389,18 @@ export function createTailer(deps: TailerDeps): Tailer {
   function touchState(state: TailState): void {
     touches.set(state, (touches.get(state) ?? 0) + 1)
   }
-  function telemetryIsVolatile(s: TailState): boolean {
-    return s.subAgents.size > 0 || s.retiredSubAgents.size > 0 || (deps.codexBackgroundExecs !== undefined && !s.foreign && !s.paneDead)
+  // The codex bridge's execs are volatile for a CODEX row only: it is the one backend that can hold one
+  // (CodexAppServer.backgroundExecs). Asked of every live row, it made every Claude thread on a server
+  // with the bridge re-derive its whole telemetry on every board build, which the build does for every
+  // thread on every change (2026-11-09).
+  function telemetryIsVolatile(s: TailState, row: SessionRow): boolean {
+    return s.subAgents.size > 0 || s.retiredSubAgents.size > 0 || (deps.codexBackgroundExecs !== undefined && row.backend === "codex" && !s.foreign && !s.paneDead)
   }
   function memoizedTelemetry(s: TailState, row: SessionRow): SessionTelemetry {
     const touch = touches.get(s) ?? 0
     const memo = telemetryMemos.get(s)
     const sameRow = memo !== undefined && memo.spawnedAt === row.spawned_at
-    if (sameRow && memo.touch === touch && !telemetryIsVolatile(s)) return memo.tele
+    if (sameRow && memo.touch === touch && !telemetryIsVolatile(s, row)) return memo.tele
     const fresh = telemetryOf(s, row)
     if (sameRow && jsonEqual(memo.copy, fresh)) {
       memo.touch = touch
@@ -6427,6 +6481,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       timer = null
       if (nudgeTimer) clearTimeout(nudgeTimer)
       nudgeTimer = null
+      nudged.clear()
       // A clean shutdown is the cheapest moment to make the next boot free: write back everything the
       // periodic flush has not reached yet. A hard kill just costs that thread its delta re-read.
       flushCache(now())

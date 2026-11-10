@@ -219,7 +219,7 @@ export function useRegisteredAnswering(thread: ThreadView | undefined): Register
     setError(undefined)
     // Local truth FIRST, then the network — the ordering every other send on this card obeys, and the
     // whole of what "the card goes away when I answer it" means on a machine under load.
-    queueDismiss?.dismiss()
+    ;(queueDismiss?.sent ?? queueDismiss?.dismiss)?.()
     // …AND THE RAIL ROW GOES TO WORK WITH IT. Every answer wakes the worker (the scheduler delivers the
     // batch), so this is a steer in all but name, and it takes the steer's overlay: without it the row
     // dropped its question mark on the board push, sat in the queue wearing the at-rest ellipsis, and only
