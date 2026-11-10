@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { SIGN_IN_COMMAND, PROVIDER_LABEL, parseAccountAlias } from "./signIn.ts"
+import { SIGN_IN_COMMAND, PROVIDER_LABEL, parseAccountAlias, runtimeDownloadNote } from "./signIn.ts"
 
 // Lock the exact commands surfaced by the sign-in gate. These are real CLI invocations the user runs
 // verbatim, verified against `claude auth --help` / `codex login --help` — a silent drift here would
@@ -26,4 +26,13 @@ test("parseAccountAlias: exact complete input only", () => {
   assert.equal(parseAccountAlias("/loginx"), null)
   assert.equal(parseAccountAlias("/compact"), null)
   assert.equal(parseAccountAlias(""), null)
+})
+
+test("a runtime download reads as a toast, and only the download does", () => {
+  assert.equal(runtimeDownloadNote("claude", "downloading 320 MB, 40%"), "Downloading Claude Code: 320 MB, 40%")
+  assert.equal(runtimeDownloadNote("codex", "downloading 378 MB"), "Downloading Codex: 378 MB")
+  assert.equal(runtimeDownloadNote("codex", "downloading, 12 MB so far"), "Downloading Codex: 12 MB so far")
+  assert.equal(runtimeDownloadNote("claude", "downloading"), "Downloading Claude Code…")
+  assert.equal(runtimeDownloadNote("claude", "resolving @anthropic-ai/x@1"), undefined)
+  assert.equal(runtimeDownloadNote("claude", undefined), undefined)
 })

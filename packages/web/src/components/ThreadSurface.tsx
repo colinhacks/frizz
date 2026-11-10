@@ -10,14 +10,14 @@ import { useFileDropZone, useFileIntakeHandle, type FileDropZone, type SurfaceFi
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
 import { lastHumanTurnIndex } from "../lib/messagePresentation.ts"
 import { useOpsHeldForTranscript } from "../lib/opsAhead.ts"
-import { placeQuestions, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
+import { placeQuestions, questionHomes, registeredStandingAt, type QuestionPlacement } from "../lib/questionShadow.ts"
 import { useTranscriptHeldForBoard } from "../lib/restAhead.ts"
 import { queuedRunOf, type QueuedRun } from "../lib/restReply.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
 import { latestSignOffs } from "../lib/signOffs.ts"
-import { stepsDoneReplies } from "../lib/stepsAnswer.ts"
+import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
@@ -159,9 +159,9 @@ export interface ThreadTranscript {
    *  do the emptiness predicates — a settled fence that handed the human steps keeps its card, a stated
    *  one does not. */
   hidesAwaiting: (index: number) => readonly [stale: boolean, stated: boolean]
-  /** The messages whose rest on steps the human answered with the "I have completed this" box
-   *  (lib/stepsAnswer stepsDoneReplies), so their settled steps card keeps the box, ticked. */
-  stepsDone: ReadonlySet<number>
+  /** What the human's reply said was done, by the message whose rest on steps it answered
+   *  (lib/stepsAnswer stepsDoneReplies), so that message's settled steps card can draw it ticked. */
+  stepsDone: ReadonlyMap<number, StepsReply>
   openQuestions: readonly RegisteredQuestionView[]
   /** A thread dispatched after the free-form fence was retired never gets a fence controller: a
    *  ```question with a body is prose there, and the registered card is the only answerable thing
@@ -176,6 +176,9 @@ export interface ThreadTranscript {
    *  names each one. A placed card renders in that slot and leaves its anchor group. Over the whole
    *  list — a surface that draws only a window of it narrows this with `placedFrom`. */
   placement: QuestionPlacement<RegisteredQuestionView>
+  /** The message each open question's answerable card draws in or under, by row id (lib/questionShadow
+   *  questionHomes), so a read-only copy elsewhere can say whether to look above it or below it. */
+  questionHomes: ReadonlyMap<string, number>
   /** Where each ANSWERED question's card stood when it was answered (lib/settledQuestions). */
   settledPlacement: SettledPlacement<SettledQuestion>
   /** Question↔answer pairing for "Answers:" user messages, over the whole list because the lookback
@@ -310,6 +313,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const fenceQuestions = useFenceQuestions(fencesLive, openQuestions, settledQuestions, thread, closedSpecs)
   const shadowedByMessage = useMemo(() => registeredStandingAt(messages, openQuestions), [messages, openQuestions])
   const placement = useMemo(() => placeQuestions(messages, openQuestions), [messages, openQuestions])
+  const homes = useMemo(() => questionHomes(messages, openQuestions, placement), [messages, openQuestions, placement])
   const settledPlacement = useMemo(() => settledQuestionPositions(messages, settledQuestions), [messages, settledQuestions])
   const paired = useMemo(() => pairAllAnswers(messages), [messages])
   const stepsDone = useMemo(() => stepsDoneReplies(messages), [messages])
@@ -333,13 +337,14 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       fenceQuestions,
       shadowedByMessage,
       placement,
+      questionHomes: homes,
       settledPlacement,
       paired,
       inFlightAnswers,
       answeringForMessage,
       opsThread,
     }),
-    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
+    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, homes, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
   )
 
   // The surface is the zone and its prompt box the intake (lib/fileDrop). Files given while no box is

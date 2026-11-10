@@ -2,6 +2,7 @@ import {
   DispatchPreferences,
   type Backend,
   type CodexModel,
+  type DefaultAgentProfile,
   type DispatchProviderPreferences,
   type PermissionMode,
   type SetDispatchPreferenceInput,
@@ -60,6 +61,7 @@ export function defaultDispatchPreferences(
     // agent's own CLI decides), so there is no default worth writing, and every record written before
     // the backend existed lacks the key.
     ...(backend === "acp" ? { acp: selected } : {}),
+    ...(backend === "opencode" ? { opencode: selected } : {}),
   }
 }
 
@@ -80,6 +82,22 @@ export function getDispatchPreferences(
   if (machine) return machine
   const parsed = DispatchPreferences.safeParse(storage.getSetting(KEY))
   return parsed.success ? parsed.data : defaultDispatchPreferences(settings, codexModels)
+}
+
+/**
+ * Has anyone on this machine chosen a profile? The machine record, this project's stored row, or an
+ * old configured model or backend in Settings. Only a machine with none of them gets a computed default.
+ */
+export function hasSavedDispatchPreferences(storage: Storage, settings: Settings, home: string): boolean {
+  if (readMachineDispatchPreferences(home)) return true
+  if (DispatchPreferences.safeParse(storage.getSetting(KEY)).success) return true
+  return Boolean(settings.model || settings.backend)
+}
+
+/** What the prompt box opens on with no saved choice. Read-time only: nothing is written, so a machine
+ *  that signs in later goes back to the shipped default until someone picks. */
+export function withDefaultAgentProfile(prefs: DispatchPreferences, profile: DefaultAgentProfile | undefined): DispatchPreferences {
+  return profile ? { ...prefs, backend: profile.backend, [profile.backend]: { model: profile.model } } : prefs
 }
 
 export function setDispatchPreference(

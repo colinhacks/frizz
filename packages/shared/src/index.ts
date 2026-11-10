@@ -104,9 +104,35 @@ export type RuntimeState = z.infer<typeof RuntimeState>
 // Which agent CLI a dispatch/thread runs on (Codex-support epic, Phase 3). Mirrors BackendKind in
 // server/backend/types.ts (the wire can't import it — it lives behind the server boundary). A model
 // selection drives this: a Claude model ⇒ "claude", an OpenAI/GPT model ⇒ "codex", an `acp:<agent>`
-// slug ⇒ "acp" (any Agent Client Protocol agent; plans/acp-backend.md).
-export const Backend = z.enum(["claude", "codex", "acp"])
+// slug ⇒ "acp" (any Agent Client Protocol agent; plans/acp-backend.md), an `opencode:` slug ⇒ "opencode"
+// (OpenCode 2's own server API, ARCHITECTURE.md § OpenCode backend).
+export const Backend = z.enum(["claude", "codex", "acp", "opencode"])
 export type Backend = z.infer<typeof Backend>
+
+// WHAT A BACKEND CAN DO WITH A MESSAGE SENT WHILE ITS TURN RUNS. One table, so a new backend states what
+// it supports here and every prompt box, key and server gate follows, rather than each carrying its own
+// list of backend names (2026-11-06: the composer offered an ACP thread a steer and a Send now that the
+// server then refused).
+//
+//   steer     — the agent can read a message at its next step, inside the running turn. Without it a
+//               message can only wait for the turn to end.
+//   interrupt — Frizz can preempt the running turn so the waiting messages are read now.
+export interface BackendFollowUps { steer: boolean; interrupt: boolean }
+export const BACKEND_FOLLOW_UPS: Record<Backend, BackendFollowUps> = {
+  claude: { steer: true, interrupt: true },
+  // The app-server owns steer-vs-start, and a child `spawn_agent` would die with an interrupted turn.
+  codex: { steer: true, interrupt: false },
+  // ACP has `session/prompt` and `session/cancel`, nothing between: a follow-up waits for the turn's end.
+  acp: { steer: false, interrupt: false },
+  // OpenCode's inbox takes a steer at the next step boundary, and Send now pushes one through at once by
+  // interrupting with `resume` (the turn goes on with the message in it). Interrupting would cancel a
+  // foreground sub-agent, so while one runs the bridge leaves the steer to its boundary instead.
+  opencode: { steer: true, interrupt: true },
+}
+/** A row or a board snapshot with no backend (legacy, or an older server) is a Claude thread. */
+export function backendFollowUps(backend: string | null | undefined): BackendFollowUps {
+  return backend === "codex" || backend === "acp" || backend === "opencode" ? BACKEND_FOLLOW_UPS[backend] : BACKEND_FOLLOW_UPS.claude
+}
 
 // One selectable Codex model, derived server-side from the AUTHORITATIVE ~/.codex/models_cache.json
 // (the codexModels RPC) rather than a hand-maintained list — the source of two live breakages (a bare
@@ -176,6 +202,10 @@ export const AcpAgent = z.object({
   label: z.string(),
   command: z.string(),
   available: z.boolean(),
+  // True when this agent runs on Frizz's native backend here instead (OpenCode at or above the minimum
+  // version): the composer lists it there and not among the ACP agents, and an existing `acp:<id>` thread
+  // stays on ACP and keeps its label from this entry.
+  native: z.boolean().optional(),
 })
 export type AcpAgent = z.infer<typeof AcpAgent>
 
@@ -186,6 +216,7 @@ export type AcpAgent = z.infer<typeof AcpAgent>
  *  asks for one of the models the agent advertises (`session/set_config_option` on the ACP wire). The
  *  separator is `@` because agent model ids carry `/` and `:` themselves (`openai/gpt-5.5`). */
 export const ACP_MODEL_PREFIX = "acp:"
+export { defaultAgentProfile, opencodeAgentProfile, type DefaultAgentProfile, type DefaultAgentProfileInput } from "./default-agent-profile.ts"
 export function acpModelSlug(agentId: string, modelId?: string | null): string {
   return `${ACP_MODEL_PREFIX}${agentId}${modelId ? `@${modelId}` : ""}`
 }
@@ -199,6 +230,53 @@ function acpSlugParts(model: string | null | undefined): { agent: string; model?
 }
 export function acpAgentIdFromModel(model: string | null | undefined): string | undefined { return acpSlugParts(model)?.agent }
 export function acpModelIdFromModel(model: string | null | undefined): string | undefined { return acpSlugParts(model)?.model }
+
+/** The model slug of a native OpenCode thread. Model already drives backend in the web, so this prefix
+ *  means `opencode` the way `acp:` means `acp`.
+ *
+ *  `opencode:` runs on whatever OpenCode itself defaults to; `opencode:<provider>/<id>` names a model,
+ *  and `opencode:<provider>/<id>#<variant>` a variant of it. That notation is OpenCode's own
+ *  (`Model.Ref.parse`). The variant sits in the slug because it is OpenCode's effort axis and its ids are
+ *  each model's own (`minimal`, `xhigh`, `default`), which Frizz's effort enum cannot hold. */
+export const OPENCODE_MODEL_PREFIX = "opencode:"
+export function isOpencodeModel(model: string | null | undefined): boolean {
+  return typeof model === "string" && model.startsWith(OPENCODE_MODEL_PREFIX)
+}
+export function opencodeModelSlug(ref?: { providerID: string; id: string; variant?: string | null } | null): string {
+  if (!ref) return OPENCODE_MODEL_PREFIX
+  return `${OPENCODE_MODEL_PREFIX}${ref.providerID}/${ref.id}${ref.variant ? `#${ref.variant}` : ""}`
+}
+export function opencodeModelRef(model: string | null | undefined): { providerID: string; id: string; variant?: string } | undefined {
+  if (!isOpencodeModel(model)) return undefined
+  const rest = (model as string).slice(OPENCODE_MODEL_PREFIX.length)
+  const hash = rest.indexOf("#")
+  const ref = hash === -1 ? rest : rest.slice(0, hash)
+  const slash = ref.indexOf("/")
+  if (slash <= 0 || slash === ref.length - 1) return undefined
+  const variant = hash === -1 ? "" : rest.slice(hash + 1)
+  return { providerID: ref.slice(0, slash), id: ref.slice(slash + 1), ...(variant ? { variant } : {}) }
+}
+
+/** One model OpenCode offers (`GET /api/model`), as the composer's picker reads it. `variants` is the
+ *  effort axis, empty for a model with only its default. */
+export const OpencodeModel = z.object({
+  providerID: z.string(),
+  id: z.string(),
+  name: z.string(),
+  variants: z.array(z.string()),
+  context: z.number().optional(),
+})
+export type OpencodeModel = z.infer<typeof OpencodeModel>
+/** What the composer learns: whether the native backend can run on this machine at all, and its models.
+ *  `error` names why the list is empty, for the picker's own line. */
+export const OpencodeModels = z.object({
+  available: z.boolean(),
+  version: z.string().optional(),
+  defaultModel: z.string().optional(),
+  models: z.array(OpencodeModel),
+  error: z.string().optional(),
+})
+export type OpencodeModels = z.infer<typeof OpencodeModels>
 
 /** One model an ACP agent advertises, and the probe result the composer's model picker reads. */
 export const AcpAgentModel = z.object({ id: z.string(), name: z.string() })
@@ -584,6 +662,8 @@ export function parseAskUserQuestionAnswers(result: unknown, questions: readonly
 export const AwaitingHint = z.object({
   kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command", "thread", "for", "title", "status", "needs_input", "step", "question"]),
   value: z.string(),
+  /** A step's Markdown body, drawn under its title (splitAwaitingFrontmatter). No other kind has one. */
+  body: z.string().optional(),
 })
 export type AwaitingHint = z.infer<typeof AwaitingHint>
 
@@ -714,6 +794,10 @@ const AWAITING_SCALAR_KINDS: ReadonlySet<AwaitingHint["kind"]> = new Set(["for",
  *  ellipsis rather than mid-word in silence. */
 export const AWAITING_STEPS_MAX = 12
 export const AWAITING_STEP_VALUE_MAX = 2_000
+/** A step's body is the detail its title cannot hold — what to paste, what the page shows, what to do when
+ *  it fails — so it gets room for a code block or two. Defensive for the same reason as the title's cap:
+ *  every thread's last fence rides the board. */
+export const AWAITING_STEP_BODY_MAX = 4_000
 
 /** `questions:` rides after the capped hints for the same reason `steps:` does: a thread carrying many
  *  open questions must still be able to name every one of them — the park is refused for any it leaves
@@ -756,6 +840,9 @@ export function trimAwaitingTitle(raw: string): string {
 
 /** The `---` line that closes a fence's frontmatter. One spelling for both fence kinds. */
 const FENCE_DELIMITER_RE = /^\s*---+\s*$/
+/** A code fence's opening or closing line inside a step's body. */
+const STEP_CODE_FENCE_RE = /^\s*(`{3,}|~{3,})(.*)$/
+const indentOf = (line: string) => line.length - line.trimStart().length
 
 /** Split an ```awaiting fence body into its hints and its prose.
  *
@@ -781,17 +868,25 @@ const FENCE_DELIMITER_RE = /^\s*---+\s*$/
  *  instruction is the prose most likely to carry what YAML cannot hold. `- Run \`npm login\`` is a parse
  *  error outright (a backtick may not open a plain scalar), `- Approve it: use the org account` silently
  *  becomes a one-key mapping, and either failure would cost the fence every lookup beside it. So each
- *  `- ` item under the key is taken as written, an indented line continues the item above it, and a
- *  value on the key line itself is one step — or, written `[a, b]`, a flow list YAML is allowed to try. */
+ *  `- ` item under the key is taken as written, and a value on the key line itself is one step — or,
+ *  written `[a, b]`, a flow list YAML is allowed to try.
+ *
+ *  A STEP IS A MARKDOWN LIST ITEM: A TITLE, AND A BODY UNDER IT (maintainer 2026-11-09: "It should be able
+ *  to have a full Markdown body that renders underneath each item"). Its first paragraph is the title —
+ *  the `- ` line and any indented line straight after it, joined, which is how every step written before
+ *  bodies existed still reads. A blank line, or a code fence or list that opens the item's second line,
+ *  starts the BODY: every line indented past the item's dash, kept as written and dedented, up to the next
+ *  item, the next key or the `---`. Inside a body a `---` is a rule, not the delimiter, and a code block
+ *  is carried whole. Only an outer fence longer than the code fences inside it can hold one (the signal
+ *  fence scanners take any run of three or more backticks). */
 export function splitAwaitingFrontmatter(raw: string): { body: string; hints: AwaitingHint[] } {
   const lines = raw.split("\n").map((l) => l.replace(/\r$/, ""))
-  const delimiter = lines.findIndex((l) => FENCE_DELIMITER_RE.test(l))
-  const frontmatter = delimiter === -1 ? lines : lines.slice(0, delimiter)
-  const after = delimiter === -1 ? [] : lines.slice(delimiter + 1)
   const rest: string[] = []
   const yamlLines: string[] = []
   const titleLines: string[] = []
-  const steps: string[] = []
+  /** The steps as written: the title's lines, the body's lines, the item's dash column, and the run of the
+   *  body's open code fence. */
+  const steps: { title: string[]; body: string[] | undefined; dash: number; fence: string | undefined }[] = []
   // `structural` tracks whether the line we are on belongs to the YAML document. A block sequence's items
   // and any indented continuation belong to the KEY ABOVE THEM, so they follow that key's fate — which is
   // what keeps a retired `pr:` with its list underneath from orphaning a bare sequence into the parser.
@@ -800,7 +895,17 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   let structural = true
   let inTitle = false
   let inSteps = false
-  for (const line of frontmatter) {
+  let delimiter = -1
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const step = inSteps ? steps.at(-1) : undefined
+    // A body holds its own `---` (a rule) and its own code blocks: only a line outside every body ends the
+    // frontmatter.
+    const inBody = step?.body !== undefined && (step.fence !== undefined || (line.trim() !== "" && indentOf(line) > step.dash))
+    if (!inBody && FENCE_DELIMITER_RE.test(line)) {
+      delimiter = i
+      break
+    }
     const m = line.match(AWAITING_KEY_RE)
     const key = m?.[1].toLowerCase()
     if (m && key) {
@@ -818,15 +923,12 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
     }
     if (inTitle) titleLines.push(m && key === "title" ? (m[2] ?? "") : line)
     else if (inSteps) {
-      if (m && key === "steps") steps.push(...inlineSteps(m[2] ?? ""))
-      else {
-        const item = /^\s*-\s+(.*)$/.exec(line)
-        if (item) steps.push(item[1])
-        else if (line.trim() && steps.length > 0) steps[steps.length - 1] += ` ${line.trim()}`
-      }
+      if (m && key === "steps") steps.push(...inlineSteps(m[2] ?? "").map((title) => ({ title: [title], body: undefined, dash: Number.POSITIVE_INFINITY, fence: undefined })))
+      else readStepLine(steps, line)
     }
     else (structural ? yamlLines : rest).push(line)
   }
+  const after = delimiter === -1 ? [] : lines.slice(delimiter + 1)
   const parsed = parseAwaitingYaml(yamlLines.join("\n"))
   // Unparsed lines go to the BODY rather than being dropped: the worker has to be able to see what it
   // wrote, or the correction it gets is about a fence it can no longer read.
@@ -837,15 +939,60 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   const title = trimAwaitingTitle(titleLines.join(" "))
   if (title) parsed.hints.push({ kind: "title", value: title })
   const stepHints: AwaitingHint[] = steps
-    .map(readStep)
-    .filter(Boolean)
+    .map((step) => ({ value: readStep(step.title.join(" ")), body: readStepBody(step.body) }))
+    .filter((step) => step.value)
     .slice(0, AWAITING_STEPS_MAX)
-    .map((step) => ({ kind: "step", value: step }))
+    .map(({ value, body }) => (body ? { kind: "step", value, body } : { kind: "step", value }))
   const questionHints = parsed.hints.filter((h) => h.kind === "question").slice(0, AWAITING_QUESTIONS_MAX)
   // The cap counts named items alone (see AWAITING_HINT_MAX); every scalar survives it, in written order.
   let items = 0
   const capped = parsed.hints.filter((h) => h.kind !== "question" && (AWAITING_SCALAR_KINDS.has(h.kind) || items++ < AWAITING_HINT_MAX))
   return { body: rest.join("\n").trim(), hints: [...capped, ...questionHints, ...stepHints] }
+}
+
+/** One line under `steps:`, onto the list of steps as written (splitAwaitingFrontmatter has the grammar). */
+function readStepLine(steps: { title: string[]; body: string[] | undefined; dash: number; fence: string | undefined }[], line: string): void {
+  const step = steps.at(-1)
+  const indent = indentOf(line)
+  if (step?.fence !== undefined) {
+    step.body!.push(line)
+    const close = STEP_CODE_FENCE_RE.exec(line)
+    if (close && !close[2].trim() && close[1][0] === step.fence[0] && close[1].length >= step.fence.length) step.fence = undefined
+    return
+  }
+  const item = /^(\s*)-\s+(.*)$/.exec(line)
+  if (item && (!step || indent <= step.dash)) {
+    steps.push({ title: [item[2]], body: undefined, dash: indent, fence: undefined })
+    return
+  }
+  if (!step) return
+  if (!line.trim()) {
+    // The blank line after the title is what opens the body; inside one it is the body's own.
+    if (step.body) step.body.push("")
+    else step.body = []
+    return
+  }
+  const opens = STEP_CODE_FENCE_RE.exec(line)
+  // A code block or a list straight under the title cannot be the title's words: CommonMark lets either
+  // interrupt a paragraph, so it opens the body.
+  if (!step.body && (opens || (item && indent > step.dash))) step.body = []
+  if (!step.body) {
+    step.title.push(line.trim())
+    return
+  }
+  step.body.push(line)
+  if (opens) step.fence = opens[1]
+}
+
+/** A step's body as it will RENDER: dedented to its least-indented line, blank lines trimmed off both
+ *  ends, and capped where the cut shows. Undefined when there is nothing in it. */
+function readStepBody(lines: readonly string[] | undefined): string | undefined {
+  if (!lines) return undefined
+  const filled = lines.filter((line) => line.trim())
+  if (filled.length === 0) return undefined
+  const cut = Math.min(...filled.map(indentOf))
+  const body = lines.map((line) => line.slice(Math.min(cut, indentOf(line)))).join("\n").replace(/^\n+|\s+$/g, "")
+  return body.length > AWAITING_STEP_BODY_MAX ? `${body.slice(0, AWAITING_STEP_BODY_MAX).trimEnd()}…` : body
 }
 
 /** The steps written ON the `steps:` line: none, one, or a flow list. A flow list YAML cannot read — a
@@ -888,6 +1035,17 @@ function readStep(raw: string): string {
  *  one, which is how every reader tells the two shapes apart. */
 export function awaitingSteps(hints: readonly AwaitingHint[] | undefined): string[] {
   return (hints ?? []).filter((h) => h.kind === "step").map((h) => h.value)
+}
+
+/** A step as the human reads it: the title they tick, and the Markdown under it. */
+export interface AwaitingStep {
+  text: string
+  body?: string
+}
+
+/** The fence's steps with their bodies, in the order written. */
+export function awaitingStepItems(hints: readonly AwaitingHint[] | undefined): AwaitingStep[] {
+  return (hints ?? []).filter((h) => h.kind === "step").map((h) => (h.body ? { text: h.value, body: h.body } : { text: h.value }))
 }
 
 /** The registered questions the fence says it is still waiting on, as lowercased ids in the order
@@ -1969,7 +2127,8 @@ function signoffNudgeText(needsInput: boolean): string {
   "- `` ```awaiting `` with `steps:` — the human must PERFORM something you cannot: sign in, approve,",
   "  merge, press a button you may not. List each step as a `- ` line under `steps:`, written to be",
   "  followed cold: a real Markdown link to every page and file it names, every command in a code span,",
-  "  every value the act needs written in. Frizz reads them verbatim. Steps name the HUMAN as the wait,",
+  "  every value the act needs written in. Frizz reads them verbatim. Detail the line cannot hold goes in",
+  "  a Markdown body indented under it after a blank line. Steps name the HUMAN as the wait,",
   "  so the fence needs no other name and no `for:`, and the thread goes into their queue. Their Done",
   "  comes back to you as their reply; anything else they need to say comes as a message of their own.",
   "- A question you asked at an EARLIER rest, whose answer you still need: write a ```question fence",
@@ -3840,6 +3999,30 @@ export function splitAnswersNote(text: string): { answers: string; note: string 
   return { answers: text.slice(0, at).trimEnd(), note: text.slice(at + marker.length).trim() }
 }
 
+/** EXACTLY the message that says every step on the list is done: an ordinary reply from the human, the
+ *  same thing typing the word would send, with any note they typed under it. Nothing marks it as Frizz's,
+ *  because nothing about it is. The worker contract names the word. */
+export const STEPS_DONE = "Done"
+
+/** Does this reply say the steps are done? The word opens the human's own words: the whole message, or
+ *  what follows the answers that rode the same send. Each kind of answer ends its rows with its own note
+ *  header (withAnswersNote), so a reply carrying registered AND fenced answers nests twice, and the word
+ *  is under the last one. A reply that only MENTIONS done is not this. */
+export function repliesStepsDone(text: string): boolean {
+  const said = wordsUnderAnswers(text)
+  return said === STEPS_DONE || said.startsWith(`${STEPS_DONE}\n\n`)
+}
+
+/** What the human wrote themselves, under any answers that rode the same send. */
+export function wordsUnderAnswers(text: string): string {
+  let said = text.trim()
+  for (;;) {
+    const { answers, note } = splitAnswersNote(said)
+    if (answers === said) return said
+    said = note
+  }
+}
+
 /** THE ONE WAKE ON THIS PATH FRIZZ WRITES IN ITS OWN VOICE, so it is the one the chat draws as a
  *  hairline instead of a card (FrizzWake's rule: frizz's own news is a line, someone else's prose keeps
  *  the card). It says nobody is coming — the thread went autonomous while questions were still open, so
@@ -3970,6 +4153,30 @@ export const ThreadLinkView = z.object({
 }).strict()
 export type ThreadLinkView = z.infer<typeof ThreadLinkView>
 
+// THE HUMAN'S TO-DO LIST (2026-11-09, maintainer: "a single, coherent, human-facing to-do list for the
+// entire session. That's maintained by Frizz"). One per thread: every `steps:` a worker hands over lands
+// on it (server human-todos.ts), and each item is ticked on its own. Not the WORKER's to-do list, which
+// is TranscriptTodo: that one is the agent's own plan, and this one is what the agent cannot do.
+export const HumanTodo = z.object({
+  /** Stable across rests: the step's own text, hashed, so handing the same step over again is the same item. */
+  id: z.string(),
+  /** The title: the step's own first paragraph, and the words a report recites. */
+  text: z.string(),
+  /** The Markdown under the title, as the newest fence listing the step wrote it. */
+  body: z.string().optional(),
+  done: z.boolean(),
+  /** The tick differs from what the worker was last told, so the next send reports it. */
+  staged: z.boolean(),
+}).strict()
+export type HumanTodo = z.infer<typeof HumanTodo>
+
+export const SetHumanTodoInput = z.object({
+  slug: ThreadSlug,
+  id: z.string().min(1).max(64),
+  done: z.boolean(),
+})
+export type SetHumanTodoInput = z.infer<typeof SetHumanTodoInput>
+
 export const UpsertOwnLinkInput = z.object({
   slug: ThreadSlug,
   label: z.string().trim().min(1).max(240).regex(/^[^\x00-\x1f\x7f]+$/),
@@ -4066,6 +4273,9 @@ export const ThreadView = z.object({
   bgShells: z.array(BgShellView).default([]),
   // Optional for snapshots from a server that predates link registration.
   links: z.array(ThreadLinkView).optional(),
+  // What the worker has handed the human to do across this whole thread. Absent when it has handed over
+  // nothing, on an archived thread and from a server older than the list.
+  humanTodos: z.array(HumanTodo).optional(),
   // The thread's ARMED WATCHERS — registry-derived, not folded from the transcript, which is what makes
   // them survive the worker saying one more sentence. Same default-[] discipline as the two above.
   //
@@ -4114,6 +4324,9 @@ export const ThreadView = z.object({
   // ISO8601 of the newest REAL user interaction (answer/steer/dispatch) — the chronological listing
   // sort key. Optional; the listing falls back to spawnedAt when absent (a dispatch IS an interaction).
   lastUserAt: z.string().optional(),
+  // The thread's last turn ended because a person pressed Stop, and nothing has happened since. Its rest
+  // is the human's act, so it is not drawn as one without a sign-off. Absent otherwise.
+  operatorStopped: z.boolean().optional(),
   // Runtime provider-auth rejection (claude-auth plan): the session's provider positively rejected
   // its credential (Claude: synthetic isApiErrorMessage 401 record, or the 401/login text on a
   // boot-failed pane). Bounded by design — only the typed category travels, never raw provider/pane
@@ -4341,7 +4554,7 @@ export function queuedThread(t: Pick<ThreadView, "kind" | "foreign" | "needsYou"
  * The queue as a project's BOARD draws it, and so as its badges count it: `queuedThread`, less a pinned
  * thread's plain report (maintainer 2026-11-06, of a pinned thread at rest: "Queue only its asks"). A pin
  * marks a standing thread the human goes back to on their own schedule, and its row is already on the
- * shelf at the top of the rail, so a report shows there as unread rather than taking a turn in the queue.
+ * shelf at the top of the rail, so a report waits there, unmarked, rather than taking a turn in the queue.
  * Its asks and its failures still card (board.derivePlainReport says which is which).
  *
  * The board's pin only. The Console's "By status" has a shelf of its own and asks its own question
@@ -5147,6 +5360,7 @@ export const DispatchPreferences = z.object({
   // Optional because every record written before the ACP backend existed lacks it, and a required
   // key would fail those records' parse and silently reset the operator's saved profile.
   acp: DispatchProviderPreferences.optional(),
+  opencode: DispatchProviderPreferences.optional(),
 })
 export type DispatchPreferences = z.infer<typeof DispatchPreferences>
 
@@ -5187,7 +5401,7 @@ export const SetDispatchPreferenceInput = z.discriminatedUnion("field", [
 export type SetDispatchPreferenceInput = z.infer<typeof SetDispatchPreferenceInput>
 
 function requireEffortOutsideAcp(profile: { backend: Backend; effort?: string }, ctx: z.RefinementCtx): void {
-  if (profile.backend !== "acp" && profile.effort === undefined) {
+  if (profile.backend !== "acp" && profile.backend !== "opencode" && profile.effort === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["effort"], message: `effort is required for a ${profile.backend} profile` })
   }
 }
@@ -5248,6 +5462,10 @@ export const FollowUpInput = z.object({
   // follow-up rather than the scheduler's answer wake so the pair arrives together, in the order the
   // human wrote it, and as fast as a steer does.
   answers: z.array(QuestionAnswerSchema).optional(),
+  // THE TICKS THIS MESSAGE REPORTS. The words are already in `message`; this is what the server records
+  // once the send is accepted, so the list knows the worker has heard them and stops staging them. It
+  // writes the tick too, so a send that overtakes its own tick request still reports what was on screen.
+  todos: z.array(z.object({ id: z.string().min(1).max(64), done: z.boolean() })).max(128).optional(),
   // SEND TO THE QUEUE: while the agent is mid-turn, Frizz keeps this message and delivers it when the
   // thread comes to rest, so it opens the next turn instead of steering this one. The queue goes out ONE
   // message per turn (2026-10-20), so a message also waits, even at rest, behind one already held or one
@@ -5429,7 +5647,7 @@ export function threadCanCompact(thread: { backend?: string; claudeRuntime?: str
   if (thread.foreign) return false
   // `claudeRuntime` is set only on a Claude row, whose `backend` may itself be absent (Claude is the
   // unmarked default), so the broker marker alone identifies one.
-  return thread.backend === "codex" || thread.claudeRuntime === "broker"
+  return thread.backend === "codex" || thread.backend === "opencode" || thread.claudeRuntime === "broker"
 }
 
 export const SetThreadSnoozeInput = z.object({

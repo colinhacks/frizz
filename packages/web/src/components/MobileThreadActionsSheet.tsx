@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useSnapshot } from "valtio"
-import { AlarmClock, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, FileText, Loader2, Pencil, RefreshCw, RotateCcw, RotateCw } from "lucide-react"
+import { AlarmClock, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, FileText, ListTodo, Loader2, Pencil, RefreshCw, RotateCcw, RotateCw } from "lucide-react"
 import { SNOOZE_PROMPT_MAX, type ThreadLinkView, type ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast, store, threadBySlug } from "../store.ts"
@@ -30,6 +30,7 @@ import { profileGridDisplayParts } from "../lib/profileGrid.ts"
 import { contextLine, displayUrl, effortWord, isLoopbackUrl } from "../lib/mobileThread.ts"
 import { useBackDismiss } from "../lib/backDismiss.ts"
 import { MobileBottomSheet } from "./MobileBottomSheet.tsx"
+import { HumanTodoList } from "./AwaitingSteps.tsx"
 import { GoalMark, PromptPanel } from "./RecurringPromptControl.tsx"
 import { StateButton } from "./ThreadLifecycle.tsx"
 import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
@@ -54,7 +55,7 @@ import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 // Sub-views (the snooze presets, the Goal editor, the file list, rename) swap in place inside the one
 // sheet, each with a ‹ back to the list. They are not separate history entries: Back from anywhere in
 // the sheet closes the sheet.
-export type ThreadActionsView = "actions" | "snooze" | "snooze-custom" | "goal" | "files" | "rename"
+export type ThreadActionsView = "actions" | "snooze" | "snooze-custom" | "goal" | "todos" | "files" | "rename"
 
 export interface ThreadActionsSheetProps {
   /** The thread the sheet acts on. */
@@ -92,6 +93,8 @@ export function ThreadActionsSheet({ slug, onClose, onArchived, initialView = "a
         <CustomSnoozeView thread={thread} back={() => setView("snooze")} dismiss={dismiss} />
       ) : view === "goal" ? (
         <GoalView thread={thread} back={() => setView("actions")} />
+      ) : view === "todos" ? (
+        <TodosSheetView thread={thread} back={() => setView("actions")} />
       ) : view === "files" ? (
         <FilesView thread={thread} back={initialView === "files" ? undefined : () => setView("actions")} dismiss={dismiss} />
       ) : (
@@ -118,6 +121,7 @@ function ActionsList({ thread, title, setView, dismiss, onArchived }: {
   const snoozedUntil = futureSnoozedUntil(thread)
   const goalOn = thread.recurringPrompt?.stopHook === true || thread.recurringPrompt?.heartbeat === true || thread.recurringPrompt?.postCompaction === true
   const links = thread.links ?? []
+  const todos = thread.humanTodos ?? []
   const running = thread.runtime === "running" || thread.runtime === "spawning"
   const retry = owned && offersRetry(thread)
   const restart = offersRestartWorker(thread, devBuild)
@@ -158,6 +162,9 @@ function ActionsList({ thread, title, setView, dismiss, onArchived }: {
           chevron
           onClick={() => setView("goal")}
         />
+      )}
+      {todos.length > 0 && (
+        <ActionRow data="todos" icon={<ListTodo size={19} />} label="To-do" value={String(todos.filter((todo) => !todo.done).length)} chevron onClick={() => setView("todos")} />
       )}
       {links.length > 0 && (
         <ActionRow data="files" icon={<FileText size={19} />} label="Files and links" value={String(links.length)} chevron onClick={() => setView("files")} />
@@ -328,6 +335,17 @@ function GoalView({ thread, back }: { thread: ThreadView; back: () => void }) {
 // Everything the worker registered for this thread (the rows ThreadLinks draws in the desktop's
 // Files and Links panels, over the composer), newest first. A file opens in the reader; a link opens in a new tab — except a link to
 // the machine Frizz runs on, which from a phone is the phone itself: it says so and opens nothing.
+// The phone's way to the list when the thread is not resting on it. The bar's Send is not this list's,
+// so it keeps its own, as the card does.
+function TodosSheetView({ thread, back }: { thread: ThreadView; back: () => void }) {
+  return (
+    <div data-thread-actions-todos>
+      <SubTitle back={back} count={(thread.humanTodos ?? []).filter((todo) => !todo.done).length}>To-do</SubTitle>
+      <div className="px-[18px] pb-3 text-[14px] leading-[21px]"><HumanTodoList thread={thread} sends /></div>
+    </div>
+  )
+}
+
 function FilesView({ thread, back, dismiss }: { thread: ThreadView; back?: () => void; dismiss: (then?: () => void) => void }) {
   const links = [...(thread.links ?? [])].reverse()
   return (

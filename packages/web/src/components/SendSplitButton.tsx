@@ -1,6 +1,6 @@
 import * as RadixMenu from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronDown, Loader2 } from "lucide-react"
-import { SEND_SPLIT_CARET_WIDTH, SEND_SPLIT_LABEL_WIDTH, SEND_SPLIT_SEAM_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { SEND_SOLO_WIDTH, SEND_SPLIT_CARET_WIDTH, SEND_SPLIT_LABEL_WIDTH, SEND_SPLIT_SEAM_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 
@@ -45,6 +45,7 @@ export function SendSplitButton({
   busy,
   mode,
   running,
+  steerable = true,
   right,
   bottom,
   onMode,
@@ -58,6 +59,10 @@ export function SendSplitButton({
   mode: SendMode
   /** There is something to queue behind — the only time the two rows differ. */
   running: boolean
+  /** The agent can read a message inside a running turn (shared BACKEND_FOLLOW_UPS). Without that there
+   *  is one way to send, so there is no menu to choose it from: just the button, and its tooltip says
+   *  what happens to the message. */
+  steerable?: boolean
   /** The rail offset (lib/iconRhythm composerRail). */
   right: number | undefined
   /** The rail's inset from the box's bottom edge (lib/iconRhythm PROMPT_ROW_INSET). */
@@ -73,6 +78,7 @@ export function SendSplitButton({
   // A hovered half tints toward the page rather than fading: the fill under it is the pill's own, so a
   // fade would show the same colour through and nothing would change. The divider wears the same tint.
   const hover = armed ? "hover:bg-bg/10" : ""
+  const title = !running ? "Send (Enter)" : steerable ? `${ROW_NAME[mode]} (Enter · ⌘⏎ sends now)` : "Send to queue: it waits for this turn to end (Enter)"
   return (
     // THE PILL PAINTS THE FILL, ONCE, and its halves paint only their hover tint. With each piece painting
     // its own, the press put the edges between them between device pixels, both edges were antialiased over
@@ -88,7 +94,7 @@ export function SendSplitButton({
       data-send-split
       data-send-mode={mode}
       className={`absolute flex h-6 rounded-md transition-[color,background-color,scale] ${tone} ${armed ? "has-[[data-send]:active]:scale-95" : ""}`}
-      style={{ right, bottom, width: SEND_SPLIT_WIDTH }}
+      style={{ right, bottom, width: steerable ? SEND_SPLIT_WIDTH : SEND_SOLO_WIDTH }}
     >
       <button
         type="button"
@@ -99,15 +105,16 @@ export function SendSplitButton({
         onClick={onSend}
         disabled={!armed}
         // The shut button names its way of sending here and in the placeholder, never on its face.
-        title={running ? `${ROW_NAME[mode]} (Enter · ⌘⏎ sends now)` : "Send (Enter)"}
+        title={title}
         aria-label="Send"
-        style={{ width: SEND_SPLIT_LABEL_WIDTH, paddingLeft: LABEL_PAD_LEFT }}
+        style={{ width: steerable ? SEND_SPLIT_LABEL_WIDTH : SEND_SOLO_WIDTH, paddingLeft: LABEL_PAD_LEFT }}
         // Never `transition-all`: it animates box-shadow, which holds the hover edge back (styles.css).
-        className={`flex items-center rounded-l-md text-[12px] font-medium leading-none outline-none transition-[color,background-color] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${hover}`}
+        className={`flex items-center ${steerable ? "rounded-l-md" : "rounded-md"} text-[12px] font-medium leading-none outline-none transition-[color,background-color] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${hover}`}
       >
         {/* The word never changes, so nothing beside the button moves when the way of sending does. */}
         {busy ? <Loader2 size={14} strokeWidth={2.5} className="animate-spin" /> : <span data-send-label>Send</span>}
       </button>
+      {steerable && <>
       {/* THE DIVIDER IS THE HOVER COLOUR: a full-height 1px column wearing the same tint as a lit half
           (`bg-bg/10`, the `hover` above), so whichever half lights up, on hover or mouse-down, swallows it
           and the line is gone. The maintainer picked this from eleven mockups (2026-10-13, after "the
@@ -182,6 +189,7 @@ export function SendSplitButton({
           </RadixMenu.Content>
         </RadixMenu.Portal>
       </RadixMenu.Root>
+      </>}
     </span>
   )
 }

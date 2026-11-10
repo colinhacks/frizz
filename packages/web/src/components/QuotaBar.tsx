@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react"
 import type { AccountBackend, AuthSnapshot, ProviderAuth, ProviderQuota, QuotaWindow } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { ProviderMark } from "./ProviderMark.tsx"
+import type { MarkPanel } from "./AgentMarks.tsx"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { CLAUDE_MODELS } from "../lib/options.ts"
@@ -87,7 +88,7 @@ export type GaugeModel = { backend: AccountBackend; model: string | undefined }
 export function useSelectedModel(): GaugeModel | undefined {
   const preferences = useQuery({ queryKey: ["dispatchPreferencesGet"], queryFn: () => rpc.dispatchPreferencesGet() })
   const data = preferences.data
-  if (!data || data.backend === "acp") return undefined
+  if (!data || data.backend === "acp" || data.backend === "opencode") return undefined
   return { backend: data.backend, model: data[data.backend]?.model ?? (data.backend === "claude" ? "opus" : undefined) }
 }
 
@@ -98,7 +99,7 @@ function modelWords(backend: AccountBackend, model: string | undefined): string 
   return model
 }
 
-export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "top" | "bottom" }) {
+export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; side: "top" | "bottom"; panel: MarkPanel }) {
   const queryClient = useQueryClient()
   const recheckInFlight = useRef<Promise<void> | null>(null)
   const [rechecking, setRechecking] = useState(false)
@@ -131,7 +132,7 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
   // The breakdown is a HOVER PANEL (maintainer 2026-10-26: "we need an immediate popover to show on the
   // usage gauge when hovered"). Until then it opened on a click alone, and the hover had only a native
   // `title`, which the browser shows after about a second and draws as a one-line system label.
-  const [open, setOpen] = useState(false)
+  const { open, neighbourOpen, setOpen } = panel
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const button = useRef<HTMLButtonElement>(null)
   useEffect(() => () => clearTimeout(closeTimer.current), [])
@@ -159,9 +160,10 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
   const words = modelWords(backend, model)
   const providerLabel = PROVIDER_LABEL[backend]
 
+  // A pointer or focus passing by leaves the plug's open menu alone (AgentMarks.tsx); only a click takes over.
   const openNow = () => {
     clearTimeout(closeTimer.current)
-    setOpen(true)
+    if (!neighbourOpen) setOpen(true)
   }
   const closeSoon = () => {
     clearTimeout(closeTimer.current)
@@ -179,8 +181,8 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
     // opens, clicking opens and rechecks, leaving (or Escape, or a click elsewhere) shuts.
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        {/* The paperclip's hover fill, on a square the chip's height (lib/iconRhythm.ts AGENT_MARKS), lit
-            while its panel is open. No `title`: the panel is the hover's answer, and a native tooltip
+        {/* The paperclip's hover fill at the chip's height (lib/iconRhythm.ts AGENT_MARKS), lit while its
+            panel is open. No `title`: the panel is the hover's answer, and a native tooltip
             would arrive a second later on top of it. */}
         <button
           ref={button}
@@ -191,6 +193,7 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
           aria-label={`${providerLabel} quota for ${words}: ${remaining}% remaining in the ${window.label} window`}
           aria-haspopup="dialog"
           aria-expanded={open}
+          data-quiet={neighbourOpen || undefined}
           // POINTER-typed, as RecurringPromptControl's preview is: a touch tap goes straight to the
           // click, which opens the panel and rechecks, instead of painting a hover under the finger.
           onPointerEnter={(event) => { if (event.pointerType !== "touch") openNow() }}
@@ -198,7 +201,8 @@ export function QuotaGauge({ selected, side }: { selected: GaugeModel; side: "to
           // Keyboard reaches the same panel the pointer does: tab to the gauge and the breakdown shows.
           onFocus={openNow}
           onClick={() => {
-            openNow()
+            clearTimeout(closeTimer.current)
+            setOpen(true)
             // The CLICK is the recheck — a true server-side cache bypass, not a replay of the last cached
             // failure with a decorative spinner. The hover is not: it shows the reading the 30s poll
             // already holds, because a forced Claude read spends the usage endpoint's per-token budget

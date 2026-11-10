@@ -31,7 +31,7 @@
 //   nub scripts/layout-timeline.mjs --url=http://127.0.0.1:4980/project/<p> --slug=<thread>
 //     [--action=send|steps|answer|markdone|none]
 //          send      type --message into the prompt box and press Send (default)
-//          steps     tick an awaiting card's "I have completed this" box, then Send
+//          steps     tick an awaiting card's first to-do, then Send
 //          answer    pick a registered question's option (--option=<text>, default the first), then Send
 //          markdone  press a ```done card's "Mark as done"
 //          none      press nothing
@@ -287,7 +287,7 @@ try {
   // Stage the input without sending it.
   if (action === "steps") {
     const ticked = await page.evaluate(() => {
-      const box = window.__pane().querySelector("[data-steps-complete] button[role=checkbox]")
+      const box = window.__pane().querySelector("[data-awaiting-steps] button[role=checkbox]")
       box?.click()
       return Boolean(box)
     })

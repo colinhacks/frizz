@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { allFencesShadowed, fenceRestatesRegistered, fenceStandsFor, markerIdsIn, placedFrom, placementNamesIn, placeQuestions, questionNames, registeredStandingAt, resolveQuestionName } from "./questionShadow.ts"
+import { allFencesShadowed, fenceRestatesRegistered, fenceStandsFor, markerIdsIn, placedFrom, placementNamesIn, placeQuestions, questionHomes, questionNames, registeredStandingAt, resolveQuestionName } from "./questionShadow.ts"
+import { questionClaims, questionsByAnchor } from "./questionAnchor.ts"
 import { type MessageSegment, splitQuestionBlocks } from "./questionBlocks.ts"
 
 // The pair from the 2026-08-28 report, verbatim: the registration (a plain string — the `ask` schema
@@ -339,4 +340,50 @@ test("a row known only by its handle — a question that closed without an answe
   assert.equal(resolveQuestionName("retry-policy", [closed]), closed)
   assert.equal(resolveQuestionName("QST_closed00001", [closed]), closed)
   assert.equal(resolveQuestionName("other", [closed]), undefined)
+})
+
+// ---- A RECAP AFTER A WAKE LEAVES THE CARDS IN THE WRITE-UP (2026-11-09) ----
+// The worker wrote a write-up with its questions interleaved in the prose, each under the paragraph it
+// decides. Before the human read it, another thread's steer woke the worker, Frizz corrected the park it
+// rested on, and the worker rested again on a short note listing every open question as an `id:` reference
+// — the maintainer's own instructions tell it to re-place every open question at every rest. The card went
+// to the NEWEST message naming it, so all six left the write-up for the note, stacked at its foot with no
+// lead-in, and the write-up drew read-only copies where they had been (maintainer 2026-11-09: "I had a
+// perfect write-up with a bunch of nicely interleaved questions … then it just kind of tacked all those
+// same questions on at the end"). A naming moves the card only once the human has put a turn into the
+// thread since the card was placed: until then the human has not read it where it is.
+
+const STEER = { role: "user", at: at(8), text: "<thread-message from-thread=\"docs\" from-title=\"Docs\">\nThe page moved.\n</thread-message>", sessionPeer: { name: "Docs", thread: { slug: "docs", title: "Docs" } } }
+const CORRECTION = { role: "user", at: at(9), text: "⚠️ Your ```awaiting fence names only pull requests that wait on this side.", wake: true as const }
+const REPORT = { role: "user", at: at(9), text: "The audit is done.", peerFrom: "auditor" }
+const RECAP = { role: "assistant", at: at(10), text: `Nothing has changed. This is what's open:\n\n${REF_FENCE("settings-store")}` }
+const WOKEN = [...ASKED, STEER, CORRECTION, REPORT, RECAP]
+
+test("a recap written after a wake, before the human's next turn, leaves the card in the write-up", () => {
+  assert.deepEqual([...placeQuestions(WOKEN, [FENCED_ROW]).placed.keys()], [1])
+  assert.equal(questionClaims(WOKEN).get("settings-store"), 1, "the write-up keeps the claim")
+  assert.deepEqual([...questionsByAnchor(WOKEN, [FENCED_ROW]).keys()], [1])
+  // Negative control: the same recap after the human TYPED takes the card, as it always has.
+  const typed = [...ASKED, { role: "user", at: at(8), text: "Do the docs first." }, RECAP]
+  assert.deepEqual([...placeQuestions(typed, [FENCED_ROW]).placed.keys()], [3])
+})
+
+test("the human's next turn ends the hold: a reference after it takes the card", () => {
+  const later = [...WOKEN, { role: "user", at: at(12), text: "Go with the docs." }, { role: "assistant", at: at(14), text: `Docs are in:\n\n${REF_FENCE("settings-store")}` }]
+  assert.deepEqual([...placeQuestions(later, [FENCED_ROW]).placed.keys()], [7])
+  assert.equal(questionClaims(later).get("settings-store"), 7)
+})
+
+test("an answer to another question counts as the human's turn, as the queue card's window does", () => {
+  // The answer rides in as a wake (the human may answer while the worker is down), but the human wrote it,
+  // and the queue card opens on it — so the card a later rest names moves inside that window.
+  const answered = { role: "user", at: at(8), wake: true as const, text: "Answers to earlier questions:\n1. “Ship the docs first?” → Yes" }
+  assert.deepEqual([...placeQuestions([...ASKED, answered, RECAP], [FENCED_ROW]).placed.keys()], [3])
+})
+
+test("each open question's live card has one home, and a copy can point up or down at it", () => {
+  const placement = placeQuestions(WOKEN, [FENCED_ROW])
+  assert.equal(questionHomes(WOKEN, [FENCED_ROW], placement).get(FENCED_ROW.id), 1, "the recap at 6 points up at it")
+  const typed = [...WOKEN, { role: "user", at: at(12), text: "Go with the docs." }, { role: "assistant", at: at(14), text: REF_FENCE("settings-store") }]
+  assert.equal(questionHomes(typed, [FENCED_ROW], placeQuestions(typed, [FENCED_ROW])).get(FENCED_ROW.id), 7, "the write-up at 1 points down at it")
 })

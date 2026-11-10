@@ -1,12 +1,12 @@
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
 import { createPortal } from "react-dom"
-import { useSnapshot } from "valtio"
+import { subscribe, useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon } from "lucide-react"
 import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP } from "@frizz/shared"
-import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
-import { store, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
+import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, ProviderError, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
+import { store, threadBySlug, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
 import { useBackgroundShellLines, useProjectDir, useThreadSnapshot, useTranscript, type ChatMessage, type TranscriptData } from "../hooks.ts"
 import { rpc } from "../api/rpc.ts"
 import { stripFrontmatter } from "../lib/markdown.ts"
@@ -26,6 +26,7 @@ import { splitFenceBlocks, type FenceKind } from "../lib/fenceBlocks.ts"
 import { showsRegisteredDoneCard } from "../lib/registeredDone.ts"
 import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
+import { providerNameFor } from "./providerMark.ts"
 import { answersNote, isAnswersMessage, parseAnswersCard, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
 import { fenceStandsFor, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
@@ -50,11 +51,12 @@ import { limitResumeClock } from "../lib/activityTime.ts"
 import { dayAndTime, messageStamp, restGapAt } from "../lib/messageTime.ts"
 import { useUnqueueFollowUp, useUnqueueSupported } from "../lib/unqueueFollowUp.ts"
 import { useFailedDeliveryActions } from "../lib/failedDelivery.ts"
-import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending } from "../lib/deliverQueuedNow.ts"
+import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending, useThreadCanSteer } from "../lib/deliverQueuedNow.ts"
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
+import type { StepsReply } from "../lib/stepsAnswer.ts"
 import { snoozePresetInstant, formatSnoozeWake } from "../lib/snooze.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { ICON_LABEL_NUDGE } from "../lib/iconAlign.ts"
@@ -673,7 +675,7 @@ export function RuntimeStatusLadder({
     case "provider-fault":
       return <ProviderFaultCard slug={slug} sessionId={thread!.sessionId} fault={thread!.providerFault!} retryText={retryText} />
     case "provider-error":
-      return <ProviderErrorCard error={thread!.providerError!} />
+      return <ThreadProviderErrorCard error={thread!.providerError!} />
     case "limit-pause":
       return <LimitPauseCard slug={slug} sessionId={thread!.sessionId} pause={thread!.limitPause!} />
     case "pending-ask":
@@ -3321,10 +3323,21 @@ export function QueuedSendNow() {
   const slug = useContext(ThreadSlugContext)
   const run = useContext(QueuedRunContext)
   const interruptible = useDeliverQueuedNowSupported(slug)
+  const steerable = useThreadCanSteer(slug)
   const pending = useSendNowPending(slug)
   if (!slug || !run) return null
-  const step = sendNowStep(run, interruptible)
-  if (!step) return null
+  const step = sendNowStep(run, interruptible, steerable)
+  if (!step) {
+    // No Send now to offer, because this agent has no way to read a message early. Its place says what
+    // the gray bubble is waiting for, which on every other backend the control's own tooltip covers.
+    if (steerable || run.held + run.steered === 0) return null
+    return (
+      <>
+        <VSpace h={HUMAN_RUN_STEP} />
+        <div data-queued-waits-for-turn className="flex items-baseline justify-end text-[11.5px] leading-[16px] text-muted">Waits for this turn to end</div>
+      </>
+    )
+  }
   // A release hands over one held message, the next; with more held behind it the words say which.
   const releaseTitle = run.held > 1 ? "Send the next one now — the agent reads it at its next step" : "Send it now — the agent reads it at its next step"
   return (
@@ -3526,11 +3539,13 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
       paired={t.paired[index]}
       staleAwaiting={staleAwaiting}
       restingCardShown={restingCardShown}
-      stepsDone={t.stepsDone.has(index)}
+      stepsDone={t.stepsDone.get(index)}
       shadowedBy={t.shadowedByMessage.get(index)}
       placed={t.placement.placed.get(index)}
       settledPlaced={t.settledPlacement.placed.get(index)}
       fenceQuestions={t.fenceQuestions}
+      index={index}
+      questionHomes={t.questionHomes}
       thread={t.thread}
     />
   )
@@ -3570,10 +3585,9 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
 // presence switches the splitter to that grammar, and a fence's `id:` resolves against it: a row placed
 // here draws in the fence's slot, a row drawn elsewhere draws nothing here, and an ask that names no row
 // yet draws read-only from its own bytes. One array per surface, memoized, so the memo boundary holds.
-// `stepsDone` — the human answered this message's rest on steps with the "I have completed this" box
-// (lib/stepsAnswer stepsDoneReplies), so its settled steps card keeps the box, ticked. A boolean, false
-// on every other row.
-type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; thread?: ThreadViewData; restingCardShown?: boolean; stepsDone?: boolean }
+// `stepsDone` — what the human's reply to this message's rest on steps said was done (lib/stepsAnswer
+// stepsDoneReplies), which its settled steps card draws ticked. Absent on every other row.
+type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; index?: number; questionHomes?: ReadonlyMap<string, number>; thread?: ThreadViewData; restingCardShown?: boolean; stepsDone?: StepsReply }
 // EVERY MESSAGE SAYS WHEN IT WAS SAID ON HOVER — `Today at 8:33 AM` as the browser's own tooltip
 // (lib/messageTime). Here, around every branch of the body, so a bubble, a prose turn, a tool run and a
 // hairline all carry it on every surface, the sub-agent sheet's included. `contents` keeps the wrapper
@@ -3588,7 +3602,22 @@ export const Message = memo(function Message(props: MessageProps) {
     </div>
   )
 })
-function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, thread, restingCardShown, stepsDone }: MessageProps) {
+// The error card under its thread's own provider, from whichever surface draws it. A scalar over the
+// store, as useDeliverQueuedNowSupported does: a board push must not re-render the transcript's cards.
+function ThreadProviderErrorCard({ error }: { error: ProviderError }) {
+  const slug = useContext(ThreadSlugContext)
+  const provider = useSyncExternalStore(
+    (onChange) => subscribe(store, onChange),
+    () => {
+      const thread = slug ? threadBySlug(store.board, slug) : undefined
+      return providerNameFor(thread?.backend, thread?.model)
+    },
+    () => "Agent",
+  )
+  return <ProviderErrorCard error={error} provider={provider} />
+}
+
+function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, index, questionHomes, thread, restingCardShown, stepsDone }: MessageProps) {
   // ANSWERING ON A PHONE happens in a sheet, one question at a time (MobileAnswerSheet) — the cards in
   // the transcript stay READ-ONLY there, so the questions are still visible in the context that
   // produced them but a 44pt-thumb answer never has to land on a 24pt chip inside a scrolling message.
@@ -3599,7 +3628,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
   const promptBoxSends = usePromptBoxSends()
   // An event line (a sub-agent completion) is transcript PUNCTUATION — a quiet full-width line, not a
   // bubble or a tool band. Rendered before the role branches (its role field is nominal).
-  if (m.providerError) return <ProviderErrorCard error={m.providerError} />
+  if (m.providerError) return <ThreadProviderErrorCard error={m.providerError} />
   if (m.kind === "event") return <EventLine text={m.text} boundary={m.boundary} sourceId={m.sourceId} at={m.at} />
   // A model-reasoning summary (Codex) — quiet punctuation like an event line, but CLICKABLE to expand
   // the full reasoning. Rendered before the role branches (its role field is nominal, like an event).
@@ -3848,11 +3877,14 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
               push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
               continue
             }
-            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing down.
+            // Anywhere else: the copy — answered, as its settled card stands; open, read-only, pointing at
+            // the card: down from a write-up the human has since replied past, up from a recap the worker
+            // wrote after a wake (lib/questionShadow placeQuestions).
             const answered = answeredRow(row)
+            const home = questionHomes?.get(row.id)
             push(answered
               ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy wrap={dense} />
-              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} wrap={dense} />)
+              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} above={home !== undefined && index !== undefined && home < index} wrap={dense} />)
             continue
           }
           // AN ASK WITH NO ROW YET — the server registers a second or two behind the transcript, and never
@@ -4411,7 +4443,7 @@ export function ProviderFaultCard({
 export function LimitPauseCard({ slug, sessionId, pause }: { slug: string; sessionId: string | undefined; pause: NonNullable<ThreadViewData["limitPause"]> }) {
   // Only Claude and Codex report a limit window Frizz can read; an ACP agent's limits stay inside its
   // own CLI, so a pause attributed to one is labelled generically rather than crashing on the lookup.
-  const label = pause.backend === "acp" ? "The agent" : PROVIDER_LABEL[pause.backend]
+  const label = pause.backend === "acp" ? "The agent" : pause.backend === "opencode" ? "OpenCode" : PROVIDER_LABEL[pause.backend]
   // The window is keyed "session", but it is labelled the way the provider's line above the card names
   // it: Claude Code calls it the "5-hour limit" since 2.1.312 ("session limit" before).
   const which = pause.window === "weekly" ? "weekly limit" : pause.window === "session" ? "5-hour limit" : "usage limit"

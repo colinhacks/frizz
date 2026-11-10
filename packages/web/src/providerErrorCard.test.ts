@@ -11,7 +11,7 @@ test("a provider failure is an error card, never a missing sign-off or executabl
   const thread = { kind: "session", runtime: "turn-idle", needsYou: true, lastAssistantAt: error.at, providerError: error } as ThreadView
   assert.equal(showsRestedCard(thread, ""), false)
   assert.equal(showsRestedCard({ ...thread, providerError: undefined }, ""), true)
-  const html = renderToStaticMarkup(createElement(ProviderErrorCard, { error }))
+  const html = renderToStaticMarkup(createElement(ProviderErrorCard, { error, provider: "Codex" }))
   assert.match(html, /Codex request failed/)
   assert.match(html, /cyber_policy/)
   assert.doesNotMatch(html, /<script>/)
@@ -22,5 +22,13 @@ test("a provider failure is an error card, never a missing sign-off or executabl
   assert.equal(providerErrorVisible(messages, { ...error, at: "2026-09-06T16:00:00.000Z" }), false)
   assert.equal(providerErrorVisible([], error), false)
   assert.equal(providerErrorVisible(messages, undefined), false)
-  assert.match(renderToStaticMarkup(createElement(ProviderErrorCard, { error: { ...error, retrying: true } })), /Codex retrying/)
+  assert.match(renderToStaticMarkup(createElement(ProviderErrorCard, { error: { ...error, retrying: true }, provider: "Codex" })), /Codex retrying/)
+})
+
+test("the card names the thread's own provider, failing and retrying", () => {
+  const error = { message: "session/prompt: agent connection closed" }
+  const failed = renderToStaticMarkup(createElement(ProviderErrorCard, { error, provider: "OpenCode" }))
+  assert.match(failed, /OpenCode request failed/)
+  assert.doesNotMatch(failed, /Codex/)
+  assert.match(renderToStaticMarkup(createElement(ProviderErrorCard, { error: { ...error, retrying: true }, provider: "OpenCode" })), /OpenCode retrying/)
 })

@@ -1,3 +1,4 @@
+import { backendFollowUps } from "@frizz/shared"
 import { useCallback, useSyncExternalStore } from "react"
 import { subscribe } from "valtio"
 import { rpc } from "../api/rpc.ts"
@@ -25,10 +26,11 @@ import type { QueuedRun } from "./restReply.ts"
 /** What one press of Send now does, one step at a time: messages Frizz is HOLDING for the rest go to the
  *  agent's next step without interrupting it (`release`); once nothing is held, a queued steer is pushed
  *  through now (`interrupt`) where the runtime can be preempted. Null when there is nothing it can do,
- *  which is also when the control draws nothing. */
+ *  which is also when the control draws nothing. A release is a steer, so a backend with none has no
+ *  first step either: every message on it waits for the turn to end (shared BACKEND_FOLLOW_UPS). */
 export type SendNowStep = "release" | "interrupt"
-export function sendNowStep(run: QueuedRun, interruptible: boolean): SendNowStep | null {
-  if (run.held > 0) return "release"
+export function sendNowStep(run: QueuedRun, interruptible: boolean, steerable = true): SendNowStep | null {
+  if (run.held > 0 && steerable) return "release"
   if (run.steered > 0 && interruptible) return "interrupt"
   return null
 }
@@ -40,7 +42,17 @@ export function sendNowStep(run: QueuedRun, interruptible: boolean): SendNowStep
 export function deliverQueuedNowSupported(slug: string | null): boolean {
   if (!slug) return false
   const thread = threadBySlug(store.board, slug)
-  return thread?.backend !== "codex" && thread?.runtime === "running"
+  return backendFollowUps(thread?.backend).interrupt && thread?.runtime === "running"
+}
+
+/** Can this thread's agent read a message inside a running turn at all? */
+export function threadCanSteer(slug: string | null): boolean {
+  return backendFollowUps(slug ? threadBySlug(store.board, slug)?.backend : undefined).steer
+}
+
+export function useThreadCanSteer(slug: string | null): boolean {
+  // A scalar, for the reason useDeliverQueuedNowSupported gives below.
+  return useSyncExternalStore((onChange) => subscribe(store, onChange), () => threadCanSteer(slug), () => true)
 }
 
 export function useDeliverQueuedNowSupported(slug: string | null): boolean {
@@ -81,7 +93,7 @@ export function useSendNowPending(slug: string | null): boolean {
  *  The click and ⌘⏎ both come here. Returns whether a press was made, so a keystroke with nothing to
  *  press can be left to whatever else wants it. */
 export function pressSendNow(slug: string, run: QueuedRun): boolean {
-  const step = sendNowStep(run, deliverQueuedNowSupported(slug))
+  const step = sendNowStep(run, deliverQueuedNowSupported(slug), threadCanSteer(slug))
   if (!step) return false
   if (inFlight.has(slug)) return true
   // Resolved at PRESS time, not render time — a thread re-dispatched under an open drawer must not

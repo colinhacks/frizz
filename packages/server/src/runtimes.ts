@@ -32,7 +32,13 @@
 // firewalled machine still dispatches and the log says the version seam is open again.
 // `FRIZZ_RUNTIMES=path` skips provisioning altogether (the test runner sets it — a suite must never
 // pull half a gigabyte), and `FRIZZ_RUNTIMES_DIR` relocates the root (the ad-hoc stack points a
-// sandbox HOME at the machine's real copies for the same reason).
+// sandbox HOME at the machine's real copies for the same reason). `FRIZZ_RUNTIMES_REGISTRY` names
+// another npm registry, a mirror or a verification's own, and the integrity check still applies.
+//
+// A MACHINE WITH NO USE FOR EITHER YET waits: signed out of both with OpenCode on PATH, boot fetches
+// nothing and the first thread on a backend brings its pin down (shouldDeferRuntimes, runtime-deferral.ts).
+// One difference from a boot download: a failed fetch has no PATH fallback, because every consumer
+// already holds the pin's path. That thread's dispatch fails naming the download, and the next retries.
 //
 // NOT done on purpose: reusing the vendor's own versioned install (`~/.local/share/claude/versions/`,
 // `~/.codex/packages/standalone/releases/`) when it happens to hold the exact pin. It would save one
@@ -55,12 +61,16 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
 import { Readable, Transform, Writable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { createGunzip } from "node:zlib"
+import type { ProviderAuth } from "@frizz/shared"
+import { findOnPath } from "./backend/acp-agents.ts"
+import { readClaudeAuthState, readClaudeOtherCredential, readCodexAuthState } from "./backend/auth-status.ts"
 import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./backend/codex-app-server.ts"
 import { frizzRoots } from "./frizz-paths.ts"
+import { deferRuntime } from "./runtime-deferral.ts"
 import { leaseRuntime, liveRuntimeLeases } from "./runtime-lease.ts"
 
 /** The Claude Agent SDK Frizz bundles. Must equal packages/claude-agent-sdk-runtime's dependency. */
-export const CLAUDE_AGENT_SDK_VERSION = "0.3.319"
+export const CLAUDE_AGENT_SDK_VERSION = "0.3.321"
 /** The Claude Code build that SDK was built against — its package.json `claudeCodeVersion`.
  *
  *  Keep this CURRENT when bumping, not merely matched: the first provisioned build (2.1.207, the SDK
@@ -68,7 +78,7 @@ export const CLAUDE_AGENT_SDK_VERSION = "0.3.319"
  *  2.1.207 does not support this model; version 2.1.251 or newer is required` — because a model's
  *  minimum CLI is enforced server-side. The pin makes Frizz's lag the worker's lag; a stale pin is a
  *  broken worker, not a conservative one. */
-export const CLAUDE_CODE_VERSION = "2.1.319"
+export const CLAUDE_CODE_VERSION = "2.1.321"
 /** The Codex build Frizz audited the app-server protocol against. One coordinate, owned there. */
 export const CODEX_VERSION = CODEX_APP_SERVER_SUPPORTED_VERSION
 
@@ -79,6 +89,8 @@ export type RuntimeSource =
   | "override"
   /** Frizz's own pinned copy under the cache root. */
   | "provisioned"
+  /** The same copy, not fetched yet: `bin` is where it will land, on the first thread that needs it. */
+  | "deferred"
   /** The bare name on PATH — the pre-2026-09 behaviour, now the fallback. `note` says why. */
   | "path"
 
@@ -100,6 +112,7 @@ export const RUNTIMES_MODE_ENV = "FRIZZ_RUNTIMES"
 export const RUNTIMES_DIR_ENV = "FRIZZ_RUNTIMES_DIR"
 export const CLAUDE_BIN_ENV = "FRIZZ_CLAUDE_BIN"
 export const CODEX_BIN_ENV = "FRIZZ_CODEX_BIN"
+export const RUNTIMES_REGISTRY_ENV = "FRIZZ_RUNTIMES_REGISTRY"
 
 const REGISTRY = "https://registry.npmjs.org"
 
@@ -147,6 +160,29 @@ export function runtimeCoordinates(
     return { pkg: `@anthropic-ai/claude-agent-sdk-${key}`, packageVersion: CLAUDE_AGENT_SDK_VERSION, label: CLAUDE_CODE_VERSION, binary: `claude${exe}` }
   }
   return { pkg: "@openai/codex", packageVersion: `${CODEX_VERSION}-${platform}-${arch}`, label: CODEX_VERSION, binary: `codex${exe}` }
+}
+
+/**
+ * The Rust target triple of @openai/codex's platform package, which names the directory its binary sits
+ * in. The package carries exactly one, and this is what lets a deferred Codex be named before it exists.
+ */
+function codexTriple(platform: NodeJS.Platform, arch: string): string {
+  const cpu = arch === "arm64" ? "aarch64" : "x86_64"
+  if (platform === "darwin") return `${cpu}-apple-darwin`
+  if (platform === "win32") return `${cpu}-pc-windows-msvc`
+  return `${cpu}-unknown-linux-musl`
+}
+
+/** The path a pin's binary has once provisioned: what locateBinary finds and the marker records. */
+export function pinnedBinaryPath(
+  backend: RuntimeBackend,
+  root: string,
+  coordinates: RuntimeCoordinates,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  const dir = join(root, backend, coordinates.label)
+  return backend === "claude" ? join(dir, coordinates.binary) : join(dir, "vendor", codexTriple(platform, arch), "bin", coordinates.binary)
 }
 
 const MARKER = "provisioned.json"
@@ -596,6 +632,8 @@ export interface ResolveRuntimesOptions {
   log?: (level: "info" | "warn", message: string) => void
   /** Boot-progress hook; the message names the backend. */
   onProgress?: (backend: RuntimeBackend, message: string) => void
+  /** Fetch nothing now: register each pin to come down on its first thread (runtime-deferral.ts). */
+  defer?: boolean
   /** Seams for the Windows failure modes (tests): see ProvisionOptions.rename and SweepRuntimesDeps.rm. */
   rename?: ProvisionOptions["rename"]
   rm?: SweepRuntimesDeps["rm"]
@@ -615,12 +653,25 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
     return { bin: bare, source: "path", version: "unknown", note }
   }
   const root = options.root ?? runtimesRoot(env)
+  const registry = options.registry ?? env[RUNTIMES_REGISTRY_ENV]
+  const provision = (onProgress: (message: string) => void) => provisionRuntime(backend, {
+    root, coordinates, fetch: options.fetch, registry, rename: options.rename, onProgress,
+  })
+  if (options.defer) {
+    const bin = provisionedBinary(backend, root, coordinates.label) ?? pinnedBinaryPath(backend, root, coordinates)
+    deferRuntime(backend, async (onProgress) => {
+      const provisioned = await provision(onProgress)
+      if (provisioned.fetched) log("info", `runtimes: provisioned ${backend} ${provisioned.label} at ${provisioned.bin}`)
+      // The consumers have held `bin` since boot, so a package laid out differently must say so here.
+      if (provisioned.bin !== bin) throw new Error(`${coordinates.pkg} unpacked its binary at ${provisioned.bin}, not ${bin}`)
+      leaseRuntime(provisioned.bin, "server")
+    })
+    sweepSuperseded(backend, root, coordinates.label, options)
+    return { bin, source: "deferred", version: coordinates.label }
+  }
   let provisioned: Provisioned
   try {
-    provisioned = await provisionRuntime(backend, {
-      root, coordinates, fetch: options.fetch, registry: options.registry, rename: options.rename,
-      onProgress: (message) => options.onProgress?.(backend, message),
-    })
+    provisioned = await provision((message) => options.onProgress?.(backend, message))
   } catch (err) {
     const note = err instanceof Error ? err.message : String(err)
     log("warn", `runtimes: could not provision ${backend} ${coordinates.label} (${note}); using ${bare} from PATH — the version Frizz was built against is not what will run`)
@@ -631,14 +682,20 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
   // newer pin, the successor of an in-place update) sweeps on ITS boot, and this is what tells it
   // the pin resolved here is still in use.
   leaseRuntime(provisioned.bin, "server")
-  // The sweep is housekeeping and shares NOTHING with the pin above: until 2026-09-11 both sat in one
-  // `try`, so a sweep that threw (Windows refusing to delete a claude.exe some daemon still runs)
-  // discarded a perfectly good provisioned binary and degraded the whole backend to a bare name on
-  // PATH — which on a machine without an npm claude is "could not resolve 'claude'" at boot (Windows
-  // audit 2026-09-11, finding 2). sweepRuntimes itself now keeps rather than throws, and this catch
-  // is the backstop for whatever else it might do.
+  sweepSuperseded(backend, root, coordinates.label, options)
+  return { bin: provisioned.bin, source: "provisioned", version: provisioned.label }
+}
+
+// The sweep is housekeeping and shares NOTHING with the pin: until 2026-09-11 both sat in one
+// `try`, so a sweep that threw (Windows refusing to delete a claude.exe some daemon still runs)
+// discarded a perfectly good provisioned binary and degraded the whole backend to a bare name on
+// PATH — which on a machine without an npm claude is "could not resolve 'claude'" at boot (Windows
+// audit 2026-09-11, finding 2). sweepRuntimes itself now keeps rather than throws, and this catch
+// is the backstop for whatever else it might do.
+function sweepSuperseded(backend: RuntimeBackend, root: string, label: string, options: ResolveRuntimesOptions): void {
+  const log = options.log ?? (() => {})
   try {
-    const sweep = sweepRuntimes(backend, root, coordinates.label, Date.now(), { rm: options.rm })
+    const sweep = sweepRuntimes(backend, root, label, Date.now(), { rm: options.rm })
     for (const retired of sweep.removed) log("info", `runtimes: retired ${retired}`)
     for (const { dir, leases, reason } of sweep.kept) {
       const why = reason ?? `still used by ${leases.map((lease) => `${lease.role} pid ${lease.pid}`).join(", ")}`
@@ -647,7 +704,29 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
   } catch (err) {
     log("warn", `runtimes: sweep of superseded ${backend} versions failed (${err instanceof Error ? err.message : String(err)}); the pin is unaffected`)
   }
-  return { bin: provisioned.bin, source: "provisioned", version: provisioned.label }
+}
+
+export interface ShouldDeferRuntimesDeps {
+  env?: NodeJS.ProcessEnv
+  findOpenCode?: (env: NodeJS.ProcessEnv) => string | undefined
+  readClaudeAuth?: () => Promise<ProviderAuth>
+  readClaudeOther?: (env: NodeJS.ProcessEnv) => boolean
+  readCodexAuth?: () => ProviderAuth
+}
+
+/**
+ * Should this boot leave both runtimes for their first thread? Only on a positive answer to all of it:
+ * OpenCode on PATH, and a clean "signed-out" from BOTH providers. Anything uncertain answers no, and
+ * that machine provisions at boot as it always has. Checks the cheap PATH walk first, so a machine
+ * with no OpenCode pays nothing.
+ */
+export async function shouldDeferRuntimes(deps: ShouldDeferRuntimesDeps = {}): Promise<boolean> {
+  const env = deps.env ?? process.env
+  if (env[RUNTIMES_MODE_ENV] === "path") return false
+  if (!(deps.findOpenCode ?? ((e) => findOnPath("opencode", e)))(env)) return false
+  if ((deps.readCodexAuth ?? readCodexAuthState)() !== "signed-out") return false
+  if ((deps.readClaudeOther ?? readClaudeOtherCredential)(env)) return false
+  return (await (deps.readClaudeAuth ?? readClaudeAuthState)().catch((): ProviderAuth => "unknown")) === "signed-out"
 }
 
 /** Resolve both backends, in parallel. Never throws: the fallback for every failure is PATH. */
@@ -663,6 +742,7 @@ export async function resolveRuntimes(options: ResolveRuntimesOptions = {}): Pro
 export function describeRuntime(backend: RuntimeBackend, runtime: ResolvedRuntime): string {
   switch (runtime.source) {
     case "provisioned": return `${backend}: ${runtime.version} (provisioned) ${runtime.bin}`
+    case "deferred": return `${backend}: ${runtime.version} (on its first thread) ${runtime.bin}`
     case "override": return `${backend}: ${runtime.bin} (explicit)`
     case "path": return `${backend}: ${runtime.bin} from PATH${runtime.note ? ` — ${runtime.note}` : ""}`
   }

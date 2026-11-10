@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "no
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { CodexExecutableNotFoundError } from "./codex-executable.ts"
-import { parseClaudeAuthStatusJson, readAuthSnapshot, readClaudeAccountEmail, readClaudeAuthState, readClaudeAuthStatusCli, readClaudePreflightAuth, readCodexAccountEmail, readCodexAccountId, readCodexAuthState, readCodexBinaryState, resetClaudeCliConfirm } from "./auth-status.ts"
+import { deferRuntime, ensureRuntime, resetDeferredRuntimes } from "../runtime-deferral.ts"
+import { parseClaudeAuthStatusJson, readAuthSnapshot, readClaudeAccountEmail, readClaudeAuthState, readClaudeOtherCredential, readClaudeAuthStatusCli, readClaudePreflightAuth, readCodexAccountEmail, readCodexAccountId, readCodexAuthState, readCodexBinaryState, resetClaudeCliConfirm } from "./auth-status.ts"
 
 // Codex reads env keys BEFORE the file, so a file-based test must run with those keys cleared or an
 // ambient OPENAI_API_KEY in the dev shell would mask the file logic. Clears + restores around fn.
@@ -453,5 +454,48 @@ test("readAuthSnapshot: never labels a signed-out provider with a leftover email
     else process.env.FRIZZ_KEYCHAIN_DISABLED = savedKeychain
     if (savedCodexHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = savedCodexHome
+  }
+})
+
+test("a Claude runtime waiting for its first thread is never started to confirm a signed-out", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-deferred-auth-"))
+  const marker = join(dir, "ran")
+  const bin = join(dir, "claude")
+  writeFileSync(bin, `#!/bin/sh\ntouch "${marker}"\necho '{"loggedIn":true}'\n`, { mode: 0o755 })
+  const saved = { config: process.env.CLAUDE_CONFIG_DIR, keychain: process.env.FRIZZ_KEYCHAIN_DISABLED }
+  process.env.CLAUDE_CONFIG_DIR = dir
+  process.env.FRIZZ_KEYCHAIN_DISABLED = "1"
+  t.after(() => {
+    resetDeferredRuntimes()
+    resetClaudeCliConfirm()
+    if (saved.config === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved.config
+    if (saved.keychain === undefined) delete process.env.FRIZZ_KEYCHAIN_DISABLED; else process.env.FRIZZ_KEYCHAIN_DISABLED = saved.keychain
+    rmSync(dir, { recursive: true, force: true })
+  })
+  resetClaudeCliConfirm()
+  deferRuntime("claude", async () => {})
+  assert.equal((await readAuthSnapshot({ claudeBin: bin, fresh: true })).claude, "signed-out")
+  assert.equal(await readClaudePreflightAuth({ claudeBin: bin }), "signed-out", "a positive signed-out, so the gate opens instead of a download")
+  assert.equal(existsSync(marker), false, "nothing ran the binary")
+  // The negative control: the same machine once the runtime is down asks the CLI as it always has.
+  await ensureRuntime("claude")
+  assert.equal(await readClaudePreflightAuth({ claudeBin: bin }), "authed")
+  assert.equal(existsSync(marker), true)
+})
+
+test("a Claude credential only Claude Code itself can see counts against deferring its download", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-claude-other-"))
+  try {
+    assert.equal(readClaudeOtherCredential({}, dir), false, "no settings file is the ordinary case")
+    assert.equal(readClaudeOtherCredential({ ANTHROPIC_API_KEY: "x" }, dir), true)
+    assert.equal(readClaudeOtherCredential({ CLAUDE_CODE_USE_BEDROCK: "1" }, dir), true)
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ theme: "dark" }))
+    assert.equal(readClaudeOtherCredential({}, dir), false)
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ apiKeyHelper: "op read x" }))
+    assert.equal(readClaudeOtherCredential({}, dir), true)
+    writeFileSync(join(dir, "settings.json"), "{ not json")
+    assert.equal(readClaudeOtherCredential({}, dir), true, "an unreadable answer provisions as today")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })

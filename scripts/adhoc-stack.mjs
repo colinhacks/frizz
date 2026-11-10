@@ -20,7 +20,7 @@
 // It prints ONE json line to stdout: {"url","port","home","project"} once /health is green,
 // then stays up until SIGINT/SIGTERM, deleting the temp HOME on exit (unless --keep). Run it with Bash
 // run_in_background:true, parse that json line, then drive the url with Chrome DevTools MCP or shot.mjs.
-import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { frizzPaths, projectStateDir } from "../packages/server/src/frizz-paths.ts"
@@ -76,6 +76,10 @@ const realGithubCredentials = join(frizzPaths({ home: realHome }).data, "github"
 // Frizz's own state. A sandbox HOME gets its `.frizz`; the REAL home is never given one, because that
 // folder existing is what tells every Frizz process on the machine to use it (lib/adhoc-frizz-root.mjs).
 const frizzRoot = adhocFrizzRoot({ home, realHome, legacyExists: existsSync(join(home, ".frizz")) })
+// The operator's own XDG roots, read before anything below replaces them: --creds links what an agent
+// needs out of these, and nothing else here may name them again (see `xdgDirs`).
+const realConfigHome = process.env.XDG_CONFIG_HOME?.trim() || join(realHome, ".config")
+const realDataHome = process.env.XDG_DATA_HOME?.trim() || join(realHome, ".local", "share")
 let isolatedRoot
 if (frizzRoot === "sandbox") mkdirSync(join(home, ".frizz"), { recursive: true })
 if (frizzRoot === "isolated") {
@@ -101,13 +105,9 @@ const claudeLogin = creds && !(process.platform === "darwin" && home !== realHom
 if (creds) {
   // The agent CLIs read their own credentials out of HOME. `.frizz/builds` rides along so a stack that
   // promotes an artifact starts warm instead of rebuilding from cold.
-  for (const name of [...(claudeLogin ? [".claude", ".claude.json"] : []), ".codex", ".config"]) {
+  // `.config` is not among them: it is built entry by entry under `xdgDirs` below, without OpenCode's.
+  for (const name of [...(claudeLogin ? [".claude", ".claude.json"] : []), ".codex"]) {
     try { symlinkSync(join(realHome, name), join(home, name)) } catch {}
-  }
-  // ACP agents keep their credentials under XDG data dirs (opencode: ~/.local/share/opencode/auth.json),
-  // so a real `backend: "acp"` dispatch needs those too. Linked per agent, never the whole ~/.local.
-  for (const name of [join(".local", "share", "opencode")]) {
-    try { mkdirSync(join(home, dirname(name)), { recursive: true }); symlinkSync(join(realHome, name), join(home, name)) } catch {}
   }
   try { symlinkSync(join(realHome, ".frizz", "builds"), join(home, ".frizz", "builds")) } catch {}
   // The DIRECTORY, not the file: a token renewal renames a sibling over the file, and through a linked
@@ -118,6 +118,57 @@ if (creds) {
     // Its key is in the real login keychain, which the sandbox HOME can't find on its own (github-credential-seal.ts).
     const keychain = join(realHome, "Library", "Keychains", "login.keychain-db")
     if (existsSync(keychain)) process.env.FRIZZ_GITHUB_KEYCHAIN = keychain
+  }
+}
+// EVERY XDG ROOT IS THE STACK'S OWN, forced whatever the stack inherited, for the server and everything it
+// starts. OpenCode keeps all of itself under them (util/src/global-roots.ts reads XDG first, then HOME):
+// its service's registration and password under STATE, its port under CONFIG, its database (sessions,
+// and in OpenCode 2 the sign-ins too) under DATA. An inherited `XDG_CONFIG_HOME=$HOME/.config`, or a
+// `.config` that --creds linked whole, put a sandbox's OpenCode on the operator's real service config,
+// and a linked `~/.local/share/opencode` put it on their real database. Frizz itself is unaffected: a
+// sandbox or shared stack keeps its state in a legacy `.frizz`, which wins over XDG (frizz-paths.ts
+// rule 1), and an isolated one is named by these variables already. A real-HOME stack gets a temp root.
+let xdgRoot = frizzRoot === "sandbox" ? undefined : isolatedRoot
+let ownXdgRoot = false
+if (frizzRoot === "shared") { xdgRoot = mkdtempSync(join(tmpdir(), "frizz-adhoc-xdg-")); ownXdgRoot = true }
+const xdgDirs = xdgRoot
+  ? { XDG_DATA_HOME: join(xdgRoot, "data"), XDG_STATE_HOME: join(xdgRoot, "state"), XDG_CACHE_HOME: join(xdgRoot, "cache"), XDG_CONFIG_HOME: join(xdgRoot, "config") }
+  : { XDG_DATA_HOME: join(home, ".local", "share"), XDG_STATE_HOME: join(home, ".local", "state"), XDG_CACHE_HOME: join(home, ".cache"), XDG_CONFIG_HOME: join(home, ".config") }
+Object.assign(process.env, xdgDirs)
+{
+  const configHome = xdgDirs.XDG_CONFIG_HOME
+  // A sandbox an older --creds run left behind (--home=) has `.config` linked whole to the real one. The
+  // link is the sandbox's own; removing it leaves its target alone.
+  try { if (lstatSync(configHome).isSymbolicLink()) unlinkSync(configHome) } catch {}
+  mkdirSync(configHome, { recursive: true })
+  // The other tools' configuration (gh's sign-in, git's) is still the operator's, linked one entry at a
+  // time, OpenCode's left out. With --creds that is what the agents' logins need; on a real HOME it is
+  // what the HOME already gave every tool. An entry the operator adds later is not seen here.
+  if (creds || home === realHome) {
+    let entries = []
+    try { entries = readdirSync(realConfigHome) } catch {}
+    for (const name of entries) {
+      if (name === "opencode") continue
+      try { symlinkSync(join(realConfigHome, name), join(configHome, name)) } catch {}
+    }
+  }
+  // OpenCode's managed service listens on ONE fixed port per machine (49374 on 2.2.5,
+  // ServiceConfig.defaultPort), so a sandbox service would hold the port the operator's own service needs,
+  // and two stacks could not both start one. This one's service config names a port of its own.
+  const serviceConfig = join(configHome, "opencode", "service.json")
+  let linked = false
+  try { linked = lstatSync(join(configHome, "opencode")).isSymbolicLink() } catch {}
+  if (!linked && !existsSync(serviceConfig)) {
+    const servicePort = port + 10_000 <= 65_535 ? port + 10_000 : port - 10_000
+    mkdirSync(dirname(serviceConfig), { recursive: true })
+    writeFileSync(serviceConfig, JSON.stringify({ port: servicePort }) + "\n")
+  }
+  // An ACP OpenCode (1.x) signs in from `auth.json` under DATA, and OpenCode 2 imports that file into its
+  // own database the first time it opens one. The FILE, never the directory: the directory holds the
+  // operator's database. A sign-in a sandbox refreshes stays in the sandbox's database.
+  const realAuth = join(realDataHome, "opencode", "auth.json")
+  if (creds && existsSync(realAuth)) {
+    try { mkdirSync(join(xdgDirs.XDG_DATA_HOME, "opencode"), { recursive: true }); symlinkSync(realAuth, join(xdgDirs.XDG_DATA_HOME, "opencode", "auth.json")) } catch {}
   }
 }
 if (!flag("wakers")) process.env.FRIZZ_WAKERS_OFF = "1"
@@ -150,10 +201,12 @@ if (flag("seed")) {
 
 let close = async () => {}
 const cleanup = () => {
+  stopSandboxOpencodeService()
   if (!keep) { try { rmSync(home, { recursive: true, force: true }) } catch {} }
   // The isolated root is this run's own even though the HOME is not, so `--home` alone (which only
   // implies --keep to protect the HOME it was handed) does not keep it; an explicit --keep does.
   if (isolatedRoot && !flag("keep")) { try { rmSync(isolatedRoot, { recursive: true, force: true }) } catch {} }
+  if (ownXdgRoot && !flag("keep")) { try { rmSync(xdgRoot, { recursive: true, force: true }) } catch {} }
 }
 const stop = (code) => {
   void (async () => {
@@ -161,6 +214,19 @@ const stop = (code) => {
     cleanup()
     process.exit(code ?? 0)
   })()
+}
+// A dispatch to OpenCode starts OpenCode's background service, which outlives its client on purpose. This
+// one is the sandbox's: its registration is under the sandbox's state directory, never the real one, and
+// nothing else here will stop it. By the PID it registered, and only when that file is the sandbox's.
+function stopSandboxOpencodeService() {
+  // Only an explicit --keep leaves it running: `--home` implies keep to protect the HOME, not the service.
+  if (flag("keep")) return
+  // `xdgDirs` is the stack's own by construction; on a real HOME, `home/.local/state` is the operator's.
+  const file = join(xdgDirs.XDG_STATE_HOME, "opencode", "service.json")
+  try {
+    const pid = JSON.parse(readFileSync(file, "utf8")).pid
+    if (Number.isInteger(pid) && pid > 1) process.kill(pid, "SIGTERM")
+  } catch {}
 }
 process.on("SIGINT", () => stop(0))
 process.on("SIGTERM", () => stop(0))
@@ -214,6 +280,8 @@ try {
     // "isolated" (a temp root, named here, that this run deletes on exit unless --keep).
     frizzRoot,
     ...(isolatedRoot ? { isolatedRoot } : {}),
+    xdgConfigHome: xdgDirs.XDG_CONFIG_HOME,
+    xdgStateHome: xdgDirs.XDG_STATE_HOME,
     wakers: flag("wakers"),
     creds,
     claudeLogin,

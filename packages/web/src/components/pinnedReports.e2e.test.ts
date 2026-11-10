@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 // A PINNED THREAD QUEUES ONLY ITS ASKS (maintainer 2026-11-06). A pinned thread's plain report draws no
-// queue card and leaves the counts; its row carries an unread dot until the thread is opened, and opening
-// that row opens a drawer, since no card is mounted to scroll to. A question or a `steps:` list keeps its
+// queue card, leaves the counts and puts no mark on its row (an unread dot did, from 2026-11-06 to
+// 2026-11-09), and opening that row opens a drawer, since no card is mounted to scroll to. A question or a `steps:` list keeps its
 // card. A report loses its card only where a pinned row shows it instead, so the Console's two views answer
 // for themselves: By status reads the Console's own pin, and By project lifts nothing.
 //
@@ -28,7 +28,7 @@ type Board = { projectSlug: string; threads: BoardThread[] }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-test("a pinned thread queues only its asks, and its report waits on the row as unread", { skip: !baseUrl, timeout: 300_000 }, async () => {
+test("a pinned thread queues only its asks, and its report waits on the row unmarked", { skip: !baseUrl, timeout: 300_000 }, async () => {
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   const api = createRpcClient(`${baseUrl}/`)
   await api.waitForHealth()
@@ -92,14 +92,6 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
       }
       assert.deepEqual([...got].sort(), [...want].sort(), label)
     }
-    const dotted = (slug: string, attr = "data-sidebar-item") => page.$eval(`[${attr}="${slug}"]`, (el) => el.querySelector("[data-sidebar-unread]") !== null)
-    const waitDot = async (slug: string, want: boolean, label: string, attr?: string) => {
-      for (let i = 0; i < 100; i++) {
-        if ((await dotted(slug, attr)) === want) return
-        await sleep(100)
-      }
-      assert.equal(await dotted(slug, attr), want, label)
-    }
     const drawer = (slug: string) => `.frizz-sheet-panel [data-thread-surface="${slug}"]`
     const openRow = async (slug: string) => {
       await page.click(`[data-sidebar-item="${slug}"] button`)
@@ -122,14 +114,10 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
     const shelf = await page.$$eval("section[aria-label='Pinned'] [data-pinned-row]", (rows) => rows.map((r) => r.getAttribute("data-pinned-row")!))
     assert.deepEqual([...shelf].sort(), [...everyone].sort())
 
-    // 3. THE UNREAD DOT, on the reports and only on them.
-    for (const slug of reports) await waitDot(slug, true, `${slug}: a report nobody has opened is unread`)
-    for (const slug of asks) assert.equal(await dotted(slug), false, `${slug}: an ask has its card`)
-
-    // 4. A report's row opens a DRAWER, which clears its dot. Its resting card is still drawn there.
+    // 3. A report's row opens a DRAWER. Its resting card is still drawn there.
     await openRow(report)
     await page.waitForSelector(drawer(report), { timeout: 10_000 })
-    await waitDot(report, false, "opening the thread reads the report")
+    await until("opening the thread recorded it", async () => Boolean((await thread(report))?.seenAt))
     const seen = await thread(report)
     assert.ok(seen?.seenAt, "opening the thread recorded it")
     assert.equal(seen?.needsYou, true, "reading a report does not change what the thread is resting on")
@@ -140,12 +128,12 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
     await closeDrawer(report)
     await waitCards(asks, "closing the drawer leaves the queue as it was")
 
-    // 5. An ask's row still SCROLLS TO ITS CARD, and opens nothing.
+    // 4. An ask's row still SCROLLS TO ITS CARD, and opens nothing.
     await openRow(question)
     await sleep(300)
     assert.equal(await page.$(drawer(question)), null, "a queued thread's surface is its card")
 
-    // 6. A NEW REST: unread again if nobody was looking, and not if the thread was open when it landed.
+    // 5. A NEW REST, with nobody looking, still draws no card.
     const send = async (slug: string, message: string) => {
       const t = await thread(slug)
       await api.mutate("followUp", { slug, sessionId: t?.sessionId ?? "", message })
@@ -159,33 +147,20 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
     const before = (await thread(report))?.lastAssistantAt
     await send(report, "One more, with nobody looking")
     await restedSince(report, before)
-    await waitDot(report, true, "a report landing with the thread closed is unread")
-    await waitCards(asks, "and it still draws no card")
+    await waitCards(asks, "a new report on a pin draws no card")
 
-    await openRow(report)
-    await page.waitForSelector(drawer(report), { timeout: 10_000 })
-    await waitDot(report, false, "opening it reads it")
-    const beforeOpen = (await thread(report))?.lastAssistantAt
-    await send(report, "One more, while it is open")
-    await restedSince(report, beforeOpen)
-    await sleep(1_500)
-    assert.equal(await dotted(report), false, "a report read as it lands is never marked")
-    await closeDrawer(report)
-
-    // 7. UNPINNED, the report takes its turn in the queue again, and the row has a card to say so.
+    // 6. UNPINNED, the report takes its turn in the queue again, and the row has a card to say so.
     await api.mutate("setThreadPinned", { slug: done, sessionId: (await thread(done))?.sessionId ?? "", pinned: false })
     await waitCards([...asks, done], "unpinned, a report cards again")
     assert.equal(await queued(), 3)
-    assert.equal(await dotted(done), false)
     await api.mutate("setThreadPinned", { slug: done, sessionId: (await thread(done))?.sessionId ?? "", pinned: true })
     await waitCards(asks, "pinned again")
 
-    // 8. A DEEP LINK to a pinned report opens the drawer; there is no card for it to settle on.
+    // 7. A DEEP LINK to a pinned report opens the drawer; there is no card for it to settle on.
     await page.goto(`${boardUrl}?thread=${bare}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(drawer(bare), { timeout: 20_000 })
-    await waitDot(bare, false, "a link reads it too")
 
-    // 9. ITS FULL PAGE reads it as well, and draws the thread in full.
+    // 8. ITS FULL PAGE reads it as well, and draws the thread in full.
     await page.goto(`${boardUrl}/thread/${done}`, { waitUntil: "networkidle2" })
     await page.waitForSelector(`main[data-standalone-thread] [data-thread-surface="${done}"]`, { timeout: 20_000 })
     await until("the full page recorded the read", async () => {
@@ -193,8 +168,8 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
       return Boolean(t?.seenAt && t.lastAssistantAt && t.seenAt > t.lastAssistantAt)
     })
 
-    // 10. THE CONSOLE. By status knows nothing of a board's pin, so the report keeps its card there, its
-    // row in no shelf. Pinned on the Console's own shelf, it leaves that view's cards for an unread row.
+    // 9. THE CONSOLE. By status knows nothing of a board's pin, so the report keeps its card there, its
+    // row in no shelf. Pinned on the Console's own shelf, it leaves that view's cards for its row there.
     await send(report, "One for the Console")
     const k = (slug: string) => `${projectSlug}~${slug}`
     await page.evaluateOnNewDocument(() => localStorage.setItem("frizz:console-group", "status"))
@@ -203,23 +178,12 @@ test("a pinned thread queues only its asks, and its report waits on the row as u
     await waitCards(everyone.map(k), "By status, a board pin plays no part")
     await api.mutate("setThreadConsolePinned", { slug: report, sessionId: (await thread(report))?.sessionId ?? "", pinned: true })
     await waitCards(everyone.filter((s) => s !== report).map(k), "By status, its own pin takes the report's card")
-    await page.waitForSelector(`[data-console-pinned] [data-sidebar-item="${k(report)}"] [data-sidebar-unread]`, { timeout: 10_000 })
+    await page.waitForSelector(`[data-console-pinned] [data-sidebar-item="${k(report)}"]`, { timeout: 10_000 })
     await page.click("[data-console-sidebar] [data-sidebar-rail] [data-rail-view-chip=\"group\"]")
     await page.waitForSelector('[data-rail-view-option="project"]')
     await page.click('[data-rail-view-option="project"]')
     await waitCards(everyone.map(k), "By project lifts nothing, so a report keeps its card")
     await api.mutate("setThreadConsolePinned", { slug: report, sessionId: (await thread(report))?.sessionId ?? "", pinned: false })
-
-    // 11. THE PHONE has one list: the shelf leads it, and the row says unread itself.
-    await send(bare, "One for the phone")
-    await restedSince(bare, (await thread(bare))?.lastAssistantAt)
-    const phone = await browser.newPage()
-    await phone.setViewport({ width: 420, height: 900, deviceScaleFactor: 2, isMobile: true, hasTouch: true })
-    await phone.goto(boardUrl, { waitUntil: "networkidle2" })
-    await phone.waitForSelector(`[data-mobile-thread-row="${bare}"]`, { timeout: 20_000 })
-    assert.ok(await phone.$(`[data-mobile-thread-row="${bare}"] [data-mobile-row-unread]`), "an unread report wears the dot on the phone")
-    assert.equal(await phone.$(`[data-mobile-thread-row="${question}"] [data-mobile-row-unread]`), null, "an ask does not")
-    await phone.close()
 
     assert.deepEqual(errors, [])
   } finally {

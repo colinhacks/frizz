@@ -73,6 +73,7 @@ export const REMOTE_ACCESS = {
   // What the page reads as it loads. None of these takes input that reaches a process.
   settingsGet: "allow",
   dispatchPreferencesGet: "allow",
+  runtimeDownloads: "allow",
   codexModels: "allow",
   acpAgents: "allow",
   quota: (input: { force?: unknown } | undefined) => input?.force ? onThisMachine("Refreshing the quota") : null,
@@ -104,6 +105,7 @@ export const REMOTE_ACCESS = {
   adoptThread: "full",
   followUp: "full",
   dismissFailedFollowUp: "full",
+  setHumanTodo: "full",
   unqueueFollowUp: "full",
   deliverQueuedNow: "full",
   compactThread: "full",
@@ -132,6 +134,8 @@ export const REMOTE_ACCESS = {
   threadSkills: "full",
   claudeModels: "full",
   acpAgentModels: "full",
+  opencodeModels: "full",
+  stopThreadTurn: "full",
 
   // MCP, provider and GitHub sign-ins.
   mcpStatus: "full",

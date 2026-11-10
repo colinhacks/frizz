@@ -248,6 +248,56 @@ test("tail-cache: a row with an OPEN delivery ledger keeps its full replay", () 
   assert.deepEqual(cachedSlugs(h), [], "a thread with follow-ups in flight is never cached")
 })
 
+const ledgerItem = (state: string, id = "d1") => ({ id, text: "please continue", state, at: stamp(3), updatedAt: stamp(3) })
+
+// Write something only a cache hit can hand back: a re-fold from byte 0 overwrites it.
+function forgeCachedAnswer(h: Harness): void {
+  const stored = h.storage.db.prepare<[], { state: string }>("SELECT state FROM tail_state").get()!
+  const decoded = decodeTailState(stored.state)!
+  decoded.lastAssistant = "from the cache"
+  h.storage.db.prepare("UPDATE tail_state SET state = ?").run(encodeTailState(decoded))
+}
+
+for (const state of ["cancelled", "held"]) {
+  test(`tail-cache: a ledger holding only ${state} items is no reason to re-read the transcript`, () => {
+    const h = harness()
+    h.storage.upsertSession(row())
+    writeFileSync(h.path("sid"), [user(1, "go"), assistant(2, "answer")].map((l) => l + "\n").join(""))
+    h.storage.setDeliveryLedger("t", JSON.stringify([ledgerItem(state)]))
+
+    const cold = boot(h, { tailCache: null })
+    assert.deepEqual(boot(h), cold, "seeding the cache must not change the derivation")
+    assert.deepEqual(cachedSlugs(h), ["t"])
+    assert.deepEqual(boot(h), cold, "the cached derivation must equal the cold one")
+
+    forgeCachedAnswer(h)
+    assert.equal(boot(h)?.lastAssistant, "from the cache", "the boot resumed from the cache")
+  })
+}
+
+for (const state of ["sending", "pending", "enqueued", "delivered", "unconfirmed", "failed"]) {
+  test(`tail-cache: a ${state} send beside a tombstone keeps the full replay`, () => {
+    const h = harness()
+    h.storage.upsertSession(row())
+    writeFileSync(h.path("sid"), [user(1, "go"), assistant(2, "answer")].map((l) => l + "\n").join(""))
+    h.storage.setDeliveryLedger("t", JSON.stringify([ledgerItem("cancelled", "d0"), ledgerItem(state)]))
+    boot(h)
+    assert.deepEqual(cachedSlugs(h), [], "a send that may still be evidenced is never cached")
+  })
+}
+
+test("tail-cache: a send opened after the cache was written goes back to the full replay", () => {
+  const h = harness()
+  h.storage.upsertSession(row())
+  writeFileSync(h.path("sid"), [user(1, "go"), assistant(2, "answer")].map((l) => l + "\n").join(""))
+  h.storage.setDeliveryLedger("t", JSON.stringify([ledgerItem("cancelled", "d0")]))
+  boot(h)
+  forgeCachedAnswer(h)
+
+  h.storage.setDeliveryLedger("t", JSON.stringify([ledgerItem("cancelled", "d0"), ledgerItem("pending")]))
+  assert.equal(boot(h)?.lastAssistant, "answer", "the entry is ignored while a send waits on the transcript")
+})
+
 test("tail-cache: an entry for a slug the registry no longer has is pruned", () => {
   const h = harness()
   h.storage.upsertSession(row())

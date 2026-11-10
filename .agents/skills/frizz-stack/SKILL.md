@@ -158,6 +158,12 @@ the next time it boots. `--home=$HOME` did create it until 2026-10-13, and left 
   is shared. The root is named by `XDG_DATA_HOME` / `XDG_STATE_HOME` / `XDG_CACHE_HOME`, which every
   process the stack starts inherits: a tool in a worker that honors XDG finds empty directories there
   (a package cache refills; opencode's login under `~/.local/share` is not found).
+- **Every stack forces all four XDG roots to its own** (`xdgConfigHome` / `xdgStateHome` in the json
+  line), whatever it inherited and whatever `--creds` links, so an OpenCode it starts registers its
+  service, keeps its database and reads its port there, never in the operator's
+  `~/.local/state/opencode` or `~/.config/opencode`. The config root links each of the operator's
+  `~/.config` entries but `opencode` (with `--creds`, or on a real HOME), so `gh` and `git` read their
+  own as before; `--creds` gives OpenCode the operator's `auth.json` alone, never their database.
 - `"shared"`: the machine's Frizz already lives in `~/.frizz`, and the stack uses that tree as it is,
   registry and settings included.
 

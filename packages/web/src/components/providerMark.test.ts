@@ -3,7 +3,7 @@ import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ProviderMark } from "./ProviderMark.tsx"
-import { PROVIDER_MARK_GEOMETRY, providerMarkFor, providerMarkForBackend } from "./providerMark.ts"
+import { PROVIDER_MARK_GEOMETRY, providerMarkFor, providerMarkForBackend, providerNameFor } from "./providerMark.ts"
 
 test("provider marks identify only known, backend-backed threads", () => {
   assert.deepEqual(providerMarkForBackend("codex"), { key: "codex", backend: "codex", label: "OpenAI Codex" })
@@ -37,4 +37,14 @@ test("every ACP provider mark uses semantic ink while retaining its own geometry
     assert.match(html, /text-muted-65/)
     assert.doesNotMatch(html, /text-muted\/65/)
   }
+})
+
+test("a thread's provider has a name for a sentence, whichever agent it runs on", () => {
+  assert.equal(providerNameFor("codex", "gpt-5"), "Codex")
+  assert.equal(providerNameFor("claude", "opus"), "Claude")
+  assert.equal(providerNameFor("acp", "acp:opencode@opencode/big-pickle"), "OpenCode")
+  assert.equal(providerNameFor("acp", "acp:gemini"), "Gemini CLI")
+  assert.equal(providerNameFor("acp", "acp:kilo"), "Kilo", "an agent with no mark still has its own name")
+  assert.equal(providerNameFor("acp", null), "Agent")
+  assert.equal(providerNameFor(undefined), "Agent")
 })

@@ -1,28 +1,30 @@
 import { statSync, openSync, readSync, closeSync, readdirSync, realpathSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { execFile } from "node:child_process"
 import { takeLoopTurn } from "./loop-turns.ts"
+import { closeHumanSteps, foldHumanSteps, type HumanStep } from "./human-todos.ts"
 import { execFileOffThread } from "./off-thread-exec.ts"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { fenceWaitsOnHuman, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingStepItems, fenceWaitsOnHuman, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
 import type { Storage, SessionRow } from "./storage.ts"
 import { discoverTranscriptDir, discoverTranscriptId, mtimeOfNonEmpty, DISCOVERY_GRACE_MS } from "./discover.ts"
 import { CLAUDE_WORKER_ENV, type AgentBackend, type FoldState, type NormalizedEvent, type NormalizedTail, type QuestionSighting } from "./backend/types.ts"
+import { parseOpencodeSubAgentLine } from "./backend/opencode-transcript.ts"
 import { adoptionRuntimeBinding } from "./adoption-recovery.ts"
 import { normalizeObservedThreadModel, validateThreadProfile } from "./backend/thread-profiles.ts"
-import { dispatchProfileCell } from "./subagent-profile.ts"
+import { dispatchProfileCell, observedDispatchCell } from "./subagent-profile.ts"
 import { resolveRuntimeTurn, type ClaudeRuntimeTask } from "./backend/claude-runtime-ingest.ts"
 import { classifyLimitRecord } from "./backend/usage-limit.ts"
 import { codexLimitFault } from "./backend/codex-usage-limit.ts"
 import { claudeBrokerDiagnosticLogPath } from "./backend/claude-broker-diagnostics.ts"
 import { claudeBrokerRecordPath, readBrokerRecord } from "./backend/claude-broker-host.ts"
-import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, type DeliveryLedgerItem } from "./delivery-ledger.ts"
+import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, ledgerAwaitsTranscript, type DeliveryLedgerItem } from "./delivery-ledger.ts"
 import { createCodexSubAgentTracker, type CodexSubAgentTracker } from "./codex-subagents.ts"
 import { defaultCodexHome, readCodexThreadNames, scanForeignRollouts } from "./backend/codex.ts"
 import {
@@ -814,7 +816,7 @@ interface SubAgentEntry {
   outputFile?: string // the child/shell's output path (from the launch tool_result); its mtime = liveness
   // Transcript SCHEMA of `outputFile` when it isn't Claude's own JSONL. A codex sub-agent's output file
   // is the CHILD's codex rollout, which the drill-in drawer must parse with the codex reader instead.
-  outputFormat?: "codex"
+  outputFormat?: "codex" | "opencode"
   // A `Monitor`, which is a shell op with NO output file: its ack names only a task ("Monitor started
   // (task …)"), and every event it produces arrives as a notification to the worker. Its row therefore
   // carries no drill-in — the drawer could only ever say "No output yet." for the Monitor's whole life.
@@ -902,7 +904,7 @@ interface RetiredSubAgent {
   label: string
   subagentType?: string
   outputFile?: string
-  outputFormat?: "codex" // see SubAgentEntry.outputFormat
+  outputFormat?: "codex" | "opencode" // see SubAgentEntry.outputFormat
   // ISO8601 of the DISPATCH, carried over from the live entry. A retired row is normally never rendered,
   // but one holding a live fan-out is (see the RESTED anchor in descendantSubtrees), and that row needs
   // the same honest "working for 12m" instant every other child row shows rather than a derived one.
@@ -1339,7 +1341,9 @@ export function hasQuestionBlock(text: string | undefined): boolean {
 // CRLF-tolerant (normalized before matching).
 // ONE implementation so the grammar lives in a single place (mirrors QUESTION_BLOCK_RE's spirit). The
 // ```question fence keeps its own separate machinery (hasQuestionBlock) — it is NOT a signal fence.
-const SIGNAL_FENCE_RE = /^```(done|awaiting)[ \t]*\n([\s\S]*?)\n```[ \t]*$/gm
+// Any run of three or more backticks opens one, and only a run at least as long closes it, as in CommonMark:
+// a fence whose steps carry a code block in their bodies opens with four (2026-11-09).
+const SIGNAL_FENCE_RE = /^(`{3,})(done|awaiting)[ \t]*\n([\s\S]*?)\n\1`*[ \t]*$/gm
 // An awaiting-body hint line: `<kind>: <value>`. Kind is case-insensitive (lowercased on output); the
 // value must start with a non-space char (a bare `pr:` with nothing after is prose, not a hint).
 // THREE PLACES SPELL THE VOCABULARY and they must move together: this regex, FenceView["hints"]'s
@@ -1374,8 +1378,8 @@ export function parseSignalFence(text: string | undefined): FenceView | undefine
   let end = 0
   let m: RegExpExecArray | null
   while ((m = SIGNAL_FENCE_RE.exec(norm)) !== null) {
-    kind = m[1] as "done" | "awaiting" // last-fence-wins: keep overwriting
-    raw = m[2]
+    kind = m[2] as "done" | "awaiting" // last-fence-wins: keep overwriting
+    raw = m[3]
     end = m.index + m[0].length
   }
   if (!kind) return undefined
@@ -2683,6 +2687,8 @@ export function applyRecord(state: TailState, rec: Record): void {
     // classifier, so the two projections cannot drift again — but the chat draws Frizz's own deliveries
     // too, so it is only the first gate. The question asks the narrower one below the row-order key.
     state.lastAssistantAllDone = false
+    // A tool result answers a call made in the same message, so that fence was never the thread's last word.
+    if (isRealUserMessage(rec.message?.content)) settleHumanSteps(state, userText)
     state.lastFence = undefined
     const humanSpoke = isHumanSpeaking(rec, userText, systemUserRec, compactSummaryRec)
     // Any user record supersedes a usage-limit pause: the conversation has moved past the point where
@@ -2766,6 +2772,36 @@ function noteHandoff(state: FoldState): void {
   if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints) && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
 }
 
+// A REST ON `steps:` IS OVER, so what it handed the human joins the thread's list (human-todos.ts). Here
+// and not where the fence is parsed, because a later assistant message replaces a fence that was not the
+// thread's last word, and that fence never rested on anything.
+function settleHumanSteps(state: FoldState, replyText: string): void {
+  const steps = state.lastFence?.kind === "awaiting" ? awaitingStepItems(state.lastFence.hints) : []
+  const atMs = Date.parse(state.handoffAt ?? "")
+  if (steps.length === 0 || !Number.isFinite(atMs)) return
+  const listed = foldHumanSteps(state.humanSteps ?? [], steps, atMs)
+  state.humanSteps = repliesStepsDone(replyText) ? closeHumanSteps(listed, steps.map((step) => step.text), atMs) : listed
+}
+
+// The list with the fence the thread is resting on now, which has not settled yet. One value per fence
+// and base list, so the board's memos see the same array on every read of a thread that has not moved.
+const humanStepsAtRest = new WeakMap<FenceView, { base: HumanStep[] | undefined; steps: HumanStep[] }>()
+
+function humanStepsOf(state: FoldState): HumanStep[] | undefined {
+  const fence = state.turn === "idle" && state.lastFence?.kind === "awaiting" ? state.lastFence : undefined
+  const steps = fence ? awaitingStepItems(fence.hints) : []
+  const atMs = Date.parse(state.handoffAt ?? "")
+  if (!fence || steps.length === 0 || !Number.isFinite(atMs)) return state.humanSteps
+  const memo = humanStepsAtRest.get(fence)
+  if (memo && memo.base === state.humanSteps) return memo.steps
+  const folded = foldHumanSteps(state.humanSteps ?? [], steps, atMs)
+  humanStepsAtRest.set(fence, { base: state.humanSteps, steps: folded })
+  return folded
+}
+
+// What ends FoldState.operatorStopped: the thread moving again.
+const STOP_CLEARING_KINDS: ReadonlySet<NormalizedEvent["kind"]> = new Set(["turn-start", "user-message", "assistant-text", "tool-call", "tool-result", "reasoning", "provider-error", "agent-report"])
+
 // Fold one NORMALIZED event into the backend-neutral accumulator — the codex-facing counterpart to
 // applyRecord (which folds raw Claude records). A backend whose turn model maps cleanly onto
 // NormalizedEvent (codex's explicit task_started/task_complete brackets) drives its fold as
@@ -2782,6 +2818,10 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
   // A tool call, a user turn or a new turn ends the assistant message in progress (see the field): the
   // next text is another message, and a closing bracket after it does not echo this one.
   if (ev.kind === "tool-call" || ev.kind === "tool-result" || ev.kind === "user-message" || ev.kind === "turn-start") state.assistantMessage = undefined
+  // A Stop describes only the rest it ended: the next turn, message or output is the thread moving again.
+  // (Bookkeeping that rides after it, a title or a usage reading, leaves it standing.)
+  if (ev.kind === "turn-end") state.operatorStopped = ev.stoppedBy === "operator" || undefined
+  else if (STOP_CLEARING_KINDS.has(ev.kind)) state.operatorStopped = undefined
   switch (ev.kind) {
     case "provider-error":
       state.sawRecords = true
@@ -2869,6 +2909,7 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.limitFault = undefined
       state.turn = "in-flight"
       state.lastAssistantAllDone = false
+      settleHumanSteps(state, ev.text ?? "")
       state.lastFence = undefined
       if (!ev.synthetic) {
         // …and the QUESTION is the human's to discharge, so it never clears unconditionally. Codex's
@@ -3006,7 +3047,7 @@ function sameForeign(a: { id: string }[], b: { id: string }[]): boolean {
 
 export interface SubAgentLookup {
   outputFile?: string
-  outputFormat?: "codex"
+  outputFormat?: "codex" | "opencode"
   state: "running" | "stale" | "done"
   direct: boolean
   taskId?: string
@@ -3721,7 +3762,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     if (!path) return false
     // Only an agent's file is a Claude transcript: a shell's is its raw output, and a codex child's is
     // its rollout, which records calls in codex's own schema.
-    return quietPastWindow(path, mtimeMs(path), nowMs, e.kind === "agent" && e.outputFormat !== "codex")
+    return quietPastWindow(path, mtimeMs(path), nowMs, e.kind === "agent" && !e.outputFormat)
   }
 
   // Has a child's transcript been quiet past its window? The plain clock — SUBAGENT_STALE_MS since the
@@ -3793,7 +3834,8 @@ export function createTailer(deps: TailerDeps): Tailer {
         label: e.label,
         startedAt: e.startedAt,
         state: entryStale(state, e, nowMs) ? "stale" : "running",
-        subagentType: e.subagentType,
+        // Refined from the child's own transcript when the dispatch could not state the edition.
+        subagentType: observedDispatchCell(e.subagentType, e),
         id: e.toolUseId,
         ...(e.taskId ? { taskId: e.taskId } : {}),
         ...(lastActivityAt ? { lastActivityAt } : {}),
@@ -3826,7 +3868,7 @@ export function createTailer(deps: TailerDeps): Tailer {
         // resort. Every one of the three is a measured instant — never a fabricated one.
         startedAt: dead.startedAt ?? dead.finishedAt ?? subtree[0].startedAt,
         state: "rested",
-        subagentType: dead.subagentType,
+        subagentType: observedDispatchCell(dead.subagentType, dead),
         id: dead.toolUseId,
         ...(dead.taskId ? { taskId: dead.taskId } : {}),
         ...(lastActivityAt === undefined ? {} : { lastActivityAt: new Date(lastActivityAt).toISOString() }),
@@ -4229,7 +4271,9 @@ export function createTailer(deps: TailerDeps): Tailer {
             // gets the same real "working for 38s" duration a direct child gets from its dispatch record.
             startedAt: new Date(meta.spawnedAtMs ?? nowMs).toISOString(),
             state: stateOf(meta) === "running" ? "running" : "stale",
-            ...(meta.agentType ? { subagentType: meta.agentType } : {}),
+            // A sidecar records the bare profile the dispatch named (`frizz:high`); the descendant's own
+            // transcript names the model and edition it ran.
+            ...(meta.agentType ? { subagentType: observedDispatchCell(meta.agentType, { outputFile: descendantTranscript(state, meta) }) } : {}),
             id,
             ...(activeAt === undefined ? {} : { lastActivityAt: new Date(activeAt).toISOString() }),
             depth,
@@ -4628,7 +4672,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // now, and a broker thread's approvals arrive as typed permission requests over the control channel
     // anyway.
     // Codex and ACP approvals are typed interaction cards, never a marker file.
-    return turn === "in-flight" && row.backend !== "codex" && row.backend !== "acp" && permMarkerBlocks(state, row)
+    return turn === "in-flight" && row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && permMarkerBlocks(state, row)
   }
 
   // Write out the un-retirements the FOLD queued: an op the agent restarted under an id the operator
@@ -4933,6 +4977,34 @@ export function createTailer(deps: TailerDeps): Tailer {
     return (line: string) => tracker.onLine(line)
   }
 
+  // An OpenCode row's sub-agents, read off its own transcript: the bridge writes one record each time a
+  // child's state moves, the newest for an id wins, and a replay rebuilds the map. So unlike codex there
+  // is no tracker object and the prime cache can hold the result.
+  function opencodeSubAgentOnLine(row: SessionRow, state: TailState): ((line: string) => void) | undefined {
+    if (row.backend !== "opencode") return undefined
+    return (line: string) => {
+      const rec = parseOpencodeSubAgentLine(line)
+      if (!rec) return
+      if (rec.state === "running") {
+        state.retiredSubAgents.delete(rec.id)
+        state.subAgents.set(rec.id, {
+          kind: "agent",
+          toolUseId: rec.id,
+          label: rec.label,
+          startedAt: rec.startedAt,
+          ...(rec.agent ? { subagentType: rec.agent } : {}),
+          outputFile: rec.outputFile,
+          outputFormat: "opencode",
+          taskId: rec.childSessionId,
+        })
+        return
+      }
+      const entry: SubAgentEntry = state.subAgents.get(rec.id) ?? { kind: "agent", toolUseId: rec.id, label: rec.label, startedAt: rec.startedAt, outputFile: rec.outputFile, outputFormat: "opencode", taskId: rec.childSessionId, ...(rec.agent ? { subagentType: rec.agent } : {}) }
+      state.subAgents.set(rec.id, entry)
+      retireLive(state, entry, rec.finishedAt ?? rec.at, rec.state)
+    }
+  }
+
   // ---- durable prime cache (tail-cache.ts) ------------------------------------------------------
   // Loaded lazily on the first tick, consumed once per slug. Entries that miss their fence are simply
   // never applied: the row then folds from byte 0, exactly as it always did.
@@ -4988,7 +5060,8 @@ export function createTailer(deps: TailerDeps): Tailer {
     // A row with an OPEN delivery ledger has follow-ups whose evidence may still be sitting in the
     // prefix we would skip. Correlating those records is the ledger's whole job, so such a row keeps
     // the full replay — there are only ever a handful, and they are the actively-steered threads.
-    if (row?.delivery_ledger) return false
+    // A ledger of nothing but tombstones and held sends is not open: see ledgerAwaitsTranscript.
+    if (ledgerAwaitsTranscript(row?.delivery_ledger)) return false
     // A CODEX row keeps the full replay too. This prime cache predates the codex sub-agent tracker
     // (`state.codexSubAgents`, a live object with methods) and cannot round-trip it — a restored plain
     // blob has no `.poll`. And resuming the parent fold mid-file would skip the `spawn_agent` records
@@ -5051,7 +5124,7 @@ export function createTailer(deps: TailerDeps): Tailer {
   function cacheSnapshot(state: TailState, row: SessionRow | null): TailCacheEntry | null {
     // Codex rows are never cached — the prime cache predates their live sub-agent tracker and cannot
     // round-trip it (see hydrateFromCache). Never persisting them keeps hydrate a guaranteed miss.
-    if (state.offset <= 0 || row?.delivery_ledger || row?.backend === "codex") return null
+    if (state.offset <= 0 || ledgerAwaitsTranscript(row?.delivery_ledger) || row?.backend === "codex") return null
     const fence = measureFence(state.path, state.offset)
     if (!fence) return null
     return {
@@ -5214,7 +5287,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     const detail = isBrokerClaudeRow(row) && deps.project.stateDir
       ? `no worker terminal to capture (broker runtime). Daemon diagnostics: ${claudeBrokerDiagnosticLogPath(deps.project.stateDir, row.session_id)}`
       : isHeadlessRow(row)
-      ? `no worker terminal to capture (headless ${row.backend === "codex" ? "codex app-server" : row.backend === "acp" ? "ACP agent" : "claude broker"} runtime)`
+      ? `no worker terminal to capture (headless ${row.backend === "codex" ? "codex app-server" : row.backend === "acp" ? "ACP agent" : row.backend === "opencode" ? "OpenCode" : "claude broker"} runtime)`
       // Neither runtime above, i.e. a pre-cutover row. Nothing in this build captures anything, so the
       // old "(pane empty / unavailable)" described output that SHOULD have existed and sent the reader
       // hunting for a screen that cannot exist. Say why there is nothing instead.
@@ -5572,7 +5645,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // session/load), but the transcript is FRIZZ-written and keyed by the frizz session id
       // (acp-transcript.ts) — so its stem is always `session_id`.
       const backend = resolveBackend(row.backend)
-      const nativeId = row.backend === "acp" ? row.session_id : row.agent_session_id ?? row.transcript_id ?? row.session_id
+      const nativeId = row.backend === "acp" || row.backend === "opencode" ? row.session_id : row.agent_session_id ?? row.transcript_id ?? row.session_id
       const known = states.get(row.slug)
       const runtimeGeneration = row.runtime_generation ?? 0
       // The state this row may KEEP: same session, same native transcript stem, same runtime
@@ -5649,7 +5722,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // would wrongly flag noTranscript (a codex discovery-miss is a separate follow-up). An ACP row's
       // file is deterministic too (frizz writes it), so it takes the same exemption.
       const prevNoTranscript = state.noTranscript
-      if (row.backend !== "codex" && row.backend !== "acp" && !resolveTranscript(state, row, nowMs)) {
+      if (row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && !resolveTranscript(state, row, nowMs)) {
         unsettled = true // a discovered transcript lost its claim; the next tick decides again
         continue
       }
@@ -5676,7 +5749,7 @@ export function createTailer(deps: TailerDeps): Tailer {
         primedRows++
         const primeOffset = state.offset
         const primeLedger = ledgerFold(row, nowMs, state)
-        consume(state, backend, chainOnLine(primeLedger.onLine, codexSubAgentOnLine(row, state)))
+        consume(state, backend, chainOnLine(chainOnLine(primeLedger.onLine, codexSubAgentOnLine(row, state)), opencodeSubAgentOnLine(row, state)))
         state.codexSubAgents?.poll(nowMs)
         const primedLedger = primeLedger.finish()
         state.deliveryLedgerSeen = primedLedger.changed ? primedLedger.value : row.delivery_ledger ?? null
@@ -5752,7 +5825,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       const rowLedger = row.delivery_ledger ?? null
       const ledgerDrifted = rowLedger !== (state.deliveryLedgerSeen ?? null) // a router write with no JSONL advance
       const ledger = ledgerFold(row, nowMs, state)
-      consume(state, backend, chainOnLine(chainOnLine(ledger.onLine, codexSubAgentOnLine(row, state)), crossSessionOnLine))
+      consume(state, backend, chainOnLine(chainOnLine(chainOnLine(ledger.onLine, codexSubAgentOnLine(row, state)), opencodeSubAgentOnLine(row, state)), crossSessionOnLine))
       // Child rollouts advance on their OWN clock, so poll every tick — not only when the parent
       // appended. This is what flips a finished codex child out of the live set (and, once every
       // child is done, releases the thread from Active into the queue).
@@ -6237,7 +6310,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

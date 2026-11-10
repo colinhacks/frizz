@@ -6,6 +6,7 @@ const source = readFileSync(new URL("./SettingsDrawer.tsx", import.meta.url), "u
 const helpSource = readFileSync(new URL("../lib/settingsHelp.ts", import.meta.url), "utf8")
 const autosaveSource = readFileSync(new URL("../hooks/useSettingsAutosave.tsx", import.meta.url), "utf8")
 const fieldSource = readFileSync(new URL("./SettingsField.tsx", import.meta.url), "utf8")
+const experimentalChipSource = readFileSync(new URL("./ui/ExperimentalChip.tsx", import.meta.url), "utf8")
 const agentSource = readFileSync(new URL("./AgentSettingsPopover.tsx", import.meta.url), "utf8")
 const promptFieldSource = readFileSync(new URL("./GithubPromptField.tsx", import.meta.url), "utf8")
 const promptPopoverSource = readFileSync(new URL("./GithubPromptPopover.tsx", import.meta.url), "utf8")
@@ -79,7 +80,7 @@ test("the drawer is one untabbed list of interface preferences, with no project 
   assert.ok(source.indexOf('<SettingsField label="GitHub"') < source.indexOf("{!draft ? ("), "the GitHub row renders without the draft")
   // Child threads is the one experiment, and says so beside its name.
   assert.deepEqual([...source.matchAll(/<SettingsField label="([^"]+)" experimental\b/g)].map((m) => m[1]), ["Child threads"])
-  assert.match(fieldSource, /normal-case[^"]*tracking-normal[^"]*">\s*Experimental\s*</)
+  assert.match(experimentalChipSource, /normal-case[^`]*tracking-normal[^`]*`\}>\s*Experimental\s*</)
   // The triage prompt has exactly one editor, and it is the picker's.
   assert.doesNotMatch(source, /GithubPromptEditor|githubPrompt|<textarea/)
   assert.match(promptPopoverSource, /<GithubPromptEditor draft=\{draft\} onChange=\{update\} rows=\{14\} \/>/)
@@ -129,27 +130,27 @@ test("the agent settings panel is modal, keyboard-reachable, and holds exactly t
 })
 
 // The GitHub picker's header: the slug is a right-justified link out to the repo with the external
-// arrow. Its footer: the gear that opens the triage prompt stands beside the model chip, the two halves
-// of what every started thread will be, and the Start button stands alone.
-test("the GitHub picker carries the repo link in its header, the prompt gear beside its model chip, and waits on settings writes", () => {
+// arrow. Its footer: the running count, then one gear beside the Start button, and the gear's panel holds
+// the model selector and the prompt, the two halves of what every started thread will be.
+test("the GitHub picker carries the repo link in its header, one settings gear beside its Start button with the model inside, and waits on settings writes", () => {
   const header = pickerSource.slice(pickerSource.indexOf("{/* Header"), pickerSource.indexOf("{/* Controls"))
   // The row is baseline-aligned so its two glyphs can take the browser-computed cap-band correction
   // (half the glyph's box minus half the resolved cap height); the numbers behind it are in the
   // component's comments.
-  assert.match(header, /<h2 className="mb-4 flex items-baseline gap-2/)
+  assert.match(header, /<h2 className="-mx-5 -mt-1\.5 mb-4 flex items-baseline gap-2 border-b border-border\/60/)
   assert.match(header, /className="ml-auto flex shrink-0 items-baseline"/)
-  assert.match(header, /<Github size=\{15\} aria-hidden="true" className="shrink-0 self-baseline translate-y-\[calc\(7\.5px_-_0\.5cap\)\]/)
   assert.match(agentSource, /self-baseline|items-baseline/)
   assert.match(agentSource, /-mr-3 inline-flex size-5 shrink-0 translate-y-\[calc\(7px_-_0\.5cap\)\]/)
   assert.match(header, /<RepoLink nameWithOwner=\{status\.data\.nameWithOwner\} \/>/)
   assert.match(header, /\{GITHUB_PICKER_TITLE\}/)
-  // The gear lives in the footer, right of the model chip as the composer's agent marks are
-  // (maintainer 2026-11-07), and its panel opens upward and rightward off the modal's bottom-left corner.
-  assert.doesNotMatch(header, /<GithubPromptPopover \/>/)
+  // The gear lives in the footer, the Start button's left-hand neighbour, its panel opening upward off
+  // the modal's bottom-right corner, with the model selector inside it (maintainer 2026-11-09).
+  assert.doesNotMatch(header, /<GithubPromptPopover\b/)
   const footer = pickerSource.slice(pickerSource.indexOf("{/* Footer"))
-  assert.match(footer, /<\/PromptControlGroup>[\s\S]*?<div className=\{AGENT_MARKS\}>\s*<GithubPromptPopover \/>\s*<\/div>\s*<\/div>\s*<button\s+disabled=\{n === 0/)
-  assert.match(promptPopoverSource, /<PopoverContent side="top" align="start"/)
-  assert.match(promptPopoverSource, /className=\{`github-prompt-trigger \$\{SETTINGS_MARK\}`\}/)
+  assert.match(footer, /<GithubPromptPopover>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<ProfileGridSelector\b[\s\S]*?<\/GithubPromptPopover>\s*<button\s+disabled=\{n === 0/)
+  assert.doesNotMatch(pickerSource, /PromptControlGroup/)
+  assert.match(promptPopoverSource, /<PopoverContent\s+side="top"\s+align="end"/)
+  assert.match(promptPopoverSource, /<SettingsField label="Model and effort"/)
   // The slug is no longer an em-dashed suffix of the title (the dash must be gone from the MARKUP;
   // the comments above it are prose and may carry one).
   assert.doesNotMatch(header.slice(header.indexOf("<h2")), /—/)
@@ -157,8 +158,11 @@ test("the GitHub picker carries the repo link in its header, the prompt gear bes
   assert.match(link, /href=\{`https:\/\/github\.com\/\$\{nameWithOwner\}`\}/)
   assert.match(link, /target="_blank"/)
   assert.match(link, /<ArrowUpRight aria-hidden="true" className="-mx-\[0\.29em\] size-\[1em\] shrink-0 self-baseline translate-y-\[calc\(0\.5em_-_0\.5cap\)\]"/)
-  // A chip on the tab and sort controls' own border and fill, in the fg tone: the picker's way out.
-  assert.match(link, /rounded-md border border-border bg-panel-2 .*text-fg\/85/)
+  // Text in the fg tone with the GitHub mark, and no box: a chip stacked on the sort control is what
+  // the maintainer rejected (2026-11-09).
+  assert.match(link, /<Github aria-hidden="true" className="mr-0\.5 size-\[13px\] shrink-0 self-baseline translate-y-\[calc\(6\.5px_-_0\.5cap\)\]"/)
+  assert.match(link, /text-fg\/85/)
+  assert.doesNotMatch(link, /\bborder\b|bg-panel-2/)
   assert.match(promptPopoverSource, /<Popover modal open=\{open\} onOpenChange=\{setOpen\}>/)
   assert.match(promptPopoverSource, /<GithubPromptEditor draft=\{draft\} onChange=\{update\} rows=\{14\} \/>/)
   // A prompt edit flushed by closing the popover is still in flight when the button is pressed.

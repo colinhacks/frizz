@@ -19,7 +19,7 @@ import { CARD_BODY, TranscriptCard } from "./TranscriptCard.tsx"
 
 export type RestedCardThread = Pick<
   ThreadView,
-  "kind" | "foreign" | "runtime" | "needsYou" | "crashed" | "lastFence" | "questions" | "answersInFlight" | "pendingQuestion" | "pendingAsk" | "pendingInteraction" | "awaitingBackground" | "limitPause" | "providerFault" | "providerError" | "lastAssistantAt" | "closedQuestions"
+  "kind" | "foreign" | "runtime" | "needsYou" | "crashed" | "lastFence" | "questions" | "answersInFlight" | "pendingQuestion" | "pendingAsk" | "pendingInteraction" | "awaitingBackground" | "limitPause" | "providerFault" | "providerError" | "lastAssistantAt" | "closedQuestions" | "operatorStopped"
 > & {
   /** Which ```question grammar the thread speaks (shared questionFencesLive) — see the last check below. */
   spawnedAt?: ThreadView["spawnedAt"]
@@ -58,6 +58,9 @@ export function showsRestedCard(thread: RestedCardThread | undefined, lastAssist
   // and the wake telling the worker is coming) — without it this card claimed a bare rest of a thread
   // that had asked, in the seconds after the operator hit save (maintainer 2026-09-02).
   if (thread.answersInFlight) return false
+  // A PERSON'S STOP: the human ended the turn, so the worker was never given the chance to sign off, and
+  // the transcript's own "Turn cancelled." already says what happened.
+  if (thread.operatorStopped) return false
   if (thread.pendingAsk || thread.pendingInteraction || thread.awaitingBackground || thread.limitPause || thread.providerFault) return false
   // Nothing said yet (a thread that has not produced an assistant record) is not a rest to describe.
   if (!thread.lastAssistantAt || lastAssistantText === undefined) return false

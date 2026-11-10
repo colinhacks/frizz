@@ -2,6 +2,7 @@ import { query } from "@frizz/claude-agent-sdk-runtime"
 import { claudeFamilyLabel, parseClaudeWireId, type ClaudeModel, type ClaudeModelFamily } from "@frizz/shared"
 import { sanitizeProviderChildEnvironment } from "./claude-agent-sdk.ts"
 import { resolveClaudeExecutableAbsolute } from "./claude-broker-host.ts"
+import { isRuntimeDeferred } from "../runtime-deferral.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
 
 // The Claude Code side of the model catalogue, the analogue of codex-models.ts: the picker labels a
@@ -33,12 +34,15 @@ export const CLAUDE_MODELS_FALLBACK: ClaudeModel[] = CLAUDE_MODEL_ALIASES.map((a
  *  for a fixture unit test over the real 2.1.281 answer. */
 export function resolveClaudeModels(rows: readonly unknown[]): ClaudeModel[] {
   const byAlias = new Map<ClaudeModelAlias, ClaudeModel>()
-  for (const raw of rows) {
-    if (!raw || typeof raw !== "object") continue
-    const row = raw as Record<string, unknown>
+  const records = rows.filter((raw): raw is Record<string, unknown> => !!raw && typeof raw === "object")
+  // Frizz dispatches on the alias, so a row NAMED for the alias is the one that says what a worker will
+  // run, and those go first. A family's rows can disagree: Claude Code 2.1.319 listed a
+  // `claude-fable-5-2` row, which the binary never names, ahead of a `fable` row that still ran 5.1
+  // (measured 2026-11-09), so a first-row rule labelled the picker with an edition no worker got.
+  for (const row of [...records.filter(isNamedForAlias), ...records]) {
     // `resolvedModel` is the canonical id behind an alias row; a row keyed on a wire id directly
-    // (`claude-fable-5-1[1m]`) carries the same fact in `value`. The first row per family wins — the
-    // CLI lists its default first, and every row of one family resolves the same edition.
+    // (`claude-fable-5-1[1m]`) carries the same fact in `value`. Past the rows named for an alias, the
+    // first row per family wins, because the CLI lists its default first.
     for (const key of ["resolvedModel", "value"] as const) {
       const candidate = row[key]
       if (typeof candidate !== "string") continue
@@ -49,6 +53,11 @@ export function resolveClaudeModels(rows: readonly unknown[]): ClaudeModel[] {
     }
   }
   return CLAUDE_MODEL_ALIASES.map((alias) => byAlias.get(alias) ?? { alias, label: claudeFamilyLabel(alias) })
+}
+
+// `opus` and `opus[1m]` are both the alias: the suffix is a context window, not a model.
+function isNamedForAlias(row: Record<string, unknown>): boolean {
+  return typeof row.value === "string" && (CLAUDE_MODEL_ALIASES as readonly string[]).includes(row.value.replace(/\[1m\]$/, ""))
 }
 
 // One probe per executable for the server's life (a resolved list), with the in-flight promise shared
@@ -77,6 +86,8 @@ export interface ReadClaudeModelsOptions {
 /** The Claude models for the picker (RPC-facing): resolved labels from the pinned runtime, or the bare
  *  fallback while the probe runs or when it cannot. NEVER throws. */
 export async function readClaudeModels(options: ReadClaudeModelsOptions = {}): Promise<ClaudeModel[]> {
+  // Reading the catalogue starts the runtime, and one still waiting for its first thread stays unstarted.
+  if (isRuntimeDeferred("claude")) return CLAUDE_MODELS_FALLBACK
   let executable: string
   try {
     executable = resolveClaudeExecutableAbsolute(options.claudeBin)

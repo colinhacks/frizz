@@ -22,6 +22,7 @@ import "./styles.css"
 //   ?drift=1         serves every later page one row early, as GitHub does when an issue is opened
 //                    between two fetches: each page's first row repeats the previous page's last
 //   ?searchTotal=N   reports N matching items, more than GitHub's search will page through
+//   ?opencode=1      a machine whose saved profile is native OpenCode
 const PAGE_SIZE = 30
 const params = new URLSearchParams(location.search)
 const HEAD = [412, 409, 407, 400, 398, 395, 390, 388, 381, 377, 370, 366, 361, 359, 352, 348, 344, 340, 337, 333, 330, 328, 321, 318]
@@ -57,13 +58,18 @@ const items: GithubItem[] = NUMBERS.map((number, i) => ({
 }))
 
 const codexModels: CodexModel[] = []
+const opencode = params.get("opencode") === "1"
 const preferences: DispatchPreferences = {
-  backend: "claude",
+  backend: opencode ? "opencode" : "claude",
   claude: { model: "opus", effort: "high", permissionMode: "auto" },
   codex: { permissionMode: "default" },
+  ...(opencode ? { opencode: { model: "opencode:" } } : {}),
 } as DispatchPreferences
 
 const dispatched: unknown[] = []
+// Every model or effort the picker's selector saved, so a test can prove the control still writes from
+// inside the settings panel.
+const preferenceWrites: unknown[] = []
 // The project settings the header gear edits (GithubPromptPopover): every settingsSet is recorded so
 // a test can prove a typing burst writes ONCE, and `?settingsDelay=N` holds each write for N ms to
 // drive the dispatch gate.
@@ -81,9 +87,9 @@ const drift = params.get("drift") === "1"
 const searchTotal = Number(params.get("searchTotal") ?? 0)
 
 declare global {
-  interface Window { githubPickerRangeFixture?: { dispatched: unknown[]; settingsWrites: Record<string, unknown>[]; listRequests: number[] } }
+  interface Window { githubPickerRangeFixture?: { dispatched: unknown[]; settingsWrites: Record<string, unknown>[]; listRequests: number[]; preferenceWrites: unknown[] } }
 }
-window.githubPickerRangeFixture = { dispatched, settingsWrites, listRequests }
+window.githubPickerRangeFixture = { dispatched, settingsWrites, listRequests, preferenceWrites }
 
 const nativeFetch = window.fetch.bind(window)
 window.fetch = async (input, init) => {
@@ -108,8 +114,23 @@ window.fetch = async (input, init) => {
     return json({ items: items.slice(from, from + perPage), total: searchTotal || items.length, page, pageCount })
   }
   if (url.pathname === "/_frizz/rpc/codexModels") return json(codexModels)
-  if (url.pathname === "/_frizz/rpc/acpAgents") return json([])
+  if (url.pathname === "/_frizz/rpc/acpAgents") return json(opencode ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }] : [])
+  // Two of OpenCode's free models, one with reasoning levels, for the menu's OpenCode dropdowns.
+  if (url.pathname === "/_frizz/rpc/opencodeModels") {
+    return json({
+      available: true,
+      defaultModel: "opencode:opencode/big-pickle",
+      models: [
+        { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+        { providerID: "opencode", id: "flint-40b-free", name: "Flint 40B Free", variants: ["low", "high"] },
+      ],
+    })
+  }
   if (url.pathname === "/_frizz/rpc/dispatchPreferencesGet") return json(preferences)
+  if (url.pathname === "/_frizz/rpc/dispatchPreferenceSet") {
+    preferenceWrites.push(JSON.parse(String(init?.body ?? "{}")))
+    return json(preferences)
+  }
   if (url.pathname === "/_frizz/rpc/settingsGet") return json(settings)
   if (url.pathname === "/_frizz/rpc/githubPromptDefaults") return json({ prompt: "Triage {repo}#{n}: {title}\n{url}\n\nRead the whole thread and say what you actually checked." })
   if (url.pathname === "/_frizz/rpc/settingsSet") {

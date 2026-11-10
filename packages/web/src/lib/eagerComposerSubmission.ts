@@ -29,6 +29,8 @@ export type EagerFollowUpCallbacks = {
   onRollback?: (failure: SendFailure) => void
   // The deliveryId of a failed send this one re-sends (FollowUpInput.supersedes).
   supersedes?: string
+  // Names the send's own verb on a failure toast. The default says "Steer failed".
+  failureToast?: (message: string) => string
   // THE PROMPT BOX'S ONE SEND (ThreadComposerBox). Staged answers to registered questions travel in
   // this same message — the server settles them and composes them above the text — so the text may be
   // EMPTY when they ride. `displayText` is what the optimistic bubble shows meanwhile: the answers in
@@ -37,8 +39,10 @@ export type EagerFollowUpCallbacks = {
   displayText?: string
   // "Send to queue": Frizz holds the message until the agent rests (FollowUpInput.hold).
   hold?: boolean
+  // The to-do ticks this message reports (FollowUpInput.todos). The words are already in the text.
+  todos?: { id: string; done: boolean }[]
 }
-type FollowUpExtras = { answers?: QuestionAnswer[]; hold?: boolean }
+type FollowUpExtras = { answers?: QuestionAnswer[]; hold?: boolean; todos?: { id: string; done: boolean }[] }
 
 export function beginEagerSubmission({
   optimistic,
@@ -210,7 +214,7 @@ export function sendFollowUpAttempt(
   // re-dispatched mid-retry must bind to its CURRENT session, and the guarded followUp is what turns
   // a stale id into a clean refusal instead of a misdelivery.
   return (rpc.followUp(
-    { slug, sessionId: threadBySlug(store.board, slug)?.sessionId ?? "", message, deliveryId, freshProcess, interrupt, ...(supersedes ? { supersedes } : {}), ...(extras.answers?.length ? { answers: extras.answers } : {}), ...(extras.hold ? { hold: true } : {}) },
+    { slug, sessionId: threadBySlug(store.board, slug)?.sessionId ?? "", message, deliveryId, freshProcess, interrupt, ...(supersedes ? { supersedes } : {}), ...(extras.answers?.length ? { answers: extras.answers } : {}), ...(extras.hold ? { hold: true } : {}), ...(extras.todos?.length ? { todos: extras.todos } : {}) },
     { signal: controller.signal },
   ) as Promise<void>).finally(() => clearTimeout(timer))
 }
@@ -265,7 +269,7 @@ export function sendEagerFollowUp(
     // Resolve the session id at SEND time from the live board (not render time), so a re-dispatch
     // between mount and send still binds the guarded followUp to the current session. Contention
     // refusals are retried in place — the composer only gets the message back once they are exhausted.
-    request: () => enqueueThreadSend(slug, () => deliverFollowUp(slug, message, deliveryId, sentAtMs, callbacks.freshProcess, callbacks.interrupt, callbacks.supersedes, { answers, hold: callbacks.hold })),
+    request: () => enqueueThreadSend(slug, () => deliverFollowUp(slug, message, deliveryId, sentAtMs, callbacks.freshProcess, callbacks.interrupt, callbacks.supersedes, { answers, hold: callbacks.hold, todos: callbacks.todos })),
     success: () => callbacks.onSuccess?.(),
     failure: (error) => {
       // The optimistic copy goes either way. When the server KEPT the send, its own failed bubble (same

@@ -22,3 +22,8 @@ test("nothing queued is nothing to press", () => {
   assert.equal(sendNowStep({ held: 0, steered: 0 }, true), null)
   assert.equal(sendNowStep({ held: 0, steered: 0 }, false), null)
 })
+
+test("an agent with no steer has no Send now at all: nothing it holds can reach the turn early", () => {
+  assert.equal(sendNowStep({ held: 2, steered: 0 }, false, false), null)
+  assert.equal(sendNowStep({ held: 0, steered: 1 }, false, false), null)
+})

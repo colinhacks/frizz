@@ -13,7 +13,8 @@ import { AskedQuestionSchema, BoardDiffer, activeBandThreadAt, githubReadingStal
 import type { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
 import { isHeadlessRow, isBrokerClaudeRow, sessionTitleLocked, type ThreadQuestionRow } from "./storage.ts"
-import type { Storage, SessionRow, PrWatchRow, ThreadTimerRow, ThreadWatchRow, ThreadLinkRow, CommandWatchRow } from "./storage.ts"
+import type { Storage, SessionRow, PrWatchRow, ThreadTimerRow, ThreadWatchRow, ThreadLinkRow, CommandWatchRow, ThreadHumanTodoRow } from "./storage.ts"
+import { humanTodoView } from "./human-todos.ts"
 import { monitorStatusOf } from "./command-watch.ts"
 import { threadLinkView } from "./thread-links.ts"
 import { normalizeObservedThreadModel } from "./backend/thread-profiles.ts"
@@ -322,7 +323,8 @@ function orphanedAgents(agents: ThreadView["subAgents"], ownerGone: boolean): Th
 }
 
 function stampStoppable(agents: ThreadView["subAgents"], row: SessionRow): ThreadView["subAgents"] {
-  if (!isBrokerClaudeRow(row)) return agents
+  // An OpenCode child is a session of its own, which takes an interrupt like any other.
+  if (!isBrokerClaudeRow(row) && row.backend !== "opencode") return agents
   return agents.map((agent) => (agent.state === "running" ? { ...agent, stoppable: true } : agent))
 }
 
@@ -1656,7 +1658,7 @@ export function resolveSessionPermission(
 ): ThreadView["permissionMode"] {
   const saved = PermissionMode.safeParse(row.permission_mode)
   const pending = PermissionMode.safeParse(row.permission_pending)
-  const normalize = (mode: PermissionModeValue) => effectivePermissionMode(row.backend === "codex" ? "codex" : "claude", mode)
+  const normalize = (mode: PermissionModeValue) => effectivePermissionMode(row.backend === "codex" ? "codex" : row.backend === "opencode" ? "opencode" : "claude", mode)
   // A successful controlled reattach stamps the exact argv mode before its transcript sidecar is
   // tailed. During that short reconciliation window the launched value is already authoritative.
   if (saved.success && pending.success && normalize(saved.data) === normalize(pending.data)) return normalize(saved.data)
@@ -1847,6 +1849,7 @@ interface ThreadRegistries {
   questions: ReadonlyMap<string, readonly ThreadQuestionRow[]>
   watches: ReadonlyMap<string, readonly ThreadWatchRow[]>
   done: ReadonlyMap<string, { readonly body: string; readonly doneAt: number }>
+  humanTodos: ReadonlyMap<string, readonly ThreadHumanTodoRow[]>
 }
 
 function readThreadRegistries(storage: Storage, previous?: ThreadRegistries): ThreadRegistries {
@@ -1858,6 +1861,7 @@ function readThreadRegistries(storage: Storage, previous?: ThreadRegistries): Th
     questions: storage.threadQuestionsBySlug(),
     watches: storage.armedThreadWatchesBySlug(),
     done: storage.threadDoneBySlug(),
+    humanTodos: storage.humanTodoTicksBySlug(),
   }
   // The storage hands back the same map while its table is unchanged, so "nothing in any registry
   // moved" is seven identity checks — and then the previous object, which the archived-view memo
@@ -1870,7 +1874,8 @@ function readThreadRegistries(storage: Storage, previous?: ThreadRegistries): Th
     previous.commandWatches === next.commandWatches &&
     previous.questions === next.questions &&
     previous.watches === next.watches &&
-    previous.done === next.done
+    previous.done === next.done &&
+    previous.humanTodos === next.humanTodos
   ) return previous
   return next
 }
@@ -2120,6 +2125,10 @@ function sessionThreadView(
   const permissionMode = resolveSessionPermission(row, tele)
   const permissionPending = resolvePendingPermission(row)
   const title = resolveSessionTitle(row, tele)
+  // Not on an archived thread, which owes nobody anything and whose transcript keeps the record. That is
+  // also what keeps ticks out of the archived-view memo's inputs. A worker's sign-off closes the list for
+  // as long as it stands.
+  const humanTodos = archived ? [] : humanTodoView(tele?.humanSteps, registries.humanTodos.get(row.slug), { finished: tele?.lastFence?.kind === "done" })
   return {
     id: row.slug,
     ...title,
@@ -2147,6 +2156,7 @@ function sessionThreadView(
     subAgents: stampStoppable(orphanedAgents(tele?.subAgents ?? [], deliveryProcessGone), row),
     bgShells: stampStoppableShells(tele?.bgShells ?? [], row),
     links: (registries.links.get(row.slug) ?? []).map(threadLinkView),
+    ...(humanTodos.length > 0 ? { humanTodos } : {}),
     // ONE SOURCE: the FENCE. Both kinds are derived from what the worker wrote — `prs:` entries
     // become the github rows, `watch:` lines the shell rows — so this strip lists exactly what will
     // actually wake the thread, and the two cannot drift into claiming different things. There is no
@@ -2163,6 +2173,8 @@ function sessionThreadView(
     answersInFlight: inFlightAnswers,
     deliveryInFlight: deliveryInFlight || undefined,
     lastUserAt: tele?.lastUserAt,
+    // The last turn ended on a person's Stop (FoldState.operatorStopped): no "Rested without a sign-off".
+    ...(tele?.operatorStopped ? { operatorStopped: true } : {}),
     // Runtime provider-auth rejection (claude-auth plan): only the typed category travels — the raw
     // error/provider text never leaves the server. Drives the trusted sign-in recovery card in ChatView.
     providerFault: tele?.authFault
@@ -2213,7 +2225,7 @@ function sessionThreadView(
     // from today's dispatch preference: unknown/migrated rows remain unmarked, while rows whose
     // database default was explicitly normalized to "claude" get the same per-thread identity as
     // Codex rows.
-    backend: row.backend === "claude" || row.backend === "codex" || row.backend === "acp" ? row.backend : undefined,
+    backend: row.backend === "claude" || row.backend === "codex" || row.backend === "acp" || row.backend === "opencode" ? row.backend : undefined,
     // Only a persisted, validated per-session value is exposed. A migrated row stays visibly unknown;
     // never label it with today's global defaults (which may not match its running process).
     permissionMode,

@@ -678,19 +678,21 @@ export function relativeToolPaths(label: string, projectDir: string | undefined,
  * (localPathBase, set from the same snapshot that carries `projectDir`); a test passes its own.
  */
 export function toolActivityLabel(
-  tool: Pick<TranscriptToolCall, "name" | "detail" | "desc">,
+  tool: Pick<TranscriptToolCall, "name" | "detail" | "desc" | "command">,
   projectDir?: string,
   homeDir: string = localPathBase().home,
 ): string {
   return relativeToolPaths(rawToolActivityLabel(tool), projectDir, homeDir)
 }
 
-function rawToolActivityLabel(tool: Pick<TranscriptToolCall, "name" | "detail" | "desc">): string {
+function rawToolActivityLabel(tool: Pick<TranscriptToolCall, "name" | "detail" | "desc" | "command">): string {
   const name = normalizedToolName(tool.name)
   const detail = target(tool)
   const suffix = detail ? ` ${detail}` : ""
 
-  if (name === "bash" || name === "exec" || name === "run command") {
+  // A call that has a command is running one, whatever its agent calls the tool (ACP names are the
+  // agent's own: opencode's `shell`, and its sub-agents' `<title>: shell`).
+  if (name === "bash" || name === "exec" || name === "run command" || name === "shell" || tool.command) {
     return gerundDescription(tool.desc, detail ? `Running ${detail}` : "Running a command")
   }
   if (name === "read" || name === "view image") return `Reading${suffix || " a file"}`

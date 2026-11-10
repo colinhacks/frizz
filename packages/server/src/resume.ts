@@ -177,10 +177,10 @@ export interface ResumeDeps {
 
 function permissionModeForRow(row: SessionRow, settings: Settings): PermissionModeValue {
   const pending = PermissionMode.safeParse(row.permission_pending)
-  if (pending.success) return effectivePermissionMode(row.backend === "codex" ? "codex" : "claude", pending.data)
+  if (pending.success) return effectivePermissionMode(row.backend === "codex" ? "codex" : row.backend === "opencode" ? "opencode" : "claude", pending.data)
   const saved = PermissionMode.safeParse(row.permission_mode)
   const requested = saved.success ? saved.data : settings.permissionMode
-  return effectivePermissionMode(row.backend === "codex" ? "codex" : "claude", requested)
+  return effectivePermissionMode(row.backend === "codex" ? "codex" : row.backend === "opencode" ? "opencode" : "claude", requested)
 }
 
 // Build + spawn the backend-native resume invocation. `message` omitted means REATTACH ONLY: open the

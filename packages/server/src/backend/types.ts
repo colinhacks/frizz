@@ -1,5 +1,6 @@
 import type { LimitWindow, LiveTool, PermissionMode, ProviderError } from "@frizz/shared"
 import type { FenceView, SubAgentView, BgShellView, PendingAskData, TurnState } from "../tailer.ts"
+import type { HumanStep } from "../human-todos.ts"
 
 // A turn cut off by an exhausted SUBSCRIPTION window, as a backend's fold observed it. Carries only
 // typed data — which window, when it happened, and the provider's stated reset clock in structured
@@ -23,7 +24,7 @@ export interface LimitFault {
 // stay backend-blind. Phase 1 ships ClaudeBackend as the sole implementation with byte-for-byte
 // identical observable behavior; Phase 2 adds CodexBackend behind this same interface.
 
-export type BackendKind = "claude" | "codex" | "acp"
+export type BackendKind = "claude" | "codex" | "acp" | "opencode"
 
 // A backend-neutral transcript record: the vocabulary a backend's parser emits, and — for a backend
 // whose turn model maps cleanly onto it (codex's explicit task_started/task_complete brackets) — the
@@ -38,7 +39,9 @@ export type BackendKind = "claude" | "codex" | "acp"
 // normalized VIEW — the codex-facing seam + the unit-test surface.
 export type NormalizedEvent =
   | { kind: "turn-start"; at?: string } // a turn began (→ in-flight)
-  | { kind: "turn-end"; at?: string; finalText?: string; successful?: boolean } // a turn finished (→ idle); finalText carries the fence
+  // `stoppedBy: "operator"` when a person's Stop ended it (FoldState.operatorStopped). Only the OpenCode
+  // bridge writes it so far: its Stop ends a turn and nothing else, with no receipt in the conversation.
+  | { kind: "turn-end"; at?: string; finalText?: string; successful?: boolean; stoppedBy?: "operator" } // a turn finished (→ idle); finalText carries the fence
   | { kind: "provider-error"; at?: string; error: ProviderError }
   // `streamed` marks the text as ONE FLUSHED PIECE of a longer message rather than a whole one: the ACP
   // bridge writes an agent message's text out every second, so one message is several of these sharing a
@@ -120,6 +123,9 @@ export interface NormalizedTail {
   restFromAt?: string
   // When the worker last rested on steps or questions for the human — see FoldState.handoffAt.
   handoffAt?: string
+  // What the worker has handed the human to do across the thread — see FoldState.humanSteps. Includes the
+  // fence the thread is resting on now, which the fold has not settled yet.
+  humanSteps?: HumanStep[]
   // When Frizz last delivered a ```question fence correction — see FoldState.questionCorrectedAt.
   questionCorrectedAt?: string
   lastUserText?: string // the newest drawn user turn's text, Frizz's deliveries included (confirms wake-token delivery)
@@ -139,6 +145,7 @@ export interface NormalizedTail {
   pendingAsk?: PendingAskData // codex: undefined
   authFault?: "authentication_rejected" // runtime provider-auth rejection (see FoldState.authFault)
   apiFault?: boolean // the turn ended in a provider failure (see FoldState.apiFault)
+  operatorStopped?: boolean // the last turn ended on a person's Stop (see FoldState.operatorStopped)
   providerError?: ProviderError
   limitFault?: LimitFault // subscription window exhausted mid-turn (see FoldState.limitFault)
   contextTokens?: number // tokens the last request carried (see FoldState.contextTokens)
@@ -168,6 +175,11 @@ export interface QuestionSighting {
 
 export interface FoldState {
   turn: TurnState // in-flight while a turn runs; idle once it brackets closed
+  // The last turn ended because a person pressed Stop (a turn-end with `stoppedBy: "operator"`), and
+  // nothing has happened since. That rest is the human's act, not the worker's: it carries no sign-off
+  // because it was not allowed to write one, so neither the sign-off reminder nor the "Rested without a
+  // sign-off" card applies to it. Cleared by the next turn, message or text.
+  operatorStopped?: boolean
   sawRecords: boolean // any substantive record folded yet (a fresh/booting session guard)
   model?: string // latest concrete backend-observed model
   effort?: string // latest concrete backend-observed reasoning effort
@@ -229,6 +241,10 @@ export interface FoldState {
   // needed from you", and each one then held every CI and shell park after it in the queue until the
   // human typed: 204 parks in one 36h window. The worker's own next `status:` decides those now.
   handoffAt?: string
+  // THE HUMAN'S TO-DO LIST, as far as the transcript can say (human-todos.ts): every step of every rest
+  // that is over. The ticks live in the thread_human_todo table. Absent on a tail cached before the list
+  // existed, which reads as no history: only the fences after it count.
+  humanSteps?: HumanStep[]
   // The human messages QUEUED and not yet seen delivered, oldest first — so the record that delivers one
   // does not move `restFromAt` a second time, to an instant later than the human wrote it. Bounded.
   queuedHumanTexts?: string[]

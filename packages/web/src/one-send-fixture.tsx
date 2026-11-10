@@ -5,6 +5,7 @@ import { ThreadView } from "./components/ChatView.tsx"
 import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
+import { fixtureSetHumanTodo, fixtureTodos } from "./human-todos-fixture-stub.ts"
 import "./styles.css"
 
 // Browser QA for THE ONE SEND (lib/sendScope): everything staged anywhere in a thread's transcript leaves
@@ -113,6 +114,7 @@ const thread = {
   watches: [],
   questions: legacy ? [THEME] : [DEPLOY, CHANGELOG],
   lastFence: { kind: "awaiting", body: STEPS_PROSE, hints: STEPS_HINTS },
+  humanTodos: fixtureTodos(STEPS_HINTS.filter((h) => h.kind === "step").map((h) => h.value)),
   lastActivityAt: ago(2),
   // Before QUESTION_FENCE_RETIRED_AT the free-form fence is the worker's grammar; after it, the fence's id.
   spawnedAt: legacy ? "2026-09-01T09:00:00Z" : "2026-10-14T09:00:00Z",
@@ -128,6 +130,10 @@ window.fetch = async (input, init) => {
     return json({ messages, transcriptKey: `${SLUG}-${legacy ? "legacy" : "fence"}`, hasEarlier: false, historyLoaded: true })
   }
   if (url.pathname === "/_frizz/rpc/threadSettledQuestions") return json({ questions: [] })
+  if (url.pathname === "/_frizz/rpc/setHumanTodo") {
+    fixtureSetHumanTodo(JSON.parse(String(init?.body ?? "{}")))
+    return json(null)
+  }
   // Every write, echoed onto the window so the probe reads the exact payload the server would receive.
   if (url.pathname === "/_frizz/rpc/followUp" || url.pathname === "/_frizz/rpc/answerQuestions") {
     const body = JSON.parse(String(init?.body ?? "{}"))

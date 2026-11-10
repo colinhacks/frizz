@@ -12,6 +12,7 @@ import {
   type ThreadMessageSender,
   type TranscriptMessage,
   acpModelIdFromModel,
+  opencodeModelRef,
 } from "@frizz/shared"
 import { Bus, Emitter } from "./bus.ts"
 import { frizzRoots } from "./frizz-paths.ts"
@@ -21,14 +22,14 @@ import { createStorage, isBrokerClaudeRow, isHeadlessRow, workerTaughtMcp, type 
 import { clearSecrets } from "./secret-files.ts"
 import type Database from "./sqlite.ts"
 import { getSettings, setSettings, resetSettings } from "./settings.ts"
-import { getDispatchPreferences, setDispatchPreference } from "./dispatch-preferences.ts"
+import { getDispatchPreferences, hasSavedDispatchPreferences, setDispatchPreference } from "./dispatch-preferences.ts"
 import { readQuota } from "./quota.ts"
 import { refreshClaudeQuotaInBackground } from "./backend/claude-quota.ts"
 import { createBoard, resolveSessionTitle, type BoardManager } from "./board.ts"
 import { createSessionPeerResolver, type SessionPeerThread } from "./session-peer.ts"
 import { auditLogPathForStateDir, fileAuditLog, type AuditLog } from "./audit.ts"
 import { createTailer, defaultLogDir, type Tailer } from "./tailer.ts"
-import { createDispatcher, acpWorkerContract, claudeContractOptions, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
+import { createDispatcher, acpWorkerContract, opencodeWorkerContract, claudeContractOptions, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
 import { createScheduler, type Scheduler, probeIssueReadable, probePrReadable, type PrRef, type PrProbe } from "./scheduler.ts"
 import {
 resumeThread,
@@ -37,6 +38,9 @@ import { createClaudeBackend } from "./backend/claude.ts"
 import { createCodexBackend, codexSandbox } from "./backend/codex.ts"
 import { readCodexModels } from "./backend/codex-models.ts"
 import { createAcpBackend } from "./backend/acp-transcript.ts"
+import { createOpencodeBackend } from "./backend/opencode-transcript.ts"
+import { createOpencodeBridge, type OpencodeBridge } from "./backend/opencode-bridge.ts"
+import { opencodeModeOf } from "./backend/opencode-types.ts"
 import { readThreadTranscript } from "./transcript.ts"
 import { createAcpBridge, type AcpBridge } from "./backend/acp-bridge.ts"
 import { readClaudeAuthState, readClaudePreflightAuth, readCodexAuthState, readCodexBinaryState } from "./backend/auth-status.ts"
@@ -48,6 +52,7 @@ import { needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { onClaudeModelsResolved, peekClaudeModels, readClaudeModels } from "./backend/claude-models.ts"
 import { claudeModelUpgradeDue, claudeUpgradeCandidate, SERVER_STARTED_AT_MS } from "./backend/claude-model-upgrade.ts"
 import { detectGithub, type GithubDetection } from "./github.ts"
+import { isRuntimeDeferred } from "./runtime-deferral.ts"
 import { startGithubCredentialKeeper } from "./github-credential.ts"
 import type { InteractionStore } from "./interaction-store.ts"
 import {
@@ -65,7 +70,7 @@ import {
 } from "./backend/claude-agent-broker-bridge.ts"
 import { createClaudeRuntimeIngest, type ClaudeRuntimeIngest } from "./backend/claude-runtime-ingest.ts"
 import { describeClaudeBrokerDiagnostic, droppedDeliveryId, droppedDeliveryReason } from "./backend/claude-broker-diagnostics.ts"
-import { recordDeliveryDropped } from "./delivery-ledger.ts"
+import { forgetDelivery, recordDeliveryDropped } from "./delivery-ledger.ts"
 import {
   ADOPTION_RECONCILE_INTERVAL_MS,
   adoptionRuntimeBinding,
@@ -178,6 +183,7 @@ export interface AppContext {
   // per thread (backend/acp-bridge.ts, plans/acp-backend.md). Always constructed; a dispatch fails with
   // an actionable message when the chosen agent is not installed.
   acpBridge?: AcpBridge
+  opencodeBridge?: OpencodeBridge
   // Session-broker bridge for Claude: the detached daemon that owns every claude thread's SDK session.
   // Undefined only under the FRIZZ_CLAUDE_BROKER_BRIDGE="0" kill switch, which leaves claude no transport.
   claudeBroker?: ClaudeAgentBrokerBridge
@@ -221,6 +227,7 @@ export interface AppContext {
   // this server serves (dispatch-preferences.ts) — which is why these close over `home` here rather
   // than the router reaching for it.
   getDispatchPreferences: (codexModels?: readonly CodexModel[]) => DispatchPreferences
+  hasSavedDispatchPreferences: () => boolean
   setDispatchPreference: (update: SetDispatchPreferenceInput, codexModels?: readonly CodexModel[]) => DispatchPreferences
   /**
    * Every project this PROCESS has open, with its board — the launching project and each tenant
@@ -399,6 +406,7 @@ interface PartialContextResources {
   stopSubscriptions?: () => void
   codexAppServer?: CodexAppServerBridge
   acpBridge?: AcpBridge
+  opencodeBridge?: OpencodeBridge
   claudeBroker?: ClaudeAgentBrokerBridge
   claudeRuntimeIngest?: ClaudeRuntimeIngest
   board?: BoardManager
@@ -413,6 +421,7 @@ interface PartialContextCleanup {
   board(): Promise<void>
   codexAppServer(): Promise<void>
   acpBridge(): Promise<void>
+  opencodeBridge(): Promise<void>
   claudeBroker(): Promise<void>
   storage(): Promise<void>
 }
@@ -425,6 +434,7 @@ function partialContextCleanup(resources: PartialContextResources): PartialConte
     board: createRetryableCleanup(async () => { await resources.board?.stop() }),
     codexAppServer: createRetryableCleanup(async () => { await resources.codexAppServer?.shutdown() }),
     acpBridge: createRetryableCleanup(async () => { await resources.acpBridge?.shutdown() }),
+    opencodeBridge: createRetryableCleanup(async () => { await resources.opencodeBridge?.shutdown() }),
     claudeBroker: createRetryableCleanup(async () => { resources.claudeBroker?.close(); resources.claudeRuntimeIngest?.close() }),
     storage: createRetryableCleanup(() => resources.storage?.close()),
   }
@@ -751,7 +761,8 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   const claudeBackend = createClaudeBackend({ logDir: defaultLogDir(project), claudeBin: opts.claudeBin })
   const codexBackend = createCodexBackend({})
   const acpBackend = createAcpBackend({ stateDir: project.stateDir })
-  const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : kind === "acp" ? acpBackend : claudeBackend)
+  const opencodeBackend = createOpencodeBackend({ stateDir: project.stateDir })
+  const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : kind === "acp" ? acpBackend : kind === "opencode" ? opencodeBackend : claudeBackend)
   const codexAppServer = codexAppServerBridgeEnabled()
     ? createCodexAppServerBridge({
         projectId: project.id,
@@ -824,7 +835,8 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   // restart is still running in there, and until we attach its `turn/completed` sits queued and the
   // board's stall grace would card the thread as crashed. Fire-and-forget: codex being unavailable
   // must never hold up (or fail) a boot.
-  void codexAppServer?.warmUp()
+  // A runtime still waiting for its first thread is not brought down by a boot; that first use connects.
+  if (!isRuntimeDeferred("codex")) void codexAppServer?.warmUp()
   opts.startup?.afterPhase?.("Codex app-server bridge")
 
   // The generic ACP bridge. Its agents live in detached daemons (acp-host.ts), so like codex and the
@@ -856,6 +868,32 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     storage.allSessions()
       .filter((row) => row.backend === "acp" && row.state !== "archived" && row.archived !== 1)
       .map((row) => ({ threadSlug: row.slug, sessionId: row.session_id, cwd: project.dir, agentId: row.acp_agent ?? "", modelId: acpModelIdFromModel(row.model), acpSessionId: row.agent_session_id })),
+  )
+
+  // The native OpenCode bridge (ARCHITECTURE.md § OpenCode backend). Every project's bridge shares one
+  // service and one event stream. It warms up only the threads whose transcript says work is open, so a
+  // boot starts no OpenCode service for someone who is not using it.
+  const opencodeBridge = createOpencodeBridge({
+    projectId: project.id,
+    stateDir: project.stateDir,
+    frizzCli: resolveFrizzCli(frizzMcpTarget),
+    interactions: storage.interactions,
+    env: process.env,
+    contractFor: (_slug, sessionId) => opencodeWorkerContract(sessionId, project.dir, { childThreads: getSettings(storage, home).childThreads }),
+    onDelivered: (slug, deliveryId) => {
+      forgetDelivery(storage, slug, deliveryId)
+      transcriptChange.emit([slug])
+    },
+    onStatusChange: () => board?.refresh(),
+  })
+  resources.opencodeBridge = opencodeBridge
+  contextUnsubscribers.push(storage.subscribeSessionLifecycle((event) => {
+    opencodeBridge.releaseSession(event.previous.slug, event.previous.session_id, event.type === "replaced" ? "session-replaced" : "session-deleted")
+  }))
+  opencodeBridge.warmUp(
+    storage.allSessions()
+      .filter((row) => row.backend === "opencode" && row.state !== "archived" && row.archived !== 1 && row.agent_session_id)
+      .map((row) => ({ threadSlug: row.slug, sessionId: row.session_id, cwd: project.dir, opencodeSessionId: row.agent_session_id as string, mode: opencodeModeOf(row.permission_mode), ...(opencodeModelRef(row.model) ? { model: opencodeModelRef(row.model)! } : {}) })),
   )
 
   // The consumer for the broker's structured event stream. Until this existed the bridge forwarded
@@ -1109,6 +1147,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     backendFor,
     codexAppServer,
     acpBridge,
+    opencodeBridge,
     claudeBroker,
     // Auth preflight (claude-auth plan, Slice A): Claude reads its local credential and confirms only
     // a positive signed-out against its CLI (readClaudePreflightAuth — the comment there records why
@@ -1213,6 +1252,14 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
           agentId: row.acp_agent ?? "", modelId: acpModelIdFromModel(row.model), acpSessionId: row.agent_session_id, text: deliveryMessage, deliveryId,
         }).then((r) => {
           if (r.acpSessionId !== row.agent_session_id) storage.setAgentSession(slug, r.acpSessionId)
+          if (row.exited === 1) storage.setExitedIfCurrent(slug, row.session_id, row.runtime_generation ?? 0, false)
+        })
+      }
+      if (row?.backend === "opencode") {
+        return opencodeBridge.followUp({
+          threadSlug: slug, sessionId: row.session_id, cwd: project.dir, opencodeSessionId: row.agent_session_id,
+          ...(opencodeModelRef(row.model) ? { model: opencodeModelRef(row.model)! } : {}), mode: opencodeModeOf(row.permission_mode), text: deliveryMessage, deliveryId, delivery: "steer",
+        }).then(() => {
           if (row.exited === 1) storage.setExitedIfCurrent(slug, row.session_id, row.runtime_generation ?? 0, false)
         })
       }
@@ -1332,6 +1379,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     interactions: storage.interactions,
     codexAppServer,
     acpBridge,
+    opencodeBridge,
     claudeBroker,
     mcp,
     board,
@@ -1348,6 +1396,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     setSettings: (s) => setSettings(storage, s, home),
     resetSettings: () => resetSettings(storage, home),
     getDispatchPreferences: (codexModels) => getDispatchPreferences(storage, getSettings(storage, home), home, codexModels),
+    hasSavedDispatchPreferences: () => hasSavedDispatchPreferences(storage, getSettings(storage, home), home),
     setDispatchPreference: (update, codexModels) =>
       setDispatchPreference(storage, getSettings(storage, home), home, update, codexModels),
     activeTenants: opts.activeTenants,

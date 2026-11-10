@@ -2278,6 +2278,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // does. Observed unbounded in the field before the cap was fixed to bind at all; both fixes are
       // needed, because the cap alone still spends two deliveries on a thread that can never use them.
       if (tele.apiFault) continue
+      // A PERSON'S STOP IS NOT A REST EITHER. The human ended the turn, so the worker never had the chance
+      // to sign off, and the reminder would tell it off for the human's act — then wake it into another
+      // turn, the opposite of what Stop asked for. Only a backend whose Stop ends the turn and nothing
+      // else writes the mark (OpenCode's); Claude's and Codex's rests are untouched by it.
+      if (tele.operatorStopped) continue
       // ANY fence means the thread already said where it stands — including `awaiting`, which is still
       // a legitimate sign-off until the registry replaces it. Nothing to teach, AND the allowance comes
       // back: signing off is the only event that proves the nudge worked, and the only one frizz cannot

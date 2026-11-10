@@ -15,7 +15,7 @@ import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { Select } from "./ui/Select.tsx"
 import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
-import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
+import { dispatchProfileGroups, dispatchProfileUpdate, dispatchProfileValue } from "../lib/dispatchPreferences.ts"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS } from "../lib/options.ts"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
@@ -27,7 +27,8 @@ import { useBoard } from "../hooks.ts"
 import { projectIdentity } from "./Sidebar.tsx"
 import { X } from "lucide-react"
 import { isConsolePath } from "../lib/base-path.ts"
-import { ProjectScope, useProjectScope } from "../lib/projectScope.tsx"
+import { ProjectScope, scopedKey, useProjectScope } from "../lib/projectScope.tsx"
+import { runtimeDownloadNote } from "../lib/signIn.ts"
 import { beginDispatch, dispatchAnswered, dispatchFailed } from "../lib/pendingDispatch.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
@@ -44,7 +45,7 @@ const NEW_THREAD_MARKS = <NewThreadAgentMarks />
 // preview — only the layout around them differs.
 function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
-  const { resolved, codexList, claudeList, acpList, loadError: profileLoadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, opencode, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -135,6 +136,22 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     },
   })
 
+  // A runtime waiting for its first thread comes down inside the dispatch call (runtime-deferral.ts), which
+  // can take minutes. Polled only while a Claude or Codex dispatch is out, and drawn over the same toast.
+  const dispatchingBackend = dispatch.variables?.backend ?? "claude"
+  const downloadingBackend = dispatch.isPending && (dispatchingBackend === "claude" || dispatchingBackend === "codex") ? dispatchingBackend : undefined
+  const downloads = useQuery({
+    queryKey: scopedKey(["runtimeDownloads"], project),
+    queryFn: () => rpcFor(project).runtimeDownloads(),
+    enabled: downloadingBackend !== undefined,
+    refetchInterval: 1000,
+    gcTime: 0,
+  })
+  const downloadNote = downloadingBackend ? runtimeDownloadNote(downloadingBackend, downloads.data?.[downloadingBackend]) : undefined
+  useEffect(() => {
+    if (downloadNote) showToast(downloadNote, { spinner: true, sticky: true })
+  }, [downloadNote])
+
   // Fire the dispatch and do the one-shot UI bookkeeping (optimistic toast + prompt clear). Called both
   // on a clean submit and after the sign-in gate is cleared, so the prompt is only cleared once the
   // thread is actually being started — a gated submit leaves the draft intact.
@@ -154,6 +171,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
       clearPrompt()
       if (resolved.backend === "acp") {
         showToast("An ACP agent signs in through its own CLI — Frizz holds no account for it")
+        return
+      }
+      if (resolved.backend === "opencode") {
+        showToast("OpenCode signs in through its own CLI: run `opencode auth login`")
         return
       }
       if (alias === "login") {
@@ -185,7 +206,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     // Auth gate: block ONLY on a positive "signed-out" for this dispatch's backend. Loading/unknown/
     // authed all fall through (fail open) so a flaky or slow read never blocks a logged-in user. An ACP
     // agent has no account here at all — its own CLI reports a missing login on the first prompt.
-    if (resolved.backend !== "acp" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
+    if (resolved.backend !== "acp" && resolved.backend !== "opencode" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
       gatedInputRef.current = input
       setSignInFor(resolved.backend)
       return
@@ -216,7 +237,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </PromptControlGroup>
       )
     }
-    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList)
+    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
@@ -232,16 +253,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             <ProfileGridSelector
               groups={profileGroups}
               agentSettings
-              // `pickerModel`, not `model`: an ACP row is keyed on the bare agent slug; the model inside
-              // the agent is the dropdown's, below.
-              value={{ provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }}
-              onValueChange={(selection) => saveProfile({
-                field: "profile",
-                backend: selection.provider as typeof resolved.backend,
-                model: selection.model,
-                // An ACP row has no effort cell, so its selection carries "" — stored as absent.
-                effort: (selection.effort || undefined) as DispatchInput["effort"],
-              })}
+              // An ACP row is keyed on the bare agent slug, and the model inside the agent is the dropdown's
+              // below. OpenCode's model and level are both chosen inside the menu (lib/opencodeProfile.ts).
+              value={dispatchProfileValue(resolved)}
+              onValueChange={(selection) => saveProfile(dispatchProfileUpdate(selection))}
               ariaLabel="Model and effort"
               title={resolved.modelAvailable && resolved.effortAvailable
                 ? "Model and reasoning effort"
@@ -282,7 +297,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </div>
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, firstGroup, opencode, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>
@@ -296,6 +311,16 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             setSignInFor(null)
             if (input) runDispatch(input)
           }}
+          // Only a thread that has not started can change agent, so the thread composer's and the transcript's
+          // copies of this modal leave this out. A gated Send goes through on OpenCode with the same words.
+          onUseOpenCode={opencodeInstalled ? () => {
+            const input = gatedInputRef.current
+            gatedInputRef.current = null
+            setSignInFor(null)
+            const { backend, model } = opencodeProfile
+            saveProfile({ field: "profile", backend, model, effort: undefined })
+            if (input) runDispatch({ ...input, backend, model, effort: undefined })
+          } : undefined}
         />
       )}
       {logoutFor && <LogoutConfirmModal backend={logoutFor} onClose={() => setLogoutFor(null)} />}
@@ -346,7 +371,7 @@ function LocalDispatchForm({
         onSubmit={form.submit}
         placeholder="Describe the task…"
         minHeight={96}
-        maxHeight={340}
+        maxHeight={277}
         busy={form.busy}
         footer={form.footer}
       />

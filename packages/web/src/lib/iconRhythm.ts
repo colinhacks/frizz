@@ -122,26 +122,23 @@ export const PROMPT_FOOTER_ROW = "min-h-[31px] pb-[7px] pl-[7px]"
 /** A rail mark's square (the Goal, the paperclip, the microphone, the plain send): the chip's height and corner. */
 export const RAIL_MARK_SQUARE = "h-6 w-6 rounded-md"
 
-/** THE AGENT'S MARKS beside the model chip (components/AgentMarks.tsx): the paperclip's hover fill and tone, on
- *  a square the chip's own 24px height and 6px corner, trimmed onto its ink so the row's one gap is a distance
- *  of ink: the rail's ~14.5px (RAIL_BOX_GAP), so one distance runs between every mark in the box.
+/** THE AGENT'S MARKS beside the model chip (components/AgentMarks.tsx): the paperclip's hover fill and tone at the
+ *  chip's own 24px height and 6px corner, trimmed onto its ink so the row's one gap is a distance of ink: the
+ *  rail's ~14.5px (RAIL_BOX_GAP), so one distance runs between every mark in the box.
  *
- *  THE SQUARES NEVER OVERLAP (maintainer 2026-11-07, of the gauge and the plug lit side by side: "The fact that
- *  these overlap is weird"). Each mark holds its fill while its panel is open, so the pointer on one with the
- *  other's panel open lights both. They were the rail's 28px squares until then, overlapping by 3.75px of
- *  padding on the belief that only one could be lit at a time, and the overlap painted twice. On 22px squares
- *  they stood 2.3px apart with 12.5px of ink between them. On 24px squares the same 2.3px puts 14.5px of ink
- *  between them, which is the rail's distance, so the chip-to-gauge gap took it too. */
+ *  EACH IS 28PX WIDE, SO NEIGHBOURS OVERLAP AND THERE IS NO DEAD GAP BETWEEN THEM (maintainer 2026-11-09: "a little
+ *  overlap is fine ... there's a gap between them, which means that the tap target is just unnecessarily small").
+ *  At that ink distance the gauge and the plug share a 1.7px band, and the later in the DOM, the plug, takes the
+ *  pointer there. They stood 2.3px apart for two days after both were seen lit at once, which shrank both targets
+ *  and fixed the wrong thing: the fault was two lit at once, which AgentMarks.tsx now rules out.
+ *
+ *  THE FILL FADES IN AND GOES OUT AT ONCE. Fading out while the neighbour fades in is two lit at once for 150ms,
+ *  so the fill's transition lives on the lit states alone. `data-quiet` is a mark standing down while its
+ *  neighbour's panel is open: it takes no hover (AgentMarks.tsx). */
 export const AGENT_MARKS = "ml-[9px] flex shrink-0 items-center gap-[15px] empty:hidden"
-const AGENT_MARK = `icon-focus-outline relative flex ${RAIL_MARK_SQUARE} shrink-0 items-center justify-center text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg`
-export const GAUGE_MARK = `-mx-[6.2px] ${AGENT_MARK}`
-export const PLUG_MARK = `-mx-[6.5px] ${AGENT_MARK}`
-/** The GitHub picker's prompt gear (GithubPromptPopover), which stands beside that picker's model chip as these
- *  marks stand beside the composer's: the same square, tone and pen. Its trim is what it paints, not its 11px of
- *  ink by arithmetic: trimmed 6.5px a side it stood 15.2px of painted ink from the chip, so it takes 7.2px and
- *  stands 14.5px off it, as the composer's marks do (scripts/ink-gaps.mjs at 4x, 2026-11-07). */
-export const SETTINGS_GLYPH = markGlyph(12.5)
-export const SETTINGS_MARK = `-mx-[7.2px] ${AGENT_MARK}`
+const AGENT_MARK = "icon-focus-outline relative flex h-6 w-7 rounded-md shrink-0 items-center justify-center text-muted outline-none transition-[color] not-data-[quiet]:hover:bg-hover-strong not-data-[quiet]:hover:text-fg not-data-[quiet]:hover:transition-[color,background-color] aria-expanded:bg-hover-strong aria-expanded:text-fg aria-expanded:transition-[color,background-color]"
+export const GAUGE_MARK = `-mx-[8.2px] ${AGENT_MARK}`
+export const PLUG_MARK = `-mx-[8.5px] ${AGENT_MARK}`
 
 /** THE RAIL, right to left: send, the microphone (only where on-device dictation exists — see
  *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 24px square
@@ -163,8 +160,8 @@ const RAIL_BOX_GAP: Partial<Record<`${RailMark}>${RailMark}`, number>> = {
   // The paperclip's 11px of ink wears 6.5px of dead box a side, the Goal's the same and the microphone's 7.5px.
   // Each gap is the 28px square's measured gap plus the 2px a side the 24px square gave back: painted pixels at
   // a real 4x, 2026-11-06, on 28px squares, paperclip→send 14.25, Goal→paperclip 14.50, paperclip→mic 14.75,
-  // mic→send 14.50, re-measured on 24px squares in the commit that made them. No square overlaps another now,
-  // so the rule that a mark holding its fill must never overlap (AGENT_MARKS) holds on the rail too.
+  // mic→send 14.50, re-measured on 24px squares in the commit that made them. No rail mark holds its fill when
+  // the pointer leaves it, so at most the hovered one is ever lit.
   "paperclip>send": 8,
   "lead>paperclip": 1,
   "mic>send": 7,
@@ -179,6 +176,9 @@ export const SEND_SPLIT_LABEL_WIDTH = 45.5
 export const SEND_SPLIT_SEAM_WIDTH = 1
 export const SEND_SPLIT_CARET_WIDTH = 23
 export const SEND_SPLIT_WIDTH = SEND_SPLIT_LABEL_WIDTH + SEND_SPLIT_SEAM_WIDTH + SEND_SPLIT_CARET_WIDTH
+/** The button alone, for a thread with only one way to send: no seam and no caret. The word sits 9.6px
+ *  from the left edge (SendSplitButton), so this leaves it about the same to the right. */
+export const SEND_SOLO_WIDTH = 47.5
 
 /** Where each present mark sits (its CSS `right`, px) and how much right padding the prose keeps.
  *  `sendWidth` is the Send control's own width when it is not the 24px square. A fractional one is

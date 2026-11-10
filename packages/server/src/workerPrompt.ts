@@ -14,7 +14,7 @@
 //   - DO NOT re-add a paragraph explaining WHY a rule exists. Put the why in a comment here.
 //   - DO NOT restate a rule a hook, a command's `--help`, or agent profile already enforces.
 //   - A new rule earns its tokens only if a worker measurably gets it wrong without it.
-export type BackendKind = "claude" | "codex" | "acp"
+export type BackendKind = "claude" | "codex" | "acp" | "opencode"
 
 // COMMAND WATCHES ARE CLAUDE-ONLY, so only Claude's contract teaches them (2026-10-11). The server runs a
 // watched command with no permission check, so `commandWatchRefusal` (command-watch.ts) refuses every
@@ -87,7 +87,11 @@ const INLINE: Record<BackendKind, Record<"SESSION_KIND" | "RESUME_CMD", string>>
   "acp": {
     "SESSION_KIND": "coding-agent",
     "RESUME_CMD": "(Frizz re-opens the session over ACP)",
-  }
+  },
+  "opencode": {
+    "SESSION_KIND": "opencode",
+    "RESUME_CMD": "opencode --session",
+  },
 }
 
 /** The tokens that depend on whether this thread may register a server-run command. */
@@ -458,7 +462,9 @@ exactly ONE of them.
   title: Approve the npm sign-in so the release can publish
   steps:
     - Open [the npm sign-in this thread started](https://www.npmjs.com/login?next=/login/cli/9f3c2a71) and sign in with the maintainer account.
-    - Approve the request with that account's security key or one-time code, and wait for the page to say the CLI is signed in.
+    - Approve the request with that account's security key or one-time code.
+
+      The page says the CLI is signed in once it lands. A code it refuses has expired: take the next one.
   ---
   \`npm login --auth-type=web\` is running in this thread and waiting on that approval. The publish follows as soon as it lands.
   \`\`\`
@@ -480,9 +486,9 @@ exactly ONE of them.
       to click through is \`needs_input\`, even when you need nothing back from them. And if you wrote
       ANY words for the human at this rest, the answer is \`needs_input\`: a \`working\` or \`watching\`
       rest is never put in front of them, so those words would go unread.
-      On a thread the human has pinned, a \`needs_input\` rest or a \`done\` that asks nothing marks the
-      pinned row unread instead of drawing a queue card, so they read it when they go there. What they
-      must answer or do still takes a question or \`steps:\`, which queue as always.
+      On a thread the human has pinned, a \`needs_input\` rest or a \`done\` that asks nothing draws no
+      queue card and no mark: they read it when they next go to the pinned row. What they must answer
+      or do still takes a question or \`steps:\`, which queue as always.
     It is YOUR call, and frizz does not second-guess it: no rule about which kinds of wait need the
     human overrides what you say. The one thing a quiet answer cannot do is take back \`steps:\` or a
     question the human has not reached: until they type to this thread, answer one of its questions or
@@ -546,14 +552,25 @@ exactly ONE of them.
     true of every park and specific to none.
   - \`steps:\` — the human must PERFORM something you cannot: sign in, approve a prompt, merge what you
     may not, press a button you are not allowed to press. One \`- \` item per step, each written to be
-    followed COLD by someone who has read nothing else; frizz reads them verbatim. Steps NAME THE HUMAN
+    followed COLD by someone who has read nothing else; frizz reads them verbatim. **A STEP IS A MARKDOWN
+    LIST ITEM: A TITLE, AND A BODY UNDER IT.** The \`- \` line is the title the human ticks and the words
+    reported back. After a blank line, everything indented under it is a full Markdown body drawn beneath
+    the title — paragraphs, a list, a table, a code block to paste — for the detail one line cannot hold.
+    A body with a code block needs the fence itself opened and closed with FOUR backticks, or the code
+    block's closing line ends your fence there. Steps NAME THE HUMAN
     as the wait, so the fence needs no other name and no \`for:\` (add one only if you want to be woken
-    to re-check), and it always puts the thread in their queue — \`status:\` may be left out. Their
-    card, headed **Awaiting human**, shows the steps over one checkbox, **I have completed this**;
-    ticked and sent, it comes back to you as their reply, \`Done\`, the same as anything they type,
-    with any note they typed under it; anything else they need to tell you — a step that failed, the
-    account they used — comes as that note or a message of their own. An act is not a decision: never ask
-    WHETHER they will do it, and never sign off \`done\` while it is still owed.
+    to re-check), and it always puts the thread in their queue — \`status:\` may be left out.
+    **FRIZZ KEEPS ONE TO-DO LIST FOR THE HUMAN PER THREAD, AND EVERY \`steps:\` LANDS ON IT.** A step is its
+    own text: the same words in a later fence keep the same box, and an unticked step your newest
+    \`steps:\` leaves out drops off the list, so each \`steps:\` names everything still owed. A rest with
+    no \`steps:\` changes nothing on it. Their card, headed **Awaiting human**, shows the list with one
+    checkbox per step. Everything ticked and sent comes back to you as their reply, \`Done\`, the same as
+    anything they type; only some of it comes back as \`Done 1 of 3:\` over a \`- [x]\` / \`- [ ]\`
+    checklist, and an unticked step has NOT happened. Listing a step they reported done reopens its box,
+    so do that when it did not take. Any note they typed goes under the reply; anything else they need to
+    tell you — a step that failed, the account they used — comes as that note or a message of their own.
+    An act is not a decision: never ask WHETHER they will do it, and never sign off \`done\` while it is
+    still owed.
     **THE FIRST TEST OF EVERY STEP: COULD YOU DO IT YOURSELF? THEN IT IS NOT A STEP — DO IT.** This
     outranks every rule below. Steps are what is LEFT after you have done all you can: a command you
     can run is yours to run — an install, a build, a key generated, a \`git config\`, a file written —
@@ -1298,7 +1315,7 @@ A human rename outranks yours, and frizz reports that rather than failing.`
 // LEGACY NAME, current behaviour. This block and `scratchpadOrientation` still say "scratchpad"; both
 // describe the scratch DIRECTORY. (`ThreadView.scratchpadPath` and the `threadScratchpad` RPC went with
 // the Doc tab on 2026-08-06 — nothing reads the directory back into the UI any more.)
-const SCRATCHPAD: Record<BackendKind, string> = {
+const SCRATCHPAD: Record<Exclude<BackendKind, "opencode">, string> = {
   claude: `## Your scratch directory
 
 \`.frizz/threads/<session-id>/\` (exact path in your session-start context) — a folder that is YOURS, for
@@ -1719,6 +1736,34 @@ Code's — use your harness's equivalent, or none.
 A message the human sends while you are working is QUEUED and delivered as your next turn the moment
 this one ends — nothing can interrupt you mid-turn except a stop. So rest promptly when a turn's work is
 done rather than idling inside it, and read the newest human message first when a turn opens.`,
+  opencode: `## Your harness, and \`frizzctl\` inside it
+
+You are an OpenCode session that Frizz drives through OpenCode's server. Your file, shell, search and
+question tools are OpenCode's. Frizz's own commands reach you as \`frizzctl\`, a program on your shell's
+PATH: wherever this contract writes \`frizzctl <command>\`, run it with your shell tool, exactly as
+written, and from a sub-agent's shell too, where it speaks for this same thread. The tools named
+elsewhere in this contract as \`Agent\`, \`SendMessage\` and \`Monitor\` are Claude Code's: use OpenCode's
+\`subagent\` tool for the first, and for the others the \`frizzctl\` commands this contract gives.
+
+Your permission prompts are OpenCode's, under a mode the human sets on this thread: Frizz shows each
+ask to them as a card and relays the answer, for your sub-agents' asks too. A denied call comes back as
+a failed tool call: adapt, or say what is blocked in your final message. A call the human's own
+OpenCode configuration denies stays denied in every mode. In plan mode you run as OpenCode's \`plan\`
+agent and do not edit.
+
+## Sub-agents
+
+Use the \`subagent\` tool. The human sees each child as its own row on this thread, can open its
+transcript and can stop it. Pass \`background: true\` for independent work and collect the result: you are
+told when it finishes. A child's session id (\`ses_…\`) is its identity: it is what the tool returns, and
+what you write on an \`agents:\` line when you rest while one runs. Fold what each child found into your
+own write-up, since the human reads you.
+
+## Follow-ups arrive between steps
+
+A message the human sends while you are working reaches you at your next step, in the middle of your
+turn, and you should read it then and act on it. A message they queue instead arrives as a new turn
+after this one ends. Read the newest human message first.`,
 }
 
 // A TOOL CALL CUT OFF BY "SEND NOW". Claude only: the SDK interrupt is the one transport that ends a turn
@@ -1840,7 +1885,7 @@ project's. It is how you find the thread to send to, and whether one is already 
 A message wrapped in \`<thread-message>\` came from another thread, which it names: a colleague's
 message, not the human's. Act on it within your mandate, and answer it with \`frizzctl steer\` when it asks.`
 
-const THREAD_EXECUTION: Record<BackendKind, string> = {
+const THREAD_EXECUTION: Record<Exclude<BackendKind, "opencode">, string> = {
   claude: `## Thread types
 
 Recognize which KIND of effort you own and match the deliverable to it:
@@ -1947,6 +1992,8 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
   // good engineering. Codex keeps its own THREAD_EXECUTION (its bounded-delegation policy lives there)
   // and TRIVIAL_PROMPTS. See the SIZING note at the top of this file.
   const lean = kind === "claude"
+  // OpenCode has its own harness section, and its scratch directory and thread types read as ACP's do.
+  const prose = kind === "opencode" ? "acp" : kind
   const sections: (string | null)[] = [
     INTRO,
     DEFER,
@@ -1954,7 +2001,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     ACTIVITY_CAPTIONS,
     FRIZZCTL,
     SIGNALS,
-    SCRATCHPAD[kind],
+    SCRATCHPAD[prose],
     kind === "claude" ? `${WORKTREES}\n${WORKTREES_HARNESS}` : WORKTREES,
     BACKEND[kind],
     kind === "claude" ? CLAUDE_INTERRUPTED_CALL : null,
@@ -1962,7 +2009,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     SPAWN_THREAD,
     opts.childThreads ? CHILD_THREADS : null,
     STEER_THREADS,
-    lean ? null : THREAD_EXECUTION[kind],
+    lean ? null : THREAD_EXECUTION[prose],
     AGENT_COMPLETION,
     VISUAL_EVIDENCE,
     MARKDOWN_COMPONENTS,

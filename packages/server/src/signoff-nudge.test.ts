@@ -14,7 +14,8 @@ import { createStorage, type SessionRow } from "./storage.ts"
 import { NEEDS_INPUT_REQUIRED_AT, QUESTION_FENCE_RETIRED_AT, retiredAwaitingKindsIn, SIGNOFF_NUDGE_MARKER, SIGNOFF_NUDGE_MESSAGE } from "@frizz/shared"
 import { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
-import { applyRecord, createTailer, newTailState, type SessionTelemetry, type Tailer } from "./tailer.ts"
+import { applyEvent, applyRecord, createTailer, newTailState, type SessionTelemetry, type Tailer } from "./tailer.ts"
+import { parseAcpLine } from "./backend/acp-transcript.ts"
 import { createScheduler } from "./scheduler.ts"
 import { createCodexBackend } from "./backend/codex.ts"
 import { createWakeDeliveryStore } from "./wake-store.ts"
@@ -79,6 +80,33 @@ test("Codex failed turns cannot trigger a sign-off reminder or an armed rest Goa
     assert.deepEqual(h.delivered, [])
     assert.equal(h.storage.db.prepare("SELECT count(*) AS n FROM wake_delivery").get()?.n, 0)
   } finally { h.close() }
+})
+
+test("a person's Stop on an OpenCode turn draws no sign-off reminder; the same rest without it does", async () => {
+  // The bridge's own records, folded the way the tailer folds them. The control is the identical turn
+  // whose end the person did not cause: it is a bare rest, and the reminder answers it.
+  const fold = (stopped: boolean) => {
+    const state = newTailState("resting", "sid", "/fixture")
+    const lines = [
+      { kind: "turn-start", at: "2026-11-06T10:00:00.000Z" },
+      { kind: "user-message", at: "2026-11-06T10:00:00.000Z", text: "Run the build", synthetic: false },
+      { kind: "assistant-text", at: "2026-11-06T10:00:05.000Z", text: "Running it now.", final: false },
+      { kind: "tool-call", at: "2026-11-06T10:00:06.000Z", id: "c1", name: "shell", input: { command: "sleep 600" } },
+      { kind: "turn-end", at: "2026-11-06T10:00:20.000Z", successful: false, ...(stopped ? { stoppedBy: "operator" } : {}) },
+      { kind: "title", title: "Run the build" },
+    ]
+    for (const line of lines) for (const ev of parseAcpLine(JSON.stringify(line))) applyEvent(state, ev)
+    return state
+  }
+  for (const stopped of [true, false]) {
+    const f = fold(stopped)
+    assert.equal(f.operatorStopped, stopped || undefined)
+    const h = nudger({ turn: f.turn, lastAssistantAt: f.lastAssistantAt, lastUserAt: f.lastUserAt, lastActivityAt: f.lastActivityAt, operatorStopped: f.operatorStopped }, { runtime: "alive" })
+    try {
+      await h.s.tick()
+      assert.equal(h.delivered.length, stopped ? 0 : 1, stopped ? "the human's Stop is not the worker's rest" : "the control rest is nudged")
+    } finally { h.close() }
+  }
 })
 
 test("provider failures supersede sign-off and rest Goal deliveries queued before the failure was decoded", async () => {

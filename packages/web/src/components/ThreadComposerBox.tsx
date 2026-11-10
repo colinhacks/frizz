@@ -16,6 +16,7 @@ import { draftKey, mergeIntoDraft, useDraft, useProjectDir } from "../lib/drafts
 import { noteFailedDraftOrigin, takeSupersededFailure } from "../lib/failedDelivery.ts"
 import { parseAccountAlias } from "../lib/signIn.ts"
 import { useEagerFollowUp, type EagerFollowUpCallbacks } from "../lib/eagerComposerSubmission.ts"
+import { backendFollowUps } from "@frizz/shared"
 import { canInterruptAndSend } from "../lib/composerKeyboard.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
@@ -24,7 +25,7 @@ import { RecurringPromptControl } from "./RecurringPromptControl.tsx"
 import type { PhoneBarApi } from "./Composer.tsx"
 import { RegisteredAnsweringContext } from "./RegisteredQuestionCards.tsx"
 import { SendScopeContext } from "../lib/sendScope.tsx"
-import { useStepsAnswer, withStepsDone } from "../lib/stepsAnswer.ts"
+import { useStepsAnswer } from "../lib/stepsAnswer.ts"
 import { sendPlaceholder, setSendMode, useSendMode } from "../lib/sendMode.ts"
 import { QueueDismissContext } from "../lib/threadContexts.ts"
 import { QueuedRunContext } from "../lib/threadContexts.ts"
@@ -168,8 +169,8 @@ function LocalThreadComposerBox({
   const registered = useContext(RegisteredAnsweringContext)
   const scope = useContext(SendScopeContext)
   const surfaceExit = useContext(QueueDismissContext)
-  // …and a steps card's ticked "I have completed this" box, which is answered the same way (lib/
-  // stepsAnswer). It reads the thread rather than a context: the card and this box address one draft.
+  // …and the ticks on the human's to-do list, which are answered the same way (lib/stepsAnswer). It reads
+  // the thread rather than a context: the list is the thread's, whichever surface drew the box.
   const stepsAnswer = useStepsAnswer(thread)
   const staged = (registered?.staged ?? 0) + (scope?.fencedCount ?? 0) + (stepsAnswer.staged ? 1 : 0)
   // "A turn is in flight" — the only time sending as a steer and sending to the queue differ…
@@ -178,7 +179,10 @@ function LocalThreadComposerBox({
   // goes out one message per turn, and the agent rests for a moment between two of them.
   const held = useContext(QueuedRunContext)?.held ?? 0
   const behind = running || held > 0
-  const mode = useSendMode()
+  // A backend with no steer has one way to send, whichever row the operator keeps ticked for the others.
+  const { steer: steerable } = backendFollowUps(thread?.backend)
+  const pickedMode = useSendMode()
+  const mode = steerable ? pickedMode : "queue"
   // ONE placeholder for both surfaces, decided here from the thread — the queue card said "Reply to the
   // agent…" and the drawer "Follow up…" until 2026-10-09, and only the card said when the box was the
   // way AROUND an open question. An external session keeps its own sentence: it says what sending does,
@@ -189,7 +193,7 @@ function LocalThreadComposerBox({
   // and with the menu shut this line is also what says how the button will send (sendPlaceholder).
   const placeholder = thread?.foreign
     ? "Send a message to take over this session…"
-    : sendPlaceholder({ staged, openQuestions: Boolean(thread?.pendingQuestion) || (thread ? hasStandingQuestion(thread) : false), running: behind, mode })
+    : sendPlaceholder({ staged, openQuestions: Boolean(thread?.pendingQuestion) || (thread ? hasStandingQuestion(thread) : false), running: behind, mode, steerable })
   const projectDir = useProjectDir()
   const key = draftKey.followUp(projectDir, slug, thread?.sessionId)
   const [message, setMessage, clearMessage] = useDraft(key)
@@ -225,9 +229,8 @@ function LocalThreadComposerBox({
   // too — the Goal rides this rail and nowhere else on desktop chrome, and the phone bar has no rail.
   const phoneBar = (phoneChrome ?? isMobile) && surface === "chatComposer"
   const turnRunning = thread?.runtime === "running" || thread?.runtime === "spawning"
-  // NOT WHILE THE THREAD WAITS ON STEPS (`steps:` in its last fence). The card above carries its own
-  // "Done", which means "I did the steps" and sends a reply; this one would mean "archive the thread",
-  // and two Done verbs one above the other on a phone read as the same button.
+  // NOT WHILE THE THREAD WAITS ON STEPS (`steps:` in its last fence). The list above is ticked to say
+  // "I did this"; a check beside it would mean "archive the thread", and on a phone the two read as one.
   const stepsOpen = thread?.lastFence?.kind === "awaiting" && awaitingSteps(thread.lastFence.hints).length > 0
   const canComplete = thread ? threadLifecycleAvailability(thread).archive && !turnRunning && !stepsOpen : false
   // THE GOAL rides the rail on every desktop surface that steers a Frizz-owned session — the same
@@ -240,7 +243,7 @@ function LocalThreadComposerBox({
     // go through its own sheet (PhoneQuestionCards), which this bar never registered a send for.
     const answers = phoneBar ? null : registered?.take() ?? null
     const fenced = phoneBar ? null : scope?.takeFenced() ?? null
-    // On the phone the steps card keeps its own Send, as the questions keep their sheet.
+    // On the phone the list keeps its own Send, as the questions keep their sheet.
     const steps = phoneBar ? null : stepsAnswer.take()
     if (!text && !answers && !fenced && !steps) return
     // `/login` / `/logout` are frizz-owned account actions for THIS thread's backend — invoked
@@ -253,6 +256,10 @@ function LocalThreadComposerBox({
         showToast("An ACP agent signs in through its own CLI — Frizz holds no account for it")
         return
       }
+      if (thread?.backend === "opencode") {
+        showToast("OpenCode signs in through its own CLI: run `opencode auth login`")
+        return
+      }
       const backend: AccountBackend = thread?.backend === "codex" ? "codex" : "claude"
       if (alias === "login") setSignInFor(backend)
       else setLogoutFor(backend)
@@ -262,8 +269,8 @@ function LocalThreadComposerBox({
     // attachment paths) and cleared with it — restored on a rejected send exactly like the draft.
     const context = takeContextItems(slug)
     const typed = text ? buildMessageWithContext(text, context, projectDir) : ""
-    // A ticked steps box is the reply's opening word, `Done`, with the typed words under it.
-    const note = steps ? withStepsDone(typed) : typed
+    // Ticks on the list open the reply, with the typed words under them.
+    const note = steps ? steps.compose(typed) : typed
     // ONE TURN. Fenced answers are composed here and the typed words go under them as the note; the
     // registered ones are settled and composed by the server, above all of it (FollowUpInput.answers),
     // so `outgoing` may be empty when only those ride. `shown` is what the optimistic bubble draws
@@ -279,11 +286,13 @@ function LocalThreadComposerBox({
       },
       onSuccess: () => answers?.onSuccess(),
       ...(answers ? { answers: answers.answers, displayText: shown } : {}),
+      ...(steps ? { todos: steps.todos } : {}),
       // "Send to queue" is the ticked row AND there is something to queue behind. The forced send never
       // queues: ⌘/Ctrl-Enter means now. A message already handed over whose turn has not started (the
       // board's delivery in flight) counts too, since the queue gives each message a turn of its own;
       // the server is the judge of that one, and sends at once if nothing is ahead after all.
       ...(mode === "queue" && !interrupt && (behind || thread?.deliveryInFlight === true) ? { hold: true } : {}),
+      ...(steerable ? {} : { failureToast: (error: string) => `Send failed — ${error.slice(0, 160)}` }),
       // Re-sending words an earlier failure handed back replaces that failure's bubble — see
       // lib/failedDelivery.ts.
       supersedes: takeSupersededFailure(key, outgoing),
@@ -336,7 +345,7 @@ function LocalThreadComposerBox({
           slashSuggest={slashSuggest}
           // An external session keeps its own sentence (it says what sending does); otherwise the verb
           // is the thread's state: steering a turn in flight, or replying to one at rest.
-          placeholder={thread?.foreign ? placeholder : turnRunning ? "Steer…" : "Reply…"}
+          placeholder={thread?.foreign ? placeholder : turnRunning ? (steerable ? "Steer…" : "Queue…") : "Reply…"}
           busy={controls.busy}
           fileDrop={fileDrop}
           phone={{
@@ -384,7 +393,7 @@ function LocalThreadComposerBox({
         fileDrop={fileDrop}
         // An external session keeps the ↑: sending there takes the session over, and there is no turn
         // of Frizz's to steer or queue behind until it has.
-        send={thread?.foreign ? undefined : { mode, onMode: setSendMode, running: behind, staged }}
+        send={thread?.foreign ? undefined : { mode, onMode: setSendMode, running: behind, staged, steerable }}
       />
       {controls.status}
       {signInFor && <SignInModal backend={signInFor} onClose={() => setSignInFor(null)} onAuthed={() => setSignInFor(null)} />}

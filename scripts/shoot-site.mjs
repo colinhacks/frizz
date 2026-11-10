@@ -315,6 +315,11 @@ const FEATURES = {
   } },
   "f-steps": { w: THREAD_W, h: 520, stage: async (page) => {
     await open(page, "publish-docs", "[data-awaiting-steps]")
+    // A tick is saved on the server, so a second shoot of one stack finds it already there.
+    const box = await need(page, "[data-awaiting-steps] li:first-child button[role=checkbox]")
+    if (await box.evaluate((el) => el.getAttribute("aria-checked") === "false")) await box.click()
+    await page.mouse.move(10, 10)
+    await settle(400)
   } },
   "f-secret": { w: THREAD_W, h: 440, stage: async (page) => {
     await open(page, "publish-sdk", "[data-question-id]")

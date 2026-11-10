@@ -20,7 +20,7 @@ const baseUrl = process.env.FRIZZ_ONE_SEND_E2E_URL
 
 type Sent = { rpc: string; body: { slug?: string; message?: string; answers?: { questionId: string; question: string; chosen?: string[]; text?: string }[] } }
 
-const STEPS_BOX = "[data-steps-complete] button[role=checkbox]"
+const STEPS_BOX = "[data-awaiting-steps] button[role=checkbox]"
 
 async function open(page: Page, query: string) {
   await page.goto(`${baseUrl}/one-send-fixture.html?${query}`, { waitUntil: "networkidle0" })
@@ -126,9 +126,8 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
     )
     // THE SENT STEPS STAY ON SCREEN, TICKED: the send ends the rest in the render that draws its bubble,
     // so the card is now the record in its message, and its box says what the reply said.
-    await page.waitForSelector("[data-steps-completed]", { timeout: 10_000 })
+    await page.waitForSelector("[data-awaiting-steps] span[role=checkbox][aria-checked=true]", { timeout: 10_000 })
     assert.equal(await page.$(STEPS_BOX), null, "no live box beside the sent reply")
-    assert.equal(await page.$eval("[data-steps-completed]", (el) => [el.getAttribute("aria-checked"), (el as HTMLElement).innerText.trim()].join(" ")), "true I have completed this")
 
     // THE QUEUE CARD, with nothing typed: Enter in the EMPTY box still sends everything staged. The card
     // opens on the newest exchange, so the earlier rest's question is behind "Load earlier messages".

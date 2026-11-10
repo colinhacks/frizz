@@ -13,9 +13,11 @@ import {
   correlateDeliveryRecord,
   deliverOutstandingDeliveries,
   dropHeldDelivery,
+  failHeldDeliveries,
   heldDeliveries,
   heldSendMustWait,
   holdDelivery,
+  holdStrandedDeliveries,
   MAX_LEDGER_ITEMS,
   nextHeldRelease,
   parseDeliveryLedger,
@@ -156,4 +158,35 @@ test("the next held message waits for every send ahead of it whose turn has not 
   }
   assert.equal(heldSendMustWait([a]), true, "a new send never overtakes a held one")
   assert.equal(heldSendMustWait([]), false, "with nothing ahead it is an ordinary send")
+})
+
+test("a send a runtime's queue stranded goes back to held, in place, and a wake with no entry draws nothing", () => {
+  const { storage, dispose } = ledger()
+  try {
+    appendDelivery(storage, "t", { id: "a", text: "first", state: "enqueued" })
+    appendDelivery(storage, "t", { id: "b", text: "answered", state: "delivered" })
+    assert.equal(holdStrandedDeliveries(storage, "t", [{ id: "a", text: "first + gap note" }, { id: "w", text: "<wake>" }, { id: "b", text: "answered" }]), 2)
+    const items = parseDeliveryLedger(storage.getSession("t")!.delivery_ledger)
+    assert.deepEqual(items.map((i) => [i.id, i.state, i.text, i.silent]), [
+      ["a", "held", "first", undefined],
+      ["b", "delivered", "answered", undefined],
+      ["w", "held", "<wake>", true],
+    ])
+    assert.equal(projectDeliveryLedger([], items).some((m) => m.text === "<wake>"), false)
+    assert.equal(beginDelivery(storage, "t", { id: "a", text: "first", release: true }), "begin", "the ordinary release takes it")
+  } finally { dispose() }
+})
+
+test("a held send on a thread put away turns failed with its words kept and can be retried; a silent one goes", () => {
+  const { storage, dispose } = ledger()
+  try {
+    holdDelivery(storage, "t", { id: "a", text: "cherry" })
+    holdStrandedDeliveries(storage, "t", [{ id: "w", text: "<wake>" }])
+    assert.equal(failHeldDeliveries(storage, "t", "The session ended before this message was sent."), 2)
+    const items = parseDeliveryLedger(storage.getSession("t")!.delivery_ledger)
+    assert.deepEqual(items.map((i) => [i.id, i.state, i.retryable, i.error]), [["a", "failed", true, "The session ended before this message was sent."]])
+    const bubble = projectDeliveryLedger([], items)[0]!
+    assert.equal(bubble.deliveryState, "failed")
+    assert.equal(bubble.queued, false)
+  } finally { dispose() }
 })

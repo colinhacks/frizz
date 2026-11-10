@@ -22,13 +22,14 @@ export interface SubAgentContextUsage {
   window?: number
 }
 
-export function readSubAgentContextUsage(absPath: string, format?: "codex"): SubAgentContextUsage | undefined {
+export function readSubAgentContextUsage(absPath: string, format?: "codex" | "opencode"): SubAgentContextUsage | undefined {
   let text: string
   try {
     text = readFileSync(absPath, "utf8")
   } catch {
     return undefined
   }
+  if (format === "opencode") return writtenContextUsage(text)
   return format === "codex" ? codexContextUsage(text) : claudeContextUsage(text)
 }
 
@@ -39,6 +40,20 @@ export function readSubAgentLastActivityAt(absPath: string): string | undefined 
   } catch {
     return undefined
   }
+}
+
+// A Frizz-written transcript states it directly: its newest `context-usage` record, window included.
+function writtenContextUsage(text: string): SubAgentContextUsage | undefined {
+  const lines = text.split("\n")
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line?.includes('"context-usage"')) continue
+    try {
+      const rec = JSON.parse(line) as { kind?: unknown; tokens?: unknown; window?: unknown }
+      if (rec.kind === "context-usage" && typeof rec.tokens === "number") return { tokens: rec.tokens, ...(typeof rec.window === "number" ? { window: rec.window } : {}) }
+    } catch { /* a partial tail line */ }
+  }
+  return undefined
 }
 
 // Newest first, so a long transcript stops at its tail. Lines that cannot carry either reading are

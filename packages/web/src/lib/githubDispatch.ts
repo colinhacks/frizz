@@ -18,6 +18,9 @@ export function dispatchProfileError(
   codexModels: readonly CodexModel[],
   acpAgents: readonly AcpAgent[] = [],
 ): string | undefined {
+  if (profile.backend === "opencode") {
+    return acpAgents.some((agent) => agent.native && agent.available) ? undefined : "OpenCode 2 is not installed on this machine"
+  }
   if (profile.backend === "acp") {
     // `acp:<agent>@<model>`: the agent must be installed; the model inside it is the agent's to honour.
     const agent = acpAgents.find((candidate) => candidate.id === acpAgentIdFromModel(profile.model))

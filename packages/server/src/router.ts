@@ -33,6 +33,7 @@ import {
   UnqueueFollowUpInput,
   DismissFailedFollowUpInput,
   DismissFailedFollowUpResult,
+  SetHumanTodoInput,
   UnqueueFollowUpResult,
   DeliverQueuedNowInput,
   CompactThreadInput,
@@ -181,20 +182,28 @@ import {
   AcpAgent,
   acpAgentIdFromModel,
   acpModelIdFromModel,
+  OpencodeModels,
+  opencodeModelRef,
+  backendFollowUps,
   AcpAgentModels,
   AcpAgentModelsInput,
 } from "@frizz/shared"
 import { type AppContext, type ThreadInbox, type ThreadSpawner } from "./context.ts"
 import { secretFilePath, serveSecret } from "./secret-files.ts"
 import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command-watch.ts"
-import { listAcpAgents } from "./backend/acp-agents.ts"
+import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
+import { hasLaunchPrefix } from "./backend/launch-prefix.ts"
+import { withDefaultAgentProfile } from "./dispatch-preferences.ts"
+import { runtimeDownloads } from "./runtime-deferral.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { appServerTurnStalled, resolveLiveWatchTarget, resolveRecurringPrompt, resolveSessionTitle } from "./board.ts"
 import { runThreadUpdate } from "./frizz.ts"
 import { repairThreadFile } from "./repair.ts"
 import { reopenArchivedThreadForFollowUp, resumeThread, wakeParkedThreadForFollowUp } from "./resume.ts"
-import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, forgetDelivery, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
+import { opencodeModeOf } from "./backend/opencode-types.ts"
+import { opencodeNativeAvailable } from "./backend/opencode-service.ts"
+import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, failHeldDeliveries, forgetDelivery, holdStrandedDeliveries, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
 import {
   readEarlierThreadTranscriptPage,
@@ -203,6 +212,7 @@ import {
   transcriptFoldCaughtUp,
   readTranscriptFile,
   readCodexTranscriptFile,
+  readOpencodeChildTranscript,
   projectTranscriptPageAgentLifecycles,
 } from "./transcript.ts"
 import { readSubAgentContextUsage, readSubAgentLastActivityAt } from "./subagent-facts.ts"
@@ -241,7 +251,7 @@ import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, boardQueuedThread } from "@frizz/shared"
+import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, boardQueuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
@@ -281,7 +291,7 @@ export function validateGithubDispatchProfile(
 ): void {
   // An ACP profile carries no effort, and its "model" is an `acp:<agent>` slug the dispatcher resolves
   // itself (refusing an agent that is not on PATH) — there is no model/effort catalogue to check.
-  if (input.backend === "acp") return
+  if (input.backend === "acp" || input.backend === "opencode") return
   if (input.effort === undefined) throw new Error(`Unsupported ${input.backend} model/effort pair: ${input.model} / (no effort)`)
   validateThreadProfile(input.backend, input.model, input.effort, codexModels)
 }
@@ -363,12 +373,18 @@ export interface CodexTurnTerminator {
 
 // The ACP bridge's slice of the same contract: a turn is live only while its `session/prompt` is in
 // flight, and interruptTurn resolves once that prompt has returned (or the child was killed).
-export interface AcpTurnTerminator {
+export interface OpencodeTurnTerminator {
+  isAgentAlive(threadSlug: string, sessionId: string): boolean
   turnLiveness(threadSlug: string, sessionId: string): { turnActive: boolean } | undefined
   interruptTurn(threadSlug: string, sessionId: string): Promise<{ interrupted: boolean }>
-  /** End the agent itself — its daemon outlives frizz (acp-host.ts), so a stop that only cancelled
-   *  the turn would leave the agent running for nobody. */
   releaseSession(threadSlug: string, sessionId: string, reason: "session-replaced" | "session-deleted"): void
+}
+
+export interface AcpTurnTerminator {
+  turnLiveness(threadSlug: string, sessionId: string): { turnActive: boolean } | undefined
+  /** Take the queue off, cancel the turn and end the agent itself — its daemon outlives frizz
+   *  (acp-host.ts), so a stop that only cancelled the turn would leave the agent running for nobody. */
+  endSession(threadSlug: string, sessionId: string): Promise<void>
   /** Whether an agent process exists for this session at all — attached or not, mid-turn or idle. The
    *  Claude broker's `isDaemonAlive` twin: an idle daemon is still a live worker to end. */
   isAgentAlive(threadSlug: string, sessionId: string): boolean
@@ -424,16 +440,24 @@ export async function stopThreadRuntime(
   codex?: CodexTurnTerminator,
   claudeBroker?: ClaudeBrokerTerminator,
   acp?: AcpTurnTerminator,
+  opencode?: OpencodeTurnTerminator,
 ): Promise<"absent" | "stopped"> {
+  if (row.backend === "opencode") {
+    // A session in the person's service, not a process of ours: stop its turn and stop tracking it, and
+    // leave the session where their other OpenCode clients can open it.
+    if (!opencode) return "absent"
+    const alive = opencode.isAgentAlive(row.slug, row.session_id)
+    if (opencode.turnLiveness(row.slug, row.session_id)?.turnActive === true) await opencode.interruptTurn(row.slug, row.session_id)
+    opencode.releaseSession(row.slug, row.session_id, "session-deleted")
+    return alive ? "stopped" : "absent"
+  }
   if (row.backend === "acp") {
-    // The bridge answers both questions: is a turn running, and stop it (session/cancel, then wait for
-    // the prompt to return). Then END the agent: it lives in a detached daemon that would otherwise sit
-    // idle for hours after the thread is put away. A resting thread with no daemon costs nothing here.
+    // The bridge stops the turn (session/cancel, then wait for the prompt to return) and then ENDS the
+    // agent: it lives in a detached daemon that would otherwise sit idle for hours after the thread is
+    // put away. A resting thread with no daemon costs nothing here.
     if (!acp) return "absent"
     const alive = acp.isAgentAlive(row.slug, row.session_id)
-    const turnActive = acp.turnLiveness(row.slug, row.session_id)?.turnActive === true
-    if (turnActive) await acp.interruptTurn(row.slug, row.session_id)
-    acp.releaseSession(row.slug, row.session_id, "session-deleted")
+    await acp.endSession(row.slug, row.session_id)
     return alive ? "stopped" : "absent"
   }
   if (isAppServerCodexRow(row)) {
@@ -503,9 +527,10 @@ export async function stopRuntimeBySlug(
   codex?: CodexTurnTerminator,
   claudeBroker?: ClaudeBrokerTerminator,
   acp?: AcpTurnTerminator,
+  opencode?: OpencodeTurnTerminator,
 ): Promise<{ outcome: "absent" | "stopped"; row?: SessionRow }> {
   const row = storage.getSession(slug)
-  if (row) return { outcome: await stopThreadRuntime(storage, row, runtime, codex, claudeBroker, acp), row }
+  if (row) return { outcome: await stopThreadRuntime(storage, row, runtime, codex, claudeBroker, acp, opencode), row }
   if (storage.getAdoptionClaim(slug)) throw new Error("An adoption attempt is in progress; nothing was stopped")
   // A rowless thread name has no durable owner identity. Even a DB lock cannot make a detached worker
   // crash-safe after this process dies, so never issue a reusable-name kill without a row.
@@ -621,6 +646,7 @@ export async function completeRegisteredThread(
   codex?: CodexTurnTerminator,
   claudeBroker?: ClaudeBrokerTerminator,
   acp?: AcpTurnTerminator,
+  opencode?: OpencodeTurnTerminator,
 ): Promise<{ needsConfirmation: boolean; hold?: CompletionHold }> {
   const binding = adoptionRuntimeBinding(storage, row)
   if (binding.kind === "conflict") {
@@ -649,6 +675,8 @@ export async function completeRegisteredThread(
     // 2026-09-24: two `opencode acp` processes still up after both threads were marked done).
     : row.backend === "acp"
     ? (acp?.isAgentAlive(row.slug, row.session_id) ?? false)
+    : row.backend === "opencode"
+    ? (opencode?.isAgentAlive(row.slug, row.session_id) ?? false)
     : false
 
   // A live runtime is asked about when it is still working; a dead one when it never finished. The
@@ -660,7 +688,7 @@ export async function completeRegisteredThread(
     // row exactly as it was — an archived row whose worker is still running is the failure this whole
     // change exists to remove, and for codex it is unrecoverable from the UI (the daemon outlives us
     // and an archived thread has no card left to act on).
-    await stopThreadRuntime(storage, row, runtime, codex, claudeBroker, acp)
+    await stopThreadRuntime(storage, row, runtime, codex, claudeBroker, acp, opencode)
     // For a standalone registered session this is the postcondition that turns an idempotent kill into
     // a safe completion operation. An adopted binding is already verified by stopRegisteredRuntime, an
     // app-server codex turn by interruptTurn's own proof that the turn retired, and a broker Claude
@@ -686,6 +714,7 @@ export async function stopAndForgetRegisteredRuntime(
   codex?: CodexTurnTerminator,
   claudeBroker?: ClaudeBrokerTerminator,
   acp?: AcpTurnTerminator,
+  opencode?: OpencodeTurnTerminator,
 ): Promise<SessionRow> {
   const binding = adoptionRuntimeBinding(storage, row)
   if (binding.kind === "conflict") {
@@ -696,7 +725,7 @@ export async function stopAndForgetRegisteredRuntime(
     runtimeGeneration: row.runtime_generation ?? 0,
     adoptionAttemptToken: binding.kind === "bound" ? binding.claim.attempt_token : null,
   }
-  await stopThreadRuntime(storage, row, runtime, codex, claudeBroker, acp)
+  await stopThreadRuntime(storage, row, runtime, codex, claudeBroker, acp, opencode)
   const forgotten = storage.forgetSessionIfCurrent(row.slug, expected)
   if (!forgotten) {
     throw new Error("This thread resumed or was replaced while it was being dismissed; the new worker was preserved")
@@ -1219,6 +1248,39 @@ export function createRouter(ctx: AppContext) {
         ctx.board.refresh()
         return
       }
+      // An OpenCode follow-up goes into the session's own inbox: a steer is read at the next step, a queued
+      // message at the next idle boundary. It is `enqueued` until the stream says `session.inbox.delivered`,
+      // when the bridge writes it to the transcript and takes it off the ledger (onDelivered, context.ts).
+      if (row?.backend === "opencode") {
+        const bridge = ctx.opencodeBridge
+        if (!bridge) throw new Error("The OpenCode bridge is unavailable; cannot deliver this follow-up")
+        // OpenCode has no `/compact` in a prompt: compaction is its own route.
+        if (input.message.trim() === "/compact") {
+          await bridge.compact(opencodeRefOf(row))
+          ctx.board.refresh()
+          return
+        }
+        if (input.deliveryId) appendDelivery(ctx.storage, input.slug, { id: input.deliveryId, text: input.message, state: "enqueued" })
+        let result
+        try {
+          result = await bridge.followUp({
+            threadSlug: input.slug, sessionId: row.session_id, cwd: ctx.project.dir, opencodeSessionId: row.agent_session_id,
+            ...(opencodeModelRef(row.model) ? { model: opencodeModelRef(row.model)! } : {}), mode: opencodeModeOf(row.permission_mode),
+            text: messageForWorker, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
+            // A message sent to the queue is Frizz's to hold until the rest (releaseHeldFollowUps), as on
+            // every backend, so what reaches OpenCode is always a steer: read at its next step boundary.
+            delivery: "steer", ...(input.interrupt ? { interrupt: true } : {}),
+          })
+        } catch (err) {
+          if (input.deliveryId) forgetDelivery(ctx.storage, input.slug, input.deliveryId)
+          throw err
+        }
+        if (result.opencodeSessionId !== row.agent_session_id) ctx.storage.setAgentSession(input.slug, result.opencodeSessionId)
+        if (row.exited === 1) ctx.storage.setExitedIfCurrent(input.slug, row.session_id, row.runtime_generation ?? 0, false)
+        if (input.deliveryId) ctx.transcriptChange.emit([input.slug])
+        ctx.board.refresh()
+        return
+      }
       if (row?.backend === "codex") {
         const bridge = ctx.codexAppServer
         if (!bridge) throw new Error("Codex app-server is unavailable; cannot deliver this follow-up")
@@ -1625,9 +1687,18 @@ export function createRouter(ctx: AppContext) {
       if (answers.length > 0) return
       throw new Error("There is nothing to send")
     }
-    const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, hold: undefined }
-    if (input.hold && !input.interrupt && !input.freshProcess && !replay) {
-      const row = ctx.storage.getSession(input.slug)
+    const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, todos: undefined, hold: undefined }
+    // After the send is accepted, so a refused one leaves its ticks staged for the retry.
+    const reportTodos = () => {
+      if (!input.todos?.length) return
+      ctx.storage.reportHumanTodos(input.slug, input.todos, Date.now())
+      ctx.board.refresh()
+    }
+    const row = ctx.storage.getSession(input.slug)
+    // A backend with no steer has nothing else to do with a message sent mid-turn, whoever is asking: a
+    // tab from before the composer knew, or `frizzctl steer`.
+    const hold = input.hold || !backendFollowUps(row?.backend).steer
+    if (hold && !input.interrupt && !input.freshProcess && !replay) {
       // Only something the server can SEE is worth waiting behind: a turn the tailer reads as running,
       // messages already held (the queue is FIFO, so a send must not overtake them on a rest), or a send
       // whose turn has not ended (the queue goes out one turn at a time). Unknown telemetry sends now: a
@@ -1637,6 +1708,7 @@ export function createRouter(ctx: AppContext) {
       if (row && row.session_id === input.sessionId && (inFlight || heldSendMustWait(items))) {
         const id = input.deliveryId ?? randomUUID()
         if (holdDelivery(ctx.storage, input.slug, { id, text: message })) {
+          reportTodos()
           watchHeld(input.slug)
           ctx.transcriptChange.emit([input.slug])
           ctx.board.refresh()
@@ -1646,7 +1718,8 @@ export function createRouter(ctx: AppContext) {
         }
       }
     }
-    return deliverFollowUp(send)
+    await deliverFollowUp(send)
+    reportTodos()
   }
 
   // RELEASE WHAT FRIZZ IS HOLDING FOR THIS THREAD'S REST, oldest first, through the ordinary follow-up
@@ -1668,6 +1741,19 @@ export function createRouter(ctx: AppContext) {
     if (!row) { heldSlugs.delete(slug); return 0 }
     const items = parseDeliveryLedger(row.delivery_ledger)
     if (!items.some((item) => item.state === "held")) { heldSlugs.delete(slug); return 0 }
+    if (row.backend === "acp" || row.backend === "opencode") {
+      // The session is going down, so its stop decides what this message waits for. The sweep comes back.
+      if (row.backend === "acp" && ctx.acpBridge?.isEnding?.(row.session_id)) return 0
+      // Nobody is coming to read it: the operator ended this thread with the message still waiting.
+      // Sending it would reopen what they just closed, so it stays on screen as a failed send instead.
+      if (row.state === "archived" || row.archived === 1) {
+        failHeldDeliveries(ctx.storage, slug, "The session ended before this message was sent.")
+        heldSlugs.delete(slug)
+        ctx.transcriptChange.emit([slug])
+        ctx.board.refresh()
+        return 0
+      }
+    }
     if (!opts.force && ctx.tailer.get(slug)?.turn === "in-flight") return 0
     if (hasPendingPermissionChange(row)) return 0 // the sweep comes back for it
     const item = nextHeldRelease(items, { force: opts.force })
@@ -1713,6 +1799,18 @@ export function createRouter(ctx: AppContext) {
   ctx.bus?.subscribe((event) => {
     if (event.type !== "notify" || event.kind !== "turn-done" || !heldSlugs.has(event.slug)) return
     setTimeout(() => void releaseHeldFollowUps(event.slug), 0).unref?.()
+  })
+  // A message the ACP bridge was queueing on a session that stopped, or lost its agent, under it. The
+  // ledger holds it from here, durably: the release opens the session again and delivers it once the
+  // agent is back, or fails it visibly if the thread was put away.
+  ctx.acpBridge?.onFollowUpsStranded?.(({ threadSlug, sessionId, followUps }) => {
+    const row = ctx.storage.getSession(threadSlug)
+    if (!row || row.session_id !== sessionId) return
+    const sends = followUps.map((followUp) => ({ id: followUp.deliveryId ?? randomUUID(), text: followUp.text }))
+    if (holdStrandedDeliveries(ctx.storage, threadSlug, sends) === 0) return
+    watchHeld(threadSlug)
+    ctx.transcriptChange.emit([threadSlug])
+    ctx.board.refresh()
   })
 
   // The two checks both recurring-prompt writers owe, shared so the operator's path and the worker's
@@ -2059,6 +2157,8 @@ export function createRouter(ctx: AppContext) {
     if (!info.direct) return blocked("Only sub-agents this thread dispatched itself can be steered — this one belongs to another agent.")
     const row = ctx.storage.getSession(slug)
     if (!row) return blocked(null)
+    // A child is a session of its own, so a prompt reaches it directly, and its parent's turn has no say.
+    if (row.backend === "opencode") return info.taskId && ctx.opencodeBridge ? { sessionId: row.session_id } : blocked(null)
     if (row.backend === "codex") return blocked("Codex runs its sub-agents inside its own process and exposes no way to address one, so this child can't be steered from here.")
     if (row.claude_runtime !== "broker" || !ctx.claudeBroker) {
       return blocked("Steering a sub-agent needs the Claude session broker; this thread predates it.")
@@ -2149,6 +2249,11 @@ export function createRouter(ctx: AppContext) {
     if (!(shell ? shell.state === "running" && !shellGone : info.state === "running")) return blocked(null)
     const row = ctx.storage.getSession(slug)
     if (!row) return blocked(null)
+    if (row.backend === "opencode") {
+      if (shell) return blocked("OpenCode ends a shell through the agent that started it, so this one can't be stopped from here.")
+      if (!info.taskId || !ctx.opencodeBridge) return blocked(null)
+      return { sessionId: row.session_id, taskId: info.taskId, shell: false }
+    }
     if (row.backend === "codex") {
       return blocked(shell
         ? "Codex runs its background commands inside its own process and exposes no way to end one, so this shell can't be stopped from here."
@@ -2211,6 +2316,23 @@ export function createRouter(ctx: AppContext) {
     }
   }
 
+  // A native OpenCode row as the bridge names it.
+  function opencodeRefOf(row: SessionRow) {
+    const selected = opencodeModelRef(row.model)
+    return {
+      threadSlug: row.slug, sessionId: row.session_id, cwd: ctx.project.dir, opencodeSessionId: row.agent_session_id ?? "",
+      mode: opencodeModeOf(row.permission_mode), ...(selected ? { model: selected } : {}),
+    }
+  }
+
+  // A title set in Frizz is the session's title in the person's other OpenCode clients too. Only a failed
+  // courtesy, so it never fails the rename.
+  function syncOpencodeTitle(slug: string, title: string): void {
+    const row = ctx.storage.getSession(slug)
+    if (row?.backend !== "opencode" || !row.agent_session_id || !ctx.opencodeBridge) return
+    void ctx.opencodeBridge.rename(opencodeRefOf(row), title).catch(() => {})
+  }
+
   // STOP A SUBTREE, NOT A ROW — the shared body behind both stop paths (the drawer's button and the ×).
   //
   // `stopTask` ends exactly the task it names, and the registry behind it is flat and session-wide, so
@@ -2237,6 +2359,12 @@ export function createRouter(ctx: AppContext) {
     id: string,
     target: { sessionId: string; taskId: string; shell?: boolean },
   ): Promise<{ descendantsStopped: number; descendantsFailed: number; noticeFailed: string | null }> {
+    // A child session takes an interrupt, and OpenCode's foreground sub-agents go one level deep by default.
+    if (ctx.storage.getSession(slug)?.backend === "opencode") {
+      const stopped = await ctx.opencodeBridge?.stopChild(slug, target.sessionId, target.taskId)
+      if (!stopped) throw new Error("This sub-agent is no longer running, so it can't be stopped")
+      return { descendantsStopped: 0, descendantsFailed: 0, noticeFailed: null }
+    }
     const bridge = ctx.claudeBroker
     if (!bridge) throw new Error("Claude session broker is unavailable; cannot stop this sub-agent")
     // Read the shell's own name for itself while its row is still live — the notice below is delivered
@@ -2553,6 +2681,11 @@ export function createRouter(ctx: AppContext) {
         outcome: z.enum(["completed", "failed", "killed"]).optional(),
         startedAt: z.string().optional(),
         finishedAt: z.string().optional(),
+        // The model id the child's latest request ran on, off its own transcript (Claude only) — the
+        // drawer's readout names the edition from it, as the thread's composer names its worker's. The
+        // dispatch cell cannot always: an alias of another family than the parent's resolves inside the
+        // runtime, and a descendant's cell is its bare agent type (subagent-profile.ts).
+        model: z.string().optional(),
       }),
       handler: async ({ input }) => {
         const info = ctx.tailer.subAgent(input.slug, input.id)
@@ -2562,7 +2695,7 @@ export function createRouter(ctx: AppContext) {
         const lastActivityAt = info.outputFile ? readSubAgentLastActivityAt(info.outputFile) : undefined
         // A CODEX sub-agent is itself a codex thread, so its "output file" is a rollout in codex's own
         // schema — parse it with the codex reader or the drawer renders empty.
-        const read = info.outputFormat === "codex" ? readCodexTranscriptFile : readTranscriptFile
+        const read = info.outputFormat === "codex" ? readCodexTranscriptFile : info.outputFormat === "opencode" ? readOpencodeChildTranscript : readTranscriptFile
         const messages = mergeSubAgentSteers(
           info.outputFile ? read(info.outputFile) : [],
           ctx.storage.listSubAgentSteers(input.slug, input.id),
@@ -2581,6 +2714,7 @@ export function createRouter(ctx: AppContext) {
           ...(info.state === "done" && info.outcome ? { outcome: info.outcome } : {}),
           ...(info.startedAt ? { startedAt: info.startedAt } : {}),
           ...(info.state === "done" && info.finishedAt ? { finishedAt: info.finishedAt } : {}),
+          ...(usage?.model ? { model: usage.model } : {}),
         }
       },
     }),
@@ -2610,13 +2744,22 @@ export function createRouter(ctx: AppContext) {
           if (target.sessionId === null) {
             throw new Error(target.note ?? "This sub-agent is no longer running, so it can't be steered")
           }
+          // The words the child receives are the words journaled below — see deliverFollowUp.
+          const message = deliverableInputText(input.message)
+          if (!message.trim()) throw new Error("There is nothing to send")
+          // An OpenCode child's own transcript records the message when it is delivered, so there is
+          // nothing to journal.
+          if (ctx.storage.getSession(input.slug)?.backend === "opencode") {
+            const child = ctx.tailer.subAgent(input.slug, input.id)?.taskId
+            const sent = child && ctx.opencodeBridge ? await ctx.opencodeBridge.steerChild(input.slug, target.sessionId, child, message) : false
+            if (!sent) throw new Error("This sub-agent is no longer running, so it can't be steered")
+            ctx.board.refresh()
+            return { delivered: true }
+          }
           const bridge = ctx.claudeBroker
           if (!bridge) throw new Error("Claude session broker is unavailable; cannot steer this sub-agent")
           const deliveryId = input.deliveryId ?? randomUUID()
           const sentAtMs = Date.now()
-          // The words the child receives are the words journaled below — see deliverFollowUp.
-          const message = deliverableInputText(input.message)
-          if (!message.trim()) throw new Error("There is nothing to send")
           await bridge.steerSubAgent({
             threadSlug: input.slug,
             sessionId: target.sessionId,
@@ -3001,6 +3144,16 @@ export function createRouter(ctx: AppContext) {
           ctx.board.refresh()
           return { unqueued: true }
         }
+        if (row.backend === "opencode") {
+          const bridge = ctx.opencodeBridge
+          if (!bridge || !row.agent_session_id) throw new Error("The OpenCode bridge is unavailable; cannot unqueue this follow-up")
+          const cancelled = await bridge.cancelQueued(opencodeRefOf(row), input.deliveryId)
+          if (!cancelled) return { unqueued: false, reason: "That message has already reached the agent" }
+          cancelDelivery(ctx.storage, input.slug, input.deliveryId)
+          ctx.transcriptChange.emit([input.slug])
+          ctx.board.refresh()
+          return { unqueued: true }
+        }
         if (row.backend !== "claude" || row.claude_runtime !== "broker") {
           return { unqueued: false, reason: "This thread's runtime can't take a message back once it's been sent" }
         }
@@ -3066,6 +3219,9 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const row = currentOwnedSession(input.slug, input.sessionId)
         if (!row) throw new Error("This thread is no longer the session this tab is looking at")
+        // With no steer there is nothing "now" can mean: a released message would only wait in the
+        // bridge instead of the ledger. A tab from before the composer knew can still ask.
+        if (!backendFollowUps(row.backend).steer) return { interrupted: false, reason: "This agent reads a message when its turn ends, so it can't be sent sooner" }
         // The next message Frizz was HOLDING for the rest goes to the runtime first — the operator has just
         // said not to wait — and then the interrupt below pushes the runtime's queue through, it included.
         // One message, as a rest would hand over: the queue goes out one at a time (nextHeldRelease). On a
@@ -3074,6 +3230,20 @@ export function createRouter(ctx: AppContext) {
         const released = await releaseHeldFollowUps(input.slug, { force: true })
         if (input.releaseOnly) {
           return released > 0 ? { interrupted: false, released } : { interrupted: false, reason: "That message has already been sent" }
+        }
+        // OpenCode reads a steer at its next step boundary; send now interrupts the running step with
+        // `resume`, so the execution starts again with the message in it rather than ending.
+        if (row.backend === "opencode") {
+          const bridge = ctx.opencodeBridge
+          const pushed = bridge && row.agent_session_id ? await bridge.pushSteers(opencodeRefOf(row)) : "nothing"
+          if (pushed === "pushed") return released > 0 ? { interrupted: true, released } : { interrupted: true }
+          if (released > 0) return { interrupted: false, released }
+          return {
+            interrupted: false,
+            reason: pushed === "subagent"
+              ? "A sub-agent is running, and sending now would stop it. The message is read when it finishes"
+              : "This thread has no turn running, so nothing is ahead of that message",
+          }
         }
         if (row.backend !== "claude" || row.claude_runtime !== "broker") {
           return released > 0
@@ -3137,6 +3307,14 @@ export function createRouter(ctx: AppContext) {
           ctx.board.refresh()
           return
         }
+        if (row.backend === "opencode") {
+          const bridge = ctx.opencodeBridge
+          if (!bridge || !row.agent_session_id) throw new Error("The OpenCode bridge is unavailable; cannot compact this thread")
+          await bridge.compact(opencodeRefOf(row))
+          if (row.exited === 1) ctx.storage.setExitedIfCurrent(input.slug, row.session_id, row.runtime_generation ?? 0, false)
+          ctx.board.refresh()
+          return
+        }
         if (row.backend !== "claude" || row.claude_runtime !== "broker") {
           throw new Error("This thread's runtime can't be compacted from Frizz")
         }
@@ -3179,6 +3357,16 @@ export function createRouter(ctx: AppContext) {
         // BACKEND test stays: followUp branches the same way and migrates such a row on contact.
         const permRow = ctx.storage.getSession(input.slug)
         if (permRow?.backend === "acp") throw new Error("An ACP agent enforces its own permissions; Frizz has no mode to set on it")
+        if (permRow?.backend === "opencode") {
+          const bridge = ctx.opencodeBridge
+          if (!bridge || !permRow.agent_session_id) throw new Error("The OpenCode bridge is unavailable; cannot change this thread's permissions")
+          // Live on the session at once, which is why the row is written after, not before: a refusal
+          // from the service must leave the control reading what is really in force.
+          await bridge.setPermission(opencodeRefOf(permRow), opencodeModeOf(input.permissionMode))
+          ctx.storage.setPermissionMode(input.slug, input.permissionMode)
+          ctx.board.refresh()
+          return { effect: "applied" as const }
+        }
         if (permRow?.backend === "codex") {
           // Persist FIRST and unconditionally: the registry is the operator's stated intent, it is what
           // every later cold resume now carries (resumeSandboxOverride), and it must survive even if the
@@ -3272,7 +3460,9 @@ export function createRouter(ctx: AppContext) {
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new Error(`thread ${input.slug} has no session to ask for skills`)
         let skills: ThreadSkill[]
-        if (row.backend === "acp") {
+        if (row.backend === "opencode") {
+          skills = [] // OpenCode finds its own skills, and has no route that lists them for a session
+        } else if (row.backend === "acp") {
           skills = [] // an ACP agent's skills are its own; the protocol lists commands, not skills
         } else if (row.backend === "codex") {
           if (!isAppServerCodexRow(row) || !ctx.codexAppServer) {
@@ -3362,6 +3552,18 @@ export function createRouter(ctx: AppContext) {
           const live = ctx.acpBridge ? await ctx.acpBridge.setModel(input.slug, profRow.session_id, acpModelIdFromModel(input.model)) : { applied: false }
           ctx.board.refresh()
           return { effect: live.applied ? "applied" as const : "next-resume" as const }
+        }
+        if (profRow?.backend === "opencode") {
+          // The slug carries the model and its variant. A session takes a new model at once, and it is the
+          // next step that runs on it.
+          const selected = opencodeModelRef(input.model)
+          const bridge = ctx.opencodeBridge
+          if (!selected) throw new Error("Pick a model OpenCode lists")
+          if (!bridge || !profRow.agent_session_id) throw new Error("The OpenCode bridge is unavailable; cannot change this thread's model")
+          await bridge.setModel(opencodeRefOf(profRow), selected)
+          ctx.storage.setProfile(input.slug, input.model, "")
+          ctx.board.refresh()
+          return { effect: "applied" as const }
         }
         if (!input.effort) throw new Error(`effort is required for a ${profRow?.backend ?? "claude"} thread`)
         if (profRow?.backend === "codex") {
@@ -3470,9 +3672,13 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const row = currentOwnedSession(input.slug, input.sessionId)
         const result = await completeRegisteredThread(
-          ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge,
+          ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge,
         )
-        if (!result.needsConfirmation) ctx.board.refresh()
+        if (!result.needsConfirmation) {
+          ctx.board.refresh()
+          // Whatever an ACP thread was still holding fails now, not at the next sweep.
+          if (row.backend === "acp") void releaseHeldFollowUps(input.slug)
+        }
         return result
       },
     }),
@@ -4508,6 +4714,16 @@ export function createRouter(ctx: AppContext) {
     // the row out on the same reading), and it REPLACES a wall-clock snooze rather than stacking on one:
     // the two are one choice in one menu, and a clock left armed underneath would keep the thread parked
     // past the rest this one promises.
+    // One box on the human's to-do list. It sends nothing: the worker hears about it with the next send.
+    setHumanTodo: mutation({
+      input: SetHumanTodoInput,
+      handler: async ({ input }) => {
+        if (!ctx.storage.getSession(input.slug)) throw new Error("This thread no longer exists")
+        ctx.storage.setHumanTodo(input.slug, input.id, input.done, Date.now())
+        ctx.board.refresh()
+      },
+    }),
+
     snoozeAwaitingBackground: mutation({
       input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1) }).strict(),
       handler: async ({ input }) => {
@@ -4544,7 +4760,7 @@ export function createRouter(ctx: AppContext) {
         if (t && t.runtime !== "exited") {
           throw new Error("only a stalled or exited session can be dismissed — archive a live one instead")
         }
-        await stopAndForgetRegisteredRuntime(ctx.storage, row, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge)
+        await stopAndForgetRegisteredRuntime(ctx.storage, row, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge)
         ctx.tailer.forget(input.slug)
         ctx.board.refresh() // storage-only change — the removed row fans out as a delete delta on SSE
       },
@@ -4638,7 +4854,7 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         assertLegacyMutationAllowed(input.slug)
         if (input.status === "dismissed") {
-          const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge)
+          const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge)
           if (stopped.row && !ctx.storage.setExitedIfCurrent(
             stopped.row.slug,
             stopped.row.session_id,
@@ -4687,6 +4903,7 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         if (!ctx.storage.getSession(input.slug)) throw new Error(`thread ${input.slug} is not editable`)
         ctx.storage.setTitle(input.slug, input.title)
+        syncOpencodeTitle(input.slug, input.title)
         ctx.board.refresh() // storage-only overlay; publishes an immediate board delta to every client
       },
     }),
@@ -4747,9 +4964,30 @@ export function createRouter(ctx: AppContext) {
         const title = await bridge.renameSession({ threadSlug: input.slug, sessionId: row.session_id, description })
         if (!title?.trim()) throw new Error("Claude did not return a title for this thread")
         ctx.storage.setTitle(input.slug, title.trim())
+        syncOpencodeTitle(input.slug, title.trim())
         ctx.board.refresh()
         return { title: title.trim() }
       },
+    }),
+
+    // STOP THE TURN, and only the turn: the thread stays where it is, ready for the next message. OpenCode
+    // only so far, the one backend whose stop leaves nothing to reattach.
+    stopThreadTurn: mutation({
+      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1) }).strict(),
+      output: z.object({ interrupted: z.boolean() }),
+      handler: ({ input }) => audit(
+        "stopThreadTurn",
+        { project: thisProject, thread: input.slug },
+        async () => {
+          const row = currentOwnedSession(input.slug, input.sessionId)
+          if (!row) throw new Error("This thread is no longer the session this tab is looking at")
+          if (row.backend !== "opencode") throw new Error("This thread's runtime has no stop for a single turn")
+          if (!ctx.opencodeBridge) throw new Error("The OpenCode bridge is unavailable; cannot stop this turn")
+          const result = await ctx.opencodeBridge.interruptTurn(input.slug, row.session_id, row.agent_session_id, ctx.project.dir)
+          ctx.board.refresh()
+          return result
+        },
+      ),
     }),
 
     killAgent: mutation({
@@ -4759,7 +4997,7 @@ export function createRouter(ctx: AppContext) {
         // with turn/interrupt rather than a kill aimed at a registered runtime it never had. A stop that
         // could not be delivered throws out of here BEFORE setExitedIfCurrent, so the row is never
         // marked exited on the strength of a termination that did not happen.
-        const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge)
+        const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge)
         if (stopped.row && !ctx.storage.setExitedIfCurrent(
           stopped.row.slug,
           stopped.row.session_id,
@@ -4769,6 +5007,8 @@ export function createRouter(ctx: AppContext) {
           throw new Error("This thread resumed or was replaced while it was being stopped; the new worker was preserved")
         }
         ctx.board.refresh() // storage-only change — overlay is enough
+        // An ACP turn stopped here may have had messages waiting behind it: they go out on a new agent.
+        if (stopped.row?.backend === "acp") void releaseHeldFollowUps(input.slug)
       },
     }),
 
@@ -4789,9 +5029,31 @@ export function createRouter(ctx: AppContext) {
 
     // The ACP agents Frizz knows how to launch, with `available` for the ones on this machine's PATH.
     // The composer lists the available ones as `acp:<id>` models (plans/acp-backend.md, decision 9).
+    // What each runtime that waited for its first thread is doing while it comes down (runtime-deferral.ts).
+    // The composer polls this for as long as a dispatch call is out, and draws it in its toast.
+    runtimeDownloads: query({
+      output: z.object({ claude: z.string().optional(), codex: z.string().optional() }),
+      handler: async () => runtimeDownloads(),
+    }),
     acpAgents: query({
       output: z.array(AcpAgent),
-      handler: async () => listAcpAgents(ctx.getSettings().acpAgents).map((a) => ({ id: a.id, label: a.label, command: a.command, available: a.bin !== undefined })),
+      handler: async () => {
+        const native = await opencodeNativeAvailable().catch(() => ({ available: false }))
+        return listAcpAgents(ctx.getSettings().acpAgents).map((a) => ({
+          id: a.id, label: a.label, command: a.command, available: a.bin !== undefined,
+          // OpenCode at or above the minimum runs natively. Below it, it stays an ACP agent here.
+          ...(a.id === "opencode" && native.available ? { native: true } : {}),
+        }))
+      },
+    }),
+    // OpenCode's model list, from its running service. A separate query for the same reason as the one
+    // below, and more so: answering it starts the service, so only a picker showing OpenCode asks.
+    opencodeModels: query({
+      input: z.object({}).strict().optional(),
+      output: OpencodeModels,
+      handler: async () => ctx.opencodeBridge
+        ? ctx.opencodeBridge.models(ctx.project.dir)
+        : { available: false, models: [], error: "The OpenCode bridge is unavailable" },
     }),
     // The models one ACP agent advertises — read by opening a throwaway session in the project dir
     // (cached in the bridge), so it is a separate query the composer asks only once a model picker
@@ -5232,7 +5494,19 @@ export function createRouter(ctx: AppContext) {
 
     dispatchPreferencesGet: query({
       output: DispatchPreferences,
-      handler: async () => ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion)),
+      handler: async () => {
+        const prefs = ctx.getDispatchPreferences(readCodexModels(undefined, ctx.codexVersion))
+        if (ctx.hasSavedDispatchPreferences()) return prefs
+        const settings = ctx.getSettings()
+        const auth = await readAuthSnapshot({ claudeBin: ctx.claudeBin })
+        return withDefaultAgentProfile(prefs, defaultAgentProfile({
+          // A launch prefix may be what supplies a provider's credentials, so its "signed-out" says nothing.
+          claude: hasLaunchPrefix(settings, "claude") ? "unknown" : auth.claude,
+          codex: hasLaunchPrefix(settings, "codex") ? "unknown" : auth.codex,
+          opencodeInstalled: resolveAcpAgent("opencode", settings.acpAgents)?.bin !== undefined,
+          opencodeNative: (await opencodeNativeAvailable().catch(() => ({ available: false }))).available,
+        }))
+      },
     }),
 
     dispatchPreferenceSet: mutation({

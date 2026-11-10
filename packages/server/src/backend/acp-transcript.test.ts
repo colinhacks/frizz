@@ -121,3 +121,39 @@ test("acp-transcript: a tool-result carrying the target the call lacked names th
   ].join("\n") + "\n"
   assert.equal(projectAcpTranscript(raw2, "x")[0]!.tools[0]!.detail, "cat x")
 })
+
+test("acp-transcript: a provider error is its own message, so it stays drawn beside the turn's text", () => {
+  const raw = ([
+    { kind: "user-message", at: T(1), text: "go", synthetic: false },
+    { kind: "turn-start", at: T(1) },
+    { kind: "assistant-text", at: T(2), text: "Starting.", final: false, messageId: "m1" },
+    { kind: "provider-error", at: T(3), error: { message: "agent connection closed" } },
+    { kind: "turn-end", at: T(3), successful: false },
+    { kind: "user-message", at: T(5), text: "again", synthetic: false },
+  ] as AcpRecord[]).map((r) => JSON.stringify(r)).join("\n")
+  const msgs = projectAcpTranscript(raw)
+  assert.equal(msgs.length, 4)
+  assert.equal(msgs[1]!.text, "Starting.")
+  assert.equal(msgs[1]!.providerError, undefined)
+  assert.equal(msgs[2]!.kind, "event", "the Codex projector's shape, which the web draws whatever the board says")
+  assert.equal(msgs[2]!.text, "agent connection closed")
+  assert.equal(msgs[2]!.providerError?.message, "agent connection closed")
+})
+
+test("acp-transcript: a later input replaces a path detail with the command, and an unknown call is ignored", () => {
+  const raw = ([
+    { kind: "tool-call", at: T(1), id: "c1", name: "shell", input: { cwd: "/tmp/p" }, acp: { kind: "execute", title: "shell", locations: ["/tmp/p"] } },
+    { kind: "acp-tool-input", at: T(2), id: "gone", input: { command: "nope" } },
+    { kind: "acp-tool-input", at: T(2), id: "c1", input: { command: "sleep 1", cwd: "/tmp/p" }, acp: { title: "sleep 1", locations: ["/tmp/p"] } },
+    { kind: "tool-call", at: T(3), id: "c2", name: "subagent", input: {}, acp: { kind: "think", title: "subagent", locations: [] } },
+    { kind: "acp-tool-input", at: T(4), id: "c2", input: { agent: "general", prompt: "read it" } },
+  ] as AcpRecord[]).map((r) => JSON.stringify(r)).join("\n")
+  const [msg] = projectAcpTranscript(raw)
+  const [shell, sub] = msg!.tools
+  assert.equal(shell!.detail, "sleep 1")
+  assert.equal(shell!.command, "sleep 1")
+  assert.equal(shell!.input, undefined)
+  assert.equal(sub!.command, undefined)
+  assert.match(sub!.input!, /read it/)
+  assert.deepEqual(parseAcpLine(JSON.stringify({ kind: "acp-tool-input", at: T(2), id: "c1", input: {} })), [], "the fold never sees it")
+})

@@ -28,18 +28,19 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleSlash, CircleX, Clock, GitMerge, GitPullRequestClosed, Hourglass, ListTodo, Radio, RefreshCw, TerminalSquare, X } from "lucide-react"
 import { githubReadingStale, shortCommit, type AwaitingHint, type GithubIssueStatus, type GithubWatchStatus, type ThreadView, type ThreadWatchView } from "@frizz/shared"
-import { awaitingFenceTitle, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingStepItems, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
 import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, CHILD_THREAD_WAITING, CHILD_THREAD_WAITING_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
 import { childThreadStartedAt, childThreadState } from "../lib/childThreads.ts"
+import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
 import { useChildThreads } from "../hooks.ts"
 import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { compactAge } from "../lib/activityTime.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
-import { restingOnSteps } from "../lib/stepsAnswer.ts"
+import { restingOnSteps, type StepsReply } from "../lib/stepsAnswer.ts"
 import { openThread, pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
@@ -47,7 +48,7 @@ import { SHELL_WATCHED_NOTE } from "../lib/threadOps.ts"
 import { ICON_LABEL_NUDGE } from "../lib/iconAlign.ts"
 import { PRIMER, PRIMER_DANGER_LINK } from "../lib/primer.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
-import { StepsComplete, StepsCompleted, StepsList } from "./AwaitingSteps.tsx"
+import { LiveSteps, StepsList } from "./AwaitingSteps.tsx"
 import { CARD_ACTION_EXPLAINER, CardActions, CARD_BODY, CARD_LINK, CARD_PRIMARY_ACTION, QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
 
 // Name what the thread is ACTUALLY waiting on. Three real cases, and the sentence has to be true in all
@@ -964,11 +965,11 @@ export function liveAgents(thread: Pick<ThreadView, "subAgents">) {
 
 export function AgentRow({ agent, slug, now, onDismiss }: { agent: ThreadView["subAgents"][number]; slug: string; now: number; onDismiss?: () => void }) {
   const elapsed = compactElapsedSince(agent.startedAt, now)
-  // The profile without its namespace: `frizz:opus-high` is how it is dispatched, `opus-high` is how the
-  // maintainer says it. It lives in the TOOLTIP, not the status (maintainer 2026-10-08: "I don't think
-  // the model and effort is very important") — the status track is width the title needs, and the
-  // elapsed time is the one reading on this row that changes.
-  const profile = agent.subagentType?.replace(/^frizz:/, "")
+  // The profile in the words every other surface names a child's runtime with ("opus 5.5 › high", edition
+  // and all — lib/subAgentProfile.ts). It lives in the TOOLTIP, not the status (maintainer 2026-10-08: "I
+  // don't think the model and effort is very important") — the status track is width the title needs,
+  // and the elapsed time is the one reading on this row that changes.
+  const profile = subAgentProfileCell(agent.subagentType)
   // STALE reaches the fullscreen rail only (this card's set is `liveAgents`): a child whose completion
   // never arrived and whose transcript has gone quiet past its window (tailer `quietPastWindow`). It does
   // not spin. It wears the flat dot every other surface gives a stale child, in a box the size of the
@@ -1339,9 +1340,9 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
   // a snooze does, and puts it back if the send fails. Queue-only, like the pair above.
   onReplied?: () => void
   onReplyFailed?: () => void
-  /** A SETTLED steps card whose rest the human answered with its box (lib/stepsAnswer
-   *  stepsDoneReplies): the box stays, ticked and inert, as the record that the steps were done. */
-  stepsDone?: boolean
+  /** A SETTLED steps card whose rest the human answered with a report (lib/stepsAnswer
+   *  stepsDoneReplies): what that reply said was done, drawn ticked and inert as the record of it. */
+  stepsDone?: StepsReply | null
 }) {
   // The thread's live work, as the rows and the heading read it. A card with no owning thread has none
   // of it — no rows, no shell-only heading — rather than a branch at every use below.
@@ -1366,8 +1367,8 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
   // Live-ticking, so a shell's "running · 4m" keeps counting while the board sends nothing (a quiet
   // child pushes no delta). One clock read for the whole card rather than one per row.
   const now = useNowMs()
-  // A STEPS CARD LISTS NO WORK — no rows, no PR refs, no sentence counting them — so its box sits right
-  // under the steps it confirms (maintainer 2026-10-15: "you don't need to show all the other shit that
+  // A STEPS CARD LISTS NO WORK — no rows, no PR refs, no sentence counting them — so nothing stands
+  // between the reader and the checklist (maintainer 2026-10-15: "you don't need to show all the other shit that
   // it's awaiting. It's already visible above the prompt box … All that really matters is what the human
   // is supposed to do next. it's also weird that the to-do item is separated from the 'I have completed
   // this' checkbox by a bunch of shit"). The line of counts over the prompt box carries every kind these
@@ -1445,7 +1446,9 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
         // its way (AWAITING_NO_PROSE) — and the sentence below is what it says instead.
         : groups.length === 0 && !hasUnrowedWork(work) && steps.length === 0 ? <p className={CARD_BODY}>{AWAITING_NO_PROSE}</p>
         : null}
-      {steps.length > 0 && <StepsList steps={steps} />}
+      {steps.length > 0 && (stepsLive
+        ? <LiveSteps thread={thread} onReplied={onReplied} onReplyFailed={onReplyFailed} />
+        : <StepsList steps={awaitingStepItems(hints)} done={stepsDone} />)}
       {unrowed.length > 0 && (
         // A WATCHED PR THE TABLE DOES NOT ROW goes here, under the prose, whether there is one or several.
         // ONE used to ride the head's far right, in the slot the GitHub wake card's ref takes, and there it
@@ -1506,14 +1509,9 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
           the control reads as chrome under the content rather than as one more row of it. This card
           introduced the band on 2026-08-31; every card with a verb wears it since 2026-09-30. It draws
           on EVERY surface the card is live on; a thread with no snooze verb draws the card without it.
-          A STEPS card ends on its box instead — the card's answer, last like a verb — and wears the band
-          only for its own Send, where no prompt box sends the box for it (AwaitingSteps). Once its rest
-          is over the box stays only where the human's reply was the box's, ticked (`stepsDone`). */}
-      {stepsLive ? (
-        <StepsComplete slug={thread.id} steps={steps} onReplied={onReplied} onReplyFailed={onReplyFailed} />
-      ) : steps.length > 0 && stepsDone ? (
-        <StepsCompleted />
-      ) : snoozable ? (
+          A STEPS card ends on its checklist instead, and draws its own Send where no prompt box sends it
+          (AwaitingSteps). */}
+      {snoozable ? (
         <CardActions data-awaiting-snooze>
           <AwaitingSnooze thread={thread} onSnooze={onSnooze} onSnoozeFailed={onSnoozeFailed} />
         </CardActions>

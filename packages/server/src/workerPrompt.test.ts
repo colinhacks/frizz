@@ -203,7 +203,9 @@ test("the contract teaches steps: as the wait on a human's act, and routes to it
     assert.match(c, /do everything up to the first one, hand over only that, and do what follows yourself when their reply wakes you/)
     assert.match(c, /`npm login --auth-type=web` is running in this thread and waiting on that approval/)
     assert.doesNotMatch(prompt, /steps:\n(?: {4}- [^\n]*\n)*? {4}- Run `npm login/)
-    assert.match(c, /card, headed \*\*Awaiting human\*\*, shows the steps over one checkbox, \*\*I have completed this\*\*; ticked and sent, it comes back to you as their reply, `Done`/)
+    assert.match(c, /FRIZZ KEEPS ONE TO-DO LIST FOR THE HUMAN PER THREAD, AND EVERY `steps:` LANDS ON IT/)
+    assert.match(c, /an unticked step your newest `steps:` leaves out drops off the list, so each `steps:` names everything still owed/)
+    assert.match(c, /Everything ticked and sent comes back to you as their reply, `Done`, the same as anything they type; only some of it comes back as `Done 1 of 3:`/)
     // A decision is still a question; an act is steps — at every place the two used to blur.
     assert.match(c, /A DECISION you need from them is a question, never an `awaiting` fence/)
     assert.match(c, /WAITING ON ONE TO ACT IS `steps:`/)

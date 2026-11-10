@@ -173,3 +173,37 @@ test("the Claude rows take their edition labels from the runtime-resolved catalo
   assert.equal(groups[0]!.options.find((option) => option.value === "opus")?.label, "Opus 5.5")
   assert.equal(resolveDispatchPreferences({ ...preferences, claude: { model: "opus", effort: "high", permissionMode: "acceptEdits" } }, models).modelAvailable, true)
 })
+
+test("the group a signed-out machine leads with goes first, and one agent is its own heading", () => {
+  const opencode = { id: "opencode", label: "OpenCode", command: "opencode", available: true }
+  const led = dispatchProfileGroups(models, [opencode], [], "acp")
+  assert.deepEqual(led.map((group) => group.id), ["acp", "claude", "codex"])
+  assert.equal(led[0]?.label, "OpenCode")
+  assert.deepEqual(dispatchProfileGroups(models, [opencode]).map((group) => group.id), ["claude", "codex", "acp"])
+  // No such group on this machine: the order is untouched rather than the menu emptied.
+  assert.deepEqual(dispatchProfileGroups(models, [], [], "acp").map((group) => group.id), ["claude", "codex"])
+  const two = dispatchProfileGroups(models, [opencode, { ...opencode, id: "kilo", label: "Kilo" }])
+  assert.equal(two.at(-1)?.label, "ACP agents")
+})
+
+test("only the native OpenCode group is marked experimental", () => {
+  const agent = { id: "opencode", label: "OpenCode", command: "opencode", args: ["acp"], available: true }
+  const native = dispatchProfileGroups(models, [{ ...agent, native: true }])
+  assert.equal(native.find((group) => group.id === "opencode")?.experimental, true)
+  assert.deepEqual(native.filter((group) => group.experimental).map((group) => group.id), ["opencode"])
+  assert.deepEqual(dispatchProfileGroups(models, [agent]).filter((group) => group.experimental), [])
+})
+
+test("a native OpenCode profile is ready to send: no effort axis, so nothing to be unavailable", () => {
+  const agents = [{ id: "opencode", label: "OpenCode", command: "opencode", args: ["acp"], available: true, native: true }]
+  for (const model of ["opencode:", "opencode:opencode/glm-5.3-flash-free#high"]) {
+    const resolved = resolveDispatchPreferences({ ...preferences, backend: "opencode", opencode: { model } }, models, agents)
+    assert.equal(resolved.backend, "opencode")
+    assert.equal(resolved.effort, "")
+    // The box's model dropdown reads this: without it, a saved model is sent while the box says "Default".
+    assert.equal(resolved.opencodeModel, model)
+    assert.equal(resolved.modelAvailable, true, model)
+    // The new-thread box refuses a send while this is false ("Saved reasoning level is unavailable").
+    assert.equal(resolved.effortAvailable, true, model)
+  }
+})

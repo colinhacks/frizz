@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { boardQueuedThread, type ThreadView } from "@frizz/shared"
-import { unreadReport } from "../groups.ts"
 import { consoleQueue, holdsCardOnConsole } from "./consoleBoard.ts"
 import { nextThreadNeedingYou } from "./mobileTriage.ts"
 
@@ -33,17 +32,6 @@ test("By status reads the Console's pin alone, and By project lifts nothing, so 
   assert.equal(holdsCardOnConsole(boardPinned, "project"), true, "By project has no shelf")
   assert.equal(holdsCardOnConsole(consolePinned, "project"), true, "By project has no shelf")
   assert.deepEqual(consoleQueue([boardPinned, consolePinned, consolePinnedAsk], "fifo", "status").map((t) => t.id).sort(), ["board", "console ask"])
-})
-
-test("a report is unread until the thread has been opened since it landed", () => {
-  const after = "2026-11-06T10:00:01.000Z"
-  const before = "2026-11-06T09:59:59.000Z"
-  const landed = { ...report, lastAssistantAt: at }
-  assert.equal(unreadReport(rest("never opened", landed)), true)
-  assert.equal(unreadReport(rest("opened before it landed", { ...landed, seenAt: before })), true)
-  assert.equal(unreadReport(rest("opened since", { ...landed, seenAt: after })), false)
-  assert.equal(unreadReport(rest("an ask has its card", { lastAssistantAt: at })), false)
-  assert.equal(unreadReport(rest("a steer just left", { ...landed, needsYou: false })), false, "the optimistic send clears it at once")
 })
 
 test("the phone's Done loop passes over a pinned thread's report, and lands on its ask", () => {

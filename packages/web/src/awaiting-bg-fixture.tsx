@@ -7,6 +7,7 @@ import { GithubHovercards } from "./components/GithubHovercards.tsx"
 import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
+import { fixtureReopenHumanTodo, fixtureSetHumanTodo, fixtureTodos } from "./human-todos-fixture-stub.ts"
 import "./styles.css"
 
 // Browser QA for the resting card ON THE QUEUE: a thread that came to rest while its OWN background work
@@ -47,9 +48,26 @@ const wantAgents = wantAll || params.get("agents") === "1"
 const wantWatch = wantAll || watchMode !== null
 // ?steps=1 — STEPS FOR THE HUMAN (2026-10-03): a fence handing the reader things only they can do, with
 // no live work beside it — the shape a worker parks on when it needs a sign-in. ?steps=titled adds the
-// worker's own heading. The "I have completed this" box draws because the thread rests on these steps, and
+// worker's own heading, and ?steps=earlier a list with two steps finished at earlier rests. The boxes are live because the thread rests on these steps, and
 // the card's prompt box is what sends it.
 const stepsMode = params.get("steps")
+const LATEST_STEP = "Publish the release from the [GitHub releases page](https://github.com/acme/app/releases)."
+// ?steps=body — steps with Markdown bodies under their titles (2026-11-09).
+const BODY_STEPS = [
+  {
+    text: "Sign in to npm with the **acme-bot** account",
+    body: "Run this in a terminal on this machine, then approve the browser prompt:\n\n```sh\nnpm login --auth-type=web\n```\n\n- The prompt opens in your default browser.\n- A code it refuses has expired: take the next one.",
+  },
+  { text: "Publish the [draft release](https://github.com/acme/app/releases)", body: "The **Publish release** button is at the bottom of the draft." },
+  { text: "Reply once `npm whoami` prints `acme-bot`" },
+]
+const LONG_STEPS = [
+  "Open [Cloudflare → R2 → API tokens](https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/r2/api-tokens). If the list shows only names, click a token to see its Access Key ID.",
+  "Delete the token with Access Key ID `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (the old `acme-uploads-prod` key).",
+  "Delete the token with Access Key ID `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` (the old `acme-private-prod` key).",
+  "Delete the token with Access Key ID `cccccccccccccccccccccccccccccccc` (the old `acme-uploads-dev` key).",
+  "Keep the two new tokens whose names end in `-2026-10-12`, and leave every other token alone. Tick the box when the three are gone.",
+]
 const wantSteps = stepsMode !== null
 // Shells are the DEFAULT shape; ?agents=1 swaps them for sub-agents, and ?watch=1 for a lone watcher.
 const wantShells = wantAll || (!wantSteps && !wantAgents && watchMode !== "1" && watchMode !== "one")
@@ -183,11 +201,12 @@ const thread = {
         // opening on a dashboard link, three carrying 32-character ids that wrap. The ids are made up.
         ...(stepsMode === "long" ? [
           { kind: "title", value: "Delete the three leaked R2 tokens" },
-          { kind: "step", value: "Open [Cloudflare → R2 → API tokens](https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/r2/api-tokens). If the list shows only names, click a token to see its Access Key ID." },
-          { kind: "step", value: "Delete the token with Access Key ID `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (the old `acme-uploads-prod` key)." },
-          { kind: "step", value: "Delete the token with Access Key ID `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` (the old `acme-private-prod` key)." },
-          { kind: "step", value: "Delete the token with Access Key ID `cccccccccccccccccccccccccccccccc` (the old `acme-uploads-dev` key)." },
-          { kind: "step", value: "Keep the two new tokens whose names end in `-2026-10-12`, and leave every other token alone. Tick the box when the three are gone." },
+          ...LONG_STEPS.map((value) => ({ kind: "step", value })),
+        ] : stepsMode === "body" ? [
+          { kind: "title", value: "Sign in to npm so the acme 4.2.0 release can publish" },
+          ...BODY_STEPS.map((step) => ({ kind: "step", value: step.text, ...(step.body ? { body: step.body } : {}) })),
+        ] : stepsMode === "earlier" ? [
+          { kind: "step", value: LATEST_STEP },
         ] : [
           { kind: "step", value: "Run `npm login --auth-type=web` in a terminal on this machine." },
           { kind: "step", value: "Approve the browser prompt with the **acme-bot** account." },
@@ -195,6 +214,17 @@ const thread = {
         ]),
       ],
     },
+    humanTodos: stepsMode === "earlier"
+      ? [
+          { id: "step-a", text: "Run `npm login --auth-type=web` in a terminal on this machine.", done: true, staged: false },
+          { id: "step-b", text: "Approve the browser prompt with the **acme-bot** account.", done: true, staged: false },
+          { id: "step-0", text: LATEST_STEP, done: false, staged: false },
+        ]
+      : stepsMode === "long"
+      ? fixtureTodos(LONG_STEPS)
+      : stepsMode === "body"
+      ? BODY_STEPS.map((step, i) => ({ id: `step-${i}`, ...step, done: false, staged: false }))
+      : fixtureTodos(["Run `npm login --auth-type=web` in a terminal on this machine.", "Approve the browser prompt with the **acme-bot** account.", "Reply here once `npm whoami` prints `acme-bot`."]),
   } : declaredTitle === null ? {} : {
     lastFence: {
       kind: "awaiting",
@@ -227,6 +257,8 @@ const HOVER_CARDS: GithubRefCard[] = [
   },
 ]
 
+;(window as unknown as { __reopenHumanTodo: (id: string) => void }).__reopenHumanTodo = (id) => fixtureReopenHumanTodo(SLUG, id)
+
 const originalFetch = window.fetch
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === "string" ? input : (input as Request).url ?? input.toString(), location.origin)
@@ -248,6 +280,12 @@ window.fetch = async (input, init) => {
   // the exact message, so the e2e can read the words the worker would receive.
   // The reply starts the worker's turn in production, which takes the thread out of the queue; model
   // that by pruning it, so the queue's 8s un-hide guard does not bring the card back.
+  if (url.pathname === "/_frizz/rpc/setHumanTodo") {
+    const body = JSON.parse(String(init?.body ?? "{}"))
+    window.dispatchEvent(new CustomEvent("fixture-rpc", { detail: { rpc: "setHumanTodo", body } }))
+    fixtureSetHumanTodo(body)
+    return new Response(JSON.stringify({ result: null }), { headers: { "content-type": "application/json" } })
+  }
   if (url.pathname === "/_frizz/rpc/followUp") {
     window.dispatchEvent(new CustomEvent("fixture-rpc", { detail: { rpc: "followUp", body: JSON.parse(String(init?.body ?? "{}")) } }))
     if (store.board) store.board = { ...store.board, threads: store.board.threads.filter((t) => t.id !== SLUG) } as BoardSnapshot

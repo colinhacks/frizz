@@ -85,7 +85,7 @@ export interface TailStateCache {
 // files, which `index.ts` only re-exports — a parser fix there changed no byte this digest read. The ACP
 // fold is listed for the same reason the other two backends are.
 const FOLD_SOURCES = [
-  "transcript.ts", "tailer.ts", "backend/claude.ts", "backend/codex.ts", "backend/acp-transcript.ts",
+  "transcript.ts", "tailer.ts", "human-todos.ts", "backend/claude.ts", "backend/codex.ts", "backend/acp-transcript.ts",
   "../../shared/src/index.ts", "../../shared/src/question-fence.ts", "../../shared/src/code-fences.ts",
 ]
 

@@ -1,6 +1,7 @@
 import { HelpCircle } from "lucide-react"
 import type { ReactNode } from "react"
 import { Tooltip } from "./Tooltip.tsx"
+import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 
 // A settings label with an instant tooltip on a small HelpCircle — keeps explanatory prose OUT of the
 // form body (one control per line reads clean when the "why" lives in the tooltip). Shared by the
@@ -14,21 +15,9 @@ export function LabelWithHelp({ label, help, experimental = false }: { label: st
           <HelpCircle size={12} />
         </button>
       </Tooltip>
+      {/* After the help glyph, because in the Settings sheet a help glyph further right than this runs into the
+          tooltip's clamp at the viewport's edge, and the tooltip opens over the glyph it explains. */}
       {experimental ? <ExperimentalChip /> : null}
-    </span>
-  )
-}
-
-// The chip is copy, not part of the label's small-caps treatment, so it resets to sentence case. Neutral
-// on purpose: amber in this app means something needs you, and an experiment that is off needs nothing.
-// It follows the help glyph, because in the Settings sheet a help glyph further right than this runs into the
-// tooltip's clamp at the viewport's edge, and the tooltip opens over the glyph it explains. pb-px on a line 1px
-// shorter lifts the word by a whole pixel, because a text baseline snaps to one: its capitals land 0.52px above
-// the pill's centre, which the descender in "Experimental" balances, where 0.48px below read visibly low.
-function ExperimentalChip() {
-  return (
-    <span data-experimental-chip className="rounded-full border border-border-strong px-1.5 pb-px text-[10px] font-medium normal-case leading-[13px] tracking-normal text-muted">
-      Experimental
     </span>
   )
 }

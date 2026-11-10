@@ -8,13 +8,11 @@ import { childThreadState } from "../lib/childThreads.ts"
 import { prefs } from "../lib/prefs.ts"
 import {
   displayTitle,
-  isPinned,
   lastActiveLabelAt,
   needsAction,
   restIsWorking,
   sectionThreads,
   sessionIndicatorKind,
-  unreadReport,
 } from "../groups.ts"
 import { ageSpan, spanUntil } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
@@ -339,15 +337,8 @@ function MobileThreadRow({
         onClick={() => openThread(t.id)}
         // No callout, no text selection: a hold on a row is the actions gesture, not a copy.
         style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
-        className="relative flex w-full items-start gap-3 px-4 py-[11px] text-left active:bg-hover"
+        className="flex w-full items-start gap-3 px-4 py-[11px] text-left active:bg-hover"
       >
-        {/* A pinned thread's unread report (groups.ts unreadReport), in the gutter as on the rail. It has no
-            card on the desktop, and on the phone no row of its own to say so but this one. */}
-        {isPinned(t) && unreadReport(t) && (
-          <span data-mobile-row-unread className="absolute left-[5px] top-[18px] size-[7px] rounded-full bg-accent">
-            <span className="sr-only">Unread report</span>
-          </span>
-        )}
         <span className="flex h-[21px] w-[18px] shrink-0 items-center justify-center">
           <MobileThreadMark t={t} />
         </span>

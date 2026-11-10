@@ -7,12 +7,12 @@ import { showToast } from "../store.ts"
 import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
-import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
+import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
-import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
-import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z } from "../lib/overlaySurface.ts"
+import { dispatchProfileGroups, dispatchProfileUpdate, dispatchProfileValue } from "../lib/dispatchPreferences.ts"
+import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z, OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z } from "../lib/overlaySurface.ts"
 import { buildGithubBatchInput, dispatchProfileError } from "../lib/githubDispatch.ts"
 import { GITHUB_PICKER_TITLE, useGithubStatus } from "./GithubTrigger.tsx"
 import { GithubSignInSheet } from "./GithubSignInSheet.tsx"
@@ -20,7 +20,6 @@ import { applyRowSelection } from "../lib/rowRangeSelection.ts"
 import { githubLabelColors } from "../lib/githubLabelColors.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { compactAge } from "../lib/activityTime.ts"
-import { AGENT_MARKS } from "../lib/iconRhythm.ts"
 
 type Kind = "issues" | "prs"
 type Sort = "recent" | "reactions"
@@ -36,9 +35,9 @@ const PREFETCH_MARGIN = "0px 0px 360px 0px"
 const SEARCH_WINDOW = 1000
 
 // THE GitHub picker: a wider anywhere-modal (reusing NewThreadModal's Overlay) that lists the repo's
-// Issues or PRs (tabs), sortable by recency or reactions, with multi-select checkboxes and the
-// ordinary model/effort selector in its bottom-left corner. "Dispatch N thread(s)" spins up one frizz
-// thread per checked item
+// Issues or PRs (tabs), sortable by recency or reactions, with multi-select checkboxes, and the
+// ordinary model/effort selector in the settings panel behind its footer gear. "Dispatch N thread(s)"
+// spins up one frizz thread per checked item
 // (each ISSUE an investigate/reproduce/recommend thread, each PR a review thread) via
 // rpc.githubDispatchBatch — the server hydrates + templates each fresh, reusing the normal dispatch
 // flow; the new sidebar rows paint via the board SSE. The trigger that opens this is auth-gated, so
@@ -59,8 +58,8 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   // below writes it, so choosing here also becomes the composer's next default (one profile, not a
   // picker-local copy that silently diverges). A Codex cache refresh can invalidate the saved pair
   // while the picker is open; the final revalidation below then fails closed rather than downgrading.
-  const { resolved, codexList, claudeList, acpList, loadError, saveProfile } = useDispatchProfile()
-  // A settings write still in flight — the triage prompt just edited in the header popover, a
+  const { resolved, codexList, claudeList, acpList, firstGroup, opencode, loadError, saveProfile } = useDispatchProfile()
+  // A settings write still in flight — the triage prompt just edited in the settings panel, a
   // compaction window picked in the selector — must land before a batch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
 
@@ -185,7 +184,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   const n = selected.size
   // Stable identity: ProfileGridSelector memoizes off `groups`, and this modal re-renders on every
   // row toggle.
-  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList), [codexList, acpList, claudeList])
+  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode), [codexList, acpList, claudeList, firstGroup, opencode])
   const acpAgent = resolved?.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
   const profile: DispatchProfileSnapshot | undefined = resolved
     ? { backend: resolved.backend, model: resolved.model, effort: (resolved.effort || undefined) as DispatchProfileSnapshot["effort"] }
@@ -215,7 +214,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   return (
     <Overlay onClose={onClose}>
       <div
-        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50"
+        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel px-5 pb-3 pt-5 shadow-2xl shadow-shadow-ink/50"
         onKeyDownCapture={(e) => {
           if (e.key === "Escape") {
             e.stopPropagation()
@@ -228,13 +227,17 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             is the picker's one way OUT to the repo.
             The title says what the picker DOES. It read "Investigate this issue and make
             recommendations" until 2026-10-26 — the lead line of the prompt each issue thread is sent,
-            heading a list of many issues and PRs (maintainer: "this title doesnt make sense"). */}
-        {/* `items-baseline`, not `items-center`: the two glyphs on this row (the GitHub mark and the
-            link's arrow) are each put on the title's CAP BAND by a browser-computed translate — half
-            the glyph's box minus half the resolved cap height — which needs a shared baseline to work
-            from (measured 2026-09-19: 0.0px residual in both type families). */}
-        <h2 className="mb-4 flex items-baseline gap-2 text-[14px] font-medium">
-          <Github size={15} aria-hidden="true" className="shrink-0 self-baseline translate-y-[calc(7.5px_-_0.5cap)] text-muted" />
+            heading a list of many issues and PRs (maintainer: "this title doesnt make sense").
+            The rule under it, and its twin above the footer, run edge to edge in the tone of the app's
+            other panel rules (maintainer 2026-11-09: "a little more Frizz-like"): a heading, a body, and
+            what the body starts. */}
+        {/* `items-baseline`, not `items-center`: the link's two glyphs are each put on its CAP BAND by a
+            browser-computed translate — half the glyph's box minus half the resolved cap height — which
+            needs a shared baseline to work from (measured 2026-09-19: 0.0px residual in both type
+            families). `-mt-1.5` centres the title's INK between the modal's top edge and the rule, 21.1px
+            above its capitals and 21.8px below its baseline: the line box's own leading stood it 27.1px
+            down on the modal's `p-5` alone. */}
+        <h2 className="-mx-5 -mt-1.5 mb-4 flex items-baseline gap-2 border-b border-border/60 px-5 pb-4 text-[14px] font-medium">
           <span className="min-w-0 truncate">{GITHUB_PICKER_TITLE}</span>
           {status.data?.nameWithOwner && (
             <span className="ml-auto flex shrink-0 items-baseline">
@@ -254,7 +257,8 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             ]}
           />
           <div className="flex items-center gap-2">
-            <span className="petite-caps text-[11px] text-muted-70">Sort</span>
+            {/* Gone on a narrow screen, where the two controls and this label overran the row by 7px at 390. */}
+            <span className="petite-caps text-[11px] text-muted-70 max-sm:hidden">Sort</span>
             <Segmented
               value={sort}
               onChange={switchSort}
@@ -323,19 +327,26 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* The running selection under the list. Checked rows can be scrolled far out of view, so this is
-            the only place the full count is always visible. */}
-        {pages && (
-          // whitespace-nowrap throughout: the running-selection cluster holds its size, and only the repo
-          // total (the least actionable number here) truncates when the modal is squeezed.
-          <div className="mt-2.5 flex items-center whitespace-nowrap text-[11.5px] text-muted-60">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate tabular-nums">
+        {/* Footer: the running selection on the left, and on the right the gear and the Start button. One
+            row: the totals line, the model chip and the button were three bands of chrome under the list
+            (maintainer 2026-11-09: "It still feels kind of insane. Let's just combine the model and effort
+            selector inside of the settings popover and just have a single settings icon immediately to
+            the left of the Start Investigation button").
+            12px above and below, like the app's other panel footers. The bottom 12 is the modal's own
+            `pb-3`, so a model error under this row keeps its margin.
+            whitespace-nowrap: the running-selection cluster holds its size, and only the repo total (the
+            least actionable number here, and the one that goes on a phone once anything is checked)
+            gives way. Checked rows can be scrolled far out of view, so this is the only place the full
+            count is always visible. */}
+        <div className="-mx-5 mt-3 flex items-center gap-3 border-t border-border/60 px-5 pt-3">
+          {pages && (
+            <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-60">
+              <span className={`truncate tabular-nums ${n > 0 ? "max-sm:hidden" : ""}`}>
                 {total.toLocaleString()} open {kind === "issues" ? (total === 1 ? "issue" : "issues") : total === 1 ? "pull request" : "pull requests"}
               </span>
               {n > 0 && (
                 <span className="flex shrink-0 items-center gap-1.5">
-                  <span className="text-muted-30">·</span>
+                  <span className="text-muted-30 max-sm:hidden">·</span>
                   <span className="tabular-nums text-fg/70">{n} selected</span>
                   <button
                     onClick={clearSelection}
@@ -347,68 +358,52 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 </span>
               )}
             </div>
-          </div>
-        )}
-
-        {/* Footer: what every thread this batch starts will be, bottom-left, and the act that starts
-            them, alone on the right — the prompt box's own layout. The selector is the SAME control the
-            prompt box carries and writes the same durable preference; its menu opens UPWARD
-            (side="top"), since the footer sits on the modal's bottom edge. */}
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-x-1.5">
-            <PromptControlGroup>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {/* What every thread this batch starts will be: the model and effort, and the prompt. The
+                selector is the SAME control the prompt box carries and writes the same durable preference.
+                The picker keeps its state, because the batch dispatches with it; only the control moved. */}
+            <GithubPromptPopover>
               <ProfileGridSelector
                 groups={profileGroups}
                 agentSettings
-                value={resolved ? { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort } : undefined}
-                onValueChange={(selection) => saveProfile({
-                  field: "profile",
-                  backend: selection.provider as DispatchProfileSnapshot["backend"],
-                  model: selection.model,
-                  effort: selection.effort as DispatchInput["effort"] & string,
-                })}
+                value={resolved ? dispatchProfileValue(resolved) : undefined}
+                onValueChange={(selection) => saveProfile(dispatchProfileUpdate(selection))}
                 placeholder={loadError ? "Profile unavailable" : "Profile loading…"}
                 ariaLabel="Model and effort"
                 title={dispatchBlocked ?? "Model and reasoning effort for every thread this batch starts"}
                 disabled={!resolved}
-                side="top"
-                // The picker's Overlay is z-[200]; the default z-[110] portal would paint the menu
-                // beneath its frosted backdrop.
+                // The popover layer, the one the panel holding it is on, and not the selector-in-popover
+                // layer above: each runtime's gear in this menu opens a panel on the popover layer, which
+                // has to land over the menu. On one layer the later-opened paints on top, and these only
+                // ever open in that order (githubPromptPopover.e2e pins all three).
                 menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
                 className="max-w-[min(21rem,60vw)]"
               />
+              {resolved?.backend === "opencode" && <ExperimentalChip className="shrink-0" />}
               {acpAgent && (
                 <AcpModelSelect
                   agentId={acpAgent.id}
                   agentLabel={acpAgent.label}
                   modelId={resolved?.acpModelId}
                   onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
-                  side="top"
-                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
+                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z}
                   className="max-w-[min(14rem,30vw)]"
                 />
               )}
-            </PromptControlGroup>
-            {/* The gear opens the prompt every thread this batch starts will run: with the model, it is
-                the other half of WHAT starts, so it stands to the right of the model chip, where the
-                composer keeps its agent's marks (maintainer 2026-11-07: "it's weird that the model
-                selector is at the bottom left, but the settings are to the left of the button"). It
-                sat left of the Start button from 2026-10-26, and in the header's far corner before that. */}
-            <div className={AGENT_MARKS}>
-              <GithubPromptPopover />
-            </div>
+            </GithubPromptPopover>
+            <button
+              disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
+              onClick={startDispatch}
+              onMouseDown={(e) => e.preventDefault()}
+              className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
+            >
+              {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
+              {/* The count is on the button because the batch is unbounded and can run far past the rows
+                  in view — "Start 47 investigations" is the last chance to notice it says 47, not 4. */}
+              {n <= 1 ? "Start investigation" : `Start ${n} investigations`}
+            </button>
           </div>
-          <button
-            disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
-            onClick={startDispatch}
-            onMouseDown={(e) => e.preventDefault()}
-            className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
-          >
-            {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
-            {/* The count is on the button because the batch is unbounded and can run far past the rows
-                in view — "Start 47 investigations" is the last chance to notice it says 47, not 4. */}
-            {n <= 1 ? "Start investigation" : `Start ${n} investigations`}
-          </button>
         </div>
         {profileError && <p className="mt-1 max-w-[430px] text-[10.5px] text-danger">{profileError}</p>}
       </div>
@@ -416,22 +411,20 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   )
 }
 
-// The repo slug as a link OUT to github.com, in the picker header's far corner. Mono for the slug
-// (it is an identifier); the arrow is lucide's arrow-up-right, the "opens elsewhere" mark GitHub
-// itself uses beside external links, at the slug's own `1em` so the pair reads as one link.
+// The repo as a link OUT to github.com, in the picker header's far corner: the GitHub mark, the slug and
+// lucide's arrow-up-right, the "opens elsewhere" mark GitHub itself uses beside external links, at the
+// slug's own `1em` so the three read as one link.
 //
-// Drawn as a chip in the fg tone, on the same border and `panel-2` fill as the tab and sort controls
-// below it, rather than as muted text: it is the picker's one way out to the repo, and as a grey slug in
-// the corner it read as a caption (maintainer 2026-11-07: "make the link out to the repo a little more
-// prominent"). Without the fill its hairline all but vanished against the panel.
+// TEXT, NOT A BUTTON, on purpose. As muted text it read as a caption (maintainer 2026-11-07: "make the link
+// out to the repo a little more prominent"), and as a bordered chip, 2026-11-07 to 2026-11-09, it was one
+// box stacked on the sort control's (maintainer: "I really don't like the repo button in such close
+// proximity to the tab switcher"). The fg tone and the mark carry the prominence, and the header's rule
+// keeps it from reading as part of the controls.
 //
-// The arrow's ink is centred in its box (7..17 of 24), so with the link `items-baseline` the
-// documented `0.5em - 0.5cap` translate puts it exactly on the slug's cap band in either font. It
-// paints 10 of its 24 box units — 0.29em of dead space a side — so `-mx-[0.29em]` collapses the box
-// onto its ink: the `gap-1` becomes 4px of INK between the slug's last glyph and the arrow (it read
-// 8.4px before the trim), which makes the arrow the slug's tail rather than a mark standing next to
-// it. The padding is uneven so the INK inside the border is even: on `px-2` the mono slug's side
-// bearing stood its first glyph 9.25px in, against the arrow's 7.5px (painted pixels at 4x, 2026-11-07).
+// Each glyph goes on the slug's cap band by the documented translate, half its box minus half the cap
+// height. The arrow's ink is centred in its box (7..17 of 24) and paints 10 of 24 units, 0.29em of dead
+// space a side, so `-mx-[0.29em]` collapses the box onto its ink: the `gap-1` is 4px of INK from the slug
+// to the arrow, and the arrow's tip stands on the right edge the sort control and the list end on.
 function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
   return (
     <a
@@ -439,9 +432,10 @@ function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
       target="_blank"
       rel="noreferrer noopener"
       title={`Open ${nameWithOwner} on GitHub`}
-      className="github-repo-link inline-flex min-w-0 items-baseline gap-1 rounded-md border border-border bg-panel-2 pl-[6.5px] pr-2 py-[3px] font-mono-keep text-[12px] font-normal leading-[18px] text-fg/85 outline-none transition-colors hover:bg-elevated hover:text-fg focus-visible:bg-elevated focus-visible:text-fg"
+      className="github-repo-link group inline-flex min-w-0 items-baseline gap-1 rounded-sm text-[12.5px] font-normal text-fg/85 outline-none transition-colors hover:text-fg focus-visible:text-fg"
     >
-      <span className="truncate">{nameWithOwner}</span>
+      <Github aria-hidden="true" className="mr-0.5 size-[13px] shrink-0 self-baseline translate-y-[calc(6.5px_-_0.5cap)]" />
+      <span className="truncate underline-offset-2 group-hover:underline group-focus-visible:underline">{nameWithOwner}</span>
       <ArrowUpRight aria-hidden="true" className="-mx-[0.29em] size-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]" />
     </a>
   )

@@ -1,4 +1,4 @@
-import type { BgShellView, SubAgentView, ThreadLinkView, ThreadView, ThreadWatchView } from "@frizz/shared"
+import type { BgShellView, HumanTodo, SubAgentView, ThreadLinkView, ThreadView, ThreadWatchView } from "@frizz/shared"
 import { mergeBackgroundShells, visibleChildOps, type TranscriptShellRecord } from "./childOps.ts"
 
 /** WHAT A THREAD HAS RUNNING, WATCHED OR SAVED — one answer for every place that lists it: the line of
@@ -8,6 +8,8 @@ import { mergeBackgroundShells, visibleChildOps, type TranscriptShellRecord } fr
  *  thread's watches and every watch no longer armed, while the line over the prompt box and its panels
  *  went on counting and listing both. */
 export interface ThreadOps {
+  /** What the worker has handed the human to do, across the whole thread (server human-todos.ts). */
+  todos: readonly HumanTodo[]
   /** Every child still unresolved — running, rested or stale — at every depth (visibleChildOps "card"). */
   agents: readonly SubAgentView[]
   /** The CHILD THREADS this thread started (`frizzctl spawn-child`) that are still open, oldest first —
@@ -44,6 +46,7 @@ export function threadOps(
   const github = armed.filter((watch) => watch.kind === "github")
   const saved = thread.links ?? []
   return {
+    todos: thread.humanTodos ?? [],
     agents: visibleChildOps(thread.subAgents ?? [], "card"),
     children,
     shells: mergeBackgroundShells(thread.bgShells ?? [], transcriptShells),

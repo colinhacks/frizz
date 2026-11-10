@@ -50,17 +50,6 @@ export const AWAITING_NO_PROSE = "Waiting for an external update."
  *  words. */
 export const STEPS_KIND = "Awaiting human"
 
-/** The steps card's one control, a checkbox, in the maintainer's own words (2026-10-12: "a big checkbox
- *  that says 'I have completed this.'"). Ticking it stages the answer below; a send carries it. */
-export const STEPS_COMPLETE = "I have completed this"
-
-/** EXACTLY the message a ticked steps card sends — an ordinary reply from the human, the same thing
- *  typing the word would send, with whatever they typed in the prompt box under it (lib/stepsAnswer
- *  withStepsDone). Nothing marks it as frizz's, because nothing about it is: the worker reads it as the
- *  human's own answer to the steps it just posted, and the transcript draws it as their bubble. The
- *  worker contract names the word. */
-export const STEPS_DONE = "Done"
-
 /** The PRs this fence is parked on, in fence order, deduped — clickable, because the fence line is the
  *  only place the ref exists and a card that names a PR without reaching it is a dead end (maintainer
  *  2026-07-31: "obviously this should have a link to the PR being watched").

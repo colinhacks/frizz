@@ -321,10 +321,32 @@ body {
      swaps in blue for a background shell/Monitor. */
   --live-dot: var(--color-accent);
   background: var(--live-dot);
-  /* Keep the motion cue close to the mark. At high browser zoom the former 4px pulse read as a
-     second, much larger circle rather than a quiet live-state halo. */
+  position: relative;
+  animation: frizz-live-fade 1.25s ease-in-out infinite;
+}
+/* THE PULSE ANIMATES OPACITY ONLY, so the GPU runs it and the page's main thread never sees a frame of
+   it. It animated `box-shadow` until 2026-11-09, which Chrome cannot hand off: every dot cost a style
+   and paint pass per frame, scrolled out of view or not. The Console's 20 dots, all below the fold,
+   held a settled page at 37% of a core, against 0.9% with animations off. As opacity it settles at 4%.
+
+   So the ring is two rings, cross-faded: the resting 1px one fades out as the 2px halo fades in, which
+   reads as the ring breathing outward and back. Keep the motion cue close to the mark: at high browser
+   zoom a 4px pulse read as a second, much larger circle rather than a quiet live-state halo. */
+.frizz-live-dot::before,
+.frizz-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.frizz-live-dot::before {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--live-dot) 28%, transparent);
-  animation: frizz-live-pulse 1.25s ease-in-out infinite;
+  animation: frizz-live-ring-rest 1.25s ease-in-out infinite;
+}
+.frizz-live-dot::after {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--live-dot) 14%, transparent);
+  opacity: 0;
+  animation: frizz-live-ring-halo 1.25s ease-in-out infinite;
 }
 /* Three runtime concerns, three hues: background shells pulse blue, sub-agents pulse the accent-yellow,
    and a parked PR watcher pulses violet.
@@ -496,11 +518,25 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .frizz-tile-badge-ring { animation: none; }
 }
-@keyframes frizz-live-pulse {
-  50% { opacity: 0.62; box-shadow: 0 0 0 2px color-mix(in srgb, var(--live-dot) 14%, transparent); }
+/* Every end of these keyframes is spelled out. Left implicit, Chrome refused to run 3 in 4 of the
+   Console's pulses on the GPU (trace `compositeFailed` 131072, "mixed keyframe value types"), though a
+   bare test page took the same rules, and the page stayed at 57-62% of a core. */
+@keyframes frizz-live-fade {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+@keyframes frizz-live-ring-rest {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes frizz-live-ring-halo {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .frizz-live-dot { animation: none; background: transparent; border: 2px solid var(--live-dot); box-shadow: none; }
+  .frizz-live-dot { animation: none; background: transparent; border: 2px solid var(--live-dot); }
+  .frizz-live-dot::before,
+  .frizz-live-dot::after { display: none; }
 }
 
 /* NO SPINNER LIVES HERE ANY MORE. `.frizz-tool-spinner` was the dispatch card's right-hand indicator for
@@ -1084,90 +1120,50 @@ a[href] {
   text-decoration: line-through;
   text-decoration-thickness: from-font;
 }
-/* ── The steps card's to-do STEPPER (AwaitingSteps.tsx StepsList, 2026-10-12) ─────────────────────
-   One numbered marker per step down a gutter, joined by a rail. It speaks the task family's language
-   above — the same muted ring — but in a CIRCLE, because a numbered rounded square reads as a keycap
-   and a numbered circle is what a stepper is. The markers are read-only: the card's one checkbox sits
-   under the list (AwaitingSteps.tsx StepsComplete), and each marker was a checkbox of its own for an
-   afternoon before it.
-
-   THE MARKER SITS ON THE FIRST LINE'S CAP BAND, computed by the browser rather than fitted. The gutter
-   opens with a line box of its own at the step text's size and leading, so its baseline is the text's;
-   the marker is an EMPTY inline-block in that line (its face is absolutely positioned, so it has no line
-   boxes and its baseline is its bottom margin edge), raised by `0.5cap − size/2` — the `.md-task` rule
-   — which puts its centre on baseline − 0.5cap in whatever face the OS picked. The digit inside is
-   centred the rail-glyph way: `text-box: trim-both cap alphabetic` makes its layout box the cap band
-   itself, so the flex centring centres the ink.
-
-   THE RAIL runs down the rest of the gutter and through the gap below the step, which is the step's
-   PADDING rather than a margin precisely so the gutter can reach into it (`margin-bottom` = −gap). */
-.md-body ol.frizz-steps {
-  --step-mark: calc(17em / 13);
-  /* 12, not 10: between two one-line steps the rail is the gap minus its 5px of clearance, and at 10 it
-     drew a 5px dash that read as a speck rather than a connector. */
-  --step-gap: 12px;
+/* ── The human's to-do list (AwaitingSteps.tsx, 2026-11-09) ───────────────────────────────────────
+   THE BOX SITS ON THE FIRST LINE'S CAP BAND, computed by the browser rather than fitted. An empty block's
+   baseline is its bottom edge, so `align-self: baseline` stands the box on the text's baseline, and
+   lifting it by half its height less half a cap puts its centre on baseline − 0.5cap in whatever face the
+   OS picked. Its button is absolutely positioned, so the block stays empty. */
+.md-body ul.frizz-todos {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.md-body .frizz-step {
+.md-body .frizz-todo {
   display: grid;
-  grid-template-columns: var(--step-mark) minmax(0, 1fr);
-  column-gap: 0.62em;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: baseline;
   margin: 0;
-  padding-bottom: var(--step-gap);
+  padding-bottom: 8px;
 }
-.md-body .frizz-step:last-child {
+.md-body .frizz-todo:last-child {
   padding-bottom: 0;
 }
-.frizz-step-gutter {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: calc(-1 * var(--step-gap));
-}
-.frizz-step:last-child .frizz-step-gutter {
-  margin-bottom: 0;
-}
-.frizz-step-line {
-  display: block;
-}
-.frizz-step-mark {
-  display: inline-block;
+.frizz-todo-box {
   position: relative;
+  display: block;
+  align-self: baseline;
   box-sizing: border-box;
-  width: var(--step-mark);
-  height: var(--step-mark);
-  padding: 0;
-  vertical-align: calc(0.5cap - var(--step-mark) / 2);
-  border: 1px solid color-mix(in srgb, var(--color-muted) 45%, transparent);
-  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  transform: translateY(calc(8px - 0.5cap));
+}
+.frizz-todo[data-done="true"] .frizz-todo-text {
   color: color-mix(in srgb, var(--color-muted) 85%, transparent);
 }
-.frizz-step-face {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* A step's body (StepBody): the Markdown under its title, in the title's column, at the prose's own size
+   and rhythm. Quieter than the title, which is the act; the body is how to do it. */
+.md-body .frizz-todo-body {
+  margin-top: 4px;
+  color: var(--color-muted);
 }
-.frizz-step-num {
-  font-size: calc(10em / 13);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  text-box: trim-both cap alphabetic;
-}
-.frizz-step-rail {
-  flex: 1;
-  width: 1px;
-  margin: 3px 0 2px;
-  /* The rings' own muted, quieter than they are. `--color-border` (the card's rules) all but vanished
-     at the 7px a rail runs between two one-line steps. */
-  background: color-mix(in srgb, var(--color-muted) 28%, transparent);
-}
-.frizz-step:last-child .frizz-step-rail {
-  display: none;
+/* A row with a body is a paragraph group, so it is set off from the next step by the prose's own
+   paragraph break rather than the bare rows' 8px, or its last body line reads as the next title's. */
+.md-body .frizz-todo:has(> div > .frizz-todo-body):not(:last-child) {
+  padding-bottom: var(--md-step);
 }
 /* Links and local-file actions wear ONE treatment on both prose surfaces — the block body and the
    inline-only run (an answer chip, the recommendation caption). The inline run used to get a bare

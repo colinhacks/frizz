@@ -31,6 +31,7 @@ import type {
   UnqueueFollowUpResult,
   DismissFailedFollowUpInput,
   DismissFailedFollowUpResult,
+  SetHumanTodoInput,
   DeliverQueuedNowInput,
   DeliverQueuedNowResult,
   CompactThreadInput,
@@ -95,6 +96,7 @@ import type {
   ClaudeModel,
   CodexModel,
   AcpAgent,
+  OpencodeModels,
   AcpAgentModels,
   AcpAgentModelsInput,
   QuotaSnapshot,
@@ -181,7 +183,7 @@ export interface Api {
   // `steerable` is the server's answer to "can this child be prompted right now" — a broker-backed
   // claude thread's own live Agent-tool child, and nothing else. The drawer renders its prompt box
   // if and only if this is true; the client never re-derives the policy.
-  subAgentTranscript(input: { slug: string; id: string }): Promise<{ messages: TranscriptMessage[]; state: "running" | "stale" | "done" | "gone"; steerable: boolean; steerNote: string | null; stoppable: boolean; stopNote: string | null; lastActivityAt?: string; context?: { tokens: number; window: number }; outcome?: "completed" | "failed" | "killed"; startedAt?: string; finishedAt?: string }>
+  subAgentTranscript(input: { slug: string; id: string }): Promise<{ messages: TranscriptMessage[]; state: "running" | "stale" | "done" | "gone"; steerable: boolean; steerNote: string | null; stoppable: boolean; stopNote: string | null; lastActivityAt?: string; context?: { tokens: number; window: number }; outcome?: "completed" | "failed" | "killed"; startedAt?: string; finishedAt?: string; model?: string }>
   // Deliver a steer INTO one running sub-agent's own conversation (not the thread's main turn).
   // Throws when the child settled first — see the router's subAgentSteer for why that must fail loudly.
   subAgentSteer(input: { slug: string; id: string; message: string; deliveryId?: string }): Promise<{ delivered: boolean }>
@@ -334,6 +336,8 @@ export interface Api {
   // (the parent comes to a NEW rest). No deadline and no scheduler — the board re-surfaces it the moment
   // rested_at advances. `sessionId` binds the click to the session the tab was looking at.
   snoozeAwaitingBackground(input: { slug: string; sessionId: string }): Promise<void>
+  // One box on the human's to-do list. Sends nothing to the worker.
+  setHumanTodo(input: SetHumanTodoInput): Promise<void>
   // Hard-delete: drop a stalled/exited phantom's registry row and tombstone its transcript id.
   // Refused for a genuinely live session — archive that one instead.
   forgetThread(input: { slug: string }): Promise<void>
@@ -354,6 +358,7 @@ export interface Api {
   repairThread(input: { file: string }): Promise<{ slug: string }>
   archiveThread(input: { slug: string }): Promise<void>
   killAgent(input: { slug: string }): Promise<void>
+  stopThreadTurn(input: { slug: string; sessionId: string }): Promise<{ interrupted: boolean }>
   renameThread(input: RenameThreadInput): Promise<void>
   aiRenameThread(input: { slug: string }): Promise<AiRenameThreadResult>
   // The selectable Codex models + per-model effort options, read server-side from the authoritative
@@ -369,6 +374,9 @@ export interface Api {
   // The models one ACP agent advertises (a throwaway session, cached server-side). Asked only when a
   // model picker for that agent is open.
   acpAgentModels(input: AcpAgentModelsInput): Promise<AcpAgentModels>
+  // OpenCode's own model list. Answering it starts the person's OpenCode service, so only a picker
+  // showing OpenCode asks.
+  opencodeModels(input?: Record<string, never>): Promise<OpencodeModels>
   // Provider subscription quota (5h + weekly windows) for the sidebar status bar. `force` names the
   // provider whose freshness window an explicit user recheck bypasses (a bare `true` is Claude's).
   quota(input?: { force?: boolean | "claude" | "codex" }, opts?: RpcCallOpts): Promise<QuotaSnapshot>
@@ -423,6 +431,7 @@ export interface Api {
   // has an input schema), and the transport posts `{}` for it.
   settingsReset(input: Record<never, never>): Promise<Settings>
   dispatchPreferencesGet(): Promise<DispatchPreferences>
+  runtimeDownloads(): Promise<{ claude?: string; codex?: string }>
   dispatchPreferenceSet(input: SetDispatchPreferenceInput): Promise<DispatchPreferences>
   // The shipped GitHub batch-dispatch prompt template — the Settings UI prefills its editor from this
   // and resets to it (an empty githubPrompt setting = the server default). One template, issues and PRs.
@@ -528,6 +537,7 @@ export const PROCEDURES = {
   listOwnThreadActivity: "mutation",
   listThreads: "mutation",
   snoozeAwaitingBackground: "mutation",
+  setHumanTodo: "mutation",
   forgetThread: "mutation",
   openExternal: "mutation",
   openLocalFile: "mutation",
@@ -540,12 +550,14 @@ export const PROCEDURES = {
   repairThread: "mutation",
   archiveThread: "mutation",
   killAgent: "mutation",
+  stopThreadTurn: "mutation",
   renameThread: "mutation",
   aiRenameThread: "mutation",
   codexModels: "query",
   claudeModels: "query",
   acpAgents: "query",
   acpAgentModels: "query",
+  opencodeModels: "query",
   quota: "query",
   authStatus: "query",
   accountLogout: "mutation",
@@ -566,6 +578,7 @@ export const PROCEDURES = {
   settingsSet: "mutation",
   settingsReset: "mutation",
   dispatchPreferencesGet: "query",
+  runtimeDownloads: "query",
   dispatchPreferenceSet: "mutation",
   githubPromptDefaults: "query",
   githubStatus: "query",

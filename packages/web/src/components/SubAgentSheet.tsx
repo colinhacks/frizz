@@ -7,7 +7,7 @@ import { formatFixedDuration } from "../lib/durationLabels.ts"
 import { PANE_HEADER_HEIGHT_CLASS } from "../lib/paneHeaderHeight.ts"
 import { PROMPT_CONTROL_TYPOGRAPHY_CLASS } from "../lib/promptControlTypography.ts"
 import { AGENT_OUTCOME_VERB } from "../lib/subAgentCompletion.ts"
-import { subAgentProfileLabel } from "../lib/subAgentProfile.ts"
+import { subAgentProfileParts, subAgentProfileText } from "../lib/subAgentProfile.ts"
 import { coalesceToolActivityMessages, historicalToolActivityMessages, liveRuntimeStartedAt, liveToolActivityRun, liveToolActivityTail, toolActivityLabel } from "../lib/toolActivity.ts"
 import { BackgroundOpsStrip, ChildDrillSlugContext, Message, VSpace, WorkingIndicator, withMessageSpacers, workingIndicatorGap } from "./ChatView.tsx"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
@@ -271,6 +271,7 @@ export function SubAgentSheet({
             slug={slug}
             subId={subId}
             subagentType={subagentType}
+            observedModel={q.data?.model}
             steerable={q.data?.steerable === true}
             note={q.data?.steerNote ?? null}
             stoppable={q.data?.stoppable === true}
@@ -299,6 +300,7 @@ function SubAgentSteerFooter({
   slug,
   subId,
   subagentType,
+  observedModel,
   steerable,
   note,
   stoppable,
@@ -309,6 +311,8 @@ function SubAgentSteerFooter({
   slug: string
   subId: string
   subagentType?: string
+  // The model the child's own transcript says it ran — see SubAgentProfileReadout.
+  observedModel?: string
   steerable: boolean
   note: string | null
   stoppable: boolean
@@ -367,7 +371,7 @@ function SubAgentSteerFooter({
       <div data-subagent-steer-note className="w-full shrink-0 border-t border-border bg-panel px-3 py-3">
         <div className="px-1 pb-2 text-[11.5px] text-muted-70">{unavailableNote}</div>
         <div className="pl-1.5">
-          <SubAgentProfileReadout subagentType={subagentType} />
+          <SubAgentProfileReadout subagentType={subagentType} observedModel={observedModel} />
         </div>
         {/* Same optical bottom inset ThreadComposerBox gives the thread-level prompt box (styles.css).
             No `empty:hidden` wrapper needed — the strip itself renders nothing when it has no rows, so
@@ -386,7 +390,7 @@ function SubAgentSteerFooter({
         surface="subAgentComposer"
         placeholder="Steer this sub-agent…"
         busy={busy || stopping}
-        footer={<SubAgentProfileReadout subagentType={subagentType} />}
+        footer={<SubAgentProfileReadout subagentType={subagentType} observedModel={observedModel} />}
       />
       {!stoppable && stopNote && (
         <div className="mt-2 px-1 text-[11.5px] text-muted-70">{stopNote}</div>
@@ -400,16 +404,33 @@ function SubAgentSteerFooter({
 }
 
 // The model chip's 24px and 6px corner, so it sits in the prompt box's corner as the chip does (lib/iconRhythm.ts).
-function SubAgentProfileReadout({ subagentType }: { subagentType?: string }) {
-  const label = subAgentProfileLabel(subagentType)
+//
+// It reads as the thread's own model chip reads — "OPUS 5.5 › XHIGH", the edition in the edition ink —
+// because the two sit in the same corner of the same prompt box one drawer apart, and a child chip that
+// said only "OPUS" read as a vaguer kind of fact (maintainer 2026-11-09: "In some places, we include a
+// version number, and in others, we don't"). The edition comes from the dispatch cell when the parent's
+// record stated it, and from `observedModel` — the child's own transcript — always when it has one,
+// which is the only source for a child dispatched on another family than its parent's.
+function SubAgentProfileReadout({ subagentType, observedModel }: { subagentType?: string; observedModel?: string }) {
+  const parts = subAgentProfileParts(subagentType, observedModel)
+  const label = parts ? subAgentProfileText(parts) : "Profile unknown"
   return (
     <span
       data-subagent-profile
       aria-label={`Sub-agent profile: ${label}`}
-      title={subagentType?.trim() || "The provider did not report this sub-agent's model and effort"}
+      title={parts ? label : "The provider did not report this sub-agent's model and effort"}
       className={`inline-flex h-6 min-w-0 max-w-[min(72%,20rem)] items-center rounded-md border border-border/50 bg-transparent px-1.5 text-muted ${PROMPT_CONTROL_TYPOGRAPHY_CLASS}`}
     >
-      <span className="profile-grid-value relative -top-px min-w-0 truncate">{label}</span>
+      <span className="profile-grid-value relative -top-px min-w-0 truncate">
+        {parts && parts.verbatim === undefined ? (
+          <>
+            {parts.role && `${parts.role} · `}
+            {parts.model}
+            {parts.edition && <> <span className="profile-grid-edition text-edition">{parts.edition}</span></>}
+            {parts.effort && `${parts.model ? " › " : ""}${parts.effort}`}
+          </>
+        ) : label}
+      </span>
     </span>
   )
 }
