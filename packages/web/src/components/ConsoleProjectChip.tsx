@@ -74,13 +74,16 @@ function ProjectChip({ project, projects, onPick }: { project: ProjectCard; proj
       <RadixDropdown.Portal>
         {/* `alignOffset` puts the menu's squares under the chip's: a row's square stands 13px inside the menu
             (its 1px border, 6px of padding and the row's own 6px), and the chip's 6px inside the chip. The width
-            cap gives a long name the room the crumb's menu does (ProjectCrumb.tsx), plus the rail's 36px. */}
+            cap gives a long name the room the crumb's menu does (ProjectCrumb.tsx), plus the rail's 36px.
+            The left collision margin is the smaller one so that offset survives a sidebar against the window's
+            edge: in the one-thread pane up to 1440px the chip starts 12px in, the menu 5px, and a margin of 8
+            pushed it 3px right of the chip's square. */}
         <RadixDropdown.Content
           align="start"
           alignOffset={-7}
           side="bottom"
           sideOffset={5}
-          collisionPadding={8}
+          collisionPadding={{ top: 8, right: 8, bottom: 8, left: 4 }}
           className={`${OPAQUE_PORTAL_SURFACE_CLASS} relative flex min-w-[200px] overflow-hidden rounded-lg ${phone ? "max-w-[280px]" : "max-w-[316px]"}`}
         >
           {/* THE RAIL: the new-tab arrows stand in a strip of their own down the menu's right edge, past one
