@@ -245,32 +245,54 @@ test("the nudge tracks context GROWTH, not an absolute threshold or wall clock",
   const nudge = (tokens: number) =>
     runHook(dir, ["--mode=nudge"], { session_id: SID, transcript_path: writeTranscript(dir, tokens) }, stale)
 
-  assert.equal(nudge(20_000), "", "below the threshold the hook must say nothing")
+  assert.equal(nudge(20_000), "", "the first reading is the baseline, and says nothing")
+  assert.equal(nudge(70_000), "", "50k of growth is under the interval")
 
-  // An EMPTY directory measures growth from ZERO — the whole session is unrecorded.
-  const empty = additionalContext(nudge(70_000))
+  // An EMPTY directory counts from the first reading, and the note says how deep the session is.
+  const empty = additionalContext(nudge(90_000))
   assert.match(empty, /⟦scratch directory empty⟧/)
-  assert.match(empty, /~70k tokens deep/)
+  assert.match(empty, /~90k tokens deep/)
 
-  assert.equal(nudge(75_000), "", "a second nudge must not follow immediately")
+  assert.equal(nudge(95_000), "", "a second nudge must not follow immediately")
 
   writeScratch(dir, "now written with real content\n", "plan.md")
-  assert.equal(nudge(76_000), "", "a fresh write silences the nudge")
-  assert.equal(nudge(120_000), "", "44k of growth is still under the interval")
+  assert.equal(nudge(96_000), "", "a fresh write silences the nudge")
+  assert.equal(nudge(140_000), "", "44k of growth is still under the interval")
 
-  const restale = additionalContext(nudge(140_000))
+  const restale = additionalContext(nudge(160_000))
   assert.match(restale, /⟦scratch notes stale⟧/)
   assert.match(restale, /grown ~64k tokens/)
 })
 
+// A session opens on a fixed context of its own (the system prompt, the tool schemas, the project's
+// instructions): 96k in this repository when this was written, which is more than the 60k interval.
+// Counted from zero, an empty directory was reported after the first tool call of nearly every session.
+test("a session that opens above the interval is not told its directory is empty on its first tool call", () => {
+  const dir = newProject()
+  const nudge = (tokens: number) =>
+    runHook(dir, ["--mode=nudge", "--event=PostToolUse"], { session_id: SID, transcript_path: writeTranscript(dir, tokens) }, { FRIZZ_SCRATCHPAD_STALE_TOKENS: "60000" })
+
+  assert.equal(nudge(96_000), "", "the opening context is not work the session left unrecorded")
+  assert.equal(nudge(97_500), "", "nor is the second call's")
+  assert.equal(nudge(155_000), "", "59k the session added is under the interval")
+  const empty = additionalContext(nudge(157_000))
+  assert.match(empty, /⟦scratch directory empty⟧/)
+  assert.match(empty, /~157k tokens deep/)
+  assert.equal(nudge(200_000), "", "and the next one is a whole interval later")
+  assert.match(additionalContext(nudge(218_000)), /~218k tokens deep/)
+})
+
 test("the mid-turn channel reports itself as PostToolUse so the harness accepts the injection", () => {
   const dir = newProject()
-  const out = runHook(
-    dir,
-    ["--mode=nudge", "--event=PostToolUse"],
-    { session_id: SID, transcript_path: writeTranscript(dir, 90_000) },
-    { FRIZZ_SCRATCHPAD_STALE_TOKENS: "60000" }
-  )
+  const run = (tokens: number) =>
+    runHook(
+      dir,
+      ["--mode=nudge", "--event=PostToolUse"],
+      { session_id: SID, transcript_path: writeTranscript(dir, tokens) },
+      { FRIZZ_SCRATCHPAD_STALE_TOKENS: "60000" }
+    )
+  assert.equal(run(20_000), "", "the first reading is the baseline")
+  const out = run(90_000)
   // A frizz worker runs enormous autonomous turns; a turn-boundary-only nudge can miss a whole
   // session's work. The event name must match the firing hook or the payload is rejected.
   assert.equal(JSON.parse(out).hookSpecificOutput.hookEventName, "PostToolUse")
@@ -282,6 +304,7 @@ test("both nudge channels share one interval, so mid-turn firing does not multip
   const stale = { FRIZZ_SCRATCHPAD_STALE_TOKENS: "60000" }
   const t = (tokens: number) => ({ session_id: SID, transcript_path: writeTranscript(dir, tokens) })
 
+  assert.equal(runHook(dir, ["--mode=nudge", "--event=PostToolUse"], t(5_000), stale), "", "the first reading is the baseline")
   assert.notEqual(runHook(dir, ["--mode=nudge", "--event=PostToolUse"], t(70_000), stale), "", "first fires")
   // The turn-boundary channel must respect the budget the mid-turn channel just spent.
   assert.equal(runHook(dir, ["--mode=nudge"], t(75_000), stale), "", "shared state suppresses the sibling")

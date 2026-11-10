@@ -65,8 +65,8 @@ const MAX_LISTED_FILES = intFromEnv('FRIZZ_SCRATCH_MAX_LISTED', 40);
 /** Context-token growth since the last scratch write that marks the directory stale. 60k is ~a third of
  *  a 200k window and ~6% of a 1M one: frequent enough that a long effort is reminded while there is
  *  still something to record, rare enough not to be chatter. Also the first-write trigger — an EMPTY
- *  directory has no clock of its own, so the baseline is zero and the first nudge lands once a session
- *  has accumulated 60k tokens actually worth persisting. */
+ *  directory has no write to count from, so its baseline is the first reading this hook took, and the
+ *  first nudge lands once the session has added 60k tokens of its own to what it opened on. */
 const STALE_TOKENS = intFromEnv('FRIZZ_SCRATCHPAD_STALE_TOKENS', 60000);
 
 /** @param {string} name @param {number} fallback */
@@ -396,9 +396,12 @@ if (mode === 'nudge') {
     writeState(state);
   }
 
-  // An EMPTY directory measures growth from ZERO: the whole session is unrecorded, so the clock starts
-  // at the beginning, not at whenever this first looked.
-  const baseline = mtimeMs ? (state.tokensAtWrite ?? tokens) : 0;
+  // An EMPTY directory counts from the first reading too (`tokensAtWrite`, set above the first time this
+  // looked), never from zero. A session opens on a fixed context of its own, the system prompt, the tool
+  // schemas and the project's instructions, which is already more than the interval: counted from zero,
+  // the "empty" note went out after the first tool call of nearly every session, about nothing the
+  // worker had done.
+  const baseline = state.tokensAtWrite ?? tokens;
   const grown = tokens - baseline;
   if (grown < STALE_TOKENS) process.exit(0);
   // Space repeat nudges by the same interval. Both channels share this state, so firing on every tool
@@ -407,7 +410,8 @@ if (mode === 'nudge') {
 
   writeState({ ...state, tokensAtNudge: tokens });
 
-  const k = Math.round(grown / 1000);
+  // The stale note reports the growth since the last write; the empty one, how deep the session is.
+  const k = Math.round((mtimeMs ? grown : tokens) / 1000);
   const event = /** @type {'UserPromptSubmit'|'PostToolUse'} */ (
     input.transcript_path && flagValue('--event') === 'PostToolUse' ? 'PostToolUse' : 'UserPromptSubmit'
   );
