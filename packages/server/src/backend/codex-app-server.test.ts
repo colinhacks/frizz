@@ -580,6 +580,8 @@ test("a turn does not hang on an idle boundary that never comes", async () => {
 
 function commandParams(threadId: string, turnId: string, over: Record<string, unknown> = {}) {
   return {
+    // On every command approval since codex 0.150 (captured from 0.167.0, 2026-11-07).
+    kind: "command",
     threadId,
     turnId,
     itemId: "item-command-1",
@@ -2049,6 +2051,7 @@ test("typed request adapters cover file, permissions, standard MCP form/URL, and
     turnId,
     itemId: "item-question",
     autoResolutionMs: 60_000,
+    isBlocking: true,
     questions: [{
       id: "choice",
       header: "Choice",
@@ -2125,6 +2128,7 @@ test("exact 0.144.1 permissions and user-input choices never advertise fabricate
     turnId,
     itemId: "question-contract-item",
     autoResolutionMs: null,
+    isBlocking: true,
     questions: [{
       id: "choice",
       header: "Choice",
@@ -2201,6 +2205,7 @@ test("secret user-input capability is unavailable instead of rendering an unusab
     turnId,
     itemId: "item-secret",
     autoResolutionMs: null,
+    isBlocking: true,
     questions: [{ id: "token", header: "Token", question: "Enter token", isOther: false, isSecret: true, options: null }],
   })
   const scope = { projectId: "project-1", threadSlug: binding.threadSlug, sessionId: binding.sessionId }
@@ -3467,5 +3472,114 @@ test("a freshly started app-server that is behind the pin runs, and is never rep
     assert.equal(h.processes.length, 1)
     assert.deepEqual(events(h, "version-behind"), [{ event: "version-behind", expected: CODEX_APP_SERVER_SUPPORTED_VERSION, received: OLD_PIN, replaceAtIdle: false }])
     assert.deepEqual(events(h, "pin-moved"), [])
+  } finally { h.close() }
+})
+
+// ---- a refusal says so --------------------------------------------------------------------------------
+// A request the bridge could not parse was answered `-32602` with nothing logged, and a notification was
+// dropped on a bare `return`, so a key codex added to a strict schema looked exactly like codex never
+// sending the message. Two approval schemas refused everything the pinned binary sends for 17 releases
+// that way.
+
+test("a request the bridge cannot read is refused with where it stopped fitting, and never a value", async () => {
+  const h = harness()
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "loud", sessionId: "loud-session", cwd: h.dir })
+    const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "Run it" })
+    const process = h.processes[0]!
+    process.request("grew-a-key", "item/commandExecution/requestApproval", commandParams(binding.codexThreadId, turnId, {
+      addedByCodex: "value-that-must-not-be-logged",
+      commandActions: [{ type: "unknown", command: "ls", alsoNew: 1 }],
+    }))
+    await waitFor(() => process.clientResponses.some((message) => message.id === "grew-a-key"), "the refusal")
+    const response = process.clientResponses.find((message) => message.id === "grew-a-key") as { error?: { code?: number } }
+    assert.equal(response.error?.code, -32602)
+    assert.deepEqual(events(h, "request-rejected"), [{
+      event: "request-rejected",
+      method: "item/commandExecution/requestApproval",
+      code: -32602,
+      issues: ["commandActions.0: unrecognized alsoNew", "(params): unrecognized addedByCodex"],
+    }])
+    assert.equal(JSON.stringify(h.diagnostics).includes("value-that-must-not-be-logged"), false)
+    assert.equal(JSON.stringify(h.diagnostics).includes("secret-that-must-not-be-journaled"), false, "nor the command")
+    assert.equal(h.interactions.listPending({ projectId: "project-1", threadSlug: binding.threadSlug, sessionId: binding.sessionId }).length, 0)
+  } finally { h.close() }
+})
+
+// `kind` says what is under review. The card reads "run a command", so input for a terminal that is
+// already running and a managed checkpoint are refused by name instead of being drawn under it.
+test("a command approval is drawn for a command, and refused by name for terminal input", async () => {
+  const h = harness()
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "kinds", sessionId: "kinds-session", cwd: h.dir })
+    const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "Run it" })
+    const process = h.processes[0]!
+    const scope = { projectId: "project-1", threadSlug: binding.threadSlug, sessionId: binding.sessionId }
+
+    process.request("stdin", "item/commandExecution/requestApproval", commandParams(binding.codexThreadId, turnId, { kind: "writeStdin", itemId: "item-stdin" }))
+    await waitFor(() => process.clientResponses.some((message) => message.id === "stdin"), "the refusal")
+    assert.equal((process.clientResponses.find((message) => message.id === "stdin") as { error?: { code?: number } }).error?.code, -32601)
+    assert.deepEqual(events(h, "request-rejected"), [{ event: "request-rejected", method: "item/commandExecution/requestApproval", code: -32601 }])
+    assert.equal(h.interactions.listPending(scope).length, 0)
+
+    process.request("command", "item/commandExecution/requestApproval", commandParams(binding.codexThreadId, turnId))
+    await waitFor(() => h.interactions.listPending(scope).length === 1, "the command's card")
+    assert.equal(events(h, "request-rejected").length, 1, "the shape the pinned binary sends is read")
+  } finally { h.close() }
+})
+
+test("a notification the bridge cannot read is reported once per method, and dropped", async () => {
+  const h = harness()
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "unread", sessionId: "unread-session", cwd: h.dir })
+    const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "Work" })
+    const process = h.processes[0]!
+    for (let i = 0; i < 3; i++) process.notify("turn/completed", { threadId: binding.codexThreadId, turn: { id: turnId }, addedByCodex: "value-that-must-not-be-logged" })
+    await waitFor(() => events(h, "notification-unparsed").length > 0, "the report")
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(events(h, "notification-unparsed"), [{ event: "notification-unparsed", method: "turn/completed", issues: ["(params): unrecognized addedByCodex"] }])
+    assert.equal(JSON.stringify(h.diagnostics).includes("value-that-must-not-be-logged"), false)
+    assert.equal(h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId, turnId, "which is what it costs: the turn still reads as running")
+
+    // A different method is its own report, and one that parses is still handled.
+    process.notify("turn/started", { threadId: binding.codexThreadId })
+    process.completeActiveTurn()
+    await waitFor(() => h.bridge.binding(binding.threadSlug, binding.sessionId)?.currentTurnId === null, "the readable completion")
+    assert.deepEqual(events(h, "notification-unparsed").map((event) => event.method), ["turn/completed", "turn/started"])
+  } finally { h.close() }
+})
+
+// What is still refused, in the shape codex 0.167.0 really sends for one untrusted command (captured
+// 2026-11-07, re-typed here with made-up values). Among the choices is a structured one that applies a
+// policy amendment, and Frizz has no decision that sends it back, so the menu is refused whole rather
+// than drawn short. This is the open half of the Codex approval cards: reading the request is fixed,
+// answering this one is a product decision (codex-protocol-conformance.test.ts, REFUSED_ON_PURPOSE).
+test("the pinned binary's command approval that offers a policy amendment is refused, and the refusal names the choice", async () => {
+  const h = harness()
+  try {
+    const binding = await h.bridge.startDisposableSession({ threadSlug: "amend", sessionId: "amend-session", cwd: h.dir })
+    const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "Touch a file" })
+    const process = h.processes[0]!
+    process.request("as-sent", "item/commandExecution/requestApproval", {
+      kind: "command",
+      threadId: binding.codexThreadId,
+      turnId,
+      itemId: "item-as-sent",
+      startedAtMs: Date.parse("2026-07-13T12:00:00.000Z"),
+      environmentId: "local",
+      command: "/bin/zsh -lc 'touch /tmp/example'",
+      cwd: "/tmp/project",
+      commandActions: [{ type: "unknown", command: "touch /tmp/example" }],
+      proposedExecpolicyAmendment: ["touch", "/tmp/example"],
+      availableDecisions: ["accept", { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["touch", "/tmp/example"] } }, "cancel"],
+    })
+    await waitFor(() => process.clientResponses.some((message) => message.id === "as-sent"), "the refusal")
+    assert.deepEqual(events(h, "request-rejected"), [{
+      event: "request-rejected",
+      method: "item/commandExecution/requestApproval",
+      code: -32602,
+      issues: ["availableDecisions.1: invalid_type"],
+    }])
+    assert.equal(h.interactions.listPending({ projectId: "project-1", threadSlug: binding.threadSlug, sessionId: binding.sessionId }).length, 0)
   } finally { h.close() }
 })

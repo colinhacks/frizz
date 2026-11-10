@@ -470,6 +470,19 @@ A worker is NOT whatever `claude` or `codex` is first on the operator's PATH —
   grants plus deny (the server treats an empty granted profile as no grant), while
   `request_user_input` exposes only answer. That protocol has no decline/cancel response; cancelling
   work is the separate `turn/interrupt` client request, never a fabricated interaction choice.
+- **What the bridge READS is gated, and a refusal says so.** Every schema a handler parses an incoming
+  request or notification with is in `CODEX_READS`, and `codex-protocol-conformance.test.ts` holds each
+  against the pinned binary's own generated schema: a key, union variant or enum value the binary
+  declares that a strict schema here would refuse fails the test by name, unless it is listed in that
+  test's `REFUSED_ON_PURPOSE` with the reason. A request the bridge answers with an error emits
+  `request-rejected` with where the params stopped fitting (key paths, never a value), and a
+  notification it cannot parse emits `notification-unparsed` once per method. Before 2026-11-10 both
+  were silent, and two approval schemas had refused everything the pinned binary sends since codex
+  0.150 (`kind` on a command approval, `isBlocking` on a question). It stayed dormant because every
+  Frizz thread runs `approvalPolicy: "never"`, which is also why the approval cards are not reached in
+  practice today. One refusal is still open on purpose: the pinned binary offers a policy amendment
+  among the choices for an ordinary untrusted command, Frizz has no decision that sends one back, and
+  `commandDecisions` refuses such a menu whole rather than draw it short.
 - Registry replacement/deletion atomically cancels old delivery rows and detaches the exact native
   binding before a lifecycle hook removes it and terminates the child. Bridge disconnect/close
   detaches active bindings, and action authority requires a live connection plus the exact active

@@ -400,6 +400,13 @@ const CommandApprovalParams = z.object({
   threadId: Opaque,
   turnId: Opaque,
   itemId: Opaque,
+  // What is under review: `command`, or since codex 0.150 `writeStdin` (input for a terminal that is
+  // already running) and `humanCommand` (a managed checkpoint). Serialized on EVERY request, so this
+  // strict schema refused every command approval the pinned binary could send until the key was named
+  // here (2026-11-10; dormant only because every thread runs `approvalPolicy: "never"`). A plain string
+  // on purpose: the handler refuses every kind but `command` by name, which a fixed list would turn
+  // back into "invalid params" the day codex adds a fourth.
+  kind: z.string().max(64).optional(),
   startedAtMs: SafeTimestampMs,
   approvalId: Opaque.nullable().optional(),
   environmentId: Opaque.nullable(),
@@ -532,7 +539,11 @@ const UserInputParams = z.object({
   turnId: Opaque,
   itemId: Opaque,
   questions: z.array(UserInputQuestion).min(1).max(32),
-  autoResolutionMs: z.number().int().nonnegative().max(24 * 60 * 60 * 1_000).nullable(),
+  // Deprecated upstream in favour of `isBlocking`, and still sent (null) by 0.167.0.
+  autoResolutionMs: z.number().int().nonnegative().max(24 * 60 * 60 * 1_000).nullable().optional(),
+  // Required on the wire since codex 0.150, and refused here until 2026-11-10 for the same reason as
+  // `kind` above. Frizz reads nothing off it: whether the turn waits is codex's side of the request.
+  isBlocking: z.boolean().optional(),
 }).strict()
 
 const McpBase = {
@@ -595,7 +606,13 @@ export type CodexAppServerDiagnostic =
   // nothing newer to replace it with.
   | { event: "version-behind"; expected: string; received: string; replaceAtIdle: boolean }
   | { event: "stderr"; bytes: number; truncated: boolean }
-  | { event: "request-rejected"; method: string; code: number }
+  // A request FROM the app-server (an approval, a question) that the bridge answered with an error, so
+  // no card was drawn for it. Emitted for every such answer, from the one place that writes them.
+  // `issues` is where the params failed their schema, when that is why.
+  | { event: "request-rejected"; method: string; code: number; issues?: readonly string[] }
+  // A notification whose params failed the schema the bridge reads it with, and was dropped. Once per
+  // method per bridge: a build that grew a key sends it on every item.
+  | { event: "notification-unparsed"; method: string; issues: readonly string[] }
   | { event: "turn-auto-resumed"; threadSlug: string; interruptedTurnId: string }
   // A thread this server had only REJOINED (it was mid-turn, or held a background command, when the
   // server came up) was rebuilt with this server's own config before its next turn — see threadConfig.
@@ -622,11 +639,34 @@ export type CodexAppServerDiagnostic =
 
 class RpcProtocolError extends Error {
   readonly code: number
+  /** Where the params failed their schema (schemaIssues). Never a value off the wire. */
+  readonly issues?: readonly string[]
 
-  constructor(code: number, message: string) {
+  constructor(code: number, message: string, issues?: readonly string[]) {
     super(message)
     this.code = code
+    if (issues && issues.length > 0) this.issues = issues
   }
+}
+
+/**
+ * Where a message failed its schema, as `path: reason` lines, for a diagnostic.
+ *
+ * A refusal used to say nothing: a server request the bridge could not parse was answered `-32602` and
+ * a notification was dropped on a bare `return`, so a key codex added to a strict schema looked exactly
+ * like codex never sending the message. Paths and key NAMES only. A value is never copied: these are
+ * commands, file paths and patches, and the diagnostic log is plain text.
+ */
+function schemaIssues(error: z.ZodError): string[] {
+  const name = (value: unknown): string => String(value).replace(/[^\w.$/-]/gu, "?").slice(0, 64)
+  const lines: string[] = []
+  for (const issue of error.issues.slice(0, 8)) {
+    const path = issue.path.length > 0 ? issue.path.map(name).join(".") : "(params)"
+    lines.push(issue.code === "unrecognized_keys"
+      ? `${path}: unrecognized ${issue.keys.slice(0, 8).map(name).join(", ")}`
+      : `${path}: ${issue.code}`)
+  }
+  return lines
 }
 
 interface PendingRpc {
@@ -867,6 +907,12 @@ class JsonlRpcConnection {
         await this.onRequest(message.method, parsedId.data, message.params)
       } catch (error) {
         const rpcError = error instanceof RpcProtocolError ? error : new RpcProtocolError(-32603, "Frizz could not stage the provider request")
+        this.diagnostic?.({
+          event: "request-rejected",
+          method: message.method.replace(/[^\w.$/-]/gu, "?").slice(0, 128),
+          code: rpcError.code,
+          ...(rpcError.issues ? { issues: rpcError.issues } : {}),
+        })
         await this.errorResponse(parsedId.data, rpcError.code, rpcError.message).catch(() => undefined)
       }
       return
@@ -1831,6 +1877,54 @@ const ThreadSettingsUpdated = z.object({
 }).passthrough()
 const TurnStarted = z.object({ threadId: Opaque, turn: z.object({ id: Opaque }).passthrough() }).strict()
 const TurnCompleted = z.object({ threadId: Opaque, turn: z.object({ id: Opaque }).passthrough() }).strict()
+const ErrorNotification = z.object({ threadId: Opaque, turnId: Opaque, error: z.unknown(), willRetry: z.boolean() }).passthrough()
+const McpOAuthLoginCompleted = z.object({
+  name: z.string().max(256),
+  loginId: z.string().max(256).nullish(),
+  success: z.boolean(),
+  error: z.string().max(2000).nullish(),
+}).passthrough()
+
+/**
+ * EVERYTHING THIS BRIDGE READS OFF THE APP-SERVER, BY WIRE METHOD: the schema each handler applies to
+ * the params of a request or notification the app-server sends, and to the two `ThreadItem` variants
+ * read out of an item envelope.
+ *
+ * It exists for codex-protocol-conformance.test.ts, which holds each of these against the pinned
+ * binary's own generated schema: a key the binary declares that a strict schema here refuses, a key
+ * required here that the binary never declares, a union variant or enum value on one side only. Until
+ * 2026-11-10 that gate read `ClientRequest.json` alone (what Frizz SENDS), and the read side was a
+ * person reading a schema diff at each pin bump who had to know which of these are `.strict()`. Two of
+ * them had been refusing what the pinned binary sends since codex 0.150.
+ *
+ * These are the same objects the handlers parse with, so the table cannot drift from them. A handler
+ * that reads a NEW method adds its schema here: the test fails on a `safeParse(rawParams)` in this file
+ * whose schema the table does not list.
+ */
+export const CODEX_READS = {
+  requests: {
+    "item/commandExecution/requestApproval": CommandApprovalParams,
+    "item/fileChange/requestApproval": FileApprovalParams,
+    "item/permissions/requestApproval": PermissionsApprovalParams,
+    "item/tool/requestUserInput": UserInputParams,
+    "mcpServer/elicitation/request": McpElicitationParams,
+  },
+  notifications: {
+    "error": ErrorNotification,
+    "item/started": ItemStartedNotification,
+    "item/completed": ItemCompletedNotification,
+    "item/fileChange/patchUpdated": FileChangePatchUpdatedNotification,
+    "mcpServer/oauthLogin/completed": McpOAuthLoginCompleted,
+    "serverRequest/resolved": ResolvedNotification,
+    "thread/settings/updated": ThreadSettingsUpdated,
+    "turn/started": TurnStarted,
+    "turn/completed": TurnCompleted,
+  },
+  items: {
+    fileChange: FileChangeItem,
+    commandExecution: CommandExecutionItem,
+  },
+} as const
 const MAX_CORRELATED_FILE_ITEMS = 128
 
 interface ObservedThreadSettings {
@@ -2005,6 +2099,8 @@ export class CodexAppServerBridge {
   private authReplacement: Promise<void> | null = null
   private readonly authReplacementWaitMs: number
   private readonly turnIdleWaiters = new Set<() => void>()
+  /** Notification methods already reported as unreadable (unparsedNotification). */
+  private readonly unparsedNotifications = new Set<string>()
   /**
    * The handshake a FRESHLY FORKED daemon already gave us and we already rejected — i.e. what the
    * codex binary on disk actually reports. Once we have heard it from a new process there is nothing
@@ -4098,7 +4194,7 @@ export class CodexAppServerBridge {
       payload,
       expiresAt,
     })
-    if (!parsed.success) throw new RpcProtocolError(-32602, "Codex request cannot be represented by the Frizz interaction protocol")
+    if (!parsed.success) throw new RpcProtocolError(-32602, "Codex request cannot be represented by the Frizz interaction protocol", schemaIssues(parsed.error))
     return parsed.data
   }
 
@@ -4115,8 +4211,13 @@ export class CodexAppServerBridge {
 
     if (method === "item/commandExecution/requestApproval") {
       const parsed = CommandApprovalParams.safeParse(rawParams)
-      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex command approval request")
+      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex command approval request", schemaIssues(parsed.error))
       const params = parsed.data
+      // The card says "run a command". Input for a terminal that is already running and a managed
+      // checkpoint are different questions, and answering one under that heading would be a lie.
+      if (params.kind !== undefined && params.kind !== "command") {
+        throw new RpcProtocolError(-32601, "This Frizz bridge draws approvals for commands only, not for terminal input or managed checkpoints")
+      }
       providerContext = { fingerprint: requestFingerprint(params) }
       const row = this.ownedBinding(params.threadId, params.turnId)
       const actions = commandActions(params.commandActions)
@@ -4147,7 +4248,7 @@ export class CodexAppServerBridge {
       )
     } else if (method === "item/fileChange/requestApproval") {
       const parsed = FileApprovalParams.safeParse(rawParams)
-      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex file approval request")
+      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex file approval request", schemaIssues(parsed.error))
       const params = parsed.data
       const row = this.ownedBinding(params.threadId, params.turnId)
       const correlated = this.correlatedFileItem(params.threadId, params.turnId, params.itemId)
@@ -4207,7 +4308,7 @@ export class CodexAppServerBridge {
       )
     } else if (method === "item/permissions/requestApproval") {
       const parsed = PermissionsApprovalParams.safeParse(rawParams)
-      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex permissions approval request")
+      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex permissions approval request", schemaIssues(parsed.error))
       const params = parsed.data
       const row = this.ownedBinding(params.threadId, params.turnId)
       logicalId = logicalRequestId(method, [params.threadId, params.turnId, params.itemId])
@@ -4238,14 +4339,13 @@ export class CodexAppServerBridge {
       )
     } else if (method === "item/tool/requestUserInput") {
       const parsed = UserInputParams.safeParse(rawParams)
-      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex user-input request")
+      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex user-input request", schemaIssues(parsed.error))
       const params = parsed.data
       if (params.questions.some((question) => question.isSecret)) {
         // The exact protocol can carry secret answers, but Frizz's durable provider outbox cannot do
         // so without retaining plaintext. Keep this capability unavailable until transient encrypted
         // delivery exists; do not render an action that will inevitably fail. Turn interruption is a
         // separate `turn/interrupt` client request, never a fabricated user-input response.
-        this.options.diagnostic?.({ event: "request-rejected", method, code: -32601 })
         throw new RpcProtocolError(-32601, "Secret Codex user input requires unavailable transient delivery")
       }
       providerContext = { fingerprint: requestFingerprint(params) }
@@ -4271,7 +4371,7 @@ export class CodexAppServerBridge {
       )
     } else if (method === "mcpServer/elicitation/request") {
       const parsed = McpElicitationParams.safeParse(rawParams)
-      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex MCP elicitation request")
+      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex MCP elicitation request", schemaIssues(parsed.error))
       const params = parsed.data
       providerContext = { fingerprint: requestFingerprint(params) }
       if (params.mode === "openai/form") {
@@ -4326,7 +4426,6 @@ export class CodexAppServerBridge {
         )
       }
     } else {
-      this.options.diagnostic?.({ event: "request-rejected", method: cleanText(method, 128, "unknown"), code: -32601 })
       throw new RpcProtocolError(-32601, "Unsupported Codex app-server request method")
     }
 
@@ -4450,15 +4549,22 @@ export class CodexAppServerBridge {
     }
   }
 
+  /** A notification this bridge reads arrived in a shape its schema refuses, and is dropped. Said once
+   *  per method: it is the same key on every message, and `turn/completed` alone is one per turn. What
+   *  is lost is whatever that notification drives (a turn that never reads as finished, an approval
+   *  that is never retired), so the line names the method and where the params stopped fitting. */
+  private unparsedNotification(method: string, error: z.ZodError): void {
+    if (this.unparsedNotifications.has(method)) return
+    this.unparsedNotifications.add(method)
+    const issues = schemaIssues(error)
+    this.options.diagnostic?.({ event: "notification-unparsed", method, issues })
+    frizzLog.warn("codex", `Codex app-server sent a ${method} notification this bridge cannot read, and it is being dropped (${issues.join("; ")}). The Codex protocol may have moved past what this Frizz reads.`)
+  }
+
   private async handleNotification(connection: JsonlRpcConnection, method: string, rawParams: unknown): Promise<void> {
     if (method === "mcpServer/oauthLogin/completed") {
-      const parsed = z.object({
-        name: z.string().max(256),
-        loginId: z.string().max(256).nullish(),
-        success: z.boolean(),
-        error: z.string().max(2000).nullish(),
-      }).passthrough().safeParse(rawParams)
-      if (!parsed.success) return
+      const parsed = McpOAuthLoginCompleted.safeParse(rawParams)
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const event: CodexMcpOAuthCompleted = {
         name: parsed.data.name,
         success: parsed.data.success,
@@ -4469,8 +4575,8 @@ export class CodexAppServerBridge {
       return
     }
     if (method === "error") {
-      const parsed = z.object({ threadId: Opaque, turnId: Opaque, error: z.unknown(), willRetry: z.boolean() }).passthrough().safeParse(rawParams)
-      if (!parsed.success) return
+      const parsed = ErrorNotification.safeParse(rawParams)
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const binding = this.bindingForCodexThread(parsed.data.threadId)
       if (!binding || binding.state !== "active" || binding.connection_epoch !== this.connectionEpoch || binding.current_turn_id !== parsed.data.turnId) return
       this.providerErrors.set(binding.frizz_session_id, codexProviderError(parsed.data.error, this.now().toISOString(), parsed.data.willRetry))
@@ -4479,7 +4585,7 @@ export class CodexAppServerBridge {
     }
     if (method === "item/started") {
       const envelope = ItemStartedNotification.safeParse(rawParams)
-      if (!envelope.success) return
+      if (!envelope.success) return this.unparsedNotification(method, envelope.error)
       const binding = this.bindingForCodexThread(envelope.data.threadId)
       if (binding?.state === "active" && binding.connection_epoch === this.connectionEpoch && binding.current_turn_id === envelope.data.turnId && this.providerErrors.delete(binding.frizz_session_id)) this.options.onStatusChange?.()
       this.foldExecItem(envelope.data.threadId, envelope.data.item, envelope.data.startedAtMs)
@@ -4504,7 +4610,7 @@ export class CodexAppServerBridge {
     }
     if (method === "item/fileChange/patchUpdated") {
       const parsed = FileChangePatchUpdatedNotification.safeParse(rawParams)
-      if (!parsed.success) return
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const key = correlatedFileItemKey(parsed.data.threadId, parsed.data.turnId, parsed.data.itemId)
       const current = this.correlatedFileItems.get(key)
       if (!current) return
@@ -4522,7 +4628,7 @@ export class CodexAppServerBridge {
     }
     if (method === "item/completed") {
       const envelope = ItemCompletedNotification.safeParse(rawParams)
-      if (!envelope.success) return
+      if (!envelope.success) return this.unparsedNotification(method, envelope.error)
       this.foldExecItem(envelope.data.threadId, envelope.data.item)
       const item = FileChangeItem.safeParse(envelope.data.item)
       if (!item.success) return
@@ -4541,7 +4647,7 @@ export class CodexAppServerBridge {
     }
     if (method === "serverRequest/resolved") {
       const parsed = ResolvedNotification.safeParse(rawParams)
-      if (!parsed.success) throw new RpcProtocolError(-32602, "Invalid Codex request-resolved notification")
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const binding = this.bindingForCodexThread(parsed.data.threadId)
       if (!binding || binding.connection_epoch !== this.connectionEpoch || binding.state !== "active") return
       const result = this.options.interactions.acknowledgeProviderResponse(
@@ -4562,7 +4668,7 @@ export class CodexAppServerBridge {
       // The ONLY trustworthy evidence that a settings change took effect: the app-server emits this
       // exclusively when the settings actually changed, and it carries the FULL effective ThreadSettings.
       const parsed = ThreadSettingsUpdated.safeParse(rawParams)
-      if (!parsed.success) return
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const observed: ObservedThreadSettings = {
         sandbox: codexSandboxModeOfPolicy(parsed.data.threadSettings.sandboxPolicy),
         approvalPolicy: parsed.data.threadSettings.approvalPolicy,
@@ -4578,7 +4684,7 @@ export class CodexAppServerBridge {
     }
     if (method === "turn/started") {
       const parsed = TurnStarted.safeParse(rawParams)
-      if (!parsed.success) return
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const binding = this.bindingForCodexThread(parsed.data.threadId)
       if (!binding || binding.connection_epoch !== this.connectionEpoch || binding.state !== "active") return
       if (binding.current_turn_id !== null) {
@@ -4604,7 +4710,7 @@ export class CodexAppServerBridge {
     }
     if (method === "turn/completed") {
       const parsed = TurnCompleted.safeParse(rawParams)
-      if (!parsed.success) return
+      if (!parsed.success) return this.unparsedNotification(method, parsed.error)
       const binding = this.bindingForCodexThread(parsed.data.threadId)
       if (binding?.state === "active" && binding.connection_epoch === this.connectionEpoch && binding.current_turn_id === parsed.data.turn.id) {
         if (parsed.data.turn.error != null || parsed.data.turn.status === "failed") {
