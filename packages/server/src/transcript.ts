@@ -769,6 +769,14 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
   // Byte counts include the '\n' terminator so a line's offset matches a one-shot fold exactly.
   let offset = 0
   let buffer = ""
+  // Chunks of that same trailing line, parked UNJOINED until one arrives that could end it (see ingest).
+  // Logically `buffer + pendingParts.join("")` is the partial; nothing reads `buffer` without joining first.
+  const pendingParts: string[] = []
+  function joinPending(): void {
+    if (pendingParts.length === 0) return
+    buffer += pendingParts.join("")
+    pendingParts.length = 0
+  }
 
   function processLine(line: string, lineOffset: number): void {
     if (!line.trim()) return
@@ -1270,6 +1278,24 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
 
   function ingest(chunk: string): void {
     if (!chunk) return
+    // A CHUNK THAT CANNOT END THE LINE IS PARKED, NOT SCANNED. `buffer` never holds a newline, so the last
+    // newline of `buffer + chunk` is the chunk's own; and tryConsumePartial refuses anything whose trimmed
+    // end is not "}". So a chunk with neither can only extend the partial, and joining it now buys nothing.
+    // It used to be joined anyway: `(buffer + chunk).lastIndexOf("\n")` flattened and rescanned everything
+    // received so far, on every chunk — N²/128KB for one record of N bytes fed in the cold fold's 64KB
+    // slices (FOLD_SLICE_BYTES). Measured 2026-11-10 on one synthetic record: 8MB took 441ms and 32MB took
+    // 7.4s, with single 64KB ingests of up to 50ms, which is the stall the 8ms slicing exists to prevent.
+    // Parked, the same 32MB takes 33ms, nearly all of it the one parse at the end. Tool results of 4.4MB
+    // are in this machine's transcripts, and an image block may be 32MB of base64.
+    // A whitespace-only chunk falls through to the join: the partial behind it may already end in "}".
+    if (!chunk.includes("\n")) {
+      const end = chunk.trimEnd()
+      if (end !== "" && !end.endsWith("}")) {
+        pendingParts.push(chunk)
+        return
+      }
+    }
+    joinPending()
     const data = buffer + chunk
     buffer = ""
     let pos = offset
@@ -1311,6 +1337,7 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
   // with no newline is still projected; a parse failure is skipped). The incremental cache never calls
   // this — its buffered partial waits for the newline (or an optimistic parse) on the next appended read.
   function finalize(): void {
+    joinPending()
     if (buffer === "") return
     processLine(buffer, offset)
     offset += Buffer.byteLength(buffer)
@@ -1339,7 +1366,8 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
     // just anchored on it (reconcileLiveMessages replaces the window wholesale).
     messages: () => latestTranscriptWindow(projected()),
     allMessages: projected,
-    consumedBytes: () => offset + Buffer.byteLength(buffer),
+    // Joined first, so a surrogate pair split across two parked chunks counts as the 4 bytes it is.
+    consumedBytes: () => (joinPending(), offset + Buffer.byteLength(buffer)),
   }
 }
 

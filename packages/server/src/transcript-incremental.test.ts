@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { StringDecoder } from "node:string_decoder"
 import {
   createTranscriptFold,
   parseTranscript,
@@ -161,6 +162,122 @@ test("consumedBytes is monotonic and reaches the full stream length after finali
   }
   fold.finalize()
   assert.equal(fold.consumedBytes(), total, "after finalize the fold has consumed the whole stream")
+})
+
+// ── the parked partial line (ingest's `pendingParts`) ────────────────────────────────────────────────
+// A chunk that cannot end the trailing line is parked unjoined instead of being concatenated and rescanned.
+// These pin that the parking is invisible: at every cut, mid-stream and at the end, the fold is in the
+// state one ingest of the same bytes leaves it in. The corpus is every framing case the reader meets: a
+// multi-byte character at each width (2, 3 and 4 bytes, the last a surrogate pair), "}" inside strings and
+// at chunk ends, a blank line, a whitespace-only line, a CR before the LF, a line that is not JSON, and a
+// final record with no newline.
+const PARK_CORPUS = [
+  userLine("naïve café — 日本語 😀 done"),
+  asstText("p1", 'a brace } in prose, then {"a":{"b":[1,2,{"c":"}"}]}} and a trailing one }'),
+  asstTool("p2", "bash-p", "Bash", { command: "printf '%s' '{\"k\":\"v\"}'", description: "Print a JSON object" }),
+  toolResult("bash-p", '{"k":"v"}\n{"k":"w"}'),
+  "",
+  "   ",
+  userLine("carriage return next", "2026-07-01T00:00:04.000Z") + "\r",
+  '{"type":"user","message":{"role":"user","content":"torn',
+  enqueue("queued — 🙂"),
+  deliver("queued — 🙂"),
+  asstText("p3", "résumé }"),
+].join("\n")
+
+// The reader's own framing: bytes through one StringDecoder, an empty decode never handed on (ingestBounded).
+function foldByteChunks(buf: Buffer, cuts: number[]): ReturnType<typeof createTranscriptFold> {
+  const fold = createTranscriptFold(PREFIX)
+  const decoder = new StringDecoder("utf8")
+  let prev = 0
+  for (const cut of [...cuts, buf.length]) {
+    const chunk = decoder.write(buf.subarray(prev, cut))
+    if (chunk) fold.ingest(chunk)
+    prev = cut
+  }
+  return fold
+}
+const snapshot = (fold: ReturnType<typeof createTranscriptFold>) => JSON.stringify({ bytes: fold.consumedBytes(), messages: fold.allMessages() })
+
+test("a line parked across chunks: every BYTE cut leaves the fold where one ingest of the same bytes does", () => {
+  for (const raw of [PARK_CORPUS, `${PARK_CORPUS}\n`]) {
+    const buf = Buffer.from(raw)
+    const whole = snapshot(foldByteChunks(buf, []))
+    for (let cut = 1; cut < buf.length; cut++) {
+      // Mid-stream: only the first `cut` bytes have arrived. This is the state a live read publishes.
+      const head = buf.subarray(0, cut)
+      assert.equal(snapshot(foldByteChunks(head, [])), snapshot(foldByteChunks(head, [Math.floor(cut / 2)])), `prefix of ${cut} bytes diverged when cut in two`)
+      assert.equal(snapshot(foldByteChunks(buf, [cut])), whole, `cut at byte ${cut} diverged`)
+    }
+  }
+})
+
+test("a line parked across chunks: fixed-width dribbles from 1 to 40 bytes equal the one-shot fold, offsets included", () => {
+  const buf = Buffer.from(`${PARK_CORPUS}\n`)
+  const whole = foldByteChunks(buf, [])
+  const expected = snapshot(whole)
+  // sourceId is `${prefix}:${byte offset of the line}`: a parked chunk miscounted would move every later one.
+  const ids = whole.allMessages().map((m) => m.sourceId)
+  assert.ok(ids.some((id) => id !== undefined && /:\d{3,}$/.test(id)), "the corpus must carry offsets past the parked lines")
+  for (let width = 1; width <= 40; width++) {
+    const cuts: number[] = []
+    for (let at = width; at < buf.length; at += width) cuts.push(at)
+    const fold = foldByteChunks(buf, cuts)
+    assert.equal(snapshot(fold), expected, `a ${width}-byte dribble diverged`)
+    assert.deepEqual(fold.allMessages().map((m) => m.sourceId), ids)
+  }
+})
+
+test("a line parked across chunks: a surrogate pair cut between its halves still counts 4 bytes", () => {
+  // The file reader cannot produce this cut (StringDecoder holds a torn character back), but `ingest`
+  // takes strings from any caller, and a lone half measured by itself is 3 bytes of U+FFFD, not 2 of 4.
+  const raw = `${PARK_CORPUS}\n`
+  const oneShot = JSON.stringify(parseTranscript(raw, PREFIX))
+  for (let i = 1; i < raw.length; i++) {
+    const fold = createTranscriptFold(PREFIX)
+    fold.ingest(raw.slice(0, i))
+    const mid = fold.consumedBytes()
+    fold.ingest(raw.slice(i))
+    assert.equal(mid, Buffer.byteLength(raw.slice(0, i)), `consumedBytes after ${i} UTF-16 units`)
+    assert.equal(fold.consumedBytes(), Buffer.byteLength(raw), `consumedBytes after a cut at ${i}`)
+    fold.finalize()
+    assert.equal(JSON.stringify(fold.messages()), oneShot, `cut at UTF-16 unit ${i} diverged`)
+  }
+})
+
+test("a multi-megabyte record folds the same in 64KB slices, and a slice that cannot end it costs nothing", () => {
+  // One tool result of 16MB with a multi-byte character every 1,021 bytes, so the 64KB cuts land inside
+  // characters, between two ordinary records. The cold fold feeds exactly these slices (FOLD_SLICE_BYTES).
+  const big = toolResult("bash-big", ("x".repeat(1019) + "é").repeat(16 * 1024))
+  const raw = [userLine("before"), asstTool("b1", "bash-big", "Bash", { command: "cat big.txt", description: "Print the file" }), big, asstText("b2", "after — done")].join("\n") + "\n"
+  const buf = Buffer.from(raw)
+  assert.ok(Buffer.byteLength(big) > 16 * 1000 * 1000)
+  const whole = snapshot(foldByteChunks(buf, []))
+  assert.match(whole, /after — done/)
+
+  // What is timed is each ingest of a slice from the middle of the record, and nothing else: the parse at
+  // its end costs the same however the record arrived. CPU time, not wall, because this machine runs at a
+  // load near 100.
+  const fold = createTranscriptFold(PREFIX)
+  const decoder = new StringDecoder("utf8")
+  let parked = 0
+  let parkedMs = 0
+  for (let at = 0; at < buf.length; at += 64 * 1024) {
+    const chunk = decoder.write(buf.subarray(at, at + 64 * 1024))
+    if (!chunk) continue
+    const start = process.cpuUsage()
+    fold.ingest(chunk)
+    const spent = process.cpuUsage(start)
+    if (!chunk.includes("\n")) {
+      parked++
+      parkedMs += (spent.user + spent.system) / 1000
+    }
+  }
+  assert.equal(snapshot(fold), whole, "the sliced fold and the one-shot fold project the same messages at the same offsets")
+  assert.ok(parked > 200, `the record must span hundreds of slices, and spanned ${parked}`)
+  // Each of these used to join and rescan everything received so far, so the cost grew with the square of
+  // the record: 1,800ms of CPU for these 254 slices (measured 2026-11-10), against under 1ms parked.
+  assert.ok(parkedMs < 250, `${parked} slices that could not end the record took ${parkedMs.toFixed(0)}ms of CPU`)
 })
 
 // ── cache behavior via readTranscript (real ~/.claude/projects/<slug>/<id>.jsonl layout) ─────────────
