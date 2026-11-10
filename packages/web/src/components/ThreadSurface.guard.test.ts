@@ -49,9 +49,11 @@ test("every surface that draws a thread's prompt box mounts the shell, once", ()
     assert.doesNotMatch(text, /\bon(?:Drop|DragOver|DragEnter|DragLeave)=/, `${file} binds no drag handlers of its own`)
   }
   // A page that is one thread's widens that thread's zone to itself (ThreadPageZone) — the shell's
-  // element, mounted by the full-screen page alone, which binds no drag handler of its own either.
-  assert.deepEqual(filesWith("<ThreadPageZone").filter((file) => file !== SHELL), ["components/StandaloneThreadPage.tsx"])
-  assert.doesNotMatch(sources.get("components/StandaloneThreadPage.tsx")!, /\bon(?:Drop|DragOver|DragEnter|DragLeave)=/)
+  // element, mounted by the full-screen page and by the board's one-thread pane around its thread and rail,
+  // neither of which binds a drag handler of its own.
+  const pageZones = ["components/StandaloneThreadPage.tsx", "components/ThreadPane.tsx"]
+  assert.deepEqual(filesWith("<ThreadPageZone").filter((file) => file !== SHELL), pageZones)
+  for (const file of pageZones) assert.doesNotMatch(sources.get(file)!, /\bon(?:Drop|DragOver|DragEnter|DragLeave)=/)
   assert.match(sources.get(SHELL)!, /<div \{\.\.\.root\} \{\.\.\.\(pageZone \? null : zone\)\} data-thread-surface=/, "one zone: a surface whose page took it binds none on its own root")
   // The box is drawn directly by the queue card, and through ThreadActionBar by ChatView.
   assert.deepEqual(filesWith("<ThreadComposerBox"), ["components/ThreadActionBar.tsx", "components/TodosView.tsx"])

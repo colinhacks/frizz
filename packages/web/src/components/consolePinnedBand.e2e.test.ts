@@ -3,8 +3,12 @@ import test from "node:test"
 
 // THE CONSOLE'S OWN PIN SHELF (ConsoleSidebar.tsx, lib/consoleBoard.ts PINS). On All projects' "By status"
 // view a row's hover pin writes the CONSOLE's shelf, never the project board's: the pinned threads leave
-// Queue and Running for a Pinned band at the top, in the shelf's order, their cards lead the cards, and a
-// project board's own pin plays no part there. The band spans projects, so a drop is written by the
+// Queue and Running for a Pinned band at the top, in the shelf's order, and a project board's own pin plays
+// no part there. The queue the one-thread pane steps through (ThreadPane.tsx usePaneQueue, lib/consoleBoard
+// consoleCardOrder) takes the band's order too: the pinned threads waiting on you come first, as the band
+// stands above Queue, so `j` walks the sidebar top to bottom. (Until 2026-11-09 that order was the queue
+// cards'. The pinned threads here end on a question, since a pinned plain report leaves the queue
+// altogether: pinnedReports.e2e.test.ts.) The band spans projects, so a drop is written by the
 // browser — one write when the moved row has room between its new neighbours, and one call per project
 // touched when it has not — and the band must never show an order that is neither the old nor the new
 // while those calls land one project at a time.
@@ -24,7 +28,7 @@ type Board = { projectSlug: string; threads: BoardThread[] }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-test("the Console's By status view pins, orders and drags a shelf of its own", { skip: !baseUrl || projectIds.length !== 2, timeout: 300_000 }, async () => {
+test("the Console's By status view pins, orders and drags a shelf of its own", { skip: !baseUrl || projectIds.length !== 2, timeout: 480_000 }, async () => {
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   const [alpha, beta] = projectIds.map((id) => createRpcClient(`${baseUrl}/`, id))
   await alpha!.waitForHealth()
@@ -32,10 +36,10 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
   const dispatch = async (api: typeof alpha, title: string, script: string) =>
     ((await api!.mutate("dispatch", { prompt: `[script ${script}] ${title}`, title, backend: "claude", model: "haiku", effort: "low" })) as { slug: string }).slug
   const A1 = await dispatch(alpha, "Console pins alpha one", "ending=needs paras=1")
-  const A2 = await dispatch(alpha, "Console pins alpha two", "ending=needs paras=1")
+  const A2 = await dispatch(alpha, "Console pins alpha two", "ending=question paras=1")
   const A3 = await dispatch(alpha, "Console pins alpha three, running", "ending=needs paras=1 tools=1 toolms=900000")
-  const B1 = await dispatch(beta, "Console pins beta one", "ending=needs paras=1")
-  const B2 = await dispatch(beta, "Console pins beta two", "ending=needs paras=1")
+  const B1 = await dispatch(beta, "Console pins beta one", "ending=question paras=1")
+  const B2 = await dispatch(beta, "Console pins beta two", "ending=question paras=1")
   const B3 = await dispatch(beta, "Console pins beta three, pinned on its board", "ending=needs paras=1")
   let slugs = { alpha: "", beta: "" }
   for (let i = 0; i < 200; i++) {
@@ -101,7 +105,35 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     const pinnedIds = () => page.$$eval(`${rail} [data-console-pinned] [data-pinned-row]`, (rows) => rows.map((r) => r.getAttribute("data-pinned-row")))
     const outsidePinned = () =>
       page.$$eval(`${rail} [data-sidebar-item]`, (rows) => rows.filter((r) => !r.closest("[data-console-pinned]")).map((r) => r.getAttribute("data-sidebar-item")))
-    const cardIds = () => page.$$eval("[data-queue-card]", (cards) => cards.map((c) => c.getAttribute("data-queue-card")))
+    // THE PANE'S QUEUE, read the way a reader walks it: a fresh load of the Console, its pane empty, then
+    // `j` until it stops moving. Every step opens a thread, which reads it and dequeues nothing. The walk
+    // ends on a fresh load again, the pane empty.
+    const consoleUrl = `${baseUrl}/console`
+    const paneSlug = () => page.evaluate(() => document.querySelector("[data-pane-thread] [data-thread-surface]")?.getAttribute("data-thread-surface") ?? null)
+    const queueIds = async () => {
+      await page.goto(consoleUrl, { waitUntil: "networkidle2" })
+      await page.waitForSelector("[data-pane-empty]", { timeout: 20_000 })
+      await page.waitForSelector(`[data-sidebar-item="${kB3}"]`, { timeout: 20_000 })
+      // As many steps as the empty pane says are waiting, so the walk never waits out a step past the end.
+      const waiting = await page.$eval("[data-pane-empty]", (el) => Number(/(\d+) threads? (?:is|are) waiting/.exec(el.textContent ?? "")?.[1] ?? 0))
+      const steps: string[] = []
+      for (let i = 0; i < waiting; i++) {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+        await page.keyboard.press("j")
+        // A thread of another project draws once its transcript is in, which takes seconds on a loaded Mac.
+        let now: string | null = null
+        for (let w = 0; w < 100; w++) {
+          now = await paneSlug()
+          if (now !== null && now !== steps.at(-1)) break
+          await sleep(100)
+        }
+        if (now === null || now === steps.at(-1)) break
+        steps.push(now)
+      }
+      await page.goto(consoleUrl, { waitUntil: "networkidle2" })
+      await page.waitForSelector(`[data-sidebar-item="${kB3}"]`, { timeout: 20_000 })
+      return steps
+    }
     // A pinned row shows its pin only on hover, as the unpin verb (2026-10-24), so "pinned on the shelf
     // this view speaks for" reads off that verb rather than a resting mark.
     const offersUnpin = async (id: string) => {
@@ -131,12 +163,12 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
       }
       assert.deepEqual(got, want, label)
     }
-    const waitCards = async (lead: string[], label: string) => {
-      let got: (string | null)[] = []
-      for (let i = 0; i < 40; i++) {
-        got = await cardIds()
+    const waitQueue = async (lead: string[], label: string) => {
+      let got: string[] = []
+      for (let i = 0; i < 8; i++) {
+        got = await queueIds()
         if (got.slice(0, lead.length).join() === lead.join()) return got
-        await sleep(100)
+        await sleep(500)
       }
       assert.deepEqual(got.slice(0, lead.length), lead, label)
       return got
@@ -166,7 +198,8 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     assert.equal(await page.$(`${rail} [data-console-pinned]`), null)
     assert.equal(await offersUnpin(kB3), false, "a board pin offers no unpin here")
     assert.equal(await hasAge(kB3), true)
-    const cardsBefore = await cardIds()
+    const queueBefore = await queueIds()
+    for (const id of [kA1, kA2, kB1, kB2, kB3]) assert.ok(queueBefore.includes(id), `${id}, at rest, is in the queue`)
 
     // 2. PIN from the hover verb: two waiting threads of two projects and a running one.
     await pinVerb(kA2)
@@ -181,8 +214,8 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
       assert.equal(await offersUnpin(id), true, `${id} offers its unpin`)
     }
     for (const id of [kA1, kB2, kB3]) assert.ok(outside.includes(id), `${id} stays in Queue`)
-    const cards = await waitCards([kA2, kB1], "the pinned rows' cards lead")
-    assert.deepEqual(cards.slice(2), cardsBefore.filter((id) => id !== kA2 && id !== kB1), "the rest keep the queue's order")
+    const queue = await waitQueue([kA2, kB1], "the pinned threads lead the pane's queue, in the band's order")
+    assert.deepEqual(queue.slice(2), queueBefore.filter((id) => id !== kA2 && id !== kB1), "the rest keep the queue's order")
     const a2 = (await board(alpha)).threads.find((t) => t.id === A2)!
     assert.equal(typeof a2.consolePinnedAt, "string")
     assert.equal(a2.pinnedAt, undefined, "a Console pin is not a board pin")
@@ -224,11 +257,11 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     assert.ok(seen.length > 0, "the observer saw the drop")
     for (const order of seen) assert.ok([[kA3, kB1, kA2, kB2].join(), want.join()].includes(order), `an in-between order flashed: ${order}`)
 
-    // 5. A RELOAD reads the servers' order, and the cards follow it (A3 is running: no card).
+    // 5. A RELOAD reads the servers' order, and the pane's queue follows it (A3 is running: not queued).
     await page.reload({ waitUntil: "networkidle2" })
     await page.waitForSelector(`${rail} [data-console-pinned] [data-pinned-row="${kB1}"]`, { timeout: 20_000 })
     assert.deepEqual(await pinnedIds(), want, "the order survived a reload")
-    await waitCards([kB2, kB1, kA2], "the cards follow the shelf")
+    await waitQueue([kB2, kB1, kA2], "the pane's queue follows the shelf")
 
     // 6. BY PROJECT wears each board's pins and no Console band.
     await pickGroup("project")

@@ -64,8 +64,9 @@ test("a pinned row dragged to a new slot stays there, across a reload, without o
     assert.deepEqual(got, want, "the server holds the band's new order")
   }
   await waitForServerOrder([a, b, c])
-  // Alpha is the row the test drags. Done, it has no queue card, so a click on it opens its drawer — which
-  // is what makes "the release did not open it" a claim that can fail. The pin outranks Done: it stays.
+  // Alpha is the row the test drags. A click on any row opens its thread in the board's one-thread pane, so
+  // "the release did not open it" is a claim that can fail. Done, alpha is in no queue the pane could have
+  // brought up on its own. The pin outranks Done: it stays.
   await api.mutate("setThreadState", { slug: a, state: "archived" })
 
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
@@ -88,9 +89,10 @@ test("a pinned row dragged to a new slot stays there, across a reload, without o
       const r = el.getBoundingClientRect()
       return { x: r.left + r.width / 2, top: r.top, bottom: r.bottom, height: r.height }
     })
-    const drawerOpen = () => page.$(".frizz-sheet-panel").then((el) => el !== null)
+    const opened = (slug: string) => page.$(`[data-pane-thread] [data-thread-surface="${slug}"]`).then((el) => el !== null)
 
     await page.goto(boardUrl, { waitUntil: "networkidle2" })
+    await page.waitForSelector("[data-pane-empty]", { timeout: 15_000 })
     await page.waitForFunction((n) => document.querySelectorAll("[data-pinned-band] > [data-pinned-row]").length === n, { timeout: 15_000 }, 3)
     // gamma's sub-agent row, under it inside the same draggable box.
     await page.waitForFunction((slug) => (document.querySelector(`[data-pinned-row="${slug}"]`)?.getBoundingClientRect().height ?? 0) > 40, { timeout: 15_000 }, c)
@@ -126,7 +128,8 @@ test("a pinned row dragged to a new slot stays there, across a reload, without o
     await waitForServerOrder([b, c, a])
     assert.deepEqual(await domOrder(), [b, c, a], "…and still is once the board carries it back")
     await new Promise((r) => setTimeout(r, 300))
-    assert.equal(await drawerOpen(), false, "the release did not open the dropped row")
+    assert.equal(await opened(a), false, "the release did not open the dropped row")
+    assert.ok(await page.$("[data-pane-empty]"), "…nor any other: the pane is still empty")
     assert.equal(await page.$$eval("[data-pinned-band] > [data-pinned-row]", (rows) => rows.filter((row) => (row as HTMLElement).style.transform).length), 0, "no row is left displaced")
 
     // 2. A RELOAD reads the server's order.
@@ -143,10 +146,10 @@ test("a pinned row dragged to a new slot stays there, across a reload, without o
     await waitForServerOrder([c, b, a])
     await page.waitForFunction((slug) => document.activeElement?.closest("[data-pinned-row]")?.getAttribute("data-pinned-row") === slug, { timeout: 2_000 }, c)
 
-    // 4. A PRESS THAT DOES NOT TRAVEL IS STILL A CLICK, and opens alpha's drawer.
+    // 4. A PRESS THAT DOES NOT TRAVEL IS STILL A CLICK, and opens alpha in the pane.
     const done = await box(a)
     await page.mouse.click(done.x, done.top + 10)
-    await page.waitForSelector(".frizz-sheet-panel", { timeout: 5_000 })
+    await page.waitForSelector(`[data-pane-thread] [data-thread-surface="${a}"]`, { timeout: 10_000 })
     assert.deepEqual(await serverOrder(), [c, b, a], "a click reorders nothing")
 
     assert.deepEqual(errors, [])

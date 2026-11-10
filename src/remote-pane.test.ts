@@ -132,9 +132,10 @@ test("under --sandbox the username screen says a claim is real, and the others s
   assert.doesNotMatch(out.text(), /claim is real/);
 });
 
-test("a private name claims with one question — no form, no GitHub, QR straight away", async () => {
-  // The auth-free default. The pane asks what a device may do, and enter takes the preselected answer. That
-  // IS the claim: it mints through claim("") and lands on the done screen with the sign-in QR.
+test("a private name claims after one question and a confirmation — no form, no GitHub, QR straight away", async () => {
+  // The auth-free default. The pane asks what a device may do, enter takes the preselected answer, and a
+  // confirmation says the board goes on the internet and stays there. Its enter IS the claim: it mints
+  // through claim("") and lands on the done screen with the sign-in QR.
   const claims: string[] = [];
   const { pane, out, applied } = build({
     claim: async (name) => {
@@ -146,6 +147,10 @@ test("a private name claims with one question — no form, no GitHub, QR straigh
   pane.key("1");
   pane.key("\r");
   assert.deepEqual(claims, [], "nothing is claimed until the question has its answer");
+  pane.key("\r");
+  await settle();
+  assert.deepEqual(claims, [], "nor until the confirmation has its enter");
+  assert.match(lastScreen(out.text()), /Put this board on the internet\?/);
   pane.key("\r");
   await settle();
   assert.deepEqual(claims, [""], "an empty name asks the claimer to mint one");
@@ -165,6 +170,7 @@ test("in an 80x24 window the done screen keeps the whole code on screen", async 
   pane.key("1");
   pane.key("\r");
   pane.key("\r");
+  pane.key("\r"); // confirm putting the board on the internet
   await settle();
   const screen = out.text().split("\x1b[2J\x1b[H").pop()!.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
   const rows = screen.split("\n");
@@ -307,10 +313,8 @@ test("answering read and answer is what gets saved, by either way of claiming", 
     pane.key("\x1b[B");
     pane.key("\r");
     await settle();
-    if (row === "2") {
-      pane.key("\r"); // claim the username
-      await settle();
-    }
+    pane.key("\r"); // confirm the claim: the random name's and the username's confirmations alike
+    await settle();
     assert.equal(applied[0]!.relayAccess, "read-and-answer", row);
     assert.equal(applied[0]!.serve, "relay");
   }
@@ -327,6 +331,34 @@ test("escape on the question goes back to the menu, and nothing is claimed", asy
   assert.match(lastScreen(out.text()), /❯ frizz\.sh subdomain/);
   assert.deepEqual(claims, []);
   assert.deepEqual(applied, []);
+});
+
+test("a random name goes public only after a confirmation that says so, and escape there claims nothing", async () => {
+  for (const [moves, said] of [
+    [[], "full control: start and steer threads, answer cards"],
+    [["\x1b[B"], "read and answer: read the board and pick options on cards"],
+  ] as const) {
+    const claims: string[] = [];
+    const { pane, out, applied } = build({ claim: async (name) => { claims.push(name); return { hostname: "x.frizz.sh", claim: "x", serve: "relay" }; } });
+    Object.assign(out.stream, { columns: 80, rows: 24 });
+    pane.open();
+    pane.key("1");
+    pane.key("\r");
+    for (const move of moves) pane.key(move);
+    pane.key("\r");
+    await settle();
+    const screen = lastScreen(out.text());
+    assert.deepEqual(claims, [], "the access answer alone claims nothing");
+    assert.match(prose(screen), /^Put this board on the internet\? .*every project on this machine.*every launch until Off is chosen here\./);
+    assert.ok(prose(screen).includes(said), said);
+    assert.match(screen, /enter claim · esc back/);
+    for (const line of screen.split("\n")) assert.ok(line.length < 80, `${JSON.stringify(line)} fits 80 columns`);
+    assert.equal(pane.key("\x1b"), "keep");
+    await settle();
+    assert.match(lastScreen(out.text()), /❯ frizz\.sh subdomain/, "escape goes back to the menu");
+    assert.deepEqual(claims, []);
+    assert.deepEqual(applied, []);
+  }
 });
 
 test("Cloudflare Tunnel, Tailscale, something else and Off ask nothing, and offer no row to change it", async () => {
@@ -487,6 +519,7 @@ test("in an 80x24 window a random name's done screen keeps the message, the whol
   pane.key("1");
   pane.key("\r");
   pane.key("\r");
+  pane.key("\r"); // confirm putting the board on the internet
   await settle();
   const rows = lastScreen(out.text()).split("\n");
   assert.ok(rows.length <= 24, `the done screen is ${rows.length} rows in a 24-row window`);
@@ -530,10 +563,8 @@ test("a refused claim names what it could not claim, and wraps between words und
     pane.key("\r");
     pane.key("\r");
     await settle();
-    if (row === "2") {
-      pane.key("\r");
-      await settle();
-    }
+    pane.key("\r"); // either way, a confirmation comes before the claim
+    await settle();
     const screen = lastScreen(out.text());
     const lead = row === "1" ? "Could not claim a frizz.sh subdomain:" : "Could not claim ada.frizz.sh:";
     assert.equal(prose(screen), `${lead} ${refusal} press any key to go back`, row);
@@ -572,6 +603,7 @@ test("once the pane closes on a change, it says the new setup, once; closing on 
   pane.key("1");
   pane.key("\r");
   pane.key("\r");
+  pane.key("\r"); // confirm putting the board on the internet
   await settle();
   assert.deepEqual(told, [], "not while the pane holds the terminal");
   assert.equal(pane.key("x"), "close");

@@ -14,10 +14,12 @@ import test from "node:test"
 // A dev stack has no launcher, so `/_frizz/control/status` is the one thing answered here rather than
 // by the server — which is also what lets the test say "restarting" and name a second build. The poll
 // is woken with the app's own wake event (api/supervisorStatus.ts) instead of waiting out its 8s rest
-// cadence. The Escape test's stalled hold is three minutes of silence, so it answers 503 and moves the
-// page's clock instead of waiting them out; its drawer is a WORKING thread's, since a queued thread's
-// link opens its card (that worker runs for about two minutes: kill the stack's workers with the
-// stack). The notification half replaces `Notification` and `document.hidden` in the page, since a
+// cadence. The board's prompt box is the sidebar's: since 2026-11-09 the board is the one-thread pane, and
+// with no thread open its column holds no other. The Escape test's stalled hold is three minutes of
+// silence, so it answers 503 and moves the page's clock instead of waiting them out. On the board it
+// folds a WORKING thread's pane, which Escape unfolds at rest, and opens that thread's drawer over a
+// status list, the one board page a thread link still opens a drawer on (that worker runs for about two
+// minutes: kill the stack's workers with the stack). The notification half replaces `Notification` and `document.hidden` in the page, since a
 // headless tab is always the visible one and has nowhere to show a notification; the event itself is
 // the server's own `notify` for a scripted turn that ends, read off the feed's socket for the control.
 // The test writes the stack's `notifications` setting and leaves it off.
@@ -37,8 +39,8 @@ type PageGlobals = {
   frizzPageFrameE2eMarker?: boolean
 }
 
-// One scripted thread at rest, for the full-screen page to show and the board to queue; and the two
-// shells' URLs. Shared by every test here.
+// One scripted thread at rest, for the full-screen page to show and the board to queue (a board with no
+// thread draws the first-task view, not the pane); and the two shells' URLs. Shared by every test here.
 let prepared: Promise<{ api: ReturnType<typeof import("../../../../scripts/lib/rpc-client.mjs").createRpcClient>; projectSlug: string; shells: Shell[] }> | null = null
 function prepare() {
   return (prepared ??= (async () => {
@@ -59,7 +61,7 @@ function prepare() {
       projectSlug,
       shells: [
         { name: "the full-screen thread page", url: `${board}/thread/${slug}`, root: "main[data-standalone-thread]" },
-        { name: "the board", url: board, root: "#workpane" },
+        { name: "the board", url: board, root: "[data-pane-layout]" },
       ],
     }
   })())
@@ -232,10 +234,10 @@ test("the board and the full-screen thread page both follow a restart: the overl
   }
 })
 
-test("Escape does nothing while the restart overlay blocks, on either shell, and works again once it stops blocking", { skip: !baseUrl, timeout: 240_000 }, async () => {
+test("Escape does nothing while the restart overlay blocks, on the full-screen page, the board's pane and a drawer, and works again once it stops blocking", { skip: !baseUrl, timeout: 240_000 }, async () => {
   const { api, shells } = await prepare()
   const [full, board] = shells
-  // A drawer needs a thread that is WORKING: a queued thread's link opens its card instead.
+  // A thread that keeps WORKING, so nothing it does moves the pane or the drawer on while the test runs.
   const { slug: working } = await api.mutate("dispatch", { prompt: "[script ending=done paras=2 tools=40 toolms=3000] Keep working", backend: "claude", model: "haiku", effort: "low" }) as { slug: string }
   let running = false
   for (let i = 0; i < 120 && !running; i++) {
@@ -306,26 +308,56 @@ test("Escape does nothing while the restart overlay blocks, on either shell, and
       await page.close()
     }
 
-    // THE BOARD, with a thread's drawer open. The sheet is portaled out of the page (ThreadSheet), so
-    // `inert` never covered it, and both Radix and the drawer stack close it on Escape.
+    // THE BOARD, with a thread full screen in its pane (⌘\). Escape at rest puts the sidebar back
+    // (App.tsx, DrawerStack's last step); under the block it must leave the page as it is. The pane is
+    // inside the inert page, but a window key listener is not, so the swallow is all that stops it.
     {
       const { page, errors, supervisor } = await open(board.name)
-      const boardPath = new URL(board.url).pathname
-      const drawer = `.frizz-sheet-panel [data-thread-surface="${working}"]`
-      const drawerOpen = () => page.evaluate((selector, path) => ({ drawer: document.querySelector(selector) !== null, path: `${location.pathname}${location.search}` === path }), drawer, `${boardPath}?thread=${working}`)
-
+      const layout = () => page.$eval("[data-pane-layout]", (el) => el.getAttribute("data-pane-layout"))
+      await page.goto(board.url, { waitUntil: "domcontentloaded" })
+      await page.evaluate(() => localStorage.removeItem("frizz.threadPanePrototype.v1"))
       await page.goto(`${board.url}?thread=${working}`, { waitUntil: "domcontentloaded" })
+      await page.waitForSelector(`[data-pane-thread] [data-thread-surface="${working}"]`, { visible: true })
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.keyboard.down("Meta")
+      await page.keyboard.press("Backslash")
+      await page.keyboard.up("Meta")
+      await page.waitForSelector('[data-pane-layout="folded"]')
+      await supervisor.restart()
+      await escape(page)
+      assert.deepEqual({ layout: await layout(), blocking: await blocking(page) }, { layout: "folded", blocking: true }, `${board.name}: Escape under the block leaves the pane full screen`)
+      await supervisor.back()
+      assert.equal(await layout(), "folded", `${board.name}: still full screen when the server is back`)
+      await escape(page)
+      await page.waitForFunction(() => document.querySelector("[data-pane-layout]")?.getAttribute("data-pane-layout") !== "folded", { timeout: 10_000 })
+        .catch((error) => { throw new Error(`${board.name}: Escape did not put the sidebar back once the server was back`, { cause: error }) })
+      assert.ok(await page.$(`[data-pane-thread] [data-thread-surface="${working}"]`), `${board.name}: the thread stays open in the pane`)
+
+      assert.deepEqual(errors, [], `${board.name}: no page errors`)
+      await page.close()
+    }
+
+    // A STATUS LIST, with the thread's drawer open over it. The sheet is portaled out of the page
+    // (ThreadSheet), so `inert` never covered it, and both Radix and the drawer stack close it on Escape.
+    {
+      const name = "a status list"
+      const { page, errors, supervisor } = await open(name)
+      const listPath = `${new URL(board.url).pathname}/status/archived`
+      const drawer = `.frizz-sheet-panel [data-thread-surface="${working}"]`
+      const drawerOpen = () => page.evaluate((selector, path) => ({ drawer: document.querySelector(selector) !== null, path: `${location.pathname}${location.search}` === path }), drawer, `${listPath}?thread=${working}`)
+
+      await page.goto(`${baseUrl}${listPath}?thread=${working}`, { waitUntil: "domcontentloaded" })
       await page.waitForSelector(drawer, { visible: true })
       await supervisor.restart()
       await escape(page)
-      assert.deepEqual({ ...await drawerOpen(), blocking: await blocking(page) }, { drawer: true, path: true, blocking: true }, `${board.name}: Escape under the block leaves the drawer open`)
+      assert.deepEqual({ ...await drawerOpen(), blocking: await blocking(page) }, { drawer: true, path: true, blocking: true }, `${name}: Escape under the block leaves the drawer open`)
       await supervisor.back()
-      assert.deepEqual(await drawerOpen(), { drawer: true, path: true }, `${board.name}: the drawer is still open when the server is back`)
+      assert.deepEqual(await drawerOpen(), { drawer: true, path: true }, `${name}: the drawer is still open when the server is back`)
       await page.keyboard.press("Escape")
-      await page.waitForFunction((selector, path) => !document.querySelector(selector) && location.pathname === path, { timeout: 10_000 }, drawer, boardPath)
-        .catch((error) => { throw new Error(`${board.name}: Escape did not close the drawer once the server was back`, { cause: error }) })
+      await page.waitForFunction((selector, path) => !document.querySelector(selector) && location.pathname === path, { timeout: 10_000 }, drawer, listPath)
+        .catch((error) => { throw new Error(`${name}: Escape did not close the drawer once the server was back`, { cause: error }) })
 
-      assert.deepEqual(errors, [], `${board.name}: no page errors`)
+      assert.deepEqual(errors, [], `${name}: no page errors`)
       await page.close()
     }
   } finally {

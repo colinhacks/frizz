@@ -15,6 +15,12 @@ import { MOBILE_MAX_PX } from "../lib/mobile.ts"
 //   FRIZZ_OVERLAY_E2E_URL=http://127.0.0.1:47451/project/frizz FRIZZ_OVERLAY_E2E_NESTED_SLUG=nested-subagents \
 //     nub run test packages/web/src/components/overlayAccessibility.e2e.test.ts
 //
+// A desktop board opens every thread in its one-thread pane and never in a sheet (store.paneEnabled, since
+// 2026-11-09). So on a desktop the thread SHEET is opened over a status list (`/status/<status>?thread=`),
+// the one board view with no pane; a phone board (MobileBoard) still opens one from the board's own
+// `?thread=`. The pane gets its own check: a sub-agent drawer opened from it unwinds on Escape and leaves
+// the pane's thread where it was.
+//
 // While the Mac sits idle, new headless Chrome can stop drawing frames after a tab's second
 // navigation (see the headless-browser skill). The app keeps working, but puppeteer's
 // requestAnimationFrame-polled waits never re-check, so a step whose state is already true times out
@@ -58,7 +64,7 @@ async function stubSupervisorStatus(page: import("puppeteer").Page): Promise<voi
 
 // Seed with scripts/seed-nested-subagents.mjs against the disposable stack's HOME, then set
 // FRIZZ_OVERLAY_E2E_NESTED_SLUG=nested-subagents alongside FRIZZ_OVERLAY_E2E_URL.
-test("Escape unwinds nested subagent drawers without dismissing their session", {
+test("Escape unwinds nested subagent drawers without dismissing their session, or the pane's thread", {
   skip: !baseUrl || !nestedThreadSlug,
   timeout: 90_000,
 }, async () => {
@@ -75,32 +81,47 @@ test("Escape unwinds nested subagent drawers without dismissing their session", 
       const { store } = await (globalThis as unknown as StoreHandle).frizzOverlayE2eStore()
       return store.drawers.map((drawer: { kind: string; closing?: boolean }) => ({ kind: drawer.kind, closing: !!drawer.closing }))
     })
+    const child = '[role="dialog"] [aria-label^="Open sub-agent transcript:"]'
+    const drawerCount = (n: number) => page.waitForFunction(async (n) => {
+      const { store } = await (globalThis as unknown as StoreHandle).frizzOverlayE2eStore()
+      return store.drawers.filter((drawer: { closing?: boolean }) => !drawer.closing).length === n
+    }, {}, n)
     for (const [width, font] of [[1440, "sans"], [390, "sans"], [1440, "mono"], [390, "mono"]] as const) {
+      const desktop = width > MOBILE_MAX_PX
       await page.setViewport({ width, height: 900 })
-      await page.goto(`${baseUrl}?thread=${nestedThreadSlug}`, { waitUntil: "domcontentloaded" })
+      if (desktop) {
+        // THE PANE FIRST: the board's own link shows the thread in its pane, and a sub-agent opened from
+        // there is the one drawer over it. Escape closes that drawer and nothing else.
+        await page.goto(`${baseUrl}?thread=${nestedThreadSlug}`, { waitUntil: "domcontentloaded" })
+        await page.waitForSelector(`[data-subagent-parent="${nestedThreadSlug}"]`)
+        await page.evaluate((font) => { document.documentElement.dataset.font = font }, font)
+        const paneChild = '[data-pane-thread] [aria-label^="Open sub-agent transcript:"]'
+        await page.waitForSelector(paneChild)
+        await page.click(paneChild)
+        // A sub-agent's sheet is an inline panel, not a Radix dialog (only ThreadSheet is one).
+        await drawerCount(1)
+        await page.waitForSelector(".frizz-sheet-panel")
+        await page.keyboard.press("Escape")
+        await drawerCount(0)
+        await page.waitForFunction(() => !document.querySelector(".frizz-sheet-panel"))
+        assert.ok(await page.$(`[data-pane-thread] [data-thread-surface="${nestedThreadSlug}"]`), "Escape left the pane's thread open")
+        assert.equal(new URL(page.url()).searchParams.get("thread"), nestedThreadSlug)
+      }
+      // THE SHEET: on a desktop over a status list, on the phone over its board.
+      const sheetRoute = desktop ? `${baseUrl}/status/active` : baseUrl
+      await page.goto(`${sheetRoute}?thread=${nestedThreadSlug}`, { waitUntil: "domcontentloaded" })
       // Wait for the board to have drawn this thread with its live children. The desktop rail lists
       // each sub-agent as its own row (`data-subagent-parent`); the PHONE board (MobileBoard, below
       // MOBILE_MAX_PX) deliberately draws no sub-agent rows — one row per thread, a "· N agents" count
       // in their place — so there the thread's own row is the board's evidence. Either way the drill
       // under test is the TRANSCRIPT's Agent card below, which both widths render.
-      await page.waitForSelector(width > MOBILE_MAX_PX
+      await page.waitForSelector(desktop
         ? `[data-subagent-parent="${nestedThreadSlug}"]`
         : `[data-mobile-thread-row="${nestedThreadSlug}"]`)
       await page.evaluate((font) => { document.documentElement.dataset.font = font }, font)
-      // A desktop deep link to a thread that needs you lands on its queue card, not a drawer
-      // (store.resolveRoutedThread); open the session drawer explicitly. Where the route already
-      // opened it (the phone), this raises the same layer rather than stacking a second.
-      await page.evaluate(async (slug) => {
-        const { pushDrawer } = await (globalThis as unknown as StoreHandle).frizzOverlayE2eStore()
-        pushDrawer("thread", slug)
-      }, nestedThreadSlug!)
-      const child = '[role="dialog"] [aria-label^="Open sub-agent transcript:"]'
       await page.waitForSelector(child)
       await page.click(child)
-      await page.waitForFunction(async () => {
-        const { store } = await (globalThis as unknown as StoreHandle).frizzOverlayE2eStore()
-        return store.drawers.length === 2
-      })
+      await drawerCount(2)
       await page.keyboard.press("Escape")
       await page.waitForFunction(async () => {
         const { store } = await (globalThis as unknown as StoreHandle).frizzOverlayE2eStore()
@@ -231,13 +252,15 @@ test("dialog portals, nested Select Escape, and thread sheets keep their keyboar
 
     // A cold `?thread=` route must create the thread sheet immediately, labelled and holding focus. On a
     // desktop the sheet is deliberately NON-modal (ThreadSheet: `modal={narrow}`) so the rail beside it
-    // stays live; at or below 800px it is a modal sheet (asserted at 390px below). The sheet's
+    // stays live; at or below 800px it is a modal sheet (asserted at 390px below). A desktop board opens
+    // the thread in its pane instead, so the desktop sheet is read over a status list. The sheet's
     // Chat|Doc tab strip — and with it the tablist/tabpanel contract this test once pinned here — was
     // removed on 2026-08-06 (6d00c75e) when the Doc tab lost its only destination; the sheet has one
     // surface and no tabs, so there is no arrow-key or tab-persistence contract left to drive.
-    await page.goto(`${baseUrl}?thread=${encodeURIComponent(threadSlug)}`, { waitUntil: "domcontentloaded" })
+    const statusPath = `${boardPath}/status/active`
+    await page.goto(`${baseUrl}/status/active?thread=${encodeURIComponent(threadSlug)}`, { waitUntil: "domcontentloaded" })
     const desktopSheet = await threadSheet()
-    assert.deepEqual(desktopSheet, { label: "Thread: Overlay E2E", modal: null, path: `${boardPath}?thread=${threadSlug}` })
+    assert.deepEqual(desktopSheet, { label: "Thread: Overlay E2E", modal: null, path: `${statusPath}?thread=${threadSlug}` })
     await expectFocusInsideDialog()
 
     // The same cold route survives a real hard reload: the sheet comes back, labelled, holding focus.
@@ -246,7 +269,7 @@ test("dialog portals, nested Select Escape, and thread sheets keep their keyboar
     await expectFocusInsideDialog()
 
     // The live-thread model/effort menu is portaled outside the dialog DOM. Escape still dismisses
-    // only that highest layer; the next Escape closes the sheet and rewrites the route to the board.
+    // only that highest layer; the next Escape closes the sheet and rewrites the route to the list under it.
     const profileMenu = await page.waitForSelector('[role="dialog"] button[aria-label="Thread model and effort"]:not([disabled])')
     assert.ok(profileMenu)
     await profileMenu.focus()
@@ -254,7 +277,7 @@ test("dialog portals, nested Select Escape, and thread sheets keep their keyboar
     await page.waitForSelector("[role=menu]")
     assert.ok(await page.$("[role=dialog]"), "opening a portaled menu must leave its parent sheet mounted")
     await dismissMenuThenDialog("Thread model and effort")
-    await page.waitForFunction((path) => location.pathname === path && location.search === "", {}, boardPath)
+    await page.waitForFunction((path) => location.pathname === path && location.search === "", {}, statusPath)
 
     // Repeat the essential portal/focus checks at the requested compact viewport, where the sheet is
     // modal.

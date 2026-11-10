@@ -19,11 +19,17 @@ const baseUrl = process.env.FRIZZ_FIRST_PAINT_E2E_URL
 // for the first frame; the font stopped being a setting on 2026-09-19 and is pinned sans on <html>. A requestAnimationFrame sampler installed before any script runs records every change to
 // the three, so the assertion is over the whole load rather than a screenshot of one moment.
 //
+// The board is the one-thread pane since 2026-11-09 (components/ThreadPane.tsx), which mounts the sidebar
+// and the thread column together on the board's first frame. So the columns are sampled from that frame
+// on: before it the page holds the loader alone, centred on the page (the test below), beside an EMPTY
+// reserved column and workpane that draw nothing — the old queue's geometry, which the pane does not
+// share, so their place says nothing about what the eye sees.
+//
 // The CONTROL clears the mirrors: the same sampler must then SEE the rail arrive late and the
-// workpane move, or the assertions above were passing on a sampler that could not observe a shift.
-type Sample = { t: number; font: string | undefined; rail: boolean; workpaneLeft: number | null }
+// pane's columns move, or the assertions above were passing on a sampler that could not observe a shift.
+type Sample = { t: number; font: string | undefined; mounted: boolean; rail: boolean; pane: boolean; sidebarLeft: number | null; workpaneLeft: number | null }
 
-test("a reload paints the font, the project rail and the sidebar column in their final state on the first frame", {
+test("a reload paints the font, the project rail and the pane's columns in their final state on the first frame", {
   skip: !baseUrl,
   timeout: 90_000,
 }, async () => {
@@ -48,14 +54,19 @@ test("a reload paints the font, the project rail and the sidebar column in their
       const log: Sample[] = ((window as unknown as { __samples: Sample[] }).__samples = [])
       let last = ""
       const tick = () => {
-        const wp = document.getElementById("workpane")?.getBoundingClientRect()
+        const pane = document.querySelector("[data-pane-layout]")
+        const wp = pane?.querySelector("#workpane")?.getBoundingClientRect()
+        const sidebar = pane?.querySelector("[data-pane-sidebar]")?.getBoundingClientRect()
         const s: Sample = {
           t: Math.round(performance.now() - t0),
           font: document.documentElement.dataset.font,
+          mounted: document.querySelector("#root > *") !== null,
           rail: document.querySelector('nav[aria-label="Projects"]') !== null,
+          pane: pane !== null,
+          sidebarLeft: sidebar ? Math.round(sidebar.left) : null,
           workpaneLeft: wp ? Math.round(wp.left) : null,
         }
-        const key = JSON.stringify([s.font, s.rail, s.workpaneLeft])
+        const key = JSON.stringify([s.font, s.mounted, s.rail, s.pane, s.sidebarLeft, s.workpaneLeft])
         if (key !== last) { last = key; log.push(s) }
         requestAnimationFrame(tick)
       }
@@ -64,35 +75,38 @@ test("a reload paints the font, the project rail and the sidebar column in their
     const samples = () => page.evaluate(() => (window as unknown as { __samples: Sample[] }).__samples)
     const load = async () => {
       await page.goto(`${baseUrl}/project/frizz`, { waitUntil: "networkidle2" })
-      await page.waitForSelector("aside:not([data-sidebar-reserved]) [data-status-row]", { timeout: 20_000 })
+      await page.waitForSelector("[data-pane-sidebar] aside [data-status-row]", { timeout: 20_000 })
       await new Promise((r) => setTimeout(r, 500))
       return samples()
     }
+    const columns = (s: Sample) => `${s.sidebarLeft}|${s.workpaneLeft}`
 
     // The first load in a fresh profile is allowed to shift: it is what writes the mirrors.
     const first = await load()
-    assert.ok(first.some((s) => s.workpaneLeft !== null), "the board rendered a workpane")
-    const settledLeft = first.at(-1)!.workpaneLeft
+    assert.ok(first.some((s) => s.pane && s.workpaneLeft !== null && s.sidebarLeft !== null), "the board rendered the pane's sidebar and workpane")
+    const settled = columns(first.at(-1)!)
 
     // The reload is the case: every sample is the final answer.
     const warm = await load()
-    const painted = warm.filter((s) => s.workpaneLeft !== null)
-    assert.ok(painted.length > 0, "the reload rendered a workpane")
+    const painted = warm.filter((s) => s.pane)
+    assert.ok(painted.length > 0, "the reload rendered the pane")
     // `data-font` is pinned on the <html> tag since 2026-09-19 (the mono setting is gone), so it is
     // sans on every frame by construction; sampled anyway so a regression that reintroduces a
     // late-applied font shows up here.
     assert.deepEqual(new Set(warm.map((s) => s.font)), new Set(["sans"]), `the font never left sans: ${JSON.stringify(warm)}`)
-    assert.deepEqual(new Set(painted.map((s) => s.workpaneLeft)), new Set([settledLeft]), `the workpane never moved: ${JSON.stringify(warm)}`)
-    assert.equal(painted[0]!.rail, true, `the rail is on the first painted frame: ${JSON.stringify(warm)}`)
+    assert.deepEqual(new Set(painted.map(columns)), new Set([settled]), `the pane's columns never moved: ${JSON.stringify(warm)}`)
+    assert.equal(painted[0]!.rail, true, `the rail is on the pane's first frame: ${JSON.stringify(warm)}`)
+    // …and before it: the loader's frames stand beside it too.
+    assert.ok(warm.filter((s) => s.mounted).every((s) => s.rail), `the rail is on every frame React drew: ${JSON.stringify(warm)}`)
 
     // Old Mono settings and cache must not change the font. Clearing the rail/board mirrors
-    // remains the negative control: the sampler must see the rail arrive and the workpane move.
+    // remains the negative control: the sampler must see the rail arrive and the pane's columns move.
     await set({ font: "mono", projectRail: true })
     await page.evaluate(() => { localStorage.clear(); localStorage.setItem("frizz-font", "mono") })
     const control = await load()
-    const controlPainted = control.filter((s) => s.workpaneLeft !== null)
+    const controlPainted = control.filter((s) => s.pane)
     assert.deepEqual(new Set(control.map((s) => s.font)), new Set(["sans"]), `obsolete Mono settings cannot change the font: ${JSON.stringify(control)}`)
-    assert.ok(new Set(controlPainted.map((s) => s.workpaneLeft)).size > 1, `the control saw the workpane move: ${JSON.stringify(control)}`)
+    assert.ok(new Set(controlPainted.map(columns)).size > 1, `the control saw the pane's columns move: ${JSON.stringify(control)}`)
     assert.equal(controlPainted[0]!.rail, false, `the control saw the rail arrive late: ${JSON.stringify(control)}`)
 
     assert.deepEqual(errors, [], "no page errors")

@@ -155,8 +155,8 @@ Options:
 To reach the board from a phone or another machine, press R in the terminal running it: a short
 walkthrough sets up a frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
 Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
-on. The board stays on loopback and shows a single-use sign-in link as a QR; press L for a fresh
-one, or run --link from another shell.`,
+on. The board stays on loopback, and a phone signs in with a single-use link: press L for one
+as a QR, or run --link from another shell.`,
   );
   process.exit(0);
 }
@@ -179,8 +179,6 @@ let paneHost: PaneHost | null = null;
  */
 const globalInstall = process.env[GLOBAL_INSTALL_ENV] === "1" || isGlobalInstall(import.meta.dirname);
 let accessPane: AccessPane | null = null;
-/** The single-use link this launch minted, read by the readout below. */
-let activeAccessLink: { url: string } | null = null;
 /** Set when this start's session-epoch advance signed remote devices out; the readout says so. */
 let sessionNotice: string | null = null;
 let serverOwner: ServerOwnerLease | undefined;
@@ -477,7 +475,7 @@ async function openOrPrint(port: number, reused: boolean, landing: LaunchRoute):
   if (!readout) {
     console.log(`${reused ? "reusing" : "started"} Frizz${landing.project ? ` for ${landing.project.dir}` : ""}`);
     console.log(url);
-    if (publicOrigin) console.log(activeAccessLink?.url ?? `${publicOrigin}/`);
+    if (publicOrigin) console.log(`${publicOrigin}/`);
     for (const warning of warnings) console.log(warning);
     return;
   }
@@ -485,7 +483,7 @@ async function openOrPrint(port: number, reused: boolean, landing: LaunchRoute):
   readout.ready(
     [
       { label: "Local", value: boardAddress(url), accent: true },
-      ...(publicOrigin ? [{ label: "Public", value: activeAccessLink?.url ?? `${publicOrigin}/`, accent: true }] : []),
+      ...(publicOrigin ? [{ label: "Public", value: `${publicOrigin}/`, accent: true }] : []),
       // Only a launch that OPENED a project names one: the dashboard and an offer are about no
       // project, and the folder the server runs on is Frizz's own.
       ...(landing.project ? [{ label: "Project", value: `${landing.project.name} — ${tildePath(landing.project.dir, home)}` }] : []),
@@ -497,12 +495,11 @@ async function openOrPrint(port: number, reused: boolean, landing: LaunchRoute):
       : options.debug
         ? undefined
         : publicOrigin
-          ? "press L for a fresh sign-in link · R to change how this board is reached · ctrl-c to stop"
+          ? "press L for a sign-in link · R to change how this board is reached · ctrl-c to stop"
           : "press R to reach this board from a phone or another machine · ctrl-c to stop",
     {
       ...(reused ? { status: `already running on port ${port}` } : {}),
       ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
-      ...(activeAccessLink && !reused ? { qr: renderQrLines(activeAccessLink.url) } : {}),
     },
   );
 }
@@ -705,9 +702,10 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     rejectedUpdate: () => rejected,
   });
   publishStableServerAddress(serverOwner, port);
-  // The first single-use link, minted now that the board can redeem it. The old `?frizz_token=` this
-  // replaced was a STANDING secret: it never expired and never rotated, so anything that saw it once
-  // — a screenshot, scrollback, a chat log — kept working forever.
+  // A saved setup comes back, but no sign-in link is minted with it: one is minted only when asked for,
+  // with L or --link. Until 2026-11-09 every public launch printed a fresh single-use link and its QR,
+  // so a launch the maintainer did not mean to be public put a working way in on his screen and in the
+  // terminal's scrollback (maintainer: "This should all be opt-in").
   remote = createRemoteController({ host: supervisor, port, log: logger, say: (message) => console.error(`frizz: ${message}`) });
   try {
     await remote.serveSaved();
@@ -718,7 +716,6 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     logger.error("remote", message);
     console.error(`frizz: the saved remote setup could not start: ${message}`);
   }
-  activeAccessLink = remote.origin() ? supervisor.issueAccessLink() : null;
 
   // "Press L for a fresh link" — the only way to reissue without restarting. Null when stdout is not
   // a terminal, which leaves the plain records path untouched.
