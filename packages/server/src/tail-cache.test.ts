@@ -7,7 +7,8 @@ import { createStorage, type Storage, type SessionRow } from "./storage.ts"
 import { Bus } from "./bus.ts"
 import { createTailer } from "./tailer.ts"
 import type { Project } from "./project.ts"
-import { createTailStateCache, encodeTailState, decodeTailState, measureFence, fenceMatches } from "./tail-cache.ts"
+import { createTailStateCache, encodeTailState, decodeTailState, measureFence, fenceMatches, MAX_STATE_BYTES } from "./tail-cache.ts"
+import { captureLogRecords } from "./logging.ts"
 
 // The durable prime cache exists to remove the FULL re-fold of every transcript on every boot. Its one
 // non-negotiable property is that it can only ever make boot FASTER, never make the derived state
@@ -161,6 +162,56 @@ test("tail-cache: a warm boot derives EXACTLY what a cold boot derives", () => {
 
   const warm = boot(h)
   assert.deepEqual(warm, cold, "the cached derivation must equal the cold one")
+})
+
+test("tail-cache: a thread with thousands of shell calls is still cached, and its warm boot equals its cold one", () => {
+  // One owned id for every Bash, Agent and Monitor call (tailer.ts ownedToolUseIds). At 9,000 calls the
+  // state is past the 256 KB this cache once refused at, without a word, on the busiest threads.
+  const h = harness()
+  h.storage.upsertSession(row())
+  const at = (i: number) => new Date(Date.parse("2026-07-01T00:00:00.000Z") + i * 1000).toISOString()
+  const lines = [JSON.stringify({ type: "user", timestamp: at(0), promptSource: "typed", message: { content: [{ type: "text", text: "go" }] } })]
+  for (let i = 0; i < 9000; i++) {
+    const id = `toolu_01${String(i).padStart(22, "0")}` // 30 characters, as a real id is
+    lines.push(JSON.stringify({ type: "assistant", timestamp: at(i + 1), message: { id: `m${i}`, role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command: "true" } }] } }))
+    lines.push(JSON.stringify({ type: "user", timestamp: at(i + 1), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } }))
+  }
+  lines.push(JSON.stringify({ type: "assistant", timestamp: at(9002), message: { id: "end", role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "done" }] } }))
+  writeFileSync(h.path("sid"), lines.map((l) => l + "\n").join(""))
+
+  const cold = boot(h, { tailCache: null })
+  const seeding = boot(h)
+  assert.deepEqual(seeding, cold)
+  assert.deepEqual(cachedSlugs(h), ["t"], "the busy thread's state is saved")
+  const saved = h.storage.db.prepare<[], { bytes: number }>("SELECT length(state) AS bytes FROM tail_state").get()!.bytes
+  assert.ok(saved > 256 * 1024 && saved < MAX_STATE_BYTES, `the state is ${saved} bytes`)
+  assert.deepEqual(boot(h), cold, "and the boot that resumes from it lands where a cold fold does")
+})
+
+test("tail-cache: a state over the limit is refused out loud, once for each thread, and the row it had is kept", () => {
+  const h = harness()
+  const cache = createTailStateCache(h.storage.scope)
+  const entry = (slug: string, state: string) => ({ slug, sessionId: "sid", nativeSessionId: "sid", runtimeGeneration: 0, path: h.path("sid"), offset: 10, size: 10, mtimeMs: 1, ino: "1", contentDigest: "d", state })
+  cache.put([entry("t", "{}")])
+  const log = captureLogRecords()
+  try {
+    const huge = JSON.stringify({ filler: "x".repeat(MAX_STATE_BYTES) })
+    cache.put([entry("t", huge), entry("small", "{}")])
+    cache.put([entry("t", huge)])
+    const said = log.records.filter((record) => record.scope === "tail-cache")
+    assert.equal(said.length, 1, "once, not on every flush")
+    assert.equal(said[0]!.level, "warn")
+    assert.match(said[0]!.message, new RegExp(`^thread t: its tail state encodes to ${huge.length} bytes, over the ${MAX_STATE_BYTES} this cache keeps`))
+    assert.deepEqual(cache.load().get("t")?.state, "{}", "the last state that fitted is still the checkpoint")
+    assert.ok(cache.load().has("small"), "and the rest of the batch was written")
+
+    // It fits again (a ring trimmed), then grows again: that is a new refusal, and it is said.
+    cache.put([entry("t", '{"smaller":true}')])
+    cache.put([entry("t", huge)])
+    assert.equal(log.records.filter((record) => record.scope === "tail-cache").length, 2)
+  } finally {
+    log.restore()
+  }
 })
 
 test("tail-cache: a thread whose transcript GREW resumes at the cached offset and lands where a cold fold does", () => {

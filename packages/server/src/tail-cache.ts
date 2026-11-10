@@ -3,6 +3,7 @@ import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs"
 import { join } from "node:path"
 import type { ProjectScope } from "./project-scope.ts"
 import type Database from "./sqlite.ts"
+import { log as frizzLog } from "./logging.ts"
 
 // ── The durable tail-state cache ───────────────────────────────────────────────────────────────────
 // The tailer's FIRST tick primes every registry row by folding its ENTIRE JSONL from byte 0. On the
@@ -38,11 +39,20 @@ import type Database from "./sqlite.ts"
 const SAMPLE_BYTES = 1024
 
 /**
- * Refuse to cache a state whose serialization is pathologically large. Nothing in a TailState is
- * unbounded (previews are capped, the retired rings are capped), but a future field could be — and a
- * multi-megabyte row per thread would trade the boot read for a boot read.
+ * Refuse to cache a state whose serialization is pathologically large: a future field could be
+ * unbounded, and a row of many megabytes per thread would trade the boot read for a boot read.
+ *
+ * THE LIMIT SITS ABOVE WHAT A STATE IS ALLOWED TO GROW TO, or the threads that lose their cache are the
+ * busiest ones. It was 256 KB beside the sentence "nothing in a TailState is unbounded", while
+ * `ownedToolUseIds` keeps one id for every Bash, Agent and Monitor call up to 25,000 of them (tailer.ts
+ * MAX_OWNED_TOOL_USE_IDS), 33 bytes each encoded: 825 KB at its own cap, and 279 KB measured on one real
+ * thread. Past about 7,500 such calls a thread was silently never saved again: its last row went on
+ * serving as an ever older checkpoint, and after the next change to the fold it primed from byte 0 at
+ * every boot. Measured through the real tailer: 5,000 Bash calls left a row of 166 KB, 9,000 left none.
+ * Two megabytes holds that set at its cap beside everything else a state carries, and the row is
+ * written at most every 30s (tailer.ts CACHE_FLUSH_MS).
  */
-const MAX_STATE_BYTES = 256 * 1024
+export const MAX_STATE_BYTES = 2 * 1024 * 1024
 
 export interface TailCacheFence {
   /** Byte cursor the cached state was folded to (state.offset). */
@@ -270,6 +280,7 @@ export function createTailStateCache(scope: ProjectScope, schema = foldSchemaDig
     usable = false
   }
 
+  const refused = new Set<string>() // threads whose state was too large to save, so each is reported once
   const selectAll = (): CacheRow[] => scope.prepare<[string], CacheRow>(
     "SELECT * FROM tail_state WHERE project_id = @project_id AND fold_schema = ?",
   ).all(schema)
@@ -333,7 +344,16 @@ export function createTailStateCache(scope: ProjectScope, schema = foldSchemaDig
       try {
         const write = db.transaction((batch: TailCacheEntry[]) => {
           for (const entry of batch) {
-            if (entry.state.length > MAX_STATE_BYTES) continue
+            if (entry.state.length > MAX_STATE_BYTES) {
+              // Said once for each thread: the cost is a slower boot for it, every boot, and nothing
+              // else would ever point here.
+              if (!refused.has(entry.slug)) {
+                refused.add(entry.slug)
+                frizzLog.warn("tail-cache", `thread ${entry.slug}: its tail state encodes to ${entry.state.length} bytes, over the ${MAX_STATE_BYTES} this cache keeps, so it is not saved and the thread is read from an older checkpoint, or from the start, at the next boot`)
+              }
+              continue
+            }
+            refused.delete(entry.slug)
             upsert.run({
               slug: entry.slug,
               session_id: entry.sessionId,
