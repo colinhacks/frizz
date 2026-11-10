@@ -43,6 +43,15 @@ const CHILD_STOP_TIMEOUT_MS = 15_000
 export const STABLE_UPDATE_READY_TIMEOUT_MS = BOOT_STALL_TIMEOUT_MS
 /** Reject a ready-then-immediately-dead candidate before making its artifact durable. */
 export const STABLE_UPDATE_STABILIZE_MS = 1_000
+/**
+ * How long a COMMITTED child update can still be undone. The second above proves a release can boot
+ * and nothing more: one that dies at its first scheduler tick or its first read of a large board was
+ * committed all the same, and after that a crash only ever restarted the same release, while the
+ * Update button that could replace it lives in the page that release cannot serve.
+ */
+export const UPDATE_PROBATION_MS = 10 * 60_000
+/** Stops inside the probation that undo the update. A release that cannot start again undoes it at the first. */
+export const UPDATE_PROBATION_EXITS = 3
 // POSIX only: how long a child that ignored the IPC ask gets to answer SIGTERM before SIGKILL. A
 // child whose event loop is wedged answers neither, so this is the bound on a wedged child's life,
 // not a second drain budget (its own force timer already fired at CHILD_STOP_TIMEOUT_MS).
@@ -185,6 +194,17 @@ export interface DevSupervisorOptions {
   dev?: boolean
   /** Restore the known-good artifact selection if its replacement cannot become ready. */
   rollbackUpdate?: () => Promise<void> | void
+  /**
+   * Select the release that served before the last COMMITTED child update, because the new one kept
+   * stopping inside its probation (UPDATE_PROBATION_MS). Distinct from `rollbackUpdate`, which puts
+   * back a selection that was prepared and never committed. It throws when there is nothing to go
+   * back to. A launcher that omits it keeps a committed update final.
+   */
+  revertUpdate?: () => Promise<void> | void
+  /** How long a committed child update can still be undone; injectable for real-child fixtures. */
+  updateProbationMs?: number
+  /** The version `revertUpdate` last went back from, if any; see RestartSupervisorProxy. */
+  rejectedUpdate?: () => string | undefined
   /**
    * Replace the durable owner after a successful immutable update.  This is deliberately separate
    * from a child recycle: a promoted artifact also contains the CLI/supervisor implementation.
@@ -542,6 +562,14 @@ class Supervisor implements DevSupervisor {
   private readonly parentEnv: NodeJS.ProcessEnv
   private readonly roots: string[]
   private readonly watchEnabled: boolean
+  /**
+   * What follows a child that could not start. Only a launcher that watches its source can promise
+   * the next edit; the registry launcher said "watching for a corrective edit" too, and no edit can
+   * reach it.
+   */
+  private get afterStartFailure(): string {
+    return this.watchEnabled ? "; watching for a corrective edit" : "; it was not started again"
+  }
   private readonly childEnvironment: () => NodeJS.ProcessEnv
   private readonly debounceMs: number
   private readonly childEntry: string
@@ -575,6 +603,12 @@ class Supervisor implements DevSupervisor {
   private readonly updateHardTimeoutMs: number
   private readonly updateStabilizeMs: number
   private readonly rollbackUpdate?: () => Promise<void> | void
+  private readonly revertUpdate?: () => Promise<void> | void
+  private readonly updateProbationMs: number
+  /** The committed update that can still be undone: until when, how often it has stopped, and its version. */
+  private probation: { until: number; exits: number; version: string | undefined } | null = null
+  /** An undo of a committed update in flight (undoUpdate). An update asked for meanwhile waits for it. */
+  private undoing: Promise<void> | null = null
   private readonly durableReexec?: () => Promise<void> | void
   /** Environment of the generation that actually reached ready, never merely the latest pointer. */
   private activeChildEnvironment: NodeJS.ProcessEnv = {}
@@ -640,6 +674,8 @@ class Supervisor implements DevSupervisor {
     this.updateHardTimeoutMs = Math.max(1, opts.updateHardTimeoutMs ?? BOOT_HARD_TIMEOUT_MS)
     this.updateStabilizeMs = Math.max(0, opts.updateStabilizeMs ?? STABLE_UPDATE_STABILIZE_MS)
     this.rollbackUpdate = opts.rollbackUpdate
+    this.revertUpdate = opts.revertUpdate
+    this.updateProbationMs = Math.max(0, opts.updateProbationMs ?? UPDATE_PROBATION_MS)
     this.durableReexec = opts.durableReexec
     this.publicProxy = new RestartSupervisorProxy({
       port: opts.port,
@@ -660,6 +696,7 @@ class Supervisor implements DevSupervisor {
       version: opts.version,
       launcherVersion: opts.launcherVersion,
       updateVersion: opts.updateVersion,
+      rejectedUpdate: opts.rejectedUpdate,
       dev: opts.dev,
       status: () => {
         // The proxy reports THIS answer, not its own acknowledged transition, while an update is in
@@ -942,6 +979,8 @@ class Supervisor implements DevSupervisor {
     if (!this.commitUpdate || !this.rollbackUpdate) {
       return { state: "failed", message: "child-only Update & Restart requires commit and rollback callbacks" }
     }
+    // An undo holds the child slot exactly as this does. Wait for it rather than start beside it.
+    await this.undoing
     // This covers preparation too: source-watch restarts must not replace the old child while the
     // update callback is selecting a candidate for it.
     this.updateChildRunning = true
@@ -993,6 +1032,10 @@ class Supervisor implements DevSupervisor {
       // The selection has moved and the new server is the one answering: the line a reader looks for.
       const serving = this.servingVersion()
       this.logLine(`[frizz] update committed${serving ? `: now serving ${serving}` : ""}`)
+      // Committed, and still on probation: see the child's exit handler and undoUpdate.
+      this.probation = this.revertUpdate && this.updateProbationMs > 0
+        ? { until: Date.now() + this.updateProbationMs, exits: 0, version: serving }
+        : null
       return { state: "ready" }
     } finally {
       this.updateChildRunning = false
@@ -1065,6 +1108,88 @@ class Supervisor implements DevSupervisor {
   }
 
   /**
+   * Count one unexpected stop against a committed update still on probation. Returns that update once
+   * its stops are used up, and the probation is over from then on: UPDATE_PROBATION_EXITS stops of a
+   * child that had been serving, or one stop of a child that never got as far as ready.
+   */
+  private probationSpent(started: boolean): { exits: number; version: string | undefined } | null {
+    const probation = this.probation
+    if (!probation || this.closed) return null
+    if (Date.now() >= probation.until) {
+      this.probation = null
+      return null
+    }
+    probation.exits += 1
+    if (started && probation.exits < UPDATE_PROBATION_EXITS) return null
+    this.probation = null
+    return probation
+  }
+
+  /**
+   * Go back to the release that served before a committed update, because the new one kept stopping.
+   *
+   * Called from the stopped child's exit handler in place of the retry that would start the same
+   * release again. It holds the child slot the way an update does, so a restart asked for meanwhile
+   * waits instead of forking the release that is being left. If the selection cannot be put back,
+   * the stop is handled as it was before there was a probation.
+   */
+  private undoUpdate(left: { exits: number; version: string | undefined }, started: boolean, why: string): Promise<void> {
+    const work = (async () => {
+      const from = left.version ? `Frizz ${left.version}` : "the updated Frizz"
+      const what = started
+        ? `stopped ${left.exits} times after it was installed`
+        : `could not start again after it was installed (${why})`
+      this.updateChildRunning = true
+      this.handoffDraining = true
+      let undone = false
+      try {
+        this.errorLine(`[frizz] ${from} ${what}; going back to the release before it`)
+        this.writeStatus("restarting", `${from} ${what}; going back to the release before it`, null)
+        if (this.debounce) clearTimeout(this.debounce)
+        this.debounce = null
+        // A restart still in flight is the one whose child just stopped: let it return first.
+        await this.restartCompletion
+        await this.stopChild()
+        if (this.closed) return
+        try {
+          await this.revertUpdate!()
+          undone = true
+        } catch (error) {
+          this.errorLine(`[frizz] the update could not be undone: ${error instanceof Error ? error.message : error}`)
+        }
+        if (!undone) return
+        const restored = await this.spawnChild()
+        const serving = this.servingVersion()
+        const now = serving ? `Frizz ${serving}` : "the release before it"
+        if (restored) this.logLine(`[frizz] update undone: ${from} ${what}; serving ${now} again`)
+        else this.errorLine(`[frizz] update undone: ${from} ${what}, and ${now} did not start: ${this.lastRestartFailure ?? "it did not become ready"}`)
+      } finally {
+        this.updateChildRunning = false
+        this.handoffDraining = false
+        if (!undone && !this.closed) {
+          // Nothing to go back to. What is left is what a stop got before there was a probation.
+          if (started) {
+            const retryDelay = devCrashRetryDelay(++this.crashAttempts)
+            this.writeStatus("failed", `control plane stopped (${why}); retry ${this.crashAttempts} in ${retryDelay}ms`)
+            this.requestRestart("unexpected control-plane exit", false, false, retryDelay)
+          } else {
+            const message = `control plane stopped (${why}) before ready${this.afterStartFailure}`
+            this.lastRestartFailure = message
+            this.writeStatus("failed", message)
+          }
+        } else if (this.restartAgain && !this.closed) {
+          this.restartAgain = false
+          this.requestRestart("restart asked for while an update was undone", true)
+        }
+      }
+    })().finally(() => {
+      if (this.undoing === work) this.undoing = null
+    })
+    this.undoing = work
+    return work
+  }
+
+  /**
    * A promoted pointer is not committed until its durable owner has actually been replaced.  If
    * that handoff cannot happen, put the previous pointer back before reporting the failure.  When
    * draining has already started, rebuild this same owner in place so a thrown/injected exec does
@@ -1127,7 +1252,7 @@ class Supervisor implements DevSupervisor {
     try {
       launch = this.childLaunchProvider?.()
     } catch (error) {
-      const message = `child launch selection failed: ${error instanceof Error ? error.message : error}; watching for a corrective edit`
+      const message = `child launch selection failed: ${error instanceof Error ? error.message : error}${this.afterStartFailure}`
       this.lastRestartFailure = message
       this.errorLine(`[frizz] ${message}`)
       this.writeStatus("failed", message, null)
@@ -1152,7 +1277,7 @@ class Supervisor implements DevSupervisor {
           ...({ windowsHide: true } as object),
         })
       } catch (error) {
-        const message = `child spawn failed: ${error instanceof Error ? error.message : error}; watching for a corrective edit`
+        const message = `child spawn failed: ${error instanceof Error ? error.message : error}${this.afterStartFailure}`
         this.lastRestartFailure = message
         this.errorLine(`[frizz] ${message}`)
         this.writeStatus("failed", message, null)
@@ -1246,7 +1371,7 @@ class Supervisor implements DevSupervisor {
         settleSpawn(true)
       })
       child.once("error", (err) => {
-        const message = `child spawn failed: ${err.message}; watching for a corrective edit`
+        const message = `child spawn failed: ${err.message}${this.afterStartFailure}`
         this.lastRestartFailure = message
         this.errorLine(`[frizz] ${message}`)
         this.writeStatus("failed", message)
@@ -1268,12 +1393,18 @@ class Supervisor implements DevSupervisor {
         // must never enter the normal crash watchdog (which would fork it again against a rollback).
         const expected = this.closed || this.stopping === child || ownershipRejected || this.updateCandidate === child
         this.clearCrashStability()
-        if (!expected) {
-          const why = signal ? `signal ${signal}` : `exit ${code ?? "unknown"}`
+        const why = signal ? `signal ${signal}` : `exit ${code ?? "unknown"}`
+        // An update committed a few minutes ago is the likeliest reason this child stopped, and the
+        // retry below can only start the same release again. Count the stop against the update, and
+        // once it has used them up go back to the release that served before it instead.
+        const left = expected ? null : this.probationSpent(started)
+        if (left) {
+          void this.undoUpdate(left, started, why)
+        } else if (!expected) {
           const retryDelay = started ? devCrashRetryDelay(++this.crashAttempts) : 0
           const message = started
             ? `control plane stopped (${why}); retry ${this.crashAttempts} in ${retryDelay}ms`
-            : `control plane stopped (${why}) before ready; watching for a corrective edit`
+            : `control plane stopped (${why}) before ready${this.afterStartFailure}`
           if (!started) this.lastRestartFailure = message
           this.errorLine(`[frizz] dev ${message}`)
           this.writeStatus("failed", message)

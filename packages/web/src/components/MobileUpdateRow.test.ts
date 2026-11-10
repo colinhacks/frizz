@@ -48,6 +48,19 @@ test("up to date: a muted, inert row that offers no verb", () => {
   }
 })
 
+test("an update the launcher went back from: an inert row that says so, with the step it undid", () => {
+  const html = render({ updateRestart: true, updateAvailable: false, version: "0.14.0", rejectedUpdate: "0.14.1" })
+  assert.match(html, />Update undone</)
+  assert.match(html, /data-mobile-update-undone[^>]*>0\.14\.1 → 0\.14\.0</)
+  assert.match(row(html), /disabled=""/)
+  assert.doesNotMatch(html, /up to date|Update Frizz|Restart Frizz|data-mobile-update-row-notification|data-mobile-update-step/)
+  // A newer version than the one it went back from is offered as any other.
+  const offered = render({ updateRestart: true, updateAvailable: true, version: "0.14.0", updateVersion: "0.14.2", rejectedUpdate: "0.14.1" })
+  assert.match(offered, />Update Frizz</)
+  assert.match(offered, /data-mobile-update-step[^>]*>0\.14\.0 → 0\.14\.2</)
+  assert.doesNotMatch(offered, /undone/)
+})
+
 test("nothing before a supervisor has answered", () => {
   assert.equal(render(null), "")
 })

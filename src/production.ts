@@ -541,11 +541,18 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   let active = await store.load();
   let pending: ServerGeneration | undefined;
   let previous = active;
+  // The release that served before the last COMMITTED update: what the supervisor goes back to when
+  // the new one keeps stopping (`revertUpdate`). `previous` cannot say, because every later click on
+  // Update moves it to whatever is serving then.
+  let before: ServerGeneration | undefined;
+  // A release this launcher went back from. It is not offered or installed again while this launcher
+  // runs: it would only stop the same way. In memory only, so starting Frizz again offers it once more.
+  let rejected: string | undefined;
   onPrepared();
   // Once a release is committed, the ones nothing runs from any more go (ServerReleaseStore.sweep).
   // In the background and never fatal: it is housekeeping, and this process is the listener.
   const sweepOldReleases = (): void => {
-    void store.sweep({ keep: [active.id, previous.id, ...(pending ? [pending.id] : [])] }).then(
+    void store.sweep({ keep: [active.id, previous.id, ...(before ? [before.id] : []), ...(pending ? [pending.id] : [])] }).then(
       (sweep) => {
         const line = describeGenerationSweep(sweep);
         if (line) logger.info("launcher", line);
@@ -578,8 +585,9 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       const plan = await planRegistryUpdate(spec.package, checkedVersion, installer);
       probeFailure = undefined;
       if (active.version !== checkedVersion) return;
-      updateAvailable = plan !== null;
-      updateVersion = plan?.latestVersion;
+      const offered = plan && plan.latestVersion !== rejected ? plan : null;
+      updateAvailable = offered !== null;
+      updateVersion = offered?.latestVersion;
     } catch (error) {
       // A registry we cannot reach is not evidence either way. Leave the last known answer — but
       // record why. This swallowed every failure, so a probe that could NEVER answer left a board
@@ -649,6 +657,11 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       try {
         const plan = await planRegistryUpdate(spec.package, active.version, installer);
         if (!plan) { updateAvailable = false; updateVersion = undefined; return { state: "failed" as const, message: `Frizz ${active.version} is already current` }; }
+        if (plan.latestVersion === rejected) {
+          updateAvailable = false;
+          updateVersion = undefined;
+          return { state: "failed" as const, message: `Frizz ${rejected} kept stopping after it was installed, so it is not installed again. Stop Frizz and start it again to try it once more` };
+        }
         updateAvailable = true;
         updateVersion = plan.latestVersion;
         logger.info("launcher", `update: installing Frizz server ${plan.latestVersion} while ${active.version} serves`);
@@ -663,6 +676,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     commitUpdate: () => {
       if (!pending) throw new Error("no server update was prepared");
       store.commit(pending);
+      before = active;
       active = pending;
       pending = undefined;
       updateAvailable = false;
@@ -677,6 +691,18 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       active = previous;
       pending = undefined;
     },
+    revertUpdate: () => {
+      if (!before || before.id === active.id) throw new Error("no earlier Frizz server release is held to go back to");
+      store.commit(before);
+      rejected = active.version;
+      active = before;
+      previous = before;
+      before = undefined;
+      pending = undefined;
+      updateAvailable = false;
+      updateVersion = undefined;
+    },
+    rejectedUpdate: () => rejected,
   });
   publishStableServerAddress(serverOwner, port);
   // The first single-use link, minted now that the board can redeem it. The old `?frizz_token=` this

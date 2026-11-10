@@ -15,7 +15,7 @@ import { SNOOZE_PRESETS, isSnoozePreset } from "../lib/snooze.ts"
 import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { isRemoteSession } from "../api/signOut.ts"
 import { QuotaMeters } from "./QuotaBar.tsx"
-import { RestartFailureNotice, useUpdateRestart } from "./RestartFrizzButton.tsx"
+import { RestartFailureNotice, UPDATE_UNDONE, useUpdateRestart } from "./RestartFrizzButton.tsx"
 import { SignOutThisDeviceRow } from "./SignOutThisDeviceRow.tsx"
 import { GithubAccountField } from "./GithubAccountField.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
@@ -461,13 +461,19 @@ function MobileSettingsPage({
  * Up to date, it stays as a muted, inert "Frizz is up to date", the desktop's grey state; the version
  * itself is the footer under it. A rejected request leaves its failure card inline under the row,
  * dismissible, rather than anchored to a button the phone does not have.
+ *
+ * When the launcher installed a version and went back from it because it kept stopping, the inert
+ * row reads "Update undone" with the step it undid (`0.14.0 → 0.13.8`), where the desktop popover has
+ * a sentence. "Up to date" would be false there: the launcher has stopped offering that version.
  */
 export function MobileUpdateRow() {
   const control = useUpdateRestart()
   if (!control.visible) return null
+  // The launcher installed this version and went back from it: the row says so, with the step it undid.
+  const undone = control.current ? control.rejected : undefined
   const label = control.busy
     ? control.update ? "Updating…" : "Restarting…"
-    : control.current ? "Frizz is up to date" : control.update ? "Update Frizz" : "Restart Frizz"
+    : undone ? UPDATE_UNDONE : control.current ? "Frizz is up to date" : control.update ? "Update Frizz" : "Restart Frizz"
   const newer = control.update ? control.updateVersion : undefined
   return (
     <div data-mobile-update>
@@ -490,6 +496,10 @@ export function MobileUpdateRow() {
           {newer && control.version ? (
             <span data-mobile-update-step className="shrink-0 text-[14px] tabular-nums text-muted">
               {control.version} → {newer}
+            </span>
+          ) : undone && control.version ? (
+            <span data-mobile-update-undone className="shrink-0 text-[14px] tabular-nums text-muted">
+              {undone} → {control.version}
             </span>
           ) : null}
         </button>

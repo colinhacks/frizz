@@ -1,6 +1,6 @@
 import React, { useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { useSnapshot } from "valtio"
-import { AlertTriangle, Check, RefreshCw, X } from "lucide-react"
+import { AlertTriangle, Check, RefreshCw, Undo2, X } from "lucide-react"
 import {
   canRestart,
   canUpdateRestart,
@@ -58,6 +58,12 @@ const restartCopy = "Restart Frizz. Your running threads will not be affected."
 // True of a registry launcher that has confirmed it is current AND of a legacy supervisor with no
 // update verb at all, which is why it does not claim "the latest version".
 const currentCopy = "There is no newer version of Frizz to install."
+// The launcher installed `rejected`, it kept stopping, and the launcher went back (FrizzSupervisorStatus
+// .rejectedUpdate). The control is greyed as when up to date, and "nothing newer to install" would be
+// false: there is something newer, and it did not stay up.
+export const UPDATE_UNDONE = "Update undone"
+const undoneCopy = (rejected: string, version: string | undefined) =>
+  `Frizz ${rejected} kept stopping after it was installed, so ${version ?? "the version before it"} is running again. The next version will be offered here.`
 
 // The one anchor both panels that hang off this button use: the button's LEFT edge, opening RIGHTWARD
 // into the gutter and the workpane beyond it. The button sits at the right end of the status row above
@@ -162,6 +168,7 @@ export function UpdateRestartPopover({
   current = false,
   version,
   updateVersion,
+  rejected,
 }: {
   open: boolean
   update: boolean
@@ -171,9 +178,12 @@ export function UpdateRestartPopover({
   version?: string
   /** The newer application-server version, once the launcher has observed one. */
   updateVersion?: string
+  /** A version the launcher installed and went back from. Read only while nothing is offered. */
+  rejected?: string
 }) {
   if (!open) return null
-  const action = current ? "Frizz is up to date" : update ? "Update Frizz" : "Restart Frizz"
+  const undone = current ? rejected : undefined
+  const action = undone ? UPDATE_UNDONE : current ? "Frizz is up to date" : update ? "Update Frizz" : "Restart Frizz"
   // Name the newer version only on the verb that installs it: in plain-restart mode the board is
   // confirmed current, so `updateVersion` is never present there anyway.
   const newer = update ? updateVersion : undefined
@@ -188,7 +198,8 @@ export function UpdateRestartPopover({
       <span aria-hidden="true" className={`${PANEL_ARROW} border-border-strong`} />
       <div className="relative flex items-center gap-2.5">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-fg/10 text-fg">
-          {current ? <Check aria-hidden="true" size={14} strokeWidth={2.25} /> : <RefreshCw aria-hidden="true" size={14} strokeWidth={2.25} />}
+          {/* Not the check: that says all is well, and this says the launcher took an update back. */}
+          {undone ? <Undo2 aria-hidden="true" size={14} strokeWidth={2.25} /> : current ? <Check aria-hidden="true" size={14} strokeWidth={2.25} /> : <RefreshCw aria-hidden="true" size={14} strokeWidth={2.25} />}
         </span>
         <div className="flex min-w-0 flex-col">
           <span className="text-[13px] font-semibold tracking-[-0.01em] text-fg">{action}</span>
@@ -198,7 +209,7 @@ export function UpdateRestartPopover({
           )}
         </div>
       </div>
-      <p className="relative mt-2.5 text-[12px] leading-relaxed text-muted">{current ? currentCopy : update ? (newer ? newerVersionCopy : updateCopy) : restartCopy}</p>
+      <p className="relative mt-2.5 text-[12px] leading-relaxed text-muted">{undone ? undoneCopy(undone, version) : current ? currentCopy : update ? (newer ? newerVersionCopy : updateCopy) : restartCopy}</p>
     </div>
   )
 }
@@ -269,6 +280,7 @@ export function RestartActionButton({
   current = false,
   version,
   updateVersion,
+  rejected,
   onFocus,
   onBlur,
   onClick,
@@ -277,6 +289,8 @@ export function RestartActionButton({
   busy: boolean
   /** Nothing to install: greyed and inert, but still focusable and hoverable so its popover can say why. */
   current?: boolean
+  /** A version the launcher installed and went back from: the greyed control is named for that instead. */
+  rejected?: string
   /** The running registry version, used with updateVersion to decide whether this is a new release line. */
   version?: string
   /** A confirmed newer registry version. Patch updates stay actionable but do not earn the badge dot. */
@@ -289,7 +303,7 @@ export function RestartActionButton({
     <button
       type="button"
       aria-describedby="update-restart-popover"
-      aria-label={current ? "Frizz is up to date" : update ? "Update Frizz" : "Restart Frizz"}
+      aria-label={current ? (rejected ? UPDATE_UNDONE : "Frizz is up to date") : update ? "Update Frizz" : "Restart Frizz"}
       disabled={busy}
       aria-busy={busy || undefined}
       // aria-disabled, not the native attribute, for the same reason as AiRenameButton: the popover
@@ -432,6 +446,8 @@ export function useUpdateRestart() {
     current,
     version: versions.version,
     updateVersion: versions.updateVersion,
+    /** A version the launcher went back from, while it is still the newest one there is. */
+    rejected: status?.rejectedUpdate,
     shownError,
     outcome,
     dismiss: () => setDismissed(shownError),
@@ -495,6 +511,7 @@ export function RestartFrizzButton() {
         current={control.current}
         version={control.version}
         updateVersion={control.updateVersion}
+        rejected={control.rejected}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onClick={() => {
@@ -508,7 +525,7 @@ export function RestartFrizzButton() {
         </AnchoredPanel>
       ) : open ? (
         <AnchoredPanel>
-          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} />
+          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} rejected={control.rejected} />
         </AnchoredPanel>
       ) : null}
     </div>

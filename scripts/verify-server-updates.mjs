@@ -120,7 +120,7 @@ import {appendFileSync as _proofAppend,readFileSync as _proofRead} from 'node:fs
 const _proof = (event) => _proofAppend(process.env.FRIZZ_TEST_CHILD_EVENTS, JSON.stringify({event,pid:process.pid,parent:process.ppid,version:${JSON.stringify(version)},node:process.version,at:Date.now()})+'\\n');
 for (const row of _proofRead(process.env.FRIZZ_TEST_CHILD_EVENTS,'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse)) {if(row.event==='start' && row.pid!==process.pid) {try{process.kill(row.pid,0);_proof('overlapping-server')}catch{}}}
 _proof('start'); process.on('exit',()=>_proof('exit'));
-const _send = process.send.bind(process); process.send=(message,...args)=>{if(message.type==='frizz-ready'){_proof('ready');${fault === "crash" ? "setTimeout(()=>process.exit(86),100);" : ""}} return _send(message,...args)};
+const _send = process.send.bind(process); process.send=(message,...args)=>{if(message.type==='frizz-ready'){_proof('ready');${fault === "crash" ? "setTimeout(()=>process.exit(86),100);" : fault === "late-crash" ? "setTimeout(()=>process.exit(87),3000);" : ""}} return _send(message,...args)};
 ${fault === "exit" ? "throw new Error('INJECTED_BOOT_FAILURE');" : ""}
 `
   let contents = readFileSync(entry, "utf8")
@@ -281,6 +281,8 @@ try {
   serverFixture("0.13.10")
   serverFixture("0.13.11", "protocol")
   serverFixture("0.13.12")
+  // Boots, answers ready, outlives the second a candidate is watched for, and stops three seconds in.
+  serverFixture("0.13.13", "late-crash")
   registry = createServer(async (request, response) => {
     try {
       const path = decodeURIComponent(new URL(request.url, "http://registry").pathname)
@@ -532,6 +534,41 @@ try {
   await healthy("0.13.7")
   assert.equal(selected().version, "0.13.7")
   record("browser-update-after-failures-passed")
+  // A release that boots, is committed, and then stops. After its one second of health an update was
+  // final, so this launcher would have restarted 0.13.13 for as long as it ran. Three stops inside
+  // the probation now put 0.13.7 back with no click, and the launcher stops offering what it left.
+  packages.get("frizz-server").latest = "0.13.13"
+  await action()
+  await until("the release that stops late is committed", () => selected().version === "0.13.13", 60_000)
+  record("late-crash-committed")
+  const undone = await until("the launcher goes back by itself", async () => {
+    const value = await status().catch(() => undefined)
+    return value?.state === "ready" && value.version === "0.13.7" && value.rejectedUpdate === "0.13.13" && value
+  }, 120_000)
+  assert.equal(selected().version, "0.13.7")
+  assert.equal(undone.updateAvailable, false, "the release it went back from is not offered again")
+  assert.equal(children().filter((event) => event.event === "start" && event.version === "0.13.13").length, 3, "the candidate and two retries")
+  await until("the undo is in the launcher's log", () => /update undone: Frizz 0\.13\.13 stopped 3 times after it was installed; serving Frizz 0\.13\.7 again/u.test(launcherLogs()))
+  await api.query("board")
+  record("late-crash-undone-without-a-click", { status: undone })
+  // The page says so, where it would otherwise read "Frizz is up to date".
+  await page.setViewport({ width: 1280, height: 850, deviceScaleFactor: 2 })
+  await page.reload({ waitUntil: "networkidle2" })
+  await page.waitForSelector('button[aria-label="Update undone"]', { visible: true, timeout: 30_000 })
+  await page.hover('button[aria-label="Update undone"]')
+  await page.waitForSelector("#update-restart-popover", { visible: true })
+  assert.match(await page.$eval("#update-restart-popover", (element) => element.textContent), /Update undone0\.13\.7Frizz 0\.13\.13 kept stopping after it was installed, so 0\.13\.7 is running again\./u)
+  await page.screenshot({ path: join(out, "update-undone-desktop.png") })
+  await page.mouse.move(1000, 800)
+  record("late-crash-undone-on-the-page")
+  // Asked for anyway, it is refused with the reason, and the board keeps serving.
+  await action()
+  const refused = await until("the refused reinstall", async () => { const value = await status(); return value.state === "failed" && value })
+  assert.match(refused.message, /Frizz 0\.13\.13 kept stopping after it was installed, so it is not installed again/u)
+  assert.equal(refused.version, "0.13.7")
+  assert.equal(selected().version, "0.13.7")
+  await api.query("board")
+  record("rejected-release-not-installed-again")
   // Kill the launcher while a candidate is stuck before ready. The early disconnect guard must
   // reclaim that child; a relaunch must choose the last committed server, not the pending package.
   packages.get("frizz-server").latest = "0.13.8"

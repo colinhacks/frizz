@@ -32,6 +32,13 @@ export interface FrizzSupervisorStatus {
    */
   updateVersion?: string
   /**
+   * A version this launcher installed and then went back from, because it kept stopping in the
+   * minutes after the update. The launcher does not offer it again, so `updateAvailable` is false
+   * while it is the newest: this is what lets the page say why instead of "nothing newer to install".
+   * Sent only once that has happened.
+   */
+  rejectedUpdate?: string
+  /**
    * An UPDATE's prepare phase — frizz-dev's source build, the registry launcher's npm install — during
    * which the supervisor deliberately keeps reporting "ready" (the old child is untouched and serving)
    * and stamps it so. Additive and absent otherwise. The client reads nothing off it today: a "ready"

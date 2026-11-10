@@ -19,7 +19,11 @@ window.fetch = async (input, init) => {
   const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
   const url = new URL(requestUrl, window.location.href)
   if (url.pathname === "/_frizz/control/status") {
-    return new Response(JSON.stringify({ protocol: 1, state: "ready", updateRestart: true, updateAvailable: !params.has("current"), ...versions }), {
+    // ?rejected is a launcher that installed 0.5.0 and went back from it: nothing offered, and why.
+    const offer = params.has("rejected")
+      ? { updateAvailable: false, ...versions, updateVersion: undefined, rejectedUpdate: "0.5.0" }
+      : { updateAvailable: !params.has("current"), ...versions }
+    return new Response(JSON.stringify({ protocol: 1, state: "ready", updateRestart: true, ...offer }), {
       headers: { "content-type": "application/json" },
     })
   }
@@ -36,6 +40,8 @@ window.fetch = async (input, init) => {
 
 const { AnchoredPanel, RestartActionButton, RestartFailureNotice, RestartFrizzButton } = await import("./components/RestartFrizzButton.tsx")
 const { RestartOverlay } = await import("./components/RestartOverlay.tsx")
+// ?mobile renders the phone Settings page's row for the same control, alone on the page's ground.
+const { MobileUpdateRow } = await import("./components/SettingsDrawer.tsx")
 
 // ?failure renders the supervisor's failure card on the same anchor the popover uses. It cannot be
 // reached by clicking here — the card is raised by a status POLL reporting "failed", which this
@@ -68,8 +74,9 @@ function Fixture() {
         {/* Left-aligned, so the panel opens rightward off a `w-fit` wrapper exactly as it does off the
             status row above the prompt box, which is where this button really lives. */}
         <div className="w-fit">
-          {params.has("failure") ? <FailureOnAnchor /> : <RestartFrizzButton />}
+          {params.has("failure") ? <FailureOnAnchor /> : params.has("mobile") ? null : <RestartFrizzButton />}
         </div>
+        {params.has("mobile") ? <div className="-mx-3 font-sans sm:-mx-8"><MobileUpdateRow /></div> : null}
       </div>
     </main>
   )

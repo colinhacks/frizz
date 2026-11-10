@@ -1106,6 +1106,164 @@ test("child-only update rejects a candidate that exits during an async commit", 
   }
 })
 
+// A registry launcher's update, committed: `new` serves, and `old` is what going back selects. The
+// body then tells the new release how to misbehave by writing its orders: `stop N` stops it N more
+// times, each a moment after it reported ready, and `boot` makes it unable to start at all.
+async function withCommittedUpdate(
+  options: { probationMs?: number; revert?: "throws" | "none" },
+  body: (run: {
+    counts: { commits: number; rollbacks: number; reverts: number }
+    logged: string[]
+    errors: string[]
+    order: (orders: string) => void
+    starts: () => string[]
+    control: (path: string, method?: string) => Promise<Response>
+    status: () => Promise<{ state: string; artifactDigest?: string; version?: string; rejectedUpdate?: string }>
+    serving: (artifact: string, description: string) => Promise<{ state: string; artifactDigest?: string; version?: string; rejectedUpdate?: string }>
+  }) => Promise<void>,
+): Promise<void> {
+  const workspace = mkdtempSync(join(tmpdir(), "frizz-update-probation-"))
+  const stateDir = join(workspace, ".state")
+  const childEntry = join(workspace, "child.mjs")
+  const events = join(stateDir, "events")
+  const orders = join(stateDir, "orders")
+  mkdirSync(stateDir, { recursive: true })
+  writeFileSync(childEntry, `
+    import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
+    import { registerProjectLaunchDelegate, projectLaunchOwnerTokenFromEnvironment, projectLaunchTargetFromEnvironment } from ${JSON.stringify(projectLaunchUrl)}
+    const artifact = process.env.FRIZZ_STABLE_ARTIFACT
+    const orders = () => { try { return readFileSync(process.env.ORDERS, "utf8").trim() } catch { return "" } }
+    appendFileSync(process.env.EVENTS, \`start:\${artifact}\\n\`)
+    if (artifact === "new" && orders() === "boot") process.exit(9)
+    const delegate = registerProjectLaunchDelegate(projectLaunchTargetFromEnvironment(process.env), projectLaunchOwnerTokenFromEnvironment(process.env))
+    process.send?.({ type: "frizz-ready", pid: delegate.pid, processStart: delegate.processStart, port: Number(process.env.FRIZZ_DEV_PORT), bootId: \`\${artifact}-\${process.pid}\` })
+    const stop = () => { delegate.release(); process.exit(0) }
+    process.once("SIGTERM", stop); process.once("disconnect", stop)
+    setInterval(() => {
+      const left = artifact === "new" ? /^stop (\\d+)$/.exec(orders()) : null
+      if (!left || left[1] === "0") return
+      writeFileSync(process.env.ORDERS, \`stop \${Number(left[1]) - 1}\`)
+      process.exit(7)
+    }, 20)
+  `)
+  const target = { projectId: randomUUID(), projectDir: workspace, stateDir }
+  const owner = acquireProjectLaunchOwner(target, "supervisor")
+  const port = await freeSupervisorPort()
+  const counts = { commits: 0, rollbacks: 0, reverts: 0 }
+  const logged: string[] = []
+  const errors: string[] = []
+  let selected = "old"
+  let active = "old"
+  let rejected: string | undefined
+  const control = (path: string, method = "GET") =>
+    fetch(`http://127.0.0.1:${port}/_frizz/control/${path}`, { method, headers: { origin: `http://127.0.0.1:${port}` } })
+  const status = async () => await (await control("status")).json() as { state: string; artifactDigest?: string; version?: string; rejectedUpdate?: string }
+  const serving = (artifact: string, description: string) => eventually(async () => {
+    const answer = await status()
+    return answer.state === "ready" && answer.artifactDigest === artifact ? answer : undefined
+  }, description, 60_000)
+  let supervisor: DevSupervisor | undefined
+  try {
+    supervisor = await startDevSupervisor({
+      port, cwd: workspace, stateDir, launchTarget: target, launchOwnerToken: owner.token, watch: false,
+      childLaunchProvider: () => ({ entry: childEntry, environment: { FRIZZ_STABLE_ARTIFACT: selected, EVENTS: events, ORDERS: orders } }),
+      updateMode: "child",
+      updateReadyTimeoutMs: MEETS_DEADLINE_MS,
+      updateStabilizeMs: 20,
+      ...(options.probationMs === undefined ? {} : { updateProbationMs: options.probationMs }),
+      updateRestart: async () => { selected = "new"; return { state: "ready" } },
+      commitUpdate: () => { counts.commits++; active = selected },
+      rollbackUpdate: () => { counts.rollbacks++; selected = active },
+      ...(options.revert === "none" ? {} : {
+        revertUpdate: () => {
+          counts.reverts++
+          if (options.revert === "throws") throw new Error("no earlier release is held")
+          rejected = active
+          selected = "old"
+          active = "old"
+        },
+      }),
+      rejectedUpdate: () => rejected,
+      version: () => active,
+      log: (line) => logged.push(line), error: (line) => errors.push(line),
+    })
+    await supervisor.firstBoot
+    assert.equal((await control("update-restart", "POST")).status, 202)
+    await eventually(() => logged.some((line) => line.startsWith("[frizz] update committed")) || undefined, "the update to commit")
+    await serving("new", "the committed update")
+    await body({
+      counts, logged, errors, control, status, serving,
+      order: (text) => writeFileSync(orders, text),
+      starts: () => readFileSync(events, "utf8").trim().split("\n").map((line) => line.slice("start:".length)),
+    })
+  } finally {
+    await supervisor?.close()
+    owner.release()
+    rmSync(workspace, { recursive: true, force: true })
+  }
+}
+
+// After its one second of health a committed update was final: a release that booted and then died
+// was restarted for ever, by a retry that can only start the same release, behind a page whose
+// Update button it could not serve.
+test("a committed child update that stops three times inside its probation is undone", { timeout: 120_000 }, async () => {
+  await withCommittedUpdate({}, async (run) => {
+    assert.equal((await run.status()).rejectedUpdate, undefined, "nothing has been gone back from yet")
+    run.order("stop 3")
+    const back = await run.serving("old", "the release before the update")
+    assert.equal(back.version, "old")
+    assert.equal(back.rejectedUpdate, "new", "the page is told which version it is no longer offered")
+    assert.deepEqual(run.counts, { commits: 1, rollbacks: 0, reverts: 1 })
+    assert.deepEqual(run.starts(), ["old", "new", "new", "new", "old"], "two retries of the new release, then the old one")
+    assert.ok(run.logged.includes("[frizz] update undone: Frizz new stopped 3 times after it was installed; serving Frizz old again"), run.logged.join("\n"))
+  })
+})
+
+test("a committed child update that cannot start again is undone at its first stop", { timeout: 120_000 }, async () => {
+  await withCommittedUpdate({}, async (run) => {
+    run.order("boot")
+    // Restart Frizz, pressed in the page: the answer is the release that came back, not a failure.
+    const restart = await run.control("restart", "POST")
+    assert.equal(restart.status, 202)
+    const back = await run.serving("old", "the release before the update")
+    assert.equal(back.rejectedUpdate, "new")
+    assert.deepEqual(run.counts, { commits: 1, rollbacks: 0, reverts: 1 })
+    assert.deepEqual(run.starts(), ["old", "new", "new", "old"])
+    assert.ok(run.logged.includes("[frizz] update undone: Frizz new could not start again after it was installed (exit 9); serving Frizz old again"), run.logged.join("\n"))
+  })
+})
+
+test("a committed child update keeps its release through two stops, and through three once the probation is over", { timeout: 180_000 }, async () => {
+  await withCommittedUpdate({}, async (run) => {
+    run.order("stop 2")
+    await eventually(() => run.starts().length === 4 || undefined, "the third start of the new release")
+    await run.serving("new", "the new release, still selected")
+    assert.deepEqual(run.counts, { commits: 1, rollbacks: 0, reverts: 0 })
+  })
+  await withCommittedUpdate({ probationMs: 1 }, async (run) => {
+    await delay(20)
+    run.order("stop 3")
+    await eventually(() => run.starts().length === 5 || undefined, "the fourth start of the new release", 60_000)
+    await run.serving("new", "the new release, retried as any crash is")
+    assert.deepEqual(run.counts, { commits: 1, rollbacks: 0, reverts: 0 })
+    assert.deepEqual(run.starts(), ["old", "new", "new", "new", "new"])
+  })
+})
+
+test("a launcher that cannot go back retries the new release as it always did", { timeout: 180_000 }, async () => {
+  for (const revert of ["throws", "none"] as const) {
+    await withCommittedUpdate({ revert }, async (run) => {
+      run.order("stop 3")
+      await eventually(() => run.starts().length === 5 || undefined, `the fourth start of the new release (${revert})`, 60_000)
+      await run.serving("new", "the new release")
+      assert.deepEqual(run.starts(), ["old", "new", "new", "new", "new"])
+      assert.equal(run.counts.reverts, revert === "throws" ? 1 : 0)
+      assert.equal(run.errors.includes("[frizz] the update could not be undone: no earlier release is held"), revert === "throws")
+      assert.equal((await run.status()).rejectedUpdate, undefined)
+    })
+  }
+})
+
 // The drain is an IPC ask, not a signal (audit 2026-09-11, finding 3). This child listens for
 // 'disconnect' ONLY — no SIGTERM handler — so a supervisor that still led with kill("SIGTERM") would
 // end it under Node's default handler on POSIX with no marker written (and after the 15 s escalation

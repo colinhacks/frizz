@@ -166,6 +166,24 @@ test("the greyed control's popover says there is nothing to install, not a verb"
   assert.doesNotMatch(html, /Restart Frizz|Update Frizz/)
 })
 
+// The launcher went back from 0.5.1 and no longer offers it, so the control is greyed exactly as when
+// up to date. Its popover must not say there is nothing newer: there is, and it did not stay up.
+test("the greyed control's popover says an update was undone, and which, once the launcher went back from one", () => {
+  const html = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: false, current: true, version: "0.5.0", rejected: "0.5.1" }))
+  assert.match(html, /aria-label="Update undone"/)
+  assert.match(html, /font-mono[^"]*"[^>]*>0\.5\.0</)
+  assert.match(html, /Frizz 0\.5\.1 kept stopping after it was installed, so 0\.5\.0 is running again\. The next version will be offered here\./)
+  assert.doesNotMatch(html, /up to date|no newer version|Restart Frizz|Update Frizz/)
+  assert.equal((html.match(/<p /g) ?? []).length, 1)
+  const button = renderToStaticMarkup(createElement(RestartActionButton, { update: false, busy: false, current: true, rejected: "0.5.1", onClick: () => undefined }))
+  assert.match(button, /aria-label="Update undone"/)
+  assert.match(button, /aria-disabled="true"/)
+  // Once something newer still is offered, the popover is the ordinary offer again.
+  const offered = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: true, version: "0.5.0", updateVersion: "0.5.2", rejected: "0.5.1" }))
+  assert.match(offered, /Update Frizz/)
+  assert.doesNotMatch(offered, /undone|kept stopping/)
+})
+
 // The greyed button offers no verb; this plain-restart spelling survives only for a failure card that
 // stays on screen after an answer flips `updateAvailable` off.
 test("the plain restart popover names itself as a restart, not an update", () => {
