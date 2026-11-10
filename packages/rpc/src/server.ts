@@ -113,6 +113,17 @@ export interface RouterGuard {
   input?(c: Context, name: string, input: unknown): Response | undefined
 }
 
+/**
+ * A query's or a stream's input, off its `?input=` parameter. Hono's `c.req.query` has already
+ * percent-decoded it, and every client encodes once (`url.searchParams.set`), so this is the JSON as
+ * sent. It was decoded a second time until 2026-11-10: any input holding a `%` either failed the
+ * decode and was refused as invalid JSON (`"notes/50% done.md"`), or came through altered
+ * (`"a%2Fb.md"` arrived as `"a/b.md"`).
+ */
+function readQueryInput(raw: string): unknown {
+  return JSON.parse(raw)
+}
+
 export function mountRouter(app: Hono, prefix: string, router: Router, guard?: RouterGuard) {
   // Serve the procedure map so the client can self-configure
   const procMap = extractProcedureMap(router)
@@ -129,7 +140,7 @@ export function mountRouter(app: Hono, prefix: string, router: Router, guard?: R
         let input: unknown
         if (rawInput) {
           try {
-            input = JSON.parse(decodeURIComponent(rawInput))
+            input = readQueryInput(rawInput)
           } catch {
             return c.json({ error: "Invalid input JSON" }, 400)
           }
@@ -157,7 +168,13 @@ export function mountRouter(app: Hono, prefix: string, router: Router, guard?: R
         let input: unknown
         const contentType = c.req.header("content-type")
         if (contentType?.includes("application/json")) {
-          input = await c.req.json()
+          // A body that is not JSON is the caller's mistake, so it is a 400 like any other bad input.
+          // Unguarded, the parse threw out of the handler and Hono answered 500.
+          try {
+            input = await c.req.json()
+          } catch {
+            return c.json({ error: "Invalid input JSON" }, 400)
+          }
         }
         if (proc.input) {
           const parsed = proc.input.safeParse(input)
@@ -183,7 +200,7 @@ export function mountRouter(app: Hono, prefix: string, router: Router, guard?: R
         let input: unknown
         if (rawInput) {
           try {
-            input = JSON.parse(decodeURIComponent(rawInput))
+            input = readQueryInput(rawInput)
           } catch {
             return c.json({ error: "Invalid input JSON" }, 400)
           }

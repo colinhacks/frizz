@@ -32,6 +32,7 @@ const GLOBS = [
   "scripts/**/*.test.mjs",
   "src/**/*.test.ts",
   "packages/shared/src/**/*.test.ts",
+  "packages/rpc/src/**/*.test.ts",
   "packages/server/src/**/*.test.ts",
   "packages/registrar/src/**/*.test.ts",
   "packages/relay/src/**/*.test.ts",
