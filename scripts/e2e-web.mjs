@@ -72,6 +72,8 @@ const NEEDS_REAL_STACK = [
   "packages/web/src/components/updatePopoverStacking.e2e.test.ts",
   "packages/web/src/components/pinnedReports.e2e.test.ts",
   "packages/web/src/components/signOffCard.e2e.test.ts",
+  // And a BUILT bundle behind it (`adhoc-stack.mjs --prod`): the policy it checks is not sent by a vite.
+  "packages/web/src/components/documentPolicy.e2e.test.ts",
 ];
 
 const args = process.argv.slice(2);

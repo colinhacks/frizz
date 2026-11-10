@@ -1,12 +1,14 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { connect } from "node:net"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { gunzipSync } from "node:zlib"
 import { after, before, test } from "node:test"
 import { serveStatic } from "./index.ts"
+import { documentScriptPolicy } from "./local-origin.ts"
 
 // Driven through a REAL node http server and real fetch, because every claim here is about wire
 // behaviour a fake req/res cannot show: which validator the browser gets back, whether a conditional
@@ -55,11 +57,54 @@ test("a hashed asset is immutable; the shell that names it is not", async () => 
 test("no document can be framed, a revalidated one included", async () => {
   const shell = await fetch(`${origin}/`)
   assert.equal(shell.headers.get("x-frame-options"), "DENY")
-  assert.equal(shell.headers.get("content-security-policy"), "frame-ancestors 'none'")
+  assert.match(shell.headers.get("content-security-policy") ?? "", /^frame-ancestors 'none';/)
   const again = await fetch(`${origin}/`, { headers: { "if-none-match": shell.headers.get("etag")! } })
   assert.equal(again.status, 304)
   assert.equal(again.headers.get("x-frame-options"), "DENY")
-  assert.equal(again.headers.get("content-security-policy"), "frame-ancestors 'none'")
+  assert.match(again.headers.get("content-security-policy") ?? "", /^frame-ancestors 'none';/)
+  // An asset is not a document: nothing runs in it, and it only refuses to be framed.
+  const asset = await fetch(`${origin}/assets/index-AAAA.js`)
+  assert.equal(asset.headers.get("content-security-policy"), "frame-ancestors 'none'")
+})
+
+test("a document says which scripts may run in it: this origin's, and its own inline ones by hash", async () => {
+  // The fixture shell has no inline script, so nothing is named but the origin.
+  const plain = await fetch(`${origin}/`)
+  assert.equal(plain.headers.get("content-security-policy"), "frame-ancestors 'none'; script-src 'self'; object-src 'none'; base-uri 'none'")
+
+  // A shell with two inline scripts, one of them with CR LF line ends (the parser gives the browser LF),
+  // beside the module script it loads by URL, which is covered by 'self' and gets no hash.
+  const theme = "\n  document.documentElement.dataset.theme = 'dark'\n"
+  const second = "window.booted = true"
+  const sha = (text: string) => `'sha256-${createHash("sha256").update(text).digest("base64")}'`
+  const html = `<!doctype html><head><script>${theme.replace(/\n/g, "\r\n")}</script><SCRIPT type="text/javascript">${second}</SCRIPT></head><script type="module" crossorigin src="/assets/index-AAAA.js"></script>`
+  writeFileSync(join(dist, "index.html"), html)
+  const future = new Date(Date.now() + 60_000)
+  utimesSync(join(dist, "index.html"), future, future) // a new version of the file, whatever the clock's grain
+  try {
+    const shell = await fetch(`${origin}/project/some-project`)
+    assert.equal(shell.status, 200)
+    const policy = `frame-ancestors 'none'; script-src 'self' ${sha(theme)} ${sha(second)}; object-src 'none'; base-uri 'none'`
+    assert.equal(shell.headers.get("content-security-policy"), policy)
+    assert.equal(documentScriptPolicy(html), policy)
+    const again = await fetch(`${origin}/`, { headers: { "if-none-match": shell.headers.get("etag")! } })
+    assert.equal(again.status, 304)
+    assert.equal(again.headers.get("content-security-policy"), policy, "the revalidated copy keeps the same policy")
+  } finally {
+    writeFileSync(join(dist, "index.html"), "<!doctype html><script src=\"/assets/index-AAAA.js\"></script>")
+    const later = new Date(Date.now() + 120_000)
+    utimesSync(join(dist, "index.html"), later, later)
+  }
+  assert.equal((await fetch(`${origin}/`)).headers.get("content-security-policy"), plain.headers.get("content-security-policy"), "and a rebuilt shell gets its own")
+})
+
+test("the real dashboard document's inline script is the one the policy names", () => {
+  // The source index.html is what the build copies its inline script out of, byte for byte.
+  const html = readFileSync(join(import.meta.dirname, "..", "..", "web", "index.html"), "utf8")
+  const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]!)
+  assert.equal(inline.length, 1, "the theme bootstrap, and nothing else inline")
+  assert.ok(documentScriptPolicy(html).includes(`'sha256-${createHash("sha256").update(inline[0]!).digest("base64")}'`))
+  assert.doesNotMatch(documentScriptPolicy(html), /unsafe-inline|unsafe-eval/)
 })
 
 test("the root URL is the shell on every platform, with or without a query string", async () => {

@@ -609,10 +609,15 @@ try {
   check("arming a command watch is written down", log.some((r) => r.action === "commandWatchArm" && r.thread === SLUG))
 
   section("A document can't be framed, and the board's own frames still work")
+  // A document's policy opens with the frame refusal and then names the scripts that may run in it
+  // (local-origin.ts documentScriptPolicy). Both have to survive the proxy and the relay listener as sent.
+  const refusesFrames = (headers) => headers["x-frame-options"] === "DENY" && String(headers["content-security-policy"]).startsWith("frame-ancestors 'none'")
+  const namesScripts = (headers) => /; script-src 'self'( 'sha256-[A-Za-z0-9+/]+=*')+; object-src 'none'; base-uri 'none'$/.test(String(headers["content-security-policy"]))
   const shell = await pub.get("/")
-  check("a remote document says so", shell.headers["x-frame-options"] === "DENY" && shell.headers["content-security-policy"] === "frame-ancestors 'none'", `${shell.headers["x-frame-options"]} / ${shell.headers["content-security-policy"]}`)
+  check("a remote document says so", refusesFrames(shell.headers), `${shell.headers["x-frame-options"]} / ${shell.headers["content-security-policy"]}`)
+  check("and says which scripts may run in it", namesScripts(shell.headers), String(shell.headers["content-security-policy"]))
   const local = await loop.get("/")
-  check("so does a loopback one", local.headers["x-frame-options"] === "DENY" && local.headers["content-security-policy"] === "frame-ancestors 'none'")
+  check("so does a loopback one", refusesFrames(local.headers) && namesScripts(local.headers))
   const childDoc = await direct.get("/thread/anything")
   check("and the child's own", childDoc.status === 200 && childDoc.headers["x-frame-options"] === "DENY", `HTTP ${childDoc.status}`)
   const signIn = await stranger.get("/")
@@ -667,6 +672,14 @@ try {
   })
   const consoleErrors = []
   page.on("pageerror", (error) => consoleErrors.push(String(error)))
+  // What the document's script policy refused. The built app needs nothing it refuses, so one line here
+  // is either the app growing a need (an inline script, `eval`, a worker from a blob) or script that is
+  // not the app's. A refused FRAME is a different directive, and the pages below earn those on purpose.
+  const policyRefusals = []
+  page.on("console", (message) => {
+    const text = message.text()
+    if (/Content Security Policy directive: "(script-src|base-uri|object-src)/.test(text)) policyRefusals.push(text.slice(0, 200))
+  })
   const signedIn = await page.goto(`${ORIGIN}/?frizz_code=${encodeURIComponent(await mint())}`, { waitUntil: "domcontentloaded" })
   check("a real browser signs in with a real code, through the relay listener", signedIn.status() === 200, `HTTP ${signedIn.status()}`)
   const jar = await browser.cookies()
@@ -808,6 +821,8 @@ try {
   // Not a pass or a fail. A page that asks for something refused is noise in the audit trail, so it shows.
   console.log(`  ..   refused during real page loads: ${[...new Set(refusedCalls)].join(", ") || "(nothing)"}`)
   console.log(`  ..   page errors: ${consoleErrors.join(" | ").slice(0, 300) || "(none)"}`)
+  check("the document's script policy refused nothing a real page did", policyRefusals.length === 0, policyRefusals.slice(0, 3).join(" | "))
+  policyRefusals.length = 0
 
 
   part("2. Full control, on the same session through the same listener")
@@ -1057,6 +1072,7 @@ try {
   const refusedAgain = await pub.mutate("dispatch", dispatchBody)
   check("and dispatch is refused again", refused(refusedAgain), said(refusedAgain))
   await machineOnly("read and answer", RELAY, pub, phone.cookie)
+  check("with full control too, the script policy refused nothing a real page did", policyRefusals.length === 0, policyRefusals.slice(0, 3).join(" | "))
 
   part("3. A public origin with no relay: Tailscale, a tunnel, a proxy of the owner's")
   const OWN_PORT = PROXY + 2

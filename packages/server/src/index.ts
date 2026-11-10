@@ -42,7 +42,7 @@ import {
 } from "./project-launch.ts"
 import { serverAddressPathForStateDir } from "./frizz-paths.ts"
 import { CALLER_HEADER } from "./audit.ts"
-import { FRAME_REFUSED_HEADERS } from "./local-origin.ts"
+import { documentScriptPolicy, FRAME_REFUSED_HEADERS } from "./local-origin.ts"
 import { auditRemoteRefusal, callerAccess, isRemoteCaller } from "./remote-gate.ts"
 import { remoteRefusedMessage } from "./remote-refusal.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
@@ -513,6 +513,17 @@ function staticIsFresh(req: IncomingMessage, etag: string, mtimeMs: number): boo
   return Number.isFinite(since) && Math.floor(mtimeMs / 1000) <= Math.floor(since / 1000)
 }
 
+// A built document's policy names its inline scripts by hash, so it is read out of the file, once for
+// each version of it: the app shell is served for every page of every project.
+const documentPolicies = new Map<string, { etag: string; policy: string }>()
+function builtDocumentPolicy(file: string, etag: string): string {
+  const known = documentPolicies.get(file)
+  if (known?.etag === etag) return known.policy
+  const policy = documentScriptPolicy(readFileSync(file, "utf8"))
+  documentPolicies.set(file, { etag, policy })
+  return policy
+}
+
 // Serve a built asset from web/dist, falling back to index.html for SPA routes. Path is
 // normalized + confined to distDir so a request can't escape the root.
 export function serveStatic(distDir: string, req: IncomingMessage, res: ServerResponse) {
@@ -549,6 +560,9 @@ export function serveStatic(distDir: string, req: IncomingMessage, res: ServerRe
       // Before the 304 below: a browser keeps the frame policy of the response it revalidated from, and
       // an older copy of the page has none.
       ...FRAME_REFUSED_HEADERS,
+      // A document also says which scripts may run in it (local-origin.ts documentScriptPolicy). On the
+      // 304 too, for the same reason as the line above.
+      ...(extname(file) === ".html" ? { "content-security-policy": builtDocumentPolicy(file, etag) } : {}),
     }
     if (staticIsFresh(req, etag, stats.mtimeMs)) {
       res.writeHead(304, headers)

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { isIP } from "node:net"
 import type { IncomingMessage } from "node:http"
 import type { Duplex } from "node:stream"
@@ -80,6 +81,37 @@ export const FRAME_REFUSED_HEADERS = {
   "x-frame-options": "DENY",
   "content-security-policy": "frame-ancestors 'none'",
 } as const
+
+/**
+ * The policy a BUILT dashboard document is served with: frames refused as above, and scripts only from
+ * this origin plus the document's own inline ones, each named by its hash.
+ *
+ * Everything an agent, a pull request or a web page writes is drawn in this document, behind one
+ * hand-written sanitizer, and script in this origin is `dispatch`: code on the machine. One gap in that
+ * sanitizer was found and closed on 2026-11-09 (lib/markdown.ts); this is what stands behind the next
+ * one. An inline handler, a `javascript:` URL, an injected `<script>` and `eval` do not run here, and
+ * each attempt is a `securitypolicyviolation` the browser reports instead.
+ *
+ * Scripts and nothing else, on purpose. The built app loads one module graph from `/assets`, writes no
+ * inline script but the theme bootstrap in index.html, calls no `eval` and starts no worker, so this
+ * costs it nothing. Styles, images, frames and connections are left as they were: Mermaid and the
+ * highlighter write inline styles, and how a browser matches a WebSocket against `'self'` has differed
+ * between them. Not sent by the Vite dev server, whose own inline scripts change with every edit.
+ */
+export function documentScriptPolicy(html: string): string {
+  const inline: string[] = []
+  for (const script of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    if (/\bsrc\s*=/i.test(script[1]!)) continue
+    // The parser hands the browser CR LF as LF, and the hash is of what it was handed.
+    inline.push(`'sha256-${createHash("sha256").update(script[2]!.replace(/\r\n?/g, "\n")).digest("base64")}'`)
+  }
+  return [
+    FRAME_REFUSED_HEADERS["content-security-policy"],
+    ["script-src 'self'", ...inline].join(" "),
+    "object-src 'none'",
+    "base-uri 'none'",
+  ].join("; ")
+}
 
 /** The authority `policy.publicOrigin` describes, or null when the operator declared none. */
 function publicAuthority(policy: LocalAuthorityPolicy | undefined): ParsedLocalAuthority | null {
