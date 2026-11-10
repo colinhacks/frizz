@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useSnapshot } from "valtio"
 import { Command } from "cmdk"
 import { store, openThread, openNewThread, pushDrawer, topThreadSlug, closeDrawersById } from "../store.ts"
@@ -15,9 +15,16 @@ export function CommandPalette() {
   const board = useBoard()
   const [search, setSearch] = useState("")
 
+  // Whether this opening ended by RUNNING something. Escape and a press on the scrim hand the focus
+  // back to where ⌘K was pressed (ui/ModalSurface); a command decides the focus for itself, and a jump
+  // to a thread leaves it on the page.
+  const ranCommand = useRef(false)
+
   // Reset the query each time it opens so a stale filter never hides everything.
   useEffect(() => {
-    if (snap.showPalette) setSearch("")
+    if (!snap.showPalette) return
+    setSearch("")
+    ranCommand.current = false
   }, [snap.showPalette])
 
   if (!snap.showPalette) return null
@@ -32,6 +39,7 @@ export function CommandPalette() {
   }
 
   function run(fn: () => void) {
+    ranCommand.current = true
     fn()
     close()
   }
@@ -45,6 +53,7 @@ export function CommandPalette() {
     // defers to: the one Escape closes, the one that takes the pointer and the focus.
     <ModalSurface
       label="Command palette"
+      returnsFocus={() => !ranCommand.current}
       // `text-sm`: the app frame's type (App.tsx), which a portal to <body> leaves behind.
       className={`fixed inset-0 ${Z_PALETTE} flex items-start justify-center bg-scrim-50 pt-[12vh] text-sm`}
       onMouseDown={(e) => e.target === e.currentTarget && close()}

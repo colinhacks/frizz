@@ -1,5 +1,6 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
-import { forwardRef, type ComponentPropsWithoutRef } from "react"
+import { forwardRef, useCallback, useState, type ComponentPropsWithoutRef } from "react"
+import { focusToRestore, openerChain, rememberChain } from "../../lib/restoreFocus.ts"
 
 // A FULL-SCREEN SURFACE WE DRAW OURSELVES — its own scrim, its own slide, its own close — made a MEMBER of
 // Radix's layer stack. Rule 4 of lib/layers.ts. Every thread drawer is a Radix dialog, and Radix keeps its
@@ -13,7 +14,16 @@ import { forwardRef, type ComponentPropsWithoutRef } from "react"
 // Radix only joins it to the stack; CLOSING stays the surface's own. The app's Escape chain (DrawerStack)
 // unwinds overlays in its own order, so Radix's dismissals are refused here: its Escape (the event still
 // bubbles on to that chain), a press outside (the surface fills the screen, and its scrim's click is its
-// own), and focus leaving. So is its focus restore on close, which the plain surfaces never did.
+// own), and focus leaving. So is its focus restore on close, which returns to a `Dialog.Trigger` these
+// surfaces do not have.
+//
+// ON CLOSE, FOCUS GOES BACK TO WHAT HELD IT WHEN THE SURFACE OPENED (lib/restoreFocus.ts has the cases:
+// a surface opened from another, a close that was a navigation, an opener that has left the page). The
+// plain surfaces never returned it and neither did this until 2026-11-10: closing Settings or ⌘K left
+// the focus on <body>, and the next Tab started from the top of the rail. `returnsFocus` is how a
+// surface says a particular close was not a dismissal: ⌘K answers false once it has run a command, so a
+// jump to a thread leaves the focus where it has always left it, on the page, where `j` and `k` step
+// the pane, and not back in the prompt box ⌘K was pressed in.
 //
 // ON OPEN, FOCUS GOES TO THE ELEMENT MARKED `data-autofocus`, else to the surface itself — never to its
 // first control, which Radix would pick. React's `autoFocus` is not enough: the portal mounts a commit
@@ -25,13 +35,30 @@ import { forwardRef, type ComponentPropsWithoutRef } from "react"
 // its data attributes, its handlers. `label` names it for assistive tech, as a hidden title.
 export const ModalSurface = forwardRef<
   HTMLDivElement,
-  { label: string } & Omit<ComponentPropsWithoutRef<typeof RadixDialog.Content>, "asChild" | "forceMount">
->(function ModalSurface({ label, children, className = "", ...props }, ref) {
+  {
+    label: string
+    /** Asked as the surface closes. False leaves the focus alone; absent, it goes back to the opener. */
+    returnsFocus?: () => boolean
+  } & Omit<ComponentPropsWithoutRef<typeof RadixDialog.Content>, "asChild" | "forceMount">
+>(function ModalSurface({ label, returnsFocus, children, className = "", ...props }, ref) {
+  // Read on the FIRST render, which is the surface opening: by its first effect Radix has already
+  // moved the focus inside.
+  const [openers] = useState(openerChain)
+  const surfaceRef = useCallback(
+    (surface: HTMLDivElement | null) => {
+      if (surface) rememberChain(surface, openers)
+      if (typeof ref === "function") ref(surface)
+      else if (ref) ref.current = surface
+    },
+    [openers, ref],
+  )
   return (
     <RadixDialog.Root open>
       <RadixDialog.Portal>
         <RadixDialog.Content
-          ref={ref}
+          ref={surfaceRef}
+          // How an opener is asked which surface it sits in (lib/restoreFocus.ts).
+          data-modal-surface=""
           aria-label={label}
           aria-describedby={undefined}
           onEscapeKeyDown={(event) => event.preventDefault()}
@@ -42,7 +69,12 @@ export const ModalSurface = forwardRef<
             const surface = event.target as HTMLElement
             ;(surface.querySelector<HTMLElement>("[data-autofocus]") ?? surface).focus({ preventScroll: true })
           }}
-          onCloseAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            if (returnsFocus && !returnsFocus()) return
+            const back = focusToRestore(openers, document.activeElement, document.body)
+            if (back instanceof HTMLElement) back.focus({ preventScroll: true })
+          }}
           className={`outline-none ${className}`}
           {...props}
         >

@@ -102,7 +102,7 @@ const SWIPE_ACTION_W = 76
 const SWIPE_OPEN = SWIPE_ACTION_W * 2
 const SWIPE_SLOP = 10
 
-function SwipeRow({
+export function SwipeRow({
   open,
   onOpenChange,
   onSnooze,
@@ -124,7 +124,11 @@ function SwipeRow({
 
   return (
     <div className="relative overflow-hidden" style={{ touchAction: "pan-y" }}>
-      <div className="absolute inset-y-0 right-0 flex" aria-hidden={!open}>
+      {/* `inert` while the row is closed, not `aria-hidden`: the two actions are real buttons, and
+          hidden from assistive tech they were still Tab stops, two per row, behind the row's own
+          content (axe's aria-hidden-focus on 16 nodes of a seeded board, 2026-11-09). Inert takes them
+          out of the tab order and the accessibility tree together, until a swipe opens the row. */}
+      <div className="absolute inset-y-0 right-0 flex" inert={!open}>
         <button
           data-mobile-swipe-snooze
           onClick={() => { onOpenChange(false); onSnooze() }}

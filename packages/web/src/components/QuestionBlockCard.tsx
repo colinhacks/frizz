@@ -116,6 +116,8 @@ export function QuestionBlockCard({
   // onClick) so Enter sends the staged answers immediately after picking an option, without the
   // free-text box having to hold focus. tabIndex=-1: reachable by script, skipped by Tab.
   const gridRef = useRef<HTMLDivElement>(null)
+  // The question's own text names the group its options are (see the grid's `role`).
+  const questionId = useId()
   useLayoutEffect(() => {
     const ta = taRef.current
     if (!ta) return
@@ -147,7 +149,7 @@ export function QuestionBlockCard({
           word "Question" above it. The colour rides a WRAPPER because `.card-md .md-body` inherits
           colour by design (and outranks a utility class on the element itself). */}
       {html && (
-        <div className="text-fg">
+        <div id={questionId} className="text-fg">
           <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={html} />
         </div>
       )}
@@ -189,6 +191,12 @@ export function QuestionBlockCard({
             }
           }}
           data-question-grid
+          // The options are ONE control to assistive tech: a group named by the question. Without it a
+          // screen reader met a run of unrelated buttons, and the grid, which takes the focus after
+          // every pick, announced nothing. `group`, not `radiogroup`: see the option's `aria-pressed`.
+          role="group"
+          aria-labelledby={html ? questionId : undefined}
+          aria-label={html ? undefined : kindLabel}
           className="mt-2 grid grid-cols-1 gap-1.5 outline-none"
         >
           {parsed.options.map((opt, i) => (
@@ -550,6 +558,12 @@ function Chip({
         type="button"
         disabled={disabled}
         aria-labelledby={labelId}
+        // WHICH OPTION IS PICKED was drawn (the selection border, the tick) and never said: the button
+        // had a name and no state, so a screen reader read every option alike. A settled card says it
+        // too, on the option that was sent. A TOGGLE button, for a single choice as well as a multi,
+        // and not `role="radio"`: picking the chosen option again lets it go, which a radio cannot do,
+        // and a radio group promises arrow keys where these are reached by Tab.
+        aria-pressed={selected || settledPick}
         onClick={onClick}
         onMouseDown={(e) => e.preventDefault()}
         className="absolute inset-0 rounded-md outline-none"

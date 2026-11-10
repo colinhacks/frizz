@@ -108,3 +108,69 @@ test("focusing the free-text box unselects a registered question's chosen option
     await browser.close()
   }
 })
+
+// WHICH OPTION IS PICKED, AS ASSISTIVE TECH IS TOLD IT. The pick was drawn (the selection border, the
+// tick) and never said: an option was a button with a name and no state, in a run of buttons with no
+// group, so a screen reader read every option alike and could not say they were one choice (measured
+// 2026-11-09: after Space on an option, `{"pressed":null,"checked":null}`). Read from the browser's own
+// accessibility tree, which is what a screen reader is handed, not from the attributes.
+test("an option says whether it is picked, and the options are a group named by their question", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch()
+  try {
+    await page.goto(`${baseUrl}/registered-question-fixture.html?many=1`, { waitUntil: "networkidle0" })
+    const single = "[data-question-id='qst_0001aaaa']"
+    const multi = "[data-question-id='qst_0004dddd']"
+    await page.waitForSelector(`${single} [data-question-option]`)
+    await page.waitForSelector(`${multi} [data-question-option]`)
+
+    /**
+     * The card's options as the accessibility tree has them: the group's role and name, and each
+     * option's own button's pressed state (an option's body can hold other buttons: a code block's copy).
+     */
+    const spoken = async (card: string) => {
+      const grid = (await page.$(`${card} [data-question-grid]`))!
+      const group = await page.accessibility.snapshot({ root: grid, interestingOnly: false })
+      const options: (boolean | "mixed" | undefined)[] = []
+      for (const button of await page.$$(`${card} [data-question-option] > button`)) {
+        options.push((await page.accessibility.snapshot({ root: button, interestingOnly: false }))?.pressed)
+      }
+      return { role: group?.role, name: group?.name ?? "", options }
+    }
+    const count = await page.$$eval(`${single} [data-question-option]`, (rows) => rows.length)
+    const none = Array.from({ length: count }, () => false)
+
+    const before = await spoken(single)
+    assert.equal(before.role, "group")
+    const question = await page.$eval(`${single} .md-body`, (el) => el.textContent!.trim())
+    assert.ok(question.length > 10, "the fixture's question has text")
+    assert.equal(before.name, question, "the group is named by the question it answers")
+    assert.deepEqual(before.options, none, "every option is a toggle, and none is pressed yet")
+
+    // By keyboard, the way a screen-reader user picks: Tab stop on the option's button, Space.
+    const press = async (card: string, i: number) => {
+      await page.$$eval(`${card} [data-question-option] > button`, (buttons, i) => (buttons[i as number] as HTMLElement).focus(), i)
+      await page.keyboard.press("Space")
+    }
+    await press(single, 1)
+    assert.deepEqual((await spoken(single)).options, none.map((_, i) => i === 1))
+    assert.deepEqual(await selectedRows(page, single), [1], "what is said is what is drawn")
+    // A single choice moves.
+    await press(single, 0)
+    assert.deepEqual((await spoken(single)).options, none.map((_, i) => i === 0))
+    // And picking the chosen option again lets it go, which is why these are toggles and not radios.
+    await press(single, 0)
+    assert.deepEqual((await spoken(single)).options, none)
+
+    // A multi says each one it holds.
+    await press(multi, 0)
+    await press(multi, 2)
+    const multiSpoken = await spoken(multi)
+    assert.equal(multiSpoken.role, "group")
+    assert.deepEqual(multiSpoken.options.slice(0, 3), [true, false, true])
+    assert.deepEqual(await selectedRows(page, multi), [0, 2])
+
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
