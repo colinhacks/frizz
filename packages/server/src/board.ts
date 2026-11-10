@@ -2645,6 +2645,31 @@ export interface BoardManagerDeps {
   questionFaults?: (slug: string) => readonly QuestionFenceFault[] | undefined
 }
 
+// A BOARD'S WATCHER IS ENDED IN TURN, AND NOBODY WAITS FOR IT.
+//
+// @parcel/watcher's unsubscribe is a blocking call into the operating system for each subscription
+// (macOS: stopping and releasing an FSEvents stream), run on libuv's thread pool, and it is slow: 60 to
+// 110ms each on a quiet machine, 100 to 450ms under load, with a second now and then. `stop()` used to
+// await it, a server stops one board per open project, and so a stop cost that much per project: 17 of
+// them ran out the six seconds a shutdown allows on 2026-11-06 and again on 2026-11-09, and the storage
+// behind them was left unclosed. Asking for all of them at once is no better; the same twelve took
+// longer together than one after another (1.5 to 2.0s against 0.7 to 2.2s, three alternating runs).
+//
+// Waiting bought nothing. What must hold before a board's storage closes is that no event can start a
+// rebuild, and `stopped` is what holds it, at every way in (`scheduleRebuild`, `rebuild`,
+// `rebuildOnce`): an event the library still delivers after a stop is dropped there. So a subscription
+// is handed to this queue and forgotten. One at a time, so a
+// burst of them never takes every pool thread from the rest of the server; a process that exits first
+// leaves the rest unasked, which is how any process holding a watcher ends.
+let watcherTeardown: Promise<unknown> = Promise.resolve()
+function endWatcher(subscription: { unsubscribe(): Promise<unknown> }): void {
+  watcherTeardown = watcherTeardown
+    .then(() => subscription.unsubscribe())
+    .catch((error) => {
+      frizzLog.warn("board", `a file watcher did not end cleanly: ${error instanceof Error ? error.message : String(error)}`)
+    })
+}
+
 export function createBoard(
   project: Project,
   storage: Storage,
@@ -3112,7 +3137,7 @@ export function createBoard(
         { ignore: FRIZZ_WATCH_IGNORED_DIRS.map((name) => join(dir, name)) },
       )
       if (stopped) {
-        await next.unsubscribe()
+        endWatcher(next)
         return
       }
       parcelSub = next
@@ -3187,10 +3212,10 @@ export function createBoard(
         const subscription = parcelSub
         parcelSub = null
         const pendingWatchSetup = watchSetup
-        await Promise.all([
-          pendingWatchSetup ?? Promise.resolve(),
-          subscription?.unsubscribe() ?? Promise.resolve(),
-        ])
+        // Ended, not waited for (endWatcher above). A setup still in flight is waited for: it holds a
+        // subscription nobody else knows about yet, and ends it itself once it sees `stopped`.
+        if (subscription) endWatcher(subscription)
+        await pendingWatchSetup
         // Rebuilds are registry reads only, but still drain them so a replacement generation never
         // publishes a stale delta after shutdown begins.
         await Promise.allSettled([...activeRebuilds])

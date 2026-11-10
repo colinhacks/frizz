@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AppContext, ContextOptions } from "./context.ts"
 import type { Project } from "./project.ts"
+import { captureLogRecords } from "./logging.ts"
 import { createTenantMap } from "./tenants.ts"
 
 function project(id: string, name = id): Project {
@@ -197,6 +198,75 @@ test("closeAll drains every project", async () => {
   await tenants.closeAll()
   assert.equal(tenants.active().length, 0)
   assert.equal(stopped.filter((s) => s === "storage").length, 2)
+})
+
+// One project's scheduler finishing a tick used to hold up every project behind it, all on one six-second
+// bound. Each scheduler here settles only once EVERY project's has been asked to stop, so closing them
+// one after another never finishes.
+test("closeAll closes the projects at once, each in its own order, and leaves the one it is told to", { timeout: 10_000 }, async () => {
+  const ids = ["p1", "p2", "p3", "p4", "p5"]
+  const stopped: string[] = []
+  let asked = 0
+  let everyoneAsked!: () => void
+  const all = new Promise<void>((resolve) => { everyoneAsked = resolve })
+  const built: string[] = []
+  const tenants = createTenantMap({
+    createContext: async (opts) => {
+      const id = opts.project!.id
+      built.push(id)
+      const log: string[] = []
+      const ctx = fakeContext(log, { scheduler: () => { if (++asked === ids.length - 1) everyoneAsked(); return all } })
+      // Each project's own steps, tagged, in the one shared list.
+      log.push = (...names: string[]) => stopped.push(...names.map((name) => `${id}:${name}`))
+      return ctx
+    },
+  })
+  for (const id of ids) await tenants.activate(project(id))
+  await tenants.closeAll({ except: "p1" })
+  assert.deepEqual(tenants.active().map((entry) => entry.project.id), ["p1"], "the launching project is the barrier's own to close")
+  for (const id of ids.slice(1)) {
+    assert.deepEqual(stopped.filter((step) => step.startsWith(`${id}:`)), ["tailer", "subscriptions", "scheduler", "board", "bridge", "storage"].map((step) => `${id}:${step}`))
+  }
+  assert.equal(stopped.filter((step) => step.startsWith("p1:")).length, 0)
+  // Every scheduler was asked before any project went on to its board.
+  assert.ok(stopped.lastIndexOf("p5:scheduler") < stopped.findIndex((step) => step.endsWith(":board")))
+})
+
+// A step that never returns leaves no record unless it is said while it is stuck: the process is ended
+// with the step still running. And the projects beside it close regardless.
+test("a project's step that is slow to close is named while it is stuck, and holds up no other project", { timeout: 10_000 }, async () => {
+  const stopped: string[] = []
+  let release!: () => void
+  const wedged = new Promise<void>((resolve) => { release = resolve })
+  const tenants = createTenantMap({
+    slowCloseMs: 30,
+    createContext: async (opts) => {
+      const id = opts.project!.id
+      const log: string[] = []
+      const ctx = fakeContext(log, id === "p1" ? { board: () => wedged } : {})
+      log.push = (...names: string[]) => stopped.push(...names.map((name) => `${id}:${name}`))
+      return ctx
+    },
+  })
+  await tenants.activate(project("p1", "slow-one"))
+  await tenants.activate(project("p2", "quick-one"))
+  const log = captureLogRecords()
+  try {
+    const closing = tenants.closeAll()
+    const said = () => log.records.filter((record) => record.scope === "tenants")
+    for (let i = 0; i < 200 && said().length === 0; i++) await new Promise((r) => setTimeout(r, 10))
+    assert.deepEqual(said().map((record) => [record.level, record.message]), [["warn", "project slow-one: board has not closed after 30ms"]])
+    assert.ok(stopped.includes("p2:storage"), "the project beside it has closed its storage meanwhile")
+    assert.ok(!stopped.includes("p1:storage"), "and the slow one has not closed a database its board may still be using")
+    release()
+    await closing
+    assert.equal(stopped.at(-1), "p1:storage")
+    assert.equal(said().length, 2)
+    assert.match(said()[1]!.message, /^project slow-one took \d+ms to close: board \d+ms$/)
+    assert.ok(!log.messages().some((message) => message.includes("quick-one")), "a project that closed at once is not mentioned")
+  } finally {
+    log.restore()
+  }
 })
 
 // An activated project that never starts its producers is a STATIC board: the RPC reads storage

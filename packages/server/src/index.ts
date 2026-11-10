@@ -852,9 +852,8 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     await tenantPrime?.done
     stopProjectAnnouncements?.()
     claudeFloat?.stop()
-    for (const { project: opened } of tenants.active()) {
-      if (opened.id !== project.id) await tenants.deactivate(opened.id)
-    }
+    // All at once (tenants.ts closeAll): this phase has one bound for every project it closes.
+    await tenants.closeAll({ except: project.id })
   })
   const cleanupTailer = createRetryableCleanup(tenant.tailer)
   const cleanupSubscriptions = createRetryableCleanup(tenant.subscriptions)

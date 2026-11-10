@@ -53,7 +53,18 @@ export interface TenantMapOptions<App = unknown> {
   /** Extra options every tenant's context is built with (claudeBin, codexBin, …). */
   contextOptions?: Omit<ContextOptions, "project">
   onError?: (project: Project, error: unknown) => void
+  /** How long one step of a deactivation may run before the log says so. Defaults to SLOW_CLOSE_MS. */
+  slowCloseMs?: number
 }
+
+/**
+ * A project's close is said in the log once it, or one step of it, has run this long.
+ *
+ * A step that is still running when the process is ended leaves no other record. On 2026-11-09 a
+ * shutdown over 18 projects ran out its six seconds and the log named the phase, `other projects`,
+ * and nothing more: not which project, not which of its seven steps.
+ */
+export const SLOW_CLOSE_MS = 1_000
 
 export interface TenantMap<App = unknown> {
   /**
@@ -77,7 +88,13 @@ export interface TenantMap<App = unknown> {
   deactivate(projectId: string): Promise<boolean>
   /** Every open project, in activation order. */
   active(): { project: Project; ctx: AppContext; app?: App }[]
-  closeAll(): Promise<void>
+  /**
+   * Close every open project but `except`, all at once: each project's steps keep their order, and no
+   * project waits for another's. One after another, a project slow to close held up every project
+   * behind it on the one bound a shutdown gives them all, and their schedulers went on starting new
+   * ticks while they waited their turn.
+   */
+  closeAll(options?: { except?: string }): Promise<void>
 }
 
 export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): TenantMap<App> {
@@ -85,6 +102,8 @@ export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): 
   // An activation in flight, so two concurrent openings of one project build ONE context rather than
   // two racing SQLite handles onto the same file.
   const opening = new Map<string, Promise<AppContext | undefined>>()
+
+  const slowCloseMs = options.slowCloseMs ?? SLOW_CLOSE_MS
 
   const report = (project: Project, error: unknown): void => {
     const detail = error instanceof Error ? error.stack ?? error.message : String(error)
@@ -150,6 +169,7 @@ export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): 
     // reachable that has already had its storage closed.
     open.delete(projectId)
     const cleanups = projectContextCleanups(() => entry.ctx)
+    const took: [step: string, ms: number][] = []
     // The same order the process barrier uses, with this tenant's own transports at the front.
     for (const [name, run] of [
       ["transports", async () => { if (entry.app !== undefined) await options.closeApp?.(entry.app) }],
@@ -160,6 +180,12 @@ export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): 
       ["Codex app-server bridge", cleanups.bridge],
       ["storage", cleanups.storage],
     ] as const) {
+      const began = performance.now()
+      // Said while it is stuck, not after: a step that never returns has no "after".
+      const stuck = setTimeout(() => {
+        frizzLog.warn("tenants", `project ${entry.project.name}: ${name} has not closed after ${slowCloseMs}ms`)
+      }, slowCloseMs)
+      stuck.unref?.()
       try {
         await run()
       } catch (error) {
@@ -167,7 +193,16 @@ export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): 
         // is the one whose handle actually has to be released.
         const detail = error instanceof Error ? error.message : String(error)
         frizzLog.error("tenants", `project ${entry.project.name}: ${name} did not close cleanly: ${detail}`)
+      } finally {
+        clearTimeout(stuck)
       }
+      took.push([name, performance.now() - began])
+    }
+    const total = took.reduce((sum, [, ms]) => sum + ms, 0)
+    if (total >= slowCloseMs) {
+      // The steps that account for it, slowest first; the ones that took no time are left out.
+      const steps = took.filter(([, ms]) => ms >= 1).sort((a, b) => b[1] - a[1]).map(([name, ms]) => `${name} ${Math.round(ms)}ms`)
+      frizzLog.warn("tenants", `project ${entry.project.name} took ${Math.round(total)}ms to close: ${steps.join(", ")}`)
     }
     try {
       options.afterDeactivate?.(entry.project)
@@ -188,8 +223,9 @@ export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): 
     get: (projectId) => open.get(projectId)?.ctx,
     deactivate,
     active: () => [...open.values()],
-    async closeAll() {
-      for (const id of [...open.keys()]) await deactivate(id)
+    async closeAll({ except } = {}) {
+      // `deactivate` reports a step that fails and goes on, so none of these rejects.
+      await Promise.all([...open.keys()].filter((id) => id !== except).map((id) => deactivate(id)))
     },
   }
 }

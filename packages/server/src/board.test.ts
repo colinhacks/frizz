@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { questionAnswerMessage, questionsCancelledWakeMessage, type InteractionRequest } from "@frizz/shared"
 import { ANSWER_IN_FLIGHT_EXCUSAL_MS, DELIVERY_IN_FLIGHT_SPIN_MS, answerAwaitingDelivery, deriveDeliveryInFlight, answersInFlight, answersReceivedAt, wakeQuestionAnswer, appServerTurnStalled, createBoard, deriveAwaitingBackground, deriveNeedsYou, degradeIfAwaitingAnswer, degradeIfNoTranscript, fenceWatchViews, hasDeclaredWait, hasParkedTimerWatch, hasRegisteredBackgroundPark, isBoardRelevantFrizzPath, registeredDoneFence, resolveLimitPause, resolveSessionPermission, resolveSessionProfile, resolveSessionTitle, wakesOnItsOwn, type RegisteredWatch } from "./board.ts"
 import { Bus } from "./bus.ts"
+import { captureLogRecords } from "./logging.ts"
 import { createStorage, type ThreadQuestionRow } from "./storage.ts"
 import type { Project } from "./project.ts"
 import type { CommandWatchRow, SessionRow } from "./storage.ts"
@@ -1872,6 +1873,114 @@ test("a worker scratch write triggers no board rebuild, while a top-level .md st
     assert.equal(builds, afterStart + 2, "a watcher error rebuilds rather than going quiet")
   } finally {
     await board.stop()
+    storage.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// Ending a watcher is a blocking call into the operating system, 100 to 450ms each on a busy machine,
+// and a server stops one board per open project. Waiting for it made a stop cost that per project (17
+// projects ran out a shutdown's six seconds twice in November 2026). What a stop owes its storage is
+// that no event starts a rebuild afterwards, and the `stopped` gate is what holds that, so the watcher
+// is ended in the background, one at a time.
+test("board stop does not wait for its watcher to end, ends them one at a time, and drops an event that arrives after it", { timeout: 15_000 }, async () => {
+  const dirs: string[] = []
+  const closers: (() => void)[] = []
+  const order: string[] = []
+  const ending: Record<string, () => void> = {}
+  const builds: Record<string, number> = { a: 0, b: 0 }
+  const fire: Record<string, (path: string) => void> = {}
+  const make = (name: string) => {
+    const dir = mkdtempSync(join(tmpdir(), `frizz-board-watch-end-${name}-`))
+    dirs.push(dir)
+    mkdirSync(join(dir, ".frizz"))
+    const project: Project = { dir, id: `project-watch-end-${name}`, name, label: name, stateDir: dir, cwdSlug: name }
+    const storage = createStorage(join(dir, "ui.db"), "p")
+    closers.push(() => storage.close())
+    const tailer = {
+      get: () => undefined,
+      foreignIds: () => { builds[name]!++; return [] },
+      subAgent: () => undefined,
+      forget: () => {},
+      start: () => {},
+      stop: () => {},
+      tick: () => {},
+    } satisfies Tailer
+    return createBoard(project, storage, new Bus(), tailer, `watch-end-${name}`, {
+      subscribe: async (_dir, fn) => {
+        fire[name] = (path) => fn(null, [{ path, type: "update" as const }])
+        return {
+          unsubscribe: () => {
+            order.push(`asked ${name}`)
+            return new Promise<void>((resolve) => { ending[name] = () => { order.push(`ended ${name}`); resolve() } })
+          },
+        }
+      },
+    })
+  }
+  const a = make("a")
+  const b = make("b")
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve))
+  try {
+    await a.start()
+    await b.start()
+    const built = { ...builds }
+
+    // Raced, not awaited: a stop that waits for its watcher would never return here, and the watchers
+    // below would never be released for the tests after this one.
+    const returned = (stopping: Promise<void>) => Promise.race([stopping.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000))])
+    assert.equal(await returned(a.stop()), true, "a's stop returned with its watcher still ending")
+    assert.equal(await returned(b.stop()), true, "and b's, whose watcher has not been asked yet")
+    await turn()
+    assert.deepEqual(order, ["asked a"], "b's watcher waits its turn")
+
+    // The library can still deliver an event it had queued. It starts nothing.
+    fire.a!(join(dirs[0]!, ".frizz", "late.md"))
+    fire.b!(join(dirs[1]!, ".frizz", "late.md"))
+    await new Promise<void>((resolve) => setTimeout(resolve, 400))
+    assert.deepEqual(builds, built, "no rebuild after a stop")
+
+    ending.a!()
+    await turn()
+    assert.deepEqual(order, ["asked a", "ended a", "asked b"])
+    ending.b!()
+    await turn()
+    assert.deepEqual(order, ["asked a", "ended a", "asked b", "ended b"])
+  } finally {
+    // The queue is the module's: a watcher left ending here would hold up every later test's.
+    ending.a?.()
+    await turn()
+    ending.b?.()
+    await turn()
+    for (const close of closers) close()
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a watcher that fails to end is logged, and the next one is still ended", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-board-watch-end-fail-"))
+  mkdirSync(join(dir, ".frizz"))
+  const project: Project = { dir, id: "project-watch-end-fail", name: "fixture", label: "fixture", stateDir: dir, cwdSlug: "fixture" }
+  const storage = createStorage(join(dir, "ui.db"), "p")
+  const tailer = { get: () => undefined, foreignIds: () => [], subAgent: () => undefined, forget: () => {}, start: () => {}, stop: () => {}, tick: () => {} } satisfies Tailer
+  let ended = 0
+  const board = (fails: boolean) => createBoard(project, storage, new Bus(), tailer, "watch-end-fail", {
+    subscribe: async () => ({ unsubscribe: async () => { if (fails) throw new Error("the stream was already gone"); ended++ } }),
+  })
+  const log = captureLogRecords()
+  try {
+    const first = board(true)
+    await first.start()
+    await first.stop()
+    const second = board(false)
+    await second.start()
+    await second.stop()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(ended, 1, "the watcher queued behind the failed one was ended")
+    const said = log.records.filter((record) => record.scope === "board")
+    assert.deepEqual(said.map((record) => [record.level, record.message]), [["warn", "a file watcher did not end cleanly: the stream was already gone"]])
+  } finally {
+    log.restore()
     storage.close()
     rmSync(dir, { recursive: true, force: true })
   }
