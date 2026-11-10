@@ -1160,14 +1160,15 @@ test("Agent dispatch: the card names a model whether the call gave one or inheri
   // The shape since 2026-08-26 — an effort-only profile, the model on the call's own parameter.
   const explicit = agentDispatch("toolu_a", { description: "d", prompt: "p", subagent_type: "frizz:high", model: "sonnet", run_in_background: true })
   assert.equal(parseTranscript(explicit).at(0)!.tools[0].subagentType, "frizz:sonnet-high")
-  // …and with the model omitted, the child inherits the dispatching turn's, which the record states.
+  // …and with the model omitted, the child inherits the dispatching turn's, which the record states down
+  // to its edition — the cell carries the wire id, which the readout spells "opus 5".
   const inherited = JSON.stringify({
     type: "assistant",
     timestamp: "2026-07-01T00:00:00.000Z",
     effort: "max",
     message: { id: "m1", model: "claude-opus-5", content: [{ type: "tool_use", name: "Agent", id: "toolu_b", input: { description: "d", prompt: "p", subagent_type: "frizz:high", run_in_background: true } }] },
   })
-  assert.equal(parseTranscript(inherited).at(0)!.tools[0].subagentType, "frizz:opus-high")
+  assert.equal(parseTranscript(inherited).at(0)!.tools[0].subagentType, "frizz:claude-opus-5-high")
 })
 
 test("Agent prompt is capped with a truncation marker", () => {

@@ -183,7 +183,7 @@ export interface Api {
   // `steerable` is the server's answer to "can this child be prompted right now" — a broker-backed
   // claude thread's own live Agent-tool child, and nothing else. The drawer renders its prompt box
   // if and only if this is true; the client never re-derives the policy.
-  subAgentTranscript(input: { slug: string; id: string }): Promise<{ messages: TranscriptMessage[]; state: "running" | "stale" | "done" | "gone"; steerable: boolean; steerNote: string | null; stoppable: boolean; stopNote: string | null; lastActivityAt?: string; context?: { tokens: number; window: number }; outcome?: "completed" | "failed" | "killed"; startedAt?: string; finishedAt?: string }>
+  subAgentTranscript(input: { slug: string; id: string }): Promise<{ messages: TranscriptMessage[]; state: "running" | "stale" | "done" | "gone"; steerable: boolean; steerNote: string | null; stoppable: boolean; stopNote: string | null; lastActivityAt?: string; context?: { tokens: number; window: number }; outcome?: "completed" | "failed" | "killed"; startedAt?: string; finishedAt?: string; model?: string }>
   // Deliver a steer INTO one running sub-agent's own conversation (not the thread's main turn).
   // Throws when the child settled first — see the router's subAgentSteer for why that must fail loudly.
   subAgentSteer(input: { slug: string; id: string; message: string; deliveryId?: string }): Promise<{ delivered: boolean }>

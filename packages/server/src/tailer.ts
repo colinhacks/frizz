@@ -18,7 +18,7 @@ import { CLAUDE_WORKER_ENV, type AgentBackend, type FoldState, type NormalizedEv
 import { parseOpencodeSubAgentLine } from "./backend/opencode-transcript.ts"
 import { adoptionRuntimeBinding } from "./adoption-recovery.ts"
 import { normalizeObservedThreadModel, validateThreadProfile } from "./backend/thread-profiles.ts"
-import { dispatchProfileCell } from "./subagent-profile.ts"
+import { dispatchProfileCell, observedDispatchCell } from "./subagent-profile.ts"
 import { resolveRuntimeTurn, type ClaudeRuntimeTask } from "./backend/claude-runtime-ingest.ts"
 import { classifyLimitRecord } from "./backend/usage-limit.ts"
 import { codexLimitFault } from "./backend/codex-usage-limit.ts"
@@ -3834,7 +3834,8 @@ export function createTailer(deps: TailerDeps): Tailer {
         label: e.label,
         startedAt: e.startedAt,
         state: entryStale(state, e, nowMs) ? "stale" : "running",
-        subagentType: e.subagentType,
+        // Refined from the child's own transcript when the dispatch could not state the edition.
+        subagentType: observedDispatchCell(e.subagentType, e),
         id: e.toolUseId,
         ...(e.taskId ? { taskId: e.taskId } : {}),
         ...(lastActivityAt ? { lastActivityAt } : {}),
@@ -3867,7 +3868,7 @@ export function createTailer(deps: TailerDeps): Tailer {
         // resort. Every one of the three is a measured instant — never a fabricated one.
         startedAt: dead.startedAt ?? dead.finishedAt ?? subtree[0].startedAt,
         state: "rested",
-        subagentType: dead.subagentType,
+        subagentType: observedDispatchCell(dead.subagentType, dead),
         id: dead.toolUseId,
         ...(dead.taskId ? { taskId: dead.taskId } : {}),
         ...(lastActivityAt === undefined ? {} : { lastActivityAt: new Date(lastActivityAt).toISOString() }),
@@ -4270,7 +4271,9 @@ export function createTailer(deps: TailerDeps): Tailer {
             // gets the same real "working for 38s" duration a direct child gets from its dispatch record.
             startedAt: new Date(meta.spawnedAtMs ?? nowMs).toISOString(),
             state: stateOf(meta) === "running" ? "running" : "stale",
-            ...(meta.agentType ? { subagentType: meta.agentType } : {}),
+            // A sidecar records the bare profile the dispatch named (`frizz:high`); the descendant's own
+            // transcript names the model and edition it ran.
+            ...(meta.agentType ? { subagentType: observedDispatchCell(meta.agentType, { outputFile: descendantTranscript(state, meta) }) } : {}),
             id,
             ...(activeAt === undefined ? {} : { lastActivityAt: new Date(activeAt).toISOString() }),
             depth,

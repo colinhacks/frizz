@@ -50,7 +50,7 @@ import { projectSignOffs } from "./sign-offs.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
 import { BACKGROUND_JOB_REFUSAL, hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
 import { frizzTempDir, isPromptAttachmentPath } from "./frizz-paths.ts"
-import { dispatchProfileCell } from "./subagent-profile.ts"
+import { dispatchProfileCell, observedDispatchCell } from "./subagent-profile.ts"
 
 // Parse a session JSONL into a renderable conversation — mechanically, no AI. Same defensive
 // posture as the tailer: bad line → skip, unknown type → ignore, never throw. Assistant messages
@@ -4890,22 +4890,31 @@ export interface AgentLifecycleProjection {
   startedAt?: string
   finishedAt?: string
   outcome?: "completed" | "failed" | "killed"
+  // The child's own transcript, which names the edition a cell could not (subagent-profile.ts).
+  outputFile?: string
+  outputFormat?: "codex" | "opencode"
 }
 
 // Overlay the tailer's retained CHILD lifecycle onto Agent launch cards. Provider tool results measure
 // only the spawn CALL, so `durationMs` must never be promoted to an agent runtime. Both the paginated
 // RPC and the live WebSocket reader call this same projection; keeping it here prevents a socket refresh
 // from replacing an enriched initial page with raw dispatch latency.
+//
+// The card's profile cell is refined here too, for the same reason: the fold reads the PARENT's records
+// alone, which cannot say which edition a child dispatched on another family ran, and only the child's
+// own transcript can (observedDispatchCell). A cell that already states its edition costs nothing.
 export function projectTranscriptAgentLifecycles(
   messages: readonly TranscriptMessage[],
   lookup: (id: string) => AgentLifecycleProjection | undefined,
 ): TranscriptMessage[] {
   const cache = new Map<string, AgentLifecycleProjection | undefined>()
-  const projectTool = (tool: TranscriptToolCall): TranscriptToolCall => {
-    if (!tool.agentId || tool.agentStatus) return tool
-    if (!cache.has(tool.agentId)) cache.set(tool.agentId, lookup(tool.agentId))
-    const lifecycle = cache.get(tool.agentId)
-    if (!lifecycle?.outcome) return tool
+  const projectTool = (call: TranscriptToolCall): TranscriptToolCall => {
+    if (!call.agentId) return call
+    if (!cache.has(call.agentId)) cache.set(call.agentId, lookup(call.agentId))
+    const lifecycle = cache.get(call.agentId)
+    const subagentType = observedDispatchCell(call.subagentType, lifecycle)
+    const tool = subagentType === call.subagentType ? call : { ...call, subagentType }
+    if (tool.agentStatus || !lifecycle?.outcome) return tool
     const start = lifecycle.startedAt ? Date.parse(lifecycle.startedAt) : Number.NaN
     const finish = lifecycle.finishedAt ? Date.parse(lifecycle.finishedAt) : Number.NaN
     const elapsed = Number.isFinite(start) && Number.isFinite(finish) && finish >= start ? finish - start : undefined
