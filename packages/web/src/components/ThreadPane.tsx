@@ -20,7 +20,7 @@ import {
   advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded,
   setPaneRailHidden, stepPane, takeComposerFocus, usePaneWide,
 } from "../lib/threadPane.ts"
-import { store, threadBySlug } from "../store.ts"
+import { store } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { Tooltip } from "./Tooltip.tsx"
@@ -171,7 +171,9 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
   const { railHidden } = useSnapshot(paneProto)
   const board = useBoard()
   const thread = useThreadSnapshot(slug)
-  const route = resolveThreadRoute(board, slug, threadBySlug)
+  // The row the snapshot already read, not a walk of the tracked board, which would make every board
+  // delta pay to wrap the threads array (trackedThreadLookup.guard.test.ts); as ThreadSheet does.
+  const route = resolveThreadRoute(board, slug, () => thread)
   const queryClient = useQueryClient()
   const threeColumns = wide && !folded
   // The rail has room beside the thread full screen (from the split width up, as on /full) and in the three

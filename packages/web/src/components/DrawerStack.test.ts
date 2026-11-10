@@ -31,7 +31,9 @@ test("the overlay Escape chain lives in DrawerStack, not in the queue shell", ()
 
 // Escape on /full exits fullscreen once nothing above the page is left to close — the chain's last
 // step, which only /full supplies (the queue has nothing to leave). fullscreenEscape.e2e.test.ts drives it.
-test("only the /full page gives the Escape chain a way out of the page", () => {
+// Escape at rest leaves a full-screen view and nothing else: /full's page, and on the board the one-thread
+// pane's full screen, which puts the sidebar back. The board never navigates away on an Escape.
+test("the Escape chain's way out leaves full screen, on /full and in the board's pane", () => {
   assert.match(read("./StandaloneThreadPage.tsx"), /<DrawerStack onEscapeAtRest=\{\(\) => exitFullscreen\(slug\)\} \/>/)
-  assert.match(read("../App.tsx"), /<DrawerStack\s*\/>/)
+  assert.match(read("../App.tsx"), /<DrawerStack onEscapeAtRest=\{\(\) => \{ if \(store\.paneSlug\) setPaneFolded\(false\) \}\} \/>/)
 })

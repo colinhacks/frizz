@@ -259,6 +259,7 @@ test("the queue card and the drawer both tell questionsByAnchor where their wind
   const queue = readFileSync(new URL("../components/TodosView.tsx", import.meta.url), "utf8")
   const drawer = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8")
   assert.ok(queue.includes("questionsByAnchor(messages, unplaced, { from: visibleStart })"))
-  assert.ok(drawer.includes("questionsByAnchor(messages, unplaced, { from: 0 })"))
+  // The drawer's window starts at 0; the one-thread pane's at the steer a queued thread opens on.
+  assert.ok(drawer.includes("questionsByAnchor(messages, unplaced, { from: windowStart })"))
   for (const source of [queue, drawer]) assert.doesNotMatch(source, /questionsByAnchor\(messages, unplaced\)/)
 })

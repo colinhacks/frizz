@@ -63,19 +63,19 @@ test("a notification click opens the thread in the project it was raised for, no
   install("window", { focus: () => {} })
   install("location", here)
 
-  const drawersBefore = store.drawers.length
   const notificationsBefore = store.notificationsEnabled
   store.notificationsEnabled = true
 
   try {
     const event = { type: "notify", slug: "fix-auth", title: "Done", body: "…" } as const satisfies ServerEvent
 
-    // Raised on alpha, clicked on alpha: the in-app drawer, no navigation.
+    // Raised on alpha, clicked on alpha: the board's pane (the one-thread pane, a desktop board), no
+    // navigation.
     notify(event)
     raised.at(-1)!.onclick!()
     assert.deepEqual(assigned, [], "the same project needs no document load")
-    assert.equal(store.drawers.length, drawersBefore + 1, "it opens the thread in place")
-    store.drawers = []
+    assert.equal(store.paneSlug, "fix-auth", "it opens the thread in place")
+    store.paneSlug = null
 
     // Raised on alpha, clicked after the tab moved to beta: beta must not open ITS `fix-auth`.
     assigned = []
@@ -84,9 +84,11 @@ test("a notification click opens the thread in the project it was raised for, no
     here.pathname = "/project/beta"
     raised.at(-1)!.onclick!()
     assert.deepEqual(assigned, ["/project/alpha?thread=fix-auth"], "the click follows the notification's own project, to the thread on its board")
-    assert.equal(store.drawers.length, 0, "and opens nothing on the project that happens to be showing")
+    assert.equal(store.paneSlug, null, "and opens nothing on the project that happens to be showing")
+    assert.equal(store.drawers.length, 0)
   } finally {
     store.drawers = []
+    store.paneSlug = null
     store.notificationsEnabled = notificationsBefore
     for (const [key, descriptor] of globals) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor)
