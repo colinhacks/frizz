@@ -36,7 +36,7 @@ if (socket === "--append") {
 
 const PREACK_SESSION = "35555555-5555-4555-8555-555555555555"
 const PREACK_TOOL = "toolu_counter_preack_00001"
-const PREACK_OUT = path.join(home, "tasks", "preack.output")
+const PREACK_OUT = path.join(home, "tasks", "preack01.output")
 
 // Land the ack the pre-ack thread was deliberately seeded without: the shell's row has been on screen
 // the whole time, and this is the record that finally gives it an output path.
@@ -80,7 +80,7 @@ fs.rmSync(MISSING, { force: true })
 function launch({ msgId, toolId, description, command, outputFile, at }) {
   return [
     { type: "assistant", timestamp: T(at), message: { id: msgId, model: "claude-opus-5", role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", id: toolId, name: "Bash", input: { command, description, run_in_background: true } }] } },
-    { type: "user", timestamp: T(at + 900), message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: `Command running in background with ID: ${toolId.slice(-8)}. Output is being written to: ${outputFile}. You will be notified when it completes.` }] } },
+    { type: "user", timestamp: T(at + 900), message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: `Command running in background with ID: ${path.basename(outputFile, ".output")}. Output is being written to: ${outputFile}. You will be notified when it completes.` }] } },
   ]
 }
 

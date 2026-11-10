@@ -246,7 +246,7 @@ import { isBrokerClaudeRow, type CommandWatchRow, type SessionRow, type Storage,
 import { childOfRow, syncQuestionFences } from "./question-fences.ts"
 import { liveChildThreads } from "./child-threads.ts"
 import type { SessionTelemetry } from "./tailer.ts"
-import { backgroundShellLineCount, readBackgroundShellOutput } from "./background-shell-output.ts"
+import { backgroundShellLineCount, readableTaskOutput, readBackgroundShellOutput } from "./background-shell-output.ts"
 import { projectRetiredBackgroundOps, retiredOpsFor } from "./transcript.ts"
 import { clearProjectIcon, customIconPath, findById, findProjectBySegment, forgetProject, listProjects, moveProjectDirectory, projectIconStatus, renameProject, reorderProjects, resolveProjectIcon, setProjectIcon, type RegistryEntry } from "./project-registry.ts"
 import { basename, dirname } from "node:path"
@@ -2815,7 +2815,10 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const info = ctx.tailer.backgroundShell?.(input.slug, input.id)
         if (!info) return { command: null, output: "", truncated: false, state: "gone" as const, stoppable: false, stopNote: null }
-        const content = info.outputFile ? readBackgroundShellOutput(info.outputFile) : { output: "", truncated: false }
+        // Only ever the task's own output file: the path began as text in a tool result (tailer.ts
+        // launchOutputFile), and this answer goes to a read-and-answer session too.
+        const outputFile = readableTaskOutput(info.outputFile)
+        const content = outputFile ? readBackgroundShellOutput(outputFile) : { output: "", truncated: false }
         const stop = subAgentStoppable(input.slug, input.id)
         return {
           command: info.command ?? null,
@@ -2864,7 +2867,8 @@ export function createRouter(ctx: AppContext) {
         for (const id of input.ids) {
           const info = ctx.tailer.backgroundShell?.(input.slug, id)
           if (!info) continue
-          const lines = info.outputFile ? backgroundShellLineCount(info.outputFile) : undefined
+          const outputFile = readableTaskOutput(info.outputFile)
+          const lines = outputFile ? backgroundShellLineCount(outputFile) : undefined
           shells.push({ id, lines: lines ?? null, running: info.state === "running" })
         }
         return { shells }

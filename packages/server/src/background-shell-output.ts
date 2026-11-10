@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs"
+import { closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs"
 
 const OUTPUT_TAIL_BYTES = 512 * 1024
 // One delta read. Sized so a chatty dev server (tens of KB between 1.5s polls) is one syscall.
@@ -20,6 +20,30 @@ const ANSI_ESCAPE_RE = /\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g
 export interface BackgroundShellOutput {
   output: string
   truncated: boolean
+}
+
+/**
+ * Is `path` shaped like a background task's output file, `…/tasks/<task id>.output`? With `taskId`, that
+ * task's and no other. Shape only: nothing is read. The tailer asks this before it keeps a path a tool
+ * result named, because that text is the command's own output (tailer.ts launchOutputFile).
+ */
+export function isTaskOutputPath(path: string, taskId?: string): boolean {
+  const match = /[\\/]tasks[\\/]([\w-]+)\.output$/.exec(path)
+  return match !== null && (taskId === undefined || match[1] === taskId)
+}
+
+/**
+ * The path a shell's output may be READ from, or undefined. The shape again, because a path kept by an
+ * older build sits in the tail cache and was never asked, and a regular file that is not a symbolic
+ * link: a repository can ship `tasks/x.output` pointing anywhere, and this file's bytes go to the page.
+ */
+export function readableTaskOutput(path: string | undefined): string | undefined {
+  if (!path || !isTaskOutputPath(path)) return undefined
+  try {
+    return lstatSync(path).isFile() ? path : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // Background task files are an undifferentiated process stream: Claude does not preserve stdout vs

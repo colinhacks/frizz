@@ -1,5 +1,6 @@
 import { statSync, openSync, readSync, closeSync, readdirSync, realpathSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { execFile } from "node:child_process"
+import { isTaskOutputPath } from "./background-shell-output.ts"
 import { takeLoopTurn } from "./loop-turns.ts"
 import { closeHumanSteps, foldHumanSteps, type HumanStep } from "./human-todos.ts"
 import { execFileOffThread } from "./off-thread-exec.ts"
@@ -1141,6 +1142,10 @@ interface Record {
   customTitle?: string // present only on custom-title records (written by /rename)
   permissionMode?: unknown // present only on Claude permission-mode sidecars
   content?: unknown // top-level string on queue-operation records — carries the <task-notification> XML
+  // On a `user` record that carries a tool_result: the harness's own structured account of that result.
+  // An object for a Bash call (`stdout`, `stderr`, `interrupted`, and `backgroundTaskId` when the
+  // command is running detached), a string for an error. See backgroundHandoff.
+  toolUseResult?: unknown
   // On `attachment` records (type:"queued_command"): the injected text — a queued human follow-up OR a
   // background op's <task-notification>. This is the notification's INLINE-written carrier, positioned
   // AFTER its launch — unlike the queue-operation bookkeeping, which is flushed and can land BEFORE it.
@@ -1740,8 +1745,36 @@ const LAUNCH_ACK_RE = /^\s*(Async agent launched successfully|Spawned successful
 // One dispatched with no `run_in_background` at all is tracked from its dispatch, so LAUNCH_ACK_RE
 // simply keeps it; one dispatched with `run_in_background: false` was never registered, and is
 // promoted from the same park as the shell on ASYNC_AGENT_ACK_RE.
+//
+// THE SENTENCE IS NOT THE EVIDENCE (2026-11-09). A tool result's text is the command's OUTPUT with the
+// harness's notice appended, so a pattern anchored at its start was wrong both ways:
+//   - it MISSED every handoff whose command had printed first. In the 400 newest session files of this
+//     project, 26 of 56 real handoffs follow output. Each of those shells ran untracked, and a worker
+//     that parked on one was told the shell did not exist.
+//   - it BELIEVED any output that began with the sentence. A file whose first line was the notice made
+//     `cat` on it a "running" shell, and the notice's "Output is being written to:" named the file Frizz
+//     then served as that shell's output, to a read-and-answer session as well: `~/.ssh/id_ed25519` if
+//     the line said so.
+// What says a command was detached is the record's structured `toolUseResult.backgroundTaskId`, which
+// the harness writes and the command cannot: present on all 56 real handoffs and on 953 of 953
+// `run_in_background` launches in the same corpus, absent on all 13 results that merely quoted the
+// sentence. So the text decides only for a record with no structured result at all (a harness that
+// writes none, an old fixture), and a path is taken from text only when it is the task's own file
+// (launchOutputFile).
 const AUTO_BACKGROUND_ACK_RE = /^\s*Command (?:did not complete within its .{0,40}?and )?was moved to the background/
 const ASYNC_AGENT_ACK_RE = /^\s*Async agent launched successfully/
+
+/**
+ * The task a tool result's command is now running detached as, read off the record's structured result:
+ * its id; `null` when the harness described the result and named no task, which means it is not a
+ * handoff whatever the text says; `undefined` when the record carries no structured result to ask.
+ */
+function backgroundHandoff(rec: Record): string | null | undefined {
+  const result = rec.toolUseResult
+  if (result === undefined) return undefined
+  const id = result && typeof result === "object" ? (result as { backgroundTaskId?: unknown }).backgroundTaskId : undefined
+  return typeof id === "string" && id.length > 0 ? id : null
+}
 
 // Move a tracked AGENT entry into the bounded retained ring (drawer review), evicting the oldest.
 // Shared by the foreground-completion path and the <task-notification> path.
@@ -1847,15 +1880,24 @@ function rememberFoldedTerminal(state: TailState, taskId: string, fingerprint: s
 // the mailbox ack's agentId — subagent transcripts live at <session-dir>/subagents/agent-<id>.jsonl
 // beside the parent's own jsonl (verified on disk 2026-07-09). Undefined when nothing resolves (the
 // entry then simply never goes stale — its completion notification still clears it).
-function launchOutputFile(state: TailState, text: string): string | undefined {
-  const m = text.match(/output_file:\s*(\S+)/) ?? text.match(/Output is being written to:\s*(\S+)/)
+//
+// A PATH IN A TOOL RESULT IS THE AUTHOR'S, NOT THE HARNESS'S, until it is shown to be the task's own
+// file: the text is the command's output with the ack appended (a foreground agent's is its whole final
+// report), and whatever path it names is later read back to whoever opens the row. So a named path is
+// kept only in one of the two shapes the harness really writes, `…/tasks/<task id>.output` for the
+// task this result is about and `…/subagents/agent-<id>.jsonl`, and the first such path wins. Anything
+// else leaves the entry with no file, which costs it a staleness clock and nothing more.
+function launchOutputFile(state: TailState, text: string, taskId: string | undefined): string | undefined {
   // The shell ack embeds the path mid-sentence ("… written to: <path>. You will be notified …") —
   // strip the sentence period or the staleness stat hits a nonexistent path and flags every shell stale.
-  if (m) return m[1].replace(/\.$/, "")
+  const named = [...text.matchAll(/(?:output_file:|Output is being written to:)\s*(\S+)/g)].map((m) => m[1]!.replace(/\.$/, ""))
+  const own = named.find((path) => isTaskOutputPath(path, taskId) || AGENT_TRANSCRIPT_PATH_RE.test(path))
+  if (own) return own
   const aid = text.match(/agentId:\s*(\S+)/)?.[1]
   if (aid) return `${state.path.replace(/\.jsonl$/, "")}/subagents/agent-${aid}.jsonl`
   return undefined
 }
+const AGENT_TRANSCRIPT_PATH_RE = /[\\/]subagents[\\/]agent-[\w-]+\.jsonl$/
 
 // The RUNTIME task id from a launch ack — the key a later `TaskStop` (and every natural completion
 // notification) references. One per corpus-verified ack shape: the Bash background ack, the Monitor
@@ -2001,6 +2043,7 @@ function trackLaunchResults(state: TailState, rec: Record): void {
     const id = typeof b.tool_use_id === "string" ? b.tool_use_id : undefined
     if (!id) continue
     const text = toolResultText(b.content)
+    const handoff = backgroundHandoff(rec)
     let entry = state.subAgents.get(id)
     if (!entry) {
       // A parked FOREGROUND shell's result. Either it was auto-backgrounded — promote it to a live
@@ -2015,16 +2058,21 @@ function trackLaunchResults(state: TailState, rec: Record): void {
       if (!parked) continue
       state.pendingShells?.delete(id)
       if (state.dismissedOps.has(id)) continue // retired by the operator — see FoldState.dismissedOps
-      if (b.is_error === true || !(parked.agent ? ASYNC_AGENT_ACK_RE : AUTO_BACKGROUND_ACK_RE).test(text)) continue
+      // The structured result decides for a shell wherever there is one; see AUTO_BACKGROUND_ACK_RE.
+      const movedAside = parked.agent ? ASYNC_AGENT_ACK_RE.test(text) : handoff !== undefined ? handoff !== null : AUTO_BACKGROUND_ACK_RE.test(text)
+      if (b.is_error === true || !movedAside) continue
       entry = parked.agent
         ? { kind: "agent", toolUseId: id, label: parked.label, startedAt: parked.startedAt, subagentType: parked.agent.subagentType }
         : { kind: "shell", toolUseId: id, label: parked.label, startedAt: parked.startedAt, command: parked.command }
       state.subAgents.set(id, entry)
     }
-    if (!entry.outputFile) entry.outputFile = launchOutputFile(state, text)
-    if (!entry.taskId) entry.taskId = launchTaskId(text)
+    // A shell's id is the harness's when it gave one: the text's "(ID: …)" can be the output's own.
+    if (!entry.taskId) entry.taskId = (entry.kind === "shell" ? handoff : undefined) ?? launchTaskId(text)
+    if (!entry.outputFile) entry.outputFile = launchOutputFile(state, text, entry.taskId)
     if (entry.kind === "shell" && !entry.ackAt && typeof rec.timestamp === "string") entry.ackAt = rec.timestamp
-    if (LAUNCH_ACK_RE.test(text)) continue // background launch ack — the child/shell is alive, keep tracking
+    // A background launch ack — the child/shell is alive, keep tracking. A shell the harness says is
+    // detached is alive whatever its text opens with: the ack follows the output it had printed.
+    if ((entry.kind === "shell" && typeof handoff === "string") || LAUNCH_ACK_RE.test(text)) continue
     if (entry.kind === "shell") {
       state.subAgents.delete(id) // synchronous launch failure: no notification will ever arrive
       continue

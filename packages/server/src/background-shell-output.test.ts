@@ -1,9 +1,15 @@
 import assert from "node:assert/strict"
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { backgroundShellLineCount, readBackgroundShellOutput, resetBackgroundShellLineCounts } from "./background-shell-output.ts"
+import {
+  backgroundShellLineCount,
+  isTaskOutputPath,
+  readableTaskOutput,
+  readBackgroundShellOutput,
+  resetBackgroundShellLineCounts,
+} from "./background-shell-output.ts"
 
 test("background shell output reads a bounded, presentation-safe tail", () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-shell-output-"))
@@ -21,6 +27,41 @@ test("background shell output reads a bounded, presentation-safe tail", () => {
 
 test("background shell output degrades safely when the task file is unavailable", () => {
   assert.deepEqual(readBackgroundShellOutput("/definitely/missing/frizz-shell-output"), { output: "", truncated: false })
+})
+
+// ── WHICH file may be read at all ────────────────────────────────────────────────────────────────
+// The path comes out of a transcript record, so the reader checks it again: only a harness task's own
+// output file, and only a regular one.
+
+test("only a harness task's own output file is a task output path", () => {
+  const real = "/private/tmp/claude-501/-Users-someone-repo/0b1c2d3e/tasks/bq7k2m9xa.output"
+  assert.equal(isTaskOutputPath(real), true)
+  assert.equal(isTaskOutputPath(real, "bq7k2m9xa"), true)
+  assert.equal(isTaskOutputPath(real, "another"), false, "a named task reads its own file")
+  assert.equal(isTaskOutputPath("C:\\Temp\\claude\\tasks\\bq7k2m9xa.output"), true)
+  for (const path of ["/Users/someone/.ssh/id_ed25519", "/etc/passwd", "/tmp/tasks/notes.txt", "/tmp/tasks/../secret.output", "/tmp/bq7k2m9xa.output", "/tmp/tasks/a/b.output"]) {
+    assert.equal(isTaskOutputPath(path), false, path)
+  }
+})
+
+test("a task output path is read only when it is a regular file: never a link to somewhere else", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-shell-readable-"))
+  try {
+    mkdirSync(join(dir, "tasks"))
+    const secret = join(dir, "identity.key")
+    writeFileSync(secret, "not for the drawer")
+    const real = join(dir, "tasks", "breal0001.output")
+    writeFileSync(real, "built\n")
+    const link = join(dir, "tasks", "blink0001.output")
+    symlinkSync(secret, link)
+    assert.equal(readableTaskOutput(real), real)
+    assert.equal(readableTaskOutput(link), undefined, "a link in the tasks folder names another file")
+    assert.equal(readableTaskOutput(secret), undefined)
+    assert.equal(readableTaskOutput(join(dir, "tasks", "bgone0001.output")), undefined, "a file not written yet")
+    assert.equal(readableTaskOutput(undefined), undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // ── THE LIVE COUNTER on a shell row ──────────────────────────────────────────────────────────────

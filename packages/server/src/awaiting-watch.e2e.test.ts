@@ -56,7 +56,7 @@ function launchRecords(at: string): string {
         role: "user",
         content: [{
           tool_use_id: TOOL_USE, type: "tool_result", is_error: false,
-          content: `Command running in background with ID: ${TASK_ID}. Output is being written to: /tmp/${TASK_ID}.output. You will be notified when it completes.`,
+          content: `Command running in background with ID: ${TASK_ID}. Output is being written to: /tmp/tasks/${TASK_ID}.output. You will be notified when it completes.`,
         }],
       },
       toolUseResult: { stdout: "", stderr: "", interrupted: false, isImage: false, backgroundTaskId: TASK_ID },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -21,11 +21,17 @@ function harness(shells: Record<string, { outputFile?: string; state: "running" 
 
 const SLUG = "counter-thread"
 
+// A task's output file as the harness names it, `…/tasks/<task id>.output`: the only shape read.
+function taskOutput(dir: string, taskId: string) {
+  mkdirSync(join(dir, "tasks"), { recursive: true })
+  return join(dir, "tasks", `${taskId}.output`)
+}
+
 test("the activity endpoint counts each named shell's output", async () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-shell-activity-"))
   try {
-    const busy = join(dir, "busy.output")
-    const silent = join(dir, "silent.output")
+    const busy = taskOutput(dir, "busy")
+    const silent = taskOutput(dir, "silent")
     writeFileSync(busy, "one\ntwo\nthree\n")
     writeFileSync(silent, "")
     const router = harness({
@@ -63,11 +69,37 @@ test("a shell the tailer no longer knows is omitted — it is gone, not pending"
 test("a settled shell still reports its final count, marked not-running so the poll can stop", async () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-shell-activity-done-"))
   try {
-    const path = join(dir, "done.output")
+    const path = taskOutput(dir, "done")
     writeFileSync(path, "finished\n")
     const router = harness({ done: { outputFile: path, state: "done" } })
     assert.deepEqual(await router.backgroundShellActivity.handler({ input: { slug: SLUG, ids: ["done"] } }), {
       shells: [{ id: "done", lines: 1, running: false }],
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// The path a shell row carries began as text in a tool result, and a tail cache written by an older
+// build can still hold one that was never checked. So the two readers ask again, and a path that is not
+// a task's own regular output file is neither counted nor shown: not a file elsewhere on the machine,
+// and not a link a repository shipped under `tasks/`.
+test("a shell whose recorded path is not a task's own output file is never read: not counted, not shown", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-shell-activity-foreign-"))
+  try {
+    const secret = join(dir, "identity.key")
+    writeFileSync(secret, "PRIVATE\nKEY\n")
+    const linked = taskOutput(dir, "linked")
+    symlinkSync(secret, linked)
+    const router = harness({
+      foreign: { outputFile: secret, state: "running" },
+      linked: { outputFile: linked, state: "running" },
+    })
+    assert.deepEqual(await router.backgroundShellActivity.handler({ input: { slug: SLUG, ids: ["foreign", "linked"] } }), {
+      shells: [
+        { id: "foreign", lines: null, running: true },
+        { id: "linked", lines: null, running: true },
+      ],
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })

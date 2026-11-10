@@ -424,8 +424,12 @@ test("integration: a runtime event drives a tailer re-read with no poll tick at 
 // The child's own transcript, which the fold resolves out of the launch ack's prose and then stats as
 // the staleness clock. It has to EXIST: a path that never stats reads as stale, which is correct
 // behaviour (a child whose transcript vanished is not healthy) and would mask what these tests assert.
+// Named the way the harness names a child's transcript, `…/subagents/agent-<id>.jsonl`: the tailer keeps
+// a path a launch ack states only in a shape the harness writes (tailer.ts launchOutputFile).
 function childTranscript(h: { project: { dir: string } }): string {
-  const path = join(h.project.dir, "child.jsonl")
+  const dir = join(h.project.dir, "subagents")
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, "agent-child.jsonl")
   writeFileSync(path, "")
   return path
 }
