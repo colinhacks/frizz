@@ -504,6 +504,35 @@ test("workspace identity canonicalizes a symlink and survives spaces", () => {
   }
 });
 
+// The launcher's own copy of the resolver, for a server too old to be asked. Same rule as the server's
+// (project.id-file-deleted.test.ts has every case): a folder the registry knows keeps its id when its
+// `.frizz/` is deleted, where it used to come back as a new project with an empty board.
+test("a workspace whose .frizz/ was deleted resolves to the project the registry has for the folder", () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "frizz launcher id file ")));
+  const home = join(base, "home");
+  try {
+    for (const [name, git] of [["plain", false], ["repo", true]] as const) {
+      const dir = join(base, name);
+      mkdirSync(dir, { recursive: true });
+      if (git) execFileSync("git", ["init", "-q", dir]);
+      const first = resolveWorkspace(dir, home);
+      registerProject({ dir: first.root, id: first.id }, home);
+      rmSync(join(dir, ".frizz"), { recursive: true, force: true });
+      const again = resolveWorkspace(dir, home);
+      assert.equal(again.id, first.id, name);
+      assert.equal(again.stateDir, first.stateDir, name);
+    }
+    // The control: a folder the registry has never heard of is a new project.
+    const fresh = join(base, "fresh");
+    mkdirSync(fresh);
+    const one = resolveWorkspace(fresh, home);
+    rmSync(join(fresh, ".frizz"), { recursive: true, force: true });
+    assert.notEqual(resolveWorkspace(fresh, home).id, one.id);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("main and linked worktrees concurrently resolve to three stable isolated Frizz instances", async () => {
   const base = mkdtempSync(join(tmpdir(), "frizz linked worktree race "));
   const main = join(base, "main repo with spaces");

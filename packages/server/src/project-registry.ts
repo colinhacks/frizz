@@ -457,6 +457,33 @@ export function reorderProjects(ids: readonly string[], home = homedir()): Regis
   return registry.projects
 }
 
+/**
+ * The id a project root with NO id file is given, before a new one is minted.
+ *
+ * `.frizz/` is ignored by Git and looks like scratch, so it gets deleted: by hand, by `git clean -fdx`,
+ * by a fresh clone into the same folder. Two things still remember the project. `git config frizz.id`
+ * does, for a repository the launcher has opened; nothing in the tree does for a plain folder, or for
+ * a repository added from the dashboard, and each of those came back as a new project with an empty
+ * board, its threads still on disk under an id nothing led to (the registry filed it as `rekeyed`).
+ * The registry remembers all of them, by folder.
+ *
+ *  - The registry's entry for this exact folder is the board that was open here, and wins.
+ *  - Unless Git names an id the registry files under ANOTHER folder: that is a checkout moved or
+ *    copied here, which carries its own identity, and `registerProject` settles who keeps it.
+ *  - With neither, whatever Git says, and a caller mints when that is nothing.
+ *
+ * Never asked for a linked worktree: its id lives in Git's own directory for that worktree, where
+ * removing the worktree is meant to remove it.
+ */
+export function seedProjectId(root: string, home = homedir(), gitId?: string): string | undefined {
+  const registry = readRegistry(home)
+  const canonical = canonicalPath(root)
+  const here = registry.projects.find((p) => p.path === canonical || p.path === root)
+  if (!here) return gitId
+  if (gitId && gitId !== here.id && registry.projects.some((p) => p.id === gitId)) return gitId
+  return here.id
+}
+
 /** The entry for a directory Frizz already knows, if it knows it. */
 export function findByPath(path: string, home = homedir()): RegistryEntry | undefined {
   // Canonical on both sides, or a caller passing the symlinked spelling misses its own entry.

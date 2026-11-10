@@ -9,7 +9,7 @@ import {
 } from "./project-identity.ts"
 import type { ProjectLaunchTarget } from "./project-launch.ts"
 import { discoverProjectRoot, ensureProjectIdFile, writeProjectIdFile } from "./project-root.ts"
-import { registerProject } from "./project-registry.ts"
+import { registerProject, seedProjectId } from "./project-registry.ts"
 import { projectStateDir } from "./frizz-paths.ts"
 import { originRemoteUrl, parseRepoLabel, resolveProjectLabel } from "./project-identity.ts"
 import { githubRemoteNameWithOwner } from "./github.ts"
@@ -145,7 +145,9 @@ function resolveProjectIdentity(
   // inspect", and must never fall through to minting a fresh id beside a real board.
   const git = insideWorktree ? resolveGitProjectIdentity(dir, home) : undefined
   const root = git?.root ?? dir
-  return { id: ensureProjectIdFile(root, home, git?.id), scope: git?.scope ?? "repository", root }
+  // With no id file, the folder's registry entry before a fresh id (project-registry.ts seedProjectId).
+  const seed = git?.scope === "worktree" ? git.id : seedProjectId(root, home, git?.id)
+  return { id: ensureProjectIdFile(root, home, seed), scope: git?.scope ?? "repository", root }
 }
 
 // Claude Code's per-project session-log dir name: the absolute cwd with every character that is not

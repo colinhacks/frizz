@@ -256,7 +256,7 @@ import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
 import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
 import { resolveProjectLabel } from "./project-identity.ts"
-import { registerProject } from "./project-registry.ts"
+import { registerProject, seedProjectId } from "./project-registry.ts"
 import { detectProjectIcon } from "./project-icon.ts"
 import { pickDirectory, pickImageFile, warmDirectoryPicker, warmImagePicker } from "./directory-picker.ts"
 import Database from "./sqlite.ts"
@@ -797,9 +797,10 @@ export function addProjectAtPath(input: string, home = homedir()): ProjectCard {
   // unmarked directory under home then resolves to it. The launcher refuses this; so does the grid.
   if (isHomeDirectory(root, home)) throw new Error("The home folder cannot be a project — choose a folder inside it.")
   // SEEDED, exactly as the launcher seeds it: an established repository whose id lives only in
-  // `git config frizz.id` keeps that id, so adding it from the grid finds its existing board instead
+  // `git config frizz.id` keeps that id, and a folder whose `.frizz/` was deleted keeps the id the
+  // registry has for it (seedProjectId), so adding it from the grid finds its existing board instead
   // of minting a fresh one and orphaning every thread on it.
-  const id = ensureProjectIdFile(root, home, existingProjectId(root))
+  const id = ensureProjectIdFile(root, home, seedProjectId(root, home, existingProjectId(root)))
   const remoteOwner = resolveProjectLabel(root)?.split("/")[0]
   let registered = registerProject({ dir: root, id, remoteOwner }, home)
   if (registered.action === "duplicate") {

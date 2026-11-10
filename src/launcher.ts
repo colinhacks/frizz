@@ -49,6 +49,7 @@ import {
   parseLaunchRoute,
   type LaunchRoute,
 } from "@frizz/server/launch-routing";
+import { seedProjectId } from "@frizz/server/project-registry";
 import { defaultLogRoot, latestLogPath } from "@frizz/server/logging";
 import { DEFAULT_PORT, fallbackPort, FRIZZ_ROUTE_PREFIX } from "@frizz/shared";
 
@@ -617,8 +618,10 @@ export function resolveWorkspace(
   const identity = gitRoot ? resolveGitProjectIdentity(root0, home) : undefined;
   const root = identity?.root ?? root0;
   // The id lives at `.frizz/.id`; a repository's existing `git config frizz.id` seeds it, so an
-  // established board keeps its exact id and nothing is ever removed from the old store.
-  const id = ensureProjectIdFile(root, home, identity?.id);
+  // established board keeps its exact id and nothing is ever removed from the old store. With the
+  // file deleted, the folder's registry entry seeds it first (seedProjectId).
+  const seed = identity?.scope === "worktree" ? identity.id : seedProjectId(root, home, identity?.id);
+  const id = ensureProjectIdFile(root, home, seed);
   const stateDir = projectStateDir(id, home);
   mkdirSync(stateDir, { recursive: true });
   const target = {
