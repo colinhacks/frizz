@@ -548,7 +548,8 @@ const ASK_RETIRED =
   "---\n" +
   "Optional context, in any Markdown: a table, a diff, a callout, a <details> section.\n" +
   "```\n\n" +
-  "- `id:` is yours to choose: a lowercase slug, unique in this thread for good.\n" +
+  "- `id:` is yours to choose: lowercase letters, digits, `-`, `_` and `.`. One open question per id; an " +
+  "id is free again once its question is answered, withdrawn or dismissed.\n" +
   "- `kind:` is `choice` (pick one), `multi` (pick several), `text` (free text) or `secret` (one masked " +
   "box, for a token or a one-time code).\n" +
   "- `question:` is one line. Each option takes `label:`, `description:` (one line, in sentence case), `recommended: true` " +
@@ -594,8 +595,8 @@ const UNASK = {
     "open question also blocks `frizzctl done` until it is answered or withdrawn.\n\n" +
     "You do NOT need this for a question that gets answered; that settles itself and wakes you. Nor for " +
     "one a later rest simply does not mention: an older question stays answerable where it was asked. " +
-    "Withdrawing is YOUR move and is never reported back to you as news. A withdrawn id is never asked " +
-    "again — a new question takes a new id.",
+    "Withdrawing is YOUR move and is never reported back to you as news. Its id is free from then on: a " +
+    "later fence asking under it registers a new question.",
   inputSchema: {
     type: "object",
     properties: {
@@ -687,8 +688,9 @@ const DONE = {
   name: "done",
   description:
     "DECLARE THIS EFFORT FINISHED, with the write-up the human reads. Your thread cards as a checked " +
-    "success in their queue and stays there until they archive it — marking done is not dismissal, and " +
-    "it does not close, archive or hide anything.\n\n" +
+    "success in their queue and stays there until they archive it. The command itself closes, archives " +
+    "and hides nothing, but the card is a DISMISSAL: it files the thread away for the human, and nobody " +
+    "is meant to open it again.\n\n" +
     "FRIZZ CAN REFUSE THIS, which is the whole reason it is a command rather than a fence. An OPEN " +
     "QUESTION or an ARMED REGISTRATION blocks it, and the refusal names each one by id: a question " +
     "nobody answered dies with the card, and a live wait means the thing you were waiting for has not " +

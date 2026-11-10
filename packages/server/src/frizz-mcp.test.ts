@@ -1171,7 +1171,7 @@ test("`done` marks the CALLING thread finished, and reports a refusal as an acti
     rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "done", arguments: { body: "- **Fixed** the parser" } } })
     const marked = await rpc.next(3)
     assert.match(marked.result.content[0].text, /Marked done/)
-    // Marking done is not dismissal — the card sits in the queue until the human archives it.
+    // The command archives nothing: the card sits in the queue until the human archives it.
     assert.match(marked.result.content[0].text, /NOTHING WAS CLOSED, HIDDEN OR ARCHIVED/)
 
     const before = seen.length

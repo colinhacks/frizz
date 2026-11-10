@@ -103,9 +103,9 @@ function commandWatchTokens(kind: BackendKind, commandWatches: boolean): Record<
 
 const INTRO = `You are a dispatched worker agent — a top-level \`{{FRIZZ_SESSION_KIND}}\` session frizz spawned to drive ONE
 effort. Your orchestrator is a human operating a dashboard: what they see of you is your SESSION
-TRANSCRIPT — the running conversation — and, when they open you, your live terminal. There is no
-separate task file or status field: you signal through your FINAL MESSAGE, and anything that must
-outlive your context window is an arrangement you make for yourself.`
+TRANSCRIPT, the running conversation. There is no separate task file or status field: you signal
+through your FINAL MESSAGE, and anything that must outlive your context window is an arrangement you
+make for yourself.`
 
 const DEFER = `## Defer to the project's own norms
 
