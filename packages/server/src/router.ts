@@ -851,6 +851,25 @@ function storeProjectIcon(id: string, name: string, bytes: Buffer): ProjectCard 
 }
 
 /**
+ * A NATIVE PICKER OPENS ON THE SERVER'S DESKTOP, which is in front of the operator only when the request
+ * came from this machine. Asked from another one (a relay session, or an exposed bind), "Add a project"
+ * drew its panel on a screen nobody was watching while the page showed "Choosing a folder…" until the
+ * five-minute timeout reaped it, and only then offered the typed path. So such a caller is told at once
+ * that there is no picker for it, and no panel is built ahead of its click either. Every page that asks
+ * already has the fallback: the typed-path dialog for a folder, the browser's file input for an icon.
+ *
+ * An SSH port-forward is loopback at both ends and cannot be told from a tab on this machine, so it
+ * keeps the panel. Exported for its test.
+ */
+export function pickerOnAnotherScreen(
+  what: "folder" | "image",
+  origin: { via: string } = currentRequestOrigin(),
+): { kind: "unavailable"; reason: string } | undefined {
+  if (origin.via !== "public" && origin.via !== "network") return undefined
+  return { kind: "unavailable", reason: `The ${what} picker opens on the computer running Frizz` }
+}
+
+/**
  * Where a project's icon picker opens, and what it asks. Shared by the pick and the build ahead of it,
  * because a panel built in any other directory is not the one the pick shows.
  */
@@ -5312,6 +5331,8 @@ export function createRouter(ctx: AppContext) {
       input: z.object({ id: z.string().min(1) }),
       output: DirectoryPickResult,
       handler: async ({ input }) => {
+        const elsewhere = pickerOnAnotherScreen("image")
+        if (elsewhere) return elsewhere
         const { startIn, prompt } = iconPicker(input.id)
         const picked = await pickImageFile(startIn, prompt)
         if (picked.kind !== "picked") return picked
@@ -5327,7 +5348,9 @@ export function createRouter(ctx: AppContext) {
     projectIconPickWarm: mutation({
       input: z.object({ id: z.string().min(1) }),
       output: z.object({ warming: z.boolean() }),
-      handler: async ({ input }) => ({ warming: warmImagePicker(iconPicker(input.id).startIn) }),
+      handler: async ({ input }) => ({
+        warming: pickerOnAnotherScreen("image") ? false : warmImagePicker(iconPicker(input.id).startIn),
+      }),
     }),
 
     projectIconSet: mutation({
@@ -5441,6 +5464,8 @@ export function createRouter(ctx: AppContext) {
       input: z.object({}),
       output: DirectoryPickResult,
       handler: async () => {
+        const elsewhere = pickerOnAnotherScreen("folder")
+        if (elsewhere) return elsewhere
         const picked = await pickDirectory()
         // Folders tend to be added several at a time (2026-10-03: three dialogs inside 33 seconds), so
         // the next panel is built while this one's board loads. One that is never asked for dies idle.
@@ -5464,7 +5489,7 @@ export function createRouter(ctx: AppContext) {
     projectPickWarm: mutation({
       input: z.object({}),
       output: z.object({ warming: z.boolean() }),
-      handler: async () => ({ warming: warmDirectoryPicker() }),
+      handler: async () => ({ warming: pickerOnAnotherScreen("folder") ? false : warmDirectoryPicker() }),
     }),
 
     /**

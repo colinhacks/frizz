@@ -15,7 +15,6 @@
 // databases opened. Answering a list request by opening forty projects is exactly the cost lazy
 // activation exists to avoid. (The server does open them all in the background about a second after
 // boot — server/tenant-prime.ts — but on its own clock, never on a request's.)
-import * as RadixDialog from "@radix-ui/react-dialog"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { Ellipsis, ImagePlus, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
@@ -26,13 +25,13 @@ import { rpc } from "../api/rpc.ts"
 import { projectHref } from "../lib/base-path.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { showToast, store } from "../store.ts"
+import { AddProjectDialog } from "./AddProjectDialog.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/Menu.tsx"
 import { HomeTabs } from "./HomeSwitcher.tsx"
 import { ProjectSquare, projectSquareLabel, railCountsLabel, useProjectIconChange, warmProjectPicker } from "./ProjectRail.tsx"
 import { Tooltip } from "./Tooltip.tsx"
 import { SettingsDrawer } from "./SettingsDrawer.tsx"
-import { Z_DIALOG } from "../lib/layers.ts"
 
 /**
  * The mark, at the size where it is legible AS a mark.
@@ -537,90 +536,6 @@ function PhantomCard({
         <span className="text-[11px] text-muted-70">Point Frizz at a folder on this machine</span>
       ) : null}
     </button>
-  )
-}
-
-function AddProjectDialog({
-  reason,
-  proposed,
-  onClose,
-}: {
-  reason?: string
-  /** A directory `frizz` was just run in. Pre-filled, never pre-registered. */
-  proposed?: string
-  onClose: () => void
-}) {
-  const [path, setPath] = useState(proposed ?? "")
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const add = useMutation({
-    mutationFn: (input: string) => rpc.projectAdd({ path: input }),
-    onSuccess: (project) => {
-      void queryClient.invalidateQueries({ queryKey: ["projectsList"] })
-      // Adding a project is only ever a step towards opening it. `navigate`, not location.assign:
-      // the rail is already showing and must not be torn down to open what was just added.
-      navigate(projectHref(project.slug))
-    },
-  })
-  const error = add.error instanceof Error ? add.error.message : add.error ? String(add.error) : null
-
-  return (
-    <RadixDialog.Root open onOpenChange={(open) => { if (!open && !add.isPending) onClose() }}>
-      <RadixDialog.Portal>
-        <RadixDialog.Overlay className={`fixed inset-0 ${Z_DIALOG} bg-scrim-30 backdrop-blur-md backdrop-saturate-150`} />
-        <RadixDialog.Content
-          aria-modal="true"
-          aria-describedby={undefined}
-          className={`fixed left-1/2 top-1/2 ${Z_DIALOG} w-[460px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none`}
-        >
-          <RadixDialog.Title className="mb-1 text-[14px] font-medium">
-            {proposed ? "Add this folder as a project?" : "Add a project"}
-          </RadixDialog.Title>
-          <p className="mb-3.5 text-[12.5px] leading-relaxed text-muted">
-            {proposed
-              ? "You ran Frizz here and it is not a project yet. Nothing has been written — adding it is what creates its board."
-              : reason
-                ? `${reason}. Paste the folder instead — Frizz walks up to the repository root, the same way it does when you run it in a terminal.`
-                : "Paste the folder you want a board for. Frizz walks up to the repository root, the same way it does when you run it in a terminal."}
-          </p>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!add.isPending) add.mutate(path)
-            }}
-          >
-            <input
-              autoFocus
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="~/code/my-project"
-              spellCheck={false}
-              className={`w-full rounded-md border bg-bg px-2.5 py-2 font-mono text-[12px] text-fg outline-none placeholder:text-muted-50 focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${
-                error ? "border-danger-fill/60" : "border-border-strong"
-              }`}
-            />
-            {error ? <p className="mt-1.5 text-[11.5px] text-danger">{error}</p> : null}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={add.isPending}
-                className="rounded-md border border-border-strong bg-elevated px-3 py-1.5 text-[12.5px] text-fg outline-none hover:bg-panel-2 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-50"
-              >
-                {proposed ? "Not now" : "Cancel"}
-              </button>
-              <button
-                type="submit"
-                disabled={add.isPending || path.trim().length === 0}
-                className="rounded-md border border-accent bg-accent-fill px-3 py-1.5 text-[12.5px] font-medium text-on-accent outline-none hover:brightness-110 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-50"
-              >
-                {add.isPending ? "Adding…" : proposed ? "Add it" : "Add project"}
-              </button>
-            </div>
-          </form>
-        </RadixDialog.Content>
-      </RadixDialog.Portal>
-    </RadixDialog.Root>
   )
 }
 

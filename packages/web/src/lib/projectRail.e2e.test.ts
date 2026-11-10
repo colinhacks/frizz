@@ -141,3 +141,63 @@ test("reloading with the rail on renders it before settingsGet answers, from the
     await set(false)
   }
 })
+
+// "ADD A PROJECT" ON THE RAIL, WITH NO PICKER TO OPEN, ASKS FOR THE FOLDER WHERE THE OPERATOR IS. The
+// server answers `unavailable` when the machine has no folder picker, and at once when the page is on
+// another machine than the picker would open on (server router `pickerOnAnotherScreen`). The rail then
+// sent its operator to `/`, where nothing opened: the grid shows the typed-path dialog for its own click
+// only, and `/` is the Console for whoever keeps it as home. It opens the dialog itself now.
+//
+// The picker's two procedures are answered HERE, in the page, and never reach the server: a real answer
+// from this machine's own tab is a native panel on the screen of whoever runs the test.
+test("the rail's Add a project, told there is no picker, opens the typed-path dialog in place", {
+  skip: !baseUrl,
+  timeout: 90_000,
+}, async () => {
+  const rpc = `${baseUrl}/_frizz/rpc`
+  const headers = { origin: baseUrl!, "content-type": "application/json" }
+  const current = (await (await fetch(`${rpc}/settingsGet`, { headers })).json()) as { result: Record<string, unknown> }
+  const set = await fetch(`${rpc}/settingsSet`, { method: "POST", headers, body: JSON.stringify({ ...current.result, projectRail: true }) })
+  assert.equal(set.status, 200, `settingsSet must succeed: ${await set.text()}`)
+  const projects = (await (await fetch(`${rpc}/projectsList`, { headers })).json()) as { result: Array<{ slug: string }> }
+  const slug = projects.result[0]?.slug
+  assert.ok(slug, "the stack serves at least one project")
+  const reason = "The folder picker opens on the computer running Frizz"
+
+  const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+  const browser = await launchHeadless()
+  try {
+    const page = await browser.newPage()
+    const errors: string[] = []
+    page.on("pageerror", (error) => errors.push(String(error)))
+    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
+    const asked: string[] = []
+    await page.setRequestInterception(true)
+    page.on("request", (request) => {
+      const procedure = /\/rpc\/(projectPick(?:Warm)?)(?:\?|$)/u.exec(request.url())?.[1]
+      if (!procedure) return void request.continue()
+      asked.push(procedure)
+      const result = procedure === "projectPick" ? { kind: "unavailable", reason } : { warming: false }
+      void request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ result }) })
+    })
+    const add = 'nav[aria-label="Projects"] button[aria-label="Add a project"]'
+    const dialog = () => page.evaluate(() => document.querySelector('[role="dialog"]')?.textContent ?? null)
+
+    for (const path of [`/project/${slug}`, "/console"]) {
+      await page.goto(`${baseUrl}${path}`, { waitUntil: "domcontentloaded" })
+      await page.waitForSelector(add, { visible: true, timeout: 30_000 })
+      await page.click(add)
+      await page.waitForFunction(() => document.querySelector('[role="dialog"]') !== null, { timeout: 5_000 })
+        .catch(() => assert.fail(`${path}: no dialog opened, at ${page.url()}`))
+      assert.equal(await dialog().then((text) => text?.includes(`${reason}. Paste the folder instead`)), true, `${path}: the dialog says why and what to do`)
+      assert.equal(new URL(page.url()).pathname, path, "the operator is where they were")
+      assert.equal(await page.$eval(add, (button) => (button as HTMLButtonElement).disabled), false, "the square is not left disabled")
+      await page.keyboard.press("Escape")
+      await page.waitForFunction(() => document.querySelector('[role="dialog"]') === null, { timeout: 5_000 })
+    }
+    assert.ok(asked.includes("projectPick"), "the click asked for the picker, and the page answered it")
+    assert.deepEqual(errors, [], "no page errors")
+  } finally {
+    await browser.close()
+  }
+})

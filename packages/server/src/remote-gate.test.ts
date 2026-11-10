@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -12,7 +12,7 @@ import type { AppContext } from "./context.ts"
 import { resetFrizzRoots } from "./frizz-paths.ts"
 import { createInteractionStore } from "./interaction-store.ts"
 import { REMOTE_ACCESS, remoteAnswerRefusal, remoteGate, remoteRule } from "./remote-gate.ts"
-import { createRouter } from "./router.ts"
+import { createRouter, pickerOnAnotherScreen } from "./router.ts"
 import Database from "./sqlite.ts"
 
 const PORT = 49_411
@@ -452,4 +452,58 @@ test("file routes confine a remote caller, and leave this machine's tab alone", 
     const everything = await get(`/_frizz/rpc/resolveLocalPaths?input=${rpcInput({ paths: [join(project, ".env"), join(home, ".ssh", "notes.md")] })}`, stamp)
     assert.deepEqual(((await everything.json()) as { result: { resolved: Array<{ path: string | null }> } }).result.resolved.map((row) => row.path !== null), [true, true])
   }
+})
+
+// A NATIVE PICKER IS A WINDOW ON THE SERVER'S DESKTOP, so nothing here may open one. The pickers find
+// their helpers (`osascript`, `zenity`, `kdialog`) on PATH, and for this test PATH holds only stand-ins
+// that write their own name down and exit: a guard that stopped working starts a stand-in, never a panel.
+test("a caller on another machine is told at once that a picker opens on the computer running Frizz, and no picker starts", { skip: process.platform === "win32" }, async (t) => {
+  const stubs = mkdtempSync(join(tmpdir(), "frizz-picker-stubs-"))
+  const log = join(stubs, "started.log")
+  for (const helper of ["osascript", "zenity", "kdialog"]) {
+    writeFileSync(join(stubs, helper), `#!/bin/sh\necho ${helper} >> '${log}'\nexit 1\n`, { mode: 0o755 })
+  }
+  const path = process.env.PATH
+  process.env.PATH = stubs
+  t.after(() => {
+    process.env.PATH = path
+    rmSync(stubs, { recursive: true, force: true })
+  })
+  const started = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [])
+  const { post } = gateApp()
+  const result = async (name: string, input: object, stamp: string) => {
+    const response = await post(name, input, stamp)
+    assert.equal(response.status, 200, `${name}: ${await response.clone().text()}`)
+    return ((await response.json()) as { result: unknown }).result
+  }
+
+  for (const stamp of [FULL_CONTROL, OLDER_LAUNCHER]) {
+    assert.deepEqual(await result("projectPick", {}, stamp), { kind: "unavailable", reason: "The folder picker opens on the computer running Frizz" })
+    assert.deepEqual(await result("projectPickWarm", {}, stamp), { warming: false })
+    // Answered before the project is looked up: there is no picker for this caller whichever it names.
+    assert.deepEqual(await result("projectIconPick", { id: "any-project" }, stamp), { kind: "unavailable", reason: "The image picker opens on the computer running Frizz" })
+    assert.deepEqual(await result("projectIconPickWarm", { id: "any-project" }, stamp), { warming: false })
+  }
+  // Read and answer, and another machine on an exposed bind, never reach the procedure at all.
+  for (const stamp of [READ_AND_ANSWER, NETWORK]) assert.equal((await post("projectPick", {}, stamp)).status, 403)
+  assert.deepEqual(started(), [], "nothing was started for a caller that cannot see this machine's screen")
+
+  // THE CONTROL: this machine's own tab still gets its picker, which is what shows the stand-ins are what
+  // a picker would have started. The pick first, so that no panel built ahead is there for it to take:
+  // macOS then builds one ahead of the next click, and Linux has nothing to build.
+  const mac = process.platform === "darwin"
+  const local = (await result("projectPick", {}, LOOPBACK)) as { kind: string; reason?: string }
+  assert.notEqual(local.reason, "The folder picker opens on the computer running Frizz")
+  assert.deepEqual(started(), [mac ? "osascript" : "zenity"])
+  assert.deepEqual(await result("projectPickWarm", {}, LOOPBACK), { warming: mac })
+  const expected = mac ? ["osascript", "osascript"] : ["zenity"]
+  for (let waited = 0; started().length < expected.length && waited < 5_000; waited += 25) await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.deepEqual(started(), expected, "and only this machine's own asks started one")
+})
+
+test("pickerOnAnotherScreen: a relay session and an exposed bind, never this machine", () => {
+  for (const via of ["public", "network"]) {
+    assert.deepEqual(pickerOnAnotherScreen("folder", { via }), { kind: "unavailable", reason: "The folder picker opens on the computer running Frizz" })
+  }
+  for (const via of ["loopback", "direct", "internal"]) assert.equal(pickerOnAnotherScreen("folder", { via }), undefined, via)
 })

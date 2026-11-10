@@ -15,6 +15,7 @@ import { projectIconKey, rememberProjectIcon, seenProjectIcon } from "../lib/pro
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { dropIndex, edgeScrollVelocity, moveItem, shiftFor } from "../lib/railReorder.ts"
+import { AddProjectDialog } from "./AddProjectDialog.tsx"
 import { Tooltip } from "./Tooltip.tsx"
 import { Z_CHROME } from "../lib/layers.ts"
 
@@ -546,6 +547,8 @@ export function ProjectRail() {
   const { data } = useQuery({ queryKey: ["projectsList"], queryFn: () => rpc.projectsList() })
   const current = projectSlug()
   const [adding, setAdding] = useState(false)
+  /** The typed-path dialog, open because the click got no picker, with why (AddProjectDialog.tsx). */
+  const [fallback, setFallback] = useState<{ reason?: string } | null>(null)
   const navigate = useNavigate()
   const [drag, setDrag] = useState<DragState | null>(null)
   /** The order the operator is looking at, which leads the server for the whole round trip. */
@@ -561,10 +564,13 @@ export function ProjectRail() {
         void queryClient.invalidateQueries({ queryKey: ["projectsList"] })
         navigate(projectHref(result.project.slug))
       }
-      // No picker on this machine, or it failed: the grid owns the typed-path fallback dialog, and
-      // sending someone there is better than growing a second copy of it in a 57px column.
-      else if (result.kind === "unavailable") navigate("/")
+      // No picker on this machine, none for a page on another machine, or it failed: the typed-path
+      // dialog, here. This sent the operator to the grid until 2026-11-10, where nothing opened (the
+      // grid shows the dialog for its own click only), and `/` is the Console for whoever keeps it.
+      else if (result.kind === "unavailable") setFallback({ reason: result.reason })
     },
+    // A picker that throws is still a machine without a working picker, as on the grid.
+    onError: (error) => setFallback({ reason: error instanceof Error ? error.message : String(error) }),
     onSettled: () => setAdding(false),
   })
   const reorder = useMutation({
@@ -778,6 +784,7 @@ export function ProjectRail() {
           <Plus size={16} />
         </button>
       </Tooltip>
+      {fallback ? <AddProjectDialog reason={fallback.reason} onClose={() => setFallback(null)} /> : null}
     </nav>
   )
 }
