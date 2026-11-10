@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { slugify } from "@frizz/shared"
@@ -462,6 +462,41 @@ export function findByPath(path: string, home = homedir()): RegistryEntry | unde
   // Canonical on both sides, or a caller passing the symlinked spelling misses its own entry.
   const canonical = canonicalPath(path)
   return readRegistry(home).projects.find((p) => p.path === canonical || p.path === path)
+}
+
+/**
+ * `findByPath`, answered again without reading the file while nothing it reads has moved: the registry
+ * file (its identity, size and instants — `writeRegistry` replaces it by rename, so every write is a new
+ * inode) and the canonical form of the path asked about. A board build asks for its own project's slug on
+ * every build, and the read, parse and validation of the whole registry was a twentieth of a busy
+ * server's CPU (2026-11-10).
+ *
+ * The one other thing `findByPath` reads is the canonical form of Frizz's own launch folder, which
+ * `readRegistry` filters out. It is left out of the key on purpose: it can only hide the entry of the
+ * launch folder itself, and that folder is never a project anyone asks this about (registerProject
+ * refuses it), so its realpath cannot change an answer here.
+ *
+ * The entry is shared between callers: read it, never edit it.
+ */
+const byPathMemo = new Map<string, { key: string; entry: RegistryEntry | undefined }>()
+export function findByPathCached(path: string, home = homedir()): RegistryEntry | undefined {
+  let file
+  try {
+    file = statSync(registryPath(home), { throwIfNoEntry: false, bigint: true })
+  } catch {
+    file = undefined
+  }
+  const memoKey = `${home}\0${path}`
+  if (!file) {
+    byPathMemo.delete(memoKey)
+    return findByPath(path, home)
+  }
+  const key = `${file.dev}:${file.ino}:${file.size}:${file.mtimeNs}:${file.ctimeNs}\0${canonicalPath(path)}`
+  const memo = byPathMemo.get(memoKey)
+  if (memo?.key === key) return memo.entry
+  const entry = findByPath(path, home)
+  byPathMemo.set(memoKey, { key, entry })
+  return entry
 }
 
 export function findBySlug(slug: string, home = homedir()): RegistryEntry | undefined {

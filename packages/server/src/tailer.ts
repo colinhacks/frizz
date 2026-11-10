@@ -3343,9 +3343,14 @@ function isPermMarker(v: unknown): v is PermMarker {
 
 // A sub-agent transcript's mtime in epoch-ms, or undefined if it can't be stat'd (not yet created,
 // unreadable). Telemetry-grade: a stat failure degrades to "can't assess staleness", never throws.
+//
+// `throwIfNoEntry: false` because a MISSING path is the common answer here, not an exceptional one: most
+// sessions never fanned out, so their `subagents` dir does not exist, and the board asks about it on
+// every build for every thread with a retired child. A throw builds an Error with a stack each time, and
+// that was the larger part of what this cost (2026-11-10). Same answers: a missing path is still undefined.
 function defaultMtimeMs(path: string): number | undefined {
   try {
-    return statSync(path).mtimeMs
+    return statSync(path, { throwIfNoEntry: false })?.mtimeMs
   } catch {
     return undefined
   }
@@ -3826,20 +3831,26 @@ export function createTailer(deps: TailerDeps): Tailer {
   //
   // A direct child's view object is deliberately left BYTE-IDENTICAL to what it was before nesting
   // existed: `depth` is emitted only from 2 down, and absent means 1 everywhere it is read.
-  function subAgentViews(state: TailState, nowMs: number): SubAgentView[] {
+  function subAgentViews(state: TailState, nowMs: number, dirOnGrain = false): SubAgentView[] {
     if (state.subAgents.size === 0 && state.retiredSubAgents.size === 0) return []
-    const subtrees = descendantSubtrees(state, nowMs)
+    const subtrees = descendantSubtrees(state, nowMs, dirOnGrain)
     const out: SubAgentView[] = []
     for (const e of state.subAgents.values()) {
       if (e.kind !== "agent") continue
-      const lastActivityAt = entryLastActivity(state, e)
+      // entryLastActivity and entryStale, from ONE resolution of the child's transcript and ONE stat of
+      // it: asked separately, each resolved the path (a stat of the sidecar dir) and stat'd the file, four
+      // system calls a child where two give the same answers.
+      const path = entryTranscript(state, e)
+      const m = path ? mtimeMs(path) : undefined
+      const lastActivityAt = m === undefined ? undefined : new Date(m).toISOString()
+      const stale = path ? quietPastWindow(path, m, nowMs, e.kind === "agent" && !e.outputFormat) : false
       // Each progress field is spread in only when the provider reported it, so a prose-only child's
       // view object is byte-identical to what it was before this existed.
       const p = e.progress
       out.push({
         label: e.label,
         startedAt: e.startedAt,
-        state: entryStale(state, e, nowMs) ? "stale" : "running",
+        state: stale ? "stale" : "running",
         // Refined from the child's own transcript when the dispatch could not state the edition.
         subagentType: observedDispatchCell(e.subagentType, e),
         id: e.toolUseId,
@@ -4017,8 +4028,19 @@ export function createTailer(deps: TailerDeps): Tailer {
     return state.path.replace(/\.jsonl$/, "")
   }
 
+  // The `subagents` dir of a state's transcript, built once per transcript path rather than on every
+  // read: descendantSidecars runs on every telemetry read of every thread with a child, live or retired.
+  const subagentsDirs = new WeakMap<TailState, { path: string; dir: string }>()
+  function subagentsDirOf(state: TailState): string {
+    const known = subagentsDirs.get(state)
+    if (known && known.path === state.path) return known.dir
+    const dir = join(sessionDirOf(state), "subagents")
+    subagentsDirs.set(state, { path: state.path, dir })
+    return dir
+  }
+
   function descendantSidecars(state: TailState): DescendantSidecar[] {
-    const at = mtimeMs(join(sessionDirOf(state), "subagents"))
+    const at = mtimeMs(subagentsDirOf(state))
     const cached = descendantIndex.get(state.slug)
     if (cached && cached.at === at) return cached.all
     const all = readDescendantSidecars(sessionDirOf(state), mtimeMs)
@@ -4035,7 +4057,7 @@ export function createTailer(deps: TailerDeps): Tailer {
 
   // Where the descendant's own transcript sits — the same flat dir, beside its sidecar.
   function descendantTranscript(state: TailState, meta: DescendantSidecar): string {
-    return join(sessionDirOf(state), "subagents", `agent-${meta.agentId}.jsonl`)
+    return join(subagentsDirOf(state), `agent-${meta.agentId}.jsonl`)
   }
 
   // LIVE DESCENDANTS of one sub-agent, as the provider stop handles that end them.
@@ -4182,14 +4204,12 @@ export function createTailer(deps: TailerDeps): Tailer {
   // Returns subtrees keyed by the DIRECT child they hang off, each already in depth-first order, so the
   // caller can splice each one in directly behind its parent's row and get a tree by reading top down.
   // A key may name a RETIRED direct child — see anchorRoots.
-  function descendantSubtrees(state: TailState, nowMs: number): Map<string, SubAgentView[]> {
+  function descendantSubtrees(state: TailState, nowMs: number, dirOnGrain = false): Map<string, SubAgentView[]> {
     const empty = new Map<string, SubAgentView[]>()
     // Nothing tracked ⇒ nothing a descendant could hang off. This is the common case for most threads,
     // and returning here keeps the sidecar dir off the tick's disk path entirely. A RETIRED child counts
     // as tracked here (it can still anchor a live branch), which is why the ring is consulted too.
     if (state.subAgents.size === 0 && state.retiredSubAgents.size === 0) return empty
-    const all = descendantSidecars(state)
-    if (all.length === 0) return empty
 
     // Every reading below costs a stat per descendant, and this runs from BOTH the projection and the
     // change signature on the same tick. Memo per (sidecar-dir mtime, tracked-child counts, second) so
@@ -4200,10 +4220,26 @@ export function createTailer(deps: TailerDeps): Tailer {
     // it retires would sit on the board until the second ticked over, and a test that ticks twice in
     // one millisecond would never see the retirement at all.
     const second = Math.floor(nowMs / 1000)
-    const dirAt = descendantIndex.get(state.slug)?.at
     const terminals = state.descendantTerminals?.size ?? 0
     const memo = subtreeMemo.get(state.slug)
-    if (memo && memo.at === dirAt && memo.second === second && memo.live === state.subAgents.size && memo.retired === state.retiredSubAgents.size && memo.terminals === terminals) return memo.value
+    const sameCounts = memo !== undefined && memo.second === second && memo.live === state.subAgents.size && memo.retired === state.retiredSubAgents.size && memo.terminals === terminals
+    // A FILED-AWAY THREAD'S SIDECAR DIR IS READ ON THE SAME ONE-SECOND GRAIN (`dirOnGrain`, see
+    // sidecarDirOnGrain). Such a thread is volatile only because a retired child may still anchor a
+    // running branch, and the board reads its telemetry on every build: the dir's stat alone, ten builds a
+    // second for each of the sixty-odd archived threads that ever had a sub-agent, was the largest system
+    // call the server made with three workers busy on a copy of the maintainer's boards (2026-11-10). What
+    // the grain can hold back is a grandchild spawned under a child that already reported, seen up to a
+    // second late, which is the grain its liveness has always had; and only on a thread whose own process
+    // is gone, whose transcript the tick itself reads only every ten seconds (see `dormant`).
+    if (dirOnGrain && sameCounts && state.subAgents.size === 0) return memo.value
+    const all = descendantSidecars(state)
+    const dirAt = descendantIndex.get(state.slug)?.at
+    const remember = (value: Map<string, SubAgentView[]>): Map<string, SubAgentView[]> => {
+      subtreeMemo.set(state.slug, { at: dirAt, second, live: state.subAgents.size, retired: state.retiredSubAgents.size, terminals, value })
+      return value
+    }
+    if (all.length === 0) return remember(empty)
+    if (sameCounts && memo.at === dirAt) return memo.value
 
     const byAgentId = new Map<string, DescendantSidecar>()
     for (const meta of all) byAgentId.set(meta.agentId, meta)
@@ -4241,10 +4277,6 @@ export function createTailer(deps: TailerDeps): Tailer {
         shown.add(cur.agentId)
         cur = cur.parentAgentId ? byAgentId.get(cur.parentAgentId) : undefined
       }
-    }
-    const remember = (value: Map<string, SubAgentView[]>): Map<string, SubAgentView[]> => {
-      subtreeMemo.set(state.slug, { at: dirAt, second, live: state.subAgents.size, retired: state.retiredSubAgents.size, terminals, value })
-      return value
     }
     if (shown.size === 0) return remember(empty)
 
@@ -6363,7 +6395,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------
@@ -6396,14 +6428,38 @@ export function createTailer(deps: TailerDeps): Tailer {
   // (CodexAppServer.backgroundExecs). Asked of every live row, it made every Claude thread on a server
   // with the bridge re-derive its whole telemetry on every board build, which the build does for every
   // thread on every change (2026-11-09).
+  // A thread filed away with its process gone and no child live: the one kind whose sidecar dir a
+  // telemetry read takes on the subtree memo's one-second grain (descendantSubtrees). Undefined row (a
+  // foreign thread) never qualifies.
+  function sidecarDirOnGrain(s: TailState, row: SessionRow | undefined): boolean {
+    return row !== undefined && s.subAgents.size === 0 && s.paneDead && rowIsArchived(row)
+  }
   function telemetryIsVolatile(s: TailState, row: SessionRow): boolean {
     return s.subAgents.size > 0 || s.retiredSubAgents.size > 0 || (deps.codexBackgroundExecs !== undefined && row.backend === "codex" && !s.foreign && !s.paneDead)
   }
+  // A VOLATILE state the tick has not touched can only have moved in the two fields that read the clock,
+  // the disk or the codex bridge: `subAgents` (staleness, sidecar descendants, output-file mtimes) and
+  // `bgShells` (shell liveness, codex execs). Every other field of telemetryOf is the state's own, which a
+  // touch guards, or `spawned_at`, which the memo is keyed on. So an untouched volatile state re-derives
+  // those two and compares them alone, rather than building the whole telemetry and comparing all of it
+  // (retired-child rings, sightings, steps, every string). That whole pass ran for every thread that ever
+  // had a sub-agent, archived or not, on every board build: on a copy of the maintainer's boards with
+  // three workers busy, 68 threads a build at 10 builds a second, about a fifth of the server's CPU and
+  // 130 MB a minute of garbage (2026-11-10). The answer is the one the whole pass gives: the same object
+  // when both fields compare equal, a fresh derivation when either moved.
+  function volatileFieldsHold(s: TailState, row: SessionRow, memo: { copy: unknown }): boolean {
+    const copy = memo.copy as Pick<SessionTelemetry, "subAgents" | "bgShells">
+    if (!jsonEqual(copy.subAgents, subAgentViews(s, now(), sidecarDirOnGrain(s, row)))) return false
+    const shells = bgShellViews(s)
+    const codexShells = codexBgShellViews(s)
+    return jsonEqual(copy.bgShells, codexShells.length === 0 ? shells : [...shells, ...codexShells])
+  }
+
   function memoizedTelemetry(s: TailState, row: SessionRow): SessionTelemetry {
     const touch = touches.get(s) ?? 0
     const memo = telemetryMemos.get(s)
     const sameRow = memo !== undefined && memo.spawnedAt === row.spawned_at
-    if (sameRow && memo.touch === touch && !telemetryIsVolatile(s, row)) return memo.tele
+    if (sameRow && memo.touch === touch && (!telemetryIsVolatile(s, row) || volatileFieldsHold(s, row, memo))) return memo.tele
     const fresh = telemetryOf(s, row)
     if (sameRow && jsonEqual(memo.copy, fresh)) {
       memo.touch = touch

@@ -7,6 +7,7 @@ import {
   backfillRegistry,
   deriveSlug,
   findByPath,
+  findByPathCached,
   findBySlug,
   findProjectBySegment,
   forgetProject,
@@ -678,6 +679,32 @@ test("an old detected pick is re-scanned too, so a better icon added beside it r
     const entry = readRegistry(home).projects[0]!
     assert.equal(entry.icon, logo)
     assert.equal(entry.iconScannedAt, new Date(later).toISOString(), "a new scan is a new iconVersion, so the client's URL changes")
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// A board build asks for its own project's slug on every build (board.ts assemble). The cached lookup
+// answers without reading the file while the file is the one it read, and reads it again the moment any
+// writer replaces or rewrites it: this process through writeRegistry, or another one in place.
+test("findByPathCached: the same answer while the file is unchanged, and the new one after any write", () => {
+  const home = sandbox()
+  try {
+    const dir = project(home, "code/frizz", A)
+    registerProject({ dir, id: A }, home)
+    const first = findByPathCached(dir, home)
+    assert.equal(first?.slug, "frizz")
+    assert.equal(findByPathCached(dir, home), first, "unchanged file: the remembered entry, not a fresh read")
+
+    renameProject(A, { slug: "renamed" }, home)
+    assert.equal(findByPathCached(dir, home)?.slug, "renamed", "a write through writeRegistry is seen at once")
+
+    // Another process rewriting the file IN PLACE (same inode, same size): only its instants move.
+    const path = registryPath(home)
+    const text = readFileSync(path, "utf8")
+    writeFileSync(path, text.replace('"slug": "renamed"', '"slug": "rename2"'))
+    assert.equal(findByPathCached(dir, home)?.slug, "rename2", "an in-place rewrite is seen at once")
+    assert.deepEqual(findByPathCached(dir, home), findByPath(dir, home), "and it is what the uncached lookup says")
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

@@ -153,12 +153,34 @@ export function brokerLivenessSnapshot(stateDir: string): BrokerLivenessSnapshot
   const names = recordListing(dir)
   const alive = (sessionId: string) => {
     const name = claudeBrokerRecordName(sessionId)
-    return names.has(name) && liveBrokerRecord(join(dir, name)) !== null
+    return names.has(name) && recordDaemonAlive(join(dir, name))
   }
   return Object.assign(alive, {
     listing: names,
     listed: (sessionId: string) => names.has(claudeBrokerRecordName(sessionId)),
   })
+}
+
+// THE PID A RECORD NAMES, read once per version of the file. A board build asks whether each open broker
+// thread's daemon is alive, every build, and reading and parsing its record each time was most of what that
+// cost (2026-11-10). A record is written whole when its daemon starts, so while the file's identity, size
+// and modification instant are unchanged it names the same pid, and only the pid itself needs asking
+// again. A pid found dead goes through liveBrokerRecord, which reads the file afresh and prunes it exactly
+// as before. Answers what `liveBrokerRecord(path) !== null` answers.
+const recordPids = new Map<string, { ino: number; size: number; mtimeMs: number; pid: number }>()
+function recordDaemonAlive(recordPath: string): boolean {
+  let file
+  try { file = statSync(recordPath, { throwIfNoEntry: false }) } catch { file = undefined }
+  if (!file) {
+    recordPids.delete(recordPath)
+    return false
+  }
+  const known = recordPids.get(recordPath)
+  if (known && known.ino === file.ino && known.size === file.size && known.mtimeMs === file.mtimeMs && pidAlive(known.pid)) return true
+  const record = liveBrokerRecord(recordPath)
+  if (record && typeof record.daemonPid === "number") recordPids.set(recordPath, { ino: file.ino, size: file.size, mtimeMs: file.mtimeMs, pid: record.daemonPid })
+  else recordPids.delete(recordPath)
+  return record !== null
 }
 
 /** brokerLivenessSnapshot's reader, plus the listing it answers from. `listing` is the SAME object for as

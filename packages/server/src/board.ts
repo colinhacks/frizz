@@ -24,7 +24,8 @@ import { firstTextLine } from "./tailer.ts"
 import type { InteractionChange } from "./interaction-store.ts"
 import { frizzDirExists } from "./frizz.ts"
 import { githubStatusKey, idlePrsOf, liveActivityOf, needsInputParkHolds, parseIssueRef, parsePrRef, readAwaitingPark, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, type GithubIssueStatusBook, type GithubStatusBook } from "./awaiting.ts"
-import { findByPath } from "./project-registry.ts"
+import { findByPathCached } from "./project-registry.ts"
+import { jsonEqual } from "./json-value.ts"
 import { parseDeliveryLedger } from "./delivery-ledger.ts"
 import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 import { effectivePermissionMode, fallbackTitle, resolveLegacyThreadFile } from "./dispatch.ts"
@@ -258,9 +259,32 @@ export function isBoardRelevantFrizzPath(roots: ReadonlySet<string>, path: strin
   return path.endsWith(".md") && roots.has(dirname(path))
 }
 
+// THE ROW'S FIELDS, PARSED ONCE PER VALUE. Every open thread's view is derived on every build, and these
+// schemas ran on every one of them: zod's failure path builds an issue list, so a row with no snooze or no
+// pending permission (nearly every row) paid for an error object per field per build. The answers are
+// the schemas' own: a null/absent value fails both, and a value is parsed once and remembered.
+const snoozeInstants = new Map<string, number | null>()
+function snoozeInstantOf(value: string | null | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined
+  let at = snoozeInstants.get(value)
+  if (at === undefined) {
+    const parsed = SnoozeUntil.safeParse(value)
+    at = parsed.success ? Date.parse(parsed.data) : null
+    if (snoozeInstants.size >= 1024) snoozeInstants.delete(snoozeInstants.keys().next().value!)
+    snoozeInstants.set(value, at)
+  }
+  return at ?? undefined
+}
+
+// `PermissionMode` is a plain enum, so membership IS its parse.
+const PERMISSION_MODES: ReadonlySet<string> = new Set(PermissionMode.options)
+function permissionModeOf(value: string | null | undefined): PermissionModeValue | undefined {
+  return typeof value === "string" && PERMISSION_MODES.has(value) ? value as PermissionModeValue : undefined
+}
+
 function futureSnooze(row: Pick<SessionRow, "snoozed_until">, nowMs: number): string | undefined {
-  const parsed = SnoozeUntil.safeParse(row.snoozed_until)
-  return parsed.success && Date.parse(parsed.data) > nowMs ? parsed.data : undefined
+  const at = snoozeInstantOf(row.snoozed_until)
+  return at !== undefined && at > nowMs ? row.snoozed_until! : undefined
 }
 
 // The ONE signal that a rested top-level turn is still working: a live dispatched SUB-AGENT. A child
@@ -1677,13 +1701,13 @@ export function resolveSessionPermission(
   row: Pick<SessionRow, "backend" | "spawned_at" | "permission_mode" | "permission_pending" | "permission_set_at">,
   tele?: Pick<SessionTelemetry, "permissionMode" | "permissionModeAt">,
 ): ThreadView["permissionMode"] {
-  const saved = PermissionMode.safeParse(row.permission_mode)
-  const pending = PermissionMode.safeParse(row.permission_pending)
+  const savedMode = permissionModeOf(row.permission_mode)
+  const pendingMode = permissionModeOf(row.permission_pending)
   const normalize = (mode: PermissionModeValue) => effectivePermissionMode(row.backend === "codex" ? "codex" : row.backend === "opencode" ? "opencode" : "claude", mode)
   // A successful controlled reattach stamps the exact argv mode before its transcript sidecar is
   // tailed. During that short reconciliation window the launched value is already authoritative.
-  if (saved.success && pending.success && normalize(saved.data) === normalize(pending.data)) return normalize(saved.data)
-  if (row.backend === "codex" && saved.success) {
+  if (savedMode !== undefined && pendingMode !== undefined && normalize(savedMode) === normalize(pendingMode)) return normalize(savedMode)
+  if (row.backend === "codex" && savedMode !== undefined) {
     // Codex does not append a profile record merely by reopening an idle rollout. Ignore an older
     // turn_context from before this process generation, but accept a later /permissions or turn event.
     const observedAt = tele?.permissionModeAt ? Date.parse(tele.permissionModeAt) : NaN
@@ -1695,20 +1719,19 @@ export function resolveSessionPermission(
       // operator just made. Prefer the saved intent until a genuinely newer turn re-establishes the
       // observed value (then observedAt > setAt and this converges back to telemetry on its own).
       const setAt = row.permission_set_at ? Date.parse(row.permission_set_at) : NaN
-      if (Number.isFinite(setAt) && setAt > observedAt) return normalize(saved.data)
+      if (Number.isFinite(setAt) && setAt > observedAt) return normalize(savedMode)
       return normalize(tele.permissionMode)
     }
-    return normalize(saved.data)
+    return normalize(savedMode)
   }
   // The tailer writes every observed Claude permission-mode transition back to this row. Prefer the
   // durable value so a just-reattached process cannot be relabeled by the previous in-memory fold.
-  if (saved.success) return normalize(saved.data)
+  if (savedMode !== undefined) return normalize(savedMode)
   return tele?.permissionMode ? normalize(tele.permissionMode) : undefined
 }
 
 export function resolvePendingPermission(row: Pick<SessionRow, "permission_pending">): ThreadView["permissionPending"] {
-  const parsed = PermissionMode.safeParse(row.permission_pending)
-  return parsed.success ? parsed.data : undefined
+  return permissionModeOf(row.permission_pending)
 }
 
 // The recurring prompt as BOTH readers see it: the board's Goal panel (through the thread view below)
@@ -1901,6 +1924,79 @@ function readThreadRegistries(storage: Storage, previous?: ThreadRegistries): Th
   return next
 }
 
+// A THREAD'S QUESTIONS AS THE VIEW CARRIES THEM, and which of them stand at this rest. Derived from three
+// things only — the thread's question rows, its telemetry (the sightings and the rest boundary) and the
+// faults its last sync refused — so a thread whose three are unchanged gets the same answer, and the
+// same arrays, without parsing every fence in its sightings again. That parse was the largest thing a
+// build allocated for an open thread (standingQuestions, 21 KB a thread a build on the maintainer's
+// boards, 2026-11-10).
+//
+// The rows are compared FIELD BY FIELD against a copy, not by the bucket's identity alone: the fence sync
+// grows a follow-up into its parent by writing `row.spec` on the very object the storage handed out
+// (question-fences.ts syncQuestionFences), and the storage then keeps that object, and its bucket, as
+// "unchanged" because the database now agrees with it. Identity would miss exactly that edit.
+interface QuestionViews {
+  standingIds: ReadonlySet<string>
+  questions: ThreadView["questions"]
+  closedQuestions: NonNullable<ThreadView["closedQuestions"]>
+}
+const questionViewMemo = new WeakMap<readonly ThreadQuestionRow[], {
+  rows: readonly ThreadQuestionRow[]
+  tele: SessionTelemetry | undefined
+  faults: readonly QuestionFenceFault[] | undefined
+  value: QuestionViews
+}>()
+
+function sameRowFields<Row extends object>(copies: readonly Row[], rows: readonly Row[]): boolean {
+  if (copies.length !== rows.length) return false
+  for (let i = 0; i < rows.length; i++) {
+    const a = copies[i] as Record<string, unknown>
+    const b = rows[i] as Record<string, unknown>
+    let keys = 0
+    for (const key in b) {
+      keys++
+      if (a[key] !== b[key]) return false
+    }
+    if (keys !== Object.keys(a).length) return false
+  }
+  return true
+}
+
+function questionViewsOf(
+  questionRows: readonly ThreadQuestionRow[],
+  rawTele: SessionTelemetry | undefined,
+  questionFaults: readonly QuestionFenceFault[] | undefined,
+): QuestionViews {
+  const memo = questionRows.length > 0 ? questionViewMemo.get(questionRows) : undefined
+  if (memo && memo.tele === rawTele && memo.faults === questionFaults && sameRowFields(memo.rows, questionRows)) return memo.value
+  // WHICH OF THEM STAND AT THIS REST — asked at it, or referenced by it with an `id:` fence
+  // (question-fences.ts). Only those queue the thread (below), and each row says so on the view, because
+  // the rail's mark and the ask count are derived from these rows by other readers (web groups.ts
+  // sessionIndicatorKind, shared needsAction): told only "open", they marked a parked or finished thread
+  // [?] for a question the queue no longer held it on. An older open question stays answerable where it
+  // was asked, and on the card, but says nothing about where this rest sits (2026-10-13).
+  const standingIds = new Set(standingQuestions(questionRows, rawTele, questionFaults).map((q) => q.id))
+  const questions: ThreadView["questions"] = []
+  for (const q of questionRows) {
+    if (q.state !== "open") continue
+    const spec = safeQuestionSpec(q.spec)
+    if (spec) questions.push({ id: q.id, spec, askedAt: new Date(q.asked_at).toISOString(), standing: standingIds.has(q.id) })
+  }
+  // The FENCE-ASKED questions that closed WITHOUT an answer: dismissed (by the human's ×, or by Frizz the
+  // moment an autonomous thread wrote one) or withdrawn by the worker. Their fences are still in the
+  // transcript, and a fence with no open and no answered row is otherwise drawn as a question about to
+  // become answerable — so a Goal thread's cancelled question sat on the page looking asked (seen on a
+  // stack, 2026-10-13). Only rows with a handle: a question the `ask` RPC registered has no fence to draw.
+  const closedQuestions: NonNullable<ThreadView["closedQuestions"]> = []
+  for (const q of questionRows) {
+    if ((q.state !== "dismissed" && q.state !== "withdrawn") || !q.handle) continue
+    closedQuestions.push({ id: q.id, handle: q.handle, state: q.state, askedAt: new Date(q.asked_at).toISOString() })
+  }
+  const value = { standingIds, questions, closedQuestions }
+  if (questionRows.length > 0) questionViewMemo.set(questionRows, { rows: questionRows.map((q) => ({ ...q })), tele: rawTele, faults: questionFaults, value })
+  return value
+}
+
 function sessionThreadView(
   projectDir: string,
   storage: Storage,
@@ -1981,29 +2077,7 @@ function sessionThreadView(
   // the just-answered ones still on their way to the worker (answersInFlight). Unfiltered by state for
   // exactly that reason, which is why the batched read behind it is unfiltered too.
   const questionRows = registries.questions.get(row.slug) ?? []
-  // WHICH OF THEM STAND AT THIS REST — asked at it, or referenced by it with an `id:` fence
-  // (question-fences.ts). Only those queue the thread (below), and each row says so on the view, because
-  // the rail's mark and the ask count are derived from these rows by other readers (web groups.ts
-  // sessionIndicatorKind, shared needsAction): told only "open", they marked a parked or finished thread
-  // [?] for a question the queue no longer held it on. An older open question stays answerable where it
-  // was asked, and on the card, but says nothing about where this rest sits (2026-10-13).
-  const standingIds = new Set(standingQuestions(questionRows, rawTele, questionFaults).map((q) => q.id))
-  const questions: ThreadView["questions"] = []
-  for (const q of questionRows) {
-    if (q.state !== "open") continue
-    const spec = safeQuestionSpec(q.spec)
-    if (spec) questions.push({ id: q.id, spec, askedAt: new Date(q.asked_at).toISOString(), standing: standingIds.has(q.id) })
-  }
-  // The FENCE-ASKED questions that closed WITHOUT an answer: dismissed (by the human's ×, or by Frizz the
-  // moment an autonomous thread wrote one) or withdrawn by the worker. Their fences are still in the
-  // transcript, and a fence with no open and no answered row is otherwise drawn as a question about to
-  // become answerable — so a Goal thread's cancelled question sat on the page looking asked (seen on a
-  // stack, 2026-10-13). Only rows with a handle: a question the `ask` RPC registered has no fence to draw.
-  const closedQuestions: NonNullable<ThreadView["closedQuestions"]> = []
-  for (const q of questionRows) {
-    if ((q.state !== "dismissed" && q.state !== "withdrawn") || !q.handle) continue
-    closedQuestions.push({ id: q.id, handle: q.handle, state: q.state, askedAt: new Date(q.asked_at).toISOString() })
-  }
+  const { standingIds, questions, closedQuestions } = questionViewsOf(questionRows, rawTele, questionFaults)
   // The dismissal-only case counts as in flight EXACTLY when a cancellation wake is coming — an armed
   // rest Goal with text, the same gate the scheduler's evalQuestionAnswers wakes on. Anything looser
   // would also cover the human's own ×, which deliberately wakes nobody and has no arrival to bridge to.
@@ -2798,6 +2872,20 @@ export function createBoard(
   const issueStatusBook = parsedSetting(readGithubIssueStatusBook)
   // The last view derived for each ARCHIVED thread, with everything it was derived from.
   const archivedViews = new Map<string, { inputs: ArchivedViewInputs; view: ThreadView }>()
+  // THE VIEW EACH THREAD LAST SHIPPED, so a thread derived afresh that came out the same hands back that
+  // same object. An open thread is re-derived on every build (the clock is one of its inputs: see the
+  // archived memo for why only archived ones skip it), and on a busy board nearly every one of them comes
+  // out exactly as it was. Handing back the shipped object is what lets the differ skip it with an
+  // identity check rather than serializing it to find out (shared BoardDiffer), and what keeps the
+  // archived memo, the differ and the delta ring holding one copy of an unchanged view instead of one per
+  // build. Equality is jsonEqual, the differ's own sense of "the same" (a key holding `undefined` equals a
+  // missing key, exactly as the view serializes), so this can only ever skip an upsert the differ would
+  // have dropped as identical.
+  let shippedViews = new Map<string, ThreadView>()
+  const shippedViewOr = (fresh: ThreadView): ThreadView => {
+    const shipped = shippedViews.get(fresh.id)
+    return shipped !== undefined && shipped !== fresh && jsonEqual(shipped, fresh) ? shipped : fresh
+  }
 
   // Build exactly the session-backed threads recorded by Frizz. The registry is the provenance
   // boundary: historical rows remain valid after migration/restart, and both Claude and Codex use the
@@ -2861,7 +2949,7 @@ export function createBoard(
         continue
       }
       const inputs = archivedViewInputs(row, tele, legacyTerminal, interactionPresence, brokerAlive, registries, github, issueBook, catalogue, faults)
-      const view = sessionThreadView(
+      const view = shippedViewOr(sessionThreadView(
         project.dir,
         storage,
         row,
@@ -2877,7 +2965,7 @@ export function createBoard(
         catalogue,
         faults,
         liveChildThreads(children.get(row.slug) ?? [], (slug) => tailer.get(slug)),
-      )
+      ))
       if (inputs) archivedViews.set(row.slug, { inputs, view })
       else archivedViews.delete(row.slug)
       out.push(view)
@@ -2915,7 +3003,7 @@ export function createBoard(
       if (!tele || tele.turn !== "idle") continue
       // Absent (an older tailer, or a narrow fixture) reads as claude — what every foreign thread was
       // before codex rollouts joined the scan.
-      out.push(foreignThreadView(id, tele, tailer.foreignBackend?.(id) ?? "claude"))
+      out.push(shippedViewOr(foreignThreadView(id, tele, tailer.foreignBackend?.(id) ?? "claude")))
     }
     return out
   }
@@ -2938,7 +3026,7 @@ export function createBoard(
       projectName: project.name,
       projectLabel: project.label,
       ...(project.githubRepo ? { githubRepo: project.githubRepo } : {}),
-      projectSlug: findByPath(project.dir)?.slug,
+      projectSlug: findByPathCached(project.dir)?.slug,
       // So the client can expand a `~` a worker wrote in prose (see BoardSnapshot.homeDir).
       homeDir: homedir(),
     }
@@ -2951,9 +3039,14 @@ export function createBoard(
     // neither received nor can answer.
     armSnoozeWake(sessionThreads, assembledAtMs)
     notifyNeedsYou(sessionThreads)
+    const threads = [...sessionThreads, ...buildForeignThreads()]
+    // What this build ships, whatever it ships: a thread that left the board leaves this too.
+    const shipped = new Map<string, ThreadView>()
+    for (const t of threads) shipped.set(t.id, t)
+    shippedViews = shipped
     return {
       ...base,
-      threads: [...sessionThreads, ...buildForeignThreads()],
+      threads,
       errors: [],
       warnings: [],
       errorItems: [],
