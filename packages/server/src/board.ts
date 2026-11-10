@@ -29,6 +29,7 @@ import { parseDeliveryLedger } from "./delivery-ledger.ts"
 import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 import { effectivePermissionMode, fallbackTitle, resolveLegacyThreadFile } from "./dispatch.ts"
 import { ProducerStoppedError } from "./shutdown.ts"
+import { log as frizzLog } from "./logging.ts"
 import { adoptionRuntimeBinding } from "./adoption-recovery.ts"
 import { limitPauseIsStale, textResetInstant } from "./backend/usage-limit.ts"
 import { getSettings } from "./settings.ts"
@@ -39,6 +40,12 @@ import { getSettings } from "./settings.ts"
 // telemetry only for registered rows. Plan documents remain project artifacts and are read separately.
 
 const DEBOUNCE_MS = 150
+// The closest two tailer-driven refreshes may run (refreshSoon). A worker's events nudge the tailer up to
+// forty times a second and each tick that moved anything asked for a whole-board build, so a busy thread
+// rebuilt every other thread's view on its event rate: on a copy of the maintainer's largest project with
+// three workers busy (2026-11-09), building the board was most of the server's main thread. The first
+// change after a quiet spell still lands at once; this only folds the rest of a burst into one build.
+export const BOARD_REFRESH_MIN_MS = 100
 // Level-triggered reconcile period: a periodic full rebuild that re-publishes if anything drifted.
 // NOTE: this bounds SERVER-side staleness, not end-to-end UI staleness. It is the ceiling only WHILE
 // the SSE socket is delivering; if the socket dies silently the client keeps its last frame until ITS
@@ -478,17 +485,31 @@ export function hasDeclaredBackgroundPark(
   return true
 }
 
+// PARSED ONCE PER SPEC, not once per read. A spec is stored when its question is asked and never
+// rewritten, and reading one is a JSON parse plus a whole zod walk — which every board build paid for
+// every open question of every thread, on every change anywhere in the project. On a copy of the
+// maintainer's largest project with three workers busy (2026-11-09) that was 22% of the server's main
+// thread. The parsed question is SHARED between callers: read it, never write to it (no caller does).
+const questionSpecMemo = new Map<string, AskedQuestion | null>()
+const QUESTION_SPEC_MEMO_MAX = 4096
+
 /** A stored question's spec, or undefined when it no longer parses — a schema change, a hand-written
  *  row. Undefined is DROPPED by every caller rather than thrown on: one unreadable row must not blank a
  *  card carrying three good ones. Duplicated in router.ts for the worker's own read-back, which cannot
  *  reach into the board. */
 export function safeQuestionSpec(spec: string): AskedQuestion | undefined {
+  const known = questionSpecMemo.get(spec)
+  if (known !== undefined) return known ?? undefined
+  let question: AskedQuestion | null = null
   try {
     const parsed = AskedQuestionSchema.safeParse(JSON.parse(spec))
-    return parsed.success ? parsed.data : undefined
+    if (parsed.success) question = parsed.data
   } catch {
-    return undefined
+    // unreadable: remembered as such, so it is not re-parsed either
   }
+  if (questionSpecMemo.size >= QUESTION_SPEC_MEMO_MAX) questionSpecMemo.delete(questionSpecMemo.keys().next().value!)
+  questionSpecMemo.set(spec, question)
+  return question ?? undefined
 }
 
 /** A stored ANSWER, or undefined when it no longer parses. Same drop-don't-throw discipline as the spec
@@ -2577,6 +2598,11 @@ export interface BoardManager {
   rebuild(): Promise<BoardSnapshot>
   // Overlay-only: reuses file-backed caches; cheap + sync. Use for tailer/session changes.
   refresh(): BoardSnapshot
+  // The same refresh for a signal that can fire many times a second — the tailer's change: the first in
+  // BOARD_REFRESH_MIN_MS runs NOW, and the rest of that window collapse into one refresh at its end.
+  // `prepare` runs immediately before whichever refresh carries it (the question registrar's sweep).
+  // Optional for the same reason `interactionChanged` is: a test's stub board need not have it.
+  refreshSoon?(prepare?: () => void): void
   // A durable typed-interaction transition changes queue membership independently of transcript or
   // .frizz files. The board caches per-session presence and refreshes on the journal's post-commit edge.
   interactionChanged?(change: InteractionChange): void
@@ -2999,6 +3025,39 @@ export function createBoard(
     return cached
   }
 
+  // refreshSoon's window. The leading refresh runs in its caller's stack (inside a tailer tick), so a
+  // failure there reaches the tick's own handler exactly as a synchronous refresh always did; the
+  // trailing one runs on a timer, where nothing above it would catch.
+  let refreshSoonTimer: NodeJS.Timeout | null = null
+  let refreshSoonAt = Number.NEGATIVE_INFINITY
+  let refreshSoonPrepare: (() => void) | undefined
+  function refreshSoonNow(): void {
+    refreshSoonTimer = null
+    refreshSoonAt = now()
+    const prepare = refreshSoonPrepare
+    refreshSoonPrepare = undefined
+    prepare?.()
+    refresh()
+  }
+  function refreshSoon(prepare?: () => void): void {
+    if (stopped) return
+    if (prepare) refreshSoonPrepare = prepare
+    if (refreshSoonTimer) return // the window's trailing refresh is already due, and will carry this
+    const wait = refreshSoonAt + BOARD_REFRESH_MIN_MS - now()
+    if (wait <= 0) return refreshSoonNow()
+    refreshSoonTimer = setTimeout(() => {
+      if (stopped) return
+      try {
+        refreshSoonNow()
+      } catch (error) {
+        if (!(error instanceof ProducerStoppedError)) {
+          frizzLog.warn("board", `refresh failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+    }, wait)
+    refreshSoonTimer.unref?.()
+  }
+
   function interactionChanged(change: InteractionChange): void {
     if (stopped) return
     // Delivery-only transitions keep lifecycle/revision unchanged, so always evict and re-read the
@@ -3082,6 +3141,7 @@ export function createBoard(
     deltasSince,
     rebuild,
     refresh,
+    refreshSoon,
     interactionChanged,
     async start() {
       if (stopped) throw new ProducerStoppedError("board")
@@ -3116,6 +3176,8 @@ export function createBoard(
       stopPromise = (async () => {
         if (debounce) clearTimeout(debounce)
         debounce = null
+        if (refreshSoonTimer) clearTimeout(refreshSoonTimer)
+        refreshSoonTimer = null
         if (reconcileTimer) clearInterval(reconcileTimer)
         reconcileTimer = null
         if (snoozeTimer) clearTimeout(snoozeTimer)

@@ -86,7 +86,7 @@ export function createIntegrationHarness(): IntegrationHarness {
   // Late-bound exactly as context.ts binds it: the ingest is constructed before the tailer because in
   // production the broker bridge (which takes the ingest's handler) is constructed first.
   let tailer!: Tailer
-  const ingest = createClaudeRuntimeIngest({ nudge: () => tailer.nudge?.(), receipts })
+  const ingest = createClaudeRuntimeIngest({ nudge: (slug) => tailer.nudge?.(slug), receipts })
 
   tailer = createTailer({
     project,

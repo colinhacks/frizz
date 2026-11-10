@@ -903,7 +903,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   // provider's own turn reading, which the fold may consult but never be overridden by. See
   // backend/claude-runtime-ingest.ts. Created BEFORE the bridge because the bridge takes its handler;
   // its nudge target is the tailer, created below, so `tailer` is late-bound the same way `board` is.
-  const claudeRuntimeIngest = claudeBrokerBridgeEnabled() ? createClaudeRuntimeIngest({ nudge: () => tailer.nudge?.() }) : undefined
+  const claudeRuntimeIngest = claudeBrokerBridgeEnabled() ? createClaudeRuntimeIngest({ nudge: (slug) => tailer.nudge?.(slug) }) : undefined
   resources.claudeRuntimeIngest = claudeRuntimeIngest
 
   // Claude session-broker bridge — the detached daemon that owns every claude thread's SDK session,
@@ -1080,13 +1080,20 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     onCrossSessionMessage: (peer) => void sessionPeerResolver(peer, project.id),
     backendFor,
     codexModels: () => readCodexModels(undefined, opts.codexVersion),
+    // Through refreshSoon, not refresh: a busy worker's events change the board many times a second, and
+    // each refresh builds every thread's view (see BOARD_REFRESH_MIN_MS). The sweep rides with the
+    // refresh that reads what it registers.
     onChange: () => {
-      try {
-        questionRegistrar?.sweep()
-      } catch (err) {
-        // A registrar failure must never cost the board its refresh.
-        frizzLog.warn("server", `question registrar sweep failed: ${err instanceof Error ? err.message : String(err)}`)
+      const sweep = () => {
+        try {
+          questionRegistrar?.sweep()
+        } catch (err) {
+          // A registrar failure must never cost the board its refresh.
+          frizzLog.warn("server", `question registrar sweep failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
       }
+      if (board.refreshSoon) return board.refreshSoon(sweep)
+      sweep()
       board.refresh()
     },
     onTranscriptChange: (slugs) => transcriptChange.emit(slugs),
