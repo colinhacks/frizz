@@ -1746,3 +1746,48 @@ test("deflate: a frame of a patch's size goes out compressed, with an 8 KiB wind
     await h.close()
   }
 })
+
+test("memo: a busy transcript's push serializes only the messages that changed, and the memo leaves with the last subscriber", async () => {
+  // A live window as the fold hands it over: the SAME message objects read after read, one of them
+  // mutated in place (a tool result back-filled), one appended.
+  const window: TranscriptMessage[] = Array.from({ length: 300 }, (_, i) => ({
+    sourceId: `claude:s:${i * 100}`,
+    role: "assistant",
+    text: `step ${i} ${"z".repeat(2000)}`, // a long reply: the kind of message the memo keeps across reads
+    tools: [{ name: "Bash", status: "completed" }],
+    parts: [],
+  }) as TranscriptMessage)
+  const h = await startHarness()
+  h.transcripts.set("foo", window)
+  const realStringify = JSON.stringify
+  let messageEncodes = 0
+  JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+    const v = args[0] as { sourceId?: unknown } | null
+    if (v && typeof v === "object" && typeof v.sourceId === "string") messageEncodes++
+    return realStringify(...args)
+  }) as typeof JSON.stringify
+  try {
+    const c = await connectClient(h.port)
+    await c.next() // hello
+    c.ws.send(realStringify({ t: "sub", topic: "transcript", slug: "foo" }))
+    await c.next()
+    assert.equal(messageEncodes, 300, "the first push serializes the window once")
+
+    window[150]!.tools[0]!.status = "failed" // in place, far behind the tail
+    window.push({ sourceId: "claude:s:30000", role: "assistant", text: "new", tools: [], parts: [] } as TranscriptMessage)
+    messageEncodes = 0
+    h.transcriptChange.emit(["foo"])
+    const push = await c.next()
+    assert.equal(push.t, "transcript")
+    if (push.t === "transcript") assert.equal(realStringify(push.messages), realStringify(window), "exactly the window as it is now")
+    assert.equal(messageEncodes, 2, "only the mutated message and the new one were serialized")
+    assert.equal(h.appSocket.transcriptJsonMemos, 1)
+
+    c.ws.send(realStringify({ t: "unsub", topic: "transcript", slug: "foo" }))
+    await waitFor(() => h.appSocket.transcriptJsonMemos === 0, "the memo to be dropped with the last subscriber")
+    c.ws.close()
+  } finally {
+    JSON.stringify = realStringify
+    await h.close()
+  }
+})
