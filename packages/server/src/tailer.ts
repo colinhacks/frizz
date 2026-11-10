@@ -41,7 +41,7 @@ import {
   type TailCacheEntry,
   type TailStateCache,
 } from "./tail-cache.ts"
-import { log as frizzLog } from "./logging.ts"
+import { faultSummary, log as frizzLog } from "./logging.ts"
 import { frizzTempDir } from "./frizz-paths.ts"
 import { pidIsAlive } from "./project-identity.ts"
 import { redactToolPayload } from "./credential-redaction.ts"
@@ -113,6 +113,20 @@ const PRIME_BUDGET_MS = 200
 const TRANSCRIPT_READ_WINDOW = 16 * 1024 * 1024
 /** Shared empty carry — allocating one per window read is pure garbage. */
 const EMPTY_BUFFER = Buffer.alloc(0)
+
+/** How many skipped lines one thread reports (see lineFault). */
+const LINE_FAULT_LOG_CAP = 3
+
+/** How many bytes at the end of `buf` begin a UTF-8 character that `buf` does not finish: 0 to 3. */
+export function tornUtf8Tail(buf: Buffer): number {
+  for (let back = 1; back <= Math.min(3, buf.length); back++) {
+    const byte = buf[buf.length - back]!
+    if ((byte & 0xc0) === 0x80) continue // a continuation byte: its lead is further back
+    const length = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1
+    return length > back ? back : 0
+  }
+  return 0
+}
 // Ceiling on the adaptive poll (see scheduleTick). A tick this expensive means something is badly
 // wrong, but the tailer is still the only source of turn/liveness telemetry — it must keep running.
 const MAX_POLL_MS = 10_000
@@ -5288,7 +5302,9 @@ export function createTailer(deps: TailerDeps): Tailer {
       return // file not written yet (agent still booting) or transiently unreadable
     }
     if (size < state.offset) {
-      // truncated/rotated — restart the derivation from the top of the new file
+      // truncated/rotated — restart the derivation from the top of the new file. A REGISTERED row never
+      // gets here: the tick gives it a fresh state first (replacedInPlace), because everything derived
+      // from the old bytes is about another file. This is what is left for a state the tick does not own.
       state.offset = 0
       state.partial = ""
     }
@@ -5318,13 +5334,26 @@ export function createTailer(deps: TailerDeps): Tailer {
           if (read <= 0) break
           state.offset += read
           const view = carry.length ? Buffer.concat([carry, buf.subarray(0, read)]) : buf.subarray(0, read)
+          const viewAt = state.offset - view.length // where in the file `view` starts
           let start = 0
           for (;;) {
             const nl = view.indexOf(0x0a, start)
             if (nl === -1) break
             const line = view.toString("utf8", start, nl)
-            backend.foldLine(state, line)
-            onLine?.(line)
+            // EACH LINE IN ITS OWN TRY, and each of its two readers. The offset above already covers
+            // the whole read, so a throw that left this loop took every later line of the read with
+            // it: they were never folded and never read again, the offset sat at the end of the file
+            // as if they had been, and that state was then written to the tail cache. Nothing said so.
+            try {
+              backend.foldLine(state, line)
+            } catch (error) {
+              lineFault(state, "fold", viewAt + start, error)
+            }
+            try {
+              onLine?.(line)
+            } catch (error) {
+              lineFault(state, "line hook", viewAt + start, error)
+            }
             start = nl + 1
           }
           carry = start < view.length ? Buffer.from(view.subarray(start)) : EMPTY_BUFFER
@@ -5335,10 +5364,45 @@ export function createTailer(deps: TailerDeps): Tailer {
     } catch {
       // A read that raced a write/unlink stops here. Whatever was folded stays folded and
       // `state.offset` matches it exactly, so the next tick resumes rather than repeating.
-      state.partial = carry.toString("utf8")
-      return
     }
-    state.partial = carry.toString("utf8") // the (possibly empty) trailing partial line
+    parkPartial(state, carry) // the (possibly empty) trailing partial line
+  }
+
+  // THE PARTIAL LINE IS KEPT AS TEXT, SO IT MUST END ON A WHOLE CHARACTER. A read can end anywhere in a
+  // record that is still being written, including between the bytes of one character. Decoded there,
+  // the first half became U+FFFD, and so did the second half when it arrived: a line cut inside "ï"
+  // came back as "na\uFFFD\uFFFDve", in the title, the preview, and the text the delivery ledger
+  // matches a queued message by. The bytes of a character the read stopped inside are handed back
+  // instead: the offset steps back over them and the next read meets the character whole.
+  function parkPartial(state: TailState, carry: Buffer): void {
+    const torn = tornUtf8Tail(carry)
+    state.partial = carry.toString("utf8", 0, carry.length - torn)
+    state.offset -= torn
+  }
+
+  // One line that could not be folded, counted and said. The count is per thread and the log is capped:
+  // a fold bug meets every record of its kind, and the first few name it as well as the thousandth.
+  const lineFaults = new Map<string, number>()
+  function lineFault(state: TailState, what: "fold" | "line hook", at: number, error: unknown): void {
+    const key = state.foreign ? `foreign:${state.slug}` : state.slug
+    const count = (lineFaults.get(key) ?? 0) + 1
+    lineFaults.set(key, count)
+    if (count > LINE_FAULT_LOG_CAP) return
+    frizzLog.error("tailer", `thread ${state.slug}: the ${what} threw on the record at byte ${at} of ${state.path}; the record was skipped and the read went on (${count} so far): ${faultSummary(error)}`)
+  }
+
+  // A file shorter than what was read of it is another file under the same name, and nothing derived
+  // from the old bytes describes it. `consume` alone used to answer this by rewinding its offset, which
+  // replayed the new file over the old thread's state with `primed` still true: the old sub-agents and
+  // first message stayed, and the replay announced a turn ending that was history. No provider rewrites
+  // a transcript in place today; a restore from a backup or a sync tool can.
+  function replacedInPlace(state: TailState): boolean {
+    if (state.offset <= 0) return false
+    try {
+      return statSync(state.path).size < state.offset
+    } catch {
+      return false // gone or unreadable is resolveTranscript's question, not this one
+    }
   }
 
   // Every OTHER row's pinned + discovered id — the exclude set so discovery never steals a transcript
@@ -5789,6 +5853,12 @@ export function createTailer(deps: TailerDeps): Tailer {
       // and leaves exactly the state the fold's own deferral leaves. Nothing outside can tell the two
       // apart either: `get` already answers undefined both for a slug with no state and for a stale one
       // (registeredStateIsCurrent), and the scheduler's own seams read that as "unknown", never as idle.
+      // A transcript replaced in place by a shorter one starts over on a fresh state: the same silent
+      // re-adoption a relocated file gets, and it waits its turn in the prime budget like any other.
+      if (state && replacedInPlace(state)) {
+        states.delete(row.slug)
+        state = undefined
+      }
       if (!state && primeDeferred(row)) {
         primeIncomplete = true
         continue

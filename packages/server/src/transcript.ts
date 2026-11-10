@@ -46,6 +46,7 @@ import { projectAcpTranscript, readAcpTranscriptFile, type AcpUserRecordProjecto
 import { projectOpencodeTranscript, readOpencodeTranscriptFile, type OpencodeToolCardBuilder } from "./backend/opencode-transcript.ts"
 import { discoverTranscriptDir, discoverTranscriptId, DISCOVERY_GRACE_MS } from "./discover.ts"
 import { isClaudeAuthErrorText, isMonitorTimeoutEvent, parseSignalFence } from "./tailer.ts"
+import { faultSummary, log as frizzLog } from "./logging.ts"
 import { projectSignOffs } from "./sign-offs.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
 import { BACKGROUND_JOB_REFUSAL, hasEscapingBackgroundJob } from "../../../cc-worker/hooks/bash-background.mjs"
@@ -574,6 +575,9 @@ export function retireStaleQueuedBubbles(messages: TranscriptMessage[], nowMs: n
 // `processLine` is byte-for-byte the legacy per-line body (`continue` → `return`). sourceId stays
 // `${identityPrefix}:${lineOffset}` where lineOffset counts bytes INCLUDING newlines, cumulative from
 // byte 0 — identical to a one-shot `raw.split("\n")` fold, preserved exactly across chunk boundaries.
+/** How many skipped records one fold reports. A fold that keeps meeting them has said what is wrong. */
+const RECORD_FAULT_LOG_CAP = 3
+
 export interface TranscriptFold {
   ingest(chunk: string): void
   finalize(): void
@@ -778,7 +782,26 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
     pendingParts.length = 0
   }
 
+  // ONE BAD RECORD COSTS ONE RECORD. A throw out of the fold of one line used to leave through `ingest`,
+  // which had already taken the whole chunk: every line after the bad one in that chunk was dropped, the
+  // byte offsets of everything later were short by them, and the retained fold's reader had already
+  // moved its cursor past the chunk, so nothing ever read them again. Measured with a line that is the
+  // JSON value `null` (it parses, and `rec.type` threw): two records after it were never projected.
+  // A fuzz of 1,611 mutated real records found no other way in, so this is a net under a future fold
+  // bug or a record shape nobody has seen, and it says so in the log instead of hiding it.
+  let recordFaults = 0
   function processLine(line: string, lineOffset: number): void {
+    try {
+      foldRecord(line, lineOffset)
+    } catch (error) {
+      recordFaults++
+      if (recordFaults <= RECORD_FAULT_LOG_CAP) {
+        frizzLog.warn("transcript", `${identityPrefix}: the record at byte ${lineOffset} could not be folded and was skipped (${recordFaults} so far in this fold): ${faultSummary(error)}`)
+      }
+    }
+  }
+
+  function foldRecord(line: string, lineOffset: number): void {
     if (!line.trim()) return
     const sourceId = `${identityPrefix}:${lineOffset}`
     let rec: Raw
@@ -787,6 +810,8 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
     } catch {
       return
     }
+    // A line can parse and still not be a record: `null`, a number, a string. None of them says anything.
+    if (rec === null || typeof rec !== "object") return
 
     // A held-back rest divider lands HERE — ahead of whatever record follows the turn that ended, so it
     // sits between the two turns. The one record that must not flush it is another chunk of the SAME

@@ -340,6 +340,16 @@ export const log = {
 }
 
 /**
+ * An error as one log line: its message and the frame that threw. For a fault met while reading someone's
+ * data (a transcript record), where the line must name the fault and carry nothing of what was read.
+ */
+export function faultSummary(error: unknown): string {
+  if (!(error instanceof Error)) return String(error).slice(0, 200)
+  const frame = error.stack?.split("\n")[1]?.trim()
+  return `${error.message.slice(0, 200)}${frame ? ` (${frame.slice(0, 160)})` : ""}`
+}
+
+/**
  * Collect everything logged while `body` runs, writing nothing to disk.
  *
  * These diagnostics used to be `console.error` calls, and the tests that guard them captured the
