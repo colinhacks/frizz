@@ -391,13 +391,19 @@ test("aiRenameThread RPC: the title request carries the opening task, not the la
     h.storage.setClaudeRuntime("rename-src", "broker")
     const task = "Investigate the flaky resume test and fix it"
     const envelope = `orientation the operator never wrote${DISPATCH_TASK_BANNER_MARKER}${task}`
-    writeFileSync(
-      join(logDir, "sid-rename-src.jsonl"),
-      [
-        JSON.stringify({ type: "user", timestamp: "2026-08-24T00:00:00.000Z", message: { role: "user", content: envelope } }),
-        JSON.stringify({ type: "assistant", timestamp: "2026-08-24T00:01:00.000Z", message: { id: "m1", role: "assistant", content: [{ type: "text", text: lastAssistant }] } }),
-      ].map((l) => l + "\n").join(""),
-    )
+    // A LONG thread: 400 exchanges after the opening, so the latest window (300 messages) starts in the
+    // middle of the conversation, on a later message from the human. The title is still named from the
+    // opening. (Until 2026-11-10 it was named from the window's first user message.)
+    const later = Array.from({ length: 400 }, (_, i) => [
+      JSON.stringify({ type: "user", timestamp: "2026-08-24T00:02:00.000Z", message: { role: "user", content: `a side question, number ${i}` } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-08-24T00:03:00.000Z", message: { id: `side-${i}`, role: "assistant", content: [{ type: "text", text: `an answer to it, number ${i}` }] } }),
+    ]).flat()
+    const transcript = [
+      JSON.stringify({ type: "user", timestamp: "2026-08-24T00:00:00.000Z", message: { role: "user", content: envelope } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-08-24T00:01:00.000Z", message: { id: "m1", role: "assistant", content: [{ type: "text", text: lastAssistant }] } }),
+      ...later,
+    ].map((l) => l + "\n").join("")
+    writeFileSync(join(logDir, "sid-rename-src.jsonl"), transcript)
     const described: string[] = []
     ;(h.ctx as { claudeBroker?: unknown }).claudeBroker = {
       renameSession: async (input: { description: string }) => {
@@ -409,6 +415,14 @@ test("aiRenameThread RPC: the title request carries the opening task, not the la
     assert.deepEqual(result, { title: "Fix the flaky resume test" })
     assert.deepEqual(described, [task])
     assert.equal(h.storage.getSession("rename-src")?.title, "Fix the flaky resume test")
+
+    // A thread whose transcript was found under another id (transcript_id) is read from that file, as
+    // every other reader reads it: the pinned session id names a file that holds something else, or nothing.
+    rmSync(join(logDir, "sid-rename-src.jsonl"))
+    writeFileSync(join(logDir, "found-rename-src.jsonl"), transcript)
+    h.storage.setTranscriptId("rename-src", "found-rename-src")
+    await h.router.aiRenameThread.handler({ input: { slug: "rename-src" } })
+    assert.deepEqual(described, [task, task])
     h.storage.close()
   } finally {
     rmSync(logDir, { recursive: true, force: true })

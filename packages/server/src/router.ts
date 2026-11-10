@@ -208,7 +208,7 @@ import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-e
 import {
   readEarlierThreadTranscriptPage,
   readLatestThreadTranscriptPageWithFiles,
-  readTranscript,
+  readClaudeTranscriptOpening,
   transcriptFoldCaughtUp,
   readTranscriptFile,
   readCodexTranscriptFile,
@@ -4988,7 +4988,13 @@ export function createRouter(ctx: AppContext) {
         // came out naming "the very last agent action". `displayText` is the opening prompt with
         // frizz's dispatch envelope peeled off, so the titler summarizes the operator's task rather
         // than boilerplate shared by every dispatched thread.
-        const opening = readTranscript(ctx.project, row.session_id).find((m) => m.role === "user")
+        //
+        // Read off the HEAD of the transcript (readClaudeTranscriptOpening). Until 2026-11-10 this took
+        // the first `user` message of `readTranscript`, which is the latest WINDOW: on a thread longer
+        // than its window that is a message from the middle of the conversation, often a Frizz wake, so
+        // a long thread was still named after a side conversation. It also folded the whole file inline
+        // to find it, and read the pinned session id where every other reader follows `transcript_id`.
+        const opening = readClaudeTranscriptOpening(ctx.project, row.transcript_id ?? row.session_id)
         const description =
           opening?.displayText?.trim() || opening?.text?.trim() || row.title?.trim() || input.slug
         const title = await bridge.renameSession({ threadSlug: input.slug, sessionId: row.session_id, description })

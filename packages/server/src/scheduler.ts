@@ -1460,7 +1460,7 @@ export interface SchedulerDeps {
   boardThreads?: () => Promise<readonly ThreadView[]>
   // The FULL text of a thread's last assistant message, read from its transcript (the tailer keeps only
   // a 200-character preview). What a parent is handed when its child rests without a registered done.
-  lastAssistantText?: (slug: string) => string | undefined
+  lastAssistantText?: (slug: string) => string | undefined | Promise<string | undefined>
   // Hand a child's handoff to its parent as a `<thread-message>` — the router's `ctx.threadInbox`, the
   // same delivery `frizzctl steer` makes, so it wakes a resting parent, reaches a running one at its next
   // tool boundary and reopens an archived one. Resolves once the message is handed to the runtime.
@@ -5358,7 +5358,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const parent = deps.storage.getSession(view.parentSlug)
       if (!parent) continue
       const done = registeredDoneFence(deps.storage.getThreadDone(row.slug), tele.lastUserAt)
-      const handoff = done ? deps.storage.getThreadDone(row.slug)!.body : deps.lastAssistantText?.(row.slug) ?? tele.lastAssistant ?? ""
+      let handoff: string
+      if (done) handoff = deps.storage.getThreadDone(row.slug)!.body
+      else {
+        // The read can wait on a fold of the child's transcript (transcript.ts readLastAssistantText), and
+        // a child that spoke again meanwhile has a new rest: what was read may be the middle of that
+        // turn, so this rest is left alone and the new one is reported when the child comes to it.
+        const said = await deps.lastAssistantText?.(row.slug)
+        const after = deps.tailer.get(row.slug)
+        if (!after || after.turn !== "idle" || after.lastAssistantAt !== view.handoffRestAt) continue
+        handoff = said ?? tele.lastAssistant ?? ""
+      }
       const title = view.title || row.slug
       try {
         await deps.deliverToThread({

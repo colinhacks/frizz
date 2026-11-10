@@ -137,6 +137,55 @@ test("a child's done reaches its parent once, through the board's own verdict, a
   await scheduler.stop()
 })
 
+test("a child's last words are waited for, and a child that spoke again meanwhile is reported at its new rest", async (t) => {
+  const { storage, project } = sandbox(t)
+  const needsInput = { kind: "awaiting" as const, body: "Which name should the flag take?", hints: [{ kind: "status" as const, value: "needs_input" }] }
+  storage.upsertSession(row("parent"))
+  storage.upsertSession(row("child"))
+  storage.setParentSlug("child", "parent")
+  const map = new Map<string, SessionTelemetry>([
+    ["parent", tele({ turn: "in-flight", lastUserAt: T0 })],
+    ["child", tele({ lastUserAt: T0, lastAssistantAt: T1, lastAssistant: "a preview of", lastFence: needsInput })],
+  ])
+  const tailer = tailerOf(map)
+  const board: BoardManager = createBoard(project, storage, new Bus(), tailer, "boot")
+  const delivered: { from: ThreadMessageSender; to: string; message: string }[] = []
+  let reads = 0
+  // The read of the child's transcript takes a while (it folds the file in slices), and what happens to
+  // the child while it does is this test's to say.
+  let whileReading = (): void => {}
+  let said = "The whole of what the child said, far past the 200 characters the tailer keeps."
+  const scheduler = createScheduler({
+    storage, tailer, resume: () => {}, log: () => {}, wakeQuietWindowMs: 0,
+    now: () => Date.parse(T2),
+    boardThreads: async () => (await board.rebuild()).threads,
+    lastAssistantText: async () => {
+      reads++
+      await new Promise((resolve) => setImmediate(resolve))
+      whileReading()
+      return said
+    },
+    deliverToThread: async (sent) => void delivered.push(sent),
+  })
+
+  // The child starts a new turn during the read: what was read may be the middle of that turn.
+  whileReading = () => map.set("child", tele({ turn: "in-flight", lastUserAt: T1, lastAssistantAt: T1 }))
+  await scheduler.tick()
+  assert.equal(reads, 1, "the rest was a handoff, and its words were read")
+  assert.equal(delivered.length, 0, "a rest the child has already left is not handed on")
+  assert.equal(storage.getSession("child")!.child_reported_at ?? null, null, "and is not remembered as reported")
+
+  // It comes to rest again, and nothing moves during the read: this rest is the handoff, in full.
+  map.set("child", tele({ lastUserAt: T1, lastAssistantAt: T2, lastAssistant: "a preview of", lastFence: needsInput }))
+  whileReading = () => {}
+  said = "The second rest, whole."
+  await scheduler.tick()
+  assert.equal(delivered.length, 1)
+  assert.match(delivered[0]!.message, /The second rest, whole\./)
+  assert.equal(storage.getSession("child")!.child_reported_at, T2)
+  await scheduler.stop()
+})
+
 test("a child rest Frizz is still nudging is not reported until the child has answered", async (t) => {
   const { storage, project } = sandbox(t)
   // Dispatched after the cut that requires a `status:` answer, so a bare rest earns the sign-off nudge.

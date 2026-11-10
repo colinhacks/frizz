@@ -41,7 +41,7 @@ import { createAcpBackend } from "./backend/acp-transcript.ts"
 import { createOpencodeBackend } from "./backend/opencode-transcript.ts"
 import { createOpencodeBridge, type OpencodeBridge } from "./backend/opencode-bridge.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
-import { readThreadTranscript } from "./transcript.ts"
+import { readLastAssistantText } from "./transcript.ts"
 import { createAcpBridge, type AcpBridge } from "./backend/acp-bridge.ts"
 import { readClaudeAuthState, readClaudePreflightAuth, readCodexAuthState, readCodexBinaryState } from "./backend/auth-status.ts"
 import { launchPrefixArgv, launchPrefixAwareAuth } from "./backend/launch-prefix.ts"
@@ -1217,14 +1217,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     // CHILD THREADS (scheduler SOURCE 17): the board's verdict on each child's rest, the child's own words,
     // and the steer path that carries them to its parent.
     boardThreads: async () => (await board.snapshot()).threads,
-    lastAssistantText: (slug) => {
-      const messages = readThreadTranscript(project, storage, slug, backendFor)
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i]!
-        if (m.role === "assistant" && !m.kind && m.text.trim()) return m.text
-      }
-      return undefined
-    },
+    lastAssistantText: (slug) => readLastAssistantText(project, storage, slug, backendFor),
     deliverToThread: async (sent) => {
       const inbox = builtContext.current?.threadInbox
       if (!inbox) throw new Error("the router has not bound this project's thread inbox yet")

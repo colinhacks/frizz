@@ -15,6 +15,9 @@ import {
   readLatestThreadTranscriptPage,
   readLatestThreadTranscriptPageWithFiles,
   projectClaudeTranscript,
+  readClaudeTranscriptOpening,
+  readLastAssistantText,
+  readThreadTranscript,
   transcriptFoldCaughtUp,
 } from "./transcript.ts"
 import { createStorage } from "./storage.ts"
@@ -177,6 +180,85 @@ test("a cold fold runs in slices with the event loop between them, and the read 
       readLatestThreadTranscriptPage(h.project, h.store, "t").messages,
       latestTranscriptWindow(projectClaudeTranscript(body + exchanges(16100, 1) + appended, `claude:${h.sid}`)),
     )
+  } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("a thread's opening message is read off the head of its transcript, however long the thread has run", () => {
+  const h = harness()
+  try {
+    // 3,000 exchanges after the opening: the latest window starts thousands of messages in.
+    writeFileSync(h.path, USER("the task the thread was opened with") + "\n" + exchanges(0, 3000))
+    __clearTranscriptCacheForTests()
+    const size = fs.statSync(h.path).size
+    assert.ok(size > 1024 * 1024, "the transcript must be several steps long")
+    const windowed = readLatestThreadTranscriptPage(h.project, h.store, "t").messages.find((m) => m.role === "user")
+    assert.match(windowed!.text, /^user-\d+$/, "the window's first user message is from the middle of the thread")
+
+    let opening: ReturnType<typeof readClaudeTranscriptOpening>
+    const read = bytesRead(() => { opening = readClaudeTranscriptOpening(h.project, h.sid) })
+    assert.equal(opening!.text, "the task the thread was opened with")
+    assert.ok(read <= 256 * 1024, `the opening is in the first step, and ${read} of ${size} bytes were read`)
+  } finally {
+    __clearTranscriptCacheForTests()
+    h.cleanup()
+  }
+})
+
+test("a thread's opening message is found past the first step: a long one, and one still queued in the first", () => {
+  const h = harness()
+  try {
+    // Longer than two steps, in two-byte characters, so the steps cut the record and cut characters.
+    const long = "é".repeat(300_000)
+    writeFileSync(h.path, USER(long) + "\n" + exchanges(0, 50))
+    assert.equal(readClaudeTranscriptOpening(h.project, h.sid)?.text, long)
+
+    // A send the runtime has not handed over yet is a queued bubble. Its delivery is a later record, and
+    // that is the message the thread opened with: a step that ends between the two must read on.
+    const enqueued = JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp: "2026-07-10T18:00:00.000Z", content: "queued, then delivered" })
+    const sidecar = JSON.stringify({ type: "attachment", timestamp: "2026-07-10T18:00:00.500Z", attachment: { type: "hook_additional_context", content: "x".repeat(300_000) } })
+    const delivered = JSON.stringify({ type: "attachment", timestamp: "2026-07-10T18:00:01.000Z", attachment: { type: "queued_command", prompt: "queued, then delivered", commandMode: "prompt", origin: { kind: "human" } } })
+    writeFileSync(h.path, [enqueued, sidecar, delivered].join("\n") + "\n" + exchanges(0, 50))
+    const opening = readClaudeTranscriptOpening(h.project, h.sid)
+    assert.equal(opening?.text, "queued, then delivered")
+    assert.ok(!opening?.queued, "the delivered message, not the bubble that was waiting for it")
+
+    // Only ever queued: that is still what the thread was asked.
+    writeFileSync(h.path, enqueued + "\n")
+    assert.equal(readClaudeTranscriptOpening(h.project, h.sid)?.text, "queued, then delivered")
+
+    // Nothing from the human at all, and no file.
+    writeFileSync(h.path, ASSISTANT("a-0", "spoke first") + "\n")
+    assert.equal(readClaudeTranscriptOpening(h.project, h.sid), undefined)
+    assert.equal(readClaudeTranscriptOpening(h.project, `absent-${h.sid}`), undefined)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("a thread's last words are read with the event loop running, and are what the whole-file reader would say", async () => {
+  const h = harness()
+  try {
+    // Eight megabytes nobody has opened: no fold of it is retained, which is how a child thread's
+    // transcript stands when its rest is handed to its parent.
+    const last = `the handoff, ${"é".repeat(2000)}`
+    writeFileSync(h.path, exchanges(0, 16000) + ASSISTANT("long", "é".repeat(300_000)) + "\n" + USER("one more thing") + "\n" + ASSISTANT("final", last) + "\n")
+    __clearTranscriptCacheForTests()
+
+    let turns = 0
+    let turning = true
+    const turn = () => { if (turning) { turns++; setImmediate(turn) } }
+    setImmediate(turn)
+    const said = await readLastAssistantText(h.project, h.store, "t")
+    turning = false
+    assert.equal(said, last)
+    assert.ok(turns >= 3, `the event loop only came round ${turns} times while the transcript was folded`)
+    // The fold it waited for is the one the reader uses: nothing is left to read.
+    assert.equal(bytesRead(() => { readThreadTranscript(h.project, h.store, "t") }), 0)
+
+    assert.equal(await readLastAssistantText(h.project, h.store, "no-such-thread"), undefined)
   } finally {
     __clearTranscriptCacheForTests()
     h.cleanup()

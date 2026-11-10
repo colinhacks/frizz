@@ -2385,11 +2385,15 @@ function completionEvents(
 }
 
 // ── Retained incremental parse cache ────────────────────────────────────────────────────────────────
-// readTranscript is the hot path: the /ws producer calls it via readThreadTranscript on every tailer
-// tick for every subscribed thread, and today it re-reads + re-parses the WHOLE JSONL from byte 0 each
-// time. This LRU keeps the fold's closure state alive per file and feeds it only the bytes appended
-// since the last read (the fold's in-place mutations back-fill earlier messages transparently). Bounded
-// at 16 files. A file that shrank/rotated or whose identityPrefix changed drops its entry → full re-fold.
+// Every read of a Claude transcript used to re-read and re-parse the WHOLE JSONL from byte 0. This LRU
+// keeps the fold's closure state alive per file and feeds it only the bytes appended since the last read
+// (the fold's in-place mutations back-fill earlier messages transparently). Bounded at 16 files. A file
+// that shrank/rotated or whose identityPrefix changed drops its entry → full re-fold.
+//
+// WHO READS THROUGH IT NOW: the paged reader (projectSnapshot), which is what the `threadTranscript` RPC
+// and the /ws push both serve from, and `readTranscript` below. `readTranscript` was the /ws producer
+// when this was written; since the push moved to the paged reader (app-socket.ts) its one production
+// caller is `readThreadTranscript`, for a child thread's handoff (readLastAssistantText).
 interface TranscriptCacheEntry {
   identityPrefix: string
   fold: TranscriptFold
@@ -2458,7 +2462,7 @@ function readAppendedBytes(fd: number, from: number, to: number): Buffer {
 }
 
 // Resolve the retained fold for a file, dropping a stale entry first. Shared by BOTH readers of a claude
-// JSONL — readTranscript (the /ws producer) and the paged reader's projectSnapshot — because they are
+// JSONL — readTranscript (the whole-window reader) and the paged reader's projectSnapshot — because they are
 // provably the same fold: each derives its identityPrefix from the very id that NAMES the file
 // (`claude:${id}` ↔ `.../${id}.jsonl`), so identityPrefix is a function of the path and one path-keyed
 // entry serves both. Before this they kept SEPARATE caches and folded the same 30 MB twice on a cold
@@ -4859,8 +4863,12 @@ export function readCodexTranscriptFile(absPath: string, nativeId = absPath): Tr
 // if one was cached, else its pinned session_id; for a foreign thread the slug itself as a session id;
 // else empty. When the pinned transcript renders empty and nothing's been cached yet, a best-effort
 // content discovery (scratchpad sentinel, same as the tailer) re-links a drifted transcript so the drawer
-// isn't blank while the tailer catches up. The single resolution the threadTranscript RPC and the /ws
-// transcript producer share, so foreign threads render identically on both paths. Degrades to [].
+// isn't blank while the tailer catches up. Degrades to [].
+//
+// It was the resolution the `threadTranscript` RPC and the /ws producer shared. Both read the PAGED
+// reader now (readLatestThreadTranscriptPage), and this one is left with a single production caller,
+// readLastAssistantText below, which waits for the sliced fold before calling it: on a file the
+// retained fold has not read, this folds every unread byte inline.
 export function readThreadTranscript(
   project: Project,
   storage: Storage,
@@ -4931,6 +4939,73 @@ export function readThreadTranscript(
     return source.backend === "codex" ? readCodexTranscriptFile(source.path, slug) : readTranscript(project, slug)
   }
   return []
+}
+
+// THE MESSAGE A CLAUDE THREAD OPENED WITH, read off the HEAD of its transcript.
+//
+// The opening is the first record the human's side wrote, so it is in the first bytes of the file
+// however long the thread has run since. Asking the readers above for it was wrong twice over: they
+// return the LATEST WINDOW, whose first `user` message on a long thread is whatever the human (or a
+// Frizz wake, which is `user` too) said a few hundred messages ago, and they fold the whole file to
+// find it. Measured 2026-11-09 on this machine's open threads: 16 of 70 had a projection longer than
+// their window, and on all 16 the window's first `user` message was not the opening.
+//
+// A private fold from byte 0, so the message is projected exactly as the full fold projects it (the
+// dispatch envelope is peeled only off the FIRST user message, which only a fold from the start can
+// know), fed a step at a time until it has one. The cap is for a file with no such message, and for an
+// opening that carries megabytes of pasted image: past it the caller falls back to what it has.
+const OPENING_STEP_BYTES = 256 * 1024
+const OPENING_MAX_BYTES = 32 * 1024 * 1024
+
+export function readClaudeTranscriptOpening(project: Project, transcriptId: string): TranscriptMessage | undefined {
+  let fd: number | undefined
+  try {
+    fd = openSync(resolveTranscriptPath(project, transcriptId), "r")
+    const size = Math.min(fstatSync(fd).size, OPENING_MAX_BYTES)
+    const fold = createTranscriptFold(`claude:${transcriptId}`)
+    const decoder = new StringDecoder("utf8")
+    const firstUser = () => fold.allMessages().find((m) => m.role === "user")
+    for (let at = 0; at < size; at += OPENING_STEP_BYTES) {
+      const chunk = decoder.write(readAppendedBytes(fd, at, Math.min(at + OPENING_STEP_BYTES, size)))
+      if (!chunk) continue
+      fold.ingest(chunk)
+      if (!chunk.includes("\n")) continue // no record ended in this step, so the projection is where it was
+      // A bubble still QUEUED is a send the runtime has not handed over yet: its delivered record, a few
+      // lines on, is the one that carries the peeled text.
+      const found = firstUser()
+      if (found && !found.queued) return found
+    }
+    return firstUser()
+  } catch {
+    return undefined // no file yet, or one that cannot be read: the caller names the thread from what it has
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
+/**
+ * The last thing a thread's agent said, whole: what a child thread's rest hands its parent (scheduler
+ * SOURCE 17) when the child signed off with no registered `done` body.
+ *
+ * It waits for the sliced fold first. `readThreadTranscript` folds whatever the retained fold has not
+ * read INLINE, and a child nobody has opened has no retained fold at all, so each handoff folded the
+ * child's whole transcript on the server's one thread, in the middle of a scheduler tick: at the
+ * measured 9.4 ms/MB, 1.3s for a 140 MB transcript, during which no project's board, socket or RPC
+ * moved. Caught up, the read that follows folds only what was appended since.
+ */
+export async function readLastAssistantText(
+  project: Project,
+  storage: Storage,
+  slug: string,
+  backendFor?: (kind?: string) => AgentBackend,
+): Promise<string | undefined> {
+  await transcriptFoldCaughtUp(project, storage, slug, backendFor)
+  const messages = readThreadTranscript(project, storage, slug, backendFor)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!
+    if (m.role === "assistant" && !m.kind && m.text.trim()) return m.text
+  }
+  return undefined
 }
 
 export interface AgentLifecycleProjection {
