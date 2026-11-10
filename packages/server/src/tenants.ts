@@ -114,7 +114,12 @@ export function createTenantMap<App = unknown>(options: TenantMapOptions<App>): 
           // racing a second context onto the same database.
           await deactivate(project.id)
         }
-        const ctx = await options.createContext({ ...options.contextOptions, project })
+        // Copied by descriptor, not spread: a spread reads each getter once, and `claudeBin` is a getter
+        // because the Claude Code a server runs can move while it serves (claude-float.ts).
+        const ctx = await options.createContext(Object.defineProperties({}, {
+          ...Object.getOwnPropertyDescriptors(options.contextOptions ?? {}),
+          project: { value: project, enumerable: true, writable: true, configurable: true },
+        }) as ContextOptions)
         open.set(project.id, { project, ctx, app: options.createApp?.(ctx) })
         // Inside the try on purpose: a producer that fails to start is reported through the same seam
         // as a context that fails to open, and must not end a process serving other projects.

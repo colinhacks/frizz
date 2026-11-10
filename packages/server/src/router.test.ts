@@ -72,6 +72,32 @@ test("agent lifecycle overlay replaces spawn latency with the retained child run
   assert.equal("agentStatus" in page.messages[0].tools[0], false, "the transcript cache projection is not mutated")
 })
 
+test("a dispatch card on another family than its parent's reads its edition off the child's own transcript", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agent-card-edition-"))
+  try {
+    const childFile = join(dir, "agent-aCross.jsonl")
+    writeFileSync(childFile, `${JSON.stringify({ type: "assistant", isSidechain: true, message: { role: "assistant", model: "claude-sonnet-5-5", content: [] } })}\n`)
+    const cross = { name: "Agent", detail: "Summarize the changelog", agentId: "toolu_cross", subagentType: "frizz:sonnet-medium", status: "completed" as const }
+    // The parent's record already stated this one's edition, so nothing is read for it.
+    const inherited = { name: "Agent", detail: "Run the matrix", agentId: "toolu_inherit", subagentType: "frizz:claude-opus-5-5-xhigh", status: "completed" as const }
+    const page = {
+      messages: [{ role: "assistant" as const, text: "", tools: [cross, inherited], parts: [{ kind: "tools" as const, tools: [cross, inherited] }] }],
+      beforeCursor: null,
+      hasEarlier: false,
+      reachedTurnBoundary: true,
+      transcriptKey: "test-key",
+    }
+    const projected = projectTranscriptPageAgentLifecycles(page, (id) => ({ outputFile: id === "toolu_cross" ? childFile : join(dir, "never-read.jsonl") }))
+    assert.equal(projected.messages[0].tools[0].subagentType, "frizz:claude-sonnet-5-5-medium")
+    assert.equal(projected.messages[0].tools[1].subagentType, "frizz:claude-opus-5-5-xhigh")
+    const part = projected.messages[0].parts[0]
+    assert.equal(part.kind === "tools" ? part.tools[0].subagentType : undefined, "frizz:claude-sonnet-5-5-medium", "ordered parts receive the same refinement")
+    assert.equal(page.messages[0].tools[0].subagentType, "frizz:sonnet-medium", "the transcript cache projection is not mutated")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("GitHub dispatch payload preserves the exact captured backend profile (no permission passthrough)", () => {
   const batch = {
     items: [{ kind: "pr" as const, number: 91 }],

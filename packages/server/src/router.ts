@@ -2681,6 +2681,11 @@ export function createRouter(ctx: AppContext) {
         outcome: z.enum(["completed", "failed", "killed"]).optional(),
         startedAt: z.string().optional(),
         finishedAt: z.string().optional(),
+        // The model id the child's latest request ran on, off its own transcript (Claude only) — the
+        // drawer's readout names the edition from it, as the thread's composer names its worker's. The
+        // dispatch cell cannot always: an alias of another family than the parent's resolves inside the
+        // runtime, and a descendant's cell is its bare agent type (subagent-profile.ts).
+        model: z.string().optional(),
       }),
       handler: async ({ input }) => {
         const info = ctx.tailer.subAgent(input.slug, input.id)
@@ -2709,6 +2714,7 @@ export function createRouter(ctx: AppContext) {
           ...(info.state === "done" && info.outcome ? { outcome: info.outcome } : {}),
           ...(info.startedAt ? { startedAt: info.startedAt } : {}),
           ...(info.state === "done" && info.finishedAt ? { finishedAt: info.finishedAt } : {}),
+          ...(usage?.model ? { model: usage.model } : {}),
         }
       },
     }),

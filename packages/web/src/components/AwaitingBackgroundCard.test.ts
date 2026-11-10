@@ -398,11 +398,14 @@ test("a row with nothing to open is non-interactive — no chevron, never a disa
 
 // The profile is the TOOLTIP's, not the status's (maintainer 2026-10-08): the status keeps the one
 // reading that changes, and the title keeps its width.
-test("the sub-agent row keeps its profile in the tooltip, without the dispatch namespace", () => {
+test("the sub-agent row keeps its profile in the tooltip, in the words every surface names it with", () => {
   const now = Date.parse("2026-07-28T09:30:00.000Z")
   const row = renderToStaticMarkup(createElement(AgentRow, { agent: agent("running"), slug: "demo-thread", now }))
-  assert.match(row, /title="Open this sub-agent \(opus-high\) — working for 30m"/)
+  assert.match(row, /title="Open this sub-agent \(opus › high\) — working for 30m"/)
   assert.doesNotMatch(row, /frizz:opus-high/)
+  // A cell carrying the edition reads it, as the thread's own composer does.
+  const versioned = renderToStaticMarkup(createElement(AgentRow, { agent: { ...agent("running"), subagentType: "frizz:claude-opus-5-5-high" }, slug: "demo-thread", now }))
+  assert.match(versioned, /title="Open this sub-agent \(opus 5\.5 › high\) — working for 30m"/)
   assert.match(row, /data-wait-status[^>]*>30m</)
 })
 

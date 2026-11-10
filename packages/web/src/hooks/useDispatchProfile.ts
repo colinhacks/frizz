@@ -6,6 +6,8 @@ import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { showToast } from "../store.ts"
 import { scopedKey, useProjectScope } from "../lib/projectScope.tsx"
 import { settingsQuery } from "./useSettingsAutosave.tsx"
+import { useOpencodeModels } from "./useOpencodeModels.ts"
+import type { opencodeProfileGroup } from "../lib/opencodeProfile.ts"
 import {
   applyDispatchPreferenceUpdate,
   resolveDispatchPreferences,
@@ -34,6 +36,9 @@ export function useDispatchProfile(): {
   opencodeProfile: DefaultAgentProfile
   // The model menu's leading group on a machine that can start nothing else (defaultAgentProfile).
   firstGroup: string | undefined
+  // What the model menu's OpenCode group is built from: the listed models, read only once OpenCode is
+  // chosen or its list is opened (hooks/useOpencodeModels.ts), and the saved slug.
+  opencode: Parameters<typeof opencodeProfileGroup>[0]
   loadError: boolean
   saveProfile: (update: SetDispatchPreferenceInput) => void
 } {
@@ -90,6 +95,14 @@ export function useDispatchProfile(): {
     [controlsReady, preferences.data, codexList, acpList],
   )
 
+  const opencodeModels = useOpencodeModels(project, resolved?.backend === "opencode")
+  const opencode = useMemo(() => ({
+    models: opencodeModels.models,
+    loading: opencodeModels.loading,
+    saved: resolved?.opencodeModel,
+    onRequestOptions: opencodeModels.request,
+  }), [opencodeModels.models, opencodeModels.loading, opencodeModels.request, resolved?.opencodeModel])
+
   return {
     resolved,
     codexList,
@@ -98,6 +111,7 @@ export function useDispatchProfile(): {
     opencodeInstalled,
     opencodeProfile,
     firstGroup,
+    opencode,
     loadError: preferences.isError || codexModels.isError,
     saveProfile: preference.mutate,
   }

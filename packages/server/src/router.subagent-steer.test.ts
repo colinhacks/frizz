@@ -254,6 +254,30 @@ test("a provider-recorded Claude steer and Frizz's delivery journal render once"
   }
 })
 
+test("subAgentTranscript names the model the child's own transcript says it ran, edition and all", async () => {
+  let outputFile = ""
+  const h = harness(() => ({ ...RUNNING_DIRECT, outputFile }))
+  try {
+    seed(h.storage, "t")
+    outputFile = join(h.ctx.project.dir, "child.jsonl")
+    writeFileSync(outputFile, JSON.stringify({
+      type: "assistant",
+      timestamp: new Date().toISOString(),
+      isSidechain: true,
+      message: { role: "assistant", model: "claude-sonnet-5-5", usage: { input_tokens: 10, cache_read_input_tokens: 2000 }, content: [{ type: "text", text: "On it." }] },
+    }) + "\n")
+    const transcript = await h.router.subAgentTranscript.handler({ input: { slug: "t", id: "toolu_child" } })
+    assert.equal(transcript.model, "claude-sonnet-5-5")
+
+    // A child that has not answered yet states no model rather than a guessed one.
+    writeFileSync(outputFile, "")
+    const silent = await h.router.subAgentTranscript.handler({ input: { slug: "t", id: "toolu_child" } })
+    assert.equal(silent.model, undefined)
+  } finally {
+    h.cleanup()
+  }
+})
+
 test("subAgentSteer refuses a child that already settled — the case that would MISDELIVER to the parent", async () => {
   const h = harness(() => ({ outputFile: "/tmp/child.jsonl", state: "done", direct: false }))
   try {

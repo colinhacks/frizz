@@ -12,7 +12,8 @@ import {
   type SetDispatchPreferenceInput,
 } from "@frizz/shared"
 import type { SelectGroup, SelectOption } from "../components/ui/Select.tsx"
-import type { ProfileGridGroup } from "./profileGrid.ts"
+import type { ProfileGridGroup, ProfileGridSelection } from "./profileGrid.ts"
+import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "./opencodeProfile.ts"
 import {
   CLAUDE_MODELS,
   claudeModelOptions,
@@ -35,11 +36,29 @@ export interface ResolvedDispatchPreferences {
   // ACP only: the agent id and the model chosen inside it (undefined = the agent's own default).
   acpAgentId?: string
   acpModelId?: string
-  // OpenCode only: its row is the bare prefix, and the model inside it is its own picker's.
+  // OpenCode only: the whole stored slug, variant included. The menu reads it through `opencodeSelection`.
   opencodeModel?: string
   modelAvailable: boolean
   effortAvailable: boolean
   effortOptions: SelectOption[]
+}
+
+// What the model menu shows as chosen. OpenCode's variant is its effort there, though dispatch sends none.
+export function dispatchProfileValue(resolved: ResolvedDispatchPreferences): ProfileGridSelection {
+  if (resolved.backend === "opencode") return opencodeSelection(resolved.opencodeModel)
+  return { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }
+}
+
+// The preference write for a pick in the model menu. An ACP or OpenCode row carries no Frizz effort: an
+// ACP agent has none, and OpenCode's variant rides in its model slug.
+export function dispatchProfileUpdate(selection: ProfileGridSelection): SetDispatchPreferenceInput {
+  if (selection.provider === "opencode") return { field: "profile", backend: "opencode", model: opencodeSlugOf(selection) }
+  return {
+    field: "profile",
+    backend: selection.provider as Backend,
+    model: selection.model,
+    effort: (selection.effort || undefined) as Extract<SetDispatchPreferenceInput, { field: "profile" }>["effort"],
+  }
 }
 
 export function applyDispatchPreferenceUpdate(
@@ -73,6 +92,8 @@ export function dispatchProfileGroups(
   claudeModels: readonly ClaudeModel[] = [],
   // The group a signed-out machine leads with (defaultAgentProfile). The rest keep their order.
   firstGroup?: string,
+  // OpenCode's listed models and the saved slug, for its dropdown group (lib/opencodeProfile.ts).
+  opencode?: Parameters<typeof opencodeProfileGroup>[0],
 ): ProfileGridGroup[] {
   // Only the agents actually on the server's PATH get a row: the catalogue lists eight, and a grid of
   // "not installed" rows would bury the two the operator has. A SAVED agent that has since gone
@@ -111,7 +132,7 @@ export function dispatchProfileGroups(
         efforts: model.efforts,
       })),
     },
-    ...(opencodeNative ? [{ id: "opencode", label: "OpenCode", experimental: true, options: [{ model: OPENCODE_MODEL_PREFIX, label: "OpenCode", efforts: [] }] }] : []),
+    ...(opencodeNative ? [opencodeProfileGroup(opencode ?? {})] : []),
     // One agent is its own heading. "ACP agents" names the protocol, and only earns its place as a list.
     ...(acpOptions.length ? [{ id: "acp", label: acpOptions.length === 1 ? acpOptions[0]!.label : "ACP agents", options: acpOptions }] : []),
   ]

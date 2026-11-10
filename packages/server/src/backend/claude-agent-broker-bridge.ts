@@ -66,8 +66,10 @@ export interface ClaudeBrokerBinding {
 
 export interface ClaudeBrokerBridgeDeps {
   stateDir: string
-  /** Path to the `claude` executable. */
-  executablePath: string
+  /** Path to the `claude` executable, or a reader of it. A reader is asked at every fork, so a server
+   *  that moves to a newer Claude Code (claude-float.ts) starts each new daemon on it while the daemons
+   *  already running keep the build they were forked on. */
+  executablePath: string | (() => string)
   /** Base env; the broker forwards only the SDK-allowlisted subset to claude. */
   env: Record<string, string>
   /** The frizz WORKER ENVIRONMENT — constant per project, applied on every fork so a dispatch AND a
@@ -383,10 +385,12 @@ export function validatedInput(message: { id: string; text: string; parentToolUs
 
 export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): ClaudeAgentBrokerBridge {
   const sessions = new Map<string, ActiveSession>() // keyed by slug — one active session per thread
-  // Resolve the claude executable to an ABSOLUTE path ONCE: the SDK the forked daemon runs rejects a bare
+  // Resolve the claude executable to an ABSOLUTE path: the SDK the forked daemon runs rejects a bare
   // name (unlike an execvp of the CLI, which resolves it on PATH), and a bare "claude" is the default
-  // on a promoted artifact.
-  const executablePath = resolveClaudeExecutableAbsolute(deps.executablePath, deps.env)
+  // on a promoted artifact. A fixed path resolves once; a reader resolves at each fork (see the deps).
+  const fixedExecutable = typeof deps.executablePath === "string" ? resolveClaudeExecutableAbsolute(deps.executablePath, deps.env) : undefined
+  const executablePathNow = (): string =>
+    fixedExecutable ?? resolveClaudeExecutableAbsolute((deps.executablePath as () => string)(), deps.env)
 
   // Pending tool-permission escalations awaiting a human dashboard decision, keyed by interaction id.
   // The daemon holds the actual canUseTool promise (and re-delivers it on reconnect), so this only needs
@@ -655,7 +659,7 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
     // declines to guess rather than quoting a predecessor.
     const lostGeneration = sessions.get(slug)?.generation ?? lastKnownBrokerDaemon(deps.stateDir, sessionId)?.generation ?? ""
     const { record, reattached } = await adoptOrForkBroker({
-      stateDir: deps.stateDir, cwd, sessionId, executablePath, permissionMode, env: deps.env,
+      stateDir: deps.stateDir, cwd, sessionId, executablePath: executablePathNow(), permissionMode, env: deps.env,
       pluginDir: we?.pluginDir, mcpServers, allowedTools: we?.allowedTools, workerEnv,
       // The operator's launch prefix (Settings.launchPrefix.claude), read at every fork like the
       // compaction window: the next dispatch or cold resume carries an edit, a running daemon keeps the

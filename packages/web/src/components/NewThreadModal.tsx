@@ -12,11 +12,10 @@ import { NewThreadAgentMarks } from "./AgentMarks.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { SETTINGS_WRITE_KEY, settingsQuery, useSettingsAutosave } from "../hooks/useSettingsAutosave.tsx"
 import { AcpModelSelect } from "./AcpModelSelect.tsx"
-import { OpencodeModelSelect } from "./OpencodeModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { Select } from "./ui/Select.tsx"
 import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
-import { dispatchProfileGroups } from "../lib/dispatchPreferences.ts"
+import { dispatchProfileGroups, dispatchProfileUpdate, dispatchProfileValue } from "../lib/dispatchPreferences.ts"
 import { CLAUDE_DISPATCH_PERMISSION_OPTIONS } from "../lib/options.ts"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
@@ -46,7 +45,7 @@ const NEW_THREAD_MARKS = <NewThreadAgentMarks />
 // preview — only the layout around them differs.
 function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
-  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, loadError: profileLoadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, opencode, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -238,7 +237,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </PromptControlGroup>
       )
     }
-    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup)
+    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode)
     const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
@@ -254,16 +253,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             <ProfileGridSelector
               groups={profileGroups}
               agentSettings
-              // `pickerModel`, not `model`: an ACP row is keyed on the bare agent slug; the model inside
-              // the agent is the dropdown's, below.
-              value={{ provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }}
-              onValueChange={(selection) => saveProfile({
-                field: "profile",
-                backend: selection.provider as typeof resolved.backend,
-                model: selection.model,
-                // An ACP row has no effort cell, so its selection carries "" — stored as absent.
-                effort: (selection.effort || undefined) as DispatchInput["effort"],
-              })}
+              // An ACP row is keyed on the bare agent slug, and the model inside the agent is the dropdown's
+              // below. OpenCode's model and level are both chosen inside the menu (lib/opencodeProfile.ts).
+              value={dispatchProfileValue(resolved)}
+              onValueChange={(selection) => saveProfile(dispatchProfileUpdate(selection))}
               ariaLabel="Model and effort"
               title={resolved.modelAvailable && resolved.effortAvailable
                 ? "Model and reasoning effort"
@@ -278,13 +271,6 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
                 // The pick becomes the profile's model slug (`acp:<agent>@<model>`); "" (the agent's own
                 // default) drops the tail.
                 onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
-                className="max-w-[min(14rem,40vw)]"
-              />
-            )}
-            {resolved.backend === "opencode" && (
-              <OpencodeModelSelect
-                value={resolved.opencodeModel}
-                onValueChange={(slug) => saveProfile({ field: "model", backend: "opencode", value: slug })}
                 className="max-w-[min(14rem,40vw)]"
               />
             )}
@@ -311,7 +297,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </div>
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, firstGroup, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, firstGroup, opencode, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>

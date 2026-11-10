@@ -8,6 +8,7 @@ import { store, openThread, scrollToQueueCard, queueCardTargetY, pushSubAgentDra
 import { rpc } from "../api/rpc.ts"
 import { useBoardThreads, useChildThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
+import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
 import type { PinShelf } from "../groups.ts"
 import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
@@ -1199,6 +1200,12 @@ function RowPinButton({ t, shelf, className = "" }: { t: ThreadView; shelf: PinS
   )
 }
 
+// The rail row's tooltip names the child's runtime in the words every other surface uses for it.
+function childOpTitle(s: { label: string; subagentType?: string }): string {
+  const profile = subAgentProfileCell(s.subagentType)
+  return profile ? `[${profile}] ${s.label}` : s.label
+}
+
 // The rail's INDENTED child rows — the same shared ChildOpRow the queue cards and the drawer's ops
 // strip render, at "rail" density (the [ ]/[/] checkbox motif the rest of the rail speaks, indented to
 // clear the parent row's indicator column). The liveness policy is the rail's own and is deliberately
@@ -1230,7 +1237,7 @@ export function SubAgentRows({ t }: { t: ThreadView }) {
           // is where a phantom child is most often SEEN, so it is where retiring one has to be possible.
           onDismiss={childOpDismisser(t.id, s)}
           // The rail has no room for the worker-profile tag the ops strip can show, so it rides the tooltip.
-          title={s.subagentType ? `[${s.subagentType}] ${s.label}` : s.label}
+          title={childOpTitle(s)}
         />
       ))}
       <ChildThreadRows parent={t.id} childThreads={childThreads} density="rail" />
