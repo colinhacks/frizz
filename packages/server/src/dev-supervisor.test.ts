@@ -473,7 +473,28 @@ async function freeSupervisorPort(): Promise<number> {
   return address.port
 }
 
-async function eventually<T>(probe: () => T | Promise<T | undefined> | undefined, description: string, timeoutMs = 6_000): Promise<T> {
+// THE UPDATE TESTS HAND THE SUPERVISOR ITS REAL DEADLINES, AND THOSE RUN FROM THE FORK. At 500 and 600ms
+// a candidate that was only slow to start (node, the loader, an import of project-launch.ts) was judged
+// stalled before it had run a line, and the test that expected it ready failed: three runs of six, a
+// different test each time, on 2 CPUs and on a Mac at load 94. Two rules instead of one number:
+//
+// - A deadline the candidate is MEANT TO MEET is long. Readiness arrives by message, so a long bound
+//   costs nothing when the machine is quick.
+// - A deadline the candidate is MEANT TO MISS is sized from how long a child takes to start here, now,
+//   measured once: four of those, and never under the 600ms these tests always used.
+const MEETS_DEADLINE_MS = 30_000
+let measuredStall: Promise<number> | undefined
+function stallDeadlineMs(): Promise<number> {
+  return (measuredStall ??= (async () => {
+    const startedAt = performance.now()
+    const probe = spawn(process.execPath, [...process.execArgv, "--input-type=module", "-e", `await import(${JSON.stringify(projectLaunchUrl)})`], { stdio: "ignore" })
+    await once(probe, "exit")
+    return Math.max(600, Math.ceil(((performance.now() - startedAt) * 4) / 100) * 100)
+  })())
+}
+
+// Polled, so a long bound is only ever waited out by a test that is about to fail.
+async function eventually<T>(probe: () => T | Promise<T | undefined> | undefined, description: string, timeoutMs = 30_000): Promise<T> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const value = await probe()
@@ -717,7 +738,7 @@ test("Update & Restart hands the durable owner to a fresh supervisor without cop
   }
 })
 
-test("child-only Update & Restart commits one stable child without replacing its public listener", { timeout: 15_000 }, async () => {
+test("child-only Update & Restart commits one stable child without replacing its public listener", { timeout: 90_000 }, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "frizz-child-update-success-"))
   const stateDir = join(workspace, ".state")
   const childEntry = join(workspace, "child.mjs")
@@ -750,7 +771,7 @@ test("child-only Update & Restart commits one stable child without replacing its
       port, cwd: workspace, stateDir, launchTarget: target, launchOwnerToken: owner.token, watch: false,
       childLaunchProvider: () => ({ entry: childEntry, environment: { FRIZZ_STABLE_ARTIFACT: selected, EVENTS: events } }),
       updateMode: "child",
-      updateReadyTimeoutMs: 500,
+      updateReadyTimeoutMs: MEETS_DEADLINE_MS,
       updateStabilizeMs: 20,
       updateRestart: async () => { prepares++; selected = "new"; return { state: "ready", message: "Frizz new is installed and compatible" } },
       commitUpdate: () => { commits++; active = selected },
@@ -853,7 +874,11 @@ test("Restart and Update & Restart refuse, and leave the child serving, once the
   }
 })
 
-test("child updates wait for advancing candidate boot progress, but bound stalls and endless progress", { timeout: 20_000 }, async () => {
+test("child updates wait for advancing candidate boot progress, but bound stalls and endless progress", { timeout: 180_000 }, async () => {
+  // Three of these four candidates are meant to miss a deadline, and "slow" is meant to outlast the
+  // stall window while staying inside the hard one: all three numbers come from one measured start.
+  const stall = await stallDeadlineMs()
+  const hard = stall * 5
   for (const mode of ["slow", "stalled", "foreign", "endless"] as const) {
     const workspace = mkdtempSync(join(tmpdir(), `frizz-update-progress-${mode}-`))
     const stateDir = join(workspace, ".state")
@@ -887,7 +912,7 @@ test("child updates wait for advancing candidate boot progress, but bound stalls
         }
         publish()
         if (${JSON.stringify(mode)} !== "stalled") setInterval(publish, 50)
-        if (${JSON.stringify(mode)} === "slow") setTimeout(ready, 1800)
+        if (${JSON.stringify(mode)} === "slow") setTimeout(ready, ${stall * 3})
       }
     `)
     const target = { projectId: randomUUID(), projectDir: workspace, stateDir }
@@ -901,7 +926,7 @@ test("child updates wait for advancing candidate boot progress, but bound stalls
       supervisor = await startDevSupervisor({
         port, cwd: workspace, stateDir, launchTarget: target, launchOwnerToken: owner.token, watch: false,
         childLaunchProvider: () => ({ entry: childEntry, environment: { FRIZZ_STABLE_ARTIFACT: selected } }),
-        updateMode: "child", updateReadyTimeoutMs: 600, updateHardTimeoutMs: 3000, updateStabilizeMs: 20,
+        updateMode: "child", updateReadyTimeoutMs: stall, updateHardTimeoutMs: hard, updateStabilizeMs: 20,
         updateRestart: async () => { selected = "new"; return { state: "ready" } },
         commitUpdate: () => { commits++ },
         rollbackUpdate: () => { rollbacks++; selected = "old" },
@@ -917,9 +942,9 @@ test("child updates wait for advancing candidate boot progress, but bound stalls
       assert.equal(commits, mode === "slow" ? 1 : 0, mode)
       assert.equal(rollbacks, mode === "slow" ? 0 : 1, mode)
       assert.equal(result.artifactDigest, mode === "slow" ? "new" : "old", mode)
-      if (mode === "endless") assert.match(result.message!, /did not become ready within 3000ms; last boot step: runtimes: downloading/)
-      if (mode === "stalled") assert.match(result.message!, /no boot progress for 600ms; last boot step: runtimes: downloading/)
-      if (mode === "foreign") assert.equal(result.message, "update candidate made no boot progress for 600ms")
+      if (mode === "endless") assert.ok(result.message!.includes(`did not become ready within ${hard}ms; last boot step: runtimes: downloading`), result.message)
+      if (mode === "stalled") assert.ok(result.message!.includes(`no boot progress for ${stall}ms; last boot step: runtimes: downloading`), result.message)
+      if (mode === "foreign") assert.equal(result.message, `update candidate made no boot progress for ${stall}ms`)
     } finally {
       await supervisor?.close()
       owner.release()
@@ -928,7 +953,8 @@ test("child updates wait for advancing candidate boot progress, but bound stalls
   }
 })
 
-test("child-only update rolls back failed candidates and a close race without retrying them", { timeout: 30_000 }, async () => {
+test("child-only update rolls back failed candidates and a close race without retrying them", { timeout: 180_000 }, async () => {
+  const stall = await stallDeadlineMs()
   for (const failure of ["hang", "crash", "commit", "rollback", "close"] as const) {
     const workspace = mkdtempSync(join(tmpdir(), `frizz-child-update-${failure}-`))
     const stateDir = join(workspace, ".state")
@@ -944,8 +970,10 @@ test("child-only update rolls back failed candidates and a close race without re
         const target = projectLaunchTargetFromEnvironment(process.env); const token = projectLaunchOwnerTokenFromEnvironment(process.env)
         const delegate = registerProjectLaunchDelegate(target, token)
         appendFileSync(process.env.EVENTS, \`start:\${artifact}:\${process.pid}\\n\`)
-        process.send?.({ type: "frizz-ready", pid: delegate.pid, processStart: delegate.processStart, port: Number(process.env.FRIZZ_DEV_PORT), bootId: \`\${artifact}-\${process.pid}\` })
-        if (artifact === "crash") setTimeout(() => process.exit(19), 5)
+        // The crash follows the ready message out of the process, not a timer: a 5ms timer in a starved
+        // child could fire after the supervisor's whole stabilize window, and the crash it is here to
+        // catch then landed on a committed update instead.
+        process.send?.({ type: "frizz-ready", pid: delegate.pid, processStart: delegate.processStart, port: Number(process.env.FRIZZ_DEV_PORT), bootId: \`\${artifact}-\${process.pid}\` }, artifact === "crash" ? () => process.exit(19) : undefined)
         const stop = () => { appendFileSync(process.env.EVENTS, \`stop:\${artifact}:\${process.pid}\\n\`); delegate.release(); process.exit(0) }
         process.once("SIGTERM", stop); process.once("disconnect", stop); setInterval(() => {}, 1000)
       }
@@ -962,7 +990,8 @@ test("child-only update rolls back failed candidates and a close race without re
       supervisor = await startDevSupervisor({
         port, cwd: workspace, stateDir, launchTarget: target, launchOwnerToken: owner.token, watch: false,
         childLaunchProvider: () => { launchSelections.push(selected); return { entry: childEntry, environment: { FRIZZ_STABLE_ARTIFACT: selected, EVENTS: events } } },
-        updateMode: "child", updateReadyTimeoutMs: 500, updateStabilizeMs: 60,
+        // Only the candidate that hangs is meant to miss this; every other one reports ready.
+        updateMode: "child", updateReadyTimeoutMs: failure === "hang" || failure === "close" ? stall : MEETS_DEADLINE_MS, updateStabilizeMs: 60,
         updateRestart: async () => { selected = failure === "commit" || failure === "rollback" ? "new" : failure === "close" ? "hang" : failure; return { state: "ready" } },
         commitUpdate: () => {
           if (failure === "commit" || failure === "rollback") throw new Error("commit fixture failed")
@@ -1005,7 +1034,10 @@ test("child-only update rolls back failed candidates and a close race without re
       assert.equal(rollbacks, 1, failure)
       const lines = readFileSync(events, "utf8").trim().split("\n")
       const bad = failure === "commit" ? "new" : failure
-      assert.equal(lines.filter((line) => line.startsWith(`start:${bad}`)).length, 1, `${failure} candidate never enters watchdog retry: ${lines.join(", ")}; selections=${launchSelections.join(",")}`)
+      // Counted where the supervisor launches, not by the line a candidate writes once it is running:
+      // one killed at its deadline before it got that far wrote none, and was still launched once.
+      assert.equal(launchSelections.filter((launched) => launched === bad).length, 1, `${failure} candidate never enters watchdog retry: ${lines.join(", ")}; selections=${launchSelections.join(",")}`)
+      assert.ok(lines.filter((line) => line.startsWith(`start:${bad}`)).length <= 1, `${failure} candidate ran at most once: ${lines.join(", ")}`)
       assert.ok(lines.filter((line) => line.startsWith("start:old:")).length >= 2, `${failure} restores a real old child`)
     } finally {
       await supervisor?.close()
@@ -1015,7 +1047,7 @@ test("child-only update rolls back failed candidates and a close race without re
   }
 })
 
-test("child-only update rejects a candidate that exits during an async commit", { timeout: 15_000 }, async () => {
+test("child-only update rejects a candidate that exits during an async commit", { timeout: 90_000 }, async () => {
   const workspace = mkdtempSync(join(tmpdir(), "frizz-child-update-commit-exit-"))
   const stateDir = join(workspace, ".state")
   const childEntry = join(workspace, "child.mjs")
@@ -1043,7 +1075,7 @@ test("child-only update rejects a candidate that exits during an async commit", 
     supervisor = await startDevSupervisor({
       port, cwd: workspace, stateDir, launchTarget: target, launchOwnerToken: owner.token, watch: false,
       childLaunchProvider: () => ({ entry: childEntry, environment: { FRIZZ_STABLE_ARTIFACT: selected } }),
-      updateMode: "child", updateReadyTimeoutMs: 500, updateStabilizeMs: 20,
+      updateMode: "child", updateReadyTimeoutMs: MEETS_DEADLINE_MS, updateStabilizeMs: 20,
       updateRestart: async () => { selected = "new"; return { state: "ready" } },
       commitUpdate: async () => { startCommit(); await commitGate; active = selected },
       rollbackUpdate: () => { rollbacks++; active = "old"; selected = active },

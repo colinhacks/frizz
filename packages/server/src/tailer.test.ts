@@ -4937,7 +4937,7 @@ test("tailer: the real win32 probe reads a held file as alive and an unheld one 
 // real `lsof` against a real file, held open by a real fd. That probe is async and batched (it blocked
 // the event loop for ~300ms per shell before 2026-09-04), so its verdict lands one tick later, and that
 // one-tick lag is precisely what needs pinning.
-test("tailer: the real shell probe is async — the verdict lands on the NEXT tick, never inside one", { skip: process.platform === "win32" ? "lsof is POSIX" : false }, async () => {
+test("tailer: the real shell probe is async — the verdict lands on the NEXT tick, never inside one", { skip: process.platform === "win32" ? "lsof is POSIX" : false, timeout: 90_000 }, async () => {
   const openTicks = async (outputFile: string) => {
     const h = harness()
     h.storage.upsertSession(row())
@@ -4946,14 +4946,33 @@ test("tailer: the real shell probe is async — the verdict lands on the NEXT ti
       JSON.stringify(bashBg("toolu_sh", "Waiting for the verification and suite", "until grep -q done out; do sleep 5; done")),
       JSON.stringify(resultText("toolu_sh", `Command running in background with ID: ${basename(outputFile, ".output")}. Output is being written to: ${outputFile}.`)),
     ])
-    // No shellAlive: this is the real lsof path.
-    const t = makeTailer(h)
+    // No shellAlive: this is the real lsof path. The production probe, called and returned untouched;
+    // the wrapper only says when its answer has come back, which is the one thing this test waits for.
+    // It slept a fixed two seconds here, and `lsof` walks every process on the machine: on a busy one
+    // (load 16 to 94 when this failed, twice) the read below ran before the answer and saw "running".
+    let answered!: () => void
+    const answer = new Promise<void>((resolve) => { answered = resolve })
+    const t = makeTailer(h, {
+      probeShells: async (batch) => {
+        try {
+          return await probeShellVerdicts(batch)
+        } finally {
+          answered()
+        }
+      },
+    })
     h.clock.ms = Date.parse("2026-07-01T00:00:01.000Z") + 10 * 60_000
     t.tick()
     // The read is what queues the probe — `shellIsGone` is reached through assembly, not through tick.
     const first = t.get("t")?.bgShells[0]?.state
-    // Let the batched probe run and land in the cache, then read it again.
-    await new Promise((r) => setTimeout(r, 2000))
+    // The batched probe runs off the event loop. Its own bound is 8s; past 30s something else is wrong.
+    let late: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      answer,
+      new Promise<never>((_, reject) => { late = setTimeout(() => reject(new Error("the shell probe never answered")), 30_000) }),
+    ]).finally(() => clearTimeout(late))
+    // The verdict is filed in the continuation after the probe's own, so give that its turn.
+    await new Promise((r) => setImmediate(r))
     return { first, second: t.get("t")?.bgShells[0]?.state }
   }
 

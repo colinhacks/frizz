@@ -146,9 +146,9 @@ async function serving(t: TestContext, status: number) {
   return { controller, claims, said };
 }
 
-async function until(condition: () => boolean) {
-  for (let i = 0; i < 300 && !condition(); i++) await delay(10);
-  assert.ok(condition(), "timed out");
+async function until(condition: () => boolean, what = "timed out") {
+  for (const deadline = Date.now() + 30_000; !condition() && Date.now() < deadline; ) await delay(10);
+  assert.ok(condition(), what);
 }
 
 test("a served name renews its lease while the board runs, and stops when it stops serving", async (t) => {
@@ -157,10 +157,16 @@ test("a served name renews its lease while the board runs, and stops when it sto
   await until(() => claims.length >= 2);
   assert.ok(claims.every((url) => url === "/claim"));
   controller.stop();
-  await delay(50);
-  const settled = claims.length;
-  await delay(60);
-  assert.equal(claims.length, settled);
+  // Renewals already on the wire still arrive, one per 10ms the board served, and on a busy machine
+  // they take their time: 50ms was allowed for them, and a fourth arrived after it (`4 !== 3`, a Mac
+  // at load 94). So wait for the registrar to hear nothing for fifty renewal periods on end. A timer
+  // that outlived the stop never leaves that long a silence, and this times out.
+  let heard = claims.length;
+  let quietSince = Date.now();
+  await until(() => {
+    if (claims.length !== heard) [heard, quietSince] = [claims.length, Date.now()];
+    return Date.now() - quietSince >= 500;
+  }, "renewals kept arriving after the stop");
 });
 
 test("a refused renewal tells the operator, because the name lapses if it goes on", async (t) => {
