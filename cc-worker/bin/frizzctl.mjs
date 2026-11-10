@@ -235,6 +235,18 @@ function parseArgs(tool, argv) {
     const action = spec.alias?.[String(lead).toLowerCase()] ?? String(lead)
     for (const k of spec.then?.[action] ?? []) if (!(k in given) && !slots.includes(k)) slots.push(k)
   }
+  // The action said TWICE, as the leading word and as its flag (`goal start --action start …`). The help
+  // shows both spellings, and a worker that had just read it wrote both and was told the command "takes
+  // no bare argument here" (seen from a real worker, 2026-11-10). The same action twice is said once;
+  // two different ones is the mistake worth naming.
+  const lead = declared[0]
+  if (lead && lead in given && bare.length && Array.isArray(props[lead]?.enum)) {
+    const named = (/** @type {unknown} */ v) => spec.alias?.[String(v).toLowerCase()] ?? String(v)
+    if (named(bare[0]) === named(given[lead])) bare.shift()
+    else if (props[lead].enum.includes(named(bare[0]))) {
+      throw new UsageError(`\`${NAME} ${hyphen(tool.name)}\` was given two ${hyphen(lead)}s, \`${bare[0]}\` and --${hyphen(lead)} ${given[lead]}. Give one.`)
+    }
+  }
   if (declared[0] && declared[0] in given) extend(given[declared[0]])
   /** @type {Record<string, unknown>} */
   const fromBare = {}
@@ -336,7 +348,14 @@ function commandHelp(tool) {
   const usage = [`  ${command}${bare.length ? ` ${bare.join(" ")}` : ""}${Object.keys(props).length > bare.length ? " [--flags]" : ""}`]
   for (const [lead, more] of Object.entries(spec.then ?? {})) usage.push(`  ${command} ${lead} ${more.map((k) => `<${hyphen(k)}>`).join(" ")}`)
   if (Object.keys(props).length) usage.push(`  ${command} --input <file|->        the arguments below as one JSON object`)
-  const args = Object.entries(props).map(([key, sub]) => describeArg(`--${hyphen(key)}`, sub, required.has(key), "  ", []))
+  // A positional argument is listed under its flag, so say it is the bare word too: a reader of
+  // `--action <start | stop | get> (required)` under `Usage: … <action>` otherwise writes both.
+  const args = Object.entries(props).map(([key, sub]) => {
+    const described = describeArg(`--${hyphen(key)}`, sub, required.has(key), "  ", [])
+    if (!(spec.positional ?? []).includes(key)) return described
+    const [label, ...rest] = described.split("\n")
+    return [label, `      The bare <${hyphen(key)}> in the usage above, or this flag.`, ...rest].join("\n")
+  })
   const textArgs = Object.entries(props).filter(([, sub]) => sub.type === "string" && !sub.enum).map(([key]) => `--${hyphen(key)}-file`)
   return [
     `${command} — ${spec.summary ?? ""}`,

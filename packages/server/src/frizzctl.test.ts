@@ -234,6 +234,26 @@ test("flags, bare arguments, inline JSON, `--input <file>` and `--input -` all s
     assert.equal((await run(["watch-pr", "--action", "drop", "prw_9"], { env: worker(fake) })).code, 0)
     assert.equal((await run(["watch-pr", "drop", "prw_9"], { env: worker(fake) })).code, 0)
     assert.deepEqual(fake.seen.map((s) => [s.url, s.body.id]), [["/_frizz/proj-1/rpc/dropOwnPrWatch", "prw_9"], ["/_frizz/proj-1/rpc/dropOwnPrWatch", "prw_9"]])
+
+    // The action said twice, as the leading word and as its flag, is said once. A worker that had just
+    // read `Usage: frizzctl goal <action>` above `--action <start | stop | get> (required)` wrote both.
+    fake.seen.length = 0
+    const twice = await run(["goal", "start", "--action", "start", "--prompt", "p", "--heartbeat-seconds", "60", "--no-stop-hook"], { env: worker(fake) })
+    assert.equal(twice.code, 0, twice.stderr)
+    assert.deepEqual([fake.seen[0].url, fake.seen[0].body.prompt, fake.seen[0].body.stopHook], ["/_frizz/proj-1/rpc/setOwnThreadRecurringPrompt", "p", false])
+    // …an alias of it counts as the same action, and what the action takes still follows.
+    fake.seen.length = 0
+    assert.equal((await run(["watch-pr", "remove", "--action", "drop", "prw_9"], { env: worker(fake) })).code, 0)
+    assert.deepEqual(fake.seen.map((s) => [s.url, s.body.id]), [["/_frizz/proj-1/rpc/dropOwnPrWatch", "prw_9"]])
+    // Two DIFFERENT actions is the mistake, and it is named rather than one of them being picked.
+    fake.seen.length = 0
+    const two = await run(["goal", "stop", "--action", "start", "--prompt", "p"], { env: worker(fake) })
+    assert.equal(two.code, 1)
+    assert.match(two.stderr, /`frizzctl goal` was given two actions, `stop` and --action start\. Give one\./)
+    assert.equal(fake.seen.length, 0, "and Frizz is not asked")
+    // The help says the flag and the bare word are one argument.
+    const help = await run(["goal", "--help"], { env: worker(fake) })
+    assert.match(help.stdout, /--action {2}<start \| stop \| get> {2}\(required\)\n {6}The bare <action> in the usage above, or this flag\./)
   } finally {
     fake.close()
   }
