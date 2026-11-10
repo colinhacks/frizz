@@ -16,10 +16,17 @@ import { store } from "../store.ts"
 // that got fixed once.
 //
 // So the blast radius of a render error is now the SURFACE that failed, never the window. The
-// sidebar, the workpane and every drawer layer catch their own; the root catches whatever is left.
-// A broken drawer leaves the board usable and closable; a broken board keeps its sidebar and its
-// drawers. Each fallback carries the error text, because the operator reading it is the person who
-// will fix it.
+// sidebar, the pane's thread, the full-screen page's thread and every drawer layer catch their own; the
+// root catches whatever is left. A broken thread leaves the sidebar, so another thread is one click
+// away; a broken drawer leaves the board usable and closable. Each fallback carries the error text,
+// because the operator reading it is the person who will fix it.
+//
+// "THE ROOT" IS TWO PLACES. react-router catches a throw under a route itself, before the boundary
+// around the router in main.tsx can see it, and a route with no `errorElement` draws the library's own
+// page for developers ("Unexpected Application Error! … Hey developer"). That page is what a throw in
+// the pane's thread drew from 2026-11-09, when the one-thread pane replaced the queue and its boundary
+// went with it, until 2026-11-10. Every top-level route names `RouteError` (routes.tsx), which draws
+// the same page as RootErrorBoundary; the boundary in main.tsx is left for a throw outside any route.
 
 type Props = {
   children: ReactNode
@@ -107,7 +114,7 @@ export function ErrorPanel({
           </button>
         )}
         <button type="button" className={ACTION_CLASS} onClick={() => window.location.reload()}>
-          Reload frizz
+          Reload Frizz
         </button>
       </div>
     </div>
@@ -121,18 +128,20 @@ export function ErrorPanel({
  */
 export function RootErrorBoundary({ children }: { children: ReactNode }): ReactElement {
   return (
-    <ErrorBoundary
-      label="frizz"
-      fallback={(error, retry) => (
-        <div className="flex min-h-screen items-center justify-center bg-bg p-6 text-fg">
-          <div className="w-full max-w-lg">
-            <ErrorPanel label="frizz" error={error} onRetry={retry} />
-          </div>
-        </div>
-      )}
-    >
+    <ErrorBoundary label="Frizz" fallback={(error, retry) => <RootErrorPage error={error} onRetry={retry} />}>
       {children}
     </ErrorBoundary>
+  )
+}
+
+/** The page the last resort draws: RootErrorBoundary's fallback, and a route's `errorElement`. */
+export function RootErrorPage({ error, onRetry }: { error: Error; onRetry: () => void }): ReactElement {
+  return (
+    <div data-root-error className="flex min-h-screen items-center justify-center bg-bg p-6 text-fg">
+      <div className="w-full max-w-lg">
+        <ErrorPanel label="Frizz" error={error} onRetry={onRetry} />
+      </div>
+    </div>
   )
 }
 

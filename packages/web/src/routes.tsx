@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useState } from "react"
 import { useSnapshot } from "valtio"
-import { Navigate, Outlet, createBrowserRouter, useLocation, useNavigate, useParams } from "react-router"
+import { Navigate, Outlet, createBrowserRouter, useLocation, useNavigate, useParams, useRevalidator, useRouteError } from "react-router"
 import { App } from "./App.tsx"
+import { RootErrorPage } from "./components/ErrorBoundary.tsx"
 import { ProjectGrid } from "./components/ProjectGrid.tsx"
 import { ProjectRail, RAIL_INSET_CLASS } from "./components/ProjectRail.tsx"
 import { StandaloneThreadPage } from "./components/StandaloneThreadPage.tsx"
@@ -367,17 +368,30 @@ function ConsoleThreadRedirect() {
   return <Navigate to={{ pathname: CONSOLE_PATH, search: withThreadParam(search, thread ?? null), hash }} replace />
 }
 
+/**
+ * A render error no surface caught. The router catches it at the route, and without this it draws its
+ * own page for developers (components/ErrorBoundary.tsx has the history). "Try again" revalidates,
+ * which is what makes the router render the route's element again.
+ */
+function RouteError() {
+  const error = useRouteError()
+  const { revalidate } = useRevalidator()
+  return <RootErrorPage error={error instanceof Error ? error : new Error(String(error))} onRetry={() => void revalidate()} />
+}
+const errorElement = <RouteError />
+
 export const router = createBrowserRouter([
   // THE THREAD'S OWN PATH IS ITS FULL-SCREEN PAGE (lib/standaloneThreadRoute.ts); a drawer is the
   // board's URL with `?thread=<slug>` (lib/router.ts). These pages sit OUTSIDE the layout — they have
   // no rail, and should not. react-router ranks by specificity, so the `/full` aliases beat the page's
   // own routes regardless of order.
-  { path: "/thread/:thread", element: <StandaloneRoute /> },
-  { path: `${PROJECT_PATH}/thread/:thread`, element: <StandaloneRoute /> },
-  { path: "/thread/:thread/full", element: <DropFullSuffix /> },
-  { path: `${PROJECT_PATH}/thread/:thread/full`, element: <DropFullSuffix /> },
+  { path: "/thread/:thread", element: <StandaloneRoute />, errorElement },
+  { path: `${PROJECT_PATH}/thread/:thread`, element: <StandaloneRoute />, errorElement },
+  { path: "/thread/:thread/full", element: <DropFullSuffix />, errorElement },
+  { path: `${PROJECT_PATH}/thread/:thread/full`, element: <DropFullSuffix />, errorElement },
   {
     element: <RootLayout />,
+    errorElement,
     children: [
       { path: "/", element: <RootRoute /> },
       // The launching project, unprefixed. `/` itself belongs to the grid, so this project reaches its

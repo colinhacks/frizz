@@ -13,6 +13,7 @@ import { trackQueueDock } from "../lib/queueDockInset.ts"
 import { boardQueuedThread, type ThreadView } from "@frizz/shared"
 import { ThreadView as ThreadViewSurface } from "./ChatView.tsx"
 import { DrawerStack } from "./DrawerStack.tsx"
+import { ErrorBoundary } from "./ErrorBoundary.tsx"
 import { FileViewerPanel } from "./FileViewerPanel.tsx"
 import { FocusRail, RAIL_WIDTH } from "./FocusRail.tsx"
 import { PageFrame } from "./PageFrame.tsx"
@@ -199,13 +200,16 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
               ) : route.kind === "missing" ? (
                 <MissingThread slug={slug} />
               ) : (
-                <ThreadViewSurface slug={slug} showReturnToQueue />
+                // The page's own frame outlives its thread's render error (ErrorBoundary.tsx).
+                <ErrorBoundary label="this thread" resetKeys={[slug]}>
+                  <ThreadViewSurface slug={slug} showReturnToQueue />
+                </ErrorBoundary>
               )}
             </main>
             {/* No thread, no rail — but the page still has to read as centered, so the region holds
                 its width either way. */}
             {thread
-              ? <SidePane slug={slug} thread={thread} />
+              ? <ErrorBoundary label="this thread's side pane" resetKeys={[slug]}><SidePane slug={slug} thread={thread} /></ErrorBoundary>
               : <div className="hidden w-[var(--full-pane)] shrink-0 split:block" aria-hidden="true" />}
           </div>
         </ThreadPageZone>

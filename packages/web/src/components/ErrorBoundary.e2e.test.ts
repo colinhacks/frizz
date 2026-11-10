@@ -95,11 +95,11 @@ test("a throwing workpane falls back to a panel in place, not a blank page", {
     const text = await page.evaluate(() => document.querySelector("[data-error-panel]")!.textContent ?? "")
     assert.match(text, /Something went wrong rendering the queue\./)
     assert.match(text, /ReferenceError/)
-    // Try again / Reload frizz are the two ways out and both must be offered.
+    // Try again / Reload Frizz are the two ways out and both must be offered.
     const labels = await page.evaluate(() =>
       [...document.querySelectorAll("[data-error-panel] button")].map((b) => b.textContent?.trim() ?? ""),
     )
-    assert.deepEqual(labels, ["Try again", "Reload frizz"])
+    assert.deepEqual(labels, ["Try again", "Reload Frizz"])
   } finally {
     await page.close()
   }
@@ -117,7 +117,7 @@ test("the root boundary is the last resort — a throw above every surface still
       text: document.querySelector("[data-error-panel]")!.textContent ?? "",
     }))
     assert.ok(state.rootChildren > 0)
-    assert.match(state.text, /Something went wrong rendering frizz\./)
+    assert.match(state.text, /Something went wrong rendering Frizz\./)
     assert.match(state.text, /ReferenceError/)
   } finally {
     await page.close()

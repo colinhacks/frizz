@@ -22,6 +22,7 @@ import {
 } from "../lib/threadPane.ts"
 import { store } from "../store.ts"
 import { ThreadView } from "./ChatView.tsx"
+import { ErrorBoundary } from "./ErrorBoundary.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { Tooltip } from "./Tooltip.tsx"
 import { RAIL_WIDTH } from "./FocusRail.tsx"
@@ -276,7 +277,11 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
             className="flex h-full w-full min-w-0 flex-col overflow-hidden border-x border-border bg-panel [view-transition-name:thread-chat]"
           >
             {route.kind === "found" ? (
-              <ThreadView slug={slug} showReturnToQueue={folded} pane={pane} />
+              // One thread's render error stays in this column: the sidebar is still there, and picking
+              // another thread is a new render (ErrorBoundary.tsx).
+              <ErrorBoundary label="this thread" resetKeys={[slug]}>
+                <ThreadView slug={slug} showReturnToQueue={folded} pane={pane} />
+              </ErrorBoundary>
             ) : route.kind === "missing" ? (
               <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted" role="status">Thread “{slug}” was not found in this project.</div>
             ) : (
@@ -289,7 +294,11 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
             <PaneEdgeToggle side="right" hidden={railHidden} onToggle={() => setPaneRailHidden(!railHidden)} />
           )}
         </div>
-        {sidePane && thread && <SidePane slug={slug} thread={thread} rail={!railHidden} centredRail />}
+        {sidePane && thread && (
+          <ErrorBoundary label="this thread's side pane" resetKeys={[slug]}>
+            <SidePane slug={slug} thread={thread} rail={!railHidden} centredRail />
+          </ErrorBoundary>
+        )}
       </div>
     </ProjectScope>
   )
