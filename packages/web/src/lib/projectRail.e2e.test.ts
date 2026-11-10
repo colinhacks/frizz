@@ -53,6 +53,13 @@ test("flipping 'Project sidebar' on a board reached from the grid shows the rail
     assert.equal(await rail(), false, "still hidden after the switch")
 
     await page.click('[aria-label="Settings"]')
+    // The drawer slides in from the right. A real click aimed while it is still moving lands where the
+    // button WAS, and under load that was often enough to lose the press entirely: no save went out, and
+    // the rail rightly never came. Measure it where it lands.
+    await page.waitForFunction(() => {
+      const panel = document.querySelector('[role="dialog"][aria-label="Settings"]')
+      return panel !== null && panel.getAnimations().length === 0 && Math.abs(panel.getBoundingClientRect().right - innerWidth) < 0.5
+    }, { timeout: 10_000 })
     // "Project sidebar" is an Off/On pair under its label (SettingsDrawer's OnOffToggle); it was a select
     // with an "Always shown" item until the toggle replaced it. A real click, so the press has to reach
     // the drawer through whatever sits on top of it.
