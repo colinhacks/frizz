@@ -1652,6 +1652,47 @@ test("Codex limits: fresh headroom recovers a usage window; stale, unknown, busy
   }
 })
 
+// The send re-reads the quota, and a read that fails says nothing about whether delivery works. Each
+// such pass used to keep the attempt its claim had counted: six of them (a few minutes offline at the
+// moment the window came back) exhausted the row, and the exhausted row then read as "this interruption
+// already has its one wake", for good.
+test("Codex limits: quota reads that fail at the send spend no delivery attempt, and the resume goes out once capacity can be confirmed", async () => {
+  const h = limitHarness()
+  h.storage.upsertSession(row("codex", { backend: "codex" }))
+  h.storage.setBackend("codex", "codex")
+  h.tele.set("codex", limitTele({ window: "unknown", at: iso(h.clock.ms), codex: "usage" }))
+  h.clock.ms += 180_000
+  // The first read is evalLimits', on the tick that sees capacity back. Every read for the next seven
+  // minutes fails; after that the account is healthy.
+  let reads = 0
+  let outageUntil = 0
+  const logs: string[] = []
+  const s = h.make({
+    log: (line: string) => void logs.push(line),
+    readQuota: async () => {
+      if (++reads === 1) { outageUntil = h.clock.ms + 7 * 60_000; return codexQuota(h) }
+      if (h.clock.ms < outageUntil) throw new Error("offline")
+      return codexQuota(h)
+    },
+  })
+  const outbox = createWakeDeliveryStore(h.storage.scope, { quietWindowMs: 0 })
+  const mine = () => outbox.list().filter((d) => d.slug === "codex")
+  for (let i = 0; i < 6 * 7; i++) { // the seven minutes, in 10s ticks
+    await s.tick()
+    h.clock.ms += 10_000
+  }
+  assert.equal(h.resumes.length, 0, "nothing is sent on an unconfirmed reading")
+  assert.deepEqual(mine().map((d) => [d.state, d.attempts]), [["pending", 0]], "held, with no attempt spent")
+  assert.equal(logs.filter((l) => /could not be confirmed/.test(l)).length, 1, "and said once, not once per pass")
+  for (let i = 0; i < 6 * 3; i++) {
+    await s.tick()
+    h.clock.ms += 10_000
+  }
+  assert.equal(h.resumes.length, 1, "resumed once capacity is confirmed")
+  assert.match(h.resumes[0].message, /Capacity is available again/)
+  h.storage.close()
+})
+
 test("Codex limits: an unchanged healthy reading cannot create a retry storm after a bounced wake", async () => {
   const h = limitHarness()
   const firstAt = h.clock.ms

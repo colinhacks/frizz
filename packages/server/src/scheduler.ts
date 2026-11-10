@@ -1527,6 +1527,9 @@ export const MID_TURN_HOLD_MAX_MS = 10 * 60_000
 // attempt that died with the socket write in flight, which is the one case a re-open on a busy thread
 // must never guess at.
 export const WAKE_HOLD_DEFERRAL = "delivery deferred until exact awaiting telemetry is idle and available"
+/** Why a Codex limit resume was handed back unsent: the capacity re-read at the send failed or did not
+ *  show room. Its own words, because the hold's read as a busy thread to whoever opened the outbox. */
+export const CODEX_CAPACITY_UNCONFIRMED = "Codex capacity could not be confirmed at the send; held without spending a delivery attempt"
 
 export function createScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? Date.now
@@ -4863,10 +4866,18 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // NOTHING HOLDS THIS ONE. Re-grounding a worker whose context was just emptied is worth doing
       // whether or not it is mid-turn, whether or not it is waiting on an answer, and a fence it wrote
       // before the compaction says nothing about whether it still remembers what it was doing.
+      // ONCE PER COMPACTION, AND THE SESSION ROW IS WHAT REMEMBERS. A delivered bump stamps the instant
+      // of the compaction it answered (settleCompactPrompt), and only a newer compaction is later than
+      // that. The outbox row below cannot be the memory by itself: terminal rows are pruned past
+      // OUTBOX_CAP per project (wake-store.ts), about forty days of the busiest board's traffic, after
+      // which the same compaction minted the same id into an empty slot and a thread that had rested for
+      // weeks was woken to "you just compacted" (found 2026-11-09). `>=` and not `===`, for a stamp
+      // written before that date: it holds the time the bump was sent, which is later than its compaction.
+      if (row.recurring_compact_fired_at && row.recurring_compact_fired_at >= tele.lastCompactionAt) continue
       const fenceId = compactFenceId(armed.armedAt, tele.lastCompactionAt)
       const deliveryId = wakeDeliveryId(row.slug, row.session_id, fenceId)
-      // Terminal rows stay in the store, so this alone is what makes a compaction bump EXACTLY once: the
-      // same compaction yields the same delivery id, whatever happened to the first attempt.
+      // While its row is in the store, the same compaction yields the same delivery id, whatever
+      // happened to the first attempt: that covers a bump still on its way, which has left no stamp yet.
       if (outbox.get(deliveryId)) continue
       const item = outbox.enqueue({
         id: deliveryId,
@@ -4882,16 +4893,21 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   }
 
-  // Stamp the POST-COMPACTION readout once its delivery is terminal. Cosmetic (the panel's "last sent"),
-  // guarded on the generation for the same reason as its siblings: a bump settling after the operator
-  // edited the text must not write onto words it no longer describes.
+  // Stamp the POST-COMPACTION bump once it has reached the worker, with the instant of THE COMPACTION
+  // IT ANSWERED (its fence id carries it): the durable half of evalCompactPrompts' once-per-compaction
+  // guard, and the panel's "last sent", which a bump trails by a tick. It was the time of the stamping
+  // until 2026-11-10, which nothing could compare a compaction against. Guarded on the generation for
+  // the same reason as its siblings: a bump settling after the operator edited the text must not write
+  // onto words it no longer describes.
   function settleCompactPrompt(item: WakeDelivery): void {
     if (!isCompactFenceId(item.fenceId)) return
     const row = deps.storage.getSession(item.slug)
     if (!row || row.session_id !== item.sessionId) return
     const armedAt = row.recurring_armed_at
-    if (!armedAt || !item.fenceId.startsWith(`${COMPACT_FENCE_PREFIX}:${armedAt}:`)) return
-    deps.storage.stampRecurringCompactFired(item.slug, armedAt, new Date().toISOString())
+    const generation = `${COMPACT_FENCE_PREFIX}:${armedAt}:`
+    if (!armedAt || !item.fenceId.startsWith(generation)) return
+    const compactedAt = item.fenceId.slice(generation.length)
+    deps.storage.stampRecurringCompactFired(item.slug, armedAt, compactedAt || new Date().toISOString())
   }
 
   // Stamp the bump clock once a bump has genuinely REACHED the worker — the HEARTBEAT's input, and
@@ -5096,6 +5112,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   }
 
+  const capacityHoldsLogged = new Set<string>()
+
   async function deliverDue(): Promise<void> {
     for (let delivered = 0; delivered < deliveryBatchSize; delivered++) {
       // Condition polling can take seconds. Never derive a lease from the tick-start timestamp: a
@@ -5128,9 +5146,25 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           codexCapacity = false
         }
       }
+      // CAPACITY THAT COULD NOT BE CONFIRMED IS NOT A FAILED DELIVERY. The claim above counted an attempt,
+      // and deferring on the lease kept it counted: six quota reads that failed (a few minutes offline,
+      // at the moment the window came back) exhausted the row, evalLimits read the exhausted row as
+      // "this interruption already has its one wake", and the thread was never resumed. So the row goes
+      // back unsent and uncounted, and is asked about again after the same delay. It cannot spin: each
+      // pass is one read of the cached quota, and the row ends when its fault does (deliveryContext).
+      if (!codexCapacity) {
+        const releasedAt = now()
+        const released = outbox.release(item.id, deliveryOwner, releasedAt, releasedAt + Math.max(deliveryLeaseMs, retryDelay(item.attempts)), CODEX_CAPACITY_UNCONFIRMED)
+        // Said once per wake, not once per pass: a claim clears the row's last error, so the row cannot say.
+        if (released && !capacityHoldsLogged.has(item.id)) {
+          capacityHoldsLogged.add(item.id)
+          log(`waker: holding ${item.slug} — ${item.reason}: ${CODEX_CAPACITY_UNCONFIRMED}`)
+        }
+        continue
+      }
       // The live read awaited above can race a manual follow-up, archival, or a new turn. Re-read
       // supersession/busy state at the actual delivery boundary, not from before that await.
-      if (!codexCapacity || !isDeliverableNow(item, deliveryContext(item), claimedAt)) {
+      if (!isDeliverableNow(item, deliveryContext(item), claimedAt)) {
         const deferredAt = now()
         outbox.deferFailure(
           item.id,

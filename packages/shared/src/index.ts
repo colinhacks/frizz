@@ -1393,6 +1393,8 @@ export const ThreadRecurringPrompt = z.object({
   /** Last delivery per trigger; stamped separately so each reads its own clock. */
   lastRestFiredAt: z.string().optional(),
   lastScheduleFiredAt: z.string().optional(),
+  /** The instant of the compaction the newest post-compaction bump answered, which the bump trails by a
+   *  tick (server scheduler.ts settleCompactPrompt): it is also what stops that compaction firing twice. */
   lastCompactFiredAt: z.string().optional(),
 }).strict()
 export type ThreadRecurringPrompt = z.infer<typeof ThreadRecurringPrompt>

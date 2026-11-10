@@ -150,6 +150,11 @@ export interface WakeDeliveryStore {
    *  the same delivery, so the quiet window that was holding it has nothing left to hold it for. */
   adopt(id: string, owner: string, now: number, leaseUntil: number, maxAttempts: number): WakeDelivery | undefined
   deferFailure(id: string, owner: string, now: number, retryAt: number, error: string): boolean
+  /** Hand a claimed row back UNSENT, due again at `retryAt`, WITHOUT the claim counting as an attempt.
+   *  For a precondition the caller could not confirm before sending (a quota it could not read): that
+   *  says nothing about whether delivery works, and the attempt cap exists to stop retrying a delivery
+   *  that fails. A row that has been sent is never released. */
+  release(id: string, owner: string, now: number, retryAt: number, error: string): boolean
   recoverExpired(id: string, now: number, retryAt: number, maxAttempts: number, error: string): WakeDelivery | undefined
   acknowledge(id: string, owner: string, now: number): boolean
   /** SENT, NOT DELIVERED. The transport accepted the wake (for a broker thread, a socket frame the daemon
@@ -286,6 +291,12 @@ export function createWakeDeliveryStore(scope: ProjectScope, options: WakeDelive
       lease_until = @retryAt, last_error = @error, updated_at = @now
     WHERE project_id = @project_id AND id = @id AND state = 'leased' AND lease_owner = @owner
   `)
+  const releaseStmt = scope.prepare(`
+    UPDATE wake_delivery SET
+      state = 'pending', attempts = MAX(attempts - 1, 0), lease_owner = NULL, lease_until = NULL,
+      next_attempt_at = @retryAt, last_error = @error, updated_at = @now
+    WHERE project_id = @project_id AND id = @id AND state = 'leased' AND lease_owner = @owner AND sent_at IS NULL
+  `)
   const markSentStmt = scope.prepare(`
     UPDATE wake_delivery SET
       sent_at = @now, lease_until = @confirmUntil, last_error = NULL, updated_at = @now
@@ -378,6 +389,7 @@ export function createWakeDeliveryStore(scope: ProjectScope, options: WakeDelive
       error: error.slice(0, 500),
       now,
     }).changes === 1,
+    release: (id, owner, now, retryAt, error) => releaseStmt.run({ id, owner, retryAt, error: error.slice(0, 500), now }).changes === 1,
     recoverExpired: (id, now, retryAt, maxAttempts, error) => {
       if (recoverExpiredStmt.run({ id, now, retryAt, maxAttempts, error: error.slice(0, 500) }).changes !== 1) return undefined
       const row = byId.get(id)

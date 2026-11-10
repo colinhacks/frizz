@@ -17,6 +17,7 @@ import { join } from "node:path"
 import { createStorage, type SessionRow } from "./storage.ts"
 import { applyEvent, applyRecord, newTailState, type FenceView, type SessionTelemetry, type Tailer } from "./tailer.ts"
 import { createScheduler } from "./scheduler.ts"
+import { createWakeDeliveryStore } from "./wake-store.ts"
 
 const assistant = (text: string, at = "2026-08-02T00:00:01.000Z") => ({
   type: "assistant",
@@ -621,6 +622,42 @@ test("post-compaction: a SECOND compaction fires again, and the stamp reads back
     compactedAt = "2026-08-02T02:00:00.000Z"
     await h.s.tick()
     assert.equal(h.delivered.length, 2, "a new compaction is a new event")
+  } finally { h.close() }
+})
+
+// The outbox row was this source's only memory of a bump, and terminal rows are pruned past 2,000 per
+// project (wake-store.ts OUTBOX_CAP): forty days of one busy board's traffic. After that the same
+// compaction minted the same delivery id into an empty slot, and a thread that had rested since was
+// woken to "your context was just compacted". The session row's stamp is the memory now.
+test("post-compaction: the SAME compaction never fires again, even once its outbox row has been pruned", async () => {
+  const h = compactScheduler({ lastCompactionAt: "2026-08-02T01:00:00.000Z" })
+  try {
+    h.storage.upsertSession({
+      slug: "busy-neighbour", session_id: "sid-busy", thread_name: "frizz-busy-neighbour", spawned_at: new Date().toISOString(),
+      last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: null, title_auto: 1,
+      title: "busy-neighbour", state: "open", meta: null, seen_at: null, transcript_id: null,
+    } as SessionRow)
+    await h.s.tick()
+    assert.equal(h.delivered.length, 1, "the compaction's one prompt")
+    assert.equal(h.storage.getSession(h.slug)!.recurring_compact_fired_at, "2026-08-02T01:00:00.000Z", "stamped with the compaction it answered")
+
+    // Another thread's ordinary business: enough terminal rows to push this one's out of the store.
+    const outbox = createWakeDeliveryStore(h.storage.scope, { quietWindowMs: 0 })
+    const at = Date.now()
+    for (let i = 0; i < 2001; i++) {
+      const id = `filler-${i}`
+      outbox.enqueue({ id, slug: "busy-neighbour", sessionId: "sid-busy", fenceId: `shell:filler-${i}`, hintKey: `shell:filler-${i}`, message: "m", reason: "filler" }, at + 1000 + i)
+      outbox.supersede(id, at + 1000 + i, "filler")
+    }
+    assert.equal(outbox.list().filter((d) => d.slug === h.slug).length, 0, "the precondition: its row really is gone")
+    await h.s.tick()
+    await h.s.tick()
+    assert.equal(h.delivered.length, 1, "one delivery per compaction, not one per outbox prune")
+
+    // A stamp written before 2026-11-10 holds the time the bump was sent, later than its compaction.
+    h.storage.stampRecurringCompactFired(h.slug, "2026-08-02T00:00:00.000Z", "2026-08-02T01:00:09.000Z")
+    await h.s.tick()
+    assert.equal(h.delivered.length, 1, "an older build's stamp guards the same way")
   } finally { h.close() }
 })
 

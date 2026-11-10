@@ -126,6 +126,29 @@ test("adopt leases a held row where claim will not, and refuses a row that is no
   storage.close()
 })
 
+// A claim counts an attempt, and the cap on attempts is there to stop retrying a delivery that fails. A
+// caller that found it could not even decide whether to send hands the row back with the count undone.
+test("release hands a claimed row back unsent and uncounted, due at the time given, and never a row that was sent", () => {
+  const { storage, outbox } = store(0)
+  outbox.enqueue(wake("a"), T0)
+  for (let pass = 0; pass < 10; pass++) {
+    const at = T0 + pass * 30_000
+    const claimed = outbox.claim("me", at, at + 30_000, 6)
+    assert.equal(claimed?.attempts, 1, `pass ${pass}: the cap of six is never reached by releasing`)
+    assert.equal(outbox.claim("me", at, at + 30_000, 6), undefined, "leased: not claimable twice")
+    assert.equal(outbox.release("a", "someone-else", at, at + 30_000, "not yours"), false, "only its owner releases it")
+    assert.equal(outbox.release("a", "me", at, at + 30_000, "capacity unconfirmed"), true)
+    const back = outbox.get("a")!
+    assert.deepEqual([back.state, back.attempts, back.nextAttemptAt, back.lastError, back.leaseOwner], ["pending", 0, at + 30_000, "capacity unconfirmed", null])
+    assert.equal(outbox.claim("me", at + 29_999, at + 60_000, 6), undefined, "not before its time")
+  }
+  const sent = outbox.claim("me", T0 + 300_000, T0 + 330_000, 6)!
+  outbox.markSent(sent.id, "me", T0 + 300_001, T0 + 360_000)
+  assert.equal(outbox.release("a", "me", T0 + 300_002, T0 + 330_000, "too late"), false, "a wake that went out is settled by its confirmation")
+  assert.equal(outbox.get("a")?.state, "leased")
+  storage.close()
+})
+
 test("adopt honours the attempt cap exactly as claim does", () => {
   const { storage, outbox } = store(0)
   outbox.enqueue(wake("a"), T0)
