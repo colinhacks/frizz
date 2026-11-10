@@ -13,10 +13,14 @@ import { createRpcClient } from "../../../../scripts/lib/rpc-client.mjs"
 //   FRIZZ_QUESTION_NAVIGATION_E2E_HOME=<the "home" field> nub --test \
 //     packages/web/src/components/registeredQuestionNavigation.e2e.test.ts
 // Stop the disposable stack with Ctrl-C when finished.
+//
+// The questions are drawn where the thread is: the board's one-thread pane (which replaced the queue card on
+// 2026-11-09), the pane folded to full screen in place, and the /full page. Each answering provider those
+// mount reads the same staged picks, so a pick made in one is a pick in all of them.
 const baseUrl = process.env.FRIZZ_QUESTION_NAVIGATION_E2E_URL
 const home = process.env.FRIZZ_QUESTION_NAVIGATION_E2E_HOME
 
-test("registered picks survive fullscreen, project switches and reload, then clear only after a successful send", {
+test("registered picks survive the pane folding, the full-screen page, project switches and reload, then clear only after a successful send", {
   skip: !baseUrl || !home, timeout: 120_000,
 }, async () => {
   const api = createRpcClient(baseUrl!)
@@ -58,8 +62,10 @@ test("registered picks survive fullscreen, project switches and reload, then cle
       if (m.type() === "error" && !/\/_frizz\/(control\/status|project-icon)/.test(url)
         && !(/\/rpc\/followUp$/.test(url) && /status of 500/.test(m.text()))) errors.push(`${m.text()} ${url}`)
     })
-    await page.goto(`${baseUrl}/project/${a.slug}`, { waitUntil: "networkidle2" })
-    await page.waitForSelector(tree)
+    // The pane's layout persists per browser; start from it unfolded.
+    await page.evaluateOnNewDocument(() => localStorage.removeItem("frizz.threadPanePrototype.v1"))
+    await page.goto(`${baseUrl}/project/${a.slug}?thread=${slug}`, { waitUntil: "networkidle2" })
+    await page.waitForSelector(`[data-pane-thread] ${tree}`, { timeout: 30_000 })
     const pick = async (card: string, index: number) => {
       await page.$$eval(`${card} [data-question-option]`, (rows, i) => (rows[i].querySelector("button") as HTMLButtonElement).click(), index)
     }
@@ -77,13 +83,29 @@ test("registered picks survive fullscreen, project switches and reload, then cle
       assert.deepEqual(await page.$$eval(`${single} [data-question-option]`, (rows) => rows.map((el) => el.classList.contains("border-selection-border"))), [false, true])
       assert.equal(await page.$$eval(texts, (els) => (els[1] as HTMLTextAreaElement).value), "also typecheck")
     }
+    // A switch, or Escape from the full-screen page, can land on a bare board, whose pane is empty until a thread is opened: its sidebar row.
+    const openInPane = async () => {
+      if (await page.$(`[data-pane-thread] [data-thread-surface='${slug}']`)) return
+      await page.waitForSelector(`[data-sidebar-item='${slug}'] button`, { timeout: 15_000 })
+      await page.click(`[data-sidebar-item='${slug}'] button`)
+      await page.waitForSelector(`[data-pane-thread] [data-thread-surface='${slug}'] [data-question-option]`, { timeout: 15_000 })
+    }
     await check()
-    // The real fullscreen door unmounts the board and creates a fresh answering provider.
-    await page.$eval(`[data-expand-thread='${slug}']`, (el) => (el as HTMLAnchorElement).click())
-    await page.waitForSelector("main[data-standalone-thread]")
+    // On the board the fullscreen door folds the pane: the same thread full screen in place, the same
+    // provider, nothing remounted.
+    await page.$eval(`[data-pane-thread] [data-expand-thread='${slug}']`, (el) => (el as HTMLAnchorElement).click())
+    await page.waitForSelector("[data-pane-layout='folded']")
+    await check()
+    await page.click("[data-pane-edge-toggle='left']")
+    await page.waitForSelector("[data-pane-layout]:not([data-pane-layout='folded'])")
+    // The full-screen PAGE is a document of its own (the door's ⌘-click, a new tab), with a fresh
+    // answering provider; Escape there leaves it for the board in place, which mounts another.
+    await page.goto(`${baseUrl}/project/${a.slug}/thread/${slug}`, { waitUntil: "networkidle2" })
+    await page.waitForSelector(`main[data-standalone-thread] ${tree}`, { timeout: 30_000 })
     await check()
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname))
+    await openInPane()
     await check()
     // Client-side project switches remount App. The same thread slug in B must not inherit A's picks.
     const switchProject = async (project: string) => {
@@ -100,10 +122,12 @@ test("registered picks survive fullscreen, project switches and reload, then cle
     }
     await grid()
     await switchProject(b.slug)
-    await page.waitForSelector("[data-question-option]")
+    await openInPane()
+    await page.waitForSelector("[data-pane-thread] [data-question-option]")
     assert.equal(await page.$$eval("[data-question-option]", (rows) => rows.some((el) => el.classList.contains("border-selection-border"))), false)
     await grid()
     await switchProject(a.slug)
+    await openInPane()
     await check()
     await page.reload({ waitUntil: "networkidle2" })
     await check()
@@ -111,7 +135,8 @@ test("registered picks survive fullscreen, project switches and reload, then cle
     // draw no "Send answers" of their own beside a prompt box. A rejected send keeps the staged picks
     // and says so in a toast. A successful real one settles the questions and clears the cache.
     assert.equal(await page.$("[data-send-answers]"), null)
-    const send = "[data-send-split] [data-send]"
+    // The pane's own prompt box: the sidebar's new-task box has a Send of its own.
+    const send = "[data-pane-thread] [data-send-split] [data-send]"
     assert.equal(await page.$eval(send, (el) => (el as HTMLButtonElement).disabled), false, "staged answers arm the Send with nothing typed")
     let reject = true
     await page.setRequestInterception(true)

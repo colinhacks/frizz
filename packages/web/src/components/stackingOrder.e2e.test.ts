@@ -3,7 +3,8 @@ import test, { after, before } from "node:test"
 
 // THE STACKING ORDER IN A REAL BROWSER (lib/layers.ts). Its guard test holds the source to the rules;
 // this asks the browser what is actually on top, and what actually takes Escape, a keystroke and a tap,
-// for each bug the 2026-11-01 audit found on main:
+// for each bug the 2026-11-01 audit found on main (a desktop drawer, which a board then opened, now
+// opens over a status list; see openDrawer):
 //   · Settings opened from ⌘K over a thread drawer slid in UNDER it, on the desktop and the phone;
 //   · Escape with ⌘K or Settings over a drawer closed the DRAWER and left the overlay up, and on the
 //     phone ⌘K over a drawer took no keystroke at all (rule 4: a layer outside Radix's stack loses);
@@ -12,7 +13,8 @@ import test, { after, before } from "node:test"
 //   · the drawer's "Jump to latest" pill painted across the composer's skills menu;
 //   · on the phone board a toast sat on the "New thread" button and its Undo took the tap.
 //
-// Point at the BOARD URL of an isolated adhoc-stack seeded with board threads, never the live instance:
+// Point at the BOARD URL of an isolated adhoc-stack seeded with board threads (its snoozed-0 is the
+// drawer), never the live instance:
 //   nub scripts/adhoc-stack.mjs --port=47393 --also-project=/abs/throwaway-repo > stack.log 2>&1
 //   nub scripts/seed-console-bands.mjs --home=<home> --project=<launcher.id>=<launcher.dir> \
 //     --project=<tenants[0].id>=<tenants[0].dir> --done=2,2
@@ -90,9 +92,12 @@ async function open(viewport: "desktop" | "phone", height = 900, width = viewpor
   return { page, errors }
 }
 
-// A queued thread's link opens its card, so the drawer is a snoozed one's.
-async function openDrawer(page: Page): Promise<void> {
-  await page.goto(`${url}?thread=snoozed-0`, { waitUntil: "networkidle2" })
+// A thread's drawer. On the phone a board link opens one (MobileBoard). A desktop board opens every
+// thread in its one-thread pane instead (since 2026-11-09), so there the drawer is opened over a status
+// list, the one board view with no pane (store.paneEnabled).
+async function openDrawer(page: Page, viewport: "desktop" | "phone"): Promise<void> {
+  const over = viewport === "desktop" ? `${url}/status/active` : url
+  await page.goto(`${over}?thread=snoozed-0`, { waitUntil: "networkidle2" })
   await page.waitForSelector(".frizz-sheet-panel")
   await settle(500)
 }
@@ -112,7 +117,7 @@ async function openPalette(page: Page): Promise<void> {
 async function overlaysOverADrawer(viewport: "desktop" | "phone"): Promise<void> {
   const { page, errors } = await open(viewport)
   try {
-    await openDrawer(page)
+    await openDrawer(page, viewport)
 
     await openPalette(page)
     await page.keyboard.type("settings")
@@ -199,7 +204,7 @@ test("the composer's skills menu is drawn over the drawer's jump-to-latest pill"
   // well past the pill's left edge.
   const { page, errors } = await open("phone", 420, 390)
   try {
-    await openDrawer(page)
+    await openDrawer(page, "phone")
     // A READER's scroll (a wheel): the transcript snaps a programmatic one back to its tail.
     const middle = await page.evaluate(() => {
       const scroller = [...document.querySelectorAll(".frizz-sheet-panel *")].find((el) => el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY))!

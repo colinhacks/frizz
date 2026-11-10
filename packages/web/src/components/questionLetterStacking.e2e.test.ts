@@ -8,7 +8,9 @@ import test from "node:test"
 // box and nothing else. It carried `z-10` until 2026-11-06, the same z as the thread's sticky header and
 // later in the DOM, so as the card scrolled, the one letter stayed lit across the header ("E." over
 // "Last active 5h ago"). Asked of a real browser, because paint order is the thing under test, on each of
-// the thread's three surfaces.
+// the thread's three surfaces: the desktop board's one-thread pane (which replaced the queue card on
+// 2026-11-09), a drawer, and the full-screen page. A desktop board opens every thread in its pane, so the
+// drawer is opened over a status list (`/status/<status>?thread=<slug>`), the board view with no pane.
 //
 // Real server and broker, scripted worker, so nothing signs in:
 //   nub scripts/adhoc-stack.mjs --port=<port> --project=<a throwaway git repo> --claude-bin=$PWD/scripts/scripted-claude.mjs
@@ -45,7 +47,7 @@ async function read(surfaceSelector: string): Promise<Reading> {
   if (!header) throw new Error(`no sticky header in ${surfaceSelector}`)
   let scroller: HTMLElement | null = box.parentElement
   while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller = scroller.parentElement
-  // The console's queue scrolls the document itself, whose overflow reads `visible`.
+  // A surface that scrolls the document itself reads `visible` for its overflow.
   scroller ??= document.scrollingElement as HTMLElement
 
   const force = document.createElement("style")
@@ -59,8 +61,8 @@ async function read(surfaceSelector: string): Promise<Reading> {
     const topAt = ({ x, y }: { x: number; y: number }) => document.elementFromPoint(x, y)
     const settle = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 
-    // Pin the header first, since only a pinned header stays put while the row moves up to it. Other
-    // threads may be queued above this one. Then the row in the open, its box painted under the letter.
+    // Pin the header first, since only a pinned header stays put while the row moves up to it. Then the
+    // row in the open, its box painted under the letter.
     surface.scrollIntoView({ block: "start" })
     await settle()
     scroller.scrollTop += centre().y - header.getBoundingClientRect().bottom - 60
@@ -72,7 +74,10 @@ async function read(surfaceSelector: string): Promise<Reading> {
     await settle()
     const at = centre()
     const now = header.getBoundingClientRect()
-    if (at.y < now.top || at.y > now.bottom) throw new Error(`the letter at y=${at.y} never reached the header (${now.top}–${now.bottom}) in ${surfaceSelector}`)
+    if (at.y < now.top || at.y > now.bottom) {
+      const where = `scroller ${scroller.tagName.toLowerCase()}.${String(scroller.className).split(" ").slice(0, 3).join(".")} at ${scroller.scrollTop} of ${scroller.scrollHeight - scroller.clientHeight}`
+      throw new Error(`the letter at y=${at.y} never reached the header (${now.top}–${now.bottom}) in ${surfaceSelector}, ${where}`)
+    }
     const hit = topAt(at)
     return {
       letter: letter.textContent ?? "",
@@ -102,7 +107,7 @@ test("a question's free-text letter sits over its box and under the thread's sti
     else await new Promise((r) => setTimeout(r, 250))
   }
   assert.ok(projectSlug, "both scripted threads came to rest")
-  // A queued thread's link opens its card, never a drawer: the drawer needs a thread out of the queue.
+  // One thread queued for the pane and the /full page, one snoozed for the drawer, as the board would hold them.
   await api.mutate("setThreadSnooze", { slug: snoozed, sessionId: snoozedSession, until: new Date(Date.now() + 3_600_000).toISOString() })
   const boardUrl = `${baseUrl}/project/${projectSlug}`
 
@@ -111,14 +116,22 @@ test("a question's free-text letter sits over its box and under the thread's sti
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 })
+    // The pane remembers full screen and a hidden rail across loads; start from its default layout.
+    await page.evaluateOnNewDocument(() => localStorage.removeItem("frizz.threadPanePrototype.v1"))
     const surfaces = {
-      card: { url: boardUrl, selector: `[data-queue-card-root="${queued}"]` },
-      drawer: { url: `${boardUrl}?thread=${snoozed}`, selector: `.frizz-sheet-panel [data-thread-surface="${snoozed}"]` },
+      pane: { url: `${boardUrl}?thread=${queued}`, selector: `[data-pane-thread] [data-thread-surface="${queued}"]` },
+      drawer: { url: `${boardUrl}/status/active?thread=${snoozed}`, selector: `.frizz-sheet-panel [data-thread-surface="${snoozed}"]` },
       full: { url: `${boardUrl}/thread/${queued}`, selector: `main[data-standalone-thread] [data-thread-surface="${queued}"]` },
     }
     for (const [name, { url, selector }] of Object.entries(surfaces)) {
       await page.goto(url, { waitUntil: "networkidle2" })
-      await page.waitForSelector(`${selector} textarea[data-surface="questionAnswer"]`, { timeout: 30_000 })
+      const box = await page.waitForSelector(`${selector} textarea[data-surface="questionAnswer"]`, { timeout: 30_000 })
+      // Scroll as a READER first. A thread that opens at the top of its window (the pane's queued
+      // thread, ChatView `openAtTop`) holds it there against programmatic scrolls until a reader's own
+      // gesture claims the transcript, so `read` setting scrollTop alone was undone about half the time.
+      const at = (await box!.boundingBox())!
+      await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2)
+      await page.mouse.wheel({ deltaY: 40 })
       const reading = await page.evaluate(read, selector)
       assert.equal(reading.letter, "C.", `${name}: the free-text row takes the letter after the two options`)
       assert.ok(reading.onBox, `${name}: the letter paints over its own box`)
