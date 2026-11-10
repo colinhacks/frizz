@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync,
+  closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync,
   renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
@@ -238,6 +239,80 @@ export function npmServerPackageInstaller(
   };
 }
 
+/** A generation, or what a killed install left of one, is left alone until it is this old. */
+export const GENERATION_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+/** How many generations besides the selected one are kept for being the newest. */
+export const GENERATIONS_KEPT_RECENT = 2;
+
+/**
+ * Why a sweep left a generation: it is the selection or one the caller holds (`held`), one of the
+ * newest (`recent`), installed within the day (`young`), named by a running process (`running`),
+ * unjudged because this machine's processes could not be listed (`unlisted`), or its removal failed.
+ */
+export type GenerationKept = "held" | "recent" | "young" | "running" | "unlisted" | "failed";
+
+export interface GenerationSweep {
+  /** The version each removed generation held, or the start of its id when that could not be read. */
+  removed: string[];
+  /** How many leftover install directories were removed. */
+  unfinished: number;
+  kept: { version: string; why: GenerationKept }[];
+}
+
+export interface GenerationSweepOptions {
+  /** Generations the caller is serving or may go back to. The saved selection is kept without being named. */
+  keep?: readonly string[];
+  now?: number;
+  commands?: () => Promise<readonly string[] | undefined>;
+  remove?: (path: string) => Promise<void>;
+}
+
+/**
+ * Every running process's command line, or undefined when this machine cannot list them.
+ *
+ * It is how a sweep learns that something still runs out of a generation: a detached daemon and the
+ * server child are each started as `node <generation>/…/dist/<entry>.js`, so the generation's id is
+ * in the command line of whatever was started from it. No lease has to be written for that, which
+ * is what lets it speak for a daemon started by a server older than the sweep.
+ *
+ * Linux reads `/proc`, the kernel's own record, because a slim container image has no `ps`. Windows
+ * answers undefined: its process list needs PowerShell, and a sweep that cannot ask removes nothing.
+ */
+export async function runningCommands(platform: NodeJS.Platform = process.platform): Promise<string[] | undefined> {
+  if (platform === "win32") return undefined;
+  if (platform === "linux") {
+    try {
+      const pids = (await readdir("/proc")).filter((name) => /^\d+$/u.test(name));
+      // A process that ended between the listing and the read has no command line left to weigh.
+      const lines = await Promise.all(pids.map((pid) => readFile(`/proc/${pid}/cmdline`, "utf8").then((line) => line.replaceAll("\0", " ").trim(), () => "")));
+      return lines.filter(Boolean);
+    } catch { return undefined; }
+  }
+  return new Promise((resolveLines) => {
+    // `-ww`: never cut a line at a terminal's width. The orphan reaper reads the same listing.
+    execFile("ps", ["-Aww", "-o", "command="], { encoding: "utf8", windowsHide: true, timeout: 8000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+      resolveLines(error ? undefined : stdout.split("\n").map((line) => line.trim()).filter(Boolean));
+    });
+  });
+}
+
+function versions(list: readonly string[]): string {
+  return list.length > 1 ? `${list.slice(0, -1).join(", ")} and ${list.at(-1)}` : list.join("");
+}
+
+/** The log line for a sweep, or undefined when it removed nothing and withheld nothing worth a line. */
+export function describeGenerationSweep(sweep: GenerationSweep): string | undefined {
+  const kept = (why: GenerationKept) => sweep.kept.filter((entry) => entry.why === why).map((entry) => entry.version);
+  const running = kept("running"), unlisted = kept("unlisted"), failed = kept("failed");
+  const parts: string[] = [];
+  if (sweep.removed.length > 0) parts.push(`removed ${versions(sweep.removed)}`);
+  if (sweep.unfinished > 0) parts.push(`removed ${sweep.unfinished} unfinished install${sweep.unfinished === 1 ? "" : "s"}`);
+  if (running.length > 0) parts.push(`kept ${versions(running)}, still used by a running process`);
+  if (unlisted.length > 0) parts.push(`kept ${versions(unlisted)}, because the running processes could not be listed`);
+  if (failed.length > 0) parts.push(`could not remove ${versions(failed)}`);
+  return parts.length > 0 ? `old Frizz server releases: ${parts.join("; ")}` : undefined;
+}
+
 function atomicJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -381,7 +456,89 @@ export class ServerReleaseStore {
     validateServerGeneration(generation.root, generation, generation.id, this.compatibility);
     const { package: packageName, version, protocol, dataEpoch, id } = generation;
     atomicJson(this.selection, { package: packageName, version, protocol, dataEpoch, id });
-    // Old generations are intentionally retained: detached workers can still execute their files.
-    // Neither npm cache cleanup nor a later update may remove a live worker's runtime closure.
+    // Nothing is removed here: a detached daemon started from an older generation still executes
+    // its files. `sweep` removes the ones nothing runs from.
+  }
+
+  private sweeping: Promise<GenerationSweep> | undefined;
+
+  /**
+   * Remove the generations nothing can still be running from, and what killed installs left behind.
+   *
+   * Nothing removed one until 2026-11: each update added about 14 MB, and a machine that had taken
+   * sixteen held 208 MB of them. They were kept because a detached daemon goes on executing out of
+   * the generation that started it, across every later update. That is a reason to keep the ones in
+   * use, and `runningCommands` says which those are.
+   *
+   * A generation is removed only when ALL of these hold:
+   *   - it is not the saved selection, and not one the caller holds (what it serves, what it would
+   *     roll back to, what it is installing);
+   *   - it is not among the newest GENERATIONS_KEPT_RECENT of the others;
+   *   - it was installed more than a day ago, so an install or a commit in flight is never judged;
+   *   - no running process's command line names it. When the processes cannot be listed, none is.
+   * A leftover `<id>.staging` goes once it is a day old: nothing runs from one, and an install is
+   * stopped after NPM_OPERATION_TIMEOUT_MS.
+   *
+   * It throws when the saved selection cannot be read, having removed nothing: what must be kept
+   * is then unknown. A selection whose generation was removed by something else is still recovered
+   * the way it always was, by `load` reinstalling that exact release.
+   */
+  sweep(options: GenerationSweepOptions = {}): Promise<GenerationSweep> {
+    this.sweeping ??= this.sweepOnce(options).finally(() => { this.sweeping = undefined; });
+    return this.sweeping;
+  }
+
+  private async sweepOnce(options: GenerationSweepOptions): Promise<GenerationSweep> {
+    const now = options.now ?? Date.now();
+    const remove = options.remove ?? ((path: string) => rm(path, { recursive: true, force: true }));
+    const sweep: GenerationSweep = { removed: [], unfinished: 0, kept: [] };
+    const selected = record(readJson(this.selection)).id;
+    if (typeof selected !== "string" || !GENERATION.test(selected))
+      throw new Error("invalid saved Frizz server selection; no old release was removed");
+    const held = new Set([selected, ...(options.keep ?? [])]);
+    const others: { id: string; path: string; version: string; installed: number }[] = [];
+    let names: string[];
+    try { names = readdirSync(this.generations); } catch { return sweep; }
+    for (const name of names) {
+      const path = join(this.generations, name);
+      const unfinished = name.endsWith(".staging") && GENERATION.test(name.slice(0, -".staging".length));
+      // Only the two shapes `prepare` makes. Anything else in the directory is not this store's.
+      if (!unfinished && !GENERATION.test(name)) continue;
+      let installed: number;
+      try {
+        const stat = lstatSync(path);
+        if (!stat.isDirectory()) continue;
+        installed = stat.mtimeMs;
+      } catch { continue; }
+      if (unfinished) {
+        if (now - installed < GENERATION_MIN_AGE_MS) continue;
+        try { await remove(path); sweep.unfinished += 1; } catch { /* It is tried again at the next sweep. */ }
+        continue;
+      }
+      let version = name.slice(0, 8);
+      try {
+        const manifest = record(readJson(join(this.packageRoot(name), "package.json")));
+        if (typeof manifest.version === "string") version = manifest.version;
+      } catch { /* A generation with no readable manifest is still weighed, under its id. */ }
+      if (held.has(name)) sweep.kept.push({ version, why: "held" });
+      else others.push({ id: name, path, version, installed });
+    }
+    others.sort((a, b) => b.installed - a.installed);
+    const old = others.filter((generation, index) => {
+      const why = index < GENERATIONS_KEPT_RECENT ? "recent" : now - generation.installed < GENERATION_MIN_AGE_MS ? "young" : undefined;
+      if (why) sweep.kept.push({ version: generation.version, why });
+      return !why;
+    });
+    if (old.length === 0) return sweep;
+    const commands = await (options.commands ?? runningCommands)();
+    for (const generation of old) {
+      const why = !commands ? "unlisted" : commands.some((line) => line.includes(generation.id)) ? "running" : undefined;
+      if (why) { sweep.kept.push({ version: generation.version, why }); continue; }
+      try {
+        await remove(generation.path);
+        sweep.removed.push(generation.version);
+      } catch { sweep.kept.push({ version: generation.version, why: "failed" }); }
+    }
+    return sweep;
   }
 }

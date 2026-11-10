@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import {
-  npmServerPackageInstaller, resolveNpmCli, serverGenerationLaunch, serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore,
-  validateServerGeneration, type ServerCompatibility, type ServerPackageInstaller, type ServerReleaseSpec,
+  describeGenerationSweep, GENERATION_MIN_AGE_MS, npmServerPackageInstaller, resolveNpmCli, runningCommands, serverGenerationLaunch,
+  serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore,
+  validateServerGeneration, type ServerCompatibility, type ServerGeneration, type ServerPackageInstaller, type ServerReleaseSpec,
 } from "./server-release.ts";
 
 const baseline: ServerReleaseSpec = { package: "frizz-server", version: "1.0.0", protocol: 1, dataEpoch: 1 };
@@ -363,4 +366,202 @@ test("the latest-version probe reads npm 12's one-element array and still refuse
   assert.equal(await answering("npm12", '[\n  "1.1.0"\n]').latestVersion("frizz-server"), "1.1.0");
   await assert.rejects(() => answering("two", '["1.1.0", "1.2.0"]').latestVersion("frizz-server"), /npm returned an invalid Frizz server version/);
   await assert.rejects(() => answering("empty", "[]").latestVersion("frizz-server"), /npm returned an invalid Frizz server version/);
+});
+
+// --- sweeping old generations ---------------------------------------------------------------
+
+const DAY = GENERATION_MIN_AGE_MS;
+/** Give a generation (or anything in the store's directory) an install time `ago` before now. */
+function installed(path: string, ago: number): void {
+  const at = new Date(Date.now() - ago);
+  utimesSync(path, at, at);
+}
+/** `count` generations, 1.0.0 upwards, each a day older than the next, the newest five days old. */
+async function generations(store: ServerReleaseStore, count: number): Promise<ServerGeneration[]> {
+  const made: ServerGeneration[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const generation = await store.prepare(`1.${index}.0`);
+    installed(join(store.generations, generation.id), (count - index + 4) * DAY);
+    made.push(generation);
+  }
+  return made;
+}
+const nothingRunning = async (): Promise<string[]> => ["node /somewhere/else/server.js", "/sbin/launchd"];
+const versionsIn = (store: ServerReleaseStore): string[] => readdirSync(store.generations)
+  .map((id) => JSON.parse(readFileSync(join(store.generations, id, "node_modules", baseline.package, "package.json"), "utf8")).version as string)
+  .sort();
+
+test("a sweep removes old generations and keeps the selected one, the newest two others and any a process still runs from", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 7);
+  // The selection is the OLDEST: what is selected is kept for being selected, not for its age.
+  store.commit(made[0]!);
+  const running = made[2]!;
+  const sweep = await store.sweep({
+    commands: async () => ["/sbin/launchd", `node ${running.root}/dist/claude-agent-broker.js`],
+  });
+  assert.deepEqual(sweep.removed.sort(), ["1.1.0", "1.3.0", "1.4.0"]);
+  assert.deepEqual(versionsIn(store), ["1.0.0", "1.2.0", "1.5.0", "1.6.0"]);
+  assert.deepEqual(sweep.kept.sort((a, b) => a.version.localeCompare(b.version)), [
+    { version: "1.0.0", why: "held" },
+    { version: "1.2.0", why: "running" },
+    { version: "1.5.0", why: "recent" },
+    { version: "1.6.0", why: "recent" },
+  ]);
+  assert.equal(sweep.unfinished, 0);
+  // What was kept still loads, and nothing was reinstalled to make that so.
+  assert.equal((await store.load()).id, made[0]!.id);
+  assert.equal(existsSync(running.entry), true);
+});
+
+test("a generation the caller holds is kept, however old and however many are newer", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 6);
+  store.commit(made[5]!);
+  const sweep = await store.sweep({ keep: [made[0]!.id], commands: nothingRunning });
+  assert.deepEqual(sweep.removed.sort(), ["1.1.0", "1.2.0"]);
+  assert.deepEqual(versionsIn(store), ["1.0.0", "1.3.0", "1.4.0", "1.5.0"]);
+});
+
+test("nothing installed within the day is removed, and the process list is not even read", async (t) => {
+  const { store } = setup(t);
+  const made: ServerGeneration[] = [];
+  for (let index = 0; index < 6; index += 1) {
+    made.push(await store.prepare(`1.${index}.0`));
+    installed(join(store.generations, made[index]!.id), DAY - (6 - index) * 60_000);
+  }
+  store.commit(made[5]!);
+  let asked = 0;
+  const sweep = await store.sweep({ commands: async () => { asked += 1; return []; } });
+  assert.deepEqual(sweep.removed, []);
+  assert.equal(versionsIn(store).length, 6);
+  assert.equal(asked, 0);
+  // The two installed last are kept for being the newest; the other three for being under a day old.
+  assert.deepEqual(sweep.kept.filter((entry) => entry.why === "young").map((entry) => entry.version).sort(), ["1.2.0", "1.3.0", "1.4.0"]);
+  assert.equal(describeGenerationSweep(sweep), undefined);
+});
+
+test("when this machine's processes cannot be listed, no generation is removed", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 5);
+  store.commit(made[4]!);
+  const sweep = await store.sweep({ commands: async () => undefined });
+  assert.deepEqual(sweep.removed, []);
+  assert.equal(versionsIn(store).length, 5);
+  assert.deepEqual(sweep.kept.filter((entry) => entry.why === "unlisted").map((entry) => entry.version).sort(), ["1.0.0", "1.1.0"]);
+  assert.equal(describeGenerationSweep(sweep), "old Frizz server releases: kept 1.1.0 and 1.0.0, because the running processes could not be listed");
+});
+
+test("what a killed install left behind goes once it is a day old, and nothing else in the directory is touched", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 1);
+  store.commit(made[0]!);
+  const stale = join(store.generations, `${randomUUID()}.staging`);
+  const fresh = join(store.generations, `${randomUUID()}.staging`);
+  const foreign = join(store.generations, "notes");
+  const lookalike = join(store.generations, "not-a-generation.staging");
+  for (const path of [stale, fresh, foreign, lookalike]) {
+    mkdirSync(join(path, "node_modules"), { recursive: true });
+    writeFileSync(join(path, "package.json"), "{}");
+  }
+  for (const path of [stale, foreign, lookalike]) installed(path, 3 * DAY);
+  installed(fresh, DAY - 60_000);
+  // No process list at all: a leftover install is judged by its age alone.
+  const sweep = await store.sweep({ commands: async () => undefined });
+  assert.equal(sweep.unfinished, 1);
+  assert.deepEqual([stale, fresh, foreign, lookalike].map((path) => existsSync(path)), [false, true, true, true]);
+  assert.equal(describeGenerationSweep(sweep), "old Frizz server releases: removed 1 unfinished install");
+});
+
+test("a selection that cannot be read removes nothing", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 5);
+  await assert.rejects(store.sweep({ commands: nothingRunning }), "nothing is selected yet");
+  store.commit(made[4]!);
+  for (const broken of ["not json", JSON.stringify({ package: baseline.package, id: "../../elsewhere" })]) {
+    writeFileSync(store.selection, broken);
+    await assert.rejects(store.sweep({ commands: nothingRunning }));
+    assert.equal(versionsIn(store).length, 5);
+  }
+});
+
+test("a generation that could not be removed is reported, and the others still go", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 6);
+  store.commit(made[5]!);
+  const stuck = join(store.generations, made[1]!.id);
+  const sweep = await store.sweep({
+    commands: nothingRunning,
+    remove: async (path) => {
+      if (path === stuck) throw new Error("EBUSY");
+      rmSync(path, { recursive: true });
+    },
+  });
+  assert.deepEqual(sweep.removed.sort(), ["1.0.0", "1.2.0"]);
+  assert.deepEqual(sweep.kept.filter((entry) => entry.why === "failed"), [{ version: "1.1.0", why: "failed" }]);
+  assert.equal(existsSync(stuck), true);
+  assert.match(describeGenerationSweep(sweep) ?? "", /^old Frizz server releases: removed 1\.\d\.0 and 1\.\d\.0; could not remove 1\.1\.0$/u);
+});
+
+test("two sweeps asked for at once are one sweep", async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 5);
+  store.commit(made[4]!);
+  let asked = 0;
+  const commands = async (): Promise<string[]> => { asked += 1; return []; };
+  const [first, second] = await Promise.all([store.sweep({ commands }), store.sweep({ commands })]);
+  assert.equal(first, second);
+  assert.equal(asked, 1);
+  assert.deepEqual(first.removed.sort(), ["1.0.0", "1.1.0"]);
+});
+
+test("the sweep's log line names what went and what a process still holds", () => {
+  assert.equal(
+    describeGenerationSweep({
+      removed: ["0.15.18", "0.15.21", "0.15.30"], unfinished: 2,
+      kept: [{ version: "0.15.48", why: "held" }, { version: "0.15.41", why: "running" }, { version: "0.15.47", why: "recent" }],
+    }),
+    "old Frizz server releases: removed 0.15.18, 0.15.21 and 0.15.30; removed 2 unfinished installs; kept 0.15.41, still used by a running process",
+  );
+  assert.equal(describeGenerationSweep({ removed: [], unfinished: 0, kept: [{ version: "0.15.48", why: "held" }, { version: "0.15.47", why: "young" }] }), undefined);
+});
+
+// The real process table and a real process, because the whole rule rests on one fact: whatever
+// was started from a generation has that generation's id in its command line, in full.
+test("a generation a real process was started from is kept while it runs and removed once it has ended", { skip: process.platform === "win32" }, async (t) => {
+  const { store } = setup(t);
+  const made = await generations(store, 5);
+  store.commit(made[4]!);
+  const daemon = join(made[0]!.root, "dist", "claude-agent-broker.js");
+  writeFileSync(daemon, "setInterval(() => {}, 1000);\n");
+  // A long argument BEFORE the path: a listing that cut its lines short would lose the id.
+  const child = spawn(process.execPath, [`--conditions=${"c".repeat(5000)}`, daemon, "x".repeat(6000)], { stdio: "ignore", detached: true });
+  t.after(() => { try { child.kill("SIGKILL"); } catch { /* It has already ended. */ } });
+  await once(child, "spawn");
+  const deadline = Date.now() + 30_000;
+  let listed: string | undefined;
+  while (Date.now() < deadline && !listed) {
+    listed = (await runningCommands())?.find((line) => line.includes(made[0]!.id));
+    if (!listed) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(listed, "the process table names the generation the child was started from");
+  assert.ok(listed.endsWith("x".repeat(6000)), "and its command line is whole");
+
+  const during = await store.sweep();
+  assert.deepEqual(during.removed, ["1.1.0"]);
+  assert.deepEqual(during.kept.filter((entry) => entry.why === "running"), [{ version: "1.0.0", why: "running" }]);
+  assert.equal(existsSync(daemon), true);
+
+  child.kill("SIGKILL");
+  await once(child, "exit");
+  while (Date.now() < deadline && (await runningCommands())?.some((line) => line.includes(made[0]!.id)))
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  const after = await store.sweep();
+  assert.deepEqual(after.removed, ["1.0.0"]);
+  assert.equal(existsSync(join(store.generations, made[0]!.id)), false);
+  assert.deepEqual(versionsIn(store), ["1.2.0", "1.3.0", "1.4.0"]);
+});
+
+test("Windows, whose processes this cannot list, is told so rather than given an empty list", async () => {
+  assert.equal(await runningCommands("win32"), undefined);
 });

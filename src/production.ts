@@ -67,7 +67,7 @@ import {
 } from "@frizz/server/project-launch";
 import { createSupervisorShutdownHandler, startDevSupervisor } from "@frizz/server/dev-supervisor";
 import { planRegistryUpdate, PRODUCTION_PRINT_LAUNCHER_FLAG, PRODUCTION_REEXEC_FLAG, reexecArgv } from "./production-update.ts";
-import { npmServerPackageInstaller, serverGenerationLaunch, serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore, type ServerGeneration } from "./server-release.ts";
+import { describeGenerationSweep, npmServerPackageInstaller, serverGenerationLaunch, serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore, type ServerGeneration } from "./server-release.ts";
 import { acquireStableServerOwner, publishStableServerAddress, readStableServerOwner, releaseStableServerOwner, type ServerOwnerLease } from "./server-owner.ts";
 import { offerPath, type LaunchRoute } from "@frizz/server/launch-routing";
 import { GLOBAL_INSTALL_ENV, isGlobalInstall, keepUpdateHint } from "./production-update.ts";
@@ -542,6 +542,17 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   let pending: ServerGeneration | undefined;
   let previous = active;
   onPrepared();
+  // Once a release is committed, the ones nothing runs from any more go (ServerReleaseStore.sweep).
+  // In the background and never fatal: it is housekeeping, and this process is the listener.
+  const sweepOldReleases = (): void => {
+    void store.sweep({ keep: [active.id, previous.id, ...(pending ? [pending.id] : [])] }).then(
+      (sweep) => {
+        const line = describeGenerationSweep(sweep);
+        if (line) logger.info("launcher", line);
+      },
+      (error: unknown) => logger.warn("launcher", `old Frizz server releases were not swept: ${error instanceof Error ? error.message : String(error)}`),
+    );
+  };
 
   // Whether the registry actually has something newer, refreshed on a timer and READ FROM CACHE.
   // The status endpoint is polled by every open tab, so it must never reach the network; and the
@@ -656,6 +667,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
       pending = undefined;
       updateAvailable = false;
       updateVersion = undefined;
+      sweepOldReleases();
     },
     rollbackUpdate: () => {
       // Also called when nothing was prepared (already current, a failed install): no line for those.
@@ -738,6 +750,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   void supervisor.stopRequested.then(stop);
   await supervisor.firstBoot;
   store.commit(active);
+  sweepOldReleases();
   // In the log as well as on the terminal: a run log opens with the launcher's version and went on to
   // serve whatever the store selected without ever naming it.
   logger.info("launcher", `serving Frizz server ${active.version} (launcher ${PACKAGE_VERSION})`);

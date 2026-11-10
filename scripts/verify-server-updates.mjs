@@ -4,9 +4,9 @@
 // Run: nub scripts/verify-server-updates.mjs --out=/absolute/evidence
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
-import { createHash, randomBytes } from "node:crypto"
+import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { once } from "node:events"
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { tmpdir } from "node:os"
@@ -207,6 +207,26 @@ function cwdOf(pid) {
   if (process.platform !== "darwin") return undefined
   return execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], { encoding: "utf8" }).split("\n").find((line) => line.startsWith("n"))?.slice(1)
 }
+// Releases this machine took long ago, what a killed install left behind, and a daemon still running
+// out of the oldest of them: what the launcher's sweep has to tell apart (ServerReleaseStore.sweep).
+// None is a real install. A sweep weighs a generation by its age and by what runs from it, and
+// never opens one.
+function seedOldReleases() {
+  const directory = join(home, "cache/frizz/server-releases", createHash("sha256").update("frizz-server").digest("hex").slice(0, 16))
+  const daysAgo = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+  const [running, unused, third, fourth] = ["0.1.1", "0.1.2", "0.1.3", "0.1.4"].map((version, index) => {
+    const path = join(directory, randomUUID()), packageRoot = join(path, "node_modules/frizz-server")
+    mkdirSync(join(packageRoot, "dist"), { recursive: true })
+    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "frizz-server", version }))
+    writeFileSync(join(packageRoot, "dist/claude-agent-broker.js"), "setInterval(() => {}, 1000)\n")
+    utimesSync(path, daysAgo(10 - index), daysAgo(10 - index))
+    return { version, path, daemon: join(packageRoot, "dist/claude-agent-broker.js") }
+  })
+  const unfinished = join(directory, `${randomUUID()}.staging`)
+  mkdirSync(unfinished); utimesSync(unfinished, daysAgo(3), daysAgo(3))
+  start("old-release-daemon", [running.daemon])
+  return { running, unused, third, fourth, unfinished }
+}
 async function launch(version = "0.13.0", cwd = repo) {
   const before = children().length
   const child = start(`launcher-${processes.length}`, [npmCli, "exec", "--yes", `--package=frizz@${version}`, "--", "frizz", "--no-app", "--port", new URL(base).port], cwd)
@@ -291,6 +311,7 @@ try {
   env.npm_config_registry = `http://127.0.0.1:${registry.address().port}/`
   base = `http://127.0.0.1:${await freePort()}`
   record("fixture", { root, out, base, registry: env.npm_config_registry, shellIntegrity: shellRelease.integrity })
+  const old = seedOldReleases()
   if (legacyTarball) {
     start("legacy-launcher", [npmCli, "exec", "--yes", "--package=frizz@0.12.10", "--", "frizz", "--no-app", "--port", new URL(base).port])
     await healthy("0.12.10")
@@ -319,6 +340,13 @@ try {
   const initialPid = shellPid
   await healthy("0.13.0")
   await until("initial selection committed", () => selected().version === "0.13.0")
+  // A 0.12.10 launcher installs releases of its own first, which changes which two are the newest.
+  if (!legacyTarball) {
+    await until("the launcher swept what nothing runs from", () => !existsSync(old.unused.path) && !existsSync(old.unfinished), 30_000)
+    assert.deepEqual([old.running, old.third, old.fourth].map((release) => existsSync(release.daemon)), [true, true, true], "the release a daemon runs from and the two newest are kept")
+    await until("the sweep is in the log", () => launcherLogs().includes("old Frizz server releases: removed 0.1.2; removed 1 unfinished install; kept 0.1.1, still used by a running process"), 30_000)
+    record("old-releases-swept-at-first-boot")
+  }
   const registered = (directory) => JSON.parse(readFileSync(join(home, "data/frizz/registry.json"), "utf8")).projects.find((project) => project.path === realpathSync(directory))
   // The launch was typed in the project, and that is all the project is to the launcher: the server
   // runs on Frizz's own folder, and it was the SERVER that opened the project — registered it and
@@ -394,6 +422,14 @@ try {
   assert.equal(shellPid, initialPid)
   assert.equal(alive(initialPid), true)
   await until("selection version advanced", () => selected().version === "0.13.1")
+  if (!legacyTarball) {
+    // The update swept too, and removed nothing: 0.13.0 is what the launcher would roll back to, which
+    // it holds, so 0.1.3 and 0.1.4 are still the two newest of the rest.
+    const kept = "old Frizz server releases: kept 0.1.1, still used by a running process"
+    await until("the update's sweep is in the log", () => launcherLogs().split(kept).length > 1, 30_000)
+    assert.deepEqual([old.running, old.third, old.fourth].map((release) => existsSync(release.daemon)), [true, true, true])
+    record("an-update-swept-and-removed-nothing-it-holds")
+  }
   assert.equal(children().filter((event) => event.event === "start" && event.version === "0.13.1").length, 1)
   const slowStart = children().find((event) => event.event === "start" && event.version === "0.13.1")
   const slowReady = children().find((event) => event.event === "ready" && event.version === "0.13.1")
@@ -518,6 +554,13 @@ try {
   assert.equal(selected().version, "0.13.7")
   assert.notEqual(selected().id, saved.id)
   record("cache-eviction-restored-exact-version")
+  if (!legacyTarball) {
+    // By now this machine has taken several releases, so the two seeded ones are no longer among the
+    // newest. The one a process still runs from is the only seeded release left.
+    await until("the releases pushed out of the newest two are gone", () => !existsSync(old.third.path) && !existsSync(old.fourth.path), 30_000)
+    assert.equal(existsSync(old.running.daemon), true)
+    record("old-releases-swept-once-newer-ones-arrived")
+  }
   // A probe the registry cannot answer changes nothing about the board, but it has to leave a
   // record. Every failure used to be swallowed, so a probe that could NEVER answer was invisible:
   // on 2026-10-11 a board had failed one every half hour for twenty hours, never offered an update,
@@ -661,6 +704,7 @@ try {
   assert.ok(children().every((event) => event.node === runtimeVersion), "npm bin shebang and all server forks must use the requested Node version")
   assert.equal(existsSync(`${eventFile}.postinstall`), false, "dependency postinstall must never run")
   assert.deepEqual(failures, [])
+  assert.equal(existsSync(old.running.daemon), true, "the release a daemon was running from outlived every update and relaunch")
   record("passed", { children: children() })
 } catch (error) {
   record("test-failed", { error: error.stack ?? String(error) })
