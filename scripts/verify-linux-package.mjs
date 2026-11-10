@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { closureProblem, installedPackages } from "./lib/installed-closure.mjs"
 
 const arg = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3)
 const publicVersion = arg("public")
@@ -109,6 +110,11 @@ try {
   const key = readdirSync(generations)[0]
   const generation = readdirSync(join(generations, key)).find((id) => !id.endsWith(".staging"))
   check("the installed generation carries no node-pty", !existsSync(join(generations, key, generation, "node_modules", "node-pty")))
+  // The server's bundle carries the watcher's JavaScript, so the install is the server and the binary
+  // for this libc. That the server booted says the binary was found; this says nothing else came with it.
+  const nodeModules = join(generations, key, generation, "node_modules")
+  const problem = closureProblem(nodeModules)
+  check("the install is the server and the watcher's binary, nothing npm had to resolve", problem === null, problem ?? installedPackages(nodeModules).join(" "))
 
   // A real RPC through the booted server. The provider credential read is the one Linux-specific path a
   // board takes on its first render (a file under ~/.claude, where macOS reads the Keychain).

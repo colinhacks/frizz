@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { launchHeadless } from "./lib/headless-browser.mjs"
 import { createRpcClient } from "./lib/rpc-client.mjs"
+import { closureProblem, installedPackages } from "./lib/installed-closure.mjs"
 import { resolveNpmCli } from "../src/server-release.ts"
 import { frizzPaths } from "../packages/server/src/frizz-paths.ts"
 
@@ -174,6 +175,12 @@ try {
   assert.ok(alive(owner.pid), `stable launcher ${owner.pid} is alive`)
   assert.equal(owner.port, publicPort)
   evidence.cold = { ownerPid: owner.pid, npmExecPid: launcher.pid, status: before, owner, child: childBefore }
+  // What the launcher's npm install put on disk for this generation: the server and the watcher's
+  // binary, with nothing resolved on this machine (scripts/lib/installed-closure.mjs).
+  const releases = join(home, "cache", "frizz", "server-releases")
+  const nodeModules = join(releases, readdirSync(releases).find((name) => /^[0-9a-f]{16}$/.test(name)), selected().id, "node_modules")
+  evidence.cold.installed = installedPackages(nodeModules)
+  assert.equal(closureProblem(nodeModules), null, `the server's install is not exact: ${evidence.cold.installed.join(" ")}`)
   assert.equal((await fetch(`${base}/_frizz/control/update-restart`, { method: "POST", headers: { origin: "https://example.invalid" } })).status, 403, "negative control: cross-origin update denied")
   browser = await launchHeadless()
   browserPid = browser.process()?.pid

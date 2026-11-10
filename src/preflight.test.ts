@@ -120,15 +120,18 @@ test("the Node floor tracks the releases node:sqlite actually ships in", () => {
 // while declaring `engines: ">=22"`, and on Node 22.12 the addon did not fail to load — Node
 // SEGFAULTED registering it (EXC_BAD_ACCESS in napi_module_register_by_symbol during DLOpen).
 test("the Node floor covers the Node-API version every native dependency builds against", () => {
-  // What a user's machine installs is the shell's dependencies and the published server's. The shell
-  // has had none since 2026-11-10, so the addons are the server's, resolved from where its source
-  // installs them. Reading only the shell's manifest would leave this loop with nothing to read.
+  // The addons a user's machine loads are the server's. The shell has declared no dependency since
+  // 2026-11-10, and the published server names only the watcher's prebuilt binaries, which carry no
+  // `binding.gyp`. So the requirement is read where the binary is BUILT FROM: the dependencies of the
+  // server's source, each resolved from there. Reading only the shell's manifest, as this did, would
+  // leave the loop with nothing to read. (src/package-contents.test.ts holds the published server's
+  // binaries to the watcher found here.)
   const repo = join(import.meta.dirname, "..");
   const dependenciesOf = (...path: string[]) =>
     Object.keys((JSON.parse(readFileSync(join(repo, ...path, "package.json"), "utf8")) as { dependencies?: Record<string, string> }).dependencies ?? {});
   const installed = [
     ...dependenciesOf().map((name) => ({ name, require: createRequire(import.meta.url) })),
-    ...dependenciesOf("packages", "server-release").map((name) => ({ name, require: createRequire(join(repo, "packages", "server", "package.json")) })),
+    ...dependenciesOf("packages", "server").map((name) => ({ name, require: createRequire(join(repo, "packages", "server", "package.json")) })),
   ];
   assert.ok(
     !installed.some(({ name }) => name === "better-sqlite3"),

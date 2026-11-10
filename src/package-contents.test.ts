@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { test } from "node:test";
 import { serverReleaseMinimum, serverReleaseSpec } from "./server-release.ts";
@@ -20,7 +21,7 @@ const manifest = JSON.parse(
 ) as { files?: string[]; bin?: Record<string, string>; name?: string; frizzServer?: unknown; dependencies?: Record<string, string> };
 const serverManifest = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "packages", "server-release", "package.json"), "utf8")
-) as { files?: string[]; name?: string; frizzServer?: unknown; dependencies?: Record<string, string>; engines?: { node?: string } };
+) as { files?: string[]; name?: string; frizzServer?: unknown; dependencies?: Record<string, string>; optionalDependencies?: Record<string, string>; engines?: { node?: string } };
 const sourceServerManifest = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "packages", "server", "package.json"), "utf8")
 ) as { dependencies?: Record<string, string> };
@@ -94,7 +95,31 @@ test("native server dependencies do not leak back into the stable shell", () => 
   // Sign-in runs over pipes: no pty, so no native addon that needs a build on any platform.
   assert.equal(serverManifest.dependencies?.["node-pty"], undefined);
   assert.equal(sourceServerManifest.dependencies?.["node-pty"], undefined);
-  assert.equal(serverManifest.dependencies?.["@parcel/watcher"], "2.5.6");
+});
+
+test("what a user's machine installs for the server is named exactly: the server and its watcher's binary", () => {
+  // Until 2026-11-10 `frizz-server` depended on `@parcel/watcher`, whose own dependencies are four
+  // semver ranges (`picomatch ^4.0.3`, …). The launcher's install resolved them on every user's machine,
+  // at every install and update, with `--min-release-age=0` lifting the user's release-age guard for the
+  // whole tree: a new patch of any of the four reached every Frizz that updated that day, unreviewed,
+  // inside the process that holds the board's session keys.
+  //
+  // The watcher's JavaScript is in the server's bundle now, at the versions this workspace locked
+  // (scripts/build-package.test.mjs). What is left to install is the binary, and a binary package has
+  // no dependencies of its own.
+  assert.equal(serverManifest.dependencies, undefined, "a dependency of the server is resolved, with its own ranges, on the user's machine");
+
+  // Exactly the platform packages the watcher this workspace builds against names, at its version.
+  const watcher = JSON.parse(
+    readFileSync(createRequire(join(import.meta.dirname, "..", "packages", "server", "package.json")).resolve("@parcel/watcher/package.json"), "utf8")
+  ) as { version: string; optionalDependencies: Record<string, string> };
+  assert.equal(sourceServerManifest.dependencies?.["@parcel/watcher"], watcher.version, "the source server pins the watcher exactly");
+  assert.ok(Object.keys(watcher.optionalDependencies).length >= 13);
+  assert.deepEqual(serverManifest.optionalDependencies, watcher.optionalDependencies, "the published server names the watcher's binaries as the watcher itself does");
+  for (const [name, version] of Object.entries(serverManifest.optionalDependencies ?? {})) {
+    assert.match(name, /^@parcel\/watcher-[a-z0-9]+-[a-z0-9]+(-glibc|-musl)?$/);
+    assert.equal(version, watcher.version, `${name} is not pinned to the watcher's own version`);
+  }
 });
 
 test("server packages declare their actual runtime contracts", () => {

@@ -5,15 +5,14 @@ import { join, resolve } from "node:path"
 import { rmSync, existsSync } from "node:fs"
 import { build } from "esbuild"
 import { DETACHED_DAEMON_ENTRIES, detachedDaemonOutputName } from "../packages/server/src/detached-daemons.ts"
-import { PACKAGE_BUILD_OPTIONS as shared, SHELL_ENTRIES, WORKSPACE as workspace } from "./lib/package-build.mjs"
+import { SERVER_BUILD_OPTIONS, SERVER_CHILD_ENTRY, SHELL_BUILD_OPTIONS, SHELL_ENTRIES, WORKSPACE as workspace } from "./lib/package-build.mjs"
 
 const serverRelease = resolve(workspace, "packages/server-release")
 const mode = process.argv[2]
 if (mode !== "--shell" && mode !== "--server") throw new Error("usage: build-package.mjs --shell | --server")
 
-const entries = mode === "--shell"
-  ? { ...SHELL_ENTRIES }
-  : { "dev-child.js": "packages/server/src/dev-child.ts" }
+const shared = mode === "--shell" ? SHELL_BUILD_OPTIONS : SERVER_BUILD_OPTIONS
+const entries = mode === "--shell" ? { ...SHELL_ENTRIES } : { ...SERVER_CHILD_ENTRY }
 if (mode === "--server") {
   for (const entry of DETACHED_DAEMON_ENTRIES) entries[detachedDaemonOutputName(entry)] = entry
 }

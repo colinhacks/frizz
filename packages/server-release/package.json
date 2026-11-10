@@ -21,12 +21,19 @@
     "protocol": 1,
     "dataEpoch": 1
   },
-  "dependencies": {
-    "@parcel/watcher": "2.5.6"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@parcel/watcher"
-    ]
+  "optionalDependencies": {
+    "@parcel/watcher-darwin-x64": "2.5.6",
+    "@parcel/watcher-darwin-arm64": "2.5.6",
+    "@parcel/watcher-win32-x64": "2.5.6",
+    "@parcel/watcher-win32-arm64": "2.5.6",
+    "@parcel/watcher-win32-ia32": "2.5.6",
+    "@parcel/watcher-linux-x64-glibc": "2.5.6",
+    "@parcel/watcher-linux-x64-musl": "2.5.6",
+    "@parcel/watcher-linux-arm64-glibc": "2.5.6",
+    "@parcel/watcher-linux-arm64-musl": "2.5.6",
+    "@parcel/watcher-linux-arm-glibc": "2.5.6",
+    "@parcel/watcher-linux-arm-musl": "2.5.6",
+    "@parcel/watcher-android-arm64": "2.5.6",
+    "@parcel/watcher-freebsd-x64": "2.5.6"
   }
 }

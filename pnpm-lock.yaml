@@ -135,8 +135,44 @@ importers:
         version: 8.1.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/server-release:
-    dependencies:
-      '@parcel/watcher':
+    optionalDependencies:
+      '@parcel/watcher-android-arm64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-darwin-arm64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-darwin-x64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-freebsd-x64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-arm-glibc':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-arm-musl':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-arm64-glibc':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-arm64-musl':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-x64-glibc':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-x64-musl':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-win32-arm64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-win32-ia32':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-win32-x64':
         specifier: 2.5.6
         version: 2.5.6
 
