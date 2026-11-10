@@ -1586,7 +1586,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
   ensureStorageSchema(db)
   const scope = scopeDatabase(db, projectId)
 
-  const interactions = createInteractionStore(db)
+  const interactions = createInteractionStore(db, { projectId })
   const lifecycleListeners = new Set<(event: SessionLifecycleEvent) => void>()
   let closed = false
   const emitSessionLifecycle = (event: SessionLifecycleEvent) => {

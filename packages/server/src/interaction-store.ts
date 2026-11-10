@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type Database from "./sqlite.ts"
+import { namedParameters, type Statement } from "./sqlite.ts"
 import {
   INTERACTION_LIST_MAX,
   CancelInteractionInput,
@@ -222,6 +223,14 @@ interface ProviderDeliveryRow {
 interface InteractionStoreOptions {
   now?: () => Date
   id?: () => string
+  /**
+   * The project this store belongs to. Every project's store is built over ONE shared connection, and
+   * a card's owner names its project, but several statements reach rows by something else: a deadline,
+   * a session, a provider's RPC id, an interaction id. Bound, each of those sees this project's rows
+   * alone (see `own`). `createStorage` always binds it. Unset, they see every project's, which is what
+   * a test driving several projects through one store wants and nothing else should.
+   */
+  projectId?: string
 }
 
 function iso(now: () => Date): string {
@@ -522,8 +531,10 @@ export function serializeInteractionDiagnostic(value: unknown): string {
 /**
  * The journal's tables, idempotent. Split out of createInteractionStore (2026-08-27) so the unified
  * database can create them BEFORE a legacy project file is imported into it — a row can only be
- * copied into a table that exists. The journal was project-scoped from the start (every table carries
- * project_id), which is why it needed no other change for the one-file-every-project move.
+ * copied into a table that exists. Every table carried project_id from the start, which is why the move
+ * to one file for every project looked like it needed no other change. It needed two, both made on
+ * 2026-11-10: the statements that reach rows by something other than their owner (see `own`), and the
+ * delivery table's machine-wide uniqueness (see dropMachineWideRpcUniqueness).
  */
 /** The journal's tables, for the importer and the project purge. */
 export const INTERACTION_TABLES = ["interaction_journal", "interaction_provider_delivery"] as const
@@ -587,7 +598,6 @@ export function ensureInteractionSchema(db: Database): void {
       updated_at             TEXT NOT NULL,
       sent_at                TEXT,
       acknowledged_at        TEXT,
-      UNIQUE (provider, connection_epoch, rpc_request_id_json),
       UNIQUE (project_id, response_id)
     );
     CREATE INDEX IF NOT EXISTS interaction_provider_delivery_queue
@@ -595,6 +605,76 @@ export function ensureInteractionSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS interaction_provider_delivery_logical
       ON interaction_provider_delivery (project_id, provider, logical_request_id);
   `)
+  dropMachineWideRpcUniqueness(db)
+}
+
+/**
+ * `interaction_provider_delivery` was created with `UNIQUE (provider, connection_epoch,
+ * rpc_request_id_json)` written into the table, and that is one namespace for the whole machine: every
+ * project's bridge counts its connection epochs from 1 and a provider numbers its requests from small
+ * integers, so the second project to raise a Codex approval with a matching pair was refused
+ * ("provider request id is already bound to another interaction") and showed no card. The 2026-08-27
+ * change that scoped it by project dropped an index of that name and added a per-project one, but a
+ * constraint declared in the table is not an index that can be dropped: every database made before
+ * 2026-11-10 still enforces it.
+ *
+ * The only way to remove a table constraint is to rebuild the table, so this does that once, for a
+ * table that still has it: same columns, same rows, no machine-wide constraint. Found by STRUCTURE (the
+ * constraint's own automatic index), not by a schema version: an older server opening the rebuilt
+ * table finds every column and index it knows, where a raised version would have it refuse the file.
+ */
+const MACHINE_WIDE_RPC_COLUMNS = ["provider", "connection_epoch", "rpc_request_id_json"]
+function dropMachineWideRpcUniqueness(db: Database): void {
+  const indexes = db.prepare<[], { name: string; origin: string }>("PRAGMA index_list(interaction_provider_delivery)").all()
+  const inline = indexes.filter((index) => index.origin === "u").some((index) => {
+    const columns = db.prepare<[], { name: string }>(`PRAGMA index_info(${JSON.stringify(index.name)})`).all().map((column) => column.name)
+    return columns.length === MACHINE_WIDE_RPC_COLUMNS.length && columns.every((column, at) => column === MACHINE_WIDE_RPC_COLUMNS[at])
+  })
+  if (!inline) return
+  // The columns the old table actually has: one made before `provider_context_json` lacks it, and the
+  // store adds it afterwards as it always did.
+  const present = new Set(db.prepare<[], { name: string }>("PRAGMA table_info(interaction_provider_delivery)").all().map((column) => column.name))
+  const columns = [
+    "interaction_id", "project_id", "provider", "logical_request_id", "request_method", "connection_epoch",
+    "rpc_request_id_json", "state", "response_id", "provider_response_json", "provider_context_json",
+    "resolution_json", "attempts", "created_at", "updated_at", "sent_at", "acknowledged_at",
+  ].filter((column) => present.has(column)).join(", ")
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE interaction_provider_delivery_rebuilt (
+        interaction_id         TEXT PRIMARY KEY REFERENCES interaction_journal(id) ON DELETE CASCADE,
+        project_id             TEXT NOT NULL,
+        provider               TEXT NOT NULL,
+        logical_request_id     TEXT NOT NULL,
+        request_method         TEXT NOT NULL,
+        connection_epoch       INTEGER NOT NULL CHECK (connection_epoch >= 0),
+        rpc_request_id_json    TEXT NOT NULL,
+        state                  TEXT NOT NULL CHECK (state IN ('awaiting-user', 'queued', 'sent', 'acknowledged', 'cancelled')),
+        response_id            TEXT,
+        provider_response_json TEXT,
+        provider_context_json  TEXT,
+        resolution_json        TEXT,
+        attempts               INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL,
+        sent_at                TEXT,
+        acknowledged_at        TEXT,
+        UNIQUE (project_id, response_id)
+      );
+      INSERT INTO interaction_provider_delivery_rebuilt (${columns})
+        SELECT ${columns} FROM interaction_provider_delivery;
+      DROP TABLE interaction_provider_delivery;
+      ALTER TABLE interaction_provider_delivery_rebuilt RENAME TO interaction_provider_delivery;
+      CREATE INDEX IF NOT EXISTS interaction_provider_delivery_queue
+        ON interaction_provider_delivery (provider, connection_epoch, state, created_at);
+      CREATE INDEX IF NOT EXISTS interaction_provider_delivery_logical
+        ON interaction_provider_delivery (project_id, provider, logical_request_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS interaction_provider_delivery_rpc_unique_project
+        ON interaction_provider_delivery (project_id, provider, connection_epoch, rpc_request_id_json);
+      CREATE UNIQUE INDEX IF NOT EXISTS interaction_provider_delivery_response_unique
+        ON interaction_provider_delivery (project_id, response_id) WHERE response_id IS NOT NULL;
+    `)
+  })()
 }
 
 export function createInteractionStore(db: Database, options: InteractionStoreOptions = {}): InteractionStore {
@@ -661,55 +741,89 @@ export function createInteractionStore(db: Database, options: InteractionStoreOp
       .run(INTERACTION_DB_SCHEMA_VERSION)
   }
 
-  const byId = db.prepare<[string], InteractionRow>("SELECT * FROM interaction_journal WHERE id = ?")
-  const byScopedId = db.prepare<[string, string, string, string], InteractionRow>(`
+  // ONE CONNECTION, EVERY PROJECT. This store is built once per project over the shared database, and
+  // until 2026-11-10 it prepared straight on the connection, so whatever did not name an owner saw
+  // every project's rows. `expireDue` was the one that bit: it runs from each open project's board
+  // rebuild, so project A's sweep expired project B's approval card, A's listeners heard a change they
+  // drop as not theirs, and B's heard nothing: the bridge that answers B's blocked worker was never
+  // called. `deliveryByRpc` and the queued-delivery read matched another project's delivery on the same
+  // (epoch, request id), which every project's bridge counts from 1.
+  //
+  // So every statement here is prepared through `own`, which REFUSES one that does not name
+  // `@project_id`, at construction, the way ProjectScope does for the rest of the registry. A statement
+  // that already names its owner's project binds that id as before, and `OWN` is the same condition for
+  // the rest: this store's project when it has one, any project when it has none (a test's store).
+  const boundProject = options.projectId ?? null
+  const OWN = "(@project_id IS NULL OR project_id = @project_id)"
+  const own = <_Bind extends unknown[] | object = unknown[], Row = unknown>(sql: string): Statement<Row> => {
+    if (!namedParameters(sql).includes("project_id")) {
+      throw new InteractionStoreError("corrupt-journal", `unscoped interaction statement: ${sql.trim().slice(0, 120)}`)
+    }
+    const statement = db.prepare<any[], Row>(sql)
+    const isBag = (value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value)
+    const bind = (params: any[]): any[] => params.length >= 1 && isBag(params[0])
+      ? [{ ...(params[0] as Record<string, unknown>), project_id: boundProject }, ...params.slice(1)]
+      : [{ project_id: boundProject }, ...params]
+    return {
+      run: (...params: any[]) => statement.run(...bind(params)),
+      get: (...params: any[]) => statement.get(...bind(params)),
+      all: (...params: any[]) => statement.all(...bind(params)),
+    }
+  }
+  const byId = own<[string], InteractionRow>(`SELECT * FROM interaction_journal WHERE id = ? AND ${OWN}`)
+  const byScopedId = own<[string, string, string, string], InteractionRow>(`
     SELECT * FROM interaction_journal
-    WHERE id = ? AND project_id = ? AND thread_slug = ? AND session_id = ?
+    WHERE id = ? AND project_id = ? AND thread_slug = ? AND session_id = ? AND ${OWN}
   `)
-  const byProviderRequest = db.prepare<[string, string, string, number, string, string], InteractionRow>(`
+  const byProviderRequest = own<[string, string, string, number, string, string], InteractionRow>(`
     SELECT * FROM interaction_journal
     WHERE project_id = ? AND thread_slug = ? AND session_id = ? AND session_epoch = ? AND provider = ? AND provider_request_id = ?
+      AND ${OWN}
   `)
-  const byResponseId = db.prepare<[string, string], InteractionRow>(
-    "SELECT * FROM interaction_journal WHERE project_id = ? AND response_id = ?",
+  const byResponseId = own<[string, string], InteractionRow>(
+    `SELECT * FROM interaction_journal WHERE project_id = ? AND response_id = ? AND ${OWN}`,
   )
-  const deliveryByInteraction = db.prepare<[string], ProviderDeliveryRow>(
-    "SELECT * FROM interaction_provider_delivery WHERE interaction_id = ?",
+  const deliveryByInteraction = own<[string], ProviderDeliveryRow>(
+    `SELECT * FROM interaction_provider_delivery WHERE interaction_id = ? AND ${OWN}`,
   )
-  const deliveryByScopedInteraction = db.prepare<[string, string, string, string], ProviderDeliveryRow>(`
+  const deliveryByScopedInteraction = own<[string, string, string, string], ProviderDeliveryRow>(`
     SELECT d.* FROM interaction_provider_delivery d
     JOIN interaction_journal j ON j.id = d.interaction_id
     WHERE d.interaction_id = ? AND j.project_id = ? AND j.thread_slug = ? AND j.session_id = ?
-      AND d.project_id = j.project_id
+      AND d.project_id = j.project_id AND (@project_id IS NULL OR d.project_id = @project_id)
   `)
-  const deliveryByRpc = db.prepare<[string, number, string], ProviderDeliveryRow>(`
+  const deliveryByRpc = own<[string, number, string], ProviderDeliveryRow>(`
     SELECT * FROM interaction_provider_delivery
-    WHERE provider = ? AND connection_epoch = ? AND rpc_request_id_json = ?
+    WHERE provider = ? AND connection_epoch = ? AND rpc_request_id_json = ? AND ${OWN}
   `)
-  const deliveryByResponseId = db.prepare<[string, string], ProviderDeliveryRow>(
-    "SELECT * FROM interaction_provider_delivery WHERE project_id = ? AND response_id = ?",
+  const deliveryByResponseId = own<[string, string], ProviderDeliveryRow>(
+    `SELECT * FROM interaction_provider_delivery WHERE project_id = ? AND response_id = ? AND ${OWN}`,
   )
-  const queuedDeliveries = db.prepare<[string, number], ProviderDeliveryRow>(`
+  const queuedDeliveries = own<[string, number], ProviderDeliveryRow>(`
     SELECT d.* FROM interaction_provider_delivery d
     JOIN interaction_journal j ON j.id = d.interaction_id
     WHERE d.provider = ? AND d.connection_epoch = ? AND d.state = 'queued' AND j.lifecycle = 'pending'
+      AND (@project_id IS NULL OR d.project_id = @project_id)
     ORDER BY d.created_at ASC, d.interaction_id ASC
   `)
-  const listPendingStmt = db.prepare<[string, string, string, number], InteractionRow>(`
+  const listPendingStmt = own<[string, string, string, number], InteractionRow>(`
     SELECT * FROM interaction_journal
-    WHERE project_id = ? AND thread_slug = ? AND session_id = ? AND lifecycle = 'pending'
+    WHERE project_id = ? AND thread_slug = ? AND session_id = ? AND lifecycle = 'pending' AND ${OWN}
     ORDER BY created_at ASC, id ASC LIMIT ?
   `)
-  const pendingCount = db.prepare<[string, string, string], { count: number }>(`
+  const pendingCount = own<[string, string, string], { count: number }>(`
     SELECT COUNT(*) AS count FROM interaction_journal
-    WHERE project_id = ? AND thread_slug = ? AND session_id = ? AND lifecycle = 'pending'
+    WHERE project_id = ? AND thread_slug = ? AND session_id = ? AND lifecycle = 'pending' AND ${OWN}
   `)
-  const terminalSince = db.prepare<[string, string, string, string], { found: number }>(`
+  const terminalSince = own<[string, string, string, string], { found: number }>(`
     SELECT EXISTS (
       SELECT 1 FROM interaction_journal
       WHERE project_id = ? AND thread_slug = ? AND session_id = ? AND lifecycle != 'pending' AND completed_at >= ?
+        AND ${OWN}
     ) AS found
   `)
+  // The two INSERTs name their project as a VALUE, the owner's, so there is no row to filter: `ownOwner`
+  // refuses an owner from another project before either runs.
   const insert = db.prepare(`
     INSERT INTO interaction_journal (
       id, schema_version, project_id, thread_slug, session_id, session_epoch, capability_revision,
@@ -732,7 +846,7 @@ export function createInteractionStore(db: Database, options: InteractionStoreOp
       @connectionEpoch, @rpcRequestIdJson, @providerContextJson, 'awaiting-user', @at, @at
     )
   `)
-  const rebindDelivery = db.prepare(`
+  const rebindDelivery = own<object>(`
     UPDATE interaction_provider_delivery SET
       connection_epoch = @connectionEpoch,
       rpc_request_id_json = @rpcRequestIdJson,
@@ -743,21 +857,22 @@ export function createInteractionStore(db: Database, options: InteractionStoreOp
       AND state IN ('awaiting-user', 'queued', 'sent')
       AND connection_epoch <= @connectionEpoch
       AND NOT (connection_epoch = @connectionEpoch AND rpc_request_id_json = @rpcRequestIdJson)
+      AND ${OWN}
   `)
-  const queueDelivery = db.prepare(`
+  const queueDelivery = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'queued', response_id = @responseId,
       provider_response_json = @providerResponseJson, resolution_json = @resolutionJson,
       updated_at = @at
-    WHERE interaction_id = @interactionId AND state = 'awaiting-user'
+    WHERE interaction_id = @interactionId AND state = 'awaiting-user' AND ${OWN}
   `)
-  const claimDelivery = db.prepare(`
+  const claimDelivery = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'sent', attempts = attempts + 1, updated_at = @at, sent_at = @at
     WHERE interaction_id = @interactionId AND state = 'queued'
-      AND connection_epoch = @connectionEpoch AND rpc_request_id_json = @rpcRequestIdJson
+      AND connection_epoch = @connectionEpoch AND rpc_request_id_json = @rpcRequestIdJson AND ${OWN}
   `)
-  const resolveStmt = db.prepare(`
+  const resolveStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'resolved', record_revision = record_revision + 1,
       response_id = @responseId, response_json = @responseJson,
@@ -765,93 +880,95 @@ export function createInteractionStore(db: Database, options: InteractionStoreOp
     WHERE id = @id AND project_id = @projectId AND thread_slug = @threadSlug AND session_id = @sessionId
       AND lifecycle = 'pending' AND record_revision = @expectedRecordRevision
       AND session_epoch = @sessionEpoch AND capability_revision = @capabilityRevision
-      AND (expires_at IS NULL OR expires_at > @resolvedAt)
+      AND (expires_at IS NULL OR expires_at > @resolvedAt) AND ${OWN}
   `)
-  const providerResolveStmt = db.prepare(`
+  const providerResolveStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'resolved', record_revision = record_revision + 1,
       response_id = @responseId, response_json = @responseJson,
       cancellation_reason = NULL, updated_at = @resolvedAt, completed_at = @resolvedAt
     WHERE id = @id AND lifecycle = 'pending'
-      AND session_epoch = @sessionEpoch AND capability_revision = @capabilityRevision
+      AND session_epoch = @sessionEpoch AND capability_revision = @capabilityRevision AND ${OWN}
   `)
-  const cancelStmt = db.prepare(`
+  const cancelStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'cancelled', record_revision = record_revision + 1,
       cancellation_reason = 'user-cancelled', updated_at = @cancelledAt, completed_at = @cancelledAt
     WHERE id = @id AND project_id = @projectId AND thread_slug = @threadSlug AND session_id = @sessionId
       AND lifecycle = 'pending' AND record_revision = @expectedRecordRevision
       AND session_epoch = @sessionEpoch AND capability_revision = @capabilityRevision
-      AND (expires_at IS NULL OR expires_at > @cancelledAt)
+      AND (expires_at IS NULL OR expires_at > @cancelledAt) AND ${OWN}
   `)
-  const providerCancelStmt = db.prepare(`
+  const providerCancelStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'cancelled', record_revision = record_revision + 1,
       cancellation_reason = 'provider-cancelled', updated_at = @at, completed_at = @at
-    WHERE id = @id AND lifecycle = 'pending'
+    WHERE id = @id AND lifecycle = 'pending' AND ${OWN}
   `)
-  const invalidateProviderStmt = db.prepare(`
+  const invalidateProviderStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'cancelled', record_revision = record_revision + 1,
       cancellation_reason = @reason, updated_at = @at, completed_at = @at
     WHERE id = @id AND project_id = @projectId AND thread_slug = @threadSlug
-      AND session_id = @sessionId AND lifecycle = 'pending'
+      AND session_id = @sessionId AND lifecycle = 'pending' AND ${OWN}
   `)
-  const acknowledgeDeliveryStmt = db.prepare(`
+  const acknowledgeDeliveryStmt = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'acknowledged', updated_at = @at, acknowledged_at = @at
-    WHERE interaction_id = @interactionId AND state = 'sent'
+    WHERE interaction_id = @interactionId AND state = 'sent' AND ${OWN}
   `)
-  const cancelDeliveryStmt = db.prepare(`
+  const cancelDeliveryStmt = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'cancelled', updated_at = @at, acknowledged_at = @at
-    WHERE interaction_id = @interactionId AND state IN ('awaiting-user', 'queued')
+    WHERE interaction_id = @interactionId AND state IN ('awaiting-user', 'queued') AND ${OWN}
   `)
-  const cancelActiveDeliveryStmt = db.prepare(`
+  const cancelActiveDeliveryStmt = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'cancelled', updated_at = @at, acknowledged_at = @at
-    WHERE interaction_id = @interactionId AND state IN ('awaiting-user', 'queued', 'sent')
+    WHERE interaction_id = @interactionId AND state IN ('awaiting-user', 'queued', 'sent') AND ${OWN}
   `)
-  const pendingForSession = db.prepare<[string, string], InteractionRow>(`
-    SELECT * FROM interaction_journal WHERE thread_slug = ? AND session_id = ? AND lifecycle = 'pending'
+  const pendingForSession = own<[string, string], InteractionRow>(`
+    SELECT * FROM interaction_journal WHERE thread_slug = ? AND session_id = ? AND lifecycle = 'pending' AND ${OWN}
   `)
-  const cancelSessionStmt = db.prepare(`
+  const cancelSessionStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'cancelled', record_revision = record_revision + 1,
       cancellation_reason = @reason, updated_at = @at, completed_at = @at
-    WHERE thread_slug = @threadSlug AND session_id = @sessionId AND lifecycle = 'pending'
+    WHERE thread_slug = @threadSlug AND session_id = @sessionId AND lifecycle = 'pending' AND ${OWN}
   `)
-  const cancelSessionDeliveriesStmt = db.prepare(`
+  const cancelSessionDeliveriesStmt = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'cancelled', updated_at = @at, acknowledged_at = @at
-    WHERE state IN ('awaiting-user', 'queued', 'sent') AND interaction_id IN (
+    WHERE state IN ('awaiting-user', 'queued', 'sent') AND ${OWN} AND interaction_id IN (
       SELECT id FROM interaction_journal
-      WHERE thread_slug = @threadSlug AND session_id = @sessionId AND lifecycle = 'cancelled'
+      WHERE thread_slug = @threadSlug AND session_id = @sessionId AND lifecycle = 'cancelled' AND ${OWN}
     )
   `)
-  const dueStmt = db.prepare<[string], InteractionRow>(`
+  const dueStmt = own<[string], InteractionRow>(`
     SELECT j.* FROM interaction_journal j
     WHERE j.lifecycle = 'pending' AND j.expires_at IS NOT NULL AND j.expires_at <= ?
+      AND (@project_id IS NULL OR j.project_id = @project_id)
       AND NOT EXISTS (
         SELECT 1 FROM interaction_provider_delivery d
         WHERE d.interaction_id = j.id AND d.state IN ('queued', 'sent')
       )
   `)
-  const expireStmt = db.prepare(`
+  const expireStmt = own<object>(`
     UPDATE interaction_journal SET
       lifecycle = 'expired', record_revision = record_revision + 1,
       cancellation_reason = 'expired', updated_at = @at, completed_at = @at
     WHERE lifecycle = 'pending' AND expires_at IS NOT NULL AND expires_at <= @at
+      AND ${OWN}
       AND NOT EXISTS (
         SELECT 1 FROM interaction_provider_delivery d
         WHERE d.interaction_id = interaction_journal.id AND d.state IN ('queued', 'sent')
       )
   `)
-  const expireDeliveriesStmt = db.prepare(`
+  const expireDeliveriesStmt = own<object>(`
     UPDATE interaction_provider_delivery SET
       state = 'cancelled', updated_at = @at, acknowledged_at = @at
-    WHERE state = 'awaiting-user' AND interaction_id IN (
-      SELECT id FROM interaction_journal WHERE lifecycle = 'expired'
+    WHERE state = 'awaiting-user' AND ${OWN} AND interaction_id IN (
+      SELECT id FROM interaction_journal WHERE lifecycle = 'expired' AND ${OWN}
     )
   `)
 
@@ -916,8 +1033,17 @@ export function createInteractionStore(db: Database, options: InteractionStoreOp
     }
   }
 
+  /** A store bound to a project journals for that project alone (see `own`). `createProviderRequest`
+   *  journals through `createTxn` too, so this one check covers both INSERTs. */
+  function ownOwner(owner: { projectId: string }): void {
+    if (boundProject !== null && owner.projectId !== boundProject) {
+      throw new InteractionStoreError("owner-mismatch", "interaction belongs to another project")
+    }
+  }
+
   const createTxn = db.transaction((raw: InteractionRequestType): CreateInteractionResult => {
     const request = InteractionRequest.parse(raw)
+    ownOwner(request.owner)
     const requestJson = canonicalJson(request)
     const existing = byProviderRequest.get(
       request.owner.projectId,

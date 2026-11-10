@@ -74,8 +74,11 @@ function interaction(projectId = "project-owned") {
 function harness() {
   const dir = mkdtempSync(join(tmpdir(), "frizz-interaction-router-"))
   const project: Project = { dir, id: "project-owned", name: "test", label: "test", stateDir: dir, cwdSlug: "test" }
-  const storage = createStorage(join(dir, "ui.db"), "p")
+  const storage = createStorage(join(dir, "ui.db"), project.id)
   storage.upsertSession(session())
+  // Another project in the SAME database, as a server with two projects open holds them. Its rows are
+  // journaled through its own storage: a project's store refuses to write for anyone else.
+  const other = createStorage(storage.db, "other-project")
   const snapshot: BoardSnapshot = {
     projectDir: dir,
     projectName: "test",
@@ -99,7 +102,7 @@ function harness() {
     board,
     tailer: noopTailer,
   } as AppContext
-  return { ctx, storage, router: createRouter(ctx) }
+  return { ctx, storage, other, router: createRouter(ctx) }
 }
 
 async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
@@ -116,7 +119,7 @@ async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
 test("interaction RPC reads only the current registered project session", async () => {
   const h = harness()
   const owned = h.storage.interactions.create(interaction()).interaction
-  const hostileOtherProject = h.storage.interactions.create(interaction("other-project")).interaction
+  const hostileOtherProject = h.other.interactions.create(interaction("other-project")).interaction
 
   const listed = await h.router.pendingInteractions.handler({ input: { slug: "owned-thread", sessionId: "owned-session" } })
   assert.deepEqual(listed.interactions.map((candidate) => candidate.id), [owned.id])
@@ -316,7 +319,7 @@ test("provider acknowledgement winning the resolve race returns the terminal jou
 
 test("foreign interaction ids are indistinguishable from absent ids on terminal RPCs", async () => {
   const h = harness()
-  const hostileOtherProject = h.storage.interactions.create(interaction("other-project")).interaction
+  const hostileOtherProject = h.other.interactions.create(interaction("other-project")).interaction
   const base = {
     slug: "owned-thread",
     sessionId: "owned-session",
@@ -349,7 +352,7 @@ test("foreign interaction ids are indistinguishable from absent ids on terminal 
   } }))
   assert.equal(foreignCancel, absentCancel)
   assert.equal(
-    h.storage.interactions.get({ projectId: "other-project", threadSlug: "owned-thread", sessionId: "owned-session" }, hostileOtherProject.id)?.lifecycle,
+    h.other.interactions.get({ projectId: "other-project", threadSlug: "owned-thread", sessionId: "owned-session" }, hostileOtherProject.id)?.lifecycle,
     "pending",
   )
   h.storage.close()

@@ -352,7 +352,7 @@ test("board interaction presence cache follows the exact session and rechecks af
     stateDir: dir,
     cwdSlug: "fixture",
   }
-  const storage = createStorage(join(dir, "ui.db"), "p")
+  const storage = createStorage(join(dir, "ui.db"), project.id)
   storage.upsertSession(row({ slug: "typed", session_id: "session-a", thread_name: "frizz-typed" }))
   const tailer = {
     get: () => undefined,
@@ -460,7 +460,7 @@ test("board keeps provider delivery visible while ordinary resting-thread queue 
     tick: () => {},
   } satisfies Tailer
   const dbPath = join(dir, "ui.db")
-  let storage = createStorage(dbPath, "p")
+  let storage = createStorage(dbPath, project.id)
   storage.upsertSession(row({ slug: "provider", session_id: "provider-session", thread_name: "frizz-provider" }))
   let board = createBoard(project, storage, new Bus(), tailer, "provider-boot-1")
   let unsubscribe = storage.interactions.subscribe((change) => board.interactionChanged?.(change))
@@ -524,7 +524,7 @@ test("board keeps provider delivery visible while ordinary resting-thread queue 
     unsubscribe()
     await board.stop()
     storage.close()
-    storage = createStorage(dbPath, "p")
+    storage = createStorage(dbPath, project.id)
     board = createBoard(project, storage, new Bus(), tailer, "provider-boot-2")
     unsubscribe = storage.interactions.subscribe((change) => board.interactionChanged?.(change))
     assert.equal(current().pendingInteraction, true)
