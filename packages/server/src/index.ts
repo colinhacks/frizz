@@ -49,7 +49,10 @@ import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { pidIsAlive } from "./project-identity.ts"
 import { createBootProgressPublisher } from "./boot-progress.ts"
 import { log as frizzLog } from "./logging.ts"
-import { describeRuntime, resolveRuntimes, shouldDeferRuntimes, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
+import { claudeFloatEnabled, describeRuntime, resolveRuntimes, RUNTIMES_REGISTRY_ENV, runtimesRoot, shouldDeferRuntimes, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
+import { createClaudeFloat, type ClaudeFloat } from "./claude-float.ts"
+import { runtimeVersionDir } from "./runtime-lease.ts"
+import { readClaudeModels } from "./backend/claude-models.ts"
 import { createTenantMap } from "./tenants.ts"
 import { openFrizzDatabase, type FrizzDatabase, type OpenFrizzDatabaseOptions } from "./frizz-db.ts"
 import { startTenantPrime, type TenantPrimeRun } from "./tenant-prime.ts"
@@ -598,6 +601,9 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
   // The standing announcement that tells every open tab the project list changed
   // (projects-changed.ts). Armed at the end of boot; disarmed by the "other projects" shutdown phase.
   let stopProjectAnnouncements: (() => void) | undefined
+  // Moves the server to newer Claude Code builds on its line while it serves (claude-float.ts). Started
+  // after the runtimes phase for a provisioned Claude Code only; stopped with the announcements.
+  let claudeFloat: ClaudeFloat | undefined
   // One process, N projects (tenants.ts). The launching project is adopted below once its own boot
   // phases have built it; anything opened later goes through activate(), which is where the
   // AppContext-seam error boundary lives.
@@ -831,6 +837,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     tenantPrime?.stop()
     await tenantPrime?.done
     stopProjectAnnouncements?.()
+    claudeFloat?.stop()
     for (const { project: opened } of tenants.active()) {
       if (opened.id !== project.id) await tenants.deactivate(opened.id)
     }
@@ -1003,13 +1010,32 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // A provisioned Claude Code must not update itself out from under the pin. Every worker, and every
     // `claude auth status` / `claude auth login` Frizz runs, inherits the server's environment.
     if (runtimes.claude.source === "provisioned" || runtimes.claude.source === "deferred") process.env.DISABLE_AUTOUPDATER = "1"
+    // Only a Claude Code Frizz provisioned floats: an explicit executable, PATH and a stand-in are the
+    // operator's or the test's, and a runtime waiting for its first thread starts on the bundled build.
+    if (runtimes.claude.source === "provisioned" && runtimeVersionDir(runtimes.claude.bin) && claudeFloatEnabled()) {
+      claudeFloat = createClaudeFloat({
+        root: runtimesRoot(),
+        // The same registry the pins come from: a mirror, or a verification's own (FRIZZ_RUNTIMES_REGISTRY).
+        registry: process.env[RUNTIMES_REGISTRY_ENV] || undefined,
+        current: () => runtimes!.claude,
+        adopt: (next) => {
+          runtimes = { ...runtimes!, claude: next }
+          // Read the new build's catalogue now, so the picker names its editions without waiting for
+          // a browser to ask, and every board re-derives its model upgrades when it lands.
+          void readClaudeModels({ claudeBin: next.bin, cwd: project.dir, log: (message) => frizzLog.warn("server", message) })
+        },
+        log: (level, message) => frizzLog[level]("server", message),
+      })
+      claudeFloat.start()
+    }
     // Committed through the ledger callback, like the context below: an injected failure right after
     // this phase throws before the assignment would run, and the rollback must still find the handle.
     frizzDb = await phase("database", () => runtime.openDatabase({ stateDir: project.stateDir }), (value) => { frizzDb = value })
     ctx = await phase(
       "context",
       () => runtime.createContext({
-        claudeBin: runtimes!.claude.bin,
+        // A getter, read at each use: the Claude Code a server runs can move while it serves (claude-float.ts).
+        get claudeBin() { return runtimes!.claude.bin },
         codexBin: runtimes!.codex.bin,
         codexVersion: runtimes!.codex.version === "unknown" ? undefined : runtimes!.codex.version,
         project,

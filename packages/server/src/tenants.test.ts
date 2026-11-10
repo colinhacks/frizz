@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { AppContext } from "./context.ts"
+import type { AppContext, ContextOptions } from "./context.ts"
 import type { Project } from "./project.ts"
 import { createTenantMap } from "./tenants.ts"
 
@@ -222,4 +222,20 @@ test("activating a project starts its producers, and a producer that throws is r
   assert.deepEqual(reported, ["bad"], "the failure came back through the seam")
   assert.ok(map.get("good"), "and the project already serving is untouched")
   await map.closeAll()
+})
+
+// A tenant's options are copied by descriptor: `claudeBin` is a getter because the Claude Code a server
+// runs can move while it serves (claude-float.ts), and a spread would freeze it at the tenant's opening.
+test("a tenant's context reads the live Claude Code, not the one it opened with", async () => {
+  let bin = "/runtimes/claude/2.1.321/claude"
+  let seen: ContextOptions | undefined
+  const tenants = createTenantMap({
+    createContext: async (opts) => { seen = opts; return fakeContext([]) },
+    contextOptions: { get claudeBin() { return bin } },
+  })
+  await tenants.activate(project("p1"))
+  assert.equal(seen?.project?.id, "p1")
+  assert.equal(seen?.claudeBin, "/runtimes/claude/2.1.321/claude")
+  bin = "/runtimes/claude/2.1.322/claude"
+  assert.equal(seen?.claudeBin, "/runtimes/claude/2.1.322/claude")
 })

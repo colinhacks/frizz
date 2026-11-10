@@ -33,7 +33,7 @@ import { test } from "node:test"
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { CLAUDE_CODE_VERSION } from "../runtimes.ts"
+import { CLAUDE_CODE_VERSION, isLaterOnLine } from "../runtimes.ts"
 import { newTailState } from "../tailer.ts"
 import { createClaudeBackend } from "./claude.ts"
 import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./codex-app-server.ts"
@@ -66,7 +66,7 @@ interface Sample {
 // Among the qualifying candidates it takes the LARGEST, not the newest. A short session is real vendor
 // output that happens to exercise two record types; the biggest recent one exercises all of them, and
 // picking it is what stops the verdict depending on which thread the operator last ran.
-function largest(samples: Sample[]): Sample | undefined {
+function largest<T extends Sample>(samples: T[]): T | undefined {
   return samples.sort((a, b) => b.lines.length - a.lines.length)[0]
 }
 
@@ -132,11 +132,16 @@ function pinnedCodexRollout(): Sample | undefined {
   return largest(qualifying)
 }
 
-/** The best Claude transcript this machine holds that the PINNED Claude Code wrote, or undefined. */
-function pinnedClaudeTranscript(): Sample | undefined {
+/**
+ * The best Claude transcript this machine holds from the NEWEST Claude Code a worker may run: the bundled
+ * pin, or a later build on its line that a server moved to by itself (claude-float.ts). The newest is
+ * the one under test because it is the one new threads start on, and the one a vendor change reaches
+ * first. Undefined when neither has written a session here.
+ */
+function pinnedClaudeTranscript(): (Sample & { version: string }) | undefined {
   const projects = join(homedir(), ".claude", "projects")
   const settledBefore = Date.now() - SETTLED_MS
-  const qualifying: Sample[] = []
+  const qualifying: Array<Sample & { version: string }> = []
   for (const { path, mtimeMs } of newestFiles(projects, (n) => n.endsWith(".jsonl"), 2).slice(0, CANDIDATES)) {
     if (mtimeMs > settledBefore) continue
     const lines = readLines(path)
@@ -151,15 +156,18 @@ function pinnedClaudeTranscript(): Sample | undefined {
         if (typeof version === "string") stamps.add(version)
       } catch {}
     }
-    if (stamps.size !== 1 || !stamps.has(CLAUDE_CODE_VERSION)) continue
-    qualifying.push({ path, lines })
+    const [version] = stamps
+    if (stamps.size !== 1 || (version !== CLAUDE_CODE_VERSION && !isLaterOnLine(version!, CLAUDE_CODE_VERSION))) continue
+    qualifying.push({ path, lines, version: version! })
   }
+  const newest = qualifying.reduce<string | undefined>((best, sample) => (!best || isLaterOnLine(sample.version, best) ? sample.version : best), undefined)
+  const ofNewest = qualifying.filter((sample) => sample.version === newest)
   // The largest is not always the richest: a 404-record session in which the model never called a tool
   // (an agent's /compact harness, 2026-09-26) outgrew every real one and failed the tool_use assertion
   // below on a format nothing had changed. So prefer the largest session whose model used a block that
   // is neither text nor thinking. That test is spelling-blind on purpose — a vendor that renamed
   // `tool_use` still writes such a block, so the renamed session is still picked and still fails.
-  return largest(qualifying.filter(modelCalledATool)) ?? largest(qualifying)
+  return largest(ofNewest.filter(modelCalledATool)) ?? largest(ofNewest)
 }
 
 function modelCalledATool(sample: Sample): boolean {
@@ -227,9 +235,9 @@ test(`the pinned codex ${CODEX_APP_SERVER_SUPPORTED_VERSION} still emits every e
 const claudeSample = pinnedClaudeTranscript()
 const claudeSkip = claudeSample
   ? false
-  : `no transcript written by the pinned Claude Code ${CLAUDE_CODE_VERSION} is on this machine, so its transcript format is UNPROVEN — run a Claude thread, or re-check after the next dispatch`
+  : `no transcript written by the pinned Claude Code ${CLAUDE_CODE_VERSION}, or a later build on its line, is on this machine, so its transcript format is UNPROVEN — run a Claude thread, or re-check after the next dispatch`
 
-test(`the pinned Claude Code ${CLAUDE_CODE_VERSION} still writes a transcript the fold can read`, { skip: claudeSkip }, () => {
+test(`the pinned Claude Code ${claudeSample?.version ?? CLAUDE_CODE_VERSION}${claudeSample && claudeSample.version !== CLAUDE_CODE_VERSION ? ` (moved past the bundled ${CLAUDE_CODE_VERSION})` : ""} still writes a transcript the fold can read`, { skip: claudeSkip }, () => {
   const backend = createClaudeBackend({ logDir: "/nonexistent" })
   const state = newTailState("conformance", "session", "/nonexistent")
   for (const line of claudeSample!.lines) backend.foldLine(state, line)

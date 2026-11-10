@@ -321,7 +321,10 @@ export interface AppContext {
 }
 
 export interface ContextOptions {
-  claudeBin?: string // injectable dispatch executable (tests use a stand-in)
+  // Injectable dispatch executable (tests use a stand-in). The server passes it as a GETTER, because
+  // the Claude Code it runs can move while it serves (claude-float.ts): every read below happens at
+  // use, and an object handed on carries a getter rather than a copy.
+  claudeBin?: string
   codexBin?: string // injectable app-server executable; unused unless the bridge flag is enabled
   codexVersion?: string // exact provisioned runtime version; undefined for an override/PATH fallback
   // startServer pins the owner-verified project before any SQLite/tailer/scheduler initialization.
@@ -758,7 +761,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     ...(opts.serverLockPath ? { serverLock: opts.serverLockPath } : {}),
     projectId: project.id,
   }
-  const claudeBackend = createClaudeBackend({ logDir: defaultLogDir(project), claudeBin: opts.claudeBin })
+  const claudeBackend = createClaudeBackend({ logDir: defaultLogDir(project), get claudeBin() { return opts.claudeBin } })
   const codexBackend = createCodexBackend({})
   const acpBackend = createAcpBackend({ stateDir: project.stateDir })
   const opencodeBackend = createOpencodeBackend({ stateDir: project.stateDir })
@@ -919,7 +922,9 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
         onCompactionWindow: (sessionId, window) => claudeRuntimeIngest?.noteCompactionWindow(sessionId, window),
         requestedPermissionMode: (slug) => storage.getSession(slug)?.permission_mode,
         stateDir: project.stateDir,
-        executablePath: opts.claudeBin ?? "claude",
+        // Read at each fork, not now: a server that moves to a newer Claude Code (claude-float.ts) starts
+        // new daemons on it, and opts.claudeBin is a live getter for that reason (index.ts).
+        executablePath: () => opts.claudeBin ?? "claude",
         // Scoped to THIS project, not to whichever one launched the server — see
         // projectScopedEnvironment. A raw process.env spread is how project A identity would reach
         // project B agent once one process holds both.
@@ -1143,7 +1148,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     storage,
     board,
     getSettings: () => getSettings(storage, home),
-    claudeBin: opts.claudeBin,
+    get claudeBin() { return opts.claudeBin },
     backendFor,
     codexAppServer,
     acpBridge,
@@ -1407,7 +1412,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     // Derived from the state dir, never from `homedir()`, so a sandboxed server audits into its own
     // sandbox (the reason serverAddressPathForStateDir exists).
     audit: fileAuditLog(auditLogPathForStateDir(project.stateDir)),
-    claudeBin: opts.claudeBin,
+    get claudeBin() { return opts.claudeBin },
     codexBin: opts.codexBin,
     codexVersion: opts.codexVersion,
   }
