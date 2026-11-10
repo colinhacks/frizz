@@ -1,5 +1,5 @@
 import { subscribe } from "valtio"
-import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, takeQueueCardNavigation } from "../store.ts"
+import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, paneEnabled, takeQueueCardNavigation } from "../store.ts"
 import { innerPath, outerPath, projectHref } from "./base-path.ts"
 import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 
@@ -106,7 +106,21 @@ export function applyPath(path: string, search = ""): void {
   if (slug === null) {
     // No thread named: Back past the last thread layer unwinds the stack (animated).
     store.routeThreadSlug = null
+    store.paneSlug = null
     closeDrawersById(store.drawers.map((d) => d.id))
+    return
+  }
+  // THE PANE: the address names what the pane shows. A thread it already shows is this sync
+  // coming back around, and the sheets over it stay. Anything else is Back, Forward or a link: parked
+  // like any thread, with the board's App settling it through pushDrawer (store.ts).
+  if (paneEnabled()) {
+    if (store.paneSlug === slug) {
+      store.routeThreadSlug = null
+      return
+    }
+    closeDrawersById(store.drawers.map((d) => d.id))
+    store.paneSlug = null
+    store.routeThreadSlug = slug
     return
   }
   // Back/forward landed on a thread: if that thread is somewhere in the stack, unwind ABOVE it and

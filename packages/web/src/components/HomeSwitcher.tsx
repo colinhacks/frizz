@@ -132,13 +132,20 @@ export function HomeTabs({ className = "" }: { className?: string }) {
   )
 }
 
-/** The Console's placement: fixed, in the corner where its sidebar starts. */
-export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
+/** The Console's placement: fixed, in the corner where its sidebar starts. `sidebarInset` is for a layout
+ *  whose sidebar is not the centred pair's: how far in from the window's left edge the pill stands, as a
+ *  CSS length of the page (the one-thread pane). */
+export function HomeSwitcher({ railVisible, sidebarInset }: { railVisible: boolean; sidebarInset?: string }) {
   return (
     // The empty copy of the board's two columns, inset by the rail as the page is (routes.tsx RootLayout),
     // with the pill in the sidebar's slot. It is the window's width and takes no pointer, so nothing under
     // it stops being clickable.
     <div data-home-switcher-frame className={`pointer-events-none fixed inset-x-0 top-[14px] ${Z_CHROME} ${railVisible ? RAIL_INSET_CLASS : ""}`}>
+      {sidebarInset !== undefined ? (
+        <div style={{ paddingLeft: sidebarInset }}>
+          <HomeTabs className="pointer-events-auto ml-0.5" />
+        </div>
+      ) : (
       <div className={BOARD_PAIR_CLASS}>
         <div className={SIDEBAR_WIDTH_CLASS}>
           {/* `ml-0.5`: the sidebar's prompt box is inset 2px in its column (ConsoleSidebar's `px-0.5`), and the
@@ -147,6 +154,7 @@ export function HomeSwitcher({ railVisible }: { railVisible: boolean }) {
         </div>
         <div className={WORKPANE_WIDTH_CLASS} />
       </div>
+      )}
     </div>
   )
 }

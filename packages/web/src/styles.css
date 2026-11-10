@@ -2660,6 +2660,15 @@ html[data-code-wrap="off"] {
   animation-duration: 200ms;
   animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
 }
+/* THE ONE-THREAD PANE: full screen is the sidebar sliding off the left edge. */
+::view-transition-old(pane-sidebar):only-child {
+  animation: frizz-pane-sidebar-out 200ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+::view-transition-new(pane-sidebar):only-child {
+  animation: frizz-pane-sidebar-in 200ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+@keyframes frizz-pane-sidebar-out { to { transform: translateX(-100%); opacity: 0; } }
+@keyframes frizz-pane-sidebar-in { from { transform: translateX(-100%); opacity: 0; } }
 /* THE FORWARD MORPH STARTS FROM THE VISIBLE PART OF THE CARD, not its whole box. The browser's own
    group keyframes run from the old element's full border box, and a tall queue card scrolled to its
    middle has a box that starts a thousand pixels above the viewport — so the whole screen rushed

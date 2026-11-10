@@ -50,6 +50,7 @@ export function SendSplitButton({
   bottom,
   onMode,
   onSend,
+  onSendAndNext,
   onMenuClosed,
 }: {
   /** There is something to send: typed text, or an answer staged on any card. */
@@ -68,6 +69,8 @@ export function SendSplitButton({
   bottom: number
   onMode: (mode: SendMode) => void
   onSend: () => void
+  /** Send, then bring up the next thread in the queue (the one-thread pane). */
+  onSendAndNext?: () => void
   /** The menu closed: put the caret back in the prompt box, where the next keystroke belongs. */
   onMenuClosed?: () => void
 }) {
@@ -170,6 +173,19 @@ export function SendSplitButton({
               })}
             </RadixMenu.RadioGroup>
             {!running && <div className="px-2 pb-1 pt-1.5 text-[11px] leading-[15px] text-muted-70">The agent is at rest, so both send now.</div>}
+            {onSendAndNext && (
+              <>
+                <RadixMenu.Separator className="mx-1 my-1 h-px bg-border" />
+                <RadixMenu.Item
+                  data-send-and-next
+                  onSelect={onSendAndNext}
+                  className="flex cursor-pointer select-none items-baseline justify-between gap-4 rounded-md py-1.5 pl-[30px] pr-2 text-left outline-none transition-colors data-[highlighted]:bg-panel-2"
+                >
+                  <span className="text-[12px] font-medium leading-[18px] text-fg">{armed ? "Send & next" : "Next in queue"}</span>
+                  <span className="text-[11px] text-muted-70">⇧⌘⏎</span>
+                </RadixMenu.Item>
+              </>
+            )}
           </RadixMenu.Content>
         </RadixMenu.Portal>
       </RadixMenu.Root>

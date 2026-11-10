@@ -110,7 +110,9 @@ export function ConsoleSidebar() {
   // "By status" only. Done is asked once per settled list, not once per delta (consoleBoard.ts consoleDone).
   const snoozed = useMemo(() => (group === "status" ? consoleSnoozed(all) : []), [group, all])
   const done = useMemo(() => (group === "status" ? consoleDone(all) : []), [group, all])
-  const { railRef, activeId, navigateToQueueCard } = useQueueScrollspy(snap.view, snap.drawers.length, waiting.map((t) => t.id))
+  const spy = useQueueScrollspy(snap.view, snap.drawers.length, waiting.map((t) => t.id))
+  const { railRef, navigateToQueueCard } = spy
+  const activeId = snap.paneSlug ?? spy.activeId
 
   const square = (t: ThreadView) => <RowSquare project={bySlug.get(keyProject(t.id) ?? "")} />
   // By status the rows speak for the Console's shelf; by project, for each project board's own.

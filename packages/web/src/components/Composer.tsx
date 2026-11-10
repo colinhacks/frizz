@@ -10,6 +10,8 @@ import { queueComposerHandlesOptionEnter } from "../lib/queueComposerKeyboard.ts
 import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
+import { paneEnabled } from "../store.ts"
+import { sendAndNext } from "../lib/threadPane.ts"
 import { useDictation } from "../lib/dictation.ts"
 import { prefs } from "../lib/prefs.ts"
 import { DictationLevel } from "./DictationLevel.tsx"
@@ -624,6 +626,13 @@ export function Composer({
     // silently rode along with the next unrelated message. Typing stays enabled during upload (the
     // commit re-derives from valueRef); only SENDING waits for the attachment to land.
     const canSend = armed && !busy && !uploading
+    // ⇧⌘⏎ — send and move on (the one-thread pane). With nothing to send it just moves on.
+    if (surface === "chatComposer" && e.key === "Enter" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing && paneEnabled()) {
+      e.preventDefault()
+      e.stopPropagation()
+      sendAndNext(canSend, submit)
+      return
+    }
     if (shouldSubmitComposerEnter(keyboardEvent, canSend)) {
       // A plain Enter is the ordinary send. Shift/Option-Enter and IME confirmations retain the
       // native textarea behavior, so they cannot accidentally submit or lose their newline.
@@ -1152,6 +1161,7 @@ export function Composer({
           bottom={railBottom}
           onMode={send.onMode}
           onSend={submit}
+          onSendAndNext={surface === "chatComposer" && paneEnabled() ? () => sendAndNext(armed && !busy && !uploading, submit) : undefined}
           onMenuClosed={() => taRef.current?.focus({ preventScroll: true })}
         />
       ) : (

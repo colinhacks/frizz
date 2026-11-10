@@ -1,6 +1,8 @@
 import type { MouseEvent } from "react"
 import { Minimize2 } from "lucide-react"
 import { queueDestination, spaNavigate } from "../lib/router.ts"
+import { paneEnabled } from "../store.ts"
+import { setPaneFolded } from "../lib/threadPane.ts"
 import { fullscreenOriginFor } from "../lib/fullscreenHandoff.ts"
 import { prefersReducedMotion } from "../lib/sheet.ts"
 import { isPlainLeftClick } from "../lib/standaloneThreadRoute.ts"
@@ -51,6 +53,10 @@ export function CollapseThreadLink({ slug, label = "Exit fullscreen" }: { slug: 
   function onClick(event: MouseEvent<HTMLAnchorElement>) {
     if (!isPlainLeftClick(event)) return
     event.preventDefault()
+    if (paneEnabled()) {
+      setPaneFolded(false)
+      return
+    }
     exitFullscreen(slug)
   }
   return (
