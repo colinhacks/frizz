@@ -57,7 +57,8 @@ test("switching projects from the grid re-points the live feed at the project th
     // The BOARD socket for a project, ignoring any other socket the page opens. Matched
     // with a regex rather than `endsWith("…")`, which frizzRouteUrls.test.ts reads as a hand-built
     // client URL — this only recognises one, it never constructs one.
-    const isBoard = /\/ws$/
+    // The board socket asks for patches in its query (api/wirePatch.ts): the URL may go on past `/ws`.
+    const isBoard = /\/ws(\?|$)/
     const boardSocket = async () => (await page.evaluate(() =>
       (window as unknown as { __wsUrls: string[] }).__wsUrls))
       .filter((u) => isBoard.test(u)).at(-1)
@@ -70,11 +71,11 @@ test("switching projects from the grid re-points the live feed at the project th
       // The rebind is an effect + a socket open, so give the new one a moment to be constructed.
       await page.waitForFunction((s) =>
         ((window as unknown as { __wsUrls: string[] }).__wsUrls
-          .filter((u) => /\/ws$/.test(u)).at(-1) ?? "").includes(`/_frizz/${s}/`), { timeout: 15_000 }, slug)
+          .filter((u) => /\/ws(\?|$)/.test(u)).at(-1) ?? "").includes(`/_frizz/${s}/`), { timeout: 15_000 }, slug)
         .catch(() => {})
       assert.match(
         (await boardSocket()) ?? "",
-        new RegExp(`/_frizz/${slug}/ws$`),
+        new RegExp(`/_frizz/${slug}/ws(\\?|$)`),
         `the board feed on /project/${slug} must address ${slug}, not whichever project it was last bound to`,
       )
       // …and the keyframe that feed delivers actually renders: the header resolves an identity rather

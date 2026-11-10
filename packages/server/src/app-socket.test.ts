@@ -4,7 +4,8 @@ import { createServer, type Server } from "node:http"
 import { once } from "node:events"
 import type { AddressInfo } from "node:net"
 import { WebSocket, type ClientOptions } from "ws"
-import type { BoardDelta, SocketServerMsg, ThreadView, TranscriptMessage } from "@frizz/shared"
+import type { BoardDelta, JsonPatchOp, SocketServerMsg, ThreadView, TranscriptMessage } from "@frizz/shared"
+import { applyJsonPatch } from "@frizz/shared"
 import { encodeCallerStamp } from "./audit.ts"
 import { Bus, Emitter } from "./bus.ts"
 import { DeltaRing } from "./board.ts"
@@ -773,7 +774,6 @@ test("protocol: sub pushes the current transcript immediately", async () => {
 // subscriptions are registered, which is exactly the arrangement the assertion is about.
 test("resource control: concurrent tabs coalesce one slow transcript read and one serialization", async () => {
   let reads = 0
-  let serializations = 0
   const messages = [msg("shared snapshot")]
   const armedBatches: (() => void)[] = []
   const h = await startHarness({
@@ -788,10 +788,6 @@ test("resource control: concurrent tabs coalesce one slow transcript read and on
         // Deliberately synchronous like the real readFileSync + parse path.
       }
       return { messages }
-    },
-    serializeMessage: (serverMsg) => {
-      if (serverMsg.t === "transcript") serializations++
-      return JSON.stringify(serverMsg)
     },
   })
   try {
@@ -813,7 +809,7 @@ test("resource control: concurrent tabs coalesce one slow transcript read and on
       if (push.t === "transcript") assert.deepEqual(push.messages, messages)
     }
     assert.equal(reads, 1, "all tabs in one subscription batch share the synchronous parse")
-    assert.equal(serializations, 1, "all tabs share the exact encoded frame")
+    assert.equal(h.appSocket.transcriptEncodes, 1, "all tabs share the exact encoded frame")
     assert.equal(h.appSocket.transcriptCacheEntries, 1)
     assert.ok(h.appSocket.transcriptCacheBytes > 0)
 
@@ -822,7 +818,7 @@ test("resource control: concurrent tabs coalesce one slow transcript read and on
     }
     await Promise.all(clients.map((client) => client.expectNone(50)))
     assert.equal(reads, 1, "duplicate subscriptions remain true no-ops")
-    assert.equal(serializations, 1)
+    assert.equal(h.appSocket.transcriptEncodes, 1)
     assert.equal(armedBatches.length, 1, "a duplicate subscription arms no second batch either")
     for (const client of clients) client.ws.close()
   } finally {
@@ -1070,16 +1066,11 @@ test("protocol: a one-byte-over Unicode transcript pauses only that slug and an 
   assert.ok(actualBytes > encoded.length, "fixture must distinguish UTF-8 bytes from JS code units")
 
   let reads = 0
-  let transcriptSerializations = 0
   const h = await startHarness({
     maxLogicalFrameBytes: actualBytes - 1,
     readTranscript: () => {
       reads++
       return { messages: current }
-    },
-    serializeMessage: (serverMsg) => {
-      if (serverMsg.t === "transcript") transcriptSerializations++
-      return JSON.stringify(serverMsg)
     },
   })
   try {
@@ -1096,12 +1087,12 @@ test("protocol: a one-byte-over Unicode transcript pauses only that slug and an 
     assert.equal(c.ws.readyState, WebSocket.OPEN, "the board socket remains healthy")
     assert.equal(h.appSocket.registry.hasSubscribers("unicode"), false)
     assert.equal(reads, 1)
-    assert.equal(transcriptSerializations, 1, "the failed frame is serialized exactly once")
+    assert.equal(h.appSocket.transcriptEncodes, 1, "the failed frame is serialized exactly once")
 
     h.transcriptChange.emit(["unicode"])
     await c.expectNone(50)
     assert.equal(reads, 1, "a paused slug cannot create a read/serialize retry loop")
-    assert.equal(transcriptSerializations, 1)
+    assert.equal(h.appSocket.transcriptEncodes, 1)
 
     current = [msg("small again")]
     c.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "unicode" }))
@@ -1109,7 +1100,7 @@ test("protocol: a one-byte-over Unicode transcript pauses only that slug and an 
     assert.equal(recovered.t, "transcript")
     if (recovered.t === "transcript") assert.deepEqual(recovered.messages, current)
     assert.equal(reads, 2, "an explicit retry performs exactly one fresh read")
-    assert.equal(transcriptSerializations, 2)
+    assert.equal(h.appSocket.transcriptEncodes, 2)
     assert.equal(h.appSocket.registry.hasSubscribers("unicode"), true)
     c.ws.close()
   } finally {
@@ -1603,6 +1594,154 @@ test("a transcript too cold to read at once is caught up first: no read, no fram
     await new Promise((r) => setTimeout(r, 50))
     assert.equal(reads, 2)
     client.ws.close()
+  } finally {
+    await h.close()
+  }
+})
+
+// ── patches (`/ws?patch=1`) ─────────────────────────────────────────────────────────────────────────
+// A connection that asks for patches is sent each change as the difference from what it holds; every
+// other connection — an open tab from before the server learned patches — is sent whole values, as
+// before. Both halves are pinned here, and the rebuild is checked against the server's own value.
+
+test("patches: a transcript change reaches a patch client as a tail it rebuilds exactly, and a plain client whole", async () => {
+  const h = await startHarness()
+  const window = (from: number, to: number, last = "") =>
+    Array.from({ length: to - from }, (_, i) => msg(`message ${from + i}${i === to - from - 1 ? last : ""}`))
+  h.transcripts.set("long", window(0, 40))
+  try {
+    const patched = await connectClient(h.port, "/_frizz/ws?patch=1")
+    const plain = await connectClient(h.port)
+    await patched.next()
+    await plain.next()
+    for (const c of [patched, plain]) c.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "long" }))
+    const first = await patched.next()
+    assert.equal(first.t, "transcript", "a subscription always starts whole")
+    if (first.t !== "transcript") return
+    assert.equal((await plain.next()).t, "transcript")
+    let held = first.messages
+
+    // The window slides by one and its last message changes in place: what an agent's turn does.
+    for (const next of [window(1, 41), window(1, 41, " (edited)"), window(3, 43)]) {
+      h.transcripts.set("long", next)
+      h.transcriptChange.emit(["long"])
+      const tail = await patched.next()
+      assert.equal(tail.t, "transcript-tail", JSON.stringify(tail).slice(0, 120))
+      if (tail.t !== "transcript-tail") return
+      assert.equal(tail.from, held.length)
+      assert.ok(tail.messages.length <= 3, `only the changed tail rides the frame (${tail.messages.length})`)
+      held = held.slice(tail.drop, tail.drop + tail.keep).concat(tail.messages)
+      assert.deepEqual(held, next, "the rebuilt window is the server's")
+      const whole = await plain.next()
+      assert.equal(whole.t, "transcript", "a client that did not ask for patches is sent the window whole")
+      if (whole.t === "transcript") assert.deepEqual(whole.messages, next)
+    }
+
+    // The same window read again sends nothing to either.
+    h.transcriptChange.emit(["long"])
+    await patched.expectNone(50)
+    await plain.expectNone(10)
+
+    // A resubscription starts whole again, from nothing held.
+    patched.ws.send(JSON.stringify({ t: "unsub", topic: "transcript", slug: "long" }))
+    patched.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "long" }))
+    const again = await patched.next()
+    assert.equal(again.t, "transcript")
+    if (again.t === "transcript") assert.deepEqual(again.messages, held)
+    patched.ws.close()
+    plain.ws.close()
+  } finally {
+    await h.close()
+  }
+})
+
+test("patches: a window that shares nothing with the last one goes whole", async () => {
+  const h = await startHarness()
+  h.transcripts.set("swap", [msg("a"), msg("b")])
+  try {
+    const c = await connectClient(h.port, "/_frizz/ws?patch=1")
+    await c.next()
+    c.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "swap" }))
+    assert.equal((await c.next()).t, "transcript")
+    h.transcripts.set("swap", [msg("c"), msg("d")])
+    h.transcriptChange.emit(["swap"])
+    const next = await c.next()
+    assert.equal(next.t, "transcript")
+    if (next.t === "transcript") assert.deepEqual(next.messages, [msg("c"), msg("d")])
+    c.ws.close()
+  } finally {
+    await h.close()
+  }
+})
+
+test("patches: a live board delta reaches a patch client as edits to the view it holds, a replay and a plain client whole", async () => {
+  const h = await startHarness()
+  const big = (n: number) => Array.from({ length: 20 }, (_, i) => ({ label: `agent ${i}`, state: "running", lastActivityAt: `t${i === 3 ? n : 0}` }))
+  try {
+    const patched = await connectClient(h.port, "/_frizz/ws?patch=1")
+    const plain = await connectClient(h.port)
+    await patched.next()
+    await plain.next()
+    // Published before either resumes: replayed whole, and it is what the patches below are made against.
+    const v1 = view("a", { title: "first", subAgents: big(1) } as Partial<ThreadView>)
+    h.publishDelta([v1])
+    for (const c of [patched, plain]) resume(c.ws, 7)
+    const replayed = await patched.next()
+    assert.ok(replayed.t === "event" && replayed.event.type === "board-delta")
+    if (replayed.t !== "event" || replayed.event.type !== "board-delta") return
+    assert.equal(replayed.event.patches, undefined, "a replay is never patched")
+    assert.deepEqual(replayed.event.upserts, [v1])
+    await plain.next()
+
+    // One nested field moves, one field goes, one arrives; and a new thread appears.
+    const v2 = { ...v1, subAgents: big(2), title: undefined, next: "the next step" } as unknown as ThreadView
+    const fresh = view("b")
+    h.publishDelta([v2, fresh])
+    const live = await patched.next()
+    assert.ok(live.t === "event" && live.event.type === "board-delta")
+    if (live.t !== "event" || live.event.type !== "board-delta") return
+    assert.deepEqual(live.event.upserts, [fresh], "a thread no delta carried before goes whole")
+    assert.equal(live.event.patches?.length, 1)
+    const patch = live.event.patches![0]!
+    assert.equal(patch.id, "a")
+    const rebuilt = applyJsonPatch(JSON.parse(JSON.stringify(v1)), patch.ops as JsonPatchOp[])
+    assert.deepEqual(rebuilt, JSON.parse(JSON.stringify(v2)), "the edits rebuild the server's view exactly")
+    assert.ok(JSON.stringify(patch).length < JSON.stringify(v2).length / 5, "and are a fraction of it")
+
+    const whole = await plain.next()
+    assert.ok(whole.t === "event" && whole.event.type === "board-delta")
+    if (whole.t === "event" && whole.event.type === "board-delta") {
+      assert.equal(whole.event.patches, undefined, "a client that did not ask is sent whole views")
+      assert.equal(whole.event.upserts.length, 2)
+    }
+    patched.ws.close()
+    plain.ws.close()
+  } finally {
+    await h.close()
+  }
+})
+
+test("deflate: a frame of a patch's size goes out compressed, with an 8 KiB window, and a heartbeat-sized one raw", async () => {
+  // A 1.5 KB transcript: the size a busy board's patch frames run at.
+  const text = Array.from({ length: 30 }, (_, i) => `step ${i}: running the focused tests`).join(" ")
+  const h = await startHarness({ readTranscript: () => ({ messages: [msg(text)] }) })
+  try {
+    const c = await connectClient(h.port, "/_frizz/ws?patch=1", { perMessageDeflate: true })
+    assert.match(c.ws.extensions, /permessage-deflate/)
+    const negotiated = (c.ws as unknown as { _extensions: Record<string, { params: Record<string, unknown> }> })._extensions["permessage-deflate"]!.params
+    assert.equal(negotiated.server_max_window_bits, 13)
+    let wire = 0
+    ;(c.ws as unknown as { _socket: import("node:net").Socket })._socket.on("data", (chunk: Buffer) => {
+      wire += chunk.length
+    })
+    await c.next() // hello: tiny, raw
+    const helloWire = wire
+    c.ws.send(JSON.stringify({ t: "sub", topic: "transcript", slug: "s" }))
+    const pushed = await c.next()
+    const payload = Buffer.byteLength(JSON.stringify(pushed))
+    assert.ok(payload > 1_000 && payload < 8_192, `fixture size ${payload}`)
+    assert.ok(wire - helloWire < payload / 2, `a ${payload}-byte frame crossed as ${wire - helloWire} bytes`)
+    c.ws.close()
   } finally {
     await h.close()
   }

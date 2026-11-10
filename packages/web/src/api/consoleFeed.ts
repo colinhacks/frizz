@@ -13,6 +13,7 @@ import { BoardResume } from "./board-resume.ts"
 import { invalidateInteractionQueries } from "./interaction-cache.ts"
 import { rpcFor } from "./rpc.ts"
 import { writeTranscriptPush } from "./transcript-push.ts"
+import { expandBoardDelta, TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
 
 // THE CONSOLE'S LIVE FEED — every open project's board, as one.
 //
@@ -108,6 +109,17 @@ export function keyThread(project: string, t: ThreadView): ThreadView {
 // biggest board there is. A delta now costs one `slice` of it, and its upserts keep the slot table
 // (threadsWithDelta), so a delta also finds its threads without a walk.
 
+/** The inverse of keyThread: a thread on the merged board as its own project's board holds it. */
+export function unkeyThread(t: ThreadView): ThreadView {
+  const slugOf = (key: string) => splitThreadKey(key)?.slug ?? key
+  return {
+    ...t,
+    id: slugOf(t.id),
+    dependsOn: t.dependsOn.map(slugOf),
+    ...(t.parentSlug ? { parentSlug: slugOf(t.parentSlug) } : {}),
+  }
+}
+
 /** Replace ONE project's threads on the merged board with this board's. */
 export function mergeKeyframe(union: BoardSnapshot, project: string, board: BoardSnapshot): void {
   const prefix = threadKey(project, "")
@@ -159,6 +171,8 @@ class ProjectFeed {
   /** Real slug → number of interested surfaces. Ref-counted exactly as api/socket.ts's `subs`. */
   private readonly subs = new Map<string, number>()
   private readonly fileSubs = new Map<string, number>()
+  // The last whole window of each subscribed transcript on THIS socket, which its tails splice onto.
+  private readonly tails = new TranscriptTails()
   private readonly budgetRetries = new Map<string, number>()
   private readonly budgetTimers = new Map<string, ReturnType<typeof setTimeout>>()
   state: "connecting" | "open" | "closed" = "connecting"
@@ -189,7 +203,9 @@ class ProjectFeed {
       this.scheduleProbe()
       return this.schedulePoll(0)
     }
-    const sock = new WebSocket(`${location.origin.replace(/^http/, "ws")}${projectApiBase(this.project)}/ws`)
+    // A new socket starts every subscription with a whole window, so nothing held for the last one applies.
+    this.tails.clear()
+    const sock = new WebSocket(`${location.origin.replace(/^http/, "ws")}${projectApiBase(this.project)}/ws${WS_PATCH_QUERY}`)
     this.ws = sock
     this.protocolReady = false
     this.lastMsg = Date.now()
@@ -402,7 +418,23 @@ class ProjectFeed {
         return this.handleEvent(msg.event)
       case "transcript": {
         const key = threadKey(this.project, msg.slug)
+        this.tails.whole(msg.slug, msg.messages)
         writeTranscriptPush(qc, key, msg)
+        delete store.socketTranscriptFallbacks[key]
+        return true
+      }
+      case "transcript-tail": {
+        const messages = this.tails.tail(msg)
+        if (!messages) {
+          // Not made against the window held (never expected): ask for the window whole again.
+          if (this.subs.has(msg.slug)) {
+            this.send({ t: "unsub", topic: "transcript", slug: msg.slug })
+            this.send({ t: "sub", topic: "transcript", slug: msg.slug })
+          }
+          return true
+        }
+        const key = threadKey(this.project, msg.slug)
+        writeTranscriptPush(qc, key, { t: "transcript", slug: msg.slug, messages, ...(msg.page ? { page: msg.page } : {}) })
         delete store.socketTranscriptFallbacks[key]
         return true
       }
@@ -449,7 +481,18 @@ class ProjectFeed {
               this.resume.resync()
               return true
             }
-            mergeDelta(board, this.project, event)
+            // Patched threads are made whole against this project's views on the merged board, unkeyed
+            // first, since a patch is the server's and names nothing by key (wirePatch.ts).
+            const whole = expandBoardDelta(event, (slug) => {
+              const key = threadKey(this.project, slug)
+              const held = board.threads.find((t) => t.id === key)
+              return held ? unkeyThread(held) : undefined
+            })
+            if (!whole) {
+              this.resume.resync()
+              return true
+            }
+            mergeDelta(board, this.project, whole)
             this.seq = event.seq
             this.resume.progressed()
             return true
@@ -532,6 +575,7 @@ class ProjectFeed {
     const n = (this.subs.get(slug) ?? 0) - 1
     if (n <= 0) {
       this.subs.delete(slug)
+      this.tails.forget(slug)
       this.send({ t: "unsub", topic: "transcript", slug })
     } else {
       this.subs.set(slug, n)

@@ -7215,6 +7215,11 @@ const BoardDeltaEvent = z.object({
   upserts: z.array(ThreadView),
   removed: z.array(ThreadSlug),
   meta: BoardMeta.optional(),
+  // Only on a /ws connection that asked for patches (`?patch=1`, app-socket.ts), and never in the ring,
+  // over SSE or from `boardDeltas`: threads that CHANGED, each as the edits (wire-patch.ts diffJson)
+  // that turn the view the client holds into the new one. A thread is in `upserts` or here, never both.
+  // The client expands them back into upserts before applying the delta (web api/wirePatch.ts).
+  patches: z.array(z.object({ id: ThreadSlug, ops: z.array(z.array(z.unknown())) })).optional(),
 })
 
 export const ServerEvent = z.discriminatedUnion("type", [
@@ -7283,6 +7288,7 @@ export * from "./claude-editions.ts"
 export * from "./code-fences.ts"
 export * from "./question-fence.ts"
 export * from "./delta.ts"
+export * from "./wire-patch.ts"
 export * from "./drainable-worker.ts"
 export * from "./interactions.ts"
 export * from "./launch-prefix.ts"
@@ -7772,6 +7778,19 @@ export type SocketServerMsg =
   | { t: "board-resync"; reason: BoardResyncReason }
   | { t: "event"; event: ServerEvent }
   | { t: "transcript"; slug: ThreadSlug; messages: TranscriptMessage[]; page?: TranscriptPushPage }
+  // Only on a /ws connection that asked for patches (`?patch=1`): the subscribed slug's new window as a
+  // splice of the LAST window this connection received for it (wire-patch.ts windowSplice) — `from` is
+  // that window's length, as a check — with `messages` the new tail. The client rebuilds the whole
+  // window and handles it exactly as a `transcript` frame. Sent instead of one only when it is smaller.
+  | {
+      t: "transcript-tail"
+      slug: ThreadSlug
+      from: number
+      drop: number
+      keep: number
+      messages: TranscriptMessage[]
+      page?: TranscriptPushPage
+    }
   | { t: "file-changed"; path: string }
   | { t: "payload-too-large"; channel: "board"; actualBytes: number; maxBytes: number }
   | { t: "payload-too-large"; channel: "transcript"; slug: ThreadSlug; actualBytes: number; maxBytes: number }

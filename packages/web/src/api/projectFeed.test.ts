@@ -118,12 +118,12 @@ test("nothing from the project the page has left reaches the UI", async () => {
     here.pathname = "/project/alpha"
     const feed = await fresh("bound")
     feed.connectSync(queryClient as never)
-    assert.equal(FakeWebSocket.instances[0]?.url, "ws://127.0.0.1:54917/_frizz/alpha/ws")
+    assert.equal(FakeWebSocket.instances[0]?.url, "ws://127.0.0.1:54917/_frizz/alpha/ws?patch=1")
     assert.equal(feed.feedIsBoundTo("alpha"), true)
     here.pathname = "/project/beta"
     assert.equal(feed.feedIsBoundTo("beta"), false, "the page moved; the socket did not")
     feed.rebindProject()
-    assert.equal(FakeWebSocket.instances[1]?.url, "ws://127.0.0.1:54917/_frizz/beta/ws")
+    assert.equal(FakeWebSocket.instances[1]?.url, "ws://127.0.0.1:54917/_frizz/beta/ws?patch=1")
     assert.equal(feed.feedIsBoundTo("beta"), true)
 
     // 2. A FRAME FROM THE PROJECT WE LEFT IS DROPPED — and the TRANSCRIPT frame is the one that proves

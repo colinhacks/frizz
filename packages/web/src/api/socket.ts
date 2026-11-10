@@ -7,6 +7,7 @@ import { noteServerBootId } from "./boot.ts"
 import { rpc } from "./rpc.ts"
 import { connectSSE, rebindSSEProject, suspendSSE } from "./sse.ts"
 import { writeTranscriptPush } from "./transcript-push.ts"
+import { TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
 import { invalidateInteractionQueries } from "./interaction-cache.ts"
 import { FRIZZ_ROUTE_PREFIX } from "@frizz/shared"
 import { apiBase, isConsolePath, projectSlug } from "../lib/base-path.ts"
@@ -90,8 +91,13 @@ const resume = new BoardResume({
 const HEARTBEAT_TIMEOUT = 35_000
 
 function wsUrl(): string {
-  return `${location.origin.replace(/^http/, "ws")}${apiBase()}/ws`
+  return `${location.origin.replace(/^http/, "ws")}${apiBase()}/ws${WS_PATCH_QUERY}`
 }
+
+// The last whole window of each subscribed transcript on the CURRENT socket, which its tails splice
+// onto (wirePatch.ts). Emptied whenever a socket is opened: the server starts each subscription on a new
+// socket with a whole window.
+const tails = new TranscriptTails()
 
 // WHICH PROJECT THE LIVE FEED IS ON — one copy of that fact, kept by the module that actually holds the
 // connection, and readable by anyone who needs to ask (`feedIsBoundTo`). It covers BOTH transports,
@@ -125,6 +131,7 @@ function connect(): void {
   if (ws || fellBack || isConsolePath() || feedProject === CONSOLE_FEED) return
   if (store.connection !== "open") store.connection = "connecting"
   noteFeedProject()
+  tails.clear()
   const sock = new WebSocket(wsUrl())
   // The project THIS socket was opened for, frozen at construction. Every frame it later delivers is
   // checked against it: a socket outlives the navigation that supersedes it by however long the close
@@ -295,9 +302,26 @@ function handle(msg: SocketServerMsg): boolean {
       return true
     case "transcript":
       // Server truth into the SAME cache useTranscript reads — components are unchanged (transcript-push.ts).
+      tails.whole(msg.slug, msg.messages)
       writeTranscriptPush(qc, msg.slug, msg)
       delete store.socketTranscriptFallbacks[msg.slug]
       return true
+    case "transcript-tail": {
+      // The same window as a splice of the last one this socket received: rebuilt whole, then handled
+      // exactly like a `transcript` frame.
+      const messages = tails.tail(msg)
+      if (!messages) {
+        // Not made against the window held (never expected): ask for the window whole again.
+        if (subs.has(msg.slug)) {
+          send({ t: "unsub", topic: "transcript", slug: msg.slug })
+          send({ t: "sub", topic: "transcript", slug: msg.slug })
+        }
+        return true
+      }
+      writeTranscriptPush(qc, msg.slug, { t: "transcript", slug: msg.slug, messages, ...(msg.page ? { page: msg.page } : {}) })
+      delete store.socketTranscriptFallbacks[msg.slug]
+      return true
+    }
     case "file-changed":
       // A notice, not the bytes: the reader's query goes stale and refetches through the same gated
       // read it mounted with, so nothing reaches the page that the read gate would not have admitted.
@@ -411,6 +435,7 @@ export function unsubscribeTranscript(slug: string): void {
   const n = (subs.get(slug) ?? 0) - 1
   if (n <= 0) {
     subs.delete(slug)
+    tails.forget(slug)
     send({ t: "unsub", topic: "transcript", slug })
   } else {
     subs.set(slug, n)

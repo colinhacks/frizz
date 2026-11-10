@@ -5,6 +5,7 @@ import { store, setBoard, applyDelta, openThread } from "../store.ts"
 import { noteServerBootId } from "./boot.ts"
 import { basePath, projectSlug } from "../lib/base-path.ts"
 import { boardThreadHref } from "../lib/router.ts"
+import { expandBoardDelta } from "./wirePatch.ts"
 
 // The transport-agnostic board/notify handler — the delta/seq/boot state machine, shared so BOTH
 // transports drive it identically: SSE (sse.ts, the fallback) and the /ws multiplex (socket.ts).
@@ -86,12 +87,20 @@ export class BoardStream {
           break
         }
         switch (deltaAction(this.currentSeq, event.seq)) {
-          case "apply":
-            if (applyDelta(event)) {
+          case "apply": {
+            // A socket that takes patches sends changed threads as edits to the view held (wirePatch.ts);
+            // they are made whole against this board here, and only for a delta that applies to it.
+            const whole = expandBoardDelta(event, (id) => store.board?.threads.find((t) => t.id === id))
+            if (!whole) {
+              this.resync()
+              break
+            }
+            if (applyDelta(whole)) {
               this.currentSeq = event.seq
               this.applied()
             } else this.resync() // no base board yet — fetch one
             break
+          }
           case "ignore":
             break // a delta the held board already includes (a replay overlapping a read)
           case "resync":
