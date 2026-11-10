@@ -13,7 +13,7 @@ import { BoardResume } from "./board-resume.ts"
 import { invalidateInteractionQueries } from "./interaction-cache.ts"
 import { rpcFor } from "./rpc.ts"
 import { writeTranscriptPush } from "./transcript-push.ts"
-import { expandBoardDelta, TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
+import { cachedMessages, expandBoardDelta, TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
 
 // THE CONSOLE'S LIVE FEED — every open project's board, as one.
 //
@@ -420,6 +420,7 @@ class ProjectFeed {
         const key = threadKey(this.project, msg.slug)
         this.tails.whole(msg.slug, msg.messages)
         writeTranscriptPush(qc, key, msg)
+        this.tails.adopt(msg.slug, cachedMessages(qc, key))
         delete store.socketTranscriptFallbacks[key]
         return true
       }
@@ -435,6 +436,7 @@ class ProjectFeed {
         }
         const key = threadKey(this.project, msg.slug)
         writeTranscriptPush(qc, key, { t: "transcript", slug: msg.slug, messages, ...(msg.page ? { page: msg.page } : {}) })
+        this.tails.adopt(msg.slug, cachedMessages(qc, key))
         delete store.socketTranscriptFallbacks[key]
         return true
       }

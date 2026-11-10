@@ -7,7 +7,7 @@ import { noteServerBootId } from "./boot.ts"
 import { rpc } from "./rpc.ts"
 import { connectSSE, rebindSSEProject, suspendSSE } from "./sse.ts"
 import { writeTranscriptPush } from "./transcript-push.ts"
-import { TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
+import { cachedMessages, TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
 import { invalidateInteractionQueries } from "./interaction-cache.ts"
 import { FRIZZ_ROUTE_PREFIX } from "@frizz/shared"
 import { apiBase, isConsolePath, projectSlug } from "../lib/base-path.ts"
@@ -304,6 +304,7 @@ function handle(msg: SocketServerMsg): boolean {
       // Server truth into the SAME cache useTranscript reads — components are unchanged (transcript-push.ts).
       tails.whole(msg.slug, msg.messages)
       writeTranscriptPush(qc, msg.slug, msg)
+      tails.adopt(msg.slug, cachedMessages(qc, msg.slug))
       delete store.socketTranscriptFallbacks[msg.slug]
       return true
     case "transcript-tail": {
@@ -319,6 +320,7 @@ function handle(msg: SocketServerMsg): boolean {
         return true
       }
       writeTranscriptPush(qc, msg.slug, { t: "transcript", slug: msg.slug, messages, ...(msg.page ? { page: msg.page } : {}) })
+      tails.adopt(msg.slug, cachedMessages(qc, msg.slug))
       delete store.socketTranscriptFallbacks[msg.slug]
       return true
     }

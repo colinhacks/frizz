@@ -1,8 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { QueryClient } from "@tanstack/react-query"
 import { diffJson, type BoardDelta, type ThreadView, type TranscriptMessage } from "@frizz/shared"
-import { expandBoardDelta, TranscriptTails } from "./wirePatch.ts"
+import { cachedMessages, expandBoardDelta, TranscriptTails } from "./wirePatch.ts"
 import { keyThread, unkeyThread } from "./consoleFeed.ts"
+import { writeTranscriptPush } from "./transcript-push.ts"
 
 const msg = (text: string): TranscriptMessage => ({ role: "assistant", text, tools: [], parts: [] })
 const thread = (id: string, over: Partial<ThreadView> = {}): ThreadView =>
@@ -23,6 +25,32 @@ test("a tail is spliced onto the window this socket last received, and refused a
   tails.whole("u", [msg("x")])
   tails.forget("u")
   assert.equal(tails.size, 0)
+})
+
+test("the window held for the next tail is the cache's own messages, not a second copy of them", () => {
+  // The cache keeps the previous object of every unchanged message (preserveMessageIdentity), so a window
+  // held as the socket parsed it was the whole transcript twice over for every live thread.
+  const src = (id: string, text: string): TranscriptMessage => ({ ...msg(text), sourceId: id })
+  const qc = new QueryClient()
+  qc.setQueryData(["transcript", "t"], { messages: [src("1", "a"), src("2", "b"), src("3", "c")] })
+  const read = cachedMessages(qc, "t")!
+  const tails = new TranscriptTails()
+  const wire = [src("1", "a"), src("2", "b"), src("3", "c")]
+  tails.whole("t", wire)
+  writeTranscriptPush(qc, "t", { t: "transcript", slug: "t", messages: wire })
+  assert.equal(cachedMessages(qc, "t")![1], read[1], "precondition: the cache kept its own object for an unchanged message")
+  tails.adopt("t", cachedMessages(qc, "t"))
+
+  const rebuilt = tails.tail({ t: "transcript-tail", slug: "t", from: 3, drop: 1, keep: 2, messages: [src("4", "d")] })!
+  assert.deepEqual(rebuilt, [src("2", "b"), src("3", "c"), src("4", "d")], "the splice reads positions, which adopting kept")
+  assert.equal(rebuilt[0], read[1], "a kept message is the cache's object")
+  assert.equal(rebuilt[1], read[2])
+
+  // A message the cache holds with other content keeps the window's own object: only an equal one is swapped.
+  const held = tails.tail({ t: "transcript-tail", slug: "t", from: 3, drop: 0, keep: 3, messages: [] })!
+  tails.adopt("t", [held[0]!, { ...held[1]!, text: "edited" }, held[2]!])
+  const after = tails.tail({ t: "transcript-tail", slug: "t", from: 3, drop: 0, keep: 3, messages: [] })!
+  assert.equal(after[1], held[1])
 })
 
 test("a patched delta is expanded into whole upserts against the views held, or refused", () => {

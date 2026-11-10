@@ -1,5 +1,7 @@
+import type { QueryClient } from "@tanstack/react-query"
 import type { BoardDelta, JsonPatchOp, SocketServerMsg, ThreadView, TranscriptMessage } from "@frizz/shared"
 import { applyJsonPatch, applyWindowSplice } from "@frizz/shared"
+import { sameContent } from "../lib/transcript-sync.ts"
 
 // THE CLIENT HALF OF THE SOCKET'S PATCHES (server: app-socket.ts, shared: wire-patch.ts).
 //
@@ -42,6 +44,29 @@ export class TranscriptTails {
     return messages
   }
 
+  /**
+   * Hold the CACHE's object for every message that says the same thing, once a frame has been written to
+   * it (`cachedMessages`). The query cache keeps the previous object of each unchanged message
+   * (lib/transcript-sync.ts preserveMessageIdentity), so a window held as received was a second copy of
+   * the transcript the cache already held: 1.5–3 MB per live thread on the real boards (2026-11-09). The
+   * window keeps its positions and length, which are all a splice reads; only which object fills a slot
+   * changes, and only to one with the same content.
+   */
+  adopt(slug: string, cached: readonly TranscriptMessage[] | undefined): void {
+    const held = this.held.get(slug)
+    if (!held || !cached?.length) return
+    const bySource = new Map<string, TranscriptMessage>()
+    for (const message of cached) if (message.sourceId) bySource.set(message.sourceId, message)
+    let out: TranscriptMessage[] | null = null
+    for (let i = 0; i < held.length; i++) {
+      const message = held[i]!
+      const same = message.sourceId ? bySource.get(message.sourceId) : undefined
+      if (!same || same === message || !sameContent(same, message)) continue
+      ;(out ??= held.slice())[i] = same
+    }
+    if (out) this.held.set(slug, out)
+  }
+
   forget(slug: string): void {
     this.held.delete(slug)
   }
@@ -53,6 +78,11 @@ export class TranscriptTails {
   get size(): number {
     return this.held.size
   }
+}
+
+/** The messages the query cache holds for a transcript, as `TranscriptTails.adopt` takes them. */
+export function cachedMessages(qc: QueryClient | null, key: string): readonly TranscriptMessage[] | undefined {
+  return (qc?.getQueryData(["transcript", key]) as { messages?: TranscriptMessage[] } | undefined)?.messages
 }
 
 /**
