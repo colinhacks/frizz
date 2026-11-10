@@ -36,7 +36,7 @@
  * lesson, and stdin is never read — and its `--help` is the same text. `frizzctl --help` does not list it.
  */
 import { readFileSync } from "node:fs"
-import { CLI, HANDLERS, Refused, TOOLS } from "../lib/frizz-tools.mjs"
+import { CLI, HANDLERS, Refused, ServerRefusal, TOOLS } from "../lib/frizz-tools.mjs"
 
 const NAME = "frizzctl"
 const WIDTH = 100
@@ -230,8 +230,10 @@ function parseArgs(tool, argv) {
   /** @type {string[]} */
   const declared = spec.positional ?? []
   const slots = declared.filter((k) => !(k in given))
+  // An action's alias takes the slots of the action it stands for: `watch-pr remove prw_1` is `drop prw_1`.
   const extend = (/** @type {unknown} */ lead) => {
-    for (const k of spec.then?.[String(lead)] ?? []) if (!(k in given) && !slots.includes(k)) slots.push(k)
+    const action = spec.alias?.[String(lead).toLowerCase()] ?? String(lead)
+    for (const k of spec.then?.[action] ?? []) if (!(k in given) && !slots.includes(k)) slots.push(k)
   }
   if (declared[0] && declared[0] in given) extend(given[declared[0]])
   /** @type {Record<string, unknown>} */
@@ -408,6 +410,8 @@ async function main(argv) {
   try {
     answer = await HANDLERS[tool.name](args)
   } catch (err) {
+    // The server said no, in a sentence it wrote for the worker: a gate that held, like a `Refused` answer.
+    if (err instanceof ServerRefusal) return { code: 2, out: `\`${NAME} ${hyphen(tool.name)}\` was refused: ${err.message}` }
     throw new Error(`${NAME} ${hyphen(tool.name)} failed: ${err instanceof Error ? err.message : String(err)}`)
   }
   return answer instanceof Refused ? { code: 2, out: answer.text } : { code: 0, out: String(answer) }

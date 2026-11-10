@@ -12,7 +12,7 @@
  * aesthetic. The server NEVER crashes on a bad tool call: failures come back as an isError tool
  * result so the worker sees a message instead of a dead tool.
  */
-import { HANDLERS, Refused, TOOLS } from "../lib/frizz-tools.mjs"
+import { HANDLERS, Refused, ServerRefusal, TOOLS } from "../lib/frizz-tools.mjs"
 
 const PROTOCOL_FALLBACK = "2025-06-18"
 
@@ -70,7 +70,9 @@ async function handle(msg) {
         const answer = await handler(params?.arguments ?? {})
         replyTool(id, answer instanceof Refused ? answer.text : answer)
       } catch (err) {
-        replyTool(id, `\`${name}\` failed: ${err instanceof Error ? err.message : String(err)}`, true)
+        // The server's own "no" (an unknown thread, a dead handle) is a gate that held as well.
+        if (err instanceof ServerRefusal) replyTool(id, `\`${name}\` was refused: ${err.message}`)
+        else replyTool(id, `\`${name}\` failed: ${err instanceof Error ? err.message : String(err)}`, true)
       }
       return
     }

@@ -91,6 +91,27 @@ function validationMessage(error: z.ZodError): string {
 // ledger (server/src/delivery-ledger.ts, the write-ahead entry) before the failure, and still holds it
 // as a failed send the operator can retry or edit. The client then leaves the words where the server
 // keeps them instead of also pushing them back into the prompt box.
+/**
+ * A handler's deliberate "no": the request was understood and refused, in a sentence written for whoever
+ * asked. It is answered 409 with the same `{ error }` envelope, so a caller can tell a refusal from a
+ * fault (500) without reading the sentence. `frizzctl` prints a refusal's sentence and exits 2, and
+ * reports a fault as a failure. A plain Error thrown by a handler is still a 500: a handler throws this
+ * instead where a caller needs the difference, which so far is every procedure a worker's `frizzctl`
+ * calls (measured on 2026-11-09, a worker read `steerThread returned HTTP 500: {"error":"no thread …"}`
+ * for a mistyped slug).
+ */
+export class RpcRefusal extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "RpcRefusal"
+  }
+}
+
+/** The status a refusal is answered with. */
+export const RPC_REFUSED_STATUS = 409
+
+const failureStatus = (err: unknown): 409 | 500 => (err instanceof RpcRefusal ? RPC_REFUSED_STATUS : 500)
+
 function errorEnvelope(err: any): { error: string; retryable?: true; kept?: true } {
   const error = err?.message ?? "Internal server error"
   return {
@@ -158,7 +179,7 @@ export function mountRouter(app: Hono, prefix: string, router: Router, guard?: R
           const result = await proc.handler(input !== undefined ? { input } : {} as any)
           return c.json({ result })
         } catch (err: any) {
-          return c.json(errorEnvelope(err), 500)
+          return c.json(errorEnvelope(err), failureStatus(err))
         }
       })
     } else if (proc._tag === "mutation") {
@@ -189,7 +210,7 @@ export function mountRouter(app: Hono, prefix: string, router: Router, guard?: R
           const result = await proc.handler({ input } as any)
           return c.json({ result: result ?? null })
         } catch (err: any) {
-          return c.json(errorEnvelope(err), 500)
+          return c.json(errorEnvelope(err), failureStatus(err))
         }
       })
     } else if (proc._tag === "stream") {

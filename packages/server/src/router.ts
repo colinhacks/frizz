@@ -3,7 +3,7 @@ import { readFileSync, statSync, type Stats } from "node:fs"
 import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
-import { query, mutation } from "@frizz/rpc/server"
+import { query, mutation, RpcRefusal } from "@frizz/rpc/server"
 import {
   BoardSnapshot,
   BoardState,
@@ -1042,11 +1042,11 @@ export function createRouter(ctx: AppContext) {
   // sender is the caller's to have verified — this project's own `steerThread` for a sender here, the
   // sending project's for one elsewhere, which reaches this through `ctx.threadInbox` below.
   async function receiveThreadMessage(sent: Parameters<ThreadInbox>[0]): Promise<SteerThreadResult> {
-    const target = ctx.storage.getSession(sent.to)
-    if (!target) throw new Error(`no thread \`${sent.to}\` in this project`)
+    const target = threadNamed(ctx.storage, sent.to)
+    if (!target) throw new RpcRefusal(`no thread \`${sent.to}\` in this project`)
     const delivery: SteerThreadResult["delivery"] =
       target.state === "archived" || target.archived === 1 ? "reopened"
-      : ctx.tailer.get(sent.to)?.turn === "in-flight" ? "running"
+      : ctx.tailer.get(target.slug)?.turn === "in-flight" ? "running"
       : "resting"
     // A MESSAGE FROM A TIGHTER THREAD SAYS SO. `frizzctl steer` runs unasked in every mode, so a thread
     // the human narrowed can put its words into one that asks nobody, and the receiver cannot tell: the
@@ -1057,7 +1057,7 @@ export function createRouter(ctx: AppContext) {
       && permissionIsTighter(sent.sender.permissionMode, receiver.permissionMode)
       ? { sender: sent.sender.permissionMode, receiver: receiver.permissionMode }
       : undefined
-    await deliverFollowUp({ slug: sent.to, sessionId: target.session_id, message: formatThreadMessage(sent.from, sent.message, { tighter }) })
+    await deliverFollowUp({ slug: target.slug, sessionId: target.session_id, message: formatThreadMessage(sent.from, sent.message, { tighter }) })
     return { slug: target.slug, title: threadTitleOf(target), delivery }
   }
   ctx.threadInbox = receiveThreadMessage
@@ -1113,15 +1113,26 @@ export function createRouter(ctx: AppContext) {
     if (open) return open
     if (!entry) {
       const known = listProjects().filter((p) => !p.archived).map((p) => `\`${p.slug}\``)
-      throw new Error(
+      throw new RpcRefusal(
         `no project \`${project}\` on this machine. Name it by the slug its board URL shows (\`/project/<slug>/…\`)` +
         (known.length ? `; the projects are ${known.join(", ")}` : ""),
       )
     }
-    throw new Error(
+    throw new RpcRefusal(
       `project \`${entry.slug}\` is registered but not open in this Frizz — its folder may be gone, another ` +
       `Frizz may be serving it, or it failed to open — so ${unreachable}`,
     )
+  }
+
+  /**
+   * The thread `to` names in one project: by its slug, or by its session id. A worker knows a sibling by
+   * the session id in its scratch path (`.frizz/threads/<session id>/`) as often as by the slug in its
+   * link, and until 2026-11-10 a steer handed one was refused as "no thread" (most of the distinct
+   * refusals measured the day before). The slug is tried first, so a thread whose slug happens to read
+   * like an id still means itself.
+   */
+  function threadNamed(storage: Pick<Storage, "getSession" | "allSessions">, to: string): SessionRow | undefined {
+    return storage.getSession(to) ?? storage.allSessions().find((row) => row.session_id === to)
   }
 
   /**
@@ -1137,31 +1148,31 @@ export function createRouter(ctx: AppContext) {
   function resolveSteerTarget(to: string, project: string | undefined): { project: string; inbox: ThreadInbox } | undefined {
     const reachable = (open: OpenProject) => {
       if (!open.threadInbox) {
-        throw new Error(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking messages yet; retry in a moment`)
+        throw new RpcRefusal(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking messages yet; retry in a moment`)
       }
       return { project: projectSlugOf(open.project.id), inbox: open.threadInbox }
     }
     if (project) {
       const open = openProjectNamed(project, "none of its threads can be reached from here")
       if (!open) {
-        if (!ctx.storage.getSession(to)) throw new Error(`no thread \`${to}\` in this project (\`${project}\`)`)
+        if (!threadNamed(ctx.storage, to)) throw new RpcRefusal(`no thread \`${to}\` in this project (\`${project}\`)`)
         return undefined
       }
-      if (!open.storage?.getSession(to)) {
-        throw new Error(`no thread \`${to}\` in project \`${projectSlugOf(open.project.id)}\`. Pass the slug exactly as a thread link names it (\`/thread/<slug>\`)`)
+      if (!open.storage || !threadNamed(open.storage, to)) {
+        throw new RpcRefusal(`no thread \`${to}\` in project \`${projectSlugOf(open.project.id)}\`. Pass the slug exactly as a thread link names it (\`/thread/<slug>\`)`)
       }
       return reachable(open)
     }
-    if (ctx.storage.getSession(to)) return undefined
-    const holders = otherOpenProjects().filter((open) => open.storage?.getSession(to))
+    if (threadNamed(ctx.storage, to)) return undefined
+    const holders = otherOpenProjects().filter((open) => open.storage && threadNamed(open.storage, to))
     if (holders.length === 1) return reachable(holders[0])
     if (holders.length > 1) {
-      throw new Error(
+      throw new RpcRefusal(
         `no thread \`${to}\` in this project, and ${holders.length} other projects have one ` +
         `(${holders.map((open) => `\`${projectSlugOf(open.project.id)}\``).join(", ")}). Pass \`--project <slug>\` to say which`,
       )
     }
-    throw new Error(
+    throw new RpcRefusal(
       `no thread \`${to}\` in this project or any other open one. Pass the slug exactly as a thread link names ` +
       "it (`/thread/<slug>`), or the thread's full link, which names its project too",
     )
@@ -1890,10 +1901,10 @@ export function createRouter(ctx: AppContext) {
   ): void {
     if (input.prompt === null) return
     if (input.heartbeat && input.intervalSeconds === undefined) {
-      throw new Error("`intervalSeconds` is required when the heartbeat is on")
+      throw new RpcRefusal("`intervalSeconds` is required when the heartbeat is on")
     }
     if ((input.stopHook || input.heartbeat || input.postCompaction) && (row.state === "archived" || row.archived === 1)) {
-      throw new Error("Reopen this thread before arming a recurring prompt")
+      throw new RpcRefusal("Reopen this thread before arming a recurring prompt")
     }
   }
   // The stored cadence. Dropped when the prompt is cleared, and KEPT when only the heartbeat is off —
@@ -3085,11 +3096,11 @@ export function createRouter(ctx: AppContext) {
         detail: { from: input.from, ...(input.project ? { toProject: input.project } : {}), message: textDigest(input.message) },
       }, async () => {
         const sender = ctx.storage.getSession(input.from)
-        if (!sender) throw new Error(`the calling thread ${input.from} is not registered in this project`)
+        if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
         const target = resolveSteerTarget(input.to, input.project)
         if (!target) {
-          if (input.from === input.to) {
-            throw new Error("That is your own thread. `frizzctl steer` messages ANOTHER thread; to keep a note for yourself, write it to your scratch directory")
+          if (input.from === (threadNamed(ctx.storage, input.to)?.slug ?? input.to)) {
+            throw new RpcRefusal("That is your own thread. `frizzctl steer` messages ANOTHER thread; to keep a note for yourself, write it to your scratch directory")
           }
           return receiveThreadMessage({ from: { slug: sender.slug, title: threadTitleOf(sender) }, to: input.to, message: input.message, sender: threadPermissionOf(sender) })
         }
@@ -3118,7 +3129,7 @@ export function createRouter(ctx: AppContext) {
         detail: { ...(input.project ? { toProject: input.project } : {}), prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
       }, async () => {
         const sender = ctx.storage.getSession(input.from)
-        if (!sender) throw new Error(`the calling thread ${input.from} is not registered in this project`)
+        if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
         // A registered project nobody has opened yet is opened now, as a request addressed to it would
         // be: a steer needs a thread that already exists, but a spawn exists to start work there.
         const named = input.project ? findProjectBySegment(input.project) : undefined
@@ -3127,7 +3138,7 @@ export function createRouter(ctx: AppContext) {
         }
         const open = input.project ? openProjectNamed(input.project, "no thread can be started there from here") : undefined
         if (open && !open.threadSpawner) {
-          throw new Error(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking new threads yet; retry in a moment`)
+          throw new RpcRefusal(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking new threads yet; retry in a moment`)
         }
         const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender), ...(open ? { project: projectSlugOf(ctx.project.id) } : {}) }
         const { from: _from, project: _project, ...rest } = input
@@ -3162,7 +3173,7 @@ export function createRouter(ctx: AppContext) {
           return { refused: "child threads are an experiment that is switched off on this machine (Settings → Child threads). Use an in-session sub-agent, or `frizzctl spawn-thread` for separate work" }
         }
         const sender = ctx.storage.getSession(input.from)
-        if (!sender) throw new Error(`the calling thread ${input.from} is not registered in this project`)
+        if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
         if (sender.parent_slug && ctx.storage.getSession(sender.parent_slug)) {
           return { refused: "this thread is itself a child thread, and children cannot start children of their own. Use an in-session sub-agent, or hand the work back to your parent in your handoff" }
         }
@@ -3892,7 +3903,7 @@ export function createRouter(ctx: AppContext) {
       output: SetOwnThreadRecurringPromptResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         assertRecurringPromptArmable(input, row)
         // Read off the row we already hold, BEFORE the write — so the tool can name what it superseded
         // without a second call and without a race against a footer edit landing in between.
@@ -3933,7 +3944,7 @@ export function createRouter(ctx: AppContext) {
       output: OwnThreadRecurringPromptResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         return { recurringPrompt: resolveRecurringPrompt(row) ?? null }
       },
     }),
@@ -3955,15 +3966,15 @@ export function createRouter(ctx: AppContext) {
       output: SetOwnThreadTimerResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before setting a timer on it")
+          throw new RpcRefusal("Reopen this thread before setting a timer on it")
         }
         const armed = ctx.storage.listThreadTimers(input.slug, { armedOnly: true })
         // The cap is what makes "arbitrarily many" safe to offer: a tool call in a loop cannot fill the
         // table, and the refusal names the ceiling so the worker cancels rather than retrying.
         if (armed.length >= TIMER_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} armed timers (the limit is ${TIMER_MAX_ARMED}) — cancel one first`)
+          throw new RpcRefusal(`this thread already has ${armed.length} armed timers (the limit is ${TIMER_MAX_ARMED}) — cancel one first`)
         }
         const id = `tmr_${randomUUID().replace(/-/g, "").slice(0, 12)}`
         // A REGISTRATION TRUMPS A DONE (maintainer 2026-08-27: "done always gets trumped by a watcher or a
@@ -4110,8 +4121,8 @@ export function createRouter(ctx: AppContext) {
       output: UpsertOwnLinkResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
-        if (row.state === "archived" || row.archived === 1) throw new Error("Reopen this thread before registering a link")
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
+        if (row.state === "archived" || row.archived === 1) throw new RpcRefusal("Reopen this thread before registering a link")
         const destination = resolveThreadLink(input.target, ctx.project.dir, openRoots)
         const link = ctx.storage.upsertThreadLink({
           id: `lnk_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
@@ -4141,9 +4152,9 @@ export function createRouter(ctx: AppContext) {
       output: AddOwnPrWatchResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a watcher on it")
+          throw new RpcRefusal("Reopen this thread before registering a watcher on it")
         }
         // A PULL REQUEST unless the caller says `issue` (2026-09-14, `frizzctl watch-issue`). Same
         // registry and same rules below; the ref grammar, the probe and the refusal wording branch.
@@ -4153,7 +4164,7 @@ export function createRouter(ctx: AppContext) {
         // worker that registers one comes to rest believing it is covered.
         const ref = kind === "issue" ? parseIssueRef(input.target) : parsePrRef(input.target)
         if (!ref) {
-          throw new Error(`\`${input.target}\` is not ${kind === "issue" ? "an issue" : "a pull request"} I can watch — give owner/repo#123 or ${kind === "issue" ? "an issue" : "a PR"} URL`)
+          throw new RpcRefusal(`\`${input.target}\` is not ${kind === "issue" ? "an issue" : "a pull request"} I can watch — give owner/repo#123 or ${kind === "issue" ? "an issue" : "a PR"} URL`)
         }
         const armed = ctx.storage.listPrWatches(input.slug, { armedOnly: true })
         // IDEMPOTENT ON THE PR. Re-registering after a compaction is the COMMON case — the worker has
@@ -4173,7 +4184,7 @@ export function createRouter(ctx: AppContext) {
           return { id: existing.id, target, alreadyArmed: true, expiresAt, watches: armedPrWatchViews(input.slug) }
         }
         if (armed.length >= PR_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already watches ${armed.length} pull requests and issues (the limit is ${PR_WATCH_MAX_ARMED}) — drop one first`)
+          throw new RpcRefusal(`this thread already watches ${armed.length} pull requests and issues (the limit is ${PR_WATCH_MAX_ARMED}) — drop one first`)
         }
         // A MISSING `for` IS AN OLD WORKER, not a bad one — its MCP binary predates the field and
         // cannot send it (see AddOwnPrWatchInput). It gets a bounded default rather than an error,
@@ -4182,7 +4193,7 @@ export function createRouter(ctx: AppContext) {
         // and silently substituting a number would hide that.
         const asked = input.for === undefined ? PR_WATCH_DEFAULT_FOR_MS : parseAwaitingDurationRaw(input.for)
         if (asked === null) {
-          throw new Error(`\`for: ${input.for}\` is not a duration — give one like \`2h\`, \`3d\` or \`180d\` (max 365d)`)
+          throw new RpcRefusal(`\`for: ${input.for}\` is not a duration — give one like \`2h\`, \`3d\` or \`180d\` (max 365d)`)
         }
         // CLAMPED, NOT REFUSED — a fat-fingered `9999d` should still watch the PR. But the clamp is
         // REPORTED: a worker told nothing rests believing it holds a year of coverage it does not have.
@@ -4195,7 +4206,7 @@ export function createRouter(ctx: AppContext) {
         // idempotent short-circuit above, so a re-registration during a GitHub blip still answers.
         const probe = kind === "issue" ? await ctx.probeIssue(ref) : await ctx.probePr(ref)
         if (!probe.ok) {
-          throw new Error(
+          throw new RpcRefusal(
             `\`${target}\` cannot be watched as ${kind === "issue" ? "an issue" : "a pull request"} — Frizz could not read it: ${probe.reason}. ` +
             "Frizz polls with its OWN read-only GitHub sign-in (Settings → GitHub), not yours or the `gh` CLI's, so a private " +
             "repo is readable only where that sign-in can see it. Check that, and that the repo exists, then register again. " +
@@ -4235,9 +4246,9 @@ export function createRouter(ctx: AppContext) {
       output: AddOwnCommandWatchResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a monitor on it")
+          throw new RpcRefusal("Reopen this thread before registering a monitor on it")
         }
         const service = ctx.commandWatches
         const refusal = service ? service.refusal(row) : `this server cannot run monitors. ${COMMAND_WATCH_FALLBACK}`
@@ -4258,12 +4269,12 @@ export function createRouter(ctx: AppContext) {
           }
         }
         if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+          throw new RpcRefusal(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
         }
         const everyAsked = parseAwaitingDurationRaw(input.every)
-        if (everyAsked === null) throw new Error(`\`--every ${input.every}\` is not a duration — give one like \`5m\` or \`1h\` (min 1m, max 24h)`)
+        if (everyAsked === null) throw new RpcRefusal(`\`--every ${input.every}\` is not a duration — give one like \`5m\` or \`1h\` (min 1m, max 24h)`)
         const forAsked = parseAwaitingDurationRaw(input.for)
-        if (forAsked === null) throw new Error(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
+        if (forAsked === null) throw new RpcRefusal(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
         // CLAMPED, NOT REFUSED, and REPORTED — every `for` in the product follows that rule.
         const everyMs = Math.min(COMMAND_WATCH_EVERY_MAX_MS, Math.max(COMMAND_WATCH_EVERY_MIN_MS, everyAsked))
         const forMs = Math.min(forAsked, COMMAND_WATCH_FOR_MAX_MS)
@@ -4397,9 +4408,9 @@ export function createRouter(ctx: AppContext) {
       output: AddOwnMonitorResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a monitor on it")
+          throw new RpcRefusal("Reopen this thread before registering a monitor on it")
         }
         const refuse = (refused: string) => ({ refused, alreadyArmed: false, running: false, events: [], watches: armedCommandWatchViews(input.slug) })
         const service = ctx.commandWatches
@@ -4418,13 +4429,13 @@ export function createRouter(ctx: AppContext) {
           }
         }
         if (armed.length >= COMMAND_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
+          throw new RpcRefusal(`this thread already has ${armed.length} monitors armed (the limit is ${COMMAND_WATCH_MAX_ARMED}) — drop one first`)
         }
         if ((service.monitorsRunning?.() ?? 0) >= MONITOR_SERVER_MAX_RUNNING) {
           return refuse(`Frizz already runs ${MONITOR_SERVER_MAX_RUNNING} persistent monitors across every project, its limit. ${MONITOR_FALLBACK}`)
         }
         const forAsked = parseAwaitingDurationRaw(input.for)
-        if (forAsked === null) throw new Error(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
+        if (forAsked === null) throw new RpcRefusal(`\`--for ${input.for}\` is not a duration — give one like \`2h\` or \`3d\` (max 7d)`)
         // CLAMPED, NOT REFUSED, and REPORTED — every `for` in the product follows that rule.
         const forMs = Math.min(forAsked, COMMAND_WATCH_FOR_MAX_MS)
         const now = Date.now()
@@ -4483,9 +4494,9 @@ export function createRouter(ctx: AppContext) {
       output: AddOwnWatchResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) {
-          throw new Error("Reopen this thread before registering a watch on it")
+          throw new RpcRefusal("Reopen this thread before registering a watch on it")
         }
         const target = input.target.trim()
         // IDEMPOTENT ON (kind, target), and checked BEFORE liveness — the same order the PR watcher
@@ -4500,7 +4511,7 @@ export function createRouter(ctx: AppContext) {
         // because the worker rests believing it is covered.
         const live = resolveLiveWatchTarget(ctx.tailer.get(input.slug), target)
         if (!live) {
-          throw new Error(
+          throw new RpcRefusal(
             `nothing running on this thread answers to \`${target}\` — a watch only ever names work that is ` +
             "already live, and work that has already finished needs no watch at all. Run `frizzctl activity` for the " +
             "exact ids of everything you have running.",
@@ -4512,17 +4523,17 @@ export function createRouter(ctx: AppContext) {
         if (live.kind !== input.kind) {
           const said = input.kind === "agent" ? "sub-agent" : "background shell"
           const is = live.kind === "agent" ? "sub-agent" : "background shell"
-          throw new Error(`\`${target}\` is a ${is}, not a ${said} — register it with \`frizzctl watch ${live.kind}\`.`)
+          throw new RpcRefusal(`\`${target}\` is a ${is}, not a ${said} — register it with \`frizzctl watch ${live.kind}\`.`)
         }
         const armed = ctx.storage.listThreadWatches(input.slug, { armedOnly: true })
         if (armed.length >= OWN_WATCH_MAX_ARMED) {
-          throw new Error(`this thread already holds ${armed.length} watches (the limit is ${OWN_WATCH_MAX_ARMED}) — drop one first`)
+          throw new RpcRefusal(`this thread already holds ${armed.length} watches (the limit is ${OWN_WATCH_MAX_ARMED}) — drop one first`)
         }
         // REQUIRED, and unparseable is an ERROR — unlike the PR watcher's optional `for`, which is optional
         // only for sessions whose MCP binary predates the field. This RPC has no such sessions.
         const asked = parseAwaitingDurationRaw(input.for)
         if (asked === null) {
-          throw new Error(`\`for: ${input.for}\` is not a duration — give one like \`30m\`, \`2h\` or \`3d\` (max 24h)`)
+          throw new RpcRefusal(`\`for: ${input.for}\` is not a duration — give one like \`30m\`, \`2h\` or \`3d\` (max 24h)`)
         }
         // Clamped, not refused, and REPORTED — the same rule as the PR watcher above. The ceiling stays a
         // day here because this names a shell or a sub-agent, which does not outlive its session.
@@ -4701,7 +4712,7 @@ export function createRouter(ctx: AppContext) {
       output: MarkOwnDoneResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         // THE GATE. A worker must resolve or drop what it REGISTERED before it can claim to be
         // finished: an unanswered question dies with the done card, and a live wait means the thing it
         // was waiting for has not happened yet. Both are refusals a fence could never make — a fence is
@@ -4999,7 +5010,7 @@ export function createRouter(ctx: AppContext) {
       output: SetOwnThreadTitleResult,
       handler: async ({ input }) => {
         const row = ctx.storage.getSession(input.slug)
-        if (!row) throw new Error(`thread ${input.slug} is not registered`)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         // A human who has renamed the thread owns its name. Report that as a REFUSAL rather than a
         // throw: the worker did nothing wrong, and an error is the one answer it would retry.
         const lockedByHuman = sessionTitleLocked(row)

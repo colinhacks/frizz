@@ -93,7 +93,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     assert.deepEqual(list.result.tools[2].inputSchema.required, ["action"])
     assert.deepEqual(
       Object.keys(list.result.tools[2].inputSchema.properties).sort(),
-      ["action", "at", "id", "in_seconds", "prompt"],
+      ["action", "at", "id", "in", "in_seconds", "prompt"],
     )
     // `watch_pr` — same shape as its siblings: `action` alone is required, and NO thread parameter a
     // model could aim elsewhere.
@@ -833,6 +833,35 @@ test("`timer` resolves in_seconds/at into one exact instant and POSTs the callin
 
 // Every one of these is refused in the HANDLER, before any HTTP call — the same bar the cadence gets,
 // and for the same reason: a lenient client must not be able to slip a nonsense alarm past the schema.
+// The server's "no" reaches an MCP caller the way the command line prints it: the sentence, as an answer.
+test("a refusal the server wrote is an ordinary answer, and a fault is an error, each as its sentence", async () => {
+  const http = createServer((req, res) => {
+    const refused = req.url?.endsWith("/steerThread")
+    res.writeHead(refused ? 409 : 500, { "content-type": "application/json" })
+    res.end(JSON.stringify({ error: refused ? "no thread `nope` in this project" : "database is locked" }))
+  })
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve))
+  const port = (http.address() as { port: number }).port
+  const stateDir = mkdtempSync(join(tmpdir(), "frizz-mcp-"))
+  writeFileSync(join(stateDir, "server.lock"), JSON.stringify({ port }))
+  const rpc = startServer({ FRIZZ_STATE_DIR: stateDir, FRIZZ_THREAD_SLUG: "owning-thread" })
+  try {
+    rpc.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+    await rpc.next(1)
+    rpc.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "steer", arguments: { to: "nope", message: "hello" } } })
+    const refused = await rpc.next(2)
+    assert.equal(refused.result.isError, undefined)
+    assert.equal(refused.result.content[0].text, "`steer` was refused: no thread `nope` in this project")
+    rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "title", arguments: { title: "Fix queue focus" } } })
+    const fault = await rpc.next(3)
+    assert.equal(fault.result.isError, true)
+    assert.equal(fault.result.content[0].text, "`title` failed: database is locked (Frizz's `setOwnThreadTitle`, HTTP 500)")
+  } finally {
+    rpc.kill()
+    http.close()
+  }
+})
+
 test("`timer` refuses a bad delay, a missing/doubled instant and a missing id without contacting the server", async () => {
   const seen: unknown[] = []
   const http = createServer((_req, res) => {
@@ -858,8 +887,14 @@ test("`timer` refuses a bad delay, a missing/doubled instant and a missing id wi
 
     await refused(2, { action: "set", prompt: "x", in_seconds: 3 }, /must be between 10 and 2592000/)
     await refused(3, { action: "set", prompt: "x", in_seconds: 99_999_999 }, /must be between 10 and 2592000/)
-    await refused(4, { action: "set", prompt: "x" }, /give either `--in-seconds`/)
-    await refused(5, { action: "set", prompt: "x", in_seconds: 60, at: "2026-08-04T15:00:00Z" }, /not both/)
+    await refused(4, { action: "set", prompt: "x" }, /give `--in` \(a duration from now, like `10m`\), `--in-seconds`/)
+    await refused(5, { action: "set", prompt: "x", in_seconds: 60, at: "2026-08-04T15:00:00Z" }, /not several/)
+    await refused(11, { action: "set", prompt: "x", in: "10m", in_seconds: 600 }, /not several/)
+    await refused(12, { action: "set", prompt: "x", in: "5s" }, /`--in` must be between 10s and 30d/)
+    await refused(13, { action: "set", prompt: "x", in: "31d" }, /`--in` must be between 10s and 30d/)
+    // A bare number is `--in-seconds`' to take: `--in 600` could as well be minutes.
+    await refused(14, { action: "set", prompt: "x", in: "600" }, /`--in 600` is not a duration — give a number with its unit/)
+    await refused(15, { action: "set", prompt: "x", in: "ten minutes" }, /is not a duration/)
     await refused(6, { action: "set", in_seconds: 60 }, /`prompt` is required/)
     await refused(7, { action: "set", prompt: "x", at: "2020-01-01T00:00:00Z" }, /at least 10s in the future/)
     await refused(8, { action: "set", prompt: "x", at: "next tuesday" }, /must be an ISO-8601 instant/)

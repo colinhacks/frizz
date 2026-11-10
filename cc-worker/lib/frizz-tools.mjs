@@ -32,7 +32,11 @@ import { basename, dirname, join } from "node:path"
 // Comfortably above a codex dispatch's bounded rollout-discovery wait (~15s) so a legitimate slow
 // dispatch is never aborted client-side (which would make the worker think it failed and retry,
 // double-spawning). The server completes regardless; this is only the client's patience.
-const DISPATCH_TIMEOUT_MS = 30_000
+// (FRIZZ_RPC_TIMEOUT_MS shortens it for the tests that wait one out.)
+const DISPATCH_TIMEOUT_MS = (() => {
+  const n = parseInt(String(process.env.FRIZZ_RPC_TIMEOUT_MS ?? ""), 10)
+  return Number.isFinite(n) && n > 0 ? n : 30_000
+})()
 
 const SPAWN_THREAD = {
   name: "spawn_thread",
@@ -259,7 +263,7 @@ const TIMER = {
     "done yet\" is strictly worse than being woken when it is.\n\n" +
     "The text arrives VERBATIM as an ordinary user turn, so write it as an instruction to your future " +
     "self — self-contained and actionable, because you may receive it with none of the context you have " +
-    "now. Give exactly one of `--in-seconds` or `--at`. You can only ever set a timer on your OWN thread.",
+    "now. Give exactly one of `--in`, `--in-seconds` or `--at`. You can only ever set a timer on your OWN thread.",
   inputSchema: {
     type: "object",
     properties: {
@@ -275,18 +279,24 @@ const TIMER = {
         type: "string",
         description: "Required for `set`. The text delivered to you when it fires, verbatim, as a user turn.",
       },
+      in: {
+        type: "string",
+        description:
+          "For `set`: fire after this long, as a duration with its unit: `90s`, `10m`, `2h`, `3d` (the " +
+          "grammar `--for` takes; at least 10s, at most 30d). Give exactly one of this, `--in-seconds` and " +
+          "`--at`. Sub-minute precision is not real: the delivery is read at your next tool boundary.",
+      },
       in_seconds: {
         type: "integer",
         description:
-          `For \`set\`: fire this many seconds from now (minimum ${TIMER_MIN_DELAY_SECONDS}, maximum ` +
-          `${TIMER_MAX_DELAY_SECONDS} — thirty days). Give this OR \`--at\`, not both. Sub-minute precision ` +
-          "is not real: the delivery is read at your next tool boundary.",
+          `For \`set\`: the same delay as a bare number of seconds (minimum ${TIMER_MIN_DELAY_SECONDS}, maximum ` +
+          `${TIMER_MAX_DELAY_SECONDS} — thirty days).`,
       },
       at: {
         type: "string",
         description:
           "For `set`: fire at this exact instant, as an ISO-8601 timestamp (e.g. `2026-08-04T15:00:00Z`). " +
-          "Give this OR `--in-seconds`, not both. Must be in the future and within thirty days.",
+          "Must be in the future and within thirty days.",
       },
       id: {
         type: "string",
@@ -1478,29 +1488,7 @@ async function spawnThread(args) {
 
   // NO THREAD IS CALLING (the command run from a person's own terminal): a plain dispatch to the board
   // this checkout belongs to, at the Settings default, with nobody to steer back to.
-  const port = serverLockPort()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS)
-  let res
-  try {
-    res = await fetch(`http://127.0.0.1:${port}${rpcPath("dispatch")}`, {
-      method: "POST",
-      // No Origin header (undici omits it for non-browser fetch); `sec-fetch-site: same-origin`
-      // satisfies the server's loopback-origin gate (app.ts isTrustedLocalHttpRequest).
-      headers: { "content-type": "application/json", "sec-fetch-site": "same-origin" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-  } catch (err) {
-    throw unreachable("dispatch", err)
-  } finally {
-    clearTimeout(timer)
-  }
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "")
-    throw new Error(`dispatch returned HTTP ${res.status}${detail ? `: ${detail.slice(0, 500)}` : ""}`)
-  }
-  const payload = await res.json().catch(() => null)
+  const payload = await postRpc(serverLockPort(), "dispatch", body)
   const slug = payload?.result?.slug
   if (typeof slug !== "string" || !slug) throw new Error(`dispatch response missing a slug: ${JSON.stringify(payload)?.slice(0, 300)}`)
   return spawnedReceipt(slug, typeof body.title === "string" ? body.title : slug, undefined)
@@ -1580,27 +1568,89 @@ async function serverLockPortWaiting() {
 }
 
 async function callRpc(procedure, body) {
-  const port = await serverLockPortWaiting()
+  return postRpc(await serverLockPortWaiting(), procedure, body)
+}
+
+/** One POST to Frizz's RPC surface, and the one place a request that went wrong is put into words.
+ * @param {number} port @param {string} procedure @param {unknown} body */
+async function postRpc(port, procedure, body) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS)
   let res
   try {
     res = await fetch(`http://127.0.0.1:${port}${rpcPath(procedure)}`, {
       method: "POST",
+      // No Origin header (undici omits it for non-browser fetch); `sec-fetch-site: same-origin`
+      // satisfies the server's loopback-origin gate (app.ts isTrustedLocalHttpRequest).
       headers: { "content-type": "application/json", "sec-fetch-site": "same-origin" },
       body: JSON.stringify(body),
       signal: controller.signal,
     })
   } catch (err) {
-    throw unreachable(procedure, err)
+    throw controller.signal.aborted ? unanswered(procedure) : unreachable(procedure, err)
   } finally {
     clearTimeout(timer)
   }
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "")
-    throw new Error(`${procedure} returned HTTP ${res.status}${detail ? `: ${detail.slice(0, 500)}` : ""}`)
-  }
+  if (!res.ok) throw await notOk(procedure, res)
   return await res.json().catch(() => null)
+}
+
+/** A "no" the server wrote for the worker, answered HTTP 409 (packages/rpc/src/server.ts RpcRefusal): an
+ *  unknown thread, a dead handle, a limit reached. Its message is the server's sentence and nothing
+ *  else. The command line prints it and exits 2, as it does for a `Refused` answer; the MCP front end
+ *  returns it as the call's error. */
+class ServerRefusal extends Error {}
+
+/**
+ * The procedures where a second run does the thing a second time. Everything else a worker calls reads,
+ * replaces, or registers something the server already de-duplicates (a watch on the same handle, the
+ * same pull request, the same command), so after a request that got no answer the same command can
+ * simply be run again.
+ * @type {Record<string, string>}
+ */
+const UNANSWERED_NOT_REPEATABLE = {
+  steerThread: "Whether the message was delivered is not known, and sending it again can deliver it twice.",
+  spawnThread: "Whether the thread was started is not known: run `frizzctl threads`, and start it again only if it is not listed.",
+  spawnChild: "Whether the child thread was started is not known: run `frizzctl activity`, and start it again only if it is not listed.",
+  dispatch: "Whether the thread was started is not known: look at the board before starting it again.",
+  setOwnThreadTimer: "Whether the timer was set is not known: run `frizzctl timer list`, and set it again only if it is not listed.",
+}
+
+/**
+ * A request Frizz accepted and never answered, as the error the caller reads. It read "addOwnPrWatch
+ * request failed: This operation was aborted", which says neither what happened nor whether running
+ * the command again is safe, and a worker has to decide exactly that.
+ * @param {string} procedure
+ */
+function unanswered(procedure) {
+  const waited = DISPATCH_TIMEOUT_MS >= 1000 ? `${Math.round(DISPATCH_TIMEOUT_MS / 1000)}s` : `${DISPATCH_TIMEOUT_MS}ms`
+  return new Error(
+    `Frizz did not answer within ${waited} (\`${procedure}\`). ` +
+    (UNANSWERED_NOT_REPEATABLE[procedure] ??
+      "Whether it took effect is not known, and running the same command again is safe: a second run changes nothing the first already did."),
+  )
+}
+
+/**
+ * An answer that is not a success, as the error the caller reads. The server's own sentence leads,
+ * because it was written for the worker; the procedure and the status follow it only where they help
+ * someone work out what failed. It read `steerThread returned HTTP 500: {"error":"no thread …"}`.
+ * @param {string} procedure @param {Response} res
+ */
+async function notOk(procedure, res) {
+  const text = await res.text().catch(() => "")
+  let sentence = ""
+  try {
+    const error = JSON.parse(text)?.error
+    if (typeof error === "string") sentence = error.trim()
+  } catch {
+    /* not the RPC envelope: something other than a handler answered */
+  }
+  if (!sentence) return new Error(`${procedure} returned HTTP ${res.status}${text ? `: ${text.slice(0, 500)}` : ""}`)
+  if (res.status === 409) return new ServerRefusal(sentence)
+  // A 400 is the input validator's, and its words name a field of the request, not a flag.
+  if (res.status === 400) return new Error(`Frizz did not accept this command's arguments (${sentence}). Run it with --help for what it takes.`)
+  return new Error(`${sentence} (Frizz's \`${procedure}\`, HTTP ${res.status})`)
 }
 
 /**
@@ -1661,6 +1711,29 @@ class Refused {
   constructor(text) { this.text = text }
 }
 
+/**
+ * The action a worker named, as the one its command knows it by. Each command withdraws a registration
+ * under its own verb (`watch-pr drop`, `timer cancel`, `goal stop`), and a worker that reaches for a
+ * neighbour's meant the obvious thing: `watch-pr remove` and `goal status` were both tried and refused.
+ * The aliases are the CLI registry's (`alias`), which the command line reads too, to know that a bare
+ * argument after `remove` is the id.
+ * @param {string} tool @param {unknown} raw
+ */
+function actionOf(tool, raw) {
+  const action = typeof raw === "string" ? raw.trim() : ""
+  return /** @type {Record<string, any>} */ (CLI)[tool]?.alias?.[action.toLowerCase()] ?? action
+}
+
+/** A duration written with its unit, as whole seconds: `90s`, `10m`, `2h`, `3d`, the grammar `--for` and
+ *  `--every` take (the server parses those; a timer's instant is worked out here). Null when it is not one.
+ * @param {string} raw */
+function durationSeconds(raw) {
+  // The same pattern as the server's AWAITING_DURATION_RE (packages/shared), so one spelling works everywhere.
+  const m = /^(\d{1,5})(s|m|h|d)$/.exec(raw.trim())
+  if (!m) return null
+  return Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[/** @type {"s"|"m"|"h"|"d"} */ (m[2])]
+}
+
 /** How a heartbeat cadence reads back to the worker. ONE formatter, because `start` and `get` describe
  * the same stored number and a worker that saw "every 15m" armed must not read "every 900s" back.
  *
@@ -1704,7 +1777,7 @@ function goalReport(rp) {
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function goal(args) {
   const slug = threadSlug()
-  const action = typeof args.action === "string" ? args.action.trim() : ""
+  const action = actionOf("goal", args.action)
   if (action !== "start" && action !== "stop" && action !== "get") {
     throw new Error("`action` must be one of \"start\", \"stop\" or \"get\"")
   }
@@ -1821,7 +1894,7 @@ function armedList(payload) {
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function timer(args) {
   const slug = threadSlug()
-  const action = typeof args.action === "string" ? args.action.trim() : ""
+  const action = actionOf("timer", args.action)
   if (action !== "set" && action !== "cancel" && action !== "list") {
     throw new Error("`action` must be one of \"set\", \"cancel\" or \"list\"")
   }
@@ -1845,18 +1918,22 @@ async function timer(args) {
 
   // Exactly one of the two ways to name the instant. Accepting both would mean silently preferring one,
   // and a worker that gave two different times meant something by each of them.
+  const hasFor = typeof args.in === "string" && args.in.trim() !== ""
   const hasIn = args.in_seconds !== undefined && args.in_seconds !== null
   const hasAt = typeof args.at === "string" && args.at.trim() !== ""
-  if (hasIn && hasAt) throw new Error("give `--in-seconds` OR `--at`, not both")
-  if (!hasIn && !hasAt) throw new Error("give either `--in-seconds` (fire N seconds from now) or `--at` (an ISO-8601 instant)")
+  if (Number(hasFor) + Number(hasIn) + Number(hasAt) > 1) throw new Error("give ONE of `--in`, `--in-seconds` and `--at`, not several")
+  if (!hasFor && !hasIn && !hasAt) throw new Error("give `--in` (a duration from now, like `10m`), `--in-seconds` (a number of seconds) or `--at` (an ISO-8601 instant)")
 
   const nowMs = Date.now()
   let fireMs
-  if (hasIn) {
-    const seconds = typeof args.in_seconds === "number" ? Math.round(args.in_seconds) : NaN
+  if (hasFor || hasIn) {
+    const seconds = hasFor ? durationSeconds(String(args.in)) : typeof args.in_seconds === "number" ? Math.round(args.in_seconds) : NaN
+    if (seconds === null) throw new Error(`\`--in ${String(args.in).trim()}\` is not a duration — give a number with its unit, like \`90s\`, \`10m\`, \`2h\` or \`3d\` (\`--in-seconds\` takes a bare number)`)
     if (!Number.isFinite(seconds)) throw new Error("`in_seconds` must be a number of seconds")
     if (seconds < TIMER_MIN_DELAY_SECONDS || seconds > TIMER_MAX_DELAY_SECONDS) {
-      throw new Error(`\`in_seconds\` must be between ${TIMER_MIN_DELAY_SECONDS} and ${TIMER_MAX_DELAY_SECONDS} (thirty days)`)
+      throw new Error(hasFor
+        ? `\`--in\` must be between ${TIMER_MIN_DELAY_SECONDS}s and 30d`
+        : `\`in_seconds\` must be between ${TIMER_MIN_DELAY_SECONDS} and ${TIMER_MAX_DELAY_SECONDS} (thirty days)`)
     }
     fireMs = nowMs + seconds * 1000
   } else {
@@ -2140,7 +2217,7 @@ async function done(args) {
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function watchPr(args) {
   const slug = threadSlug()
-  const action = typeof args.action === "string" ? args.action.trim() : ""
+  const action = actionOf("watch_pr", args.action)
   if (action !== "add" && action !== "list" && action !== "drop") {
     throw new Error("`action` must be one of \"add\", \"list\" or \"drop\"")
   }
@@ -2163,7 +2240,11 @@ async function watchPr(args) {
 
   const target = typeof args.target === "string" ? args.target.trim() : ""
   if (!target) throw new Error("`target` is required — the pull request, as `owner/repo#123` or a PR URL")
-  const result = (await callRpc("addOwnPrWatch", { slug, target, for: typeof args.for === "string" ? args.for.trim() : "" }))?.result
+  // Checked HERE, as `watch` and `watch-issue` check theirs: sent empty, it came back as the input
+  // validator's `for: String must contain at least 1 character(s)`.
+  const forValue = typeof args.for === "string" ? args.for.trim() : ""
+  if (!forValue) throw new Error("`for` is required — a DURATION like `2h`, `3d` or `180d` (max 365d), never an instant")
+  const result = (await callRpc("addOwnPrWatch", { slug, target, for: forValue }))?.result
   const id = result?.id ?? "(unknown)"
   const ref = result?.target ?? target
   const until = result?.expiresAt ? ` until ${result.expiresAt}` : ""
@@ -2189,7 +2270,7 @@ async function watchPr(args) {
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function watchIssue(args) {
   const slug = threadSlug()
-  const action = typeof args.action === "string" ? args.action.trim() : ""
+  const action = actionOf("watch_issue", args.action)
   if (action !== "add" && action !== "list" && action !== "drop") {
     throw new Error("`action` must be one of \"add\", \"list\" or \"drop\"")
   }
@@ -2277,7 +2358,7 @@ function outputTail(output) {
  * @param {Record<string, unknown>} args @returns {Promise<string|Refused>} */
 async function monitor(args) {
   const slug = threadSlug()
-  const action = typeof args.action === "string" ? args.action.trim() : ""
+  const action = actionOf("monitor", args.action)
   if (action !== "add" && action !== "list" && action !== "drop") {
     throw new Error("`action` must be one of \"add\", \"list\" or \"drop\"")
   }
@@ -2472,6 +2553,7 @@ const CLI = {
     group: "Waiting",
     summary: "Wake on a pull request's CI, reviews, comments and labels",
     positional: ["action"],
+    alias: { remove: "drop", rm: "drop", cancel: "drop" },
     then: { add: ["target"], drop: ["id"] },
     examples: ["frizzctl watch-pr add acme/app#391 --for 180d", "frizzctl watch-pr list", "frizzctl watch-pr drop prw_ab12cd34"],
   },
@@ -2479,6 +2561,7 @@ const CLI = {
     group: "Waiting",
     summary: "Wake on a GitHub issue's comments, labels, assignees and close",
     positional: ["action"],
+    alias: { remove: "drop", rm: "drop", cancel: "drop" },
     then: { add: ["target"], drop: ["id"] },
     examples: ["frizzctl watch-issue add acme/app#482 --for 30d", "frizzctl watch-issue list", "frizzctl watch-issue drop isw_ab12cd34"],
   },
@@ -2486,6 +2569,7 @@ const CLI = {
     group: "Waiting",
     summary: "Wake when a command the server re-runs exits 0, or with --persistent on every line a script prints",
     positional: ["action"],
+    alias: { remove: "drop", rm: "drop", cancel: "drop" },
     then: { add: ["command"], drop: ["id"] },
     examples: [
       'frizzctl monitor add "npm view frizz@0.13.12 version" --every 5m --for 6h',
@@ -2504,9 +2588,10 @@ const CLI = {
     group: "Waiting",
     summary: "Set, list or cancel one-off timed prompts to yourself",
     positional: ["action"],
+    alias: { drop: "cancel", remove: "cancel", rm: "cancel" },
     then: { cancel: ["id"] },
     examples: [
-      'frizzctl timer set --in-seconds 600 --prompt "Re-check the deploy and report its status"',
+      'frizzctl timer set --in 10m --prompt "Re-check the deploy and report its status"',
       "frizzctl timer list",
       "frizzctl timer cancel tmr_a1b2c3d4e5f6",
     ],
@@ -2515,6 +2600,7 @@ const CLI = {
     group: "Waiting",
     summary: "Arm, read back or stop the text Frizz re-sends this thread",
     positional: ["action"],
+    alias: { drop: "stop", remove: "stop", rm: "stop", cancel: "stop", status: "get" },
     examples: [
       "frizzctl goal get",
       "frizzctl goal start --post-compaction --no-stop-hook --prompt-file resume-prompt.md",
@@ -2574,4 +2660,4 @@ const CLI = {
   },
 }
 
-export { TOOLS, HANDLERS, CLI, Refused, doneOpenQuestionsRefusal }
+export { TOOLS, HANDLERS, CLI, Refused, ServerRefusal, doneOpenQuestionsRefusal }

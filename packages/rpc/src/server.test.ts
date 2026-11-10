@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { Hono } from "hono"
 import { z } from "zod"
-import { mountRouter, mutation, query, stream } from "./server.ts"
+import { mountRouter, mutation, query, RpcRefusal, stream } from "./server.ts"
 
 function app() {
   const hono = new Hono()
@@ -70,4 +70,29 @@ test("a mutation's body is untouched by any of this, and a malformed one is a 40
   const bad = await send("{not json")
   assert.equal(bad.status, 400)
   assert.deepEqual(await bad.json(), { error: "Invalid input JSON" })
+})
+
+// A worker's `frizzctl` read `steerThread returned HTTP 500: {"error":"no thread …"}` for a mistyped slug:
+// a refusal the handler wrote for it, wearing a fault's status. A handler that throws RpcRefusal is
+// answered 409, so a caller can tell the two apart without reading the sentence.
+test("a handler's refusal is a 409 and its fault a 500, each with the sentence it threw", async () => {
+  const hono = new Hono()
+  const input = z.object({ how: z.enum(["refuse", "fault"]) }).strict()
+  const handler = async ({ input: { how } }: { input: { how: "refuse" | "fault" } }): Promise<{ ok: true }> => {
+    if (how === "refuse") throw new RpcRefusal("no thread `nope` in this project")
+    throw new Error("database is locked")
+  }
+  mountRouter(hono, "/rpc", {
+    read: query({ input, output: z.object({ ok: z.literal(true) }), handler }),
+    write: mutation({ input, output: z.object({ ok: z.literal(true) }), handler }),
+  })
+  const write = (how: string) => hono.request("http://127.0.0.1/rpc/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ how }) })
+  for (const ask of [write, (how: string) => hono.request(clientUrl("read", { how }))]) {
+    const refused = await ask("refuse")
+    assert.equal(refused.status, 409)
+    assert.deepEqual(await refused.json(), { error: "no thread `nope` in this project" })
+    const fault = await ask("fault")
+    assert.equal(fault.status, 500)
+    assert.deepEqual(await fault.json(), { error: "database is locked" })
+  }
 })

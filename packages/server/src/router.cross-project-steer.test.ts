@@ -9,6 +9,7 @@ import { Bus, Emitter } from "./bus.ts"
 import type { AppContext } from "./context.ts"
 import type { Project } from "./project.ts"
 import { registerProject } from "./project-registry.ts"
+import { RpcRefusal } from "@frizz/rpc/server"
 import { createRouter } from "./router.ts"
 import { createStorage, type SessionRow } from "./storage.ts"
 import type { Tailer } from "./tailer.ts"
@@ -190,6 +191,53 @@ test("refusals name the fix: an ambiguous slug, an unknown project, a closed one
     /no thread `no-such-thread` in this project or any other open one/,
   )
   assert.equal(nub.sent.length + zod.sent.length + other.sent.length + frizz.sent.length, 0, "a refused steer reaches no worker")
+})
+
+// A worker knows a sibling by the session id in its scratch path as often as by the slug in its link, and
+// a steer handed one was refused as "no thread": most of the distinct refusals measured on 2026-11-09.
+test("a thread is found by its session id where no slug matches, here or in another project, and never the sender", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("sender")
+  frizz.thread("fix-tests", "Fix the tests")
+  nub.thread("bump-the-sdk", "Bump the SDK")
+
+  const local = await frizz.router.steerThread.handler({ input: { from: "sender", to: "sid-fix-tests", message: "here" } })
+  assert.deepEqual(local, { slug: "fix-tests", title: "Fix the tests", delivery: "resting" })
+  assert.deepEqual(frizz.sent.map((s) => [s.threadSlug, s.sessionId]), [["fix-tests", "sid-fix-tests"]], "delivered to the thread, by its slug")
+
+  const across = await frizz.router.steerThread.handler({ input: { from: "sender", to: "sid-bump-the-sdk", message: "there" } })
+  assert.deepEqual(across, { slug: "bump-the-sdk", title: "Bump the SDK", delivery: "resting", project: "nub" })
+  const named = await frizz.router.steerThread.handler({ input: { from: "sender", to: "sid-bump-the-sdk", project: "nub", message: "there, named" } })
+  assert.equal(named.slug, "bump-the-sdk")
+  assert.deepEqual(nub.sent.map((s) => s.threadSlug), ["bump-the-sdk", "bump-the-sdk"])
+
+  // The sender's own session id is the sender.
+  await assert.rejects(
+    frizz.router.steerThread.handler({ input: { from: "sender", to: "sid-sender", message: "me" } }),
+    /That is your own thread/,
+  )
+  // A slug still wins over another thread's session id that happens to spell it.
+  frizz.thread("sid-bump-the-sdk", "Named like an id")
+  const slug = await frizz.router.steerThread.handler({ input: { from: "sender", to: "sid-bump-the-sdk", message: "the slug" } })
+  assert.deepEqual([slug.slug, slug.project], ["sid-bump-the-sdk", undefined])
+  assert.equal(frizz.sent.length, 2)
+})
+
+// What a worker is refused arrives as a refusal (HTTP 409 through the RPC mount), not as a server fault.
+test("a steer that names nothing, or the sender, is refused rather than failed", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("sender")
+  const refusal = (input: { to: string; project?: string }) =>
+    frizz.router.steerThread.handler({ input: { from: "sender", message: "x", ...input } }).then(() => null, (err: unknown) => err)
+  for (const input of [{ to: "no-such-thread" }, { to: "no-such-thread", project: "nub" }, { to: "sender" }, { to: "x", project: "nope" }]) {
+    assert.ok(await refusal(input) instanceof RpcRefusal, JSON.stringify(input))
+  }
 })
 
 // `frizzctl steer` runs unasked in every permission mode, so it is how a thread the human narrowed can

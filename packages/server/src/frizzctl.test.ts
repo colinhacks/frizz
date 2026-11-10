@@ -52,7 +52,8 @@ function plausible(procedure: string, body: any): unknown {
   }
 }
 
-async function fakeFrizz(answer: (procedure: string, body: any) => { status?: number; result?: unknown } | undefined = () => undefined): Promise<Fake> {
+/** `error` answers the RPC's failure envelope (`{ error }`) in place of a result; `silent` never answers. */
+async function fakeFrizz(answer: (procedure: string, body: any) => { status?: number; result?: unknown; error?: string; silent?: true } | undefined = () => undefined): Promise<Fake> {
   const seen: Seen[] = []
   const http: Server = createServer((req, res) => {
     let raw = ""
@@ -63,8 +64,9 @@ async function fakeFrizz(answer: (procedure: string, body: any) => { status?: nu
       seen.push({ url, body })
       const procedure = url.split("/rpc/")[1] ?? ""
       const custom = answer(procedure, body)
+      if (custom?.silent) return
       res.writeHead(custom?.status ?? 200, { "content-type": "application/json" })
-      res.end(JSON.stringify({ result: custom?.result ?? plausible(procedure, body) }))
+      res.end(JSON.stringify(custom?.error !== undefined ? { error: custom.error } : { result: custom?.result ?? plausible(procedure, body) }))
     })
   })
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve))
@@ -74,7 +76,7 @@ async function fakeFrizz(answer: (procedure: string, body: any) => { status?: nu
   const stateDir = join(mkdtempSync(join(tmpdir(), "frizzctl-root-")), "projects", "proj-1")
   mkdirSync(stateDir, { recursive: true })
   writeFileSync(join(stateDir, "server.lock"), JSON.stringify({ port }))
-  return { port, seen, stateDir, close: () => http.close() }
+  return { port, seen, stateDir, close: () => { http.close(); http.closeAllConnections() } }
 }
 
 interface Ran { code: number | null; stdout: string; stderr: string }
@@ -170,7 +172,7 @@ test("a misspelled command or flag fails with the fix in the message, and reache
 
     const flag = await run(["timer", "set", "--in-secs", "5"], { env: worker(fake) })
     assert.equal(flag.code, 1)
-    assert.match(flag.stderr, /`frizzctl timer` has no --in-secs\. It takes: --action, --prompt, --in-seconds, --at, --id\./)
+    assert.match(flag.stderr, /`frizzctl timer` has no --in-secs\. It takes: --action, --prompt, --in, --in-seconds, --at, --id\./)
     assert.match(flag.stderr, /frizzctl timer --help/)
 
     const extra = await run(["title", "Fix", "queue", "focus"], { env: worker(fake) })
@@ -478,6 +480,126 @@ test("a shell that only has FRIZZ_PERM_DIR still finds the server and its own pr
     assert.equal(nowhere.code, 1)
     assert.match(nowhere.stderr, /cannot locate the Frizz server/)
     assert.match(nowhere.stderr, /NOTHING WAS SAVED/)
+  } finally {
+    fake.close()
+  }
+})
+
+// What a worker read when Frizz said no, until 2026-11-10: `frizzctl steer failed: steerThread returned
+// HTTP 500: {"error":"no thread …"}`. The sentence inside was written for the worker; the RPC name, the
+// status and the JSON around it were not.
+test("a refusal the server wrote is printed as its sentence and exits 2; a fault keeps its sentence and exits 1", async () => {
+  const fake = await fakeFrizz((procedure) => {
+    if (procedure === "steerThread") return { status: 409, error: "no thread `nope` in this project or any other open one. Pass the slug exactly as a thread link names it (`/thread/<slug>`), or the thread's full link, which names its project too" }
+    if (procedure === "addOwnWatch") return { status: 409, error: "nothing running on this thread answers to `deadbeef` — `frizzctl activity` lists what is" }
+    if (procedure === "setOwnThreadTitle") return { status: 500, error: "database is locked" }
+    if (procedure === "upsertOwnLink") return { status: 400, error: "label: String must contain at least 1 character(s)" }
+    if (procedure === "listOwnThreadTimers") return { status: 404, error: "unknown RPC procedure `listOwnThreadTimers` — this server does not implement it. A caller built against a different version of frizz is the usual cause." }
+    return undefined
+  })
+  try {
+    const steer = await run(["steer", "nope", "--message", "hello"], { env: worker(fake) })
+    assert.equal(steer.code, 2)
+    assert.equal(steer.stderr, "")
+    assert.equal(steer.stdout, "`frizzctl steer` was refused: no thread `nope` in this project or any other open one. Pass the slug exactly as a thread link names it (`/thread/<slug>`), or the thread's full link, which names its project too\n")
+
+    const watch = await run(["watch", "shell", "deadbeef", "--for", "1h"], { env: worker(fake) })
+    assert.equal(watch.code, 2)
+    assert.match(watch.stdout, /^`frizzctl watch` was refused: nothing running on this thread answers to `deadbeef`/)
+    for (const out of [steer.stdout, watch.stdout]) assert.doesNotMatch(out, /HTTP|\{"error"|steerThread|addOwnWatch/)
+
+    // A fault is a failure, not a refusal: the sentence leads, and what failed follows it.
+    const fault = await run(["title", "Fix queue focus"], { env: worker(fake) })
+    assert.equal(fault.code, 1)
+    assert.equal(fault.stdout, "")
+    assert.equal(fault.stderr, "frizzctl title failed: database is locked (Frizz's `setOwnThreadTitle`, HTTP 500)\n")
+
+    // The input validator names a field of the request, so its words are introduced as that.
+    const invalid = await run(["link", "Docs", "https://example.com"], { env: worker(fake) })
+    assert.equal(invalid.code, 1)
+    assert.equal(invalid.stderr, "frizzctl link failed: Frizz did not accept this command's arguments (label: String must contain at least 1 character(s)). Run it with --help for what it takes.\n")
+
+    const skew = await run(["timer", "list"], { env: worker(fake) })
+    assert.equal(skew.code, 1)
+    assert.match(skew.stderr, /^frizzctl timer failed: unknown RPC procedure `listOwnThreadTimers` — this server does not implement it\..* \(Frizz's `listOwnThreadTimers`, HTTP 404\)\n$/)
+  } finally {
+    fake.close()
+  }
+})
+
+// `addOwnPrWatch request failed: This operation was aborted` said neither what happened nor whether
+// running the command again was safe, which is the one thing a worker has to decide next.
+test("a request Frizz never answers says so, and says whether the command can be run again", async () => {
+  const fake = await fakeFrizz((procedure) => (procedure === "listOwnPrWatches" ? undefined : { silent: true }))
+  const env = { ...worker(fake), FRIZZ_RPC_TIMEOUT_MS: "300" }
+  try {
+    const watch = await run(["watch-pr", "add", "acme/app#391", "--for", "3d"], { env })
+    assert.equal(watch.code, 1)
+    assert.equal(watch.stderr, "frizzctl watch-pr failed: Frizz did not answer within 300ms (`addOwnPrWatch`). Whether it took effect is not known, and running the same command again is safe: a second run changes nothing the first already did.\n")
+
+    const steer = await run(["steer", "fix-tests", "--message", "hello"], { env })
+    assert.equal(steer.code, 1)
+    assert.equal(steer.stderr, "frizzctl steer failed: Frizz did not answer within 300ms (`steerThread`). Whether the message was delivered is not known, and sending it again can deliver it twice.\n")
+
+    const timer = await run(["timer", "set", "--in", "10m", "--prompt", "look again"], { env })
+    assert.match(timer.stderr, /Whether the timer was set is not known: run `frizzctl timer list`, and set it again only if it is not listed\./)
+
+    const spawn = await run(["spawn-thread", "--model", "opus", "--effort", "high", "--prompt", "do it"], { env })
+    assert.match(spawn.stderr, /Whether the thread was started is not known: run `frizzctl threads`, and start it again only if it is not listed\./)
+  } finally {
+    fake.close()
+  }
+})
+
+// Each command withdraws under its own verb (`drop`, `cancel`, `stop`), and a worker that reached for a
+// neighbour's was told its action did not exist: `watch-pr remove` and `goal status` were both tried.
+test("a command's withdrawing action answers to its neighbours' verbs, and `goal status` reads the goal", async () => {
+  const fake = await fakeFrizz()
+  const calls = () => fake.seen.map((s) => [s.url.split("/rpc/")[1], s.body.id].filter(Boolean).join(" "))
+  try {
+    for (const argv of [
+      ["watch-pr", "remove", "prw_1"], ["watch-pr", "rm", "prw_2"], ["watch-pr", "cancel", "prw_3"], ["watch-issue", "remove", "isw_1"],
+      ["monitor", "remove", "cmw_1"], ["timer", "drop", "tmr_1"], ["timer", "remove", "tmr_2"], ["timer", "rm", "tmr_3"],
+      ["goal", "cancel"], ["goal", "remove"], ["goal", "status"], ["timer", "--action", "drop", "--id", "tmr_4"],
+    ]) {
+      const ran = await run(argv, { env: worker(fake) })
+      assert.equal(ran.code, 0, `${argv.join(" ")}: ${ran.stderr}`)
+    }
+    assert.deepEqual(calls(), [
+      "dropOwnPrWatch prw_1", "dropOwnPrWatch prw_2", "dropOwnPrWatch prw_3", "dropOwnPrWatch isw_1",
+      "dropOwnCommandWatch cmw_1", "cancelOwnThreadTimer tmr_1", "cancelOwnThreadTimer tmr_2", "cancelOwnThreadTimer tmr_3",
+      "setOwnThreadRecurringPrompt", "setOwnThreadRecurringPrompt", "getOwnThreadRecurringPrompt", "cancelOwnThreadTimer tmr_4",
+    ])
+    // The two goal withdrawals are stops: the prompt is cleared.
+    assert.deepEqual(fake.seen.filter((s) => s.url.endsWith("setOwnThreadRecurringPrompt")).map((s) => s.body.prompt), [null, null])
+    // A word that is no action anywhere is still refused, by name.
+    const unknown = await run(["watch-pr", "snooze", "prw_1"], { env: worker(fake) })
+    assert.equal(unknown.code, 1)
+  } finally {
+    fake.close()
+  }
+})
+
+test("`timer set --in` takes a duration with its unit, and `watch-pr add` asks for `--for` in its own words", async () => {
+  const fake = await fakeFrizz()
+  try {
+    const before = Date.now()
+    const set = await run(["timer", "set", "--in", "10m", "--prompt", "Re-check the deploy"], { env: worker(fake) })
+    assert.equal(set.code, 0, set.stderr)
+    const sent = fake.seen.find((s) => s.url.endsWith("setOwnThreadTimer"))!.body
+    const delay = Date.parse(sent.fireAt) - before
+    assert.ok(delay >= 600_000 && delay < 660_000, `fires ten minutes out, not ${delay}ms`)
+    assert.equal(sent.prompt, "Re-check the deploy")
+
+    const bare = await run(["timer", "set", "--in", "600", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(bare.code, 1)
+    assert.match(bare.stderr, /`--in 600` is not a duration — give a number with its unit, like `90s`, `10m`, `2h` or `3d`/)
+
+    const seen = fake.seen.length
+    const watch = await run(["watch-pr", "add", "acme/app#391"], { env: worker(fake) })
+    assert.equal(watch.code, 1)
+    assert.match(watch.stderr, /^frizzctl watch-pr failed: `for` is required — a DURATION like `2h`, `3d` or `180d` \(max 365d\), never an instant/)
+    assert.equal(fake.seen.length, seen, "and the server is not asked")
   } finally {
     fake.close()
   }
