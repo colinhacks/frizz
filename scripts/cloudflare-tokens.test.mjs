@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { JOBS, MINTER_SCOPES, OAUTH_SCOPES, SNAPSHOT_TOKEN, TOKENS, expiresOn, findGroup, planToken, scopesForJob, snapshotAccount, staleTokens, withAuthor } from "./cloudflare-tokens.mjs"
+import { JOBS, MINTER_SCOPES, OAUTH_SCOPES, SNAPSHOT_TOKEN, TOKENS, expiresOn, findGroup, planToken, scopesForJob, snapshotAccount, staleTokens, withId } from "./cloudflare-tokens.mjs"
 
 // Shapes from GET /accounts/{account_id}/tokens/permission_groups, cut down to the fields the plan
 // reads. Not captured from the live account: the first real run resolves against the real list and
@@ -42,9 +42,9 @@ test("the deploy token edits Workers on the account, nothing else, and lasts one
 
 test("each new deploy token joins the authors drift accepts, and the older ones stay", () => {
   assert.equal(spec("deploy").authorVariable, "WORKERS_CI_AUTHOR")
-  assert.equal(withAuthor("", "new"), "new")
-  assert.equal(withAuthor("old\n", "new"), "old,new")
-  assert.equal(withAuthor("old,new", "new"), "old,new")
+  assert.equal(withId("", "new"), "new")
+  assert.equal(withId("old\n", "new"), "old,new")
+  assert.equal(withId("old,new", "new"), "old,new")
 })
 
 test("the drift token holds the reads its check needs, and can never write or see the relay's traffic", () => {

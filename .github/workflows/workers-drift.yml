@@ -18,7 +18,7 @@ on:
 
 permissions:
   contents: read
-  actions: read # read the deploy run a Worker's version names, with its approvals and steps
+  actions: read # read the deploy run a Worker's version names, with its steps
 
 jobs:
   check:
@@ -37,10 +37,13 @@ jobs:
       # this job never waits for an approval and never holds anything that can deploy.
       # WORKERS_CI_AUTHOR is a repository VARIABLE (not a secret): the ids of the deploy tokens CI has
       # uploaded with, which cloudflare-tokens.mjs adds to as it mints each one. Unset, every run fails
-      # and prints the author it saw.
+      # and prints the author it saw. WORKERS_MINTED_TOKENS, another variable, lists every token
+      # cloudflare-tokens.mjs has minted, so the audit log's create and revoke of a deploy's own tokens
+      # pass and a token made anywhere else still fails the run.
       - name: Check that everything the Workers run came from CI
         env:
           CLOUDFLARE_READ_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           WORKERS_CI_AUTHOR: ${{ vars.WORKERS_CI_AUTHOR }}
+          WORKERS_MINTED_TOKENS: ${{ vars.WORKERS_MINTED_TOKENS }}
         run: node scripts/workers-drift.mjs

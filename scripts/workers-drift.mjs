@@ -50,6 +50,12 @@
 // version authored by a member's address did not come from CI, whatever WORKERS_CI_AUTHOR says. A tail
 // leaves no version, so it, and every other change CI would not make, is read from the audit log.
 //
+// WHAT A DEPLOY LEAVES IN THE AUDIT LOG, and the log lets through: its uploads (judged by version
+// above), the settings write wrangler makes beside each upload under the same token (the settings are
+// read directly below), and the create and revoke of each token `cloudflare-tokens.mjs` mints, which it
+// records by id in WORKERS_MINTED_TOKENS. Until 2026-11-11 each of those was an alarm, so every
+// deploy raised about four failed runs and their emails. A token made anywhere else still alarms.
+//
 // WHAT IT READS. The ACTIVE deployment always (the newest; it serves 100% of traffic unless a split
 // names two versions, and then both are checked), plus every deployment and every version created in
 // the last LOOKBACK. The lookback is what catches an attacker who deploys and rolls back between two
@@ -65,7 +71,7 @@
 // run. A check that cannot see must not go green.
 //
 //   CLOUDFLARE_READ_TOKEN=… GITHUB_TOKEN=… GITHUB_REPOSITORY=colinhacks/frizz \
-//     WORKERS_CI_AUTHOR=… node scripts/workers-drift.mjs [frizz-relay] [frizz-registrar]
+//     WORKERS_CI_AUTHOR=… WORKERS_MINTED_TOKENS=… node scripts/workers-drift.mjs [frizz-relay] [frizz-registrar]
 
 import { createHash } from "node:crypto"
 import { pathToFileURL } from "node:url"
@@ -73,6 +79,9 @@ import { pathToFileURL } from "node:url"
 export const ACCOUNT_ID = "dde3ec1f6b1f0a397ea82a9ed322f5ce"
 export const WORKERS = ["frizz-relay", "frizz-registrar"]
 export const DEPLOY_WORKFLOW = ".github/workflows/workers-deploy.yml"
+// The repository variable listing every token scripts/cloudflare-tokens.mjs has minted, which it adds to
+// as it mints each one: the deploy token, the drift token and each audit's snapshot token.
+export const MINTED_VARIABLE = "WORKERS_MINTED_TOKENS"
 // The step of that workflow that uploads. Renaming it there fails every deploy's check here.
 export const DEPLOY_STEP = "Deploy"
 export const LOOKBACK_MS = 2 * 60 * 60 * 1000
@@ -157,7 +166,7 @@ export function githubClient(token, { base = "https://api.github.com" } = {}) {
   }
 }
 
-/** The authors `WORKERS_CI_AUTHOR` names. */
+/** The ids a comma-separated repository variable names: `WORKERS_CI_AUTHOR` or `WORKERS_MINTED_TOKENS`. */
 export const parseAuthors = (value) => String(value ?? "").split(",").map((author) => author.trim()).filter(Boolean)
 
 /**
@@ -256,6 +265,9 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthors = [], 
 const AUDIT_PAGE = 1000
 // checkWorker judges these by the version or deployment each one made, so the log has nothing to add.
 const JUDGED_BY_VERSION = new Set(["script_update", "script_deploy"])
+// The token events a deploy makes for itself: the snapshot token its audit mints and revokes, the deploy
+// token it mints and revokes, and any older deploy token it clears away.
+const TOKEN_EVENTS = new Set(["token_create", "token_revoke"])
 
 /**
  * Every change in the audit log that nothing else here judges, as sentences. Nobody but CI changes this
@@ -264,12 +276,27 @@ const JUDGED_BY_VERSION = new Set(["script_update", "script_deploy"])
  * and headers, which are the relay's cookies and access codes, so this log is its only record. Cloudflare's
  * own events (certificate renewals) read `system`. Nothing about the actor is printed: these logs are public.
  */
-export function auditLogProblems(events) {
+export function auditLogProblems(events, { mintedTokens = [] } = {}) {
   const problems = []
   if (events.length >= AUDIT_PAGE) problems.push(`the audit log's page is full at ${AUDIT_PAGE} events, so a change could be past the end of it`)
+  // Who uploaded to which Worker in this window, by the audit log's own actor id. Each such upload is
+  // judged by its version in checkWorker, so its settings write rides on that judgment.
+  const uploaders = new Set(
+    events.filter((e) => JUDGED_BY_VERSION.has(e.action?.type) && e.actor?.type === "token").map((e) => `${e.actor.id} ${e.resource?.id}`),
+  )
   for (const event of events) {
     const type = event.action?.type
     if (event.actor?.type === "system" || JUDGED_BY_VERSION.has(type)) continue
+    // A deploy's own tokens, which cloudflare-tokens.mjs records in WORKERS_MINTED_TOKENS as it mints
+    // each one. Until 2026-11-11 every deploy raised these for the two hours of the lookback, about four
+    // failed runs and their emails, so an alarm here read as the deploy rather than as a stranger's token
+    // (maintainer, 2026-11-11: recognise the deploy's own tokens). A token minted any other way still
+    // alarms, and so does every use it is put to.
+    if (TOKEN_EVENTS.has(type) && mintedTokens.includes(event.metadata?.token_tag)) continue
+    // `wrangler versions deploy` writes the Worker's settings beside each upload, under the same token.
+    // The settings themselves are read by checkAccount (no tail consumer, no Logpush, no observability,
+    // the expected bindings), so this event says nothing a settings read does not.
+    if (type === "patch_settings" && event.resource?.type === "script" && event.actor?.type === "token" && uploaders.has(`${event.actor.id} ${event.resource.id}`)) continue
     const on = `${event.resource?.type ?? "unknown"} ${event.resource?.id ?? "-"}`
     if (type === "tail_logs_start") problems.push(`a tail was started on ${on} at ${event.when}, and a tail reads every request's cookies`)
     else problems.push(`the audit log shows ${type} on ${on} at ${event.when}, which CI does not do`)
@@ -284,12 +311,12 @@ const bindingKey = (b) => [b.type, b.name, b.class_name ?? b.namespace_id ?? b.t
  * Every way the account differs from `baseline`, as sentences; an empty list means it matches. A read
  * Cloudflare refuses throws, so a token that cannot see something fails the run instead of passing it.
  */
-export async function checkAccount({ cf, baseline = BASELINE, accountId = ACCOUNT_ID, now = Date.now(), lookbackMs = LOOKBACK_MS }) {
+export async function checkAccount({ cf, baseline = BASELINE, accountId = ACCOUNT_ID, now = Date.now(), lookbackMs = LOOKBACK_MS, mintedTokens = [] }) {
   const problems = []
   const account = `/accounts/${accountId}`
 
   const since = new Date(now - lookbackMs).toISOString().replace(/\.\d{3}Z$/, "Z")
-  problems.push(...auditLogProblems(await cf(`${account}/audit_logs?since=${since}&direction=desc&per_page=${AUDIT_PAGE}`)))
+  problems.push(...auditLogProblems(await cf(`${account}/audit_logs?since=${since}&direction=desc&per_page=${AUDIT_PAGE}`), { mintedTokens }))
 
   const sameSet = (what, actual, expected) => {
     for (const item of actual) if (!expected.includes(item)) problems.push(`${what}: unexpected ${item}`)
@@ -364,7 +391,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const gh = githubClient(GITHUB_TOKEN)
   let failed = false
   try {
-    const problems = await checkAccount({ cf })
+    const problems = await checkAccount({ cf, mintedTokens: parseAuthors(process.env[MINTED_VARIABLE]) })
     if (problems.length === 0) console.log("✓ the account matches its baseline")
     for (const problem of problems) console.error(`::error::${problem}`)
     failed ||= problems.length > 0

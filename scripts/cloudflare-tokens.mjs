@@ -34,6 +34,11 @@
 // THE CI TOKENS ARE ACCOUNT-OWNED ON PURPOSE. `workers-drift` tells CI's uploads from a laptop's by their
 // author, and a user-owned CI token would share its author with the maintainer's own token.
 //
+// EVERY TOKEN IT MINTS IS RECORDED by id in the repository variable WORKERS_MINTED_TOKENS (the deploy
+// token, the drift token, and each audit's snapshot token), so workers-drift passes the audit log's
+// create and revoke of each and still alarms on a token made anywhere else (2026-11-11). A recording
+// that fails is a warning: the token works, and the cost is one alarm.
+//
 // ROTATION is a re-run: each new token is in place before the older tokens of the same name are
 // revoked. Every run ends with an audit of the account's members and API tokens, flagging any token
 // this script does not manage.
@@ -59,7 +64,7 @@ import { ghCommand } from "./lib/gh-command.mjs"
 import { join } from "node:path"
 import { setTimeout } from "node:timers/promises"
 import { pathToFileURL } from "node:url"
-import { ACCOUNT_ID, CLAIMS_NAMESPACE } from "./workers-drift.mjs"
+import { ACCOUNT_ID, CLAIMS_NAMESPACE, MINTED_VARIABLE } from "./workers-drift.mjs"
 
 export const REPO = "colinhacks/frizz"
 export const ZONE = "frizz.sh"
@@ -315,28 +320,36 @@ function removeFromSink(sink) {
   return null
 }
 
-/** `list`, a repository variable's comma-separated authors, with `id` added. */
-export function withAuthor(list, id) {
-  const authors = list.split(",").map((author) => author.trim()).filter(Boolean)
-  return (authors.includes(id) ? authors : [...authors, id]).join(",")
+/** `list`, a repository variable's comma-separated ids, with `id` added. */
+export function withId(list, id) {
+  const ids = list.split(",").map((each) => each.trim()).filter(Boolean)
+  return (ids.includes(id) ? ids : [...ids, id]).join(",")
 }
 
 /**
- * Adds a new token's id to the authors workers-drift accepts, keeping the older ones: the Workers go on
- * running what the last token uploaded until this one deploys, and a mint that never deploys changes
- * nothing. Returns null on success, or what went wrong.
+ * Adds a new token's id to a list workers-drift reads, keeping the older ones: WORKERS_CI_AUTHOR, the
+ * authors it accepts (the Workers go on running what the last token uploaded until this one deploys,
+ * and a mint that never deploys changes nothing), and MINTED_VARIABLE, whose create and revoke it lets
+ * pass (an older token's revoke comes a deploy or a year later). Returns null on success, or what went
+ * wrong.
  */
-function recordAuthor(variable, id) {
+function recordId(variable, id, what) {
   const [readCommand, readArgs] = ghCommand(`Read ${variable} on ${REPO}`, ["variable", "get", variable, "--repo", REPO], { write: true })
   const read = spawnSync(readCommand, readArgs, { encoding: "utf8" })
   if (read.error) return `${readCommand} did not start: ${read.error.message}`
   if (read.status !== 0 && !/not found/i.test(read.stderr)) return `${readCommand} ${readArgs.slice(0, 3).join(" ")} exited ${read.status}: ${(read.stderr || read.stdout).trim()}`
   const list = read.status === 0 ? read.stdout : ""
-  const [command, args] = ghCommand(`Add the new deploy token to ${variable} on ${REPO}`, ["variable", "set", variable, "--repo", REPO, "--body", withAuthor(list, id)], { write: true })
+  const [command, args] = ghCommand(`Add the new ${what} to ${variable} on ${REPO}`, ["variable", "set", variable, "--repo", REPO, "--body", withId(list, id)], { write: true })
   const result = spawnSync(command, args, { encoding: "utf8" })
   if (result.error) return `${command} did not start: ${result.error.message}`
   if (result.status !== 0) return `${command} ${args.slice(0, 3).join(" ")} exited ${result.status}: ${(result.stderr || result.stdout).trim()}`
   return null
+}
+
+/** Records a token just minted in MINTED_VARIABLE, warning rather than failing: see this file's header. */
+function recordMinted(id, what) {
+  const failure = recordId(MINTED_VARIABLE, id, what)
+  if (failure) console.error(`warning: ${what} (${id}) is not in ${MINTED_VARIABLE}, so workers-drift will alarm on its create and revoke: ${failure}`)
 }
 
 function describeSink(sink) {
@@ -560,6 +573,7 @@ async function withSnapshotToken(cf, use) {
   const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: SNAPSHOT_TOKEN.name, policies, expires_on: expiresOn(Date.now(), SNAPSHOT_TOKEN_DAYS) })
   console.log(`\nminted ${SNAPSHOT_TOKEN.name} (${created.id}), expires ${created.expires_on}`)
   try {
+    recordMinted(created.id, SNAPSHOT_TOKEN.name)
     // A new token can answer 401 for its first moments, and a snapshot would record that as a refusal.
     const verify = client(created.value)
     for (let attempt = 1; ; attempt++) {
@@ -666,7 +680,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     })
     for (const p of plans) {
       const created = await cf("POST", `/accounts/${ACCOUNT_ID}/tokens`, { name: p.spec.name, policies: p.policies, expires_on: expiresOn(Date.now(), p.spec.expiresDays) })
-      const failure = deliver(p.spec.sink, created.value) ?? (p.spec.authorVariable ? recordAuthor(p.spec.authorVariable, created.id) : null)
+      recordMinted(created.id, p.spec.name)
+      const failure = deliver(p.spec.sink, created.value) ?? (p.spec.authorVariable ? recordId(p.spec.authorVariable, created.id, p.spec.name) : null)
       if (failure) {
         await cf("DELETE", `/accounts/${ACCOUNT_ID}/tokens/${created.id}`).catch(() => {})
         throw new Error(`${p.spec.name}: ${failure} — the new token ${created.id} was revoked again`)

@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { createServer } from "node:http"
+import { readFileSync } from "node:fs"
 import { test } from "node:test"
-import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkClaims, checkWorker, claimReader, cloudflareClient, githubClient, parseAuthors, parseCiMessage } from "./workers-drift.mjs"
+import { ACCOUNT_ID, auditLogProblems, BASELINE, MINTED_VARIABLE, checkAccount, checkClaims, checkWorker, claimReader, cloudflareClient, githubClient, parseAuthors, parseCiMessage } from "./workers-drift.mjs"
 
 // The bodies below follow the shapes Cloudflare documents for
 //   GET /accounts/{account_id}/workers/scripts/{script}/deployments
@@ -362,6 +363,56 @@ test("a tail in the lookback is an alarm, because it changes nothing else the ch
     "the audit log shows add_member on account a at 2026-10-09T11:35:00Z, which CI does not do",
   ])
   assert.ok(asked.some((p) => p.includes("/audit_logs?since=2026-10-09T10:00:00Z&")), asked.join("\n"))
+})
+
+test("a deploy's own token events pass, and any other token's still alarm", () => {
+  const user = { type: "user", id: "u1" }
+  const token = (when, type, tag) => ({ when, actor: user, action: { type }, resource: { type: "account", id: "a" }, metadata: { token_tag: tag, token_name: "x" } })
+  const events = [
+    token("2026-11-11T03:49:20Z", "token_create", "snapshot1"),
+    token("2026-11-11T03:49:33Z", "token_revoke", "snapshot1"),
+    token("2026-11-11T03:49:48Z", "token_create", "deploy1"),
+    token("2026-11-11T04:16:38Z", "token_revoke", "deploy1"),
+    token("2026-11-11T05:00:00Z", "token_create", "stranger"),
+  ]
+  assert.deepEqual(auditLogProblems(events, { mintedTokens: ["snapshot1", "deploy1"] }), [
+    "the audit log shows token_create on account a at 2026-11-11T05:00:00Z, which CI does not do",
+  ])
+  // With nothing recorded, every one of them alarms, as before 2026-11-11.
+  assert.equal(auditLogProblems(events).length, 5)
+  // A recorded id excuses only its create and revoke, never something else it is attached to.
+  const roll = { ...token("2026-11-11T05:01:00Z", "token_roll", "deploy1") }
+  assert.equal(auditLogProblems([roll], { mintedTokens: ["deploy1"] }).length, 1)
+})
+
+test("the settings write beside a CI upload passes, and one by anyone else alarms", () => {
+  const ci = { type: "token", id: "ci-actor" }
+  const registrar = { type: "script", id: "frizz-registrar" }
+  const upload = [
+    { when: "2026-11-11T04:16:20Z", actor: ci, action: { type: "script_update" }, resource: registrar },
+    { when: "2026-11-11T04:16:22Z", actor: ci, action: { type: "script_deploy" }, resource: registrar },
+  ]
+  const patch = (actor, resource = registrar) => ({ when: "2026-11-11T04:16:23Z", actor, action: { type: "patch_settings" }, resource })
+  assert.deepEqual(auditLogProblems([...upload, patch(ci)]), [])
+  const alarm = (resource = registrar) => `the audit log shows patch_settings on ${resource.type} ${resource.id} at 2026-11-11T04:16:23Z, which CI does not do`
+  // Another token, a member in the dashboard, or CI's token on a Worker it uploaded nothing to.
+  assert.deepEqual(auditLogProblems([...upload, patch({ type: "token", id: "other" })]), [alarm()])
+  assert.deepEqual(auditLogProblems([...upload, patch({ type: "user", id: "ci-actor" })]), [alarm()])
+  const relay = { type: "script", id: "frizz-relay" }
+  assert.deepEqual(auditLogProblems([...upload, patch(ci, relay)]), [alarm(relay)])
+  // With no upload in the window, a settings write is a change on its own.
+  assert.deepEqual(auditLogProblems([patch(ci)]), [alarm()])
+})
+
+test("the account check hands the recorded token ids to the audit log", async () => {
+  const create = { when: "2026-10-09T11:30:00Z", actor: { type: "user" }, action: { type: "token_create" }, resource: { type: "account", id: "a" }, metadata: { token_tag: "deploy1" } }
+  assert.deepEqual(await checkAccount({ cf: account({ audit: [create] }), now: NOW, mintedTokens: ["deploy1"] }), [])
+  assert.equal((await checkAccount({ cf: account({ audit: [create] }), now: NOW })).length, 1)
+})
+
+test("the scheduled run hands the script both id lists under the names it reads", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/workers-drift.yml", import.meta.url), "utf8")
+  for (const name of ["WORKERS_CI_AUTHOR", MINTED_VARIABLE]) assert.ok(workflow.includes(`${name}: \${{ vars.${name} }}`), name)
 })
 
 test("a full page of the audit log is an alarm, or a burst of noise would push a tail off it", () => {
