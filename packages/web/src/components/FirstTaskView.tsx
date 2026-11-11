@@ -2,18 +2,24 @@ import { useMutation } from "@tanstack/react-query"
 import { rpc } from "../api/rpc.ts"
 import { useBoard } from "../hooks.ts"
 import { showToast } from "../store.ts"
+import { ProjectScope } from "../lib/projectScope.tsx"
+import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { DispatchForm } from "./NewThreadModal.tsx"
 import { StatusRow } from "./StatusRow.tsx"
 
-// A BRAND-NEW PROJECT'S FIRST SCREEN: one that has never had a thread (lib/sidebarPresence). The prompt
+// A BRAND-NEW BOARD'S FIRST SCREEN: one that has never had a thread (lib/sidebarPresence). The prompt
 // box IS the whole screen, centred, with no sidebar beside it (App hides it on the same predicate). The
 // first dispatch adds a thread, the sidebar appears with this same box at its top, and the board becomes
-// the one-thread pane (ThreadPane.tsx). Never on the Console, whose sidebar is always up with its own box.
+// the one-thread pane (ThreadPane.tsx).
+//
+// The Console gets it too, on a machine that has never run a thread in any project (maintainer 2026-11-10).
+// Its status row is the Console's — the house, then the chip naming the project a task goes to — so the
+// one box still says where it sends.
 //
 // This was the queue's column (TodosView.tsx) until the one-thread pane replaced the queue's cards on
 // 2026-11-09; the cards went on 2026-11-10 (maintainer: "Delete it"). Its empty-inbox state is the pane's
 // own now (PaneEmpty).
-export function FirstTaskView() {
+export function FirstTaskView({ onConsole = false }: { onConsole?: boolean } = {}) {
   return (
     // `my-auto`, not justify-center on the column, whose top overflow would be unreachable.
     <div className="my-auto w-full min-w-0 flex flex-col py-8">
@@ -30,14 +36,34 @@ export function FirstTaskView() {
             screen a fresh install starts on would have no project identity, no way to settings, no
             reload and no quota reading at all. It sits below the heading rather than above it: the
             heading is this screen's title, the row belongs to the composer under it. */}
-        <StatusRow />
-        {/* The "Starting thread…" card FLOATS under the form. This column is centred in the window, so a
-            card in flow lifted the heading, the status row and the box 36-37px for the length of the
-            dispatch call (recorded 2026-10-13, three runs). There is no rail here to draw the pending
-            thread in, and the card is the only thing on this screen that still shows what was asked. */}
-        <DispatchForm autoFocus pendingCard="float" />
+        {onConsole ? (
+          <ConsoleFirstDispatch />
+        ) : (
+          <>
+            <StatusRow />
+            {/* The "Starting thread…" card FLOATS under the form. This column is centred in the window, so a
+                card in flow lifted the heading, the status row and the box 36-37px for the length of the
+                dispatch call (recorded 2026-10-13, three runs). There is no rail here to draw the pending
+                thread in, and the card is the only thing on this screen that still shows what was asked. */}
+            <DispatchForm autoFocus pendingCard="float" />
+          </>
+        )}
       </div>
     </div>
+  )
+}
+
+/** The Console's row and box: ConsoleSidebar's own pair, with the floating "Starting thread…" card this
+ *  screen needs in place of the rail's starting row. */
+function ConsoleFirstDispatch() {
+  const { project, chip } = useConsoleDispatchTarget()
+  return (
+    <>
+      <StatusRow onConsole projectChip={chip} />
+      <ProjectScope project={project?.slug}>
+        <DispatchForm autoFocus pendingCard="float" />
+      </ProjectScope>
+    </>
   )
 }
 

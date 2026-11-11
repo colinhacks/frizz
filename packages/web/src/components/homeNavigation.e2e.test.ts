@@ -12,18 +12,22 @@ import test from "node:test"
 //     every house it goes to the grid even while the Console is the kept home.
 //   · A bare `/` forwards to a kept Console; the launcher's `/?add=<dir>` offer does not.
 //   · The grid's icons stand in the middle of the page when they do not fill a row.
+//   · A Console over projects that have never run a thread is the centred first-task box, as a new project's
+//     board is (maintainer 2026-11-10), with the Console's house and chip over it. The first task sent from it
+//     goes to the project the chip names, and the Console becomes the sidebar and the pane, a reload included.
 //   · With no project at all, `/console` forwards to the grid's welcome, which keeps the grid as home.
 //
-// Real server, one project (nothing is dispatched). The test adds a second project and takes the launching
-// one out of the registry for a moment, and puts both back as they were:
-//   nub scripts/adhoc-stack.mjs --port=<port> --project=<throwaway repo>
+// Real server, one project with no threads, and the scripted stand-in for `claude` (it holds no login, so it
+// raises no keychain dialog). The test adds a second project, sends one scripted task to it, takes the
+// launching project out of the registry for a moment, and puts the registry back as it was:
+//   nub scripts/adhoc-stack.mjs --port=<port> --project=<throwaway repo> --claude-bin=$PWD/scripts/scripted-claude.mjs
 //   FRIZZ_HOME_NAV_E2E_URL=http://127.0.0.1:<port> FRIZZ_HOME_NAV_E2E_ADD_DIR=<another repo, not added> \
 //     nub run test <this file>
 const baseUrl = process.env.FRIZZ_HOME_NAV_E2E_URL
 const addDir = process.env.FRIZZ_HOME_NAV_E2E_ADD_DIR
 
 const KEY = "frizz:home-view"
-const HOUSE = '[data-console-sidebar] [data-status-row] a[aria-label="All projects"]'
+const HOUSE = '[data-status-row] a[aria-label="All projects"]'
 
 type Page = import("puppeteer").Page
 type Project = { id: string; slug: string; path: string }
@@ -33,7 +37,7 @@ const at = (page: Page) => page.evaluate(() => location.pathname + location.sear
 const onGrid = (page: Page) => page.waitForFunction(() => location.pathname === "/" && document.querySelector("[data-home-grid]") !== null, { timeout: 15_000 })
 const pills = (page: Page) => page.evaluate(() => document.querySelectorAll("[data-home-switcher], [data-home-tab], [role='tablist'][aria-label='Home']").length)
 
-test("no switcher: the grid links to the Console once there are two projects, and the Console's house goes back", { skip: !baseUrl || !addDir, timeout: 180_000 }, async () => {
+test("no switcher: the grid links to the Console once there are two projects, and the Console's house goes back; a Console with no thread is the first-task box", { skip: !baseUrl || !addDir, timeout: 180_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   const api = createRpcClient(`${baseUrl}/`)
@@ -67,6 +71,8 @@ test("no switcher: the grid links to the Console once there are two projects, an
 
     // TWO PROJECTS: the line under the icons links to the Console.
     added = (await api.mutate("projectAdd", { path: addDir })) as Project
+    // The Console lists the projects the server has opened, and a test stack opens one on its first read.
+    await createRpcClient(`${baseUrl}/`, added.id).query("board")
     await page.reload({ waitUntil: "networkidle2" })
     await page.waitForSelector("[data-home-console]")
     assert.equal(await page.$eval("[data-home-console]", (a) => a.getAttribute("href")), "/console")
@@ -77,11 +83,23 @@ test("no switcher: the grid links to the Console once there are two projects, an
     assert.equal(await pills(page), 0, "the Console draws no pill")
     assert.equal(await kept(page), "console", "arriving on the Console keeps it as home")
 
-    // The Console's status row: the house, the slash, then the project chip.
-    const row = await page.$eval("[data-console-sidebar] [data-status-row] nav[aria-label='Breadcrumb']", (nav) =>
-      [...nav.children].map((el) => (el.matches("a[aria-label='All projects']") ? "house" : el.textContent === "/" ? "/" : "chip")),
-    )
-    assert.deepEqual(row, ["house", "/", "chip"])
+    // No project has run a thread: the Console is the centred first-task box, not a sidebar beside an empty
+    // inbox, and its status row is the house, the slash, then the project chip.
+    const firstTask = await page.evaluate(() => {
+      const box = document.querySelector("[data-composer-box]")!.getBoundingClientRect()
+      return {
+        sidebar: document.querySelector("[data-console-sidebar]") !== null,
+        heading: [...document.querySelectorAll("h2")].some((h) => h.textContent === "What should the agent do?"),
+        centreOffset: (box.left + box.right) / 2 - innerWidth / 2,
+        row: [...document.querySelector("[data-status-row] nav[aria-label='Breadcrumb']")!.children].map((el) =>
+          el.matches("a[aria-label='All projects']") ? "house" : el.textContent === "/" ? "/" : el.querySelector("[data-console-project-chip]") ? "chip" : "?",
+        ),
+      }
+    })
+    assert.equal(firstTask.sidebar, false, "no sidebar on a Console with no thread")
+    assert.equal(firstTask.heading, true)
+    assert.ok(Math.abs(firstTask.centreOffset) < 1, `the prompt box stands in the middle of the page (off by ${firstTask.centreOffset})`)
+    assert.deepEqual(firstTask.row, ["house", "/", "chip"])
     assert.equal(await page.$eval(HOUSE, (a) => a.getAttribute("href")), "/?home=projects")
 
     // A bare `/` forwards to the kept Console; the launcher's offer to add a folder does not.
@@ -127,9 +145,32 @@ test("no switcher: the grid links to the Console once there are two projects, an
     await onGrid(page)
     assert.equal(await at(page), "/")
 
+    // THE FIRST TASK, sent from the Console's box to the project its chip names: it lands there and nowhere
+    // else, and the Console becomes the sidebar and the pane, and stays so through a reload.
+    await page.goto(`${baseUrl}/console`, { waitUntil: "networkidle2" })
+    await page.waitForSelector("[data-console-project-chip]")
+    await page.click("[data-console-project-chip]")
+    await page.waitForSelector(`[data-console-project-option="${added.slug}"]`)
+    await page.click(`[data-console-project-option="${added.slug}"]`)
+    await page.waitForFunction((slug) => document.querySelector("[data-console-project-chip]")?.getAttribute("data-console-project-chip") === slug, { timeout: 5_000 }, added.slug)
+    await page.click("[data-composer-box] textarea")
+    await page.keyboard.type("[script ending=done paras=1] Write the README")
+    await page.keyboard.down("Meta")
+    await page.keyboard.press("Enter")
+    await page.keyboard.up("Meta")
+    await page.waitForSelector("[data-console-sidebar] [data-sidebar-item]", { timeout: 30_000 })
+    const sent = (await createRpcClient(`${baseUrl}/`, added.id).query("board")) as { threads: { id: string }[] }
+    const stayed = (await createRpcClient(`${baseUrl}/`, launching.id).query("board")) as { threads: { id: string }[] }
+    assert.equal(sent.threads.length, 1, "the task went to the project the chip named")
+    assert.equal(stayed.threads.length, 0, "and to no other")
+    assert.equal(await page.$("[data-console-sidebar]") !== null && await page.$("[data-pane-layout]") !== null, true, "the sidebar and the pane")
+    await page.reload({ waitUntil: "networkidle2" })
+    await page.waitForSelector("[data-console-sidebar] [data-sidebar-item]", { timeout: 15_000 })
+
     // NO PROJECT AT ALL: the Console has nothing to show and nowhere to send a prompt, so it forwards to the
     // welcome, and the grid becomes the kept home (or a bare `/` would bounce back).
-    await api.mutate("projectRemove", { id: added.id })
+    // With its threads, so a second run starts from a project that has never run one.
+    await api.mutate("projectRemove", { id: added.id, deleteData: true })
     added = undefined
     await api.mutate("projectRemove", { id: launching.id })
     try {
@@ -143,7 +184,7 @@ test("no switcher: the grid links to the Console once there are two projects, an
 
     assert.deepEqual(errors, [])
   } finally {
-    if (added) await api.mutate("projectRemove", { id: added.id }).catch(() => {})
+    if (added) await api.mutate("projectRemove", { id: added.id, deleteData: true }).catch(() => {})
     await browser.close()
   }
 })

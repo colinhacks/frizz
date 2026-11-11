@@ -7,7 +7,8 @@ import { closeDrawerAnimated } from "./lib/overlays.ts"
 import { pageScrollY } from "./lib/pageScrollLock.ts"
 import { captureReaderPin, readerPinDrift } from "./lib/readerPin.ts"
 import { startRouter } from "./lib/router.ts"
-import { nextSidebarPresence, readSidebarMirror, writeSidebarMirror, type SidebarPresence } from "./lib/sidebarPresence.ts"
+import { CONSOLE_MIRROR, nextSidebarPresence, readSidebarMirror, writeSidebarMirror, type SidebarPresence } from "./lib/sidebarPresence.ts"
+import { consoleFeedPending } from "./api/consoleFeed.ts"
 import { isConsolePath, projectSlug } from "./lib/base-path.ts"
 import { BOARD_PAIR_CLASS, WORKPANE_WIDTH_CLASS } from "./lib/boardColumns.ts"
 import { CONSOLE_SIDEBAR_COLUMN_CLASS, ConsoleSidebar } from "./components/ConsoleSidebar.tsx"
@@ -146,17 +147,25 @@ export function App() {
   useEffect(() => { if (board) preloadThreadSurfaces() }, [board])
 
   const boardEmpty = useBoardIsEmpty()
-  sidebarPresence.current = nextSidebarPresence(sidebarPresence.current, board && { projectDir: board.projectDir, threadCount: boardEmpty ? 0 : 1 })
-  // The Console's sidebar is always there: it carries the Console's only prompt box.
-  const showSidebar = board !== null && (onConsole || sidebarPresence.current.hasBeenVisible)
-  // Before the first board lands, hold the sidebar's column open if this project had one last time —
-  // the workpane then renders in its final place on the first frame instead of centering alone and
-  // jumping when the sidebar mounts. Written back on every board so the mirror tracks the answer.
-  const reserveSidebar = board === null && (onConsole || readSidebarMirror(projectSlug()))
+  // THE CONSOLE TAKES THE SAME RULE: a machine that has never run a thread gets the centred prompt box, not
+  // a sidebar beside an empty inbox (maintainer 2026-11-10: "If there are no threads in the project at all,
+  // then it should be showing the sort of centered alignment … This is on the All Projects page"). Its
+  // sidebar was always up until then, because it held the Console's only prompt box. The merged board is
+  // shown once every project has answered or a deadline passes (api/consoleFeed.ts), so an empty one with a
+  // project still on its way decides nothing: the last answer stands until that project arrives.
+  const mirrorKey = onConsole ? CONSOLE_MIRROR : projectSlug()
+  if (sidebarPresence.current.projectDir === null && onConsole) sidebarPresence.current = { projectDir: null, hasBeenVisible: readSidebarMirror(mirrorKey) }
+  const undecided = onConsole && boardEmpty && consoleFeedPending()
+  sidebarPresence.current = nextSidebarPresence(sidebarPresence.current, board && !undecided ? { projectDir: board.projectDir, threadCount: boardEmpty ? 0 : 1 } : null)
+  const showSidebar = board !== null && sidebarPresence.current.hasBeenVisible
+  // Before the first board lands, hold the sidebar's column open if this board had one last time — the
+  // workpane then renders in its final place on the first frame instead of centering alone and jumping
+  // when the sidebar mounts. Written back on every board so the mirror tracks the answer.
+  const reserveSidebar = board === null && readSidebarMirror(mirrorKey)
   const hasBeenVisible = sidebarPresence.current.hasBeenVisible
   useEffect(() => {
-    if (board !== null && !onConsole) writeSidebarMirror(projectSlug(), hasBeenVisible)
-  }, [board, hasBeenVisible, onConsole])
+    if (board !== null && !undecided) writeSidebarMirror(mirrorKey, hasBeenVisible)
+  }, [board, hasBeenVisible, mirrorKey, undecided])
   // Window title carries the project identity. In the INSTALLED APP window (display-mode:
   // standalone) Chrome prefixes the title bar with the app name itself ("Frizz - <title>"), so the
   // page title must NOT repeat the wordmark — just the repo label ("Frizz - nubjs/nub"). In an
@@ -219,7 +228,7 @@ export function App() {
           (lib/sidebarPresence): an empty keyframe while the live stream reconnects or catches up must not
           unmount the pane and the thread open in it. A brand-new project keeps its centered first-task
           view below. */}
-      {board && snap.view === "todos" && (onConsole || hasBeenVisible) ? (
+      {board && snap.view === "todos" && hasBeenVisible ? (
         <PaneLayout sidebar={<ErrorBoundary label="the sidebar">{onConsole ? <ConsoleSidebar /> : <Sidebar />}</ErrorBoundary>} />
       ) : (
       <div className={`${BOARD_PAIR_CLASS} min-h-screen`}>
@@ -240,7 +249,7 @@ export function App() {
           // auto margins need a full-height parent). Before the board it holds the page at the height the
           // board will give it. Threads render in the pane or in DRAWERS, never here.
           className={`${WORKPANE_WIDTH_CLASS} flex flex-col py-5 ${
-            (snap.view === "todos" && !onConsole) || !board ? "min-h-screen" : ""
+            snap.view === "todos" || !board ? "min-h-screen" : ""
           } ${
             // Status lists (URL-only views) draw in a panel; the first-task box stands on the page.
             snap.view === "todos" ? "" : "rounded-lg border border-border bg-panel"
@@ -251,7 +260,7 @@ export function App() {
           {board && (
             <ErrorBoundary label="the workpane" resetKeys={[snap.view]}>
               {snap.view.startsWith("status:") && <StatusListView status={snap.view.slice(7)} />}
-              {snap.view === "todos" && <FirstTaskView />}
+              {snap.view === "todos" && <FirstTaskView onConsole={onConsole} />}
             </ErrorBoundary>
           )}
         </main>

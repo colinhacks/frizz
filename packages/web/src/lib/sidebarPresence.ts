@@ -45,6 +45,9 @@ export function nextSidebarPresence(
  */
 const MIRROR_PREFIX = "frizz-sidebar-seen:"
 
+/** The Console's key in the mirror. No project's slug can be it: a slug has no `@`. */
+export const CONSOLE_MIRROR = "@console"
+
 export function readSidebarMirror(slug: string | undefined): boolean {
   try {
     return localStorage.getItem(MIRROR_PREFIX + (slug ?? "")) === "1"
