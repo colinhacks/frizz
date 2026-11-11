@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { BoardSnapshot, CodexModel, DispatchPreferences, GithubItem } from "@frizz/shared"
+import type { BoardSnapshot, ClaudeModel, CodexModel, DispatchPreferences, GithubItem } from "@frizz/shared"
 import { GithubPickerModal } from "./components/GithubPickerModal.tsx"
 import { Toaster } from "./components/Toaster.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
@@ -23,6 +23,7 @@ import "./styles.css"
 //                    between two fetches: each page's first row repeats the previous page's last
 //   ?searchTotal=N   reports N matching items, more than GitHub's search will page through
 //   ?opencode=1      a machine whose saved profile is native OpenCode
+//   ?acp=1           a machine with one ACP agent, Cursor, whose model list the menu reads
 const PAGE_SIZE = 30
 const params = new URLSearchParams(location.search)
 const HEAD = [412, 409, 407, 400, 398, 395, 390, 388, 381, 377, 370, 366, 361, 359, 352, 348, 344, 340, 337, 333, 330, 328, 321, 318]
@@ -58,7 +59,16 @@ const items: GithubItem[] = NUMBERS.map((number, i) => ({
 }))
 
 const codexModels: CodexModel[] = []
+// The Claude catalogue as the claudeModels RPC answers it, so the model selector reads "Opus 5.5" as the
+// app does rather than the bare family name a picker with no catalogue falls back to.
+const claudeModels: ClaudeModel[] = [
+  { alias: "fable", label: "Fable 5.1", resolvedModel: "claude-fable-5-1", edition: "5.1" },
+  { alias: "opus", label: "Opus 5.5", resolvedModel: "claude-opus-5-5", edition: "5.5" },
+  { alias: "sonnet", label: "Sonnet 5", resolvedModel: "claude-sonnet-5", edition: "5" },
+  { alias: "haiku", label: "Haiku 4.5", resolvedModel: "claude-haiku-4-5-20251001", edition: "4.5" },
+]
 const opencode = params.get("opencode") === "1"
+const acp = params.get("acp") === "1"
 const preferences: DispatchPreferences = {
   backend: opencode ? "opencode" : "claude",
   claude: { model: "opus", effort: "high", permissionMode: "auto" },
@@ -114,7 +124,21 @@ window.fetch = async (input, init) => {
     return json({ items: items.slice(from, from + perPage), total: searchTotal || items.length, page, pageCount })
   }
   if (url.pathname === "/_frizz/rpc/codexModels") return json(codexModels)
-  if (url.pathname === "/_frizz/rpc/acpAgents") return json(opencode ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }] : [])
+  if (url.pathname === "/_frizz/rpc/claudeModels") return json(claudeModels)
+  if (url.pathname === "/_frizz/rpc/acpAgents") {
+    return json([
+      ...(opencode ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }] : []),
+      ...(acp ? [{ id: "cursor", label: "Cursor", command: "cursor-agent", args: ["acp"], available: true }] : []),
+    ])
+  }
+  if (url.pathname === "/_frizz/rpc/acpAgentModels") {
+    return json({
+      agentId: "cursor",
+      models: [{ id: "auto", name: "Auto" }, { id: "gpt-5.5", name: "OpenAI/GPT-5.5" }, { id: "sonnet-5", name: "Anthropic/Sonnet 5" }],
+      current: "auto",
+      probedAt: "2026-11-10T00:00:00.000Z",
+    })
+  }
   // Two of OpenCode's free models, one with reasoning levels, for the menu's OpenCode dropdowns.
   if (url.pathname === "/_frizz/rpc/opencodeModels") {
     return json({

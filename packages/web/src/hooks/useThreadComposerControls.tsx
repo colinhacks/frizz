@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { Square } from "lucide-react"
-import { acpAgentIdFromModel, acpModelIdFromModel, acpModelSlug, type PermissionMode } from "@frizz/shared"
+import { acpAgentIdFromModel, type PermissionMode } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { scopedKey } from "../lib/projectScope.tsx"
 import { keyProject } from "../lib/threadKey.ts"
@@ -9,7 +9,6 @@ import { threadFollowUpBlocked, threadComposerStatus, threadPermissionBlockedRea
 import { showToast, store } from "../store.ts"
 import { useThreadSnapshot } from "../hooks.ts"
 import { ProfileGridSelector } from "../components/ProfileGridSelector.tsx"
-import { AcpModelSelect } from "../components/AcpModelSelect.tsx"
 import { AgentMarks } from "../components/AgentMarks.tsx"
 import { Select } from "../components/ui/Select.tsx"
 import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
@@ -18,6 +17,8 @@ import { threadProfileControlState } from "../lib/threadProfile.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "../lib/opencodeProfile.ts"
 import { useOpencodeModels } from "./useOpencodeModels.ts"
+import { acpProfileGroup, acpSelection } from "../lib/acpProfile.ts"
+import { useAcpAgentModels } from "./useAcpAgentModels.ts"
 
 // One control strip for every place a registered thread can be steered: the model/effort selector, and
 // — for a Claude thread — the Auto/Bypass permission picker beside it. This lives outside the component
@@ -69,8 +70,8 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const localBusy = profile.isPending || permission.isPending || upgrade.isPending
   const backend = thread?.backend === "codex" ? "codex" : thread?.backend === "acp" ? "acp" : thread?.backend === "opencode" ? "opencode" : "claude"
   // An ACP thread's model slug is `acp:<agent>[@<model>]`. The AGENT cannot be swapped under a live
-  // session, so the thread's one control is the model inside it (AcpModelSelect below); the agent's
-  // label only names that control. The same catalogue query the dispatch composer runs; react-query
+  // session, so the thread's menu holds that agent's group alone, and its one choice is the model inside
+  // it; the agent's label names the group. The same catalogue query the dispatch composer runs; react-query
   // serves both from one fetch.
   //
   // ABOVE the early return, and it must stay there. This query sat below it until 2026-09-19, so the
@@ -80,8 +81,11 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   // Asked of the thread's own project — named by its key on the Console (lib/threadKey.ts).
   const agentsProject = thread ? keyProject(thread.id) : undefined
   const acpAgents = useQuery({ queryKey: scopedKey(["acpAgents"], agentsProject), queryFn: () => rpcFor(agentsProject).acpAgents(), enabled: Boolean(thread) && backend === "acp" })
-  // An OpenCode thread's model menu lists what its service offers. Above the early return for the reason above.
+  // An OpenCode thread's model menu lists what its service offers, and an ACP thread's what its agent does.
+  // Above the early return for the reason above.
   const opencodeModels = useOpencodeModels(agentsProject, Boolean(thread) && backend === "opencode")
+  const threadAcpAgentId = backend === "acp" ? acpAgentIdFromModel(thread?.model?.trim()) : undefined
+  const acpModels = useAcpAgentModels(agentsProject, threadAcpAgentId ? [threadAcpAgentId] : [], threadAcpAgentId)
 
   // Legacy/rowless and foreign transcripts have no Frizz-owned runtime profile to mutate. Keep their
   // existing composer behavior, but never render a misleading disabled control.
@@ -95,7 +99,6 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const model = thread.model?.trim()
   const effort = thread.effort?.trim()
   const acpAgentId = backend === "acp" ? acpAgentIdFromModel(model) : undefined
-  const acpModelId = backend === "acp" ? acpModelIdFromModel(model) : undefined
   // OPTIMISTIC PENDING. The profile control is backed by a runtime handoff that can take a half-second
   // or more, and the board's own pending bit only appears once the server has claimed the row — so
   // picking a model used to produce NO visible response at all until it landed, which reads as a dropped
@@ -107,9 +110,6 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const optimisticProfile = profile.isPending ? profile.variables : undefined
   const pendingModel = thread.profilePendingModel ?? optimisticProfile?.model
   const pendingEffort = thread.profilePendingEffort ?? optimisticProfile?.effort
-  // An ACP model change is the dropdown's to show as pending: the in-flight pick, until the row's
-  // model catches up.
-  const optimisticAcpModelId = backend === "acp" && optimisticProfile ? acpModelIdFromModel(optimisticProfile.model) : undefined
   const profileOptions = profiles.data?.options ?? []
   const { modelSelectable } = threadProfileControlState(profileOptions, model, effort, thread.runtime === "exited")
   const catalogLoaded = profiles.data !== undefined
@@ -196,19 +196,28 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
             : undefined}
         />
       )}
-      {/* An ACP thread carries ONE control, the model inside its agent. The agent itself is not a
-          choice on a live thread — a session belongs to the process that opened it, exactly as a
-          thread never moves between Claude Code and Codex — so no pill names it as one (a disabled
-          agent pill stood here for a day and read as a switch; maintainer 2026-09-16: "that
-          shouldn't be possible"). The sidebar mark and the dropdown's tooltip say which agent. */}
-      {backend === "acp" && acpAgentId && (
-        <AcpModelSelect
-          agentId={acpAgentId}
-          agentLabel={acpAgentLabel ?? acpAgentId}
-          modelId={optimisticAcpModelId ?? acpModelId}
-          // The agent slug stays; only the tail changes. Effort is "" — an ACP thread has none.
-          onValueChange={(nextModelId) => changeProfile({ model: acpModelSlug(acpAgentId, nextModelId), effort: "" })}
+      {/* An ACP thread's menu holds its own agent's group alone (lib/acpProfile.ts): the agent itself is
+          not a choice on a live thread, since a session belongs to the process that opened it, exactly as
+          a thread never moves between Claude Code and Codex (maintainer 2026-09-16, of a disabled agent
+          pill: "that shouldn't be possible"). Only the model inside it changes; an ACP thread has no
+          effort. */}
+      {backend === "acp" && acpAgentId && model && (
+        <ProfileGridSelector
+          groups={[acpProfileGroup({
+            agent: { id: acpAgentId, label: acpAgentLabel ?? acpAgentId },
+            models: acpModels.models[acpAgentId],
+            loading: acpModels.loading[acpAgentId] ?? false,
+            saved: model,
+            onRequestOptions: () => acpModels.request(acpAgentId),
+          })]}
+          value={acpSelection(model)}
+          pending={pendingModel ? acpSelection(pendingModel) : undefined}
+          onValueChange={(selection) => changeProfile({ model: selection.model, effort: "" })}
+          ariaLabel="Thread model and effort"
+          menuAriaLabel={`Choose ${acpAgentLabel ?? acpAgentId} model`}
+          title={`This thread's ${acpAgentLabel ?? acpAgentId} model`}
           disabled={busy}
+          compact
           side="top"
           className="max-w-[20rem]"
         />
@@ -225,7 +234,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
             onRequestOptions: opencodeModels.request,
           })]}
           value={opencodeSelection(model)}
-          pending={optimisticProfile ? opencodeSelection(optimisticProfile.model) : undefined}
+          pending={pendingModel ? opencodeSelection(pendingModel) : undefined}
           onValueChange={(selection) => changeProfile({ model: opencodeSlugOf(selection), effort: "" })}
           ariaLabel="Thread model and effort"
           menuAriaLabel="Choose OpenCode model and effort"

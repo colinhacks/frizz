@@ -1,20 +1,27 @@
 # Remote access
 
-Frizz binds `127.0.0.1` and has no login of its own. To reach a board from a phone or another machine, something in front of it carries the traffic, and Frizz gates the first visit with a single-use sign-in link.
+Frizz runs on localhost and has no login of its own. To reach a board from a phone or another machine, something in front of it carries the traffic, and Frizz gates the first visit with a single-use sign-in link.
 
-Press **R** in the terminal running Frizz. A walkthrough offers four ways to reach the board, checks what each needs, prints the commands, and remembers your choice — a plain `npx frizz` serves it from then on. **Off** in the same place goes back to loopback only.
+Press **R** in the terminal running Frizz. A walkthrough offers four ways to reach the board, checks what each needs, prints the commands, and remembers your choice — a plain `npx frizz` serves it from then on. **Off** in the same place goes back to localhost only.
 
 ```
-  Reach this board from anywhere
+  Reach this board from other devices
 
-  ❯ frizz.sh subdomain  a random address and a one-time QR code; no account
-    Cloudflare Tunnel   a domain you own on Cloudflare; cloudflared on this machine
-    Tailscale           your tailnet; tailscale serve does the TLS
-    Something else      any proxy or tunnel you run — tell Frizz its address
-    Off                 loopback only  (current)
+  Frizz runs on localhost, so only this computer can open the board. To open
+  it from a phone or another computer, pick a way in below. Frizz remembers
+  your choice and uses it every time it starts.
+
+  ❯ ✓ Off                 localhost only
+      frizz.sh subdomain  a random address and a one-time QR code; no account
+      Cloudflare Tunnel   a domain on Cloudflare; cloudflared on this machine
+      Tailscale           only devices on your tailnet
+      Something else      any proxy or tunnel you run — tell Frizz its address
+
+  Devices
+      Sign out all        no remote device signed in
 ```
 
-Whichever you pick, the board stays bound to loopback, and a frizz.sh subdomain asks for confirmation before it puts the board on the internet. Once the setup is done, the pane shows a QR: scanning it trades a single-use code for a session cookie, so the link stops working the moment it is used. A later launch serves the saved setup without minting a link. Press **L** for one at any time. A session lasts 30 days, after which the device needs a fresh link.
+Whichever you pick, the board itself stays on localhost, and a frizz.sh subdomain asks for confirmation before it puts the board on the internet. Once the setup is done, the pane shows a QR: scanning it trades a single-use code for a session cookie, so the link stops working the moment it is used. A later launch serves the saved setup without minting a link. Press **L** for one at any time. A session lasts 30 days, after which the device needs a fresh link.
 
 ```sh
 npx frizz --link          # a fresh link for a board that is already running — over SSH, for a headless box
@@ -71,7 +78,7 @@ To change the answer later, press **R** and pick **Device access**. The new answ
   Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for another.
 ```
 
-Your board stays on loopback and opens one outbound connection to a relay Frizz runs, and visitors' requests travel down that connection.
+Your board stays on localhost and opens one outbound connection to a relay Frizz runs, and visitors' requests travel down that connection.
 
 - **No inbound port.** The board dials out, so a laptop behind any NAT works with no configuration.
 - **No DNS record.** The relay already answers for every frizz.sh subdomain.
@@ -147,7 +154,7 @@ The link prints as a QR and a URL, is single-use, and expires in five minutes. T
 
 ## SSH port forwarding
 
-Needs no setup at all. The forwarded port is loopback on both ends, so Frizz treats it as local:
+Needs no setup at all. The forwarded port is localhost on both ends, so Frizz treats it as local:
 
 ```sh
 ssh -L 9393:127.0.0.1:9393 you@your-machine

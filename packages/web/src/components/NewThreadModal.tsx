@@ -1,7 +1,7 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { acpModelSlug, type AccountBackend, type DispatchInput, type PermissionMode, type Settings } from "@frizz/shared"
+import { type AccountBackend, type DispatchInput, type PermissionMode, type Settings } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { ReadAndAnswerNote } from "./ReadAndAnswerNote.tsx"
@@ -11,7 +11,6 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 import { NewThreadAgentMarks } from "./AgentMarks.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { SETTINGS_WRITE_KEY, settingsQuery, useSettingsAutosave } from "../hooks/useSettingsAutosave.tsx"
-import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { LogoutConfirmModal, SignInModal } from "./SignInModal.tsx"
 import { Select } from "./ui/Select.tsx"
 import { PromptControlGroup } from "./ui/PromptControlGroup.tsx"
@@ -45,7 +44,7 @@ const NEW_THREAD_MARKS = <NewThreadAgentMarks />
 // preview — only the layout around them differs.
 function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
-  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, signedOut, opencode, loadError: profileLoadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, signedOut, opencode, acp, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -237,8 +236,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </PromptControlGroup>
       )
     }
-    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut)
-    const acpAgent = resolved.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
+    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp)
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
       // `gap-1.5` for the phone's tool row, where the project chip and the model chip stand side by side
@@ -253,8 +251,8 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
             <ProfileGridSelector
               groups={profileGroups}
               agentSettings
-              // An ACP row is keyed on the bare agent slug, and the model inside the agent is the dropdown's
-              // below. OpenCode's model and level are both chosen inside the menu (lib/opencodeProfile.ts).
+              // OpenCode's model and level, and an ACP agent's model, are chosen inside the menu, from
+              // dropdowns under their names (lib/opencodeProfile.ts, lib/acpProfile.ts).
               value={dispatchProfileValue(resolved)}
               onValueChange={(selection) => saveProfile(dispatchProfileUpdate(selection))}
               ariaLabel="Model and effort"
@@ -263,17 +261,6 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
                 : "Saved model or reasoning effort unavailable — choose a supported pair"}
               className="max-w-[min(21rem,72vw)]"
             />
-            {acpAgent && (
-              <AcpModelSelect
-                agentId={acpAgent.id}
-                agentLabel={acpAgent.label}
-                modelId={resolved.acpModelId}
-                // The pick becomes the profile's model slug (`acp:<agent>@<model>`); "" (the agent's own
-                // default) drops the tail.
-                onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
-                className="max-w-[min(14rem,40vw)]"
-              />
-            )}
             {/* Claude only, and not on a phone, for the reasons the thread composer's picker gives
                 (useThreadComposerControls): Codex's axis is a sandbox, and permissions stay on the desktop.
                 Joined to the model, as it is there: two dropdowns with a mark between them read as two
@@ -297,7 +284,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </div>
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, acp, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>

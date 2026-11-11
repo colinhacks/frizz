@@ -174,16 +174,16 @@ test("the Claude rows take their edition labels from the runtime-resolved catalo
   assert.equal(resolveDispatchPreferences({ ...preferences, claude: { model: "opus", effort: "high", permissionMode: "acceptEdits" } }, models).modelAvailable, true)
 })
 
-test("the group a signed-out machine leads with goes first, and one agent is its own heading", () => {
+test("the group a signed-out machine leads with goes first, and each ACP agent is a dropdown group under its own name", () => {
   const opencode = { id: "opencode", label: "OpenCode", command: "opencode", available: true }
-  const led = dispatchProfileGroups(models, [opencode], [], "acp")
-  assert.deepEqual(led.map((group) => group.id), ["acp", "claude", "codex"])
+  const led = dispatchProfileGroups(models, [opencode], [], "acp:opencode")
+  assert.deepEqual(led.map((group) => group.id), ["acp:opencode", "claude", "codex"])
   assert.equal(led[0]?.label, "OpenCode")
-  assert.deepEqual(dispatchProfileGroups(models, [opencode]).map((group) => group.id), ["claude", "codex", "acp"])
+  assert.deepEqual(dispatchProfileGroups(models, [opencode]).map((group) => group.id), ["claude", "codex", "acp:opencode"])
   // No such group on this machine: the order is untouched rather than the menu emptied.
-  assert.deepEqual(dispatchProfileGroups(models, [], [], "acp").map((group) => group.id), ["claude", "codex"])
+  assert.deepEqual(dispatchProfileGroups(models, [], [], "acp:opencode").map((group) => group.id), ["claude", "codex"])
   const two = dispatchProfileGroups(models, [opencode, { ...opencode, id: "kilo", label: "Kilo" }])
-  assert.equal(two.at(-1)?.label, "ACP agents")
+  assert.deepEqual(two.slice(-2).map((group) => [group.id, group.label, group.layout]), [["acp:opencode", "OpenCode", "dropdown"], ["acp:kilo", "Kilo", "dropdown"]])
 })
 
 test("only the native OpenCode group is marked experimental", () => {

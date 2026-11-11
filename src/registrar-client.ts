@@ -57,8 +57,9 @@ const ADVICE: Record<string, string> = {
   "github-token-scoped": "this registrar does not take Frizz's GitHub sign-in yet — try again once frizz.sh is updated",
   "github-too-new": "that GitHub account is too new to claim a name",
   "not-your-github-username": "a custom frizz.sh name is your own GitHub username, and this is not it",
-  "one-name-per-account": "that GitHub account already holds a name — release it first",
-  "one-name-per-key": "this machine already holds a name — release it first",
+  // Nothing releases a name: an old one stays its holder's until 30 days after it was last served.
+  "one-name-per-account": "that GitHub account already holds another frizz.sh name; it frees up 30 days after it was last served",
+  "one-name-per-key": "this machine already holds another custom name; it frees up 30 days after it was last served",
   expired: "this machine's clock is behind the registrar; fix the clock and try again",
   "from-the-future": "this machine's clock is ahead of the registrar; fix the clock and try again",
   "bad-version": "this version of Frizz is too old to claim a name — upgrade and try again",

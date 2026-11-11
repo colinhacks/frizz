@@ -66,10 +66,10 @@ try {
     }
     await page.click('[data-row-number]')
     await shot('github-picker-selected')
-    await page.click('[aria-label="Triage prompt settings"]')
+    await page.click('[aria-label="Investigation settings"]')
     await page.waitForSelector('[data-github-prompt-menu] textarea')
     await shot('github-prompt')
-    assert.equal(await page.$eval('[data-github-prompt-menu] textarea', el => getComputedStyle(el).borderTopColor), await page.$eval('button[aria-pressed]', el => getComputedStyle(el.parentElement).borderTopColor), 'Triage prompt and tab group share one border tone')
+    assert.equal(await page.$eval('[data-github-prompt-menu] textarea', el => getComputedStyle(el.parentElement).borderTopColor), await page.$eval('button[aria-pressed]', el => getComputedStyle(el.parentElement).borderTopColor), 'Triage prompt and tab group share one border tone')
     await load('first-run')
     await page.waitForSelector('[data-quota-gauge]')
     await shot('first-run')
