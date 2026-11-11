@@ -21,7 +21,7 @@ const base = `http://127.0.0.1:${stack.port}`
 const API = "acme-api", APP = "mobile-app"
 /** Wide enough that a thread's column sits in the window with the page showing on both sides. */
 const THREAD_W = 880
-/** A thread on its board (in the drawer, or its queue card), or with `full` its full-screen page. */
+/** A thread on its board (in the pane), or with `full` its full-screen page. */
 const thread = (project, slug, full = false) => full ? `${base}/project/${project}/thread/${slug}` : `${base}/project/${project}?thread=${slug}`
 const settle = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -63,13 +63,14 @@ const around = (page, selectors, pad = 16) => page.evaluate((selectors, pad) => 
 
 /** The app's sign-in hint lasts 6s on a project page, and a sandbox has no GitHub sign-in. */
 const SIGN_IN_TOAST = 6500
-/** The rail and left panel, up to the first card beside them. */
+/** The rail and the sidebar, up to the pane's edge beside them. */
 const leftPanel = (page, height) => page.evaluate((height) => {
-  const card = document.querySelector("[data-queue-card-root]").getBoundingClientRect()
-  return { x: 0, y: 0, width: Math.round(card.left - 16), height }
+  const sidebar = document.querySelector("[data-pane-sidebar]").getBoundingClientRect()
+  return { x: 0, y: 0, width: Math.round(sidebar.right), height }
 }, height)
 
-const CARD = (slug) => `[data-queue-card-root="${slug}"]`
+/** The thread the board's pane is showing. */
+const PANE = "[data-pane-thread]"
 /** The newest message in the transcript, with a little of the page around it. `height` evens up two shots that sit side by side. */
 const lastMessage = async (page, height) => {
   await page.evaluate(() => [...document.querySelectorAll("[data-frizz-msg]")].at(-1).setAttribute("data-shot", ""))
@@ -77,14 +78,15 @@ const lastMessage = async (page, height) => {
   return { ...clip, height: Math.max(clip.height, height) }
 }
 
-/** The hero thread with an answer picked and a note typed: the state several shots start from. */
+/** The hero thread open in the pane, with an answer picked and a note typed: the state several shots start from. */
 async function stageAnswer(page) {
-  await page.goto(`${base}/project/${API}`, { waitUntil: "networkidle2" })
-  await need(page, CARD("settings-store"))
-  await settle(1800)
+  await page.goto(thread(API, "settings-store"), { waitUntil: "networkidle2" })
+  await need(page, `${PANE} [data-question-option]`)
+  // The sign-in hint toasts over the pane's prompt box, which the card's never reached.
+  await settle(SIGN_IN_TOAST)
   await hideLoadEarlier(page)
-  await (await byText(page, `${CARD("settings-store")} [data-question-option]`, "SQLite")).click()
-  await (await need(page, `${CARD("settings-store")} [data-composer-box] textarea`)).click()
+  await (await byText(page, `${PANE} [data-question-option]`, "SQLite")).click()
+  await (await need(page, `${PANE} [data-composer-box] textarea`)).click()
   await page.keyboard.type("Use the sessions database, and write through a transaction so a crash can't leave it half-saved.")
   await settle(400)
 }
@@ -95,7 +97,7 @@ const HERO = {
   hero: { w: 1440, h: 900, stage: async (page) => {
     await stageAnswer(page)
     await (await page.$('section[aria-label="Snoozed"] button'))?.click()
-    await pointAt(page, await need(page, `${CARD("settings-store")} [data-ops-count="agent"]`), 0.7, 0.8)
+    await pointAt(page, await need(page, `${PANE} button[aria-label="Send"]`), 0.82, 0.78)
     await settle(1200)
     // Where the page's callouts point, as percentages of the shot.
     console.log("callouts", JSON.stringify(await page.evaluate(() => {
@@ -106,16 +108,11 @@ const HERO = {
         queueRow: at(text("a, button, [role='button'], li", "Persist the settings store across restarts")),
         steer: at(text('[data-frizz-msg]', "Keep it readable")),
         option: at(text("[data-question-option]", "SQLite")),
-        ops: at(document.querySelector('[data-queue-card-root="settings-store"] [data-queue-ops-summary]')),
-        send: at(document.querySelector('[data-queue-card-root="settings-store"] button[aria-label="Send"]')),
+        rail: at(document.querySelector("[data-focus-rail]")),
+        subAgents: at(text("[data-focus-rail] *", "Audit every reader of the settings store")),
+        send: at(document.querySelector('[data-pane-thread] button[aria-label="Send"]')),
       }
     })))
-  } },
-  "hero-send": { w: 1440, h: 900, stage: async (page) => {
-    await stageAnswer(page)
-    await (await page.$('section[aria-label="Snoozed"] button'))?.click()
-    await pointAt(page, await need(page, `${CARD("settings-store")} button[aria-label="Send"]`), 0.82, 0.78)
-    await settle(1200)
   } },
   "f-full": { w: 1440, h: 860, stage: async (page) => {
     await page.goto(thread(API, "settings-store", true), { waitUntil: "networkidle2" })
@@ -123,9 +120,18 @@ const HERO = {
     await settle(1800)
     await hideLoadEarlier(page)
   } },
+  // Every project's queue down the sidebar, and one of their threads open in the pane beside it.
   "f-console": { w: 1440, h: 860, stage: async (page) => {
     await page.goto(`${base}/console`, { waitUntil: "networkidle2" })
     await settle(SIGN_IN_TOAST)
+    await (await byText(page, "[data-pane-sidebar] [data-sidebar-item] button", "Persist the settings store")).click()
+    await need(page, `${PANE} [data-question-option]`)
+    await settle(1800)
+    await hideLoadEarlier(page)
+    await page.mouse.move(4, 4)
+    // The click leaves focus on the row, which keeps its pin and expand marks drawn over the title.
+    await page.evaluate(() => document.activeElement?.blur())
+    await settle(400)
   } },
   // The whole window, with the pointer on one project and that project's tooltip open.
   "f-home": { w: 1100, h: 580, stage: async (page) => {
@@ -242,14 +248,15 @@ const open = async (page, slug, selector) => {
 }
 
 const FEATURES = {
-  "f-queue": { w: 1440, h: 560, stage: async (page) => {
+  // 1680 wide: the pane's sidebar reaches its full 480px there, and 1440 squeezes it to 323.
+  "f-queue": { w: 1680, h: 560, stage: async (page) => {
     await page.goto(`${base}/project/${APP}`, { waitUntil: "networkidle2" })
-    await need(page, "[data-queue-card-root]")
+    await need(page, "[data-pane-sidebar] [data-sidebar-item]")
     await settle(2500)
     await railCounts(page)
     // A project on the rail, with the pointer on it: its tooltip names what it has waiting and running.
     await pointAt(page, await need(page, `a[aria-current="page"][href$="/project/${APP}"]`), 0.42, 0.5)
-    await settle(700)
+    await settle(1500)
     return leftPanel(page, 560)
   } },
   "f-question": { w: THREAD_W, h: 548, stage: async (page) => {
@@ -497,7 +504,8 @@ async function take(name, shot) {
     const work = (async () => {
       const clip = await shot.stage(page)
       await railCounts(page)
-      await page.screenshot({ path: join(outDir, `${name}.png`), ...(clip ? { clip } : {}) })
+      // A clip captures beyond the viewport by default, which resizes the page and closes an open tooltip.
+      await page.screenshot({ path: join(outDir, `${name}.png`), ...(clip ? { clip, captureBeyondViewport: false } : {}) })
       return clip
     })()
     const clip = await Promise.race([work, settle(70_000).then(() => { throw new Error("timed out after 70s") })])

@@ -602,6 +602,11 @@ queued("docs", "broken-links", "Fix the broken links", 44, ["Fixed 17 broken lin
 queued("docs", "search-index", "Rebuild the search index", 70, ["Rebuilt the index in `scripts/search.ts`.", "Search now covers the changelog."], "The index is rebuilt and now covers the changelog.")
 
 await api.mutate("settingsSet", { ...(await api.query("settingsGet")), projectRail: true })
+// A sandbox has no Claude sign-in, so the new-thread box would fall back to a free OpenCode model. The shots
+// show the default a Claude Code user keeps: Opus, high.
+for (const slug of Object.keys(projects)) {
+  await createRpcClient(`http://127.0.0.1:${port}/`, slug).mutate("dispatchPreferenceSet", { field: "profile", backend: "claude", model: "opus", effort: "high" })
+}
 // A project counts on the rail once its board is open, so open them all now.
 for (const { id } of Object.values(projects)) await createRpcClient(`http://127.0.0.1:${port}/`, id).query("board")
 } // the hero set

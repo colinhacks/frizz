@@ -48,7 +48,7 @@ $ npx frizz
 A browser tab opens on the dashboard at `http://127.0.0.1:9393/`. Add a **project** there — any folder: a repo, a jj checkout, or a folder of scripts. Frizz has no opinion about version control and does not require Git. Each project gets its own board at `/project/<name>`, and from then on running `npx frizz` inside that folder opens its board. Frizz always listens on port 9393 (19393 if something else holds it), and one server serves every project on the machine, so a second run joins the server already running rather than starting another. Runs on macOS, Linux, and Windows.
 
 <p align="center">
-  <img src="assets/board.png" alt="The Frizz board: the project rail down the left, the composer and the queue of threads beside it, and on the right a card where an agent is asking an answerable question with lettered options, with its snooze clock and done check in the card's header." width="100%">
+  <img src="assets/board.png" alt="The Frizz board: the project rail down the left, the composer and the queue of threads beside it, the first thread in the queue open in the middle with an agent asking an answerable question with lettered options, and a rail on the right listing that thread's sub-agents, shell, pull request, files and edited files." width="100%">
 </p>
 
 <br/>
@@ -57,11 +57,11 @@ A browser tab opens on the dashboard at `http://127.0.0.1:9393/`. Add a **projec
 
 Frizz is a browser tab, a queue, and the agent CLIs you already pay for. It brings no model of its own, automates none of your workflow, and keeps every opinion it does have in a text file you can edit.
 
-- 🗂️ **A task queue, not a sidebar.** Every agent that comes to rest needing you becomes a card. Work the queue top to bottom instead of polling ten terminals.
+- 🗂️ **A task queue, not a session list.** Every agent that comes to rest needing you joins one queue, and the thread you open sits beside it. Work the queue top to bottom instead of polling ten terminals.
 - 📁 **Projects.** Every folder you add gets its own board, all on one server. The home page lists them, and the project rail switches between them with each queue's count on its icon.
 - 🔌 **Headless.** Every thread's agent runs in its own detached background process. Close the tab, quit the browser, ctrl-c the server, reboot — your threads are all still there when you come back, and Frizz reconnects to the ones still running rather than replaying them from disk.
 - 🤖 **Claude Code, Codex and OpenCode.** Pick the agent per thread and run them against the same repo at once. Frizz supports Claude Code and Codex subscriptions — your sign-in, your settings, your skills, driven by a copy of each CLI that Frizz pins and provisions itself. OpenCode runs from your own install, and its free models need no account.
-- 😴 **Snooze.** Not everything needs an answer now. Park a card for an hour, until tomorrow morning, or until a date you pick — optionally with a follow-up prompt attached, so the thread wakes up already working on what you told it to do next.
+- 😴 **Snooze.** Not everything needs an answer now. Park a thread for an hour, until tomorrow morning, or until a date you pick — optionally with a follow-up prompt attached, so the thread wakes up already working on what you told it to do next.
 - 🎯 **Goals.** Give a thread a standing goal that Frizz re-sends as a prompt — every time it comes to rest, on a clock you set in minutes, or both. Good for "keep going until CI is green" without you re-asking. A scheduled one reaches the agent even mid-turn, so it can nudge a thread that never stops. Switch it off whenever, or let the agent say it's finished.
 - 🐙 **GitHub integration.** Browse your repo's issues and pull requests without leaving the composer, and turn a selection of them into threads. Workers can read issues, diffs, and CI on their own.
 - 👀 **Built-in CI and PR watchers.** A worker waiting on a build or a review doesn't hand the thread back to you to be told "keep going." It watches, and picks the work back up when the run goes green or a review lands.
@@ -73,18 +73,18 @@ Frizz is a browser tab, a queue, and the agent CLIs you already pay for. It brin
 Every folder you add becomes a project with its own board, all served by the one Frizz on your machine. The dashboard at `http://127.0.0.1:9393/` lists them, and it is where `npx frizz` lands when it is run outside one.
 
 <p align="center">
-  <img src="assets/projects.png" alt="The Frizz home page: a rail of project icons down the left, and four project cards — design-system, acme-web, acme-api, frizz — each with its home-relative path and when it was last opened, plus an Add a project card." width="100%">
+  <img src="assets/projects.png" alt="The Frizz home page: a switch between Projects and the Console above an Add a project button and five project icons with counts on them, and the pointer on acme-api, naming 3 running and 4 in the queue." width="100%">
 </p>
 
 The project rail keeps every project one click away, with each queue's count on its icon. It is off by default; switch it on under **Settings → Project sidebar**.
 
 ### The queue
 
-A sidebar of sessions makes every agent something you have to remember to go check. Frizz gives you one queue instead.
+A list of sessions makes every agent something you have to remember to go check. Frizz gives you one queue instead.
 
-When an agent comes to rest needing you, a card is added to it. You can quickly evaluate what it has done since your last message and decide to answer its questions, steer it, snooze the card, or mark the session complete. You're continuously presented with a set of action items in one place, instead of constantly switching back and forth between sessions.
+When an agent comes to rest needing you, its thread joins the queue. Open one and it takes the space beside the list, where you read what the agent has done since your last message and answer its questions, steer it, snooze it, or mark it done. Done and snooze bring up the next thread in the queue, and ⇧⌘⏎ sends a reply and moves on. You work through one set of action items in one place, instead of switching back and forth between sessions.
 
-The queue is strict about what earns a card, which is what keeps it a real todo list. A thread resting only because *its own* helpers are still working isn't waiting on you, so it stays quiet until they're back. Nothing shows up just to be dismissed.
+The queue is strict about what joins it, which is what keeps it a real todo list. A thread resting only because *its own* helpers are still working isn't waiting on you, so it stays quiet until they're back. Nothing shows up just to be dismissed.
 
 **Threads are built to run without you.** A worker keeps going until it reaches something only you can settle — a product call, a fork where guessing wrong is expensive to undo, an irreversible action — and then it hands back an answerable *question* rather than a wall of text for you to re-read and interpret.
 
@@ -114,10 +114,10 @@ Workers can also read issues, diffs, and CI on their own — but only read. A wo
 
 ### Snooze
 
-Park a card for an hour, until tomorrow morning, or until a date you pick. Attach a follow-up prompt and the thread wakes up already working on it.
+Park a thread for an hour, until tomorrow morning, or until a date you pick. Attach a follow-up prompt and the thread wakes up already working on it.
 
 <p align="center">
-  <img src="assets/snooze.png" alt="The snooze menu open from the alarm clock in a queue card's header, offering 1 hour, tomorrow at 9am, 1 day, 3 days, 1 week, and a custom time and prompt." width="100%">
+  <img src="assets/snooze.png" alt="The snooze menu open from the alarm clock in a thread's header, offering 1 hour, tomorrow at 9am, 1 day, 3 days, 1 week, and a custom time and prompt." width="100%">
 </p>
 
 ### Goal
@@ -125,7 +125,7 @@ Park a card for an hour, until tomorrow morning, or until a date you pick. Attac
 Give a thread a standing goal. Frizz sends it as a prompt every time the agent comes to rest, on a clock you set in minutes, or both — a scheduled send reaches the agent even mid-turn, without cutting off work in progress.
 
 <p align="center">
-  <img src="assets/goal.png" alt="The goal panel open above a queue card's prompt box: a goal saying to keep going until the test suite is green, sent at every rest and every 30 minutes." width="100%">
+  <img src="assets/goal.png" alt="The goal panel open above a thread's prompt box: a goal saying to keep going until the test suite is green, sent at every rest and every 30 minutes." width="100%">
 </p>
 
 ### Launch prefix
@@ -269,10 +269,10 @@ Frizz has its own small vocabulary. Most of it names a feature, so this doubles 
 | **Project** | A folder you added to Frizz. Each has its own board at `/project/<name>`; one server holds all of them. |
 | **Thread** | One effort, start to finish. Not a chat tab and not a branch. The session *is* the thread — there's no sidecar document to keep in sync, and dispatching doesn't write a file into your repo. |
 | **Worker** | The agent driving a thread: a real Claude Code, Codex or OpenCode process, running as *you*, with your credentials and your CLI config. |
-| **Sub-agent** | A helper a worker dispatches for an independent prong of its own task. Frizz binds each one back to its parent, so the fan-out is visible under the parent's card. |
+| **Sub-agent** | A helper a worker dispatches for an independent prong of its own task. Frizz binds each one back to its parent, so the fan-out is listed under the parent thread. |
 | **Rested** | An agent that has ended its turn and is waiting on a human. A rested thread isn't idle, it's *your move*. |
-| **The queue** | The single list of threads that need you. A thread only earns a card when it genuinely wants a human. |
-| **Snooze** | Hide a card until later — an hour, tomorrow morning, or a date you pick — optionally with a follow-up prompt attached. |
+| **The queue** | The single list of threads that need you. A thread only joins it when it genuinely wants a human. |
+| **Snooze** | Hide a thread until later — an hour, tomorrow morning, or a date you pick — optionally with a follow-up prompt attached. |
 | **Goal** | A standing prompt a thread receives on its own — every time it rests, on a clock, or both — until you switch it off or the agent says it's done. |
 | **Scratch directory** | A folder each thread's worker gets for its own notes, under the project's `.frizz/threads/`. It is where a worker keeps what a summary of a long conversation would otherwise lose. Frizz reads nothing in it. |
 | **`FRIZZ.md`** | An optional file at your repo root whose contents are injected into every thread, for when you want agents to follow your repo's own norms. Only agents Frizz starts read it. |
