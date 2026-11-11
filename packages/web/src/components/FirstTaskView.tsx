@@ -22,7 +22,9 @@ export function FirstTaskView() {
           error hidden in an unrendered field). */}
       <BoardErrorsBanner />
       <div className="w-full flex flex-col gap-3">
-        <h2 className="text-[15px] font-medium text-center">What should the agent do?</h2>
+        {/* `mb-4` on top of the column's 12px: the heading is this screen's title, and at one gap it stood as
+            far from the status row as the row from the box, three lines of one stack. */}
+        <h2 className="mb-4 text-center text-[17px] font-medium tracking-[-0.01em]">What should the agent do?</h2>
         {/* The status row rides the top of the PROMPT BOX, and on a brand-new project this is the
             prompt box — the sidebar that normally carries it is hidden here. Without this the one
             screen a fresh install starts on would have no project identity, no way to settings, no
