@@ -2,15 +2,16 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { CDPSession, Page } from "puppeteer"
 
-// A SHEET OPENED OVER A BOARD WITH NOTHING TO SCROLL LEAVES THE BOARD ALONE (App.tsx's page lock).
+// A SHEET ON A DESKTOP LEAVES THE PAGE UNDER IT ALONE (App.tsx's page lock).
 //
-// The lock pins `body{position:fixed; top:-y}` while any overlay is open, so the page cannot scroll under
-// it. A desktop board is the one-thread pane, exactly one window tall, so there is nothing to hold — and
-// the pin re-laid-out the whole board and moved all of it into one new fixed-position compositor layer
-// the instant Settings or a sheet opened. It was the only thing opening a sheet did to everything beneath
-// it, which the maintainer saw intermittently stop rendering under an open drawer (2026-11-10). This pins
-// both halves: the board is untouched under a sheet, in the DOM and on the compositor, and a page that
-// CAN scroll is still locked and handed back where it was.
+// While any overlay is open the page must not scroll. Until 2026-11-10 every device locked it by pinning
+// `body{position:fixed; top:-y}`, which re-laid-out the whole board and moved all of it into one new
+// fixed-position compositor layer the instant Settings or a sheet opened. The maintainer saw the board
+// under an open drawer go to plain background where the sidebar and the thread had been, and come back
+// only when the drawer closed (2026-11-10). A desktop now locks with `overflow: hidden` on the body, which
+// moves nothing; the phone keeps the pin, which iOS needs. This pins all three: the one-window pane board
+// under Settings, a SCROLLED page under a thread sheet (in the DOM, on the compositor, and against the
+// wheel), and the phone's pin as the control.
 //
 // Opt-in: it drives a real Frizz and Chrome. Against a disposable stack (the frizz-stack skill), with any
 // thread on the board:
@@ -33,11 +34,12 @@ async function stubSupervisorStatus(page: Page): Promise<void> {
   })
 }
 
-function bodyLock(page: Page): Promise<{ inline: string; computed: string; top: string; scrollY: number }> {
+function bodyLock(page: Page): Promise<{ inline: string; computed: string; top: string; overflow: string; scrollY: number }> {
   return page.evaluate(() => ({
     inline: document.body.style.position,
     computed: getComputedStyle(document.body).position,
     top: document.body.style.top,
+    overflow: document.body.style.overflow,
     scrollY: window.scrollY,
   }))
 }
@@ -65,9 +67,9 @@ async function compositingReasons(page: Page, cdp: CDPSession, selector: string)
   return compositingReasonIds
 }
 
-test("a sheet over a page with nothing to scroll does not pin the body; a page that scrolls is still locked", {
+test("a sheet on a desktop locks the page without moving it, scrolled or not; the phone still pins", {
   skip: !baseUrl || !slug,
-  timeout: 90_000,
+  timeout: 120_000,
 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
@@ -80,7 +82,7 @@ test("a sheet over a page with nothing to scroll does not pin the body; a page t
     const cdp = await page.createCDPSession()
     await cdp.send("DOM.enable")
 
-    // THE DESKTOP BOARD: the thread in its pane, one window tall.
+    // THE DESKTOP BOARD: the thread in its pane, one window tall, under Settings.
     await page.goto(`${baseUrl}?thread=${slug}`, { waitUntil: "domcontentloaded" })
     await page.waitForSelector("[data-pane-thread] [data-thread-surface]")
     const paneBefore = await page.$eval("[data-pane-thread]", (el) => el.getBoundingClientRect().toJSON())
@@ -90,24 +92,18 @@ test("a sheet over a page with nothing to scroll does not pin the body; a page t
     await page.click('button[aria-label="Settings"]')
     await page.waitForSelector("[data-modal-surface]")
     await new Promise((resolve) => setTimeout(resolve, 400))
-    assert.deepEqual(await bodyLock(page), { inline: "", computed: "static", top: "", scrollY: 0 }, "Settings left the board's body where it was")
+    assert.deepEqual(await bodyLock(page), { inline: "", computed: "static", top: "", overflow: "hidden", scrollY: 0 }, "Settings locked the page without pinning the body")
     assert.deepEqual(await page.$eval("[data-pane-thread]", (el) => el.getBoundingClientRect().toJSON()), paneBefore, "the pane did not move")
     const reasonsUnder = await compositingReasons(page, cdp, "[data-pane-thread]")
     assert.ok(!reasonsUnder.includes("FixedPosition"), `the pane stayed off the fixed-position path (was ${reasonsBefore.join(",")}, now ${reasonsUnder.join(",")})`)
     await page.keyboard.press("Escape")
-    await page.waitForFunction(() => !document.querySelector("[data-modal-surface]"))
+    await page.waitForFunction(() => !document.querySelector("[data-modal-surface]") && document.body.style.overflow === "")
 
-    // A THREAD SHEET over a short status list: also nothing to scroll, also untouched.
-    await page.goto(`${baseUrl}/status/active?thread=${slug}`, { waitUntil: "domcontentloaded" })
-    await page.waitForSelector(".frizz-sheet-panel [data-thread-surface]")
-    if (await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)) {
-      assert.deepEqual(await bodyLock(page), { inline: "", computed: "static", top: "", scrollY: 0 }, "a sheet over a short list left the body alone")
-    }
-    await page.keyboard.press("Escape")
-    await page.waitForFunction(() => !document.querySelector(".frizz-sheet-panel"))
-
-    // THE CONTROL: the same list made taller than the window and scrolled. The lock holds the page there
-    // while Settings is open, and the page comes back to the same place when it closes.
+    // A SCROLLED PAGE UNDER A THREAD SHEET — the maintainer's case: a status list made taller than the
+    // window, scrolled 600px, then the thread opened over it. Nothing under the sheet moves, nothing joins
+    // the fixed-position path, the wheel does not scroll it, and closing leaves it where it was.
+    await page.goto(`${baseUrl}/status/active`, { waitUntil: "domcontentloaded" })
+    await page.waitForSelector("#workpane aside, aside")
     await page.evaluate(() => {
       const spacer = document.createElement("div")
       spacer.style.height = "2400px"
@@ -116,13 +112,58 @@ test("a sheet over a page with nothing to scroll does not pin the body; a page t
     })
     await page.evaluate(() => window.scrollTo(0, 600))
     await page.waitForFunction(() => window.scrollY === 600)
-    await page.click('button[aria-label="Settings"]')
-    await page.waitForSelector("[data-modal-surface]")
-    await page.waitForFunction(() => document.body.style.position === "fixed")
-    assert.deepEqual(await bodyLock(page), { inline: "fixed", computed: "fixed", top: "-600px", scrollY: 0 }, "a page that scrolls is still pinned at its offset")
+    const under = () => page.evaluate(() => ({
+      sidebar: document.querySelector("aside")!.getBoundingClientRect().toJSON(),
+      workpane: document.getElementById("workpane")!.getBoundingClientRect().toJSON(),
+    }))
+    const before = await under()
+    const sidebarReasonsBefore = await compositingReasons(page, cdp, "aside")
+    // Opened the way the app opens it, by the URL the router writes.
+    await page.evaluate((thread) => {
+      history.pushState(null, "", `${location.pathname}?thread=${thread}`)
+      dispatchEvent(new PopStateEvent("popstate"))
+    }, slug!)
+    await page.waitForSelector(".frizz-sheet-panel [data-thread-surface]")
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    assert.deepEqual(await bodyLock(page), { inline: "", computed: "static", top: "", overflow: "hidden", scrollY: 600 }, "the page holds its offset without a pin")
+    assert.deepEqual(await under(), before, "the sidebar and the list did not move under the sheet")
+    const sidebarReasonsUnder = await compositingReasons(page, cdp, "aside")
+    assert.ok(!sidebarReasonsUnder.includes("FixedPosition"), `the sidebar stayed off the fixed-position path (was ${sidebarReasonsBefore.join(",")}, now ${sidebarReasonsUnder.join(",")})`)
+    await page.mouse.move(300, 450)
+    await page.mouse.wheel({ deltaY: 500 })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal((await bodyLock(page)).scrollY, 600, "the wheel over the board does not scroll the page under the sheet")
     await page.keyboard.press("Escape")
-    await page.waitForFunction(() => !document.querySelector("[data-modal-surface]") && document.body.style.position === "")
-    assert.equal((await bodyLock(page)).scrollY, 600, "closing hands the page back where it was")
+    await page.waitForFunction(() => !document.querySelector(".frizz-sheet-panel") && document.body.style.overflow === "")
+    assert.equal((await bodyLock(page)).scrollY, 600, "closing leaves the page where it was")
+    assert.deepEqual(await under(), before)
+
+    // THE PHONE, THE CONTROL: it keeps the pin, which iOS needs, at the page's offset, and hands the page back.
+    const phone = await browser.newPage()
+    await stubSupervisorStatus(phone)
+    phone.on("pageerror", (error) => errors.push(String(error)))
+    await phone.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
+    await phone.goto(baseUrl!, { waitUntil: "domcontentloaded" })
+    await phone.waitForSelector("[data-mobile-board]")
+    await phone.evaluate(() => {
+      const spacer = document.createElement("div")
+      spacer.style.height = "2400px"
+      document.querySelector("[data-mobile-board]")!.append(spacer)
+    })
+    await phone.evaluate(() => window.scrollTo(0, 300))
+    await phone.waitForFunction(() => window.scrollY === 300)
+    await phone.evaluate((thread) => {
+      history.pushState(null, "", `${location.pathname}?thread=${thread}`)
+      dispatchEvent(new PopStateEvent("popstate"))
+    }, slug!)
+    await phone.waitForFunction(() => document.body.style.position === "fixed", { timeout: 15_000 })
+    // The inline pin, not the computed position: the phone's sheet is a modal Radix dialog, whose own scroll
+    // lock (`body[data-scroll-locked]`) holds the body `position: relative !important` while it is open.
+    const pinned = await bodyLock(phone)
+    assert.deepEqual({ inline: pinned.inline, top: pinned.top, overflow: pinned.overflow }, { inline: "fixed", top: "-300px", overflow: "" }, "the phone pins the page at its offset")
+    await phone.goBack()
+    await phone.waitForFunction(() => document.body.style.position === "", { timeout: 15_000 })
+    assert.equal((await bodyLock(phone)).scrollY, 300, "and hands it back where it was")
 
     assert.deepEqual(errors, [])
   } finally {

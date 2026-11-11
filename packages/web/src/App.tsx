@@ -56,21 +56,36 @@ export function App() {
   // While ANY overlay is open (thread sheet, doc drawer, settings, new-thread modal, palette), the
   // PAGE must not scroll — only the overlay's own pane does.
   const overlayOpen = snap.drawers.length > 0 || snap.showSettings || snap.showNewThread || snap.showGithubPicker || snap.showPalette
+  // The phone gets its own shell. Everything BELOW the layout — the drawer stack, the modals, the
+  // restart overlay — is shared, so only the standing surfaces branch (see the return below).
+  const isMobile = useIsMobile()
   useEffect(() => {
-    // Scroll lock via the body-fixed dance, NOT overflow:hidden on the root — hiding root overflow
-    // dropped the scrollbar (and with it the layout width) every time a drawer opened. With the
-    // track permanently reserved (html overflow-y: scroll) and the body pinned at its scroll
-    // offset, locking is pixel-invisible; unlocking restores the exact scroll position.
     if (!overlayOpen) return
-    // A PAGE WITH NOTHING TO SCROLL TAKES NO LOCK. The desktop board is the one-thread pane, exactly one
-    // window tall, so there is no page scroll to stop — and pinning the body is not free. `position:
-    // fixed` on <body> re-lays-out the whole board and moves every layer of it into one new fixed-position
-    // layer on the compositor (measured 2026-11-10 with the DevTools LayerTree: the pane's thread column
-    // went from scrolling with the root to `FixedPosition, UndoOverscroll`; on 0.15.49's queue board, 27
-    // layers became one 1503x9991 body layer), and it does that the instant any sheet opens over the
-    // board. That was the only thing opening a sheet did to everything beneath it, which the maintainer
-    // reported intermittently going blank under an open drawer (2026-11-10). A status list longer than the
-    // window, a brand-new project's page and the phone still lock, exactly as before.
+    // ON A DESKTOP, THE LOCK MOVES NOTHING: `overflow: hidden` on <body>, which the browser hands to the
+    // viewport (the root's own overflow stays visible, styles.css), so the page holds its offset and
+    // takes no wheel, and every box and compositor layer under the sheet stays exactly where it was.
+    //
+    // It was the body-fixed dance below on every device until 2026-11-10, chosen because hiding the
+    // root's overflow once dropped the scrollbar, and the layout width with it. The page scrollbar has
+    // been zero-width since (styles.css), so that reason is gone, and the dance is not free: `position:
+    // fixed` on <body> re-lays-out the whole board and moves all of it into one new fixed-position layer
+    // on the compositor the instant any sheet opens (measured with the DevTools LayerTree: on 0.15.49's
+    // queue board, 27 layers became one 1503x9991 body layer, held at `top: -scrollY`). The maintainer
+    // saw the board under an open drawer go to plain background where the sidebar and the thread had
+    // been, and come back only when the drawer closed (2026-11-10): the one thing in the app applied
+    // while a drawer is open and undone when it closes, on a real GPU that headless Chrome never
+    // reproduced.
+    if (!isMobile) {
+      const body = document.body
+      const before = body.style.overflow
+      body.style.overflow = "hidden"
+      return () => {
+        body.style.overflow = before
+      }
+    }
+    // THE PHONE KEEPS THE DANCE. iOS Safari scrolls a page under `overflow: hidden` by touch, and the
+    // phone's list holds the reader's row through a pinned page (lib/readerPin), which reads the pin.
+    // A page with nothing to scroll takes no lock: there is nothing to stop, and pinning is not free.
     if (!pageHasScrollRange()) return
     const y = window.scrollY
     const body = document.body
@@ -94,7 +109,7 @@ export function App() {
       body.style.width = ""
       window.scrollTo(0, Math.max(0, held))
     }
-  }, [overlayOpen])
+  }, [overlayOpen, isMobile])
 
   // GitHub availability drives two things: the picker TRIGGER (in the sidebar / brand-new view, gated
   // in GithubTrigger off this same cached query) and — when the repo IS a GitHub repo but gh is NOT
@@ -145,9 +160,6 @@ export function App() {
   }, [])
 
   const board = useBoard()
-  // The phone gets its own shell. Everything BELOW the layout — the drawer stack, the modals, the
-  // restart overlay — is shared, so only the standing surfaces branch (see the return below).
-  const isMobile = useIsMobile()
 
   // Settle a parked `?thread=<slug>` URL. It waits for the board, which says whether the thread exists in
   // this project and so whether the pane can show it. (resolveRoutedThread no-ops unless there is a parked

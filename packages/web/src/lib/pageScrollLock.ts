@@ -1,8 +1,9 @@
 // The PAGE scroll lock, and reading the page's offset through it.
 //
-// While any overlay is open, App pins the page with the body-fixed dance (`body{position:fixed;
-// top:-y}` — see App.tsx for why it isn't `overflow:hidden`). Two consequences bite anything that
-// wants to scroll the page WHILE a drawer is on screen or sliding out:
+// While any overlay is open on a PHONE, App pins the page with the body-fixed dance (`body{position:fixed;
+// top:-y}`); a desktop locks with `overflow: hidden` and moves nothing (App.tsx says why each). Two
+// consequences of the pin bite anything that wants to scroll the page WHILE a drawer is on screen or
+// sliding out:
 //
 //   1. `window.scrollY` reads 0 and the document collapses to viewport height, so `window.scrollTo`
 //      is silently clamped to a no-op. Every measurement has to come off the lock's own offset.
@@ -23,10 +24,9 @@ export function pageScrollY(): number {
   return Number.isNaN(top) ? window.scrollY : -top
 }
 
-// Whether the page has anything to lock: it is scrolled, or it is taller than the window. A desktop
-// board is the one-thread pane, one window tall (`h-dvh overflow-hidden`), so it has none; a status list
-// longer than the window, a brand-new project's page and the phone's board can. App takes the lock only
-// when this is true (see App.tsx for why pinning a page with nothing to scroll is not free).
+// Whether the page has anything to lock: it is scrolled, or it is taller than the window. App pins the
+// phone's page only when this is true (see App.tsx for why pinning a page with nothing to scroll is not
+// free).
 export function pageHasScrollRange(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined" || !document.documentElement) return false
   return window.scrollY > 0 || document.documentElement.scrollHeight > window.innerHeight
