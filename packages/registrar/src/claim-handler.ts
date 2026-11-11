@@ -152,14 +152,15 @@ const MESSAGES: Record<ClaimFailure, string> = {
   malformed: "the request body was not a claim",
   "provisioning-failed": "the name could not be provisioned; nothing was left behind",
   "one-name-per-key":
-    "this machine already holds a name — release it first, or claim from a different Frizz identity",
+    "this machine already holds another custom name, which stays its own until 30 days after it was last served",
   "github-required": "claiming a custom name needs a GitHub sign-in — sign in to GitHub in Frizz's Settings and try again",
   "github-rejected": "GitHub did not recognise that sign-in — try again",
   "github-token-foreign":
     "a name is claimed with Frizz's own GitHub sign-in, and this was another kind of GitHub token — update Frizz, sign in to GitHub in its Settings, and try again",
   "github-too-new": "that GitHub account is too new to claim a name",
   "not-your-github-username": "a custom frizz.sh name is the claiming account's own GitHub username, and this is not it",
-  "one-name-per-account": "that GitHub account already holds a name",
+  "one-name-per-account":
+    "that GitHub account already holds another name, which stays its own until 30 days after it was last served",
   "namespace-full": "frizz.sh has no free names left — this is our limit to raise, not yours",
   "too-many-claims": "too many new names from this network just now — try again in an hour",
 }
@@ -207,7 +208,13 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
       return reject("provisioning-failed", 502)
     }
   } else if (existing) {
-    return renew(existing, { name, hostname, port, pubkey }, deps, now)
+    const renewed = await renew(existing, { name, hostname, port, pubkey }, deps, now)
+    // The name a board serves is its key's one name, so coming back to a name it stepped off points
+    // the key's index back at it, and the one-custom-name rule below sees the name actually in use.
+    if (renewed.status === 200 && (await deps.store.readOwner(pubkey)) !== name) {
+      await deps.store.writeOwner(pubkey, name)
+    }
+    return renewed
   }
 
   // IDENTITY, and only here — a renewal is proved by the keypair alone, so a live name never depends
@@ -251,26 +258,26 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
     if (taken >= deps.maxNames) return reject("namespace-full", 503)
   }
 
-  // ONE LIVE NAME PER KEY. Without it a loop of generated keypairs takes the whole namespace, and the
-  // zone caps at 200 records. This is a speed bump rather than a wall — keys are free, so a determined
-  // squatter just makes more — and the real answer is tying a claim to an identity that costs
-  // something to obtain. It closes the trivial version, which is the one that happens by accident.
+  // ONE LIVE CUSTOM NAME PER KEY: a key holding a live custom name cannot claim a second one. It is a
+  // speed bump rather than a wall, since keys are free; the account's own username and one name per
+  // account, above, are what bind a custom name. Random names are held back by the per-network budget
+  // above instead, so any name gives way to a RANDOM one, and a random name gives way to a custom one.
+  // There is no way to release a name from the R pane, so refusing either would strand the board for
+  // the old name's 30-day lease: Off forgets the name on the machine, and picking a frizz.sh subdomain
+  // again asked for a fresh random name and was refused (maintainer, 2026-11-10: "This should not be
+  // fucking possible").
   //
-  // A RANDOM NAME GIVES WAY to a custom one claimed with the same key. A board starts on a random name,
-  // and the R pane offers the account's own name once Frizz is signed in to GitHub; refusing that would
-  // leave the board stuck for the random name's 30-day lease, with no way to release it. A custom name
-  // does not give way: its lease is the grace for coming back to it.
-  //
-  // The random name is NOT released, only stepped off: its row keeps this key until its lease lapses
+  // The old name is NOT released, only stepped off: its row keeps this key until its lease lapses
   // (the board no longer renews it), exactly as if the board had moved away without claiming. Freeing it
   // at once would hand it to whoever claimed it next, and the phones still bookmarked on it would send
-  // that stranger their session cookies, which the board would still honour on its new name.
+  // that stranger their session cookies, which the board would still honour on its new name. Coming
+  // back to it within the lease is a renewal, matched by key before this check.
   const held = await deps.store.readOwner(pubkey)
   if (held && held !== name) {
     const other = await deps.store.read(held)
     if (other && other.pubkey === pubkey && !claimLeaseExpired(other.renewedAt, now)) {
-      // Stepping off the random name is create() pointing the key's index at the new one.
-      if (!isAnonymousClaimName(held) || isAnonymousClaimName(name)) return reject("one-name-per-key", 409)
+      // Stepping off the old name is create() pointing the key's index at the new one.
+      if (!isAnonymousClaimName(held) && !isAnonymousClaimName(name)) return reject("one-name-per-key", 409)
     } else {
       // The index outlived the name it pointed at, so it is stale rather than binding.
       await deps.store.removeOwner(pubkey)

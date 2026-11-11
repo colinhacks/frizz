@@ -401,10 +401,9 @@ test("a name is NOT forgotten while its tunnel refuses to die", async () => {
 })
 
 
-test("one key holds ONE name — a loop of claims cannot take the namespace", async () => {
-  // The zone caps at 200 records, so without this a `for` loop over generated keypairs is a complete
-  // denial of the product. It is a speed bump, not a wall: keys are free, so a determined squatter
-  // just makes more. It closes the version that happens by accident.
+test("one key holds ONE live custom name", async () => {
+  // A speed bump, not a wall: keys are free. The account's own username and one name per account are
+  // what bind a custom name; this keeps one board from collecting several by accident.
   const cf = fakeCloudflare()
   const st = fakeStore()
   const identity = await generateClaimIdentity()
@@ -416,7 +415,7 @@ test("one key holds ONE name — a loop of claims cannot take the namespace", as
   assert.equal(second.status, 409)
   assert.deepEqual(second.body, {
     error: "one-name-per-key",
-    message: "this machine already holds a name — release it first, or claim from a different Frizz identity",
+    message: "this machine already holds another custom name, which stays its own until 30 days after it was last served",
   })
   assert.equal(cf.tunnels.size, 1, "the second name provisioned nothing")
 
@@ -482,19 +481,37 @@ test("releasing a lapsed name leaves an account's index alone once it points at 
   assert.equal(third_.status, 409, "so the account still holds one name")
 })
 
-test("a custom name does not give way, and neither does a random one to another random one", async () => {
-  const st = fakeStore()
-  const identity = await generateClaimIdentity()
-  const d = deps({ api: fakeCloudflare().api, store: st.store })
-  assert.equal((await handleClaim(await claimFor(identity, "colin"), d)).status, 200)
-  assert.equal((await handleClaim(await claimFor(identity, generateAnonymousClaimName()), d)).status, 409)
-  assert.equal(st.rows.has("colin"), true, "the custom name keeps its lease, the grace for coming back")
+test("any name gives way to a new random one on the same key, and stays the key's until it lapses", async () => {
+  // Off forgets the name on the machine and nothing in the R pane releases it, so picking a frizz.sh
+  // subdomain again claims a fresh random name with the same key. Refusing it stranded the board for
+  // the old name's 30-day lease (maintainer, 2026-11-10: "This should not be fucking possible").
+  for (const relay of [false, true]) {
+    const st = fakeStore()
+    const d = deps({ ...(relay ? { api: undefined } : { api: fakeCloudflare().api }), store: st.store })
+    const identity = await generateClaimIdentity()
+    const pubkey = (await claimFor(identity)).pubkey
+    const stranger = await generateClaimIdentity()
+    const first = generateAnonymousClaimName()
+    const second = generateAnonymousClaimName()
 
-  const other = await generateClaimIdentity()
-  const first = generateAnonymousClaimName()
-  assert.equal((await handleClaim(await claimFor(other, first), d)).status, 200)
-  assert.equal((await handleClaim(await claimFor(other, generateAnonymousClaimName()), d)).status, 409)
-  assert.equal(st.rows.has(first), true)
+    assert.equal((await handleClaim(await claimFor(identity, "colin"), d)).status, 200)
+    assert.equal((await handleClaim(await claimFor(identity, first), d)).status, 200, "a custom name gives way")
+    assert.equal((await handleClaim(await claimFor(identity, second), d)).status, 200, "and so does a random one")
+    assert.equal(await st.store.readOwner(pubkey), second, "the key's one name is the newest")
+    // Neither old name is released: phones bookmarked on them would hand a stranger their sessions.
+    assert.equal(st.rows.get("colin")?.pubkey, pubkey)
+    assert.equal(st.rows.get(first)?.pubkey, pubkey)
+    assert.equal((await handleClaim(await claimFor(stranger, "colin"), d)).status, 409)
+    assert.equal((await handleClaim(await claimFor(stranger, first), d)).status, 409)
+
+    // Coming back to the custom name within its lease is a renewal, and makes it the key's name again,
+    // so a second custom name is still refused.
+    const back = await handleClaim(await claimFor(identity, "colin"), d)
+    assert.equal(back.status, 200, relay ? "relay" : "tunnel")
+    assert.equal("renewed" in back.body && back.body.renewed, true)
+    assert.equal(await st.store.readOwner(pubkey), "colin")
+    assert.equal((await handleClaim(await claimFor(identity, "another"), d)).status, 409)
+  }
 })
 
 test("a random name is never handed to another key, lapsed or swept, and its own key may have it back", async () => {
