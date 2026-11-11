@@ -184,6 +184,34 @@ test("a native OpenCode profile reads as experimental in the panel and on the me
   }
 })
 
+test("an ACP agent is a group of its own in the menu, under its name, and its model dropdown saves the agent's model", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch("?rows=5&acp=1")
+  const SELECTOR = `${PANEL} [aria-label="Model and effort"]`
+  try {
+    await page.click(GEAR)
+    await page.waitForSelector(SELECTOR)
+    await page.click(SELECTOR)
+    await page.waitForSelector('.profile-grid-menu [data-profile-grid-dropdowns="acp:cursor"]')
+    // The list is read once the dropdown opens; until then the band names the agent's configured model.
+    assert.equal(await page.$eval('[aria-label="Cursor model"]', (el) => el.textContent), "Configured model")
+    assert.equal(await page.$('[aria-label="Cursor reasoning level"]'), null, "an agent has no level to choose")
+    await page.hover('[aria-label="Cursor model"]')
+    await page.click('[aria-label="Cursor model"]')
+    await page.waitForFunction(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].some((el) => el.textContent === "GPT-5.5"), { timeout: 10_000 })
+    assert.deepEqual(await page.$$eval('.profile-grid-submenu [role="menuitemradio"]', (els) => els.map((el) => el.textContent)), ["Auto", "GPT-5.5", "Sonnet 5"])
+    await page.evaluate(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].find((el) => el.textContent === "GPT-5.5")!.setAttribute("data-pick", ""))
+    await page.click(".profile-grid-submenu [data-pick]")
+    await page.waitForFunction(() => !document.querySelector(".profile-grid-menu"), { timeout: 5000 })
+    const writes = await page.evaluate(() => (window as unknown as { githubPickerRangeFixture: Fixture }).githubPickerRangeFixture.preferenceWrites)
+    assert.deepEqual(writes.at(-1), { field: "profile", backend: "acp", model: "acp:cursor@gpt-5.5" })
+    // Nothing beside the selector: the agent's model is the menu's, not a second pill's.
+    assert.equal(await page.$(`${PANEL} [aria-label^="Model for"]`), null)
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
 test("the model selector works from inside the settings panel: its menu and the runtime panel paint on top, a pick saves, and Escape unwinds one layer at a time", { skip: !baseUrl, timeout: 90_000 }, async () => {
   const { browser, page, errors } = await launch()
   const SELECTOR = `${PANEL} [aria-label="Model and effort"]`
