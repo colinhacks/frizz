@@ -105,7 +105,12 @@ const PANEL_LABEL: Record<QueueOpsKind, string> = {
   link: "Links saved for this thread",
 }
 
-export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thread: ThreadView; transcriptShells?: readonly (BgShellView & TranscriptShellRecord)[] }) {
+export function QueueOpsSummary({ thread: given, transcriptShells = [], only }: {
+  thread: ThreadView
+  transcriptShells?: readonly (BgShellView & TranscriptShellRecord)[]
+  /** The kinds of count to draw, every kind by default: beside the rail, only what the rail does not list. */
+  only?: readonly QueueOpsKind[]
+}) {
   // The counts move with the transcript's Agent rows, not ahead of them (ThreadSurface opsThread).
   const thread = useSurfaceOpsThread(given)
   // The thread's CHILD THREADS are other rows of the board, read here rather than off the thread (they
@@ -118,7 +123,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [] }: { thre
     clearTimeout(closeTimer.current)
     clearTimeout(swapTimer.current)
   }, [])
-  const groups = queueOpsCounts(thread, transcriptShells, childThreads)
+  const groups = queueOpsCounts(thread, transcriptShells, childThreads).filter((group) => !only || only.includes(group.key))
   const line = useRef<HTMLDivElement>(null)
   // Where the pointer has just been, for as long as a panel is open. On the document, because the panel
   // is portaled and the pointer's whole path runs between the two.

@@ -214,6 +214,8 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
   )
 }
 
+const TODO_ONLY = ["todo"] as const
+
 function ChatView({ slug, phone = false, railBeside = false, header, pane }: { slug: string; phone?: boolean; railBeside?: boolean; header: ReactNode; pane?: ThreadPaneHooks }) {
   const boardThread = useThreadSnapshot(slug)
   // Freshness is centrally managed (transcript-live.ts keeps every observed transcript live); `poll`
@@ -469,8 +471,11 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           // its rail stands beside the column (maintainer 2026-10-02: "in the full screen view we don't
           // need to show … the active shells and subagents and all of that beneath the prompt box anymore
           // 'cause it's already showing up in the sidebar to the right"). The rail (FocusRail) lists every
-          // row the line counts, its saved links and Codex shells included.
-          above={phone || railBeside || !thread ? undefined : <QueueOpsSummary thread={thread} transcriptShells={transcriptShells} />}
+          // row the line counts, its saved links and Codex shells included, except the human's to-dos: those
+          // are the reader's own work, not the agent's, so beside the rail the line keeps their count alone
+          // (maintainer 2026-11-11: "I don't think it makes sense to put the human facing todos in the
+          // artifact sidebar at all").
+          above={phone || !thread ? undefined : <QueueOpsSummary thread={thread} transcriptShells={transcriptShells} only={railBeside ? TODO_ONLY : undefined} />}
           phoneBarOverride={phone && sheetQuestions.length > 0
             ? (api) => <PhoneAnswerBar count={sheetQuestions.length} onAnswer={() => setAnswerSheetOpen(true)} onReply={readAndAnswerHost ? undefined : api.editReply} />
             : undefined}
@@ -1633,7 +1638,7 @@ function VirtualizedThreadTranscript({
                 ) : loadingEarlier ? (
                   <span className="flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Loading earlier messages…</span>
                 ) : (
-                  <button type="button" onClick={requestEarlier} className="button-outline rounded-md px-2 py-1 outline-none hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60">
+                  <button type="button" data-load-earlier onClick={requestEarlier} className="button-outline rounded-md px-2 py-1 outline-none hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60">
                     Load earlier messages
                   </button>
                 )}

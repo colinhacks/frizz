@@ -15,7 +15,6 @@ import { tildePath } from "../lib/paths.ts"
 import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { AgentRow, BgShellRow, ChildThreadRow, CommandWatchRow, GithubWatchRow, ON_CAP, ROW_INSET, TimerRow, WaitGrid, WaitRow, type WaitGroup } from "./AwaitingBackgroundCard.tsx"
-import { HumanTodoList } from "./AwaitingSteps.tsx"
 import { transcriptBackgroundShells } from "../lib/transcriptShells.ts"
 
 // THE FULLSCREEN PAGE'S OPERATIONAL RAIL — what is going on in this thread, listed beside the transcript
@@ -222,7 +221,8 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
   useEditedFilesRefresh(thread.id, transcript.data !== undefined, changeKey, thread.runtime === "running" || thread.runtime === "spawning")
   // THE ROWS ARE lib/threadOps' — what the line of counts over the prompt box and its panels list, by the
   // same rules, because on /full this rail is that line's replacement (ff185621) and a row it drops is
-  // shown nowhere. The shells include the transcript's: a Codex background exec is transcript-native and
+  // shown nowhere. All but the human's to-dos, which beside this rail the line keeps drawing (ChatView
+  // TODO_ONLY): they are the reader's work, not the agent's. The shells include the transcript's: a Codex background exec is transcript-native and
   // the board reports none for it (lib/transcriptShells). A STALE child — quiet past its
   // window — and a STALE shell — a process the OS confirmed gone — stay listed, and their rows say so
   // (AgentRow, BgShellRow). Each agent and shell row carries the strip's stop/clear ×, under its gate,
@@ -243,8 +243,6 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
   // rail with them, and the wait rows above are what the reader came for. The fold is a saved view
   // preference (lib/prefs.ts), so it holds across threads and reloads.
   const groups: WaitGroup[] = [
-    // First, as on the counts over a prompt box (lib/queueOpsCounts): it is the one group that waits on the reader.
-    { head: "To-do", rows: thread.humanTodos?.length ? [<div key="todos" className="px-2 text-[12px] leading-[18px]"><HumanTodoList thread={thread} /></div>] : [] },
     { head: "Sub-agents", rows: agents.map((a) => <AgentRow key={a.id ?? a.label} agent={a} slug={thread.id} now={now} onDismiss={childOpDismisser(thread.id, a)} />) },
     // Beside the sub-agents they resemble, as the counts over a prompt box order them (lib/queueOpsCounts).
     { head: "Child threads", rows: children.map((c) => <ChildThreadRow key={c.id} child={c} now={now} />) },
