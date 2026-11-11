@@ -15,6 +15,7 @@
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { launchHeadless } from "./lib/headless-browser.mjs"
+import { openRunningBand } from "./lib/rail-bands.mjs"
 import { createRpcClient } from "./lib/rpc-client.mjs"
 
 const [url, outDir = "/tmp/steer-rail/edges"] = process.argv.slice(2)
@@ -68,6 +69,7 @@ try {
     void req.continue()
   })
   await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 })
+  await openRunningBand(page)
   await page.waitForSelector(`[data-sidebar-item]`, { timeout: 20_000 })
   await new Promise((r) => setTimeout(r, 2500))
 

@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
+import { openRunningBand } from "./lib/rail-bands.mjs"
 
 const args = process.argv.slice(2)
 const opt = (k, d) => { const hit = args.find((a) => a.startsWith(`--${k}=`)); return hit ? hit.slice(k.length + 3) : d }
@@ -184,6 +185,7 @@ try {
     page.on("console", (m) => { if (m.type() === "error" && !/favicon|404/.test(m.text())) pageErrors.push(m.text()) })
     await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 2 })
     await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 })
+    await openRunningBand(page)
     await page.waitForSelector(`[data-sidebar-item="${SLUG}"]`, { timeout: 20_000 })
     await page.waitForSelector(`[data-sidebar-item="${CTRL_SLUG}"]`, { timeout: 20_000 })
     await new Promise((r) => setTimeout(r, 1500))

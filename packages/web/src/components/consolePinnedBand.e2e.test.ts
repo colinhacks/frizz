@@ -97,11 +97,18 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     const reorderCalls: string[] = []
     page.on("request", (r) => { if (/\/rpc\/reorderConsolePinnedThreads\b/.test(r.url())) reorderCalls.push(new URL(r.url()).pathname.split("/")[2]!) })
     await page.evaluateOnNewDocument(() => localStorage.setItem("frizz:console-group", "status"))
+    const rail = "[data-console-sidebar] [data-sidebar-rail]"
+    // The running A3 rows in the Running band, which every load starts collapsed (2026-11-11).
+    const openRunning = async () => {
+      await page.waitForSelector(`${rail} [data-band-header="running"]`, { timeout: 20_000 })
+      const folded = await page.$(`${rail} [data-band-header="running"][aria-expanded="false"]`)
+      if (folded) await folded.click()
+    }
     await page.goto(`${baseUrl}/console`, { waitUntil: "networkidle2" })
+    await openRunning()
     await page.waitForSelector(`[data-sidebar-item="${kA3}"]`, { timeout: 20_000 })
     await page.waitForSelector(`[data-sidebar-item="${kB3}"]`, { timeout: 20_000 })
 
-    const rail = "[data-console-sidebar] [data-sidebar-rail]"
     const pinnedIds = () => page.$$eval(`${rail} [data-console-pinned] [data-pinned-row]`, (rows) => rows.map((r) => r.getAttribute("data-pinned-row")))
     const outsidePinned = () =>
       page.$$eval(`${rail} [data-sidebar-item]`, (rows) => rows.filter((r) => !r.closest("[data-console-pinned]")).map((r) => r.getAttribute("data-sidebar-item")))
@@ -132,6 +139,7 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
       }
       await page.goto(consoleUrl, { waitUntil: "networkidle2" })
       await page.waitForSelector(`[data-sidebar-item="${kB3}"]`, { timeout: 20_000 })
+      await openRunning()
       return steps
     }
     // A pinned row shows its pin only on hover, as the unpin verb (2026-10-24), so "pinned on the shelf

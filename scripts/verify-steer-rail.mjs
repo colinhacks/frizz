@@ -15,6 +15,7 @@
 import { appendFileSync, mkdirSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { launchHeadless } from "./lib/headless-browser.mjs"
+import { openRunningBand } from "./lib/rail-bands.mjs"
 
 const [url, home, slug = "worker-5", sessionId = "00000005-2222-3333-4444-555555555555", outDir = "/tmp/steer-rail"] =
   process.argv.slice(2)
@@ -60,6 +61,7 @@ try {
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()) })
   page.on("pageerror", (e) => errors.push(String(e)))
   await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 })
+  await openRunningBand(page)
   await page.waitForSelector(`[data-sidebar-item="${slug}"]`, { timeout: 20_000 })
   await new Promise((r) => setTimeout(r, 2500)) // let the board settle
 

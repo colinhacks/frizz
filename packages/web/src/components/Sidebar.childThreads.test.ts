@@ -29,6 +29,8 @@ const base = {
 async function rail(threads: ThreadView[]): Promise<string> {
   const [{ MemoryRouter }, { Sidebar }, { store }] = await Promise.all([import("react-router"), import("./Sidebar.tsx"), import("../store.ts")])
   store.board = { projectDir: "/fixture", threads } as unknown as typeof store.board
+  // The parents here spin, so they row in the Running band, which starts collapsed.
+  store.sidebarCollapsed.running = false
   try {
     return renderToStaticMarkup(
       createElement(
@@ -39,6 +41,7 @@ async function rail(threads: ThreadView[]): Promise<string> {
     )
   } finally {
     store.board = null
+    store.sidebarCollapsed.running = true
   }
 }
 

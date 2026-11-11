@@ -12,6 +12,7 @@
 //
 //   node scripts/verify-retry-optimism.mjs <url> <unused> [slug]
 import { launchHeadless } from "./lib/headless-browser.mjs"
+import { openRunningBand } from "./lib/rail-bands.mjs"
 
 const [url, _socket, slug = "worker-6"] = process.argv.slice(2)
 if (!url) {
@@ -47,6 +48,8 @@ try {
   p.on("pageerror", (e) => errs.push(String(e)))
   p.on("console", (m) => { if (m.type() === "error") errs.push(m.text()) })
   await p.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+  await p.waitForSelector("[data-sidebar-rail]", { timeout: 60_000 })
+  await openRunningBand(p)
   await p.waitForSelector(`[data-sidebar-item="${slug}"]`, { timeout: 60_000 })
 
   // Make it STALL: kill the pane out from under the row. deriveRuntime then reads "exited".
