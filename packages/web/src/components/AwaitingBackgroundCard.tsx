@@ -49,7 +49,7 @@ import { ICON_LABEL_NUDGE } from "../lib/iconAlign.ts"
 import { PRIMER, PRIMER_DANGER_LINK } from "../lib/primer.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { LiveSteps, StepsList } from "./AwaitingSteps.tsx"
-import { CARD_ACTION_EXPLAINER, CardActions, CARD_BODY, CARD_LINK, CARD_PRIMARY_ACTION, QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
+import { CARD_ACTION_EXPLAINER, CardActions, CARD_BODY, CARD_LINK, CARD_PRIMARY_ACTION, TranscriptCard, WRAP_ANYWHERE } from "./TranscriptCard.tsx"
 
 // Name what the thread is ACTUALLY waiting on. Three real cases, and the sentence has to be true in all
 // of them: "sub-agents" is wrong for a shell-only thread (a launched dev server is not a child whose
@@ -1430,15 +1430,15 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
 
     >
       {/* THE WORKER'S PROSE — the fence's whole Markdown body, block-rendered, exactly as the old
-          free-standing message drew it (md-body inside card-md; QUEUE_WRAP so a long unbreakable token
-          wraps on a narrow queue card instead of bleeding past the edge).
+          free-standing message drew it (md-body inside card-md; WRAP_ANYWHERE so a long unbreakable
+          token wraps instead of bleeding past the edge).
 
-          QUEUE_WRAP UNCONDITIONALLY, on every surface. The fence card used to apply it on the queue
-          alone, which is the transcript's ordinary rule (a roomy column scrolls on overflow) and the
+          WRAP_ANYWHERE UNCONDITIONALLY, on every surface. The fence card used to apply it on the queue
+          card alone, which is the transcript's ordinary rule (a roomy column scrolls on overflow) and the
           wrong one INSIDE a card: a card is a narrow column wherever it is drawn, and the same fence
           then wrapped in the queue and bled past the edge in the drawer. */}
       {prose
-        ? <LinkedHtml className={`md-body ${QUEUE_WRAP}`} html={proseHtml} />
+        ? <LinkedHtml className={`md-body ${WRAP_ANYWHERE}`} html={proseHtml} />
         // NEITHER SHAPE MAY CARD AS BLANK. A fence whose body is empty — or is nothing but machinery
         // lines, which never reach the reader — has no handoff to open on, and if it has no rows either
         // the card would be a bare heading. That is reachable only with nothing live to row — a

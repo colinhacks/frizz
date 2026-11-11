@@ -19,7 +19,7 @@ import { FrizzLoader } from "./FrizzLoader.tsx"
 //     (main.tsx), beside the board read rather than after it;
 //   · only a thread opened before the chunk lands draws a fallback, and it is the loading state that
 //     surface already draws while its thread resolves (ThreadPane / ThreadSheet's spinner, the board's
-//     FrizzLoader for a brand-new project's first-task view).
+//     FrizzLoader for the full-screen page).
 //
 // Which branch a mount takes is decided ONCE per mount. Swapping a Suspense-wrapped lazy element for the
 // resolved component on a later render would be a different element type at the same position, and would
@@ -81,7 +81,6 @@ function BoardLoader() {
 }
 
 export const ThreadView = lazySurface("ThreadView", () => <SurfaceSpinner />)
-export const TodosView = lazySurface("TodosView", () => <BoardLoader />)
 // The sheets are overlays: until the chunk is in, nothing is drawn, and the sheet opens when it lands.
 export const SubAgentSheet = lazySurface("SubAgentSheet", () => null)
 export const ThreadDrawer = lazySurface("ThreadDrawer", () => null)

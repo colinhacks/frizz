@@ -1,4 +1,4 @@
-// The PAGE scroll lock and the one thing that has to survive it.
+// The PAGE scroll lock, and reading the page's offset through it.
 //
 // While any overlay is open, App pins the page with the body-fixed dance (`body{position:fixed;
 // top:-y}` — see App.tsx for why it isn't `overflow:hidden`). Two consequences bite anything that
@@ -7,13 +7,12 @@
 //   1. `window.scrollY` reads 0 and the document collapses to viewport height, so `window.scrollTo`
 //      is silently clamped to a no-op. Every measurement has to come off the lock's own offset.
 //   2. The unlock RESTORES the offset, so even a scroll that did land would be undone. (Restores it
-//      corrected for the reader's card: whatever moved it while the page was pinned — a card arriving
+//      corrected for the reader's row: whatever moved it while the page was pinned — a row arriving
 //      above it, or growing — is made up on the way back, lib/readerPin.)
 //
-// So a scroll requested under the lock doesn't scroll — it parks its landing here, and the unlock
-// lands there instead of where the page was. That is what lets a queued sidebar row dismiss the open
-// drawer and still auto-scroll to its card (maintainer 2026-08-11): the dismissal holds the lock for
-// the whole ~210ms slide-out, which is exactly the window the click happens in.
+// A scroll requested under the lock used to park its landing here for the unlock, so a sidebar row could
+// dismiss the open drawer and still scroll the board to its queue card. The cards went with the one-thread
+// pane (2026-11-09), and with them the only caller.
 
 // The document scroll offset, whether or not the page is locked. Under the lock the body is shifted
 // up by the captured offset, so `-body.style.top` is the real scrollY and every getBoundingClientRect
@@ -28,24 +27,9 @@ export function isPageScrollLocked(): boolean {
   return typeof document !== "undefined" && document.body?.style.position === "fixed"
 }
 
-let pendingUnlockScrollY: number | null = null
-
-// Park a landing for the unlock. Overwrites any earlier request: the newest navigation wins.
-export function requestScrollAfterUnlock(y: number): void {
-  pendingUnlockScrollY = y
-}
-
-// Consume the parked landing (the unlock), or clear a stale one (a fresh lock). Returns null when
-// nothing is parked, which is the signal to restore the captured offset as usual.
-export function takeScrollAfterUnlock(): number | null {
-  const y = pendingUnlockScrollY
-  pendingUnlockScrollY = null
-  return y
-}
-
 // Scroll the LOCKED page by `delta`, as an unlocked page would be scrolled: the pinned body moves by it,
-// so what is on screen under the overlay holds still (lib/readerPin: a card arriving above the reader
-// while a thread is open over the queue). The unlock restores the offset the body then holds.
+// so what is on screen under the overlay holds still (lib/readerPin: a row arriving above the reader
+// while a thread is open over the phone's list). The unlock restores the offset the body then holds.
 export function shiftLockedPage(delta: number): void {
   if (!isPageScrollLocked()) return
   document.body.style.top = `-${Math.max(0, pageScrollY() + delta)}px`

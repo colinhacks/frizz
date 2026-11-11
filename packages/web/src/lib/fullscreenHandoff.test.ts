@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import { anchorCandidates, type MessageBand } from "./fullscreenHandoff.ts"
 
-// A 900px window whose reading area starts at the top of the screen — the queue card's case.
+// A 900px window whose reading area starts at the top of the screen.
 const WINDOW = { top: 0, bottom: 900 }
 
 function band(sourceId: string | undefined, top: number, height = 200): MessageBand {
@@ -54,13 +54,11 @@ test("the candidate list is bounded", () => {
   assert.equal(anchorCandidates(bands, WINDOW).length, 6)
 })
 
-// The two surfaces find each other by ONE identifier, and neither side can be renamed alone.
-test("both surfaces stamp the source id the hand-off looks messages up by", () => {
+// The two ends find each other by ONE identifier, which every surface's transcript rows stamp.
+test("the transcript rows stamp the source id the hand-off looks messages up by", () => {
   const chat = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8")
-  const queue = readFileSync(new URL("../components/TodosView.tsx", import.meta.url), "utf8")
   const door = readFileSync(new URL("../components/ExpandThreadLink.tsx", import.meta.url), "utf8")
   assert.match(chat, /data-transcript-source-id=\{row\.kind === "message" \? row\.message\.sourceId : undefined\}/)
-  assert.ok((queue.match(/data-transcript-source-id=/g) ?? []).length >= 3, "every queue-card message site")
   // The door reads the surface and captures unconditionally — a reader on reduced motion needs the
   // place kept MORE than one watching an animation, so the capture must not sit behind the animate gate.
   assert.match(door, /captureFullscreenEnterAnchor\(surface, slug\)/)

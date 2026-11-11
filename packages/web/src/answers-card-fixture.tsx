@@ -123,9 +123,9 @@ function Fixture() {
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Answers card (dense / queue width)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Answers card (narrow)</div>
         <div className="flex w-[380px] flex-col rounded-lg border border-border bg-panel p-4">
-          <Message m={m} paired={paired} dense />
+          <Message m={m} paired={paired} />
         </div>
       </div>
       <div>
@@ -160,10 +160,10 @@ function Fixture() {
           <Message m={multiSelect} />
         </div>
       </div>
-      <div data-fixture="multi-select-dense">
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Multi-select answer (dense / queue width)</div>
+      <div data-fixture="multi-select-narrow">
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Multi-select answer (narrow)</div>
         <div className="flex w-[380px] flex-col rounded-lg border border-border bg-panel p-4">
-          <Message m={multiSelect} dense />
+          <Message m={multiSelect} />
         </div>
       </div>
       <div data-fixture="multiline">
@@ -179,9 +179,9 @@ function Fixture() {
         </div>
       </div>
       <div>
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Buried-ask answers (dense / queue width)</div>
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-70">Buried-ask answers (narrow)</div>
         <div className="flex w-[380px] flex-col rounded-lg border border-border bg-panel p-4">
-          <Message m={buried} dense />
+          <Message m={buried} />
         </div>
       </div>
       <div>

@@ -87,7 +87,7 @@ test("questions from one call group together; questions from two rests do not", 
   assert.deepEqual(grouped.get(2)?.map((q) => q.id), ["c"])
 })
 
-// THE ONE THING THE PURE FUNCTION CANNOT PIN: that both surfaces split the stack the same way. The
+// THE ONE THING THE PURE FUNCTION CANNOT PIN: that the transcript splits the stack this way. The
 // in-flight ANSWER belongs to the TAIL wherever the questions sit — it is the human's newest turn, and
 // the delivered copy of it lands at the tail a second later — so a mount placed at an older rest must
 // not draw it. Two drawing it would render the answer twice, in two places, seconds apart.
@@ -96,7 +96,7 @@ test("questions from one call group together; questions from two rests do not", 
 // unrenderedAnswers) rather than the opt-out `showInFlight` it was until 2026-09-01, so an anchored
 // mount draws nothing by simply not passing it, and this reads the same guarantee off the new spelling.
 test("a mount placed at an older rest never draws the in-flight answer", () => {
-  for (const file of ["ChatView.tsx", "TodosView.tsx"]) {
+  for (const file of ["ChatView.tsx"]) {
     const source = readFileSync(new URL(`../components/${file}`, import.meta.url), "utf8")
     const mounts = [...source.matchAll(/<RegisteredQuestionStack[^>]*>/g)].map((m) => m[0])
     const tail = mounts.filter((m) => /questions=\{[^}]*[Tt]ail\}/.test(m))
@@ -225,8 +225,8 @@ test("a quoted reference claims nothing", () => {
 // ---- A QUESTION THE HUMAN TYPED PAST IS NOT HOISTED (2026-10-13) ----
 // The server says which open questions still stand: asked or referenced since the human last TYPED to the
 // thread (`standing` on each row). A surface that cannot draw the message a card sits under hoists the
-// card to the top of what it shows. That keeps a STANDING question reachable from a queue card whose
-// window was cut below it — a shell finishing is not the human moving on — and until this date it also
+// card to the top of what it shows. That keeps a STANDING question reachable from a pane whose window
+// was cut below it (a queue card's, until 2026-11-09) — a shell finishing is not the human moving on — and until this date it also
 // headed the card with a question the human had replied past, above the newer handoff.
 test("from: a question that no longer stands is left out when its anchor is above the window, and a standing one is not", () => {
   const messages = [
@@ -238,7 +238,7 @@ test("from: a question that no longer stands is left out when its anchor is abov
   const q = { id: "qst_a", askedAt: at(2) }
   const faded = { ...q, standing: false }
   const standing = { ...q, standing: true }
-  // The queue card's window starts at the turn that moved the thread on, so the asking rest is above it.
+  // The pane's window starts at the turn that moved the thread on, so the asking rest is above it.
   assert.equal(questionsByAnchor(messages, [faded], { from: 2 }).size, 0, "typed past, and its message is not drawn: no card")
   assert.deepEqual([...questionsByAnchor(messages, [standing], { from: 2 }).keys()], [1], "still the ask: hoisted, as before")
   assert.deepEqual([...questionsByAnchor(messages, [q], { from: 2 }).keys()], [1], "a row from before the flag reads as standing")
@@ -254,12 +254,10 @@ test("from: a question that no longer stands is left out when its anchor is abov
   assert.deepEqual(questionsByAnchor(messages, [faded, { ...standing, id: "qst_b" }], { from: 2 }).get(1)?.map((x) => x.id), ["qst_b"])
 })
 
-// Both surfaces that hoist pass their window, so neither can head itself with a faded question again.
-test("the queue card and the drawer both tell questionsByAnchor where their window starts", () => {
-  const queue = readFileSync(new URL("../components/TodosView.tsx", import.meta.url), "utf8")
+// The transcript passes its window, so it cannot head itself with a faded question again.
+test("the thread view tells questionsByAnchor where its window starts", () => {
   const drawer = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8")
-  assert.ok(queue.includes("questionsByAnchor(messages, unplaced, { from: visibleStart })"))
   // The drawer's window starts at 0; the one-thread pane's at the steer a queued thread opens on.
   assert.ok(drawer.includes("questionsByAnchor(messages, unplaced, { from: windowStart })"))
-  for (const source of [queue, drawer]) assert.doesNotMatch(source, /questionsByAnchor\(messages, unplaced\)/)
+  assert.doesNotMatch(drawer, /questionsByAnchor\(messages, unplaced\)/)
 })

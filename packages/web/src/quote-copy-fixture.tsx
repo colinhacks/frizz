@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import "./styles.css"
-import { QUEUE_WRAP } from "./components/TranscriptCard.tsx"
+import { WRAP_ANYWHERE } from "./components/TranscriptCard.tsx"
 import { installCodeCopyInterceptor } from "./lib/copy-code.ts"
 import { mdToHtml } from "./lib/markdown.ts"
 import { setThemePreference } from "./lib/theme.ts"
@@ -75,8 +75,8 @@ function Fixture() {
           </div>
         </div>
       </div>
-      {/* The Queue's narrow column. */}
-      <div className={`md-body mt-6 w-[300px] text-[14px] ${QUEUE_WRAP}`}
+      {/* A narrow card column. */}
+      <div className={`md-body mt-6 w-[300px] text-[14px] ${WRAP_ANYWHERE}`}
         data-case="narrow" dangerouslySetInnerHTML={{ __html: mdToHtml([md("reply"), md("long")].join("\n\n")) }} />
     </main>
   )

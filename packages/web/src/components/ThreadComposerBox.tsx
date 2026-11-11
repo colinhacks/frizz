@@ -37,17 +37,17 @@ import { useThreadSurfaceBox } from "./ThreadSurface.tsx"
 // card injected the literal string into the running worker's stdin while the same keystroke in the drawer
 // opened the sign-in modal. Everything that must not diverge now lives here exactly once:
 //
-//   · the follow-up DRAFT key (so the queue card, the drawer and /full are the same textarea, and a
-//     draft typed in one is present in the others — in any tab — and survives a reload),
+//   · the follow-up DRAFT key (so the pane, the drawer and /full are the same textarea, and a draft
+//     typed in one is present in the others — in any tab — and survives a reload),
 //   · the `/login` | `/logout` alias intercept + its SignInModal / LogoutConfirmModal,
 //   · useThreadComposerControls (the model/effort footer and the backend busy fence),
 //   · the {controls.status} line under the box.
 //
-// The two call sites keep their DELIBERATE differences as props, never as a forked tree: the padding
-// wrapper (`className`), whether the running-operations reading (`above` the box, the one line of
-// counts) is drawn at all, and the send itself (`submitOverride`). Everything else is identical by construction, the Goal in the rail included.
-// The skills typeahead's per-thread cache, shared by BOTH composer surfaces (the drawer and the queue
-// card render the same thread) so opening either only ever asks the harness once. A failure is NOT
+// It has one call site since the queue card went (2026-11-10): ThreadActionBar, on every surface. What a
+// surface still decides is a prop, never a forked tree: the padding wrapper (`className`) and whether the
+// running-operations reading (`above` the box, the one line of counts) is drawn at all.
+// The skills typeahead's per-thread cache, shared by every box on the same thread so opening any of them
+// only ever asks the harness once. A failure is NOT
 // cached: the common failure is "the session is not running yet", and the next `/` should ask again
 // once it is. Module scope on purpose — the cache outlives any one composer mount.
 const threadSkillsCache = new Map<string, Promise<ThreadSkill[]>>()
@@ -69,8 +69,7 @@ function fetchThreadSkills(slug: string): Promise<ThreadSkill[]> {
  * The prompt box on a read-and-answer session: nothing to type in, and the one line saying where typing happens.
  * The answers staged on the cards still leave from here, since this is where the Send they use lives.
  */
-function ReadAndAnswerComposerBox({ surface, className, above, phoneBarOverride, phoneChrome, readAndAnswerHost }: {
-  surface: "queueComposer" | "chatComposer"
+function ReadAndAnswerComposerBox({ className, above, phoneBarOverride, phoneChrome, readAndAnswerHost }: {
   className?: string
   above?: ReactNode
   phoneBarOverride?: (api: PhoneBarApi) => ReactNode
@@ -79,12 +78,12 @@ function ReadAndAnswerComposerBox({ surface, className, above, phoneBarOverride,
 }): ReactElement {
   const registered = useContext(RegisteredAnsweringContext)
   const isMobile = useIsMobile()
-  const phoneBar = (phoneChrome ?? isMobile) && surface === "chatComposer"
+  const phoneBar = phoneChrome ?? isMobile
   return (
     <div
-      data-thread-composer-box={surface}
+      data-thread-composer-box={SURFACE}
       data-remote-composer
-      {...(surface === "chatComposer" ? { "data-thread-action-bar": "" } : {})}
+      data-thread-action-bar=""
       className={phoneBar ? "flex flex-col gap-2 px-3 py-2.5" : className}
     >
       {above}
@@ -107,6 +106,10 @@ function ReadAndAnswerComposerBox({ surface, className, above, phoneBarOverride,
   )
 }
 
+// The textarea's data- tag, which the e2e tests target a thread's prompt box by (Composer `surface`). It
+// was one of two until the queue card went; the box's `data-thread-composer-box` carries it too.
+const SURFACE = "chatComposer"
+
 type ThreadComposerBoxProps = Parameters<typeof LocalThreadComposerBox>[0]
 
 export function ThreadComposerBox(props: ThreadComposerBoxProps): ReactElement {
@@ -117,38 +120,26 @@ export function ThreadComposerBox(props: ThreadComposerBoxProps): ReactElement {
 
 function LocalThreadComposerBox({
   slug,
-  surface,
   className,
   id,
   above,
-  submitOverride,
   phoneBarOverride,
   phoneChrome,
 }: {
   slug: string
-  // Pure data- tag forwarded to the textarea. Also the two surfaces' only behavioral fork inside
-  // <Composer> itself (queueComposer owns Option-Enter); see lib/queueComposerKeyboard.ts.
-  surface: "queueComposer" | "chatComposer"
-  // The ONLY padding/chrome difference between the call sites — the drawer's bordered panel footer vs the
-  // queue card's flush bottom block.
+  // The padding around the box.
   className?: string
   // DOM id for the textarea. The drawer's is "followup-input".
   id?: string
-  // Rendered INSIDE the padded box ABOVE the prompt: the line of live-op counts (QueueOpsSummary) the
-  // queue card's docked box and the drawer's both carry, rather than rows hanging beneath it. Composed
-  // by the caller — this component does not decide which ops a surface shows.
+  // Rendered INSIDE the padded box ABOVE the prompt: the line of live-op counts (QueueOpsSummary), rather
+  // than rows hanging beneath it. Composed by the caller — this component does not decide which ops a
+  // surface shows.
   above?: ReactNode
-  // Replaces the default eager follow-up send. The queue card passes its useLiveAnswering `sendMessage`,
-  // so the card's free-form reply and a reply that carries answers are literally the same send — one
-  // controller, one optimistic card dissolve. Callers WITHOUT an answering controller (the drawer) omit
-  // it and get the plain eager follow-up. Deliberately not split into a separate `onSent` prop: the
-  // override already carries it, and a second copy here could only ever disagree.
-  submitOverride?: (text: string, callbacks: EagerFollowUpCallbacks) => void
   // THE PHONE BAR'S THIRD STATE. While set, the drawer's resting phone bar renders this in place of
   // its row — a thread with open registered questions shows [keyboard] + "Answer N questions" there.
   // `api.editReply()` (the keyboard button) switches back to the prompt and focuses it inside the same
-  // tap; the override returns once the field is empty and blurred. Ignored above the phone breakpoint
-  // and on the queue card. See PhoneComposerLayout in Composer.tsx.
+  // tap; the override returns once the field is empty and blurred. Ignored above the phone breakpoint.
+  // See PhoneComposerLayout in Composer.tsx.
   phoneBarOverride?: (api: PhoneBarApi) => ReactNode
   // Whether the thread around this box wears the PHONE's chrome (MobileThreadHeader and its ⋯ sheet),
   // which is what the phone bar is built to sit under. ChatView knows: a drawer below the breakpoint
@@ -157,7 +148,7 @@ function LocalThreadComposerBox({
   phoneChrome?: boolean
 }): ReactElement {
   // THE SURFACE this box sits in (ThreadSurface) — a required parent, not an optional one. It is the
-  // file drop zone: a file dropped anywhere on the queue card, the drawer or the full-screen page comes
+  // file drop zone: a file dropped anywhere on the pane, the drawer or the full-screen page comes
   // to this box, which draws the drop hint and owns the intake (see Composer's `fileDrop`).
   const { fileDrop } = useThreadSurfaceBox()
   const snap = useSnapshot(store)
@@ -183,13 +174,13 @@ function LocalThreadComposerBox({
   const { steer: steerable } = backendFollowUps(thread?.backend)
   const pickedMode = useSendMode()
   const mode = steerable ? pickedMode : "queue"
-  // ONE placeholder for both surfaces, decided here from the thread — the queue card said "Reply to the
+  // ONE placeholder for every surface, decided here from the thread — the queue card said "Reply to the
   // agent…" and the drawer "Follow up…" until 2026-10-09, and only the card said when the box was the
   // way AROUND an open question. An external session keeps its own sentence: it says what sending does,
   // which is to take the session over (see ThreadActionBar). An open question is a registered one or a
   // fence the worker's last message still asks — a registered one only while it STANDS (the server's
   // word, shared hasStandingQuestion): one the human has already typed past is no longer what this box
-  // goes around, and the queue card no longer draws it. With an answer staged the box is a note on it,
+  // goes around. With an answer staged the box is a note on it,
   // and with the menu shut this line is also what says how the button will send (sendPlaceholder).
   const placeholder = thread?.foreign
     ? "Send a message to take over this session…"
@@ -220,14 +211,13 @@ function LocalThreadComposerBox({
   // INTERRUPT AND SEND is offered only when there is something to interrupt AND a runtime that can be
   // preempted — `runtime === "running"` is exactly "process alive, turn in flight". The backend policy
   // (Claude only; Codex steers, ACP queues) lives in canInterruptAndSend, pinned by its test.
-  const canInterrupt = canInterruptAndSend(thread, submitOverride !== undefined)
-  // THE PHONE BAR — the drawer's composer below the phone breakpoint (the queue card never renders
-  // on a phone). Its right-hand verb follows the thread: Done while it rests and can be completed,
+  const canInterrupt = canInterruptAndSend(thread)
+  // THE PHONE BAR — the drawer's composer below the phone breakpoint. Its right-hand verb follows the thread: Done while it rests and can be completed,
   // Send once there is text, a dimmed ↑ while a turn runs.
   const isMobile = useIsMobile()
   // NOT on /full at a narrow width: that page keeps the desktop header, so its box is the desktop box
   // too — the Goal rides this rail and nowhere else on desktop chrome, and the phone bar has no rail.
-  const phoneBar = (phoneChrome ?? isMobile) && surface === "chatComposer"
+  const phoneBar = phoneChrome ?? isMobile
   const turnRunning = thread?.runtime === "running" || thread?.runtime === "spawning"
   // NOT WHILE THE THREAD WAITS ON STEPS (`steps:` in its last fence). The list above is ticked to say
   // "I did this"; a check beside it would mean "archive the thread", and on a phone the two read as one.
@@ -311,15 +301,12 @@ function LocalThreadComposerBox({
         steps?.onRollback()
       },
     }
-    if (submitOverride) submitOverride(outgoing, callbacks)
-    else {
-      followUp.submit(outgoing, { ...callbacks, interrupt })
-      surfaceExit?.sent?.()
-    }
+    followUp.submit(outgoing, { ...callbacks, interrupt })
+    surfaceExit?.sent?.()
   }
 
-  // Register this box as its surface's send, so Enter in a question card's own text box — and the
-  // queue card's card-level Enter — is this same send, typed words included. Through a ref: `send`
+  // Register this box as its surface's send, so Enter in a question card's own text box is this same
+  // send, typed words included. Through a ref: `send`
   // closes over the current draft and staged answers, and is a new function every render.
   const sendRef = useRef(send)
   sendRef.current = send
@@ -333,11 +320,11 @@ function LocalThreadComposerBox({
 
   if (phoneBar) {
     return (
-      <div data-thread-composer-box={surface} data-thread-action-bar="" data-phone-thread-bar="">
+      <div data-thread-composer-box={SURFACE} data-thread-action-bar="" data-phone-thread-bar="">
         <Composer
           contextTokens={contextTokens}
           id={id}
-          surface={surface}
+          surface={SURFACE}
           value={message}
           onChange={setMessage}
           onSubmit={() => send()}
@@ -364,18 +351,14 @@ function LocalThreadComposerBox({
   }
 
   return (
-    // `data-thread-action-bar` stays the drawer footer's stable anchor (fixtures/QA scripts measure the
-    // prompt-box inset from it); `data-thread-composer-box` addresses either surface's block.
-    <div
-      data-thread-composer-box={surface}
-      {...(surface === "chatComposer" ? { "data-thread-action-bar": "" } : {})}
-      className={className}
-    >
+    // `data-thread-action-bar` stays the footer's stable anchor (fixtures/QA scripts measure the
+    // prompt-box inset from it); `data-thread-composer-box` addresses the block.
+    <div data-thread-composer-box={SURFACE} data-thread-action-bar="" className={className}>
       {above}
       <Composer
         contextTokens={contextTokens}
         id={id}
-        surface={surface}
+        surface={SURFACE}
         value={message}
         onChange={setMessage}
         onSubmit={() => send()}
@@ -383,7 +366,7 @@ function LocalThreadComposerBox({
         slashSuggest={slashSuggest}
         placeholder={placeholder}
         // NOT `|| followUp.pending`. The send is already committed locally (draft cleared, bubble
-        // appended, and in the queue the card has already begun dissolving), so gating the textarea on
+        // appended), so gating the textarea on
         // its round-trip only made the box go dead — and, because the browser blurs a disabled element,
         // cost the caret — for the ~½s the injection takes. What remains is a genuine backend
         // fence: a permission/profile change owning the runtime.

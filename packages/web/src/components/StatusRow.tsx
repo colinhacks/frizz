@@ -17,9 +17,8 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 //   ⌂ / frizz ▾                                                             ↻  GitHub  ⚙
 //
 // It rides the dispatch composer wherever that composer is: the sidebar's own top on a normal board,
-// the Console's sidebar, and the centered first-task box on a brand-new project (TodosView's
-// `nothingAtAll` branch), which hides the sidebar entirely. Anywhere you can start a thread, this is
-// above it.
+// the Console's sidebar, and the centered first-task box on a brand-new project (FirstTaskView), which
+// hides the sidebar entirely. Anywhere you can start a thread, this is above it.
 //
 // IT IS LOOSE, NOT A CHIP. Until 2026-08-19 this was a FIXED bar pinned to the page's upper-left
 // corner with its own fill, hairline and shadow — a screen's width away from the column it described.
@@ -68,7 +67,7 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 /**
  * Takes nothing beyond the Console's flag and its chip, and reads its live values itself. Its call sites
  * are leaves of very different trees — the sidebar column and the fresh-project centered box — and the
- * second one (TodosView) subscribes to no store state of its own. valtio's useSnapshot tracks the
+ * second one (FirstTaskView) subscribes to no store state of its own. valtio's useSnapshot tracks the
  * properties actually READ, so this re-renders on a board change and on nothing else.
  */
 export function StatusRow({ onConsole = false, projectChip }: { onConsole?: boolean; projectChip?: ReactNode } = {}) {

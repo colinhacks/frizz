@@ -1,7 +1,7 @@
 // THE READER'S PLACE, carried through the fullscreen door.
 //
-// A queue card and the /full page draw the same thread, and until now the door threw away everything
-// the reader had in front of them: /full mounts its own transcript and scrolls to the END, so someone
+// The pane, a drawer and the /full page draw the same thread, and until 2026-09-02 the door threw away
+// everything the reader had in front of them (then on a queue card): /full mounts its own transcript and scrolls to the END, so someone
 // parked at turn 15 of a long card arrived at turn 24 with none of what they were reading still on
 // screen (maintainer 2026-09-02: "the contents that are currently visible in the cue card, their
 // scroll position is totally lost"). Measured on a 24-turn fixture before this existed: eight messages
@@ -9,9 +9,8 @@
 //
 // So the door notes which message is at the top of the reader's view and how far down the screen it
 // sits, and the /full transcript puts that same message back at that same height instead of jumping to
-// the tail. The message is named by its `sourceId`, which is the ONE identifier both surfaces already
-// stamp on their rows (`data-transcript-source-id`) — the card in TodosView, the virtualized rows in
-// ChatView — so no new plumbing is needed on either side to find it again.
+// the tail. The message is named by its `sourceId`, which the virtualized rows in ChatView already stamp
+// (`data-transcript-source-id`) on every surface, so no new plumbing is needed on either side to find it.
 //
 // It is a one-shot hand-off, not state: the door writes it, the next /full transcript to mount reads it
 // and clears it. A module-level slot rather than the valtio store for that reason, and the same shape

@@ -2,12 +2,12 @@ import { createRoot } from "react-dom/client"
 import { BrowserRouter } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardSnapshot } from "@frizz/shared"
-import { TodosView } from "./components/TodosView.tsx"
+import { FirstTaskView } from "./components/FirstTaskView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import "./styles.css"
 
-// FIRST-RUN FIXTURE — the ONE screen a brand-new project shows: TodosView's `nothingAtAll` branch,
+// FIRST-RUN FIXTURE — the ONE screen a brand-new project shows (FirstTaskView),
 // where the prompt box IS the whole screen and App hides the sidebar in lockstep.
 //
 // It exists because that screen carries the StatusRow too (2026-08-19). The row rides the PROMPT BOX,
@@ -63,11 +63,11 @@ createRoot(document.getElementById("root")!).render(
     <TooltipProvider>
       {/* App's own wrapper for this branch: the workpane's readable measure, centered, with the sidebar
           absent. The inner element copies App's <main> — a min-h-screen FLEX COLUMN — because
-          TodosView centers itself vertically with `my-auto`, which only resolves against a flex
+          FirstTaskView centers itself vertically with `my-auto`, which only resolves against a flex
           parent. A plain block here top-aligned the prompt box, which the app never does. */}
       <div className="flex min-h-screen justify-center bg-bg px-5 text-fg text-sm">
         <main className="flex min-h-screen w-[720px] max-w-[62vw] min-w-0 flex-col py-5">
-          <TodosView />
+          <FirstTaskView />
         </main>
       </div>
     </TooltipProvider>

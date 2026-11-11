@@ -135,8 +135,9 @@ export function useQueuedThreads(): readonly ThreadView[] {
   return useSyncExternalStore(onStoreChange, queuedThreadsNow)
 }
 
-/** The threads drawing a queue card on the page on screen: the queue, less the pinned reports a shelf on
- *  this page shows instead (lib/consoleBoard holdsCardHere). Stable until the queue or the grouping moves. */
+/** The threads the pane steps through on the page on screen (they drew a queue card each until
+ *  2026-11-09): the queue, less the pinned reports a shelf on this page shows instead (lib/consoleBoard
+ *  holdsCardHere). Stable until the queue or the grouping moves. */
 export function useQueueCards(): readonly ThreadView[] {
   const queuedThreads = useQueuedThreads()
   const group = useConsoleGroup()

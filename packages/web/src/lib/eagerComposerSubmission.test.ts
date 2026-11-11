@@ -181,8 +181,7 @@ test("a turn that ends before its own followUp returns is not re-anchored: the r
   assert.equal(reanchorsOnLanding(before, SENT, SENT, LANDED), false)
 
   // Either way the stamp is still the send's, so once the board reports the reply it yields: at +600ms and
-  // at +3s the row is the board's own (the Queue band), and the card's freeze — the same predicate, see
-  // isFrozen in TodosView — is off.
+  // at +3s the row is the board's own (the Queue band).
   for (const now of [SENT + 600, SENT + 3_000]) {
     assert.equal(isOptimisticallySteering(done, SENT, now), false)
     const row = optimisticallySteered(done, SENT, now)

@@ -43,7 +43,7 @@ async function read(surfaceSelector: string): Promise<Reading> {
   const letter = box?.previousElementSibling as HTMLElement | null
   if (!surface || !box || !letter) throw new Error(`no free-text row in ${surfaceSelector}`)
   const header = (surface.querySelector("[data-thread-header]")
-    ?? [...surface.querySelectorAll<HTMLElement>("*")].find((el) => getComputedStyle(el).position === "sticky" && !el.hasAttribute("data-queue-card-cap"))) as HTMLElement | undefined
+    ?? [...surface.querySelectorAll<HTMLElement>("*")].find((el) => getComputedStyle(el).position === "sticky")) as HTMLElement | undefined
   if (!header) throw new Error(`no sticky header in ${surfaceSelector}`)
   let scroller: HTMLElement | null = box.parentElement
   while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller = scroller.parentElement

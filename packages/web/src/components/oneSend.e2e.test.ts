@@ -14,8 +14,8 @@ const baseUrl = process.env.FRIZZ_ONE_SEND_E2E_URL
 // been supplied earlier in the transcript"). The thread in one-send-fixture.html asked a question at an
 // EARLIER rest, the human replied past it, and the newest rest asks another and hands the human steps.
 // Each is answered on its own card, then one Enter in the prompt box must carry all of them — and the
-// typed words — as ONE follow-up, and nothing may leave on its own. Pinned on the queue card and in the
-// drawer, in both question grammars: rows the server registered from ```question fences, and the legacy
+// typed words — as ONE follow-up, and nothing may leave on its own. Pinned on the thread view every
+// surface draws, in both question grammars: rows the server registered from ```question fences, and the legacy
 // free-form fences beside a row the `ask` tool registered.
 
 type Sent = { rpc: string; body: { slug?: string; message?: string; answers?: { questionId: string; question: string; chosen?: string[]; text?: string }[] } }
@@ -107,7 +107,7 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
 
     // THE DRAWER, the registered rows: the question asked at the earlier rest, the one at this rest, the
     // steps box, and a note typed in the box — one Enter.
-    await open(page, "view=thread")
+    await open(page, "")
     await pick(page, DEPLOY, "Staging")
     await answerText(page, CHANGELOG, "Redesigned docs site")
     await tickSteps(page)
@@ -129,15 +129,13 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
     await page.waitForSelector("[data-awaiting-steps] span[role=checkbox][aria-checked=true]", { timeout: 10_000 })
     assert.equal(await page.$(STEPS_BOX), null, "no live box beside the sent reply")
 
-    // THE QUEUE CARD, with nothing typed: Enter in the EMPTY box still sends everything staged. The card
-    // opens on the newest exchange, so the earlier rest's question is behind "Load earlier messages".
-    await open(page, "view=queue")
-    await page.evaluate(() => ([...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "Load earlier messages") as HTMLButtonElement | undefined)?.click())
-    await page.waitForFunction((q) => document.body.innerText.includes(q), { timeout: 15_000 }, DEPLOY)
+    // With nothing typed: Enter in the EMPTY box still sends everything staged. (Pinned on the queue
+    // card until the card went, 2026-11-10.)
+    await open(page, "")
     await pick(page, DEPLOY, "Production")
     await answerText(page, CHANGELOG, "New docs")
     await tickSteps(page)
-    await enterInPromptBox(page, "textarea[data-surface='queueComposer']", "")
+    await enterInPromptBox(page, "textarea[data-surface='chatComposer']", "")
     calls = await sent(page)
     assert.deepEqual(calls.map((c) => c.rpc), ["followUp"], "one send, through the prompt box")
     assert.equal(calls[0].body.message, "Done", "the steps box's word alone")
@@ -146,7 +144,7 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
     // THE LEGACY GRAMMAR, in the drawer: a free-form fence at the earlier rest, one at this rest, and a
     // row the `ask` tool registered. The fences' answers are composed into the message, the row's ride
     // beside it, and the steps' word and the note close the message.
-    await open(page, "view=thread&legacy=1")
+    await open(page, "legacy=1")
     await pick(page, "Which ORM should the docs examples use?", "Drizzle")
     await pick(page, "Which database should the preview run on?", "Postgres")
     await pick(page, "Which theme should the preview default to?", "Dark")

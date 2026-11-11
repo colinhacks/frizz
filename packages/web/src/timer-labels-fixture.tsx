@@ -24,11 +24,11 @@ const thread = {
   lastFence: { kind: "awaiting", body: "The next check is scheduled automatically.", hints: [{ kind: "timer", value: timer }] },
 } as unknown as ThreadView
 
-function Surface({ title, dense }: { title: string; dense?: boolean }) {
+function Surface({ title }: { title: string }) {
   return (
     <section className="rounded-xl border border-border bg-panel p-4 shadow-sm">
       <h2 className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted">{title}</h2>
-      <Message m={{ role: "assistant", text: awaiting, tools: [], parts: [{ kind: "text", text: awaiting }] }} dense={dense} />
+      <Message m={{ role: "assistant", text: awaiting, tools: [], parts: [{ kind: "text", text: awaiting }] }} />
     </section>
   )
 }
@@ -38,7 +38,6 @@ createRoot(document.getElementById("root")!).render(
     <main className="mx-auto grid max-w-5xl gap-5 p-6 text-fg">
       <h1 className="text-lg font-semibold">Timer label surfaces</h1>
       <div className="grid gap-5 md:grid-cols-2">
-        <Surface title="Queue card" dense />
         <Surface title="Thread drawer" />
       </div>
       <section className="max-w-md rounded-xl border border-border bg-panel p-4 shadow-sm">

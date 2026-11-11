@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 const chat = readFileSync(new URL("./ChatView.tsx", import.meta.url), "utf8")
-const queue = readFileSync(new URL("./TodosView.tsx", import.meta.url), "utf8")
 const shell = readFileSync(new URL("./ThreadSurface.tsx", import.meta.url), "utf8")
 const threadMessage = () => {
   const component = chat.match(/export function ThreadMessage\([\s\S]*?\n}\n/)?.[0]
@@ -25,7 +24,6 @@ const threadMessage = () => {
 test("the one Message hand-over gives it the registered questions at its rest", () => {
   assert.match(threadMessage(), /shadowedBy=\{t\.shadowedByMessage\.get\(index\)\}/)
   assert.equal((chat.match(/shadowedBy=\{/g) ?? []).length, 1, "ThreadMessage is the only site that passes it")
-  assert.doesNotMatch(queue, /shadowedBy=\{/, "the queue card draws its messages through ThreadMessage")
 })
 
 test("the map is built once, off the messages and questions the anchors use", () => {
@@ -34,7 +32,6 @@ test("the map is built once, off the messages and questions the anchors use", ()
   const build = /registeredStandingAt\(messages, openQuestions\), \[messages, openQuestions\]\)/g
   assert.equal((shell.match(build) ?? []).length, 1, "the thread surface builds it")
   assert.doesNotMatch(chat, /registeredStandingAt\(/)
-  assert.doesNotMatch(queue, /registeredStandingAt\(/)
 })
 
 test("a folded fence leaves no Send button behind it", () => {
@@ -42,11 +39,6 @@ test("a folded fence leaves no Send button behind it", () => {
   // (…and, since 2026-10-11, a surface with no prompt box to send them: where one is mounted its Send
   // button carries every staged answer, and neither of these two is drawn — lib/sendScope.)
   assert.match(chat, /else if \(showSendButton && answering && askBlocks\.length > 0 && !promptBoxSends\)/)
-  // …and the queue card's card-level button stands down for a standing ask folded whole.
-  // (Gated on `fencesLive` since 2026-09-11: a thread dispatched after the free-form fence was retired
-  // has no fence chrome at all — shared QUESTION_FENCE_RETIRED_AT.)
-  assert.match(queue, /const showSendAnswers = !promptBoxSends && fencesLive && \(\(answerable && !tailAskShadowed\) \|\| anyAnswered\)/)
-  assert.match(queue, /allFencesShadowed\(messages\[idx\]\.text, shadowedByMessage\.get\(idx\) \?\? \[\]\)/)
 })
 
 // ---- PER-QUESTION PLACEMENT (2026-09-11) ----
@@ -55,33 +47,25 @@ test("the hand-over gives the message its placed questions, and the stack at eac
   assert.match(threadMessage(), /placed=\{t\.placement\.placed\.get\(index\)\}/)
   assert.match(threadMessage(), /settledPlaced=\{t\.settledPlacement\.placed\.get\(index\)\}/)
   assert.equal((chat.match(/\bplaced=\{/g) ?? []).length, 1, "ThreadMessage is the only site that passes it")
-  assert.doesNotMatch(queue, /\bplaced=\{/)
-  // The placement is the surface's, over the whole list. The queue card draws a window of it, so it
-  // narrows the same placement for its anchors (placedFrom) rather than computing one of its own.
+  // The placement is the surface's, over the whole list. The pane draws a window of it, so it narrows
+  // the same placement for its anchors (placedFrom) rather than computing one of its own.
   assert.equal((shell.match(/placeQuestions\(messages, openQuestions\), \[messages, openQuestions\]\)/g) ?? []).length, 1)
-  assert.match(queue, /const placement = useMemo\(\(\) => placedFrom\(surface\.transcript\.placement, visibleStart\)/)
   // The Send rides the rest a placed card sits in (placedRestEnds), never "any card placed anywhere": a
   // card placed at an older rest with a Send at the tail and nothing above it is the 2026-09-13 report.
   assert.equal((chat.match(/placedRestEnds\(messages, placement\)/g) ?? []).length, 1, "the thread page groups its Sends by rest")
-  assert.equal((queue.match(/placedRestEnds\(messages, placement\)/g) ?? []).length, 1, "the queue card groups its Sends by rest")
   assert.equal((chat.match(/showSend=\{questionGroups\.tailSend\}/g) ?? []).length, 1, "the thread page's tail stack")
   assert.equal((chat.match(/showSend=\{row\.send\}/g) ?? []).length, 1, "the thread page's anchored stacks")
-  assert.equal((queue.match(/showSend=\{questionAnchors\.tailSend\}/g) ?? []).length, 1, "the queue card's tail stack")
-  assert.equal((queue.match(/showSend=\{questionAnchors\.sendAnchors\.has\(anchor\)\}/g) ?? []).length, 1, "the queue card's anchored stacks")
 })
 
-test("a placed question leaves its anchor group on both surfaces, and each surface mounts ONE answering provider", () => {
+test("a placed question leaves its anchor group, and each surface mounts ONE answering provider", () => {
   assert.match(chat, /filter\(\(q\) => !placement\.placedIds\.has\(q\.id\)\)/)
-  assert.match(queue, /filter\(\(q\) => !placement\.placedIds\.has\(q\.id\)\)/)
-  // The provider is the thread surface's (ThreadSurface), which each of the two mounts exactly once —
-  // ThreadSurface.guard.test.ts pins that, and that neither mounts a provider of its own.
+  // The provider is the thread surface's (ThreadSurface), which the thread view mounts exactly once —
+  // ThreadSurface.guard.test.ts pins that, and that nothing mounts a provider of its own.
   assert.equal((shell.match(/<RegisteredAnsweringProvider thread=\{surface\.transcript\.thread\}>/g) ?? []).length, 1)
   assert.equal((chat.match(/<ThreadSurface surface=\{surface\} /g) ?? []).length, 1)
-  assert.match(queue, /<ThreadSurface\n\s+surface=\{surface\}\n/)
 })
 
 test("a free-form fence in a post-retirement thread gets no answering controller, on any surface", () => {
   assert.match(threadMessage(), /answering=\{t\.fencesLive \? t\.answeringForMessage\(m\) : undefined\}/)
-  assert.doesNotMatch(queue, /answeringForMessage\(/, "the queue card hands no controller to a message itself")
   assert.equal((chat.match(/answeringForMessage\(/g) ?? []).length, 1, "ThreadMessage is the only caller")
 })

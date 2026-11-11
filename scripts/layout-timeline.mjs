@@ -41,18 +41,17 @@
 //                           server opens a ledger entry first (its ghost bubble, deliveryInFlight). Plain
 //                           `rpc` has none, which is how a worker's steerThread sends — a different path
 //     [--steers=1500,1900]  ms after 0 at which the page types a steer and presses Send, into the running turn
-//     [--drawer]            record the board's drawer (`?thread=<slug>`) instead of the thread page
+//     [--drawer]            record what `?thread=<slug>` opens on the board instead of the thread page: the
+//                           one-thread pane on a desktop board (the same ThreadView a drawer draws)
 //     [--message=text] [--ms=9000] [--out=/abs/dir] [--w=1400] [--h=900]
 //
 // MORE SURFACES AND ACTIONS (2026-10-14, the layout sweep). Each is recorded the same way, on the same
 // clock, and counted the same way — a state is a change of the rows' tops and heights, the scroll offset,
 // Jump to latest, or the surface's chrome:
-//     [--surface=page|drawer|card|sub]   what is sampled. `card` is the thread's queue card on the board
-//                           (`[data-queue-card-root]`; the WINDOW is its scroller, and every other card's
-//                           top is part of its chrome, so a neighbour that moves counts). `sub` is a
-//                           sub-agent drawer (SubAgentSheet): its scroller, its rows, its header and the
+//     [--surface=page|drawer|sub]   what is sampled. (`card` sampled the thread's queue card, until the
+//                           one-thread pane replaced the cards on 2026-11-09.) `sub` is a sub-agent drawer (SubAgentSheet): its scroller, its rows, its header and the
 //                           lifecycle slot at the header's right. `--drawer` is `--surface=drawer`.
-//     [--from=page|drawer|card|board]    the page loaded before the action, when it is not the surface
+//     [--from=page|drawer|board]    the page loaded before the action, when it is not the surface
 //                           itself: `--surface=sub --from=page` opens the thread page and records the
 //                           sub-agent drawer opened over it; `--from=board` loads the board with nothing
 //                           open (opening a thread from the rail)
@@ -62,7 +61,7 @@
 //     [--action=…]          also:
 //          open-sub  press a sub-agent's title in the thread's transcript (its Agent row)
 //          close     press Escape — the top drawer closes
-//          rail      press the thread's row in the board's left rail (it opens a drawer)
+//          rail      press the thread's row in the board's left rail (it opens the thread in the pane)
 //          rail-full press that row's "Open fullscreen" door (it navigates to the full page)
 //          page-up   wheel the transcript to its top, so older messages page in; the report then
 //                    follows the row the reader was looking at (ANCHOR lines) — it must not move
@@ -79,10 +78,8 @@
 // (the full page's right-hand rail, FocusRail, row by row). And `flash frames`: frames in which the
 // surface's scroller existed with no rows in it, after the first frame that had rows.
 //
-// The page is `/thread/<slug>/full` unless `--drawer`. The board route opens a drawer only for a thread
-// that holds no queue card — one that is running, snoozed or done — so start its turn, snooze it or
-// complete it over RPC first; a thread resting in the queue opens there as its queue card, which is a
-// different surface (TodosView) and is not sampled here.
+// The page is `/thread/<slug>/full` unless `--drawer`, which loads the board with the thread open in its
+// pane, whatever its band.
 //
 // Measured with it on 2026-10-13, scripted workers, 3+ runs per cell at 1400 and 820 wide, short and tall
 // threads: a send from any rest (steps, done, needs_input, bare, a question's answer) paints 2 states; a
@@ -108,6 +105,10 @@ const startRpc = flags.start === "rpc" || flags.start === "rpc-tab"
 const boardChange = ["rename", "pin", "unpin", "snooze"].includes(flags.start) ? flags.start : null
 const surface = flags.surface ?? (flags.drawer ? "drawer" : "page")
 const from = flags.from ?? (surface === "sub" ? "page" : surface)
+if (surface === "card" || from === "card") {
+  console.error("--surface=card / --from=card sampled the queue card, which the one-thread pane replaced (2026-11-09): use --drawer")
+  process.exit(1)
+}
 const steers = (flags.steers ?? "").split(",").filter(Boolean).map(Number)
 const action = flags.action ?? (startRpc || boardChange || steers.length ? "none" : "send")
 const typed = action === "send"
@@ -134,32 +135,19 @@ try {
     const log = (e) => window.__log.push({ t: performance.now(), ...e })
     window.__mark = log
     // The thread's own pane: the nearest ancestor of its scroller that holds a prompt box. The board
-    // route has another prompt box (the dispatch one) and one per queue card.
+    // route has another prompt box (the dispatch one).
     window.__threadPane = () => {
       let n = document.querySelector("[data-drawer-transcript-scroll]")
       while (n && !n.querySelector("[data-composer-box]")) n = n.parentElement
       return n ?? document
     }
     window.__pane = () => {
-      if (window.__surface === "card") return document.querySelector(`[data-queue-card-root="${CSS.escape(slug)}"]`) ?? document
       if (window.__surface === "sub") return document.querySelector("[data-subagent-header]")?.parentElement ?? document
       return window.__threadPane()
     }
     // What the sampler reads, per surface: the scroller, its rows (with a key each), and the chrome.
     window.__surfaceRead = () => {
       const surface = window.__surface
-      if (surface === "card") {
-        const root = document.querySelector(`[data-queue-card-root="${CSS.escape(slug)}"]`)
-        // A card on its way out (its dissolve) is a card that has left: its fade is one designed
-        // transition, not a state per frame of it.
-        if (!root || root.closest("[data-queue-card]")?.getAttribute("data-queue-leaving") === "true") return null
-        return {
-          scroller: document.scrollingElement,
-          pane: { top: 0, bottom: window.innerHeight },
-          rows: [...root.querySelectorAll("[data-transcript-source-id]")].map((el) => [el.dataset.transcriptSourceId, el]),
-          chrome: { card: root, box: root.querySelector("[data-composer-box]"), cards: [...document.querySelectorAll("[data-queue-card]")] },
-        }
-      }
       if (surface === "sub") {
         const header = document.querySelector("[data-subagent-header]")
         const scroller = header?.nextElementSibling
@@ -241,17 +229,7 @@ try {
   const base = url.replace(/\/$/, "")
   const route = from === "page" ? `/thread/${slug}` : from === "drawer" ? `?thread=${slug}` : ""
   await page.goto(`${base}${route}`, { waitUntil: "networkidle2", timeout: 30_000 })
-  if (from === "card") {
-    await page.waitForSelector(`[data-queue-card-root="${slug}"] [data-transcript-source-id]`, { timeout: 20_000 }).catch(() => {
-      throw new Error("no queue card for this thread — is it resting in the queue?")
-    })
-    // The card's prompt box at the bottom of the window: where a reader at its tail is.
-    await page.evaluate((slug) => {
-      const box = document.querySelector(`[data-queue-card-root="${CSS.escape(slug)}"] [data-composer-box]`)
-      const b = box.getBoundingClientRect()
-      window.scrollBy(0, b.bottom + 24 - window.innerHeight)
-    }, slug)
-  } else if (from === "board") {
+  if (from === "board") {
     // A snoozed or done thread's row is in a collapsed band: open the bands first, as a reader would.
     await page.waitForSelector("[data-sidebar-item]", { timeout: 20_000 })
     if (!(await page.$(`[data-sidebar-item="${slug}"]`))) {
@@ -260,7 +238,7 @@ try {
     await page.waitForSelector(`[data-sidebar-item="${slug}"]`, { timeout: 20_000 })
   } else {
     await page.waitForSelector("[data-drawer-transcript-scroll] [data-transcript-row-key]", { timeout: 20_000 }).catch(() => {
-      throw new Error(from === "drawer" ? "no drawer opened — a thread resting in the queue opens as its queue card on this route" : "no transcript on the page")
+      throw new Error(from === "drawer" ? "nothing opened on the board for this thread" : "no transcript on the page")
     })
   }
   await sleep(2500)

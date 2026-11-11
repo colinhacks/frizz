@@ -41,13 +41,11 @@ test("a fence the resting card states never reaches the card either", () => {
   // surface's `hidesAwaiting` (ThreadSurface.tsx), which ThreadMessage hands to Message. Each surface used
   // to pass it at each of its own Message sites, four in two files.
   const chat = source
-  const todos = readFileSync(new URL("./TodosView.tsx", import.meta.url), "utf8")
   const shell = readFileSync(new URL("./ThreadSurface.tsx", import.meta.url), "utf8")
   // One message before the cut keeps its fence: the handoff the board holds the thread in the queue for.
   assert.match(shell, /hidesAwaiting: \(index\) => \[awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, index === lastAgentIdx && restingShown\] as const/)
   assert.match(chat, /const \[staleAwaiting, restingCardShown\] = t\.hidesAwaiting\(index\)/, "ThreadMessage takes both reasons from the surface")
   assert.equal(chat.match(/restingCardShown=\{/g)?.length, 1, "ThreadMessage is the only site that passes it")
-  assert.doesNotMatch(todos, /restingCardShown=|staleAwaiting=/, "the queue card draws its messages through ThreadMessage")
   // …and the emptiness walk agrees, or a fence-only last message keeps its spacer and its rest divider.
   const helper = source.match(/export function rendersNothingIn[\s\S]*?\n}/)?.[0]
   assert.ok(helper, "rendersNothingIn must exist")
@@ -55,19 +53,13 @@ test("a fence the resting card states never reaches the card either", () => {
   assert.match(helper, /entry\.messageIndex === awaitingCut\) stated\.add\(entry\.message\)/, "…and marks the last message as stated")
   assert.match(helper, /messageRendersNothing\(message, stale\.has\(message\), stated\.has\(message\)\)/, "…as its own reason, not one more stale member")
   assert.equal(chat.match(/rendersNothingIn\([a-zA-Z]+, awaitingCut, restingShown, heldIdx\)/g)?.length, 2, "every rendersNothingIn call passes it, and the held handoff")
-  assert.match(todos, /const \{ lastAgentIdx, hidesAwaiting, [^}]*\} = surface\.transcript/, "the queue card's walk asks the surface")
-  assert.equal(todos.match(/message(?:RendersNothing|HasRenderableText)\(m, \.\.\.hidesAwaiting\(globalIdx\)\)/g)?.length, 2, "the queue card's predicates take both reasons")
-  assert.doesNotMatch(todos, /isStaleAwaiting|showsRestingCard\(/, "…and derive neither for themselves")
 })
 
-// THE TAIL MOUNTS WITH THE TRANSCRIPT, NOT BEFORE IT. The board lands first, so the queue card used to
-// paint its resting/done/rested card under the "Loading…" line and then shove it down ~1s later when the
-// messages mounted above it — the layout shift the maintainer refreshed into (2026-08-28).
-test("the queue card holds its tail cards until the transcript window has loaded", () => {
-  const todos = readFileSync(new URL("./TodosView.tsx", import.meta.url), "utf8")
-  // Its tail is the drawer's slot since 2026-10-09, and the slot sits inside the same hold as the gates
-  // above it.
-  assert.match(todos, /\{!q\.isLoading && \(\n\s*<>\n\s*<InteractionStack[^\n]*\n[\s\S]*?<RuntimeStatusSlot/)
+// THE TAIL MOUNTS WITH THE TRANSCRIPT, NOT BEFORE IT. The board lands first, so the queue card (the
+// board's surface until 2026-11-09) used to paint its resting/done/rested card under the "Loading…" line
+// and then shove it down ~1s later when the messages mounted above it — the layout shift the maintainer
+// refreshed into (2026-08-28).
+test("a thread holds its tail cards until the transcript window has loaded", () => {
   // The thread view holds it by construction: the slot is a row of the virtualized transcript, which is
   // mounted only once the window has messages, and the empty state drawn before then has no slot at all.
   assert.match(source, /\{count > 0 \? \(\n\s*<VirtualizedThreadTranscript/)
@@ -111,10 +103,11 @@ test("every awaiting-fence body renders through the block markdown sheet", () =>
 // reports it visible spends an adjacency spacer on an empty slot and saves a rest divider with nothing
 // under it, which is the exact bug the refused-fence strip was added for.
 test("the empty-message predicates take the settled case", () => {
-  for (const fn of ["messageRendersNothing", "messageHasRenderableText"]) {
-    const re = new RegExp(`export function ${fn}\\(m: ChatMessage, staleAwaiting\\?: boolean, restingCardShown\\?: boolean\\)`)
-    assert.match(source, re, `${fn} must accept the message's staleness, and the resting card's claim on it`)
-  }
+  assert.match(
+    source,
+    /export function messageRendersNothing\(m: ChatMessage, staleAwaiting\?: boolean, restingCardShown\?: boolean\)/,
+    "messageRendersNothing must accept the message's staleness, and the resting card's claim on it",
+  )
   const blank = source.match(/function blankText\([\s\S]*?\n}/)?.[0]
   assert.ok(blank, "blankText must exist")
   const code = blank.replace(/^\s*\/\/.*$/gm, "")
@@ -154,8 +147,8 @@ test("a settled fence that handed the human steps keeps its card, with no thread
 // sign-off block is made visible"). A hand-off followed by quiet parks on PR reviews went with the settled
 // fences. Drawn with no thread, like the steps card, and only on the message the surface marked
 // (ChatMessage.latestSignOff, ThreadSurface useLatestSignOff); a fence naming questions keeps only its
-// prose, as it does live. The emptiness predicates read the same mark, so the queue card's collapse walk
-// sees the row it will draw. signOffCard.e2e.test.ts drives it on a real stack.
+// prose, as it does live. The emptiness predicates read the same mark, so the spacer walk sees the row
+// it will draw. signOffCard.e2e.test.ts drives it on a real stack.
 test("the newest sign-off's settled fence keeps its card, with no thread behind it", () => {
   const render = renderText()
   const keep = render.indexOf("&& m.latestSignOff)")
@@ -175,7 +168,6 @@ test("the newest sign-off's settled fence keeps its card, with no thread behind 
 test("every transcript surface cuts staleness at the same index", () => {
   const lastAssistant = readFileSync(new URL("../lib/lastAssistant.ts", import.meta.url), "utf8")
   const shell = readFileSync(new URL("./ThreadSurface.tsx", import.meta.url), "utf8")
-  const todos = readFileSync(new URL("./TodosView.tsx", import.meta.url), "utf8")
   const scan = lastAssistant.match(/export function lastAssistantIndex[\s\S]*?\n}/)?.[0]
   assert.ok(scan, "lastAssistantIndex must exist")
   // SAID, not "is the last assistant ROW". A `kind:"event"` line — rest, wake, compaction, sub-agent
@@ -187,7 +179,7 @@ test("every transcript surface cuts staleness at the same index", () => {
   // Nobody re-derives it by hand — a second copy of the scan is how two surfaces' cuts drift apart.
   const scans = (text: string) => text.match(/for \(let i = messages\.length - 1; i >= 0; i--\) if \(messages\[i\]\.role === "assistant"/g)?.length ?? 0
   assert.equal(scans(lastAssistant), 1, "the last-assistant scan must exist exactly once, inside lastAssistantIndex")
-  assert.equal(scans(source) + scans(todos) + scans(shell), 0, "no surface, and not the shell, carries a second copy")
+  assert.equal(scans(source) + scans(shell), 0, "no surface, and not the shell, carries a second copy")
   const helper = source.match(/export function rendersNothingIn[\s\S]*?\n}/)?.[0]
   assert.ok(helper, "rendersNothingIn must exist")
   assert.match(helper, /new WeakSet<ChatMessage>\(\)/, "it keys on the message object the entry holds")
@@ -197,11 +189,10 @@ test("every transcript surface cuts staleness at the same index", () => {
   // sits past every message while running, so each fence in the window is stale; at rest it is the last
   // assistant message, which the resting card at the tail keys on too. This replaced the 2026-08-28 rule
   // that kept the card at the last REST while the worker ran past it (lib/restAnchor, deleted with it).
-  // The cut is the thread surface's, computed once for the queue card and the thread view (it was written
-  // out in each surface, and in each of the thread view's two columns, until 2026-10-13, and this
+  // The cut is the thread surface's, computed once for every surface (it was written out in each surface, and in each of the thread view's two columns, until 2026-10-13, and this
   // reversal had to be applied to each).
   assert.equal(shell.match(/const awaitingCut = running \? messages\.length : lastAgentIdx/g)?.length, 1, "the cut sits past every message while running")
-  assert.doesNotMatch(source + todos, /const awaitingCut = /, "no surface computes a cut of its own")
+  assert.doesNotMatch(source, /const awaitingCut = /, "no surface computes a cut of its own")
   assert.equal(source.match(/\{ [^}]*awaitingCut, restingShown, [^}]*\} = transcript\n/g)?.length, 1, "the thread view reads it from the surface")
   assert.doesNotMatch(source, /lastRest\(|restAnchor\.ts|restedAt/, "the rest anchor is gone; nothing keeps a card at a rest the worker ran past")
   assert.equal(source.match(/staleAwaiting=\{/g)?.length, 1, "the renderer is handed the surface's answer, at ThreadMessage alone")
@@ -293,6 +284,6 @@ test("a done card draws Mark as done only while the thread rests on it", () => {
   assert.match(card, /const markDone = doneThread && !isMobile && !pastRest \? \(/, "a card the thread has moved past draws no verb")
   // The tail's own done card (a sign-off that came in as a tool call) is never stale: it is only drawn at rest.
   // (RegisteredDoneCard draws it, with the whole body — lib/registeredDoneBody — and no pastRest.)
-  assert.match(source, /case "registered-done":\n\s+return <RegisteredDoneCard thread=\{thread!\} wrap=\{wrap\} \/>/)
-  assert.match(source, /return <FenceCard fenceKind="done" body=\{body\} hints=\{thread\.lastFence!\.hints\} wrap=\{wrap\} \/>/)
+  assert.match(source, /case "registered-done":\n\s+return <RegisteredDoneCard thread=\{thread!\} \/>/)
+  assert.match(source, /return <FenceCard fenceKind="done" body=\{body\} hints=\{thread\.lastFence!\.hints\} \/>/)
 })

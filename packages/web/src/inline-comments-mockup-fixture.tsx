@@ -29,8 +29,7 @@ import "./styles.css"
 // fixture messages. The header, prompt box and lifecycle footer are copies of ThreadHeader / Composer /
 // ThreadLifecycleFooter, because most of what is drawn here are states those components cannot reach.
 //
-// The transcript data, the anchors and the highlight engine live in inline-comments-mockup-kit.ts, shared
-// with queue-dock-mockup-fixture.
+// The transcript data, the anchors and the highlight engine live in inline-comments-mockup-kit.ts.
 //
 //   http://localhost:5478/inline-comments-mockup-fixture.html   (?theme=light for the light palette)
 const params = new URLSearchParams(location.search)

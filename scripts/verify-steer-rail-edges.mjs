@@ -3,7 +3,7 @@
 // on a steer that never landed is worse than one that never moved — so each retreat is exercised:
 //
 //   rollback  — the followUp POST fails (intercepted at the network). clearSteered must drop the row
-//               straight back into the rested band, at its old position, with its card restored.
+//               straight back into the rested band, at its old position, with the pane still on it.
 //   expiry    — the send succeeds but the worker never writes a turn (a swallowed injection). The row
 //               must fall out of the running band on its own at STEER_OPTIMISM_MS, unprompted by any
 //               board push, because nothing else will repaint a quiet thread at the cap.
@@ -38,7 +38,7 @@ const PROBE = `(() => {
     }
   }
   walk(rail, false)
-  return { ready: true, rows, cards: [...document.querySelectorAll('[data-queue-card]')].map((e) => e.dataset.queueCard) }
+  return { ready: true, rows, pane: document.querySelector('[data-pane-thread] [data-thread-surface]')?.getAttribute('data-thread-surface') ?? null }
 })()`
 
 const api = createRpcClient(url)
@@ -71,8 +71,11 @@ try {
   await page.waitForSelector(`[data-sidebar-item]`, { timeout: 20_000 })
   await new Promise((r) => setTimeout(r, 2500))
 
+  // Every row opens its thread in the board's pane, whatever its band, and the steer goes through the
+  // pane's prompt box.
   const steer = async (slug, text) => {
-    const composer = `[data-queue-card="${slug}"] textarea`
+    await page.click(`[data-sidebar-item="${slug}"]`)
+    const composer = `[data-pane-thread] [data-thread-surface="${slug}"] textarea`
     await page.waitForSelector(composer, { timeout: 10_000 })
     await page.click(composer)
     await page.type(composer, text)
@@ -84,14 +87,14 @@ try {
   await steer("worker-6", "this send is going to fail")
   await settle(400)
   const rollbackPeak = await bandOf("worker-6")
-  // Past the abort (1.5s) AND past TodosView's 8s reappear guard, which is what puts the card back.
+  // Past the abort (1.5s), and long enough that a late board push would have moved the row again.
   await settle(10_000)
   const rollbackSettled = await page.evaluate(PROBE)
   await page.screenshot({ path: join(outDir, "20-rollback.png") })
   results.rollback = {
     bandWhileOptimistic: rollbackPeak,
     bandAfterFailure: rollbackSettled.rows.find((r) => r.id === "worker-6")?.band ?? null,
-    cardRestored: rollbackSettled.cards.includes("worker-6"),
+    paneStillOn: rollbackSettled.pane === "worker-6",
     pass: rollbackPeak === "running" && rollbackSettled.rows.find((r) => r.id === "worker-6")?.band === "rested",
   }
 
@@ -108,7 +111,7 @@ try {
   results.expiry = {
     bandWhileOptimistic: expiryPeak,
     bandAfterCap: expirySettled.rows.find((r) => r.id === "worker-7")?.band ?? null,
-    cardRestored: expirySettled.cards.includes("worker-7"),
+    paneStillOn: expirySettled.pane === "worker-7",
     pass: expiryPeak === "running" && expirySettled.rows.find((r) => r.id === "worker-7")?.band === "rested",
   }
 
@@ -122,21 +125,9 @@ try {
   await settle(2500)
   const snoozedBefore = await bandOf(snoozedSlug)
   await page.screenshot({ path: join(outDir, "23-snoozed-before.png") })
-  // A Snoozed row has no queue card, so its steer goes through the thread DRAWER's composer — tagged by
-  // its fixed-positioned drawer ancestor, since the workpane's queue cards share the placeholder.
-  await page.click(`[data-sidebar-item="${snoozedSlug}"] button`)
-  await settle(1500)
-  const tagged = await page.evaluate(() => {
-    const ta = [...document.querySelectorAll("textarea")].find((e) => e.closest(".fixed"))
-    if (!ta) return false
-    ta.setAttribute("data-probe-composer", "1")
-    return true
-  })
-  if (!tagged) throw new Error("no drawer composer found for the snoozed row")
-  const drawerComposer = "[data-probe-composer]"
-  await page.click(drawerComposer)
-  await page.type(drawerComposer, "picking this back up now")
-  await page.keyboard.press("Enter")
+  // A Snoozed row opens in the pane like any other (it had no queue card, and went through a drawer
+  // until the pane replaced the cards).
+  await steer(snoozedSlug, "picking this back up now")
   await settle(400)
   const snoozedPeak = await bandOf(snoozedSlug)
   await page.screenshot({ path: join(outDir, "24-snoozed-steered.png") })

@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import type { AwaitingHint, BoardSnapshot, RegisteredQuestionView, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { ThreadView } from "./components/ChatView.tsx"
-import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import { fixtureSetHumanTodo, fixtureTodos } from "./human-todos-fixture-stub.ts"
@@ -14,8 +13,8 @@ import "./styles.css"
 // newest rest asks another and hands the human steps. All three stay answerable, and one Enter in the
 // prompt box must carry all three.
 //
-//   ?view=queue    the queue card (the default)
-//   ?view=thread   the drawer's thread view
+//   The thread view every surface draws (the board's pane, a drawer, the full page). It drew the queue
+//   card too, under ?view=queue, until the card went (2026-11-10).
 //   ?legacy=1      a thread dispatched before the free-form fence was retired: both asks are free-form
 //                  ```question fences, answered through the fence controller, and one more question is a
 //                  registered row of the `ask` tool's — so all three kinds of staged answer ride one send.
@@ -147,15 +146,10 @@ window.fetch = async (input, init) => {
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={new QueryClient()}>
     <TooltipProvider>
-      {params.get("view") === "thread" ? (
-        <div className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border bg-bg text-sm text-fg">
-          <ThreadView slug={SLUG} />
-        </div>
-      ) : (
-        <div className="mx-auto w-[min(680px,calc(100%-32px))] py-8">
-          <TodosView />
-        </div>
-      )}
+      {/* A <main>, as the pane's column is: the panels that open off the prompt box take it as their boundary. */}
+      <main className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border bg-bg text-sm text-fg">
+        <ThreadView slug={SLUG} />
+      </main>
     </TooltipProvider>
   </QueryClientProvider>,
 )

@@ -4,35 +4,27 @@ import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } 
 import { QueueOpsSummary } from "./components/QueueOpsSummary.tsx"
 import { ThreadActionBar } from "./components/ThreadActionBar.tsx"
 import { ThreadSurface, useThreadSurface } from "./components/ThreadSurface.tsx"
-import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import "./styles.css"
 
-// Browser QA for THE STANDARD PROMPT BOX (components/ThreadComposerBox.tsx) — the block both the queue
-// cue card and the thread drawer render. Two things are proven here, both of which used to differ
-// between the surfaces:
+// Browser QA for THE STANDARD PROMPT BOX (components/ThreadComposerBox.tsx) — the block every thread
+// surface renders. Two things are proven here, both of which once differed between the queue card and
+// the drawer (the card went on 2026-11-10):
 //
 //   D7 — `/login` and `/logout` are FRIZZ-OWNED aliases. They must open the sign-in / sign-out modal and
 //        must NEVER be delivered to the worker's stdin. Before the box was shared this only worked in
 //        the drawer; the queue card injected the literal "/login" string into the running agent.
-//   D8 — an ordinary follow-up still reaches the worker from BOTH surfaces (and, on the queue card,
-//        still dissolves the card optimistically).
+//   D8 — an ordinary follow-up still reaches the worker.
 //
-// The REAL TodosView / QueueCard / ThreadActionBar / ThreadComposerBox render; only the network is
-// stubbed. Every followUp the app attempts is recorded on window.__worker.sent — that array IS the
+// The REAL ThreadActionBar / ThreadComposerBox render; only the network is stubbed. Every followUp the app attempts is recorded on window.__worker.sent — that array IS the
 // worker's stdin as far as this fixture is concerned, so "the alias never reached the worker" is a
 // direct assertion, not an inference.
 //
-//   ?surface=queue  (default)  — just the cue card
-//   ?surface=drawer            — just the drawer footer (ThreadActionBar)
-//   ?surface=both              — both, side by side (the comparison screenshot)
-//   ?answerable=1              — the agent's last message carries a ```question block, so the card also
-//                                shows its "Send answers" action above the box (layout check)
+//   ?answerable=1              — the agent's last message carries a ```question block (layout check)
 
 const SLUG = "alias-thread"
 const params = new URLSearchParams(location.search)
-const SURFACE = params.get("surface") ?? "queue"
 const ANSWERABLE = params.get("answerable") === "1"
 
 const thread = {
@@ -113,20 +105,12 @@ window.fetch = async (input, init) => {
     }
     return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })
   }
-  // The queue card reads its settled registered questions; an empty `{}` leaves the query's data
+  // A thread surface reads its settled registered questions; an empty `{}` leaves the query's data
   // undefined, which React Query reports to the console and the no-errors assertion then trips on.
   if (url.pathname === "/_frizz/rpc/threadSettledQuestions") {
     return new Response(JSON.stringify({ result: { questions: [] } }), { headers: { "content-type": "application/json" } })
   }
   return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })
-}
-
-function QueueSurface() {
-  return (
-    <main data-fixture-queue className="w-[720px] max-w-full min-w-0 flex flex-col py-5">
-      <TodosView />
-    </main>
-  )
 }
 
 // The drawer's real footer arrangement (ChatView renders exactly this pair): the chat footer frame,
@@ -157,8 +141,7 @@ function Fixture() {
   return (
     <div className="relative min-h-screen bg-bg text-fg text-sm">
       <div className="flex min-h-screen justify-center gap-6 px-4">
-        {SURFACE !== "drawer" && <QueueSurface />}
-        {SURFACE !== "queue" && <DrawerSurface />}
+        <DrawerSurface />
       </div>
     </div>
   )

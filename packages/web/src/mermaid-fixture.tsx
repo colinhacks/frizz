@@ -126,7 +126,7 @@ createRoot(document.getElementById("root")!).render(
         </section>
         {/* The queue rail's width: the narrowest a card is drawn on a desktop. */}
         <section data-fixture-narrow className="mb-8 w-[320px]">
-          <FenceCard fenceKind="done" body={NARROW_BODY} hints={[]} wrap />
+          <FenceCard fenceKind="done" body={NARROW_BODY} hints={[]} />
         </section>
         <section data-fixture-uppercase className="mb-8">
           <FenceCard fenceKind="done" body={UPPERCASE_BODY} hints={[]} />

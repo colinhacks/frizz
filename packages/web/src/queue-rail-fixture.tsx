@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router"
 import type { BoardSnapshot, CodexModel, DispatchPreferences, ProjectCard, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { ConsoleSidebar } from "./components/ConsoleSidebar.tsx"
 import { Sidebar } from "./components/Sidebar.tsx"
-import { TodosView } from "./components/TodosView.tsx"
+import { FirstTaskView } from "./components/FirstTaskView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { setConsoleGroup } from "./lib/consoleBoard.ts"
 import { pickConsoleDispatchProject } from "./lib/consoleDispatchProject.ts"
@@ -12,25 +12,20 @@ import { threadKey } from "./lib/threadKey.ts"
 import { store } from "./store.ts"
 import "./styles.css"
 
-// Browser QA for THE RAIL BESIDE THE QUEUE while the human acts: the real <Sidebar/> and the real
-// <TodosView/> side by side in App's own layout, over a three-card queue. It exists for the two things
-// the rail did on every action until 2026-10-13, both recorded on a stack whose worker is the scripted
-// Claude (scripts/scripted-claude.mjs) and both pinned by queueRailSettle.e2e.test.ts:
-//
-//   · a send from a card moved the SCROLL MARKER three times: onto the sent row in the Running band
-//     (where no row has a card), then onto the card above for the length of the fade, then onto the
-//     card below (lib/sidebarScrollspy markerRow);
-//   · a dispatch from the prompt box put a "Starting thread…" card between the box and the rail for the
-//     length of the dispatch call, so every row moved down 73px and back up (lib/pendingDispatch).
+// Browser QA for THE RAIL while the human dispatches: the real <Sidebar/> over three queued threads. It
+// exists for what the rail did on every dispatch until 2026-10-13, recorded on a stack whose worker is
+// the scripted Claude (scripts/scripted-claude.mjs) and pinned by queueRailSettle.e2e.test.ts: a
+// dispatch from the prompt box put a "Starting thread…" card between the box and the rail for the length
+// of the dispatch call, so every row moved down 73px and back up (lib/pendingDispatch). It drew the
+// queue's cards beside the rail too, until the card went (2026-11-10).
 //
 // `?surface=` picks which prompt box the dispatch is made from (the default is a project's sidebar):
 //
 //   · `console` — the real <ConsoleSidebar/> over two projects' threads, at `/console` so the page keys
 //     and routes as the Console does. `&group=status|project` picks the grouping, `&pick=<slug>` the
 //     project the chip points at (`gamma` has nothing on the Console, so its block does not exist yet);
-//   · `first-run` — a board with no thread at all: the centred prompt box, and no rail to draw a row in.
-//
-// `window.__startElsewhere()` adds a Running thread the way a board delta nobody here asked for does.
+//   · `first-run` — a board with no thread at all: the centred prompt box (FirstTaskView), and no rail to
+//     draw a row in.
 //
 // The server is modelled on what those recordings showed. A follow-up's board delta (the thread running,
 // off the queue) lands tens of milliseconds after the click, well after the optimistic commit. A
@@ -181,29 +176,9 @@ window.fetch = async (input, init) => {
   return json(null)
 }
 
-// A thread that starts somewhere else — another tab, a wake, a GitHub batch: its Running row arrives in
-// the rail with no click on this page and no pending entry (lib/stackedRailAnchor is what it exercises).
-;(window as unknown as { __startElsewhere: () => void }).__startElsewhere = () => {
-  const now = new Date().toISOString()
-  setThreads((threads) => [...threads, makeThread("started-elsewhere", "started-elsewhere", 0, { titleAuto: true, runtime: "running", needsYou: false, spawnedAt: now, lastUserAt: now, lastAssistantAt: undefined, lastActivityAt: now } as Partial<ThreadViewModel>)])
-}
-
-// A thread whose turn ended somewhere else: its card arrives in the queue with no click on this page
-// (lib/readerPin is what it exercises). `id` names a thread already on the board (a running one rests) or
-// a new one. `restedAt` defaults to now, the newest rest of all; an older one is a card coming back from a
-// snooze, which oldest-first places above the cards that rested after it.
-;(window as unknown as { __arriveInQueue: (id?: string, restedAt?: string) => void }).__arriveInQueue = (id = "arrived-card", restedAt = new Date().toISOString()) => {
-  setThreads((threads) => {
-    const rest = { runtime: "turn-idle", needsYou: true, lastAssistantAt: restedAt, lastActivityAt: restedAt } as Partial<ThreadViewModel>
-    return threads.some((t) => t.id === id)
-      ? threads.map((t) => (t.id === id ? ({ ...t, ...rest } as ThreadViewModel) : t))
-      : [...threads, makeThread(id, "A card that just arrived", 10, rest)]
-  })
-}
-
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } })
 
-// App's own row: the sticky rail beside the page-scrolled queue.
+// App's own row before the pane: the sticky rail beside the workpane, which only the first-run view fills.
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -212,7 +187,7 @@ createRoot(document.getElementById("root")!).render(
           <div className="flex min-h-screen justify-center gap-[clamp(28px,3.4vw,52px)] px-5 max-[800px]:flex-col max-[800px]:justify-start max-[800px]:gap-0 max-[800px]:px-3">
             {surface === "console" ? <ConsoleSidebar /> : surface === "first-run" ? null : <Sidebar />}
             <main id="workpane" className="w-[720px] max-w-[62vw] min-w-0 flex flex-col py-5 min-h-screen max-[800px]:w-full max-[800px]:max-w-none">
-              <TodosView />
+              {surface === "first-run" && <FirstTaskView />}
             </main>
           </div>
         </div>

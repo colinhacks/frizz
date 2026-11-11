@@ -33,7 +33,6 @@ import { ChevronRight, MessagesSquare } from "lucide-react"
 import type { TranscriptMessage } from "@frizz/shared"
 import { useMermaidIslands } from "./CodexRichOutput.tsx"
 import { DIVIDER_LINK } from "./FrizzWake.tsx"
-import { QUEUE_WRAP } from "./TranscriptCard.tsx"
 import { WAKE_DIVIDER_GLYPH, WAKE_DIVIDER_WIDE_ONLY, WakeDivider, WakeDividerLabel } from "./WakeDivider.tsx"
 import { displayTitle } from "../groups.ts"
 import { outerPath, projectHref } from "../lib/base-path.ts"
@@ -47,7 +46,7 @@ export function sessionPeerHref(thread: NonNullable<SessionPeer["thread"]>): str
   return thread.project ? `${projectHref(thread.project)}/thread/${thread.slug}` : outerPath(`/thread/${thread.slug}`)
 }
 
-export function SessionMessageLine({ peer, text, queued, sourceId, at, wrap }: { peer: SessionPeer; text: string; queued?: boolean; sourceId?: string; at?: string; wrap?: boolean }) {
+export function SessionMessageLine({ peer, text, queued, sourceId, at }: { peer: SessionPeer; text: string; queued?: boolean; sourceId?: string; at?: string }) {
   const [open, setOpen] = useState(false)
   const bodyId = useId()
   const sender = peer.thread
@@ -143,7 +142,7 @@ export function SessionMessageLine({ peer, text, queued, sourceId, at, wrap }: {
               spans. `card-md` sets it on the cards' 13px scale with an inherited colour, a step under full
               strength, so it reads as quoted rather than as this worker's own 14px prose. */}
           <div id={bodyId} className="card-md text-fg/85">
-            <div ref={bodyRef} className={`md-body [overflow-wrap:anywhere]${wrap ? ` ${QUEUE_WRAP}` : ""}`} dangerouslySetInnerHTML={body} />
+            <div ref={bodyRef} className="md-body [overflow-wrap:anywhere]" dangerouslySetInnerHTML={body} />
             {diagrams}
           </div>
         </fieldset>

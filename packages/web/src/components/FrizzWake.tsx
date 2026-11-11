@@ -34,7 +34,7 @@ import { AlarmClock, Bell, Bot, Github, Hourglass, MessageCircleOff, Radio, Refr
 import { isGithubWakeBacklog, isInjectedNoise, isParkCorrection, parseCommandWatchWake, parseMonitorWake, type MonitorWake, parseGithubWakeSteer, parseInterruptEndedWake, parseLimitModelSwitchWake, parseLimitResumeWake, parseMergedWake, parseOwnWatchExpiredWake, parseParkWake, parsePrWatchExpiredWake, parsePrWatchGoneWake, parsePrWatchStateWake, parsePrWatchWake, parseQuestionsCancelledWake, parseRecurringPrompt, parseShellDoneWake, parseTimerWake, stripWakeTrailer, type CommandWatchWake, type GithubWakeSteer, type InterruptEndedSubAgent, type LimitWindow, type MergedWakePart, type ParkWake, type PrWatchStateWake, type PrWatchWake, type ShellDoneWake, type TimerWake } from "@frizz/shared"
 import { commandWatchName } from "./AwaitingBackgroundCard.tsx"
 import { useMermaidIslands } from "./CodexRichOutput.tsx"
-import { QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
+import { TranscriptCard } from "./TranscriptCard.tsx"
 import { RecurringPromptLine } from "./RecurringPromptLine.tsx"
 import { VSpace } from "./rhythm.tsx"
 import { DividerHint, DividerQuotedTitle, WAKE_DIVIDER_NARROW_ONLY, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
@@ -68,11 +68,11 @@ export const DIVIDER_LINK = "rounded-sm underline decoration-muted/30 underline-
 // hairline here dates itself by, with two exceptions that carry a better one of their own: a single
 // review item dates by GitHub's clock (when the comment was filed, which is the news), and a timer by
 // the instant it was set to fire.
-export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?: GithubWakeSteer; text: string; sourceId?: string; at?: string; wrap?: boolean }) {
+export function FrizzWake({ steer: served, text, sourceId, at }: { steer?: GithubWakeSteer; text: string; sourceId?: string; at?: string }) {
   // SEVERAL WAKES IN ONE DELIVERY, before anything else: every parser below reads a wake from its own
   // first line, and a merged delivery's first line is the envelope's.
   const merged = parseMergedWake(text)
-  if (merged) return <MergedWake parts={merged} sourceId={sourceId} at={at} wrap={wrap} />
+  if (merged) return <MergedWake parts={merged} sourceId={sourceId} at={at} />
   // A recurring prompt (either trigger) REPEATS by design — the same paragraph every few minutes on a
   // thread being driven by one — so it collapses to a single line rather than restating itself in full
   // down the transcript. Parsed from frizz's own trailer, defined beside the composer that writes it; a
@@ -146,7 +146,7 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
               one branch that renders arbitrary text. The server strips it in the display projection and
               this is normally a no-op — but this branch exists precisely for a delivery the parsers
               missed, and that is exactly when the boilerplate used to reach the operator. */}
-          <WakeProse text={stripWakeTrailer(text)} wrap={wrap} />
+          <WakeProse text={stripWakeTrailer(text)} />
         </TranscriptCard>
       </div>
     )
@@ -206,7 +206,7 @@ export function FrizzWake({ steer: served, text, sourceId, at, wrap }: { steer?:
 // worker that is mid-turn arrives as a QUEUED record, which the fold tracks as one object through its
 // enqueue, its dequeue and its delivery attachment; cutting that into several messages would mean every
 // one of those steps resolving a group. Drawing is the one place all three carriers meet.
-function MergedWake({ parts, sourceId, at, wrap }: { parts: MergedWakePart[]; sourceId?: string; at?: string; wrap?: boolean }) {
+function MergedWake({ parts, sourceId, at }: { parts: MergedWakePart[]; sourceId?: string; at?: string }) {
   // The trailer comes off each part, because the server's display projection is anchored to the END of
   // the delivery and so only ever reached the last one. And what the server drops when it arrives alone
   // is left out here: a fence correction is not a message (it marks the fence it refused instead), and
@@ -222,7 +222,7 @@ function MergedWake({ parts, sourceId, at, wrap }: { parts: MergedWakePart[]; so
         <Fragment key={i}>
           {i > 0 && <VSpace />}
           {/* Only the FIRST part takes the sourceId — two rendered nodes must never claim one id. */}
-          <FrizzWake text={body} sourceId={i === 0 ? sourceId : undefined} at={at} wrap={wrap} />
+          <FrizzWake text={body} sourceId={i === 0 ? sourceId : undefined} at={at} />
         </Fragment>
       ))}
     </div>
@@ -230,7 +230,7 @@ function MergedWake({ parts, sourceId, at, wrap }: { parts: MergedWakePart[]; so
 }
 
 // A wake no structured parser matches can still carry Markdown — a list, a link, a fenced block.
-function WakeProse({ text, wrap }: { text: string; wrap?: boolean }) {
+function WakeProse({ text }: { text: string }) {
   const html = useMarkdownHtml(text)
   const inner = useInnerHtml(html)
   // A ```mermaid fence a wake quotes — a review comment's, say — is a diagram, as in the cards.
@@ -238,7 +238,7 @@ function WakeProse({ text, wrap }: { text: string; wrap?: boolean }) {
   const diagrams = useMermaidIslands(ref, html)
   return (
     <>
-      <div ref={ref} className={`md-body [overflow-wrap:anywhere]${wrap ? ` ${QUEUE_WRAP}` : ""}`} dangerouslySetInnerHTML={inner} />
+      <div ref={ref} className="md-body [overflow-wrap:anywhere]" dangerouslySetInnerHTML={inner} />
       {diagrams}
     </>
   )

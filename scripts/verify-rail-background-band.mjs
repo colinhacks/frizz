@@ -203,15 +203,8 @@ try {
     if (!ctrl.hasSpinner) failures.push("the control lost its spinner")
 
     // THE REPORT THIS CLOSES (maintainer 2026-08-01): "even though the thread remains in the active
-    // running rail, its card shows up in the queue". Assert the ABSENCE on the real queue surface, not
-    // just the `needsYou` bit that feeds it — the bit and the render are two things, and it was the
-    // render the maintainer saw.
-    const cards = await page.evaluate((slug) => ({
-      mine: !!document.querySelector(`[data-queue-card="${slug}"]`),
-      total: document.querySelectorAll("[data-queue-card]").length,
-    }), SLUG)
-    console.log(`      queue: card for this thread=${cards.mine}  cards on the board=${cards.total}`)
-    if (cards.mine) failures.push("the thread is in the running band AND has a queue card — the exact pair that must not happen")
+    // running rail, its card shows up in the queue". The queue is the pane's now (2026-11-09), and the
+    // pane steps through exactly the rows in the queue band, so the band reading above is that check.
 
     const seen = await page.evaluate((slug) => {
       const row = document.querySelector(`[data-sidebar-item="${slug}"]`)

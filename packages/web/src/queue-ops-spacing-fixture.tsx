@@ -1,16 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
-import { TodosView } from "./components/TodosView.tsx"
+import { ThreadView } from "./components/ChatView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import "./styles.css"
 
-// Browser QA for the BOTTOM of a queue card: the docked prompt box and the line of op counts above it
+// Browser QA for the BOTTOM of a thread: the prompt box and the line of op counts above it
 // (QueueOpsSummary), each of whose counts opens a hover panel of its own ⤷ rows — AGENT, SHELL, GITHUB,
 // File or Link. Until 2026-10-05 the rows hung under the prompt box above a lifecycle footer, and this
 // fixture measured that column's rhythm (the maintainer read the gap under the prompt box as too
-// large); the rows keep that rhythm inside a panel, so it still measures them there.
+// large); the rows keep that rhythm inside a panel, so it still measures them there. It drew the queue
+// card until the card went (2026-11-10), and draws the thread view every surface draws since.
 
 const SLUG = "queue-ops-spacing-demo"
 
@@ -101,10 +102,11 @@ window.fetch = async (input, init) => {
 }
 
 function Fixture() {
+  // A <main>, as the pane's column is: the panels that open off the prompt box take it as their boundary.
   return (
-    <div className="mx-auto w-[min(680px,calc(100%-32px))] py-8">
-      <TodosView />
-    </div>
+    <main className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border bg-bg text-sm text-fg">
+      <ThreadView slug={SLUG} />
+    </main>
   )
 }
 

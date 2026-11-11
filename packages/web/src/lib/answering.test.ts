@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { selectOpenAsks, tailAskIdx, composeAnswerWire, type AskMsgLike } from "./answering.ts"
+import { selectOpenAsks, composeAnswerWire, type AskMsgLike } from "./answering.ts"
 
 // A single ```question block message, tagged with a sourceId for identity.
 const ask = (id: string, body = "Pick one\n- A. Left\n- B. Right"): AskMsgLike => ({
@@ -81,37 +81,6 @@ test("legacy line without sourceId gets a deterministic content identity", () =>
   assert.match(a[0].identity, /^legacy-/)
 })
 
-// ---- tailAskIdx: the queue card's CHROME signal, not an answerability gate ----
-
-test("tailAskIdx: the trailing ask stands at the tail", () => {
-  assert.equal(tailAskIdx([user("do it"), ask("q1")]), 1)
-})
-
-test("tailAskIdx: an ask BURIED by the agent's own continuation still stands at the tail", () => {
-  // Buried, not answered — the agent is still waiting on the human, so the card keeps its Send action.
-  assert.equal(tailAskIdx([ask("q1"), prose("meanwhile I did other work")]), 0)
-})
-
-test("tailAskIdx: a human turn after the ask closes the tail", () => {
-  // The question REMAINS answerable (selectOpenAsks still returns it) — only the card's "waiting on you
-  // right now" chrome stands down.
-  assert.equal(tailAskIdx([ask("q1"), user("actually do something else")]), -1)
-  assert.deepEqual(selectOpenAsks([ask("q1"), user("actually do something else")]).map((a) => a.identity), ["q1"])
-})
-
-test("tailAskIdx: with no ask after the last human turn, nothing stands at the tail", () => {
-  assert.equal(tailAskIdx([user("do it"), prose("did the work, no question")]), -1)
-})
-
-test("tailAskIdx: the MOST RECENT of two stacked asks is the tail one", () => {
-  assert.equal(tailAskIdx([ask("q1"), prose("note"), ask("q2")]), 2)
-})
-
-test("tailAskIdx: punctuation after an ask is skipped, not treated as a turn", () => {
-  assert.equal(tailAskIdx([ask("q1"), event('Agent "x" finished — 2m')]), 0)
-  assert.equal(tailAskIdx([ask("q1"), reasoning("**More thought**")]), 0)
-})
-
 // ---- composeAnswerWire ----
 
 test("all-live SINGLE block is numbered too → the answers card, never a flat bubble", () => {
@@ -188,8 +157,8 @@ test("unique-identity asks are NOT perturbed by the collision guard", () => {
 
 // ---- the optimistic exit's REVERSAL --------------------------------------------------------------
 //
-// `onSent` dissolves the queue card the instant the human commits, which is the point; nothing undid it
-// when the send was then REFUSED, so the card stayed gone and only a toast said otherwise until
+// `onSent` moved the queue card (now the pane) on the instant the human commits, which is the point;
+// nothing undid it when the send was then REFUSED, so the card stayed gone and only a toast said otherwise until
 // resolve()'s 8s reappear guard noticed the board still wanted it (measured on a refused steer against a
 // dead worker: 8084ms before, 305ms after). Two things have to hold, and both are structure rather than
 // behaviour a pure call can reach — so they are read off the source, as the question-shadow pins are.
@@ -206,14 +175,11 @@ test("sendMessage composes the caller's own onRollback ahead of the failure tail
   )
 })
 
-test("the queue card and the board's pane wire the reversal; the drawer and the thread page do not", () => {
-  const todos = readFileSync(new URL("../components/TodosView.tsx", import.meta.url), "utf8")
+test("the board's pane wires the reversal; the drawer and the thread page do not", () => {
   const chat = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8")
   const shell = readFileSync(new URL("../components/ThreadSurface.tsx", import.meta.url), "utf8")
-  // The card tells its surface how it leaves and comes back; the shell (ThreadSurface) turns that into
+  // The pane tells its surface how it leaves and comes back; the shell (ThreadSurface) turns that into
   // the controller's onSent and its reversal, so the two cannot be wired apart.
-  assert.match(todos, /const cancelThisCard = useCallback\(\(\) => onUnresolve\(thread\.id\)/, "the card can reinstate itself")
-  assert.match(todos, /exit: \{ dismiss: dismissThisCard, cancel: cancelThisCard \}/, "…and hands that to its surface")
   assert.match(shell, /\{ onSendFailed: exit\?\.cancel, composer \}/, "the shell reinstates a surface whose send was refused")
   // The thread view names an exit only when the one-thread pane hosts it: there a dismissal brings up the
   // next thread and a refused one brings this one back (ThreadPane.tsx). In a drawer or on the thread page

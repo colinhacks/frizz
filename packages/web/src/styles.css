@@ -153,17 +153,9 @@
    belongs. */
 html {
   scrollbar-width: none; /* Firefox */
-  /* The queue's docked prompt boxes cover this band of the screen (lib/queueDockInset.ts), so a control
-     focused under one is scrolled clear of it rather than left hidden behind it. 0 off the queue. */
+  /* A docked prompt box covers this band of the screen (lib/queueDockInset.ts), so a control focused
+     under one is scrolled clear of it rather than left hidden behind it. 0 where nothing docks. */
   scroll-padding-bottom: var(--queue-dock-inset, 0px);
-}
-/* …except while focus is INSIDE a dock. The dock sits in the very band it pads out, so the browser's
-   reveal-the-caret on every keystroke found the caret "hidden" behind its own box and scrolled the page
-   down to clear it — 42px a key, measured, and again on the next key because a sticky dock never
-   leaves the band. A focused dock is on screen by construction; there is nothing for the padding to
-   clear. */
-html:has([data-thread-composer-box="queueComposer"]:focus-within) {
-  scroll-padding-bottom: 0px;
 }
 html::-webkit-scrollbar {
   width: 0;
@@ -207,7 +199,7 @@ body {
    the real app via scripts/seed-queue-ops-column.mjs): an 11.5px/17.25px row leaves 4.25px under its
    baseline in the sans stack and 6.25px in mono. One shared value would leave the other mode ~2px out.
    Applied by SubAgentSheet's steer footer, the one surface that still hangs the column under its box:
-   the thread's drawer and the queue card count their ops over the box instead (QueueOpsSummary). */
+   every thread surface counts its ops over the box instead (QueueOpsSummary). */
 :root {
   --ops-column-optical-inset: -4.25px;
 }
@@ -1394,9 +1386,9 @@ a[href] {
    than the line breaks wherever it has to (maintainer 2026-10-13: "code blocks should auto-wrap, just
    like the prompt box"). It is a SETTING — "Wrap code", a browser preference that lib/codeWrap.ts
    mirrors onto <html> as `data-code-wrap` — and Off is what the thread view did until that day: each
-   line stays on one line and its block scrolls sideways. One switch for every surface, a Queue card's
-   column included; that column had its own always-wrap rule (TranscriptCard QUEUE_WRAP) only while
-   the thread view had no way to wrap at all.
+   line stays on one line and its block scrolls sideways. One switch for every surface; the queue card's
+   column (gone 2026-11-10) had its own always-wrap rule only while the thread view had no way to wrap
+   at all.
 
    The choice travels as ONE custom property, read here and by the Edit card's rows (lib/diff/diff.css),
    so the two cannot disagree. `anywhere` rather than `break-word` so a wrapped block's longest token
@@ -2551,72 +2543,6 @@ html[data-code-wrap="off"] {
   }
 }
 
-/* Brief arrival ring when a sidebar row scrolls the queue to its card (flashQueueCard in store.ts).
-   Set on the BORDERED CARD ROOT, never the outer slot — the slot is the fade wrapper, not the bordered
-   box (and while it wrapped the inter-card hairline rule and its margins, a ring on it traced ~80px of
-   empty gutter and that rule along with the card).
-   OUTLINE, not box-shadow: the root already owns `shadow-lg shadow-black/25`, which a box-shadow
-   keyframe would clobber for the whole 1.1s (the card would drop its elevation, then pop back), and an
-   inset ring would be painted over by the card's own opaque background. Outline is a separate property,
-   sits entirely OUTSIDE the border box (so the sticky header can never occlude it), and follows the
-   root's rounded-lg. `outline-style` is discrete but is `solid` in both keyframes, so only the animatable
-   color/width/offset actually interpolate. */
-[data-queue-flash] { animation: queue-flash 1.1s ease-out; }
-@keyframes queue-flash {
-  0%, 15% { outline: 2px solid var(--color-accent, #e8b923); outline-offset: 2px; }
-  100% { outline: 2px solid transparent; outline-offset: 2px; }
-}
-/* Reduced motion still needs the answer to "which card did I just jump to?" — the ring is the ONLY
-   feedback when the card is already at the landing (no scroll happens, and a queued row deliberately
-   never opens a drawer). So hold it statically for the 1.1s the attribute is present rather than
-   animating it away — showing nothing at all would leave that click with no response. */
-@media (prefers-reduced-motion: reduce) {
-  [data-queue-flash] {
-    animation: none;
-    outline: 2px solid var(--color-accent, #e8b923);
-    outline-offset: 2px;
-  }
-}
-
-/* Queue card EXIT — the CardSlot exit (TodosView). The card FADES to transparent while it recedes
-   (uniform scale from its centre, so it "sinks backwards") and blurs, AT FULL HEIGHT. Then TodosView
-   UNMOUNTS it and, in the same layout frame, pins a currently-visible neighbour card so nothing on
-   screen shifts (the one-shot pin in TodosView.tsx).
-   There is deliberately NO height-collapse phase (removed 2026-07-15). A gradual grid 1fr→0fr collapse
-   unavoidably DRIFTS the neighbouring card by the collapsed height — native scroll anchoring does not
-   compensate a grid collapse, and any programmatic scroll run alongside it fights the collapse and
-   bounces the card the reader is watching. Instant removal + the explicit neighbour pin is the classic,
-   deterministic answer. Duration MUST stay in sync with QUEUE_DISSOLVE_MS in TodosView.tsx, which
-   unmounts the card on the fade's last frame.
-   The OPACITY runs on the ACCELERATE curve, the exit curve: slow to start, full speed at the end. On the
-   standard curve the card sat below 5% opacity for the last ~60ms of the fade — a slot of the card's full
-   height that reads as empty before anything around it moves. Accelerating, it is still visibly there
-   until the frame it is removed. Reduced motion has no fade at all: the card stays opaque and TodosView
-   removes it at once (exitFadeMs), so no frame shows it gone while its slot remains. */
-.frizz-card-slot { opacity: 1; }
-@media (prefers-reduced-motion: no-preference) {
-  .frizz-card-slot[data-queue-leaving="true"] { opacity: 0; }
-  /* The hairline rule under a card is the slot's next SIBLING (TodosView renders one between each pair of
-     cards, never inside a slot), and it unmounts with the card it follows — so it fades with it too, or
-     the rule would stand at full strength beside a card that has already dissolved. */
-  .frizz-card-slot[data-queue-leaving="true"] + hr { opacity: 0; }
-}
-.frizz-card-slot > .frizz-card-clip > .frizz-card-body { transform-origin: center center; }
-@media (prefers-reduced-motion: no-preference) {
-  .frizz-card-slot[data-queue-leaving="true"] > .frizz-card-clip > .frizz-card-body { transform: scale(0.94); filter: blur(6px); }
-  /* Promote to a compositing layer ONLY while dissolving — a permanent will-change on every mounted card
-     would pin a GPU layer per queue row for its whole lifetime. */
-  .frizz-card-slot[data-queue-leaving="true"] > .frizz-card-clip > .frizz-card-body { will-change: transform, filter; }
-  .frizz-card-slot[data-queue-leaving="true"],
-  .frizz-card-slot[data-queue-leaving="true"] + hr {
-    transition: opacity 200ms cubic-bezier(0.4, 0, 1, 1);
-  }
-  .frizz-card-slot > .frizz-card-clip > .frizz-card-body {
-    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                filter 200ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-}
-
 /* The project rail's scrolling band. A 57px column cannot spend 8-15px of itself on a scrollbar
    track, so the track is hidden and a FADE says what it would have said. Without the mask a rail of
    29 projects clips hard against the divider and reads as the end of the list rather than the middle
@@ -2646,8 +2572,8 @@ html[data-code-wrap="off"] {
    `viewTransition`, which wraps the route swap in
    `document.startViewTransition` — and react-router re-arms the same transition for the browser-Back
    POP of a pair that transitioned. These rules style the three snapshot groups the swap produces.
-   `thread-chat` is the SHARED element: forward, the drawer panel or queue card the door was clicked
-   in (tagged at click time, ExpandThreadLink.tsx) morphs into the /full thread column, which wears
+   `thread-chat` is the SHARED element: forward, the drawer panel or pane the door was clicked in
+   (tagged at click time, ExpandThreadLink.tsx) morphs into the /full thread column, which wears
    the name statically; backward, the column morphs into whichever board surface the primed return
    target names (store.primeFullscreenReturn). `thread-rail` exists only on /full, so it always
    ENTERS or EXITS through its own right edge, the direction it lives in. Everything unnamed — the
@@ -2669,9 +2595,10 @@ html[data-code-wrap="off"] {
 }
 @keyframes frizz-pane-sidebar-out { to { transform: translateX(-100%); opacity: 0; } }
 @keyframes frizz-pane-sidebar-in { from { transform: translateX(-100%); opacity: 0; } }
-/* THE FORWARD MORPH STARTS FROM THE VISIBLE PART OF THE CARD, not its whole box. The browser's own
-   group keyframes run from the old element's full border box, and a tall queue card scrolled to its
-   middle has a box that starts a thousand pixels above the viewport — so the whole screen rushed
+/* THE FORWARD MORPH STARTS FROM THE VISIBLE PART OF THE SURFACE, not its whole box. The browser's own
+   group keyframes run from the old element's full border box, and a tall queue card (the board's
+   surface until 2026-11-09) scrolled to its middle had a box that started a thousand pixels above the
+   viewport — so the whole screen rushed
    downward for 200ms while the column faded in over it. The door measures the part of the surface
    that is on screen (lib/fullscreenMorph.ts) and hands it here as `--frizz-vt-from-*`; the `to` side
    stays the group's own computed geometry, so only the start moves. `data-vt-door` is set by the

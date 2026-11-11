@@ -4,7 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { useSnapshot } from "valtio"
 import { AlarmClock, Check, ChevronRight, CircleDashed, Ellipsis, Github, Hourglass, Loader2, Pin, PinOff, Radio, RotateCcw, Timer } from "lucide-react"
 import { hasLiveSubAgents, type BoardSnapshot, type ThreadView } from "@frizz/shared"
-import { store, openThread, scrollToQueueCard, queueCardTargetY, pushSubAgentDrawer, showToast, queueCardViewportTop } from "../store.ts"
+import { store, openThread, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { useBoardThreads, useChildThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
@@ -35,7 +35,6 @@ import { unlandedDispatches, usePendingDispatches, type PendingDispatchEntry } f
 import { STACKED_RAIL_ANCHOR_CLASS, stackedRailAnchor } from "../lib/stackedRailAnchor.ts"
 import { useProjectScope } from "../lib/projectScope.tsx"
 import { clampToSlots, edgeScrollVelocity, heldStep, moveItem, nearestSlot, shiftFor, type RowSlot } from "../lib/railReorder.ts"
-import { activeSidebarSection, markerRow, queueCardGeometry, queueNavigationSettled, railRevealDelta, scrolledToDocumentBottom } from "../lib/sidebarScrollspy.ts"
 import { SIDEBAR_WIDTH_CLASS } from "../lib/boardColumns.ts"
 import { RailViewChips } from "./RailViewChips.tsx"
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactElement, ReactNode, RefObject } from "react"
@@ -84,8 +83,9 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 // utility over a bare one.
 const ROW_ACTION_CLASS = "flex h-[19px] w-[19px] items-center justify-center rounded text-muted opacity-70 outline-none transition-[color,opacity] hover:bg-panel-2 hover:text-fg hover:opacity-100"
 
-// ANCHORED TO THE TOP, 52px down: the line the queue's first card opens on (main's py-5 + the queue
-// column's py-8 — TodosView), so the status row and the top card start level. It was centred
+// ANCHORED TO THE TOP, 52px down: the line the queue's first card opened on (main's py-5 + the queue
+// column's py-8), so the status row and the top card started level, until the pane replaced the cards
+// (2026-11-09). It was centred
 // (`justify-center`) until 2026-10-13, and a centred column moves every row and the prompt box by half of
 // any change in its height: a send that put a thread in a fresh Running band moved the whole sidebar up
 // 24px, and its return moved it back (maintainer: "Anchor both to the top").
@@ -93,98 +93,13 @@ export const SIDEBAR_COLUMN_CLASS =
   `sticky top-0 self-start h-screen ${SIDEBAR_WIDTH_CLASS} flex flex-col pt-[52px] max-[800px]:static max-[800px]:h-auto max-[800px]:pt-16`
 
 /**
- * Which row's card is under the reading line, and the rail scrolled to keep that row in view — the
- * sidebar's scroll marker. Shared with the Console's sidebar (ConsoleSidebar.tsx), whose rows sit
- * opposite cards the same way. `view` and `drawerCount` re-arm the observers when the workpane changes.
- * `queueIds` is the queue band's rows in order: `activeId` is the row the marker is DRAWN on, which is
- * the reading rule's card until that card's row leaves the band while the card is still fading, and
- * from then the row that takes its place (markerRow).
+ * The rail's scroller, and its marker: the row of the thread the board's pane shows, in whichever band it
+ * stands. Shared with the Console's sidebar (ConsoleSidebar.tsx). ThreadPane keeps that row in view. The
+ * marker followed a queue card past a reading line until the pane replaced the cards (2026-11-09).
  */
-export function useQueueScrollspy(view: string, drawerCount: number, queueIds: readonly string[]): {
-  railRef: RefObject<HTMLDivElement | null>
-  activeId: string | null
-  navigateToQueueCard: (id: string) => void
-} {
+export function usePaneMarker(): { railRef: RefObject<HTMLDivElement | null>; activeId: string | null } {
   const railRef = useRef<HTMLDivElement>(null)
-  const [readingId, setActiveId] = useState<string | null>(null)
-  // The queue's order the last time the marked row was in it. Advanced during render, like the queue's
-  // own departure refs (TodosView): the hand-over has to land in the commit that moves the row.
-  const whileQueued = useRef<readonly string[]>([])
-  if (readingId && queueIds.includes(readingId)) whileQueued.current = queueIds
-  const activeId = markerRow(readingId, queueIds, whileQueued.current)
-  // A click-to-card navigation in flight: the row that was clicked, plus where its scroll landed. Both
-  // halves matter — see the release conditions in syncActiveSection.
-  const pendingNavigation = useRef<{ id: string; landedY: number } | null>(null)
-
-  const syncActiveSection = useCallback(() => {
-    // Fading cards included: a card still holds the reader's place until it unmounts (queueCardGeometry).
-    const items = queueCardGeometry({ includeLeaving: true })
-    const pending = pendingNavigation.current
-    if (pending) {
-      const target = items.find((item) => item.id === pending.id)
-      if (queueNavigationSettled(target, window.scrollY, pending.landedY, queueCardViewportTop())) pendingNavigation.current = null
-      else {
-        setActiveId(pending.id)
-        return
-      }
-    }
-    const nextActiveId = activeSidebarSection(items, window.innerHeight, scrolledToDocumentBottom())
-    // Scroll/resize observations can fire several times per frame. Preserve the same primitive
-    // state value to avoid a needless row-tree update when the selected card has not changed.
-    setActiveId((current) => current === nextActiveId ? current : nextActiveId)
-  }, [])
-
-  useEffect(() => {
-    let frame = 0
-    const schedule = () => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(syncActiveSection)
-    }
-    schedule()
-    // Capture scroll so this also follows an app-level scrolling element if the page's scroll root
-    // changes. The rail's own scroll is harmless here (card geometry has not changed), while a
-    // programmatic/smooth queue-card scroll is always observed.
-    document.addEventListener("scroll", schedule, { capture: true, passive: true })
-    window.addEventListener("resize", schedule)
-    const workpane = document.getElementById("workpane")
-    const observer = workpane ? new ResizeObserver(schedule) : null
-    // Transcript expansion, card exits, and keyframe reorders can change which card crosses the
-    // reading line without a window scroll. Observe those DOM changes as well as the workpane box.
-    const mutations = workpane ? new MutationObserver(schedule) : null
-    if (workpane) observer?.observe(workpane)
-    if (workpane) mutations?.observe(workpane, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-queue-card", "data-queue-leaving", "style", "class"] })
-    return () => {
-      cancelAnimationFrame(frame)
-      document.removeEventListener("scroll", schedule, true)
-      window.removeEventListener("resize", schedule)
-      observer?.disconnect()
-      mutations?.disconnect()
-    }
-  }, [syncActiveSection, view, drawerCount])
-
-  // Reveal a newly active row inside the rail itself. Direct scrollTop adjustment is intentionally
-  // local: Element.scrollIntoView could scroll the main document and steal the reader's position.
-  useLayoutEffect(() => {
-    const rail = railRef.current
-    if (!rail || !activeId || window.matchMedia?.("(max-width: 800px)").matches) return
-    const item = rail.querySelector<HTMLElement>(`[data-sidebar-item="${CSS.escape(activeId)}"]`)
-    if (!item) return
-    const railBox = rail.getBoundingClientRect()
-    const itemBox = item.getBoundingClientRect()
-    const delta = railRevealDelta(railBox.top, railBox.bottom, itemBox.top, itemBox.bottom)
-    if (Math.abs(delta) > 0.5) rail.scrollTop += delta
-  }, [activeId])
-
-  // Called AFTER scrollToQueueCard, which has either scrolled or (with a drawer dismissing over the
-  // still-locked page) parked the landing for the unlock ~210ms out. So the landing is read off the
-  // CARD, not off window.scrollY: the two agree once the page has settled, and only the card knows the
-  // answer while the lock is still holding scrollY at 0.
-  const navigateToQueueCard = useCallback((id: string) => {
-    pendingNavigation.current = { id, landedY: queueCardTargetY(id) ?? window.scrollY }
-    setActiveId(id)
-  }, [])
-
-  return { railRef, activeId, navigateToQueueCard }
+  return { railRef, activeId: useSnapshot(store).paneSlug }
 }
 
 export function Sidebar() {
@@ -219,13 +134,11 @@ export function Sidebar() {
   const activeThreads = sections.active
   const heldThreads = sections.snoozed
   const inactiveThreads = sections.inactive
-  // The two bands of the Active section: RESTED is the cue (one row per queue card), RUNNING the rows
-  // with no card. Split here rather than at the render so the scroll marker can be told the cue's order.
+  // The two bands of the Active section: RESTED is the cue, the threads waiting on the human; RUNNING
+  // the rows that are not.
   const { running, rested } = useMemo(() => partitionActive(activeThreads), [activeThreads])
-  const spy = useQueueScrollspy(snap.view, snap.drawers.length, rested.map((t) => t.id))
-  const { railRef, navigateToQueueCard } = spy
-  // THE PANE: the marked row is the thread on screen, not a card under a reading line.
-  const activeId = snap.paneSlug ?? spy.activeId
+  // THE PANE: the marked row is the thread on screen.
+  const { railRef, activeId } = usePaneMarker()
   // A dispatch from the prompt box above, drawn as the Running row it is about to become — see StartingRow.
   // The board's ids are only gathered while one is pending.
   const pending = usePendingDispatches(useProjectScope())
@@ -314,7 +227,7 @@ export function Sidebar() {
           {sections.pinned.length > 0 && (
             <section aria-label="Pinned">
               <SectionHeader label="Pinned" count={sections.pinned.length} />
-              <PinnedBand threads={sections.pinned} railRef={railRef} activeId={activeId} onQueueNavigate={navigateToQueueCard} />
+              <PinnedBand threads={sections.pinned} railRef={railRef} activeId={activeId} />
               {/* The separating rule is drawn only when the Rested/Active section actually follows:
                   Snoozed, Done and External each draw their OWN rule above themselves, so drawing one
                   here too would double it whenever that section is empty. */}
@@ -343,7 +256,7 @@ export function Sidebar() {
               {rested.length > 0 && <SectionHeader label="Queue" count={rested.length} />}
               {rested.map((t) => (
                 <div key={t.id}>
-                  <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={navigateToQueueCard} restedAge />
+                  <ThreadRow t={t} active={activeId === t.id} restedAge />
                   <SubAgentRows t={t} />
                 </div>
               ))}
@@ -357,7 +270,7 @@ export function Sidebar() {
                   reader — and the marker is handed to the row that took its place (markerRow). */}
               {running.map((t) => (
                 <div key={t.id}>
-                  <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={navigateToQueueCard} />
+                  <ThreadRow t={t} active={activeId === t.id} />
                   <SubAgentRows t={t} />
                 </div>
               ))}
@@ -385,7 +298,7 @@ export function Sidebar() {
               {!collapsed.snoozed &&
                 heldThreads.map((t) => (
                   <div key={t.id}>
-                    <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={navigateToQueueCard} restedAge />
+                    <ThreadRow t={t} active={activeId === t.id} restedAge />
                     <SubAgentRows t={t} />
                   </div>
                 ))}
@@ -405,7 +318,7 @@ export function Sidebar() {
                 onToggle={() => (store.sidebarCollapsed.inactive = !store.sidebarCollapsed.inactive)}
               />
               {!collapsed.inactive && (
-                <DoneBand threads={inactiveThreads} railRef={railRef} activeId={activeId} onQueueNavigate={navigateToQueueCard} />
+                <DoneBand threads={inactiveThreads} railRef={railRef} activeId={activeId} />
               )}
             </div>
           )}
@@ -431,7 +344,7 @@ export function Sidebar() {
                   one is from last Tuesday. Done rows are over, so their age answers nothing. */}
               {!collapsed.external &&
                 externalSessions.map((t) => (
-                  <ThreadRow key={t.id} t={t} active={activeId === t.id} onQueueNavigate={navigateToQueueCard} restedAge />
+                  <ThreadRow key={t.id} t={t} active={activeId === t.id} restedAge />
                 ))}
             </section>
           )}
@@ -483,11 +396,10 @@ function reorderBoardPins(ids: readonly string[]): Promise<unknown> {
 /** The band's members, order aside: a pin or an unpin changes them, a reorder does not. */
 const membersKey = (ids: readonly string[]) => [...ids].sort().join("\n")
 
-export function PinnedBand({ threads, railRef, activeId, onQueueNavigate, shelf = "board", leading, onReorder = reorderBoardPins }: {
+export function PinnedBand({ threads, railRef, activeId, shelf = "board", leading, onReorder = reorderBoardPins }: {
   threads: readonly ThreadView[]
   railRef: RefObject<HTMLDivElement | null>
   activeId: string | null
-  onQueueNavigate: (id: string) => void
   /** Which pin the rows speak for: the project board's, or the Console's (groups.ts pinnedOn). */
   shelf?: PinShelf
   /** A mark before each row's indicator — the Console's project square. */
@@ -650,7 +562,7 @@ export function PinnedBand({ threads, railRef, activeId, onQueueNavigate, shelf 
             {/* Undated only while it SPINS: actively running and holding no queue card. A queued row with
                 live work out (an open question beside a running sub-agent) wears the queue's glyph, not a
                 spinner, and the cue would date it — so it is dated here too. */}
-            <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={onQueueNavigate} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} />
+            <ThreadRow t={t} active={activeId === t.id} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} />
             <SubAgentRows t={t} />
           </div>
         )
@@ -769,12 +681,10 @@ function DoneBand({
   threads,
   railRef,
   activeId,
-  onQueueNavigate,
 }: {
   threads: ThreadView[]
   railRef: RefObject<HTMLDivElement | null>
   activeId: string | null
-  onQueueNavigate: (id: string) => void
 }) {
   const listRef = useRef<HTMLDivElement>(null)
   const [scrollMargin, setScrollMargin] = useState(0)
@@ -827,7 +737,7 @@ function DoneBand({
             // inside the band, so the offset comes back off.
             style={{ transform: `translateY(${item.start - scrollMargin}px)` }}
           >
-            <ThreadRow t={t} active={activeId === t.id} onQueueNavigate={onQueueNavigate} />
+            <ThreadRow t={t} active={activeId === t.id} />
             <SubAgentRows t={t} />
           </div>
         )
@@ -875,7 +785,6 @@ export const ThreadRow = memo(function ThreadRow({
   t,
   legacy,
   active = false,
-  onQueueNavigate,
   restedAge = false,
   leading,
   shelf = "board",
@@ -883,7 +792,6 @@ export const ThreadRow = memo(function ThreadRow({
   t: ThreadView
   legacy?: boolean
   active?: boolean
-  onQueueNavigate?: (id: string) => void
   /** Show the right-justified rest-time column: the cue, Pinned, Snoozed and External rows — see RestedAge. */
   restedAge?: boolean
   /** A mark before the indicator — the Console's project square (ConsoleSidebar.tsx). */
@@ -944,19 +852,8 @@ export const ThreadRow = memo(function ThreadRow({
         {active && <span data-sidebar-scroll-marker className="absolute inset-y-0 left-1 w-[2px] rounded-full bg-accent" />}
       </span>
       <button
-        onClick={() => {
-          // A queued (needsYou) thread already has its full card in the main column. A sidebar click
-          // just SCROLLS to that card — it does NOT open a redundant drawer over it (maintainer
-          // 2026-07-15: "it should not open the thread drawer, just auto-scroll to the item in the
-          // queue"). Only fall through to the drawer when no card is mounted (not queued/not rendered).
-          // Opening the drawer here even over the card was tried on 2026-10-21 (c8f97f3c) and reverted
-          // the next day (maintainer: "It definitely should scroll to where it is in the queue instead").
-          if (t.needsYou && scrollToQueueCard(t.id)) {
-            onQueueNavigate?.(t.id)
-            return
-          }
-          openThread(t.id)
-        }}
+        // The board's pane shows it (store openThread → pushDrawer), queued or not.
+        onClick={() => openThread(t.id)}
         aria-current={active ? "location" : undefined}
         className="min-w-0 flex-1 flex items-start gap-2 pb-1 pl-5 pr-1.5 pt-1 text-left"
       >

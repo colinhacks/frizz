@@ -61,9 +61,9 @@ const userAt = (ms, text) => append({ type: "user", uuid: `gen-u${++seq}`, times
 const BUBBLES = `[...document.querySelectorAll('[class*="bg-user-bubble"]')].map((el) => ({
   text: el.innerText.trim().slice(0, 60),
   opacity: Number(getComputedStyle(el).opacity),
-  // Which surface rendered it — the same slug can be mounted in the drawer AND a queue card at once,
+  // Which surface rendered it — the same slug can be mounted in the drawer AND the board's pane at once,
   // so a naive document-wide count would read two surfaces as one duplicated bubble.
-  surface: el.closest("[data-queue-card]") ? "queue-card"
+  surface: el.closest("[data-pane-thread]") ? "pane"
     : el.closest("[data-thread-drawer]") ? "drawer"
     : el.closest("[data-standalone-thread]") ? "standalone" : "chat",
 }))`

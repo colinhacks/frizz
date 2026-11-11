@@ -25,7 +25,7 @@ test("a batch of held wakes draws one hairline per wake, and the fallback card r
     page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()) })
     for (const font of ["sans", "mono"]) {
       for (const width of [1000, 390]) {
-        const url = `${baseUrl}/frizz-wake-fixture.html?font=${font}${width < 500 ? "&dense" : ""}`
+        const url = `${baseUrl}/frizz-wake-fixture.html?font=${font}`
         await page.setViewport({ width, height: 1000, deviceScaleFactor: 2 })
         await page.goto(url, { waitUntil: "networkidle0" })
         await page.waitForSelector('[data-frizz-msg="md"] .md-body h3')

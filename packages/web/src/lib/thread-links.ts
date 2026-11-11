@@ -44,8 +44,8 @@ export function installThreadLinkInterceptor(): () => void {
     if (keyed) {
       if (!store.board?.threads.some((t) => t.id === target)) return // not on the Console — let the browser go
     } else if (onConsole) {
-      // A worker's `/thread/<slug>` names a thread of ITS project: the card or drawer the link is in.
-      const from = linked ?? keyProject(anchor.closest("[data-queue-card]")?.getAttribute("data-queue-card") ?? topThreadSlug() ?? "")
+      // A worker's `/thread/<slug>` names a thread of ITS project: the thread the link is drawn in.
+      const from = linked ?? keyProject(anchor.closest("[data-thread-surface]")?.getAttribute("data-thread-surface") ?? topThreadSlug() ?? "")
       if (from) {
         const key = threadKey(from, target)
         if (!store.board?.threads.some((t) => t.id === key)) return // not on the Console — let the browser go

@@ -219,7 +219,7 @@ function Fixture() {
           <p className="mt-0.5 text-[12px] text-muted">Several wakes held and sent as one delivery, review activity, a finished PR, a CI verdict, both at once, the PR&rsquo;s own state moving, a background shell, a usage window, a fired timer, a park that ran out or finished, a lapsed watcher or watch, a command watch settling, sub-agents an interrupt stopped — and the unparsed fallback, with and without frizz&rsquo;s agent-facing trailer.</p>
         </header>
         <div className="flex flex-1 flex-col gap-3.5 py-5">
-          {messages.map((message) => <Message key={message.sourceId} m={message} dense={new URLSearchParams(location.search).has("dense")} />)}
+          {messages.map((message) => <Message key={message.sourceId} m={message} />)}
         </div>
       </section>
     </main>

@@ -4,26 +4,22 @@ import { MemoryRouter } from "react-router"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import type { GithubRefCard } from "@frizz/shared"
 import { GithubHovercards } from "./components/GithubHovercards.tsx"
-import { TodosView } from "./components/TodosView.tsx"
+import { ThreadView } from "./components/ChatView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import { fixtureReopenHumanTodo, fixtureSetHumanTodo, fixtureTodos } from "./human-todos-fixture-stub.ts"
 import "./styles.css"
 
-// Browser QA for the resting card ON THE QUEUE: a thread that came to rest while its OWN background work
-// is still live and no human ask is outstanding renders the informational banner + the event "Snooze"
-// button and its explainer (see TodosView.AwaitingBackgroundBanner). snoozeAwaitingBackground is mocked so
-// nothing real is hit; clicking Snooze fades the card out.
+// Browser QA for the RESTING CARD: a thread that came to rest while its OWN background work is still live
+// and no human ask is outstanding renders the informational banner + the event "Snooze" button and its
+// explainer (AwaitingBackgroundCard). snoozeAwaitingBackground is mocked so nothing real is hit. It is
+// drawn in the thread view every surface draws; it was drawn on the queue card until the card went
+// (2026-11-10).
 //
 // DEFAULT = THE SHELL-ONLY REST, because since 2026-08-04 that is the only shape the server actually puts
-// in the queue: a rest on a live SUB-AGENT is excused from it (board.deriveNeedsYou), so the sub-agent
-// wording below is reachable only in the drawer / full-screen page. `?agents=1` renders it anyway — it is
-// the same component and the same card, and the two voices are worth eyeballing side by side.
-//
-// The SAME card renders in the drawer and on the full-screen page WITHOUT the Snooze — that pair is
-// server-derived (board.awaitingBackground), so it is verified against a real stack rather than here:
-// `nub scripts/seed-resting-thread.mjs --home=… --socket=…` against an adhoc stack seeds a thread at
-// rest with live children, then ?thread=<slug> and /thread/<slug> show the button-less card.
+// in the queue: a rest on a live SUB-AGENT is excused from it (board.deriveNeedsYou). `?agents=1` renders
+// it anyway — it is the same component and the same card, and the two voices are worth eyeballing side
+// by side.
 
 const SLUG = "awaiting-bg-demo"
 const params = new URLSearchParams(location.search)
@@ -288,7 +284,6 @@ window.fetch = async (input, init) => {
   }
   if (url.pathname === "/_frizz/rpc/followUp") {
     window.dispatchEvent(new CustomEvent("fixture-rpc", { detail: { rpc: "followUp", body: JSON.parse(String(init?.body ?? "{}")) } }))
-    if (store.board) store.board = { ...store.board, threads: store.board.threads.filter((t) => t.id !== SLUG) } as BoardSnapshot
     return new Response(JSON.stringify({ result: {} }), { headers: { "content-type": "application/json" } })
   }
   if (url.pathname.startsWith("/_frizz/rpc/")) {
@@ -298,17 +293,18 @@ window.fetch = async (input, init) => {
 }
 
 function Fixture() {
+  // A <main>, as the pane's column is: the panels that open off the prompt box take it as their boundary.
   return (
-    <div className="mx-auto w-[min(680px,calc(100%-32px))] py-8">
-      <TodosView />
-    </div>
+    <main className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border bg-bg text-sm text-fg">
+      <ThreadView slug={SLUG} />
+    </main>
   )
 }
 
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={new QueryClient()}>
     <TooltipProvider>
-      {/* A SEND from this card (the composer, with or without the steps' box ticked) marks the thread steered, and the working
+      {/* A SEND from this thread (the composer, with or without the steps' box ticked) marks the thread steered, and the working
           status row that then draws reads the router (StatusRow's project-scoped links) — outside a router
           context it throws on render. A MemoryRouter gives it that context without an address bar, as in
           the sidebar fixtures. */}

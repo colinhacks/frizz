@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, RegisteredQuestionView, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
-import { TodosView } from "./components/TodosView.tsx"
 import { ThreadView } from "./components/ChatView.tsx"
 import { RegisteredAnswerSheet } from "./components/RegisteredAnswerSheet.tsx"
 import { RegisteredAnsweringProvider } from "./components/RegisteredQuestionCards.tsx"
@@ -9,7 +8,7 @@ import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import "./styles.css"
 
-// Browser QA for a REGISTERED question on the queue card — a question a worker created with the `ask`
+// Browser QA for a REGISTERED question in a thread — a question a worker created with the `ask`
 // tool, which is a row rather than a fence in a message. It renders through the shared QuestionBlockCard
 // (RegisteredQuestionCards.tsx), so what is worth looking at here is what a registration adds: the ×,
 // the rich option BODY (full markdown inside the chip, visible before anything is picked — one option
@@ -23,10 +22,9 @@ import "./styles.css"
 //                 question expands and the waits must not compete with it for the one glance.
 //   ?past=1     — the question was asked at an OLDER rest, the human replied past it without answering,
 //                 and the worker's newest handoff still carries a LEGACY empty ```question qst_… marker
-//                 (mid-prose placement is retired 2026-08-30). The card's window opens at the newest rest
-//                 (hasEarlier), so the asking rest is above the window. The marker must draw NOTHING, the
-//                 card must render ONCE at the head of the window, and the card-level "Send answers" must
-//                 stand down (the registered card carries its own).
+//                 (mid-prose placement is retired 2026-08-30). The window opens at the newest rest
+//                 (hasEarlier), so the asking rest is above it. The marker must draw NOTHING, and the card
+//                 must render ONCE.
 //   ?table=1    — an option whose body carries a TABLE, a blockquote and a code fence: the blocks whose
 //                 opaque panel fills clashed with a selected chip's accent tint (screenshot 2026-09-02).
 //   ?wide=1     — a `multi` over THIRTY options: no count cap (2026-09-03), and lettering past Z into AA.
@@ -52,7 +50,9 @@ import "./styles.css"
 //                     kind its live card wore ("Select multiple").
 //   ?fence=sheet    — the PHONE's answering sheet on the fenced question (open it at a phone width): the
 //                     context draws under the question there too.
-//   ?view=thread    — the thread page (ChatView) instead of the queue card.
+//
+// It draws the thread view every surface draws (ChatView). It drew the queue card by default, and the
+// thread view under ?view=thread, until the card went (2026-11-10).
 const params = new URLSearchParams(location.search)
 document.documentElement.dataset.font = params.get("font") === "sans" ? "sans" : "mono"
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
@@ -382,14 +382,11 @@ createRoot(document.getElementById("root")!).render(
         <RegisteredAnsweringProvider thread={thread}>
           <RegisteredAnswerSheet questions={[FENCED]} onClose={() => {}} />
         </RegisteredAnsweringProvider>
-      ) : params.get("view") === "thread" ? (
-        <div className="mx-auto h-screen w-[min(760px,100%)]">
-          <ThreadView slug={thread.id} />
-        </div>
       ) : (
-        <div className="mx-auto w-[min(680px,calc(100%-32px))] py-8">
-          <TodosView />
-        </div>
+        // A <main>, as the pane's column is: the panels that open off the prompt box take it as their boundary.
+        <main className="mx-auto h-screen w-[min(760px,100%)]">
+          <ThreadView slug={thread.id} />
+        </main>
       )}
     </TooltipProvider>
   </QueryClientProvider>,

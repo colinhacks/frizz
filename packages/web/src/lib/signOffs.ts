@@ -5,11 +5,11 @@
 // parks again quietly (`status: watching`) with nothing new to say. The queue card kept the first round and
 // the last, so after two or three of those the hand-off itself sat in the collapsed middle and the card
 // ended on a bare quiet park (maintainer 2026-11-06: "Because we only ever show the most recent rest
-// message …, the sign-off is hidden by default"). The card pins the round holding this message
-// (lib/queueCollapse collapseMiddleRuns), and every surface still draws its ```awaiting card once a later
+// message …, the sign-off is hidden by default"). The card pinned the round holding this message until the
+// one-thread pane replaced it (2026-11-09), and every surface still draws its ```awaiting card once a later
 // round has made the fence stale (ThreadSurface useThreadMessages → ChatMessage.latestSignOff).
 //
-// Pure index logic over the structural minimum, like queueCollapse.
+// Pure index logic over the structural minimum.
 
 import { SIGNOFF_NUDGE_MARKER } from "@frizz/shared"
 

@@ -3,8 +3,8 @@
 // together — the reported bug is that the spinner starts instantly while the row sits in the rested
 // (queue-ordered) band for seconds before hopping into the running band.
 //
-// This drives the REAL app in a real browser against a seeded adhoc stack: it types into a queue
-// card's composer, presses Enter, and then samples the rail every 40ms recording (a) whether the
+// This drives the REAL app in a real browser against a seeded adhoc stack: it opens the thread in the
+// board's pane, types into its prompt box, presses Enter, and then samples the rail every 40ms recording (a) whether the
 // row's indicator is the animated BoxSpinner and (b) which band the row is in (the Active section's
 // one direct-child <hr> separates running from rested). It then appends the JSONL records a real
 // Claude Code writes when it picks the follow-up up, so the SERVER's own "running" verdict lands
@@ -45,10 +45,7 @@ const PROBE = `(() => {
   return {
     ready: true,
     order,
-    cards: [...document.querySelectorAll('[data-queue-card]')].map((e) => ({
-      id: e.dataset.queueCard,
-      leaving: e.dataset.queueLeaving,
-    })),
+    pane: document.querySelector('[data-pane-thread] [data-thread-surface]')?.getAttribute('data-thread-surface') ?? null,
   }
 })()`
 
@@ -69,7 +66,8 @@ try {
   const before = await page.evaluate(PROBE)
   await page.screenshot({ path: join(outDir, "10-before-steer.png") })
 
-  const composer = `[data-queue-card="${slug}"] textarea`
+  await page.click(`[data-sidebar-item="${slug}"]`)
+  const composer = `[data-pane-thread] [data-thread-surface="${slug}"] textarea`
   await page.waitForSelector(composer, { timeout: 10_000 })
   await page.click(composer)
   await page.type(composer, "keep going — check the narrow viewport too")
@@ -112,14 +110,14 @@ try {
   console.log(JSON.stringify({
     slug,
     truthAppendedAtMs: truthAt === null ? null : +truthAt.toFixed(0),
-    before: { order: before.order, cards: before.cards?.map((c) => c.id) },
+    before: { order: before.order, pane: before.pane },
     msToSpinner: firstWhere((s) => s.spinner === true),
     msToRunningBand: firstWhere((s) => s.band === "running"),
     msToRailTop: firstWhere((s) => s.index === 0),
     // Did the row settle ONCE, or hop again when server truth landed?
     bandTimeline: samples.filter((s, i) => i === 0 || s.band !== samples[i - 1].band).map((s) => ({ at: s.at, band: s.band })),
     indexTimeline: samples.filter((s, i) => i === 0 || s.index !== samples[i - 1].index).map((s) => ({ at: s.at, index: s.index })),
-    after: { order: after.order, cards: after.cards?.map((c) => c.id) },
+    after: { order: after.order, pane: after.pane },
     pageErrors: errors,
   }, null, 2))
 } finally {

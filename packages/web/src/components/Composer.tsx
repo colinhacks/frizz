@@ -6,7 +6,6 @@ import { showToast } from "../store.ts"
 import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
-import { queueComposerHandlesOptionEnter } from "../lib/queueComposerKeyboard.ts"
 import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
@@ -27,8 +26,7 @@ import { AnchoredLayer, aboveAnchor } from "./ui/AnchoredLayer.tsx"
 // holding a borderless auto-growing textarea plus a small round accent send button hovering INSIDE
 // at the bottom-right. Grows with content up to maxHeight, then scrolls. ⌘/Ctrl-Enter submits
 // (2026-08-26); every other Enter — plain, Shift, Option — keeps the browser's native newline, with a
-// no-op fallback for Chromium's macOS Option-Enter quirk. Queue retains its separately-owned
-// Option-Enter handling. Escape BLURS
+// no-op fallback for Chromium's macOS Option-Enter quirk. Escape BLURS
 // (climbs out — the next Esc, at rest, unwinds a drawer via
 // App's window handler). Keyboard handling is entirely LOCAL: the focus machine that used to
 // arbitrate boundary keys was deleted with the mouse-only sidebar. `surface` remains only as a
@@ -225,7 +223,7 @@ export function Composer({
   // For a surface whose send lives OUTSIDE this box (the phone's new-thread page puts Start in its
   // header): an upload in flight must hold that send too, as it holds Enter and ↑ here.
   onUploadingChange?: (uploading: boolean) => void
-  // THE SURFACE IS THE DROP ZONE. A thread's surface — its queue card, drawer or full-screen page —
+  // THE SURFACE IS THE DROP ZONE. A thread's surface — its pane, drawer or full-screen page —
   // takes a file dropped anywhere on it (ThreadSurface, lib/fileDrop), so this box binds no drop handlers
   // of its own there: it draws its drop hint while `over` and registers its intake on `intake`. Absent
   // (a box that is not a thread's: the dispatch form, a sub-agent's steer), the box itself is the zone.
@@ -433,8 +431,8 @@ export function Composer({
   // evicts the caret and the user must re-click the box to keep typing. A focusout whose target is
   // ALREADY disabled is exactly that eviction and nothing else (a user-initiated blur always fires
   // while the element is still enabled), so it is the precise signal for taking focus back once the
-  // box unlocks — and it is why a surface that deliberately blurs on send (the queue card dissolving
-  // itself) is honored rather than fought: that blur lands while still enabled and never arms this.
+  // box unlocks — and it is why a surface that deliberately blurs on send (one that leaves the page as
+  // it sends) is honored rather than fought: that blur lands while still enabled and never arms this.
   // The listener must be NATIVE: React does not dispatch synthetic events for disabled form controls,
   // so `onBlur` never sees this one (verified in a real browser — the synthetic handler stays silent
   // while the native focusout fires with disabled=true). Note `busy` is not only the send round-trip:
@@ -608,19 +606,6 @@ export function Composer({
         return
       }
     }
-    if (queueComposerHandlesOptionEnter(surface, e.key, e.altKey)) {
-      // Option-Enter inserts a newline EXPLICITLY (Claude Code muscle memory). Merely exempting it
-      // from submit is not enough: on macOS Chrome, Option-Enter in a textarea inserts nothing
-      // natively, so we splice the newline at the caret ourselves and restore the caret after the
-      // controlled re-render.
-      e.preventDefault()
-      e.stopPropagation()
-      const start = el.selectionStart ?? el.value.length
-      const end = el.selectionEnd ?? start
-      setProse(el.value.slice(0, start) + "\n" + el.value.slice(end))
-      requestAnimationFrame(() => el.setSelectionRange(start + 1, start + 1))
-      return
-    }
     // `!uploading` closes a confirmed data-loss race: a send while /attach is in flight used to ship
     // the prose WITHOUT the pending attachment, whose path then landed in the cleared composer and
     // silently rode along with the next unrelated message. Typing stays enabled during upload (the
@@ -655,8 +640,8 @@ export function Composer({
     // With the box EMPTY the chord is left to bubble: the thread's surface reads it as Send now under
     // the queued messages (lib/sendNowKey). So while the box holds anything it cannot send yet — an
     // upload in flight, a busy runtime — the chord is still the box's, and marked taken here: words typed
-    // and a ⌘⏎ must never push the queue through in their place. Marked, not stopped: the queue card's
-    // own handler still sees it, as it did before Send now had a key.
+    // and a ⌘⏎ must never push the queue through in their place. Marked, not stopped: a surface's own
+    // handler still sees it, as it did before Send now had a key.
     if (armed && isForcedSendChord(keyboardEvent)) {
       e.preventDefault()
       return

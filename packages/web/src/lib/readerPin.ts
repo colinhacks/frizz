@@ -40,8 +40,8 @@ const EPSILON = 0.5
  * Which of these items the reader is in: the one with the most of itself on screen between `readingTop`
  * (the top of what the reader can see — under a fixed header, its bottom) and `viewportBottom`. The
  * earliest wins a tie, so in a list of equal rows it is the first one wholly in view. -1 when none is on
- * screen. A tall queue card fills the screen and wins outright; when two share it, the one the reader
- * can see more of is the one they are reading, and an arrival between the two moves the other.
+ * screen. An item taller than the screen wins outright; when two share it, the one the reader can see
+ * more of is the one they are reading, and an arrival between the two moves the other.
  */
 export function readerPinIndex(spans: readonly Span[], readingTop: number, viewportBottom: number): number {
   let best = -1
@@ -56,31 +56,16 @@ export function readerPinIndex(spans: readonly Span[], readingTop: number, viewp
   return best
 }
 
-/**
- * Did the list change in a way that moves the items the reader already had? True when an item arrived
- * (an id `after` has that `before` did not) or the items both lists hold changed order. A list that only
- * LOST items is false: the queue's departures have their own choreography (TodosView's exit pins), and an
- * empty `before` has no reader to hold.
- */
-export function listGainedOrReordered(before: readonly string[], after: readonly string[]): boolean {
-  if (before.length === 0) return false
-  const had = new Set(before)
-  if (after.some((id) => !had.has(id))) return true
-  // Nothing new, so `after` is `before` less whatever left: the same order is `before` with those gaps.
-  const kept = new Set(after)
-  return before.filter((id) => kept.has(id)).some((id, i) => after[i] !== id)
-}
-
-// What a reader reads in: the queue's cards on a desktop board (one leaving is on its way out, and its
-// exit pins its neighbour itself), the band's rows on the phone. A page holds one kind or the other.
+// What a reader reads in: the band's rows on the phone. The desktop board's queue cards were the other
+// kind until the one-thread pane replaced them (2026-11-09); the pane scrolls its own column and holds
+// no list.
 const ITEMS: readonly { attr: string; select: string }[] = [
-  { attr: "data-queue-card", select: "[data-queue-card]:not([data-queue-leaving='true'])" },
   { attr: "data-mobile-thread-row", select: "[data-mobile-board] [data-mobile-thread-row]" },
 ]
 
 /**
- * The item the reader is in on this page, and where its top sits now — or null when no card or row is
- * on screen. The phone's fixed header covers the top of its list, so what the reader sees starts below it.
+ * The item the reader is in on this page, and where its top sits now — or null when no row is on
+ * screen. The phone's fixed header covers the top of its list, so what the reader sees starts below it.
  */
 export function captureReaderPin(): ReaderPin | null {
   if (typeof document === "undefined") return null
@@ -105,7 +90,7 @@ export function readerPinDrift(pin: ReaderPin): number {
 
 /**
  * Put the pinned item back where it was, by scrolling the page the distance it moved. An instant move
- * (`behavior: "auto"`), the queue's idiom for every viewport correction. Under the page lock the scroll
+ * (`behavior: "auto"`), the board's idiom for every viewport correction. Under the page lock the scroll
  * would be clamped and then undone by the unlock, so the lock's own offset moves instead.
  */
 export function restoreReaderPin(pin: ReaderPin): void {

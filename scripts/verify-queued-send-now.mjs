@@ -11,12 +11,12 @@
 // ⌘⏎ PRESSES IT (2026-10-19) whenever nothing is typed: from the empty prompt box, from anywhere else in
 // the thread's surface, and from a page with nothing focused. With words typed, ⌘⏎ is still the prompt
 // box's own forced send. The control wears the chord on a flat keycap to the left of its words, where
-// an arrow stood (send-now-shortcut-mockup-fixture, O). All three surfaces are driven: the drawer, the
-// full page and the queue card.
+// an arrow stood (send-now-shortcut-mockup-fixture, O). Both surfaces are driven: the drawer and the full
+// page (the queue card was the third until it went, 2026-11-10).
 //
 // Everything here needs a REAL browser: the control is mounted by each surface under its own queued
-// tail (the drawer's virtualized rows, the queue card's block), so where it lands, what it says and
-// what it asks the server for are facts of the rendered page, on both.
+// tail (the drawer's virtualized rows), so where it lands, what it says and what it asks the server for
+// are facts of the rendered page.
 //
 // Run against queued-spacing-fixture.html on a plain Vite dev server (fixtures are NOT servable through
 // the frizz stack — its Vite runs in middleware mode and falls back to index.html for every unknown path):
@@ -202,19 +202,7 @@ try {
     await page.close()
   }
 
-  // 7. THE QUEUE CARD mounts its own tail; the control has to land the same way there.
-  for (const [query, mode] of [["", "interrupt"], ["held=1", "release"]]) {
-    const page = await open(query)
-    const r = await read(page)
-    const name = `card${query ? ` (${query})` : ""}`
-    if (r.count !== 1 || r.sendNows !== 1 || r.mode !== mode) fail(`${name}: ${JSON.stringify(r)}`)
-    else if (!near(r.rightDelta, 0, 0.5) || !near(r.gap, 6, 0.5)) fail(`${name}: ${r.rightDelta.toFixed(2)}px off the right edge, ${r.gap.toFixed(2)}px under the run`)
-    else pass(`${name}: one ${mode} control, flush right, ${r.gap.toFixed(2)}px under the run`)
-    if (shots) await page.screenshot({ path: join(shots, `send-now-${name.replace(/\W+/g, "-")}.png`) })
-    await page.close()
-  }
-
-  // 8. ⌘⏎ PRESSES IT, on every surface, from wherever nothing is typed — and with words typed it is still
+  // 7. ⌘⏎ PRESSES IT, on every surface, from wherever nothing is typed — and with words typed it is still
   //    the prompt box's own send. Each case opens a fresh page, so the calls it reads are its own.
   const BOX = "[data-thread-composer-box] textarea"
   const chord = async (page, mod = "Meta", extra) => {
@@ -228,8 +216,8 @@ try {
   const calls = (page) => page.evaluate(() => ({ push: window.__pushNowCalls ?? [], typed: window.__followUpCalls ?? [] }))
   const focusOn = {
     box: (page) => page.focus(BOX),
-    // A focusable element of the surface that edits nothing: the drawer's transcript, or a card's own
-    // header button, focused the way a keyboard user lands on it.
+    // A focusable element of the surface that edits nothing: the drawer's transcript, or the full page's
+    // own header button, focused the way a keyboard user lands on it.
     transcript: (page) => page.evaluate(() => {
       const el = document.querySelector("[data-drawer-transcript-scroll]") ?? document.querySelector("[data-thread-surface] button:not([data-send-now])")
       el.focus()
@@ -252,7 +240,7 @@ try {
     ["surface=drawer&queued=0", "box", null],
   ]) {
     const page = await open(query)
-    const name = `⌘⏎ ${mod === "Control" ? "(Ctrl) " : ""}${extra ? `+${extra} ` : ""}${query || "card"}, focus on ${where}`
+    const name = `⌘⏎ ${mod === "Control" ? "(Ctrl) " : ""}${extra ? `+${extra} ` : ""}${query}, focus on ${where}`
     const landed = await focusOn[where](page)
     if (landed === false) { fail(`${name}: could not put focus there`); await page.close(); continue }
     await chord(page, mod, extra)
@@ -284,13 +272,12 @@ try {
     await page.close()
   }
 
-  // 9. NEGATIVE CONTROLS. Codex takes a steer straight into its turn, so a queued steer there has
+  // 8. NEGATIVE CONTROLS. Codex takes a steer straight into its turn, so a queued steer there has
   //    nothing to push; a run Frizz holds still releases. And with nothing queued, nothing draws.
   for (const [query, expected, why] of [
     ["surface=drawer&backend=codex", 0, "codex steer: no queue to push, no control"],
     ["surface=drawer&backend=codex&held=1", 1, "codex held: Frizz still releases it"],
     ["surface=drawer&queued=0", 0, "nothing queued: no control"],
-    ["queued=0", 0, "card, nothing queued: no control"],
   ]) {
     const page = await open(query)
     const n = await page.$$eval(CONTROL, (els) => els.length)
@@ -299,7 +286,7 @@ try {
     await page.close()
   }
 
-  // 10. NARROW. The run's right edge is the pane's, so the control must stay inside it.
+  // 9. NARROW. The run's right edge is the pane's, so the control must stay inside it.
   {
     const page = await open("surface=drawer", 420)
     const r = await read(page)

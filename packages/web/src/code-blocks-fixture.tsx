@@ -2,7 +2,7 @@ import { useState } from "react"
 import { createRoot } from "react-dom/client"
 import "./styles.css"
 import { DiffBlock } from "./components/DiffBlock.tsx"
-import { QUEUE_WRAP } from "./components/TranscriptCard.tsx"
+import { WRAP_ANYWHERE } from "./components/TranscriptCard.tsx"
 import { initCodeWrap } from "./lib/codeWrap.ts"
 import { installCodeCopyInterceptor } from "./lib/copy-code.ts"
 import { installCodeExpandInterceptor } from "./lib/expand-code.ts"
@@ -134,8 +134,8 @@ function Fixture() {
       <button type="button" data-chip-hit className="absolute inset-0" aria-label="Pick this option" />
       <div className="md-body" data-case="chip" dangerouslySetInnerHTML={{ __html: mdToHtml(sample) }} />
     </div>
-    {/* The Queue's narrow column (TranscriptCard QUEUE_WRAP): 300px for a block to wrap in, or to scroll inside with Wrap code off. */}
-    <div className={`md-body mt-6 w-[300px] text-[14px] ${QUEUE_WRAP}`}
+    {/* A narrow card column (TranscriptCard WRAP_ANYWHERE): 300px for a block to wrap in, or to scroll inside with Wrap code off. */}
+    <div className={`md-body mt-6 w-[300px] text-[14px] ${WRAP_ANYWHERE}`}
       data-case="narrow" dangerouslySetInnerHTML={{ __html: mdToHtml(sample) }} />
     {/* The Edit card: the same rows drawn from a tool call rather than a fence, and wrapped the same way. */}
     <div className="mt-6 max-w-3xl" data-case="edit-card">

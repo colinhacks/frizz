@@ -29,14 +29,12 @@ export function ThreadActionBar({ slug, above, phoneBarOverride, phoneChrome }: 
   return (
     <ThreadComposerBox
       slug={slug}
-      surface="chatComposer"
       id="followup-input"
       // PADDING ONLY — no border, no background. The separator + panel fill belong to the
       // [data-thread-chat-footer] wrapper in ChatView that hosts this bar; carrying them here too
       // stacked a second hairline directly under the first, so the line above the prompt box read
-      // as a 2px rule instead of the queue card's single hairline. The queue card's own call site
-      // (TodosView) pads its docked box the same 12px top and bottom, as does
-      // drawer-composer-footer-fixture.
+      // as a 2px rule instead of a single hairline. drawer-composer-footer-fixture pads its box the same
+      // 12px top and bottom.
       className="shrink-0 px-3 py-3"
       above={above}
       phoneBarOverride={phoneBarOverride}

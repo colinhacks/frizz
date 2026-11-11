@@ -5,15 +5,11 @@ import type { ComposerContextItem } from "./lib/composerContext.ts"
 import type { LightboxImage } from "./lib/lightbox.ts"
 import { disarmFullscreenMorph } from "./lib/fullscreenMorph.ts"
 import { closeDrawerAnimated, focusDrawer } from "./lib/overlays.ts"
-import { isPageScrollLocked, pageScrollY, requestScrollAfterUnlock } from "./lib/pageScrollLock.ts"
-import { holdQueueCardLanding } from "./lib/queueLandingHold.ts"
 import { resolveThreadRoute } from "./lib/threadRouteState.ts"
 import { parseStandaloneThreadPath, standaloneThreadHref } from "./lib/standaloneThreadRoute.ts"
 import { ownedByThisPage } from "./lib/projectOwnership.ts"
 import { innerPath, isConsolePath } from "./lib/base-path.ts"
 import { isMobileViewport } from "./lib/mobile.ts"
-import { holdsCardHere } from "./lib/consoleBoard.ts"
-import { CONSOLE_TOP_PX } from "./lib/homeView.ts"
 import { bareSlug, splitThreadKey } from "./lib/threadKey.ts"
 import { setGithubRepo } from "./lib/githubAutolink.ts"
 import { resetGithubCards } from "./lib/githubHovercards.ts"
@@ -21,70 +17,6 @@ import { setLocalPathBase } from "./lib/localPathBase.ts"
 import { basename } from "./lib/paths.ts"
 import { prefersReducedMotion, SHEET_CLOSE_MS } from "./lib/sheet.ts"
 import type { RestartAttempt } from "./api/restart.ts"
-
-// Where a scroll-to-card lands a card's outer border below the viewport top (px). Exported because the
-// sidebar's reading rail watches for that same landing to know a click-to-card has arrived.
-// 40px is the queue's own rhythm: the hairline rule between two cards carries `my-10` (40px) on each
-// side, so a landed card sits under the viewport edge with exactly the space it has under its
-// predecessor's rule. It was 12px until 2026-08-25, which read as the card being pressed against the
-// top of the window (maintainer: "we should leave the full 40 px").
-export const QUEUE_CARD_VIEWPORT_TOP = 40
-
-/**
- * The landing, measured from the window's top. On the Console's wide layout it is the line its content
- * opens on under the home switcher (lib/homeView.ts CONSOLE_TOP_PX), the same line the top card rests on.
- */
-export function queueCardViewportTop(): number {
-  const wide = typeof window === "undefined" || typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 800px)").matches
-  return isConsolePath() && wide ? CONSOLE_TOP_PX : QUEUE_CARD_VIEWPORT_TOP
-}
-
-// The BORDERED CARD ROOT inside a queue slot. The outer `[data-queue-card]` slot is the fade wrapper:
-// it also spans the root's own bottom scroll-reserve margin, and it is not the element that draws the
-// border, so anything visual — the scroll landing, the arrival ring — targets this root. (Until
-// 2026-08-25 the slot also wrapped the inter-card hairline rule and its 40px margins; the rule is a
-// sibling of the slots now, see TodosView's queue list.)
-// Falls back to the slot itself for a slot that renders no root (fixtures, future card shapes).
-function queueCardSlot(slug: string): HTMLElement | null {
-  if (typeof document === "undefined") return null
-  return document.querySelector<HTMLElement>(`[data-queue-card="${CSS.escape(slug)}"]`)
-}
-function queueCardRoot(slug: string): HTMLElement | null {
-  const el = queueCardSlot(slug)
-  if (!el) return null
-  return el.querySelector<HTMLElement>(`[data-queue-card-root="${CSS.escape(slug)}"]`) ?? el
-}
-
-// Whether `slug` is the FIRST card in the queue — the topmost slot that isn't fading out. A fading
-// predecessor still holds its row for the exit's duration, but it is already gone from the reader's
-// point of view (and the dismissal landing runs after it unmounts), so it doesn't count.
-function isFirstQueueCard(slug: string): boolean {
-  const first = document.querySelector<HTMLElement>('[data-queue-card]:not([data-queue-leaving="true"])')
-  return first !== null && first === queueCardSlot(slug)
-}
-
-// Absolute scrollY that lands `slug`'s bordered card root at the standard viewport-top landing.
-// Shared by the sidebar's scroll-to-card and the queue's dismissal auto-scroll. Accounts for the
-// narrow-layout fixed chrome the cards' sticky headers also dodge (max-[800px]:top-10 → 40px), so a
-// landed card's header sits at its natural position instead of being pushed down into the body.
-// null when the card isn't mounted.
-// `pageScrollY()`, not `window.scrollY`: with a drawer open the page is scroll-LOCKED and window.scrollY
-// reads 0 while the body sits shifted at the real offset, which would put every landing short by
-// however far the reader had scrolled before opening the drawer.
-//
-// The FIRST card lands at the very top of the page instead. At rest its box sits 52px below the page
-// top (main's py-5 plus the queue column's py-8, measured 2026-08-28), so the standard landing is
-// scrollY 12: clearing a card whose successor headed the queue left the page scrollable by that sliver
-// (maintainer 2026-08-28: "it scrolls me like there's like 10 pixels that I could scroll up from where
-// it scrolls me to, and it's very annoying").
-export function queueCardTargetY(slug: string): number | null {
-  const root = queueCardRoot(slug)
-  if (!root) return null
-  if (isFirstQueueCard(slug)) return 0
-  // matchMedia guarded: unit tests stub a minimal window without it (store.queue-navigation.test.ts).
-  const navOffset = typeof window.matchMedia === "function" && window.matchMedia("(max-width: 800px)").matches ? 40 : 0
-  return Math.max(0, pageScrollY() + root.getBoundingClientRect().top - queueCardViewportTop() - navOffset)
-}
 
 export type ConnectionState = "connecting" | "open" | "closed"
 export interface SocketPayloadFallback {
@@ -95,10 +27,9 @@ export type SocketTranscriptFallback =
   | ({ kind: "payload-too-large" } & SocketPayloadFallback)
   | { kind: "read-budget"; scope: "origin" | "global"; retryAfterMs: number }
 
-// What the workpane (the centered main column) shows: "todos" (the queue — cards + dispatch box, the
-// resting page) or "status:<s>" (URL-only per-status lists). THREADS render in the side-drawer stack
-// over the queue; there is no main-view thread surface and no nav selection (the focus machine and
-// the sidebar arrow-walk were deleted — the sidebar is mouse-driven). The router is the writer.
+// What the board shows: "todos" (the board itself — the one-thread pane, or a brand-new project's
+// first-task box) or "status:<s>" (URL-only per-status lists, whose threads open in the drawer stack).
+// The router is the writer.
 export type View = "todos" | `status:${string}`
 
 // The whole app renders off this single valtio proxy. Board is a full snapshot
@@ -184,7 +115,7 @@ export const store = proxy({
   // THE ONE-THREAD PANE: the thread the board's right-hand column shows, chosen by a sidebar row or by
   // moving through the queue. Null is the prompt to open the first item (ThreadPane.tsx).
   paneSlug: null as string | null,
-  // The slug whose BOARD surface (thread drawer or queue card) is currently wearing
+  // The slug whose BOARD surface (the pane or a thread drawer) is currently wearing
   // `view-transition-name: thread-chat`, so the /full page's thread column has somewhere to morph
   // back into when the fullscreen page is left for the board (browser Back, or the collapse icon).
   // Set render-phase by primeFullscreenReturn and cleared on a timer just past the animation — a
@@ -366,13 +297,12 @@ export function pushMonitorDrawer(slug: string, id: string, opts: { label: strin
   openOrRaiseDrawer({ kind: "monitor", slug, subId: id, label: opts.label })
 }
 
-// Open a thread from a listing/notification click-through. A QUEUED thread short-circuits to its own
-// card (see scrollToQueueCard below) — every affordance that asks to "show me this thread" obeys the
-// one rule, so nothing can stack a drawer on top of the identical panel. Otherwise routing is by
-// runtime: a thread with NO session ever spawned (runtime "none" — no transcript, the chat drawer
-// would be an empty placeholder) opens its frizz DOCUMENT drawer instead — there
-// the doc IS the substance. Anything with a session (live or exited — exited transcripts are worth
-// seeing) opens the chat drawer. The doc drawer carries the adopt ("Start a session") affordance.
+// Open a thread from a listing/notification click-through. On a desktop board it opens in the pane
+// (pushDrawer), queued or not. Otherwise routing is by runtime: a thread with NO session ever spawned
+// (runtime "none" — no transcript, the chat drawer would be an empty placeholder) opens its frizz
+// DOCUMENT drawer instead — there the doc IS the substance. Anything with a session (live or exited —
+// exited transcripts are worth seeing) opens the chat drawer. The doc drawer carries the adopt ("Start
+// a session") affordance.
 /**
  * On the Console, the KEY a bare slug names — the one thread on the merged board with that slug — or
  * null when no thread or several have it. A bare slug reaches the Console from a link a worker wrote
@@ -393,7 +323,6 @@ export function openThread(slugOrKey: string): void {
     return
   }
   const t = store.board?.threads.find((x) => x.id === slug)
-  if (t?.needsYou && scrollToQueueCard(slug)) return
   pushDrawer(t && t.runtime === "none" ? "doc" : "thread", slug)
 }
 
@@ -406,12 +335,11 @@ export function setBoardPendingCheck(check: (project?: string) => boolean): void
   boardPending = check
 }
 
-// Settle a parked `?thread=<slug>` URL, now that the board can say whether the thread is queued.
+// Settle a parked `?thread=<slug>` URL, now that the board can say whether the thread exists here.
 // A deep link deliberately asks for the CHAT surface even for a session-less thread (unlike
-// openThread's doc-routing), so this pushes the thread layer rather than delegating — but it obeys
-// the same queue-card rule: a needsYou thread renders its whole panel inline in the main column, and
-// opening the routed drawer over it painted that panel TWICE, one half-occluding the other.
-// `routed` so a cold page paints the sheet already open instead of animating a phantom backdrop in.
+// openThread's doc-routing), so this pushes the thread layer rather than delegating: the pane on a
+// desktop board, a drawer elsewhere. `routed` so a cold page paints the sheet already open instead of
+// animating a phantom backdrop in.
 export function resolveRoutedThread(): void {
   const routed = store.routeThreadSlug
   if (!routed || !store.board) return
@@ -436,9 +364,6 @@ export function resolveRoutedThread(): void {
     if (typeof location !== "undefined") location.replace(standaloneThreadHref(slug))
     return
   }
-  // `settlingRoute`: the address bar already holds this thread's entry, so the board URL that follows
-  // REPLACES it — a push would leave `?thread=<slug>` and the board behind each other as two entries.
-  if (route.kind === "found" && route.thread.needsYou && scrollToQueueCard(slug, { settlingRoute: true })) return
   pushDrawer("thread", slug, { routed: true })
 }
 
@@ -465,7 +390,7 @@ export function primeFullscreenReturn(routedSlug: string | undefined): void {
   const slug = lastStandaloneSlug
   lastStandaloneSlug = null
   if (!slug) return
-  // Name whichever surface this slug renders as — ThreadSheet and the queue card both check this.
+  // Name whichever surface this slug renders as — the pane and ThreadSheet both check this.
   // Cleared well past the 200ms animation: clearing in an effect could beat the new-state capture
   // and un-name the element mid-transition.
   store.vtReturnTarget = slug
@@ -474,103 +399,14 @@ export function primeFullscreenReturn(routedSlug: string | undefined): void {
       if (store.vtReturnTarget === slug) store.vtReturnTarget = null
     }, 600)
   }
-  // The drawer itself, only when the return URL names this thread and the board can already say it
-  // is NOT queued (a queued thread's surface is its card, which the queue mounts in this same pass).
-  // The same painted-open push resolveRoutedThread would make — just in the commit the snapshot
-  // actually reads; applyPath then finds the layer already present and leaves it be.
+  // The thread itself, only when the return URL names it and the board can already say it is here: the
+  // same painted-open push resolveRoutedThread would make — just in the commit the snapshot actually
+  // reads; applyPath then finds it already open and leaves it be.
   if (routedSlug !== slug || !store.board) return
   const route = resolveThreadRoute(store.board, slug, threadBySlug)
-  if (route.kind !== "found" || holdsCardHere(route.thread)) return
+  if (route.kind !== "found") return
   if (store.drawers.some((d) => d.kind === "thread" && d.slug === slug && !d.closing)) return
   pushDrawer("thread", slug, { routed: true })
-}
-
-// A thread that's ALREADY in the queue (needsYou) has its full card in the main column — clicking its
-// sidebar row SCROLLS to that card and stops there; it does NOT open a redundant drawer over it
-// (maintainer 2026-07-09: "the queue is how you know"; 2026-07-15: "just auto-scroll to the item in the
-// queue"). Returns false if no card is mounted (not queued / not rendered), so the caller falls back to
-// opening the drawer instead.
-//
-// Any drawer already on screen is DISMISSED here (maintainer 2026-08-11: "clicking a queued item in the
-// sidebar should both DISMISS the current drawer and autoscroll"). It has to happen in this one place
-// rather than at the sidebar's call site: a drawer over the queue is precisely what stops you seeing the
-// card, so every "show me this card" door — the rail, the palette, a deep link, a notification
-// click-through — wants it gone. The plain sheets also spread a full-screen scrim, which the click
-// would otherwise land on instead of the row.
-//
-// And that dismissal is a NAVIGATION, so it PUSHES history (takeQueueCardNavigation). Every other
-// drawer close replaces — the router's rule — and this one used to as well: A's drawer, a link to queued
-// B, and A's `?thread=a` entry was rewritten to the board, sitting on top of the board it was opened
-// from. Back then did nothing visible and A was gone (desktop, 2026-10-08). Pushed, Back returns to A.
-// A routed `?thread=<slug>` settling here (resolveRoutedThread) is the exception: that entry already
-// names this thread, and the board replaces it.
-export function scrollToQueueCard(slug: string, opts?: { settlingRoute?: boolean }): boolean {
-  const root = queueCardRoot(slug)
-  if (!root) return false
-  const targetY = queueCardTargetY(slug)
-  const open = store.drawers.filter((drawer) => !drawer.closing).map((drawer) => drawer.id)
-  if (open.length) {
-    queueCardNavigation = !opts?.settlingRoute
-    closeDrawersById(open)
-  }
-  // Absolute scroll is intentional. A narrow layout may have just changed document geometry while a
-  // drawer finished closing; a relative scroll in that transition can be applied to the old root and
-  // strand the reader midway through a tall card. Land the bordered root atomically.
-  //
-  // But the scroll LOCK outlives this click: a dismissed drawer keeps its stack slot for the ~210ms
-  // slide-out, so the body is still pinned and `window.scrollTo` would be clamped to a no-op — and the
-  // unlock would then restore the pre-click offset over the top of it. Park the landing instead and let
-  // the unlock apply it, which is also what makes the scroll land in ONE step rather than visibly
-  // jumping back to where the reader was first.
-  if (targetY !== null) {
-    if (isPageScrollLocked()) requestScrollAfterUnlock(targetY)
-    else if (Math.abs(window.scrollY - targetY) > 0.5) window.scrollTo({ top: targetY, left: 0, behavior: "auto" })
-  }
-  // And KEEP it there while the queue above is still settling, until the reader scrolls for themselves
-  // (lib/queueLandingHold). A cold `?thread=<slug>` deep link lands before the cards above it have
-  // their transcripts or pictures, and those then pushed the routed card ~1,400px out of view
-  // (2026-10-05). Armed for every door, not only the deep link: a sidebar click into a queue whose
-  // pictures are still decoding has the same race, just a smaller one.
-  holdQueueCardLanding(() => queueCardRoot(slug), () => queueCardTargetY(slug))
-  flashQueueCard(slug, root)
-  return true
-}
-
-// Set by scrollToQueueCard as it dismisses the stack for a door, read once by the store→URL sync on the
-// notification that carries that dismissal (lib/router startRouter). Taking it clears it, so a door
-// that changed no URL (a markdown reader over the board) leaves nothing armed for the next plain close.
-let queueCardNavigation = false
-
-export function takeQueueCardNavigation(): boolean {
-  const taken = queueCardNavigation
-  queueCardNavigation = false
-  return taken
-}
-
-// Pending ring teardowns, keyed by slug. A RE-CLICK inside the window must replay the ring and own the
-// single removal; without this the first click's timer would cut the second ring short.
-const queueFlashTimers = new Map<string, number>()
-
-// The arrival ring. It goes on the bordered card ROOT, never the outer `[data-queue-card]` slot: the
-// slot is the fade wrapper, not the bordered box — and while it still wrapped the inter-card hairline
-// rule and its margins, ringing it drew the card AND ~80px of gutter plus that rule as one highlighted
-// box (maintainer, 2026-07-21).
-// An ATTRIBUTE rather than a class, because the root's className is REACT-OWNED (it flips on the card's
-// `resolving` state) — a re-render rewrites className wholesale and would silently wipe an imperatively
-// added class mid-flash. React never touches an attribute absent from its props.
-function flashQueueCard(slug: string, root: HTMLElement): void {
-  const pending = queueFlashTimers.get(slug)
-  if (pending !== undefined) window.clearTimeout(pending)
-  // Re-setting an attribute that is already present does NOT restart a CSS animation, so clicking the
-  // same sidebar row twice would produce no visible response at all (the scroll is already at the
-  // landing, and the caller deliberately doesn't fall through to a drawer). Drop it and force a reflow.
-  root.removeAttribute("data-queue-flash")
-  void root.offsetWidth
-  root.setAttribute("data-queue-flash", "")
-  queueFlashTimers.set(slug, window.setTimeout(() => {
-    queueFlashTimers.delete(slug)
-    root.removeAttribute("data-queue-flash")
-  }, 1100))
 }
 
 // Open a `.md` file that lives on disk in Frizz's OWN reader, rather than handing the path to the

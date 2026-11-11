@@ -21,14 +21,11 @@ export interface LiveAnswering {
   // ordinary message. undefined is a stable primitive, so a memoized Message bails out unchanged for
   // the (many) rows that carry no question.
   answeringForMessage: (m: ChatMessage) => MessageAnswering | undefined
-  // Does an ask still stand at the TAIL (nothing from the human since)? The queue card's chrome signal,
-  // NOT a gate on answerability — every question stays answerable regardless. See tailAskIdx.
-  answerable: boolean
   anyAnswered: boolean
   sending: boolean
   // Compose the filled per-block answers into one eager reply. With no argument every open ask is
-  // gathered (the queue card, which only ever has the single live ask). Pass a message identity to
-  // scope the send to JUST that message's blocks — the thread view's per-message Send button, which
+  // gathered. Pass a message identity to scope the send to JUST that message's blocks — the thread
+  // view's per-message Send button, which
   // deliberately answers one message at a time so its state never bleeds into another open ask.
   sendAnswers: (scopeIdentity?: string) => void
   sendMessage: (text: string, callbacks?: EagerFollowUpCallbacks) => void // freeform eager reply (same path as an answer)
@@ -96,7 +93,7 @@ function identityAssigner(): (m: AskMsgLike, i: number) => string {
 }
 
 // EVERY answerable ask, in transcript order — the pure core of the controller, and the SAME scope on
-// both surfaces (queue card and thread view). A question is answerable wherever it sits: an ask the
+// every surface. A question is answerable wherever it sits: an ask the
 // agent buried under its own later work, an ask a newer ask stacked on top of, an ask a human turn
 // already replied past. This is the whole "answer a question that is no longer the last thing said"
 // feature, and it is best-effort by design — there is no "closing" and NOTHING tracks whether a
@@ -122,29 +119,6 @@ export function selectOpenAsks(messages: readonly AskMsgLike[]): OpenAsk[] {
   return found
 }
 
-// The transcript index of the ask standing at the TAIL — the most-recent one after the last human turn,
-// or -1 when the human has already replied past every ask. Deliberately NARROWER than selectOpenAsks,
-// and it decides no answerability at all: it drives only the queue card's CHROME (the card-level "Send
-// answers" button, its tightened spacing, and the "Or skip the questions and reply…" placeholder), all
-// of which say "the agent is waiting on you RIGHT NOW". Widening that to every open ask would leave a
-// card whose questions were answered turns ago wearing a permanently disabled Send button.
-// A no-question agent turn does NOT close the tail: an agent that asked and then kept working (a
-// background wake) has merely BURIED its open ask, so the walk scans back past no-question agent turns
-// to reach it. A text-bearing user turn does close it.
-// An INDEX, not an OpenAsk: identities are deduped by a FORWARD walk (identityAssigner), which a
-// backward scan cannot reproduce, so handing one back from here could disagree with selectOpenAsks.
-export function tailAskIdx(messages: readonly AskMsgLike[]): number {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.kind === "event" || m.kind === "reasoning") continue // punctuation (completion / codex reasoning)
-    if (m.role === "user" && m.text.trim()) break
-    if (m.role !== "assistant" || !m.text.trim()) continue
-    if (parseAskBlocks(m.text).length > 0) return i
-    // a no-question agent turn doesn't close the tail — keep scanning back for the buried ask
-  }
-  return -1
-}
-
 // Choose the wire form for a batch of answers. When every answer belongs to the LIVE ask, emit the
 // numbered form ("Answers:\n1. …", numbered by ORIGINAL block position) — INCLUDING a one-block ask,
 // which used to send its answer as bare text. The bare form had no marker for the renderer to key on,
@@ -167,17 +141,17 @@ export function composeAnswerWire(input: {
   return `${BURIED_ANSWERS_HEADER}\n${answered.map((x, k) => `${k + 1}. “${x.question}” → ${indentAnswerContinuation(x.answer)}`).join("\n")}`
 }
 
-// The ONE controller for answering ```question blocks — shared by the queue card and the thread chat
-// view so their behavior can never drift. EVERY question in the transcript stays answerable, wherever
+// The ONE controller for answering ```question blocks — shared by every thread surface (ThreadSurface) so
+// their behavior can never drift. EVERY question in the transcript stays answerable, wherever
 // it sits: a question buried by a sub-agent return or the agent's own continuation, one a newer ask
 // stacked on top of, one a human turn already replied past. That scope is the SAME on both surfaces
 // (maintainer 2026-08-03: "question fences should be answerable, even if there's been a more recent
 // message… possible in the full view, but not in the queue card view") — the queue card used to narrow
-// it to the tail ask, which is now only its chrome signal (see tailAskIdx / `answerable`).
+// it to the tail ask.
 // Deliberately best-effort, TRACKING NOTHING: no answered/unanswered bookkeeping, no "closing" of asks.
 // An already-answered question stays clickable (its AnswersCard renders right below it), and Send only
 // gathers the blocks the human actually filled, so untouched questions contribute nothing. `onSent` runs
-// the caller's tail after a send (queue: optimistic exit + park focus; thread: nothing), and
+// the caller's tail after a send (the pane: move on, or stay on a reply; a drawer: nothing), and
 // `opts.onSendFailed` is its REVERSAL — see there.
 export function useLiveAnswering(
   slug: string,
@@ -189,11 +163,10 @@ export function useLiveAnswering(
   // otherwise, until resolve()'s 8s reappear guard happened to notice the board still wanted it
   // (measured on a refused steer: 8084ms of a card the human had no way to get back). The eager send
   // only reaches its failure path once retries are exhausted or the error is provably non-replayable —
-  // the same evidence it deletes the optimistic bubble on — so restoring the card here is exactly as
-  // safe as removing that bubble. The thread page passes nothing; it has no card to reinstate.
+  // the same evidence it deletes the optimistic bubble on — so restoring the thread here is exactly as
+  // safe as removing that bubble. A drawer or the thread page passes nothing; it has nothing to reinstate.
   // `composer` is the surface's prompt box (lib/sendScope). While one is mounted, every "send these
-  // answers" gesture — Enter in a block's text box, the queue card's card-level Enter — is the prompt
-  // box's send, which carries EVERY staged answer and whatever is typed in the box as one turn. With
+  // answers" gesture — Enter in a block's text box — is the prompt box's send, which carries EVERY staged answer and whatever is typed in the box as one turn. With
   // none mounted (a phone thread page) `sendAnswers` sends on its own, scoped as it always was.
   opts: { onSendFailed?: () => void; composer?: ComposerSendHandle } = {},
 ): LiveAnswering {
@@ -211,9 +184,6 @@ export function useLiveAnswering(
     return undefined
   }, [messages])
 
-  // NOT "is anything answerable" (everything is, now) — "is the agent waiting on you right now", i.e.
-  // does an ask still stand at the tail. Only the queue card reads it, for its chrome. See tailAskIdx.
-  const answerable = useMemo(() => tailAskIdx(messages) !== -1, [messages])
   const projectDir = useProjectDir()
   const sessionId = useThreadSessionId(slug)
   const keyFor = useCallback(
@@ -231,10 +201,10 @@ export function useLiveAnswering(
   // IDENTITY DISCIPLINE (the render-perf thread): the closed/ordinary messages get a stable `undefined`
   // from answeringForMessage, so the memoized Message bails out unchanged; only the (few) open asks build
   // a controller, and only they re-render on a chip click / keystroke. The caller's onSent tail rides a
-  // latest-ref because QueueCard passes a fresh closure every render.
+  // latest-ref because the surface passes a fresh closure every render.
   const onSentRef = useRef(onSent)
   onSentRef.current = onSent
-  // Same latest-ref discipline as onSent, and for the same reason: QueueCard passes a fresh closure
+  // Same latest-ref discipline as onSent, and for the same reason: the surface passes a fresh closure
   // every render, and `sendMessage` must stay identity-stable.
   const onSendFailedRef = useRef(opts.onSendFailed)
   onSendFailedRef.current = opts.onSendFailed
@@ -378,8 +348,8 @@ export function useLiveAnswering(
     // The surface's prompt box sends everything staged, with whatever is typed in it — see `composer`.
     if (composer?.run()) return
     // `scopeIdentity` is a message identity when the thread's per-message Send button (or an Enter from
-    // one of its blocks) fires; guard `typeof` because the queue card wires its button as onClick={sendAnswers}
-    // and React would otherwise hand us a MouseEvent. Non-string → gather every open ask (queue path).
+    // one of its blocks) fires; guard `typeof` in case a button wires it as onClick={sendAnswers}, where
+    // React would hand us a MouseEvent. Non-string → gather every open ask.
     const taken = takeAnswers(typeof scopeIdentity === "string" ? scopeIdentity : undefined)
     if (taken) sendMessage(taken.wire, { onOptimistic: taken.onOptimistic, onRollback: taken.onRollback })
   }, [composer, takeAnswers, sendMessage])
@@ -404,7 +374,7 @@ export function useLiveAnswering(
     () => (liveMsg ? answeringForMessage(liveMsg) : undefined),
     [liveMsg, answeringForMessage],
   )
-  return { liveMsg, answering, answeringForMessage, answerable, anyAnswered, sending: followUp.pending, sendAnswers, sendMessage, stagedCount, takeAnswers: takeAllAnswers }
+  return { liveMsg, answering, answeringForMessage, anyAnswered, sending: followUp.pending, sendAnswers, sendMessage, stagedCount, takeAnswers: takeAllAnswers }
 }
 
 // The first non-empty line of a question's context prose, trimmed + length-capped — a compact label for

@@ -382,7 +382,7 @@ export function openQuestionsOf(thread: ThreadView | undefined, settled: readonl
 
 /** ONE answered registration, in the slot its open card filled: the same card, the same branch rule,
  *  greyed, and carrying only what was picked or typed. Read-only — the answer has been sent. */
-export function SettledQuestionCard({ s, wrap, copy }: { s: SettledQuestion; wrap?: boolean; copy?: boolean }) {
+export function SettledQuestionCard({ s, copy }: { s: SettledQuestion; copy?: boolean }) {
   const nodes = useMemo(() => settledQuestionNodes(s.spec, s.answer), [s.spec, s.answer])
   const card = (node: (typeof nodes)[number]) => (
     <QuestionBlockCard
@@ -395,7 +395,6 @@ export function SettledQuestionCard({ s, wrap, copy }: { s: SettledQuestion; wra
       // greyed read as a different question.
       label={node.depth > 1 ? "Follow-up" : undefined}
       settled={node.settled}
-      wrap={wrap}
     />
   )
   const branch = nodes.slice(1)
@@ -416,11 +415,11 @@ export function SettledQuestionCard({ s, wrap, copy }: { s: SettledQuestion; wra
 }
 
 /** Several answered registrations anchored after one message. */
-export function SettledQuestionStack({ questions, wrap, className = "" }: { questions: readonly SettledQuestion[]; wrap?: boolean; className?: string }) {
+export function SettledQuestionStack({ questions, className = "" }: { questions: readonly SettledQuestion[]; className?: string }) {
   if (questions.length === 0) return null
   return (
     <section data-settled-questions aria-label={`${questions.length} answered question${questions.length === 1 ? "" : "s"}`} className={`flex min-w-0 flex-col gap-3 ${className}`}>
-      {questions.map((s) => <SettledQuestionCard key={s.id} s={s} wrap={wrap} />)}
+      {questions.map((s) => <SettledQuestionCard key={s.id} s={s} />)}
     </section>
   )
 }
@@ -527,12 +526,12 @@ export function useQuestionOwners<M extends OwnerMessage>(
  *  registers a fence it refused), so in that beat the question is visible but not yet answerable; the
  *  surface swaps in the registered card in this slot once the board carries the row. Only the root is
  *  drawn: a follow-up opens under a pick, and nothing can be picked here. */
-export function UnregisteredQuestionCard({ spec, wrap }: { spec: AskedQuestion; wrap?: boolean }) {
+export function UnregisteredQuestionCard({ spec }: { spec: AskedQuestion }) {
   const question = useMemo(() => toParsedQuestion(spec).question, [spec])
   return (
     <article data-question-fence={spec.handle} data-question-unregistered className="flex min-w-0 flex-col gap-2">
       {/* `pending`: the rows the answerable card will have, so the swap moves nothing below it. */}
-      <QuestionBlockCard question={question} wrap={wrap} pending />
+      <QuestionBlockCard question={question} pending />
     </article>
   )
 }
@@ -543,11 +542,11 @@ export function UnregisteredQuestionCard({ spec, wrap }: { spec: AskedQuestion; 
  *  greyed like an answered card and headed with what happened, so it cannot be read as a question still
  *  waiting: until 2026-10-13 it drew as the read-only card a question wears for the second before it
  *  becomes answerable, and stayed that way for good. Root only, like that card. */
-export function ClosedQuestionCard({ spec, state, wrap, copyOf }: { spec: AskedQuestion; state: ClosedQuestionView["state"]; wrap?: boolean; copyOf?: string }) {
+export function ClosedQuestionCard({ spec, state, copyOf }: { spec: AskedQuestion; state: ClosedQuestionView["state"]; copyOf?: string }) {
   const question = useMemo(() => toParsedQuestion(spec).question, [spec])
   return (
     <article {...(copyOf ? { "data-question-copy": copyOf } : { "data-question-fence": spec.handle })} data-question-closed={state} aria-label={state === "dismissed" ? "Dismissed question" : "Withdrawn question"} className="flex min-w-0 flex-col gap-2 opacity-60">
-      <QuestionBlockCard question={question} label={state === "dismissed" ? "Question dismissed" : "Question withdrawn"} settled={NOT_ANSWERED} wrap={wrap} />
+      <QuestionBlockCard question={question} label={state === "dismissed" ? "Question dismissed" : "Question withdrawn"} settled={NOT_ANSWERED} />
     </article>
   )
 }
@@ -566,11 +565,11 @@ const NOT_ANSWERED = { chosenIdxs: [] }
  *  the question since then draws it live (placeQuestions), so a write-up and the recap after it both stay
  *  answerable. `above` (the live card is above this copy) is kept for a surface whose window cut the live
  *  cards away; on 2026-11-09, for one day, it was what every recap drew. */
-export function OpenQuestionCopyCard({ q, above, wrap }: { q: Pick<RegisteredQuestionView, "id" | "spec">; above?: boolean; wrap?: boolean }) {
+export function OpenQuestionCopyCard({ q, above }: { q: Pick<RegisteredQuestionView, "id" | "spec">; above?: boolean }) {
   const question = useMemo(() => toParsedQuestion(q.spec).question, [q.spec])
   return (
     <article data-question-copy={q.id} data-question-open={above ? "above" : "below"} aria-label={above ? "Open question, answered further up" : "Open question, answered further down"} className="flex min-w-0 flex-col gap-2 opacity-60">
-      <QuestionBlockCard question={question} label={above ? "Still open, answer it above" : "Still open, answer it below"} wrap={wrap} />
+      <QuestionBlockCard question={question} label={above ? "Still open, answer it above" : "Still open, answer it below"} />
     </article>
   )
 }
@@ -583,14 +582,14 @@ export function OpenQuestionCopyCard({ q, above, wrap }: { q: Pick<RegisteredQue
  *  read (maintainer, the same day: "I don't want questions to be showing up as plain YAML"). The reason
  *  sits OUTSIDE the greyed card: inside it, at the card's footnote size, it was the faintest text on the
  *  card while being the one line the reader came for. */
-export function RefusedQuestionCard({ spec, reasons, unread, wrap }: { spec: AskedQuestion; reasons?: readonly string[]; unread?: boolean; wrap?: boolean }) {
+export function RefusedQuestionCard({ spec, reasons, unread }: { spec: AskedQuestion; reasons?: readonly string[]; unread?: boolean }) {
   const question = useMemo(() => toParsedQuestion(spec).question, [spec])
   const data = unread ? { "data-question-invalid": spec.handle } : { "data-question-refused-ask": spec.handle }
   return (
     <QuestionNotAsked reasons={reasons} {...data}>
       {/* No `data-question-fence`: that names the card a question's id draws, and this id's is elsewhere. */}
       <div className="opacity-60">
-        <QuestionBlockCard question={question} wrap={wrap} />
+        <QuestionBlockCard question={question} />
       </div>
     </QuestionNotAsked>
   )

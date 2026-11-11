@@ -5,15 +5,13 @@ import { useLayoutEffect, useMemo, useRef, type ComponentPropsWithoutRef, type R
 import type { LucideIcon } from "lucide-react"
 import { mdToHtml } from "../lib/markdown.ts"
 
-// Queue cards live in the narrow needs-you rail, so a worker message carrying a long UNBREAKABLE token
-// — a Windows path, a box-drawing error dump — must wrap at the character level rather than bleed past
-// the card edge (maintainer 2026-07-10: it "looks so bad"). Applied ONLY in the dense (queue) surface:
-// `overflow-wrap:anywhere` breaks unbreakable PROSE runs to fit. Code fences needed their own pair here
-// (`whitespace-pre-wrap` + `break-all`) while the thread view scrolled them sideways. Since 2026-10-13
-// whether code wraps is ONE setting for every surface, a card included ("Wrap code", styles.css
-// `.md-body pre`): on, a fence breaks at its spaces here like anywhere else; off, it scrolls inside its
-// own <pre>, which never widens the card.
-export const QUEUE_WRAP = "[overflow-wrap:anywhere]"
+// A worker message carrying a long UNBREAKABLE token — a Windows path, a box-drawing error dump — wraps
+// at the character level rather than bleeding past its card's edge (maintainer 2026-07-10, of the queue
+// card: it "looks so bad"). `overflow-wrap:anywhere` breaks unbreakable PROSE runs to fit. The queue card
+// applied it to every message it drew until the card went (2026-11-10); the awaiting card's prose and its
+// steps wear it on every surface. Whether CODE wraps is a separate setting, one for every surface ("Wrap
+// code", styles.css `.md-body pre`): on, a fence breaks at its spaces; off, it scrolls inside its own <pre>.
+export const WRAP_ANYWHERE = "[overflow-wrap:anywhere]"
 
 // ── The shared card chrome ────────────────────────────────────────────────────────────────────────
 // Every card the transcript sets off from the prose — the ```done / ```awaiting signal fences, a
@@ -77,9 +75,6 @@ export const QUEUE_WRAP = "[overflow-wrap:anywhere]"
 // OUTER containers only. A row or button NESTED inside one keeps the 6px control corner
 // (CARD_ACTION_RADIUS below).
 export const BLOCK_RADIUS = "rounded-xl"
-// The same corner on the TOP two only — for a shell whose bottom corners are carried by something
-// else (the queue card's sticky header, which must not round its own bottom edge against the body).
-export const BLOCK_RADIUS_TOP = "rounded-t-xl"
 // The BOTTOM two corners of a child laid FLUSH against the inside of a BLOCK_RADIUS shell's 1px
 // border — one pixel tighter, because the shell's PADDING box is what the child actually meets.
 //

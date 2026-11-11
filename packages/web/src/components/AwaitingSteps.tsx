@@ -18,7 +18,7 @@ import { SendScopeContext, usePromptBoxSends } from "../lib/sendScope.tsx"
 import { tickHumanTodo, useHumanTodos, useStepsAnswer, type StepsReply } from "../lib/stepsAnswer.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
-import { CARD_PRIMARY_ACTION, CardActions, QUEUE_WRAP } from "./TranscriptCard.tsx"
+import { CARD_PRIMARY_ACTION, CardActions, WRAP_ANYWHERE } from "./TranscriptCard.tsx"
 
 type TodoThread = { readonly id: string; readonly humanTodos?: readonly HumanTodo[] }
 
@@ -26,7 +26,7 @@ type TodoThread = { readonly id: string; readonly humanTodos?: readonly HumanTod
 // above it, in the prose's own colour (maintainer 2026-10-05: "the paragraphs looks like they're a
 // slightly lighter color than the text in the ol"). The gap above is the paragraph break the prose uses
 // (`--md-step`), so the two read as one handoff in two pieces.
-const LIST_FRAME = `md-body ${QUEUE_WRAP} mt-[var(--md-step)] first:mt-0`
+const LIST_FRAME = `md-body ${WRAP_ANYWHERE} mt-[var(--md-step)] first:mt-0`
 
 /** The record of one past rest: the steps as that rest listed them, ticked as its reply said. */
 export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; done?: StepsReply | null }) {

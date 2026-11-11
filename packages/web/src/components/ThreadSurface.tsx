@@ -28,10 +28,9 @@ import { useThreadPageZone } from "./ThreadPageZone.tsx"
 import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useClosedQuestionSpecs, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 
 // THE THREAD SURFACE — the one shell around a thread, wherever it is drawn. A thread is drawn in three
-// places: its queue card (TodosView's QueueCard), its drawer and its full-screen page (both ChatView).
-// Each of those lays its transcript out its own way — the card folds a turn's middle and lets the page
-// scroll, the other two window a long transcript inside their own scroller — and that is ALL a surface
-// decides. Everything that is true of THE THREAD rather than of a layout is wired here, once:
+// places: the board's one-thread pane, its drawer and its full-screen page, all three through ChatView's
+// ThreadView (the queue's cards, TodosView, were a second component until 2026-11-10). What a surface
+// decides is its layout — which rows it shows, and where it sits on the page — and nothing else. Everything that is true of THE THREAD rather than of a layout is wired here, once:
 //
 //   · the file drop zone: a file dropped anywhere on the surface goes into its prompt box (lib/fileDrop).
 //     On a page that IS one thread — the full-screen page, the board's pane — "anywhere" is the whole page
@@ -90,8 +89,8 @@ export interface ThreadSurfaceSource {
  *      id the thread asked more than once resolved to the row it meant in each message (useQuestionOwners);
  *   5. with the newest sign-off since the human last spoke marked on a thread at rest (useLatestSignOff).
  *
- *  What a surface does on top of this is its own: the queue card freezes the list it loaded while it
- *  leaves (before this), and the thread view draws a send that ends a rest where it will land (after). */
+ *  What a surface does on top of this is its own: the thread view draws a send that ends a rest where it
+ *  will land (after this). */
 export interface ThreadMessages {
   messages: ChatMessage[]
   openQuestions: readonly RegisteredQuestionView[]
@@ -132,13 +131,10 @@ function useLatestSignOff(messages: ChatMessage[], thread: ThreadView | undefine
 }
 
 export interface ThreadSurfaceOptions {
-  /** THE SURFACE LEAVES THE PAGE WHEN ITS THREAD IS HANDED BACK — the queue card, which dissolves on a
-   *  reply, an answer, Mark as done or a snooze, and comes back when the server declines. Absent on a
-   *  surface that stays (the drawer, the full-screen page). */
+  /** THE SURFACE MOVES ON WHEN ITS THREAD IS HANDED BACK — the board's pane, which brings up the next
+   *  thread at Mark as done or a snooze (and stays on a reply, `sent`), and comes back when the server
+   *  declines. Absent on a surface that stays (the drawer, the full-screen page). */
   exit?: SurfaceExit
-  /** A file landed on the surface. For a surface whose prompt box may not be mounted — a collapsed queue
-   *  card opens itself here, and the box takes the file as it mounts. */
-  onFilesDropped?: () => void
 }
 
 /** WHAT THE THREAD SAYS ABOUT EACH MESSAGE — one answer for every surface, keyed by the message's index
@@ -246,7 +242,7 @@ export function useThreadTranscript(): ThreadTranscript {
 }
 
 /** The thread the op counts over a prompt box should draw (ThreadTranscript.opsThread): inside a thread's
- *  surface, the surface's — on the queue card, in the drawer and on the full page alike — and outside one
+ *  surface, the surface's — in the pane, in the drawer and on the full page alike — and outside one
  *  (a fixture, a mockup), the thread as given. */
 export function useSurfaceOpsThread(thread: ThreadView): ThreadView {
   const transcript = useContext(ThreadTranscriptContext)
@@ -265,7 +261,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   // by content here, once; everything below derives from the shared ones and is shared in its turn.
   const openQuestions = useShared(source.openQuestions, replaceEqualDeep)
   const settledQuestions = useShared(source.settledQuestions, replaceEqualDeep)
-  const { exit, onFilesDropped } = options
+  const { exit } = options
   // Created BEFORE the answering controller, which sends through it.
   const composer = useComposerSendHandle()
   const promptBoxSends = useComposerSendPresent(composer)
@@ -343,10 +339,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   // The surface is the zone and its prompt box the intake (lib/fileDrop). Files given while no box is
   // mounted wait on the handle.
   const intake = useFileIntakeHandle()
-  const drop = useFileDropZone((files) => {
-    intake.give(files)
-    onFilesDropped?.()
-  })
+  const drop = useFileDropZone((files) => intake.give(files))
   const box = useMemo<ThreadSurfaceBox>(() => ({ fileDrop: { over: drop.over, intake } }), [drop.over, intake])
   const dismiss = exit?.dismiss
   const cancel = exit?.cancel
@@ -368,8 +361,7 @@ export function ThreadSurface({
   // Inside a page that is this thread's alone, the PAGE is the zone (ThreadPageZone): the handlers go
   // up to it, and this root binds none. Handed over after every render, since they close over it.
   const pageZone = useThreadPageZone()
-  // ⌘⏎ for Send now, after whatever the surface itself does with the key: the queue card's root sends
-  // answers staged on its cards on the same chord, and those come first.
+  // ⌘⏎ for Send now, after whatever the surface itself does with the key.
   const sendNowKey = useSendNowKey(surface.slug, surface.queuedRun)
   const zone = surface.zone
   useEffect(() => {

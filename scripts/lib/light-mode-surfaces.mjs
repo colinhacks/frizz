@@ -136,7 +136,8 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
         await page.waitForSelector(item)
         await page.click(item)
       }
-      const root = surface === 'queue' && width !== 390 ? '[data-queue-card="theme-question"]' : '[data-thread-header]'
+      // The row opens the thread in the board's pane (or the phone's thread page), under its header.
+      const root = '[data-thread-header]'
       const title = `${root} button[title="Edit title"]`
       const editor = `${root} input[aria-label="Thread title"]`
       await page.waitForSelector(title, { visible: true })

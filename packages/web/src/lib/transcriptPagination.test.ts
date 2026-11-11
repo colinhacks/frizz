@@ -2,15 +2,10 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import type { TranscriptMessage, TranscriptPage } from "@frizz/shared"
 import {
-  captureTranscriptViewportAnchor,
   prependEarlierPage,
   previousUserBoundary,
   reconcileLatestPage,
   reconcileLiveMessages,
-  resolveVisibleStart,
-  restoreTranscriptViewportAnchor,
-  transcriptAnchorCorrection,
-  transcriptAnchorScrollDelta,
 } from "./transcriptPagination.ts"
 
 const message = (role: "user" | "assistant", sourceId: string): TranscriptMessage => ({
@@ -91,18 +86,6 @@ test("client transcript replacement discards loaded history instead of mixing se
   assert.deepEqual(reconcileLatestPage(loaded, replacement).messages.map((m) => m.sourceId), ["new-u", "new-a"])
 })
 
-test("an expanded queue card whose start message was trimmed away keeps showing what is still held", () => {
-  const messages = [message("user", "u1"), message("assistant", "a1"), message("user", "u2"), message("assistant", "a2")]
-  const lastUserIdx = 2
-  // Ordinary case: the reader expanded back to u1 and u1 is still in the window.
-  assert.equal(resolveVisibleStart(messages, "u1", lastUserIdx), 0)
-  // Unexpanded: the default window is the latest turn.
-  assert.equal(resolveVisibleStart(messages, null, lastUserIdx), lastUserIdx)
-  // THE TRIM: the reader expanded back to a message the 300-cap window has since dropped. Falling back to
-  // `lastUserIdx` would silently collapse the card they had just expanded; keep the whole held window.
-  assert.equal(resolveVisibleStart(messages, "trimmed-away", lastUserIdx), 0)
-})
-
 // A push carries messages only, so the envelope can only survive by being carried over. On a thread past
 // the server's MAX_MESSAGES cap the window SLIDES on every new message, which used to take the
 // envelope-dropping branch and silently cost the reader `hasEarlier`/`beforeCursor`/`transcriptKey` — i.e.
@@ -137,74 +120,4 @@ test("a live push against a slid window still splices in explicitly loaded histo
   const next = reconcileLiveMessages(loaded, pushed) as typeof loaded
   assert.deepEqual(next.messages.map((m) => m.sourceId), ["u1", "a1", "u2", "a2", "u3"])
   assert.equal(next.beforeCursor, "cursor-1")
-})
-
-test("scroll-anchor restoration applies the exact post-prepend top delta", () => {
-  let top = 240
-  const node = {
-    dataset: { transcriptSourceId: "u2" },
-    getBoundingClientRect: () => ({ top, bottom: top + 40 }),
-  }
-  const root = { querySelectorAll: () => [node] }
-  const anchor = captureTranscriptViewportAnchor(root as unknown as HTMLElement)
-  assert.deepEqual(anchor, { sourceId: "u2", top: 240 })
-  top = 910
-  let correction = 0
-  assert.equal(restoreTranscriptViewportAnchor(root as unknown as HTMLElement, anchor, (delta) => { correction = delta }), true)
-  assert.equal(correction, 670)
-  assert.equal(transcriptAnchorScrollDelta(240, 910), 670)
-})
-
-// ---- the load-earlier correction must always be able to STOP ----
-// "reserve" re-arms the layout effect that asks for it, so any geometry this function can never stop
-// reserving on is an infinite render loop. These pin the two guards that make that unreachable.
-
-const geometry = (over: Partial<Parameters<typeof transcriptAnchorCorrection>[0]> = {}) =>
-  ({ remaining: 400, scrollY: 1000, maxScrollY: 1000, alreadyReserved: false, ...over })
-
-test("load-earlier correction reserves only when pinned at the bottom of a scrollable window", () => {
-  assert.equal(transcriptAnchorCorrection(geometry()), "reserve", "owed pixels with nowhere left to scroll")
-  assert.equal(transcriptAnchorCorrection(geometry({ scrollY: 200 })), "settle", "room left below — just scroll")
-  assert.equal(transcriptAnchorCorrection(geometry({ remaining: 0.4 })), "settle", "already converged")
-  assert.equal(transcriptAnchorCorrection(geometry({ remaining: -800 })), "settle", "a negative delta never reserves")
-  assert.equal(transcriptAnchorCorrection(geometry({ remaining: Number.NaN })), "settle", "a NaN reading never reserves")
-})
-
-// THE REGRESSION. An open thread drawer scroll-locks the board behind it (`body{position:fixed}`), which
-// reports scrollY 0 / maxScrollY 0 — so the old `scrollY >= maxScrollY - 1` test read `0 >= -1` and was
-// true forever. On a fixed body scrollBy moves nothing and margin cannot grow scrollHeight either, so
-// `remaining` and `maxScrollY` were both frozen: the branch re-armed its own effect until React's
-// nested-update limit destroyed the QueueCard. Observed live: 52 passes, remaining stuck at 2218.75px,
-// the reserve climbing to 110,950px.
-test("a scroll-LOCKED document settles instead of reserving forever (QueueCard render-loop regression)", () => {
-  const locked = geometry({ remaining: 2218.75, scrollY: 0, maxScrollY: 0 })
-  assert.equal(transcriptAnchorCorrection(locked), "settle")
-  // The degenerate comparison the guard replaces would have said "reserve" here, every single pass.
-  assert.ok(locked.scrollY >= locked.maxScrollY - 1, "0 >= -1 — why the old bottom test never terminated")
-})
-
-test("the bottom reserve is one-shot per anchor, so a non-converging correction cannot spin", () => {
-  const owed = geometry({ remaining: 2218.75 })
-  assert.equal(transcriptAnchorCorrection(owed), "reserve", "the first ask grows the reserve")
-  assert.equal(transcriptAnchorCorrection({ ...owed, alreadyReserved: true }), "settle", "the second gives up")
-})
-
-// The loop-freedom property itself, stated directly: feed the decision back into its own geometry the way
-// the effect does (reserve → the anchor is now `reserved`) and it must reach "settle" in bounded steps —
-// for EVERY combination, including the ones where the reserve buys nothing.
-test("the correction terminates from every geometry, never re-reserving indefinitely", () => {
-  for (const remaining of [-5, 0, 0.5, 1, 2218.75, 1e6, Number.NaN]) {
-    for (const maxScrollY of [0, 1, 1000]) {
-      for (const scrollY of [0, 999, 1000, 5000]) {
-        let g = { remaining, scrollY, maxScrollY, alreadyReserved: false }
-        let steps = 0
-        // Worst case the geometry never improves at all — the pessimal real case (a fixed body).
-        while (transcriptAnchorCorrection(g) === "reserve") {
-          g = { ...g, alreadyReserved: true }
-          if (++steps > 1) break
-        }
-        assert.ok(steps <= 1, `settled after ${steps} reserves for ${JSON.stringify({ remaining, scrollY, maxScrollY })}`)
-      }
-    }
-  }
 })

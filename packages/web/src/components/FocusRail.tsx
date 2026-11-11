@@ -269,8 +269,8 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
     // `thread-rail` exists only on this page, so on the fullscreen door's view transition it has no
     // old counterpart and plays the enter animation in styles.css (slides in from the right).
     //
-    // ANCHORED TO THE TOP whenever it lists anything, the rule the queue column and the sidebar follow
-    // (maintainer 2026-10-13: "Anchor both to the top"; TodosView, Sidebar.tsx). It was centred in the
+    // ANCHORED TO THE TOP whenever it lists anything, the rule the sidebar follows (maintainer
+    // 2026-10-13, of it and the queue column: "Anchor both to the top"; Sidebar.tsx). It was centred in the
     // window, and a centred column turns every height change into a move of everything in it: a
     // background shell starting under a running sub-agent moved the Sub-agents group up 26px, and the
     // shell finishing moved it back (layout sweep, 2026-10-14). Top-anchored, a group coming or going

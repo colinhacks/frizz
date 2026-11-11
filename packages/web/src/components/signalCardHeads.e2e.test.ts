@@ -149,7 +149,7 @@ test("every block type heads with its kind over its title, at one rhythm", {
     assert.ok(Math.max(...inks) - Math.min(...inks) < 1, `question kind glyphs' ink heights: ${asked.map((c) => `${c.kind} ${c.glyphInk.toFixed(2)}`).join(", ")}`)
 
     // 6. Settled cards are headed as their live cards were; only a follow-up is named by its position.
-    const answered = (await read("registered-question-fixture.html?fence=settled&view=thread")).filter((c) => c.settled)
+    const answered = (await read("registered-question-fixture.html?fence=settled")).filter((c) => c.settled)
     assert.deepEqual(answered.map((c) => c.kind), ["Question", "Follow-up", "Select multiple"])
 
     assert.deepEqual(errors, [])

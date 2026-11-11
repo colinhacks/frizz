@@ -18,7 +18,6 @@ const SRC = dirname(fileURLToPath(import.meta.url))
 /** Modules only the lazy chunk may reach, and the npm packages only they need. */
 const LAZY_ONLY = [
   "components/ChatView.tsx",
-  "components/TodosView.tsx",
   "components/StandaloneThreadPage.tsx",
   "components/SubAgentSheet.tsx",
   "components/ThreadDrawer.tsx",

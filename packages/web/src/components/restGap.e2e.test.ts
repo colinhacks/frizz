@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// THE WAIT, DATED, AND THE HOVER (lib/messageTime), on the thread view and on its queue card. Skipped
+// THE WAIT, DATED, AND THE HOVER (lib/messageTime), on the thread view every surface draws. Skipped
 // unless a Vite URL serving the fixtures is provided (same pattern as the other *.e2e.test.ts here):
 // start `vite` in packages/web and set FRIZZ_REST_GAP_E2E_URL to its origin.
 //
 // One thread (rest-gap-fixture): a question yesterday, the reply this morning, then a reply four minutes
 // after the next rest. So exactly one rest is dated, one keeps "Agent rested", and the trailing one is
-// dropped as the tail's restatement. Measured in the browser because the card is where it can go wrong:
-// its transcript is an imperative walk that drops every rest, and the dated one is the exception.
+// dropped as the tail's restatement. (The queue card, whose transcript walk dropped every rest but the
+// dated one, was pinned here too until it went on 2026-11-10.)
 const baseUrl = process.env.FRIZZ_REST_GAP_E2E_URL
 
 type Surface = {
@@ -27,7 +27,7 @@ const HOVER_TARGETS = {
   datedRest: "10:51",
 }
 
-async function read(surface: "card" | "thread", { loadEarlier = 0 } = {}): Promise<Surface> {
+async function read(): Promise<Surface> {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
   try {
@@ -36,13 +36,8 @@ async function read(surface: "card" | "thread", { loadEarlier = 0 } = {}): Promi
     const errors: string[] = []
     page.on("console", (m) => { if (m.type() === "error" && !/404|favicon|flushSync/i.test(m.text())) errors.push(m.text()) })
     page.on("pageerror", (e) => errors.push(String(e)))
-    await page.goto(new URL(`/rest-gap-fixture.html${surface === "card" ? "?surface=card" : ""}`, baseUrl).href, { waitUntil: "networkidle2" })
+    await page.goto(new URL("/rest-gap-fixture.html", baseUrl).href, { waitUntil: "networkidle2" })
     await page.waitForFunction(() => document.body.innerText.includes("maybe its not worth encrypting"), { timeout: 15_000 })
-    for (let i = 0; i < loadEarlier; i++) {
-      const before = await page.evaluate(() => document.querySelectorAll("[data-frizz-msg]").length)
-      await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent === "Load earlier messages")?.click())
-      await page.waitForFunction((n) => document.querySelectorAll("[data-frizz-msg]").length > n, { timeout: 5_000 }, before)
-    }
     const found = await page.evaluate((targets) => {
       const clean = (text: string) => text.replace(/[\s ]+/g, " ").trim()
       const hoverOver = (words: string) => {
@@ -75,7 +70,7 @@ async function read(surface: "card" | "thread", { loadEarlier = 0 } = {}): Promi
 }
 
 test("thread view: the late reply's rest reads as its instant, the quick reply's keeps its rule", { skip: !baseUrl }, async () => {
-  const thread = await read("thread")
+  const thread = await read()
   assert.deepEqual(thread.errors, [], "the thread view logs no error")
   assert.equal(thread.dividers.length, 2, `two rest hairlines, the trailing one dropped: ${thread.dividers.join(" | ")}`)
   assert.equal(thread.dividers[0], "rest-gap: Today · 10:51 AM", "yesterday's rest, answered this morning, reads as the reply's instant")
@@ -86,18 +81,4 @@ test("thread view: the late reply's rest reads as its instant, the quick reply's
   assert.equal(thread.hovers.run, "Today at 10:52 AM", "…and so does the agent's prose after a tool run")
   assert.equal(thread.hovers.quickReply, "Today at 10:56 AM")
   assert.equal(thread.hovers.datedRest, "Agent rested yesterday at 3:03 PM", "the dated hairline's hover names the end of the wait")
-})
-
-test("queue card: no reading on the window it opens on; the dated rest arrives with the history", { skip: !baseUrl }, async () => {
-  const opened = await read("card")
-  assert.deepEqual(opened.errors, [], "the queue card logs no error")
-  assert.deepEqual(opened.dividers, [], "the window opens on the last ask, and a rest is the card's premise")
-  assert.equal(opened.timeBreaks, 0)
-  assert.equal(opened.hovers.quickReply, "Today at 10:56 AM", "the card's bubbles carry the hover too")
-
-  const history = await read("card", { loadEarlier: 2 })
-  assert.deepEqual(history.errors, [])
-  assert.deepEqual(history.dividers, ["rest-gap: Today · 10:51 AM"], "the late reply's rest draws as the drawer draws it; the quick one stays dropped")
-  assert.equal(history.hovers.ask, "Yesterday at 3:02 PM")
-  assert.equal(history.hovers.datedRest, "Agent rested yesterday at 3:03 PM")
 })

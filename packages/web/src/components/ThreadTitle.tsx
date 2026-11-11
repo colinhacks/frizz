@@ -8,9 +8,9 @@ import { THREAD_TITLE_MAX_LENGTH, manualThreadTitleSeed, threadTitleToCommit } f
 import { AiRenameButton } from "./AiRenameButton.tsx"
 
 // THE THREAD'S NAME, AND BOTH WAYS OF CHANGING IT — click the name to type a new one, or point at it
-// and press the refresh mark to have Claude re-derive one. Rendered by the thread header (ChatView)
-// and by the queue card's header (TodosView) from this ONE component, so the two surfaces cannot
-// drift. They did: the queue card carried only the refresh mark until 2026-09-13 — its title was a
+// and press the refresh mark to have Claude re-derive one. Rendered by the thread header (ChatView);
+// the queue card's header drew it too, from this ONE component, until the card went (2026-11-10). The
+// two had drifted before that: the queue card carried only the refresh mark until 2026-09-13 — its title was a
 // plain div, on the theory that the queue is a triage surface and a manual rename belongs in the
 // drawer — and the maintainer met the asymmetry on the first card they wanted to retitle ("It only
 // lets me rename. I should be able to click on it to retitle it.").

@@ -352,11 +352,10 @@ function takeOrphanRun(prose: string, lastId: string | null): { run: string; res
   return { run: absorbed.join("\n"), rest: lines.slice(end + 1).join("\n") }
 }
 
-// Does this message text carry at least one live ```question block? The cheap membership test behind
-// "never collapse an ask out of view" — the queue card's intermediate-summary hides ordinary middle
-// messages, but a question is a decision the human owes, not disposable chatter, so a middle message
-// that carries one keeps its row. Goes through the real splitter so a QUOTED fence (one inside an outer
-// code block) is correctly NOT a question here either.
+// Does this message text carry at least one live ```question block? A cheap membership test (the queue
+// card used it to keep an ask out of its collapsed middle until the card went, 2026-11-10). Goes through
+// the real splitter so a QUOTED fence (one inside an outer code block) is correctly NOT a question here
+// either.
 //
 // A QUESTION FENCE counts too (splitMessageQuestions), including a ````question whose context carries a code
 // block, which the legacy splitter never sees. That also covers the second or two before the server

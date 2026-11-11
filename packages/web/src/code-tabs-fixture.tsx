@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { createRoot } from "react-dom/client"
 import "./styles.css"
-import { QUEUE_WRAP } from "./components/TranscriptCard.tsx"
+import { WRAP_ANYWHERE } from "./components/TranscriptCard.tsx"
 import { installCodeCopyInterceptor } from "./lib/copy-code.ts"
 import { installCodeTabInterceptor } from "./lib/switch-code-tab.ts"
 import { mdToHtml } from "./lib/markdown.ts"
@@ -78,8 +78,8 @@ function Fixture() {
       <button type="button" data-chip-hit className="absolute inset-0" aria-label="Pick this option" />
       <div className="md-body" data-case="chip" dangerouslySetInnerHTML={{ __html: mdToHtml(install) }} />
     </div>
-    {/* The Queue's narrow column (TranscriptCard QUEUE_WRAP): 300px for a block to wrap in, or to scroll inside with Wrap code off. */}
-    <div className={`md-body mt-6 w-[300px] text-[14px] ${QUEUE_WRAP}`}
+    {/* A narrow card column (TranscriptCard WRAP_ANYWHERE): 300px for a block to wrap in, or to scroll inside with Wrap code off. */}
+    <div className={`md-body mt-6 w-[300px] text-[14px] ${WRAP_ANYWHERE}`}
       data-case="narrow" dangerouslySetInnerHTML={{ __html: mdToHtml(CASES[1][1]) }} />
   </main>
   )

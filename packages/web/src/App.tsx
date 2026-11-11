@@ -1,22 +1,22 @@
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useEffect, useRef } from "react"
 import { useNavigate } from "react-router"
 import { useSnapshot } from "valtio"
 import { closeGithubPicker, store, pushDrawer, resolveRoutedThread, topDrawer, topThreadSlug, showToast } from "./store.ts"
 import { useBoard, useBoardIsEmpty } from "./hooks.ts"
 import { closeDrawerAnimated } from "./lib/overlays.ts"
-import { pageScrollY, takeScrollAfterUnlock } from "./lib/pageScrollLock.ts"
+import { pageScrollY } from "./lib/pageScrollLock.ts"
 import { captureReaderPin, readerPinDrift } from "./lib/readerPin.ts"
 import { startRouter } from "./lib/router.ts"
 import { nextSidebarPresence, readSidebarMirror, writeSidebarMirror, type SidebarPresence } from "./lib/sidebarPresence.ts"
 import { isConsolePath, projectSlug } from "./lib/base-path.ts"
-import { CONSOLE_TOP_PX, HOME_SWITCHER_CLEARANCE_PX } from "./lib/homeView.ts"
 import { BOARD_PAIR_CLASS, WORKPANE_WIDTH_CLASS } from "./lib/boardColumns.ts"
 import { CONSOLE_SIDEBAR_COLUMN_CLASS, ConsoleSidebar } from "./components/ConsoleSidebar.tsx"
 import { SIDEBAR_COLUMN_CLASS, Sidebar } from "./components/Sidebar.tsx"
 import { MobileBoard } from "./components/MobileBoard.tsx"
 import { useIsMobile } from "./lib/mobile.ts"
 import { DrawerStack } from "./components/DrawerStack.tsx"
-import { TodosView, preloadThreadSurfaces } from "./components/lazySurfaces.tsx"
+import { preloadThreadSurfaces } from "./components/lazySurfaces.tsx"
+import { FirstTaskView } from "./components/FirstTaskView.tsx"
 import { PaneLayout } from "./components/ThreadPane.tsx"
 import { setPaneFolded } from "./lib/threadPane.ts"
 import { NewThreadDialog } from "./components/NewThreadModal.tsx"
@@ -63,12 +63,9 @@ export function App() {
     if (!overlayOpen) return
     const y = window.scrollY
     const body = document.body
-    // Drop any landing a previous lock left unconsumed, so a stale one can never fire against a page
-    // the reader has since moved on from.
-    takeScrollAfterUnlock()
-    // The card (or phone row) the reader was in as the overlay opened. Nothing anchors a pinned page, so
-    // whatever arrives, grows or leaves above it meanwhile would otherwise hand the reader a different
-    // card on the way back (lib/readerPin).
+    // The phone row the reader was in as the overlay opened. Nothing anchors a pinned page, so whatever
+    // arrives, grows or leaves above it meanwhile would otherwise hand the reader a different row on the
+    // way back (lib/readerPin).
     const reader = captureReaderPin()
     body.style.position = "fixed"
     body.style.top = `-${y}px`
@@ -76,18 +73,15 @@ export function App() {
     body.style.right = "0"
     body.style.width = "100%"
     return () => {
-      // Read while still pinned: the body's offset (moved by shiftLockedPage if the queue held the reader
-      // through a change), and how far the reader's card has drifted beyond that.
+      // Read while still pinned: the body's offset (moved by shiftLockedPage if the list held the reader
+      // through a change), and how far the reader's row has drifted beyond that.
       const held = pageScrollY() + (reader ? readerPinDrift(reader) : 0)
       body.style.position = ""
       body.style.top = ""
       body.style.left = ""
       body.style.right = ""
       body.style.width = ""
-      // A scroll requested WHILE the page was locked couldn't be applied (the body was pinned) and this
-      // restore would have undone it anyway — so it parked its landing. Honour it over the reader's own
-      // place: that is what lets a queued sidebar row dismiss its drawer and auto-scroll in one move.
-      window.scrollTo(0, takeScrollAfterUnlock() ?? Math.max(0, held))
+      window.scrollTo(0, Math.max(0, held))
     }
   }, [overlayOpen])
 
@@ -144,12 +138,9 @@ export function App() {
   // restart overlay — is shared, so only the standing surfaces branch (see the return below).
   const isMobile = useIsMobile()
 
-  // Settle a parked `/thread/<slug>` URL. It waits for the board because the destination depends on
-  // whether the thread is QUEUED — a needsYou thread's whole panel is already in the main column, so
-  // the URL scrolls to that card instead of stacking an identical drawer over it. Deliberately an
-  // EFFECT and not a store subscription: scrollToQueueCard measures a mounted `[data-queue-card]`, so
-  // it has to run after the queue commits, which for a cold deep link is the same render the board
-  // first arrives. (resolveRoutedThread no-ops unless there is a parked slug AND a board.)
+  // Settle a parked `?thread=<slug>` URL. It waits for the board, which says whether the thread exists in
+  // this project and so whether the pane can show it. (resolveRoutedThread no-ops unless there is a parked
+  // slug AND a board.)
   useEffect(() => { resolveRoutedThread() }, [board, snap.routeThreadSlug])
   // The board has painted: fetch the thread surfaces while the browser is idle (components/lazySurfaces).
   useEffect(() => { if (board) preloadThreadSurfaces() }, [board])
@@ -183,8 +174,8 @@ export function App() {
   // creates it on the way (writeScratchDir → ensureSafeDirectDirectory). Gating the shell on it
   // inverted the fresh-repo experience: a repo with an EMPTY `.frizz/` got the real first-run view,
   // while a repo without one got a dead end that said "dispatch a first thread" with no composer to
-  // do it in. A `.frizz`-less repo is simply a board with zero threads — TodosView's `nothingAtAll`
-  // branch already renders exactly the right thing for it (centered prompt box, sidebar hidden).
+  // do it in. A `.frizz`-less repo is simply a board with zero threads — FirstTaskView renders exactly
+  // the right thing for it (centered prompt box, sidebar hidden).
   return (
     // THE FRAME, not a bare root: following the supervisor (the restart overlay, this subtree going
     // inert under it, the reload onto a new build) and mirroring the notifications setting are what a
@@ -192,20 +183,10 @@ export function App() {
     // stands in the same one. They were this file's alone until 2026-10-13, and that page had neither.
     <PageFrame
       className="relative min-h-screen bg-bg text-fg text-sm"
-      // The Console's home switcher sits at the top of its SIDEBAR (HomeSwitcher.tsx), so beside it the
-      // cards' headers stick to the window's top as a board's do. Only the NARROW layout stacks the
-      // workpane under the sidebar, and there the pill floats over the cards: what sticks to the window's
-      // top sticks below it instead, and `--frizz-sticky-cap` fills the strip above a stuck header with the
-      // card's own surface (TodosView), so the card reaches the window's top under the pill rather than
-      // ending on a line of page. The switcher shows down to the phone breakpoint, and a phone renders
-      // MobileBoard, which has no sticky card header at all. The cap stays set at every width because it
-      // is drawn behind the header and never taller than it: with the header stuck at the top, it is
-      // covered.
-      style={onConsole ? ({ "--frizz-sticky-top-narrow": `${HOME_SWITCHER_CLEARANCE_PX}px`, "--frizz-sticky-cap": `${HOME_SWITCHER_CLEARANCE_PX}px` } as CSSProperties) : undefined}
     >
       {/* NO FIXED CHROME IN EITHER TOP CORNER. Identity, settings, reload and both quota chips used to
           be a bar pinned to the upper-left, a screen's width from the column they describe; they are
-          the StatusRow along the top of the prompt box now (Sidebar.tsx, and TodosView's centered
+          the StatusRow along the top of the prompt box now (Sidebar.tsx, and FirstTaskView's centered
           first-task box on a brand-new project). Everything flows; the PAGE is the one and only scroll
           container — a tall card simply runs off both edges. On a phone none of it renders at all: the
           project and the way to settings are already in the mobile nav bar. */}
@@ -235,8 +216,11 @@ export function App() {
               tuned 52px by ~1530px, where the pair has margins to spare. Wide layouts are unchanged.
           The classes are lib/boardColumns.ts's: the home switcher lays out an empty copy of this pair to
           find the top-left corner of the Console's sidebar, where it sits. */}
-      {/* THE ONE-THREAD PANE. A brand-new project keeps its centered first-task view below. */}
-      {board && snap.view === "todos" && !(boardEmpty && !onConsole) ? (
+      {/* THE ONE-THREAD PANE, on every board that has had a thread, read as the sidebar reads it
+          (lib/sidebarPresence): an empty keyframe while the live stream reconnects or catches up must not
+          unmount the pane and the thread open in it. A brand-new project keeps its centered first-task
+          view below. */}
+      {board && snap.view === "todos" && (onConsole || hasBeenVisible) ? (
         <PaneLayout sidebar={<ErrorBoundary label="the sidebar">{onConsole ? <ConsoleSidebar /> : <Sidebar />}</ErrorBoundary>} />
       ) : (
       <div className={`${BOARD_PAIR_CLASS} min-h-screen`}>
@@ -253,27 +237,22 @@ export function App() {
         {reserveSidebar && <aside aria-hidden className={onConsole ? CONSOLE_SIDEBAR_COLUMN_CLASS : SIDEBAR_COLUMN_CLASS} data-sidebar-reserved />}
         <main
           id="workpane"
-          // min-h-screen where content is vertically CENTERED: the empty queue's prompt box (TodosView's
-          // flex-1 centering needs a full-height parent); populated queues just top-align and grow past.
-          // Before the board it holds the page at the height the queue will give it. Threads render in
-          // DRAWERS, never here.
-          // The Console's first card opens on the sidebar's top line (CONSOLE_TOP_PX), less the queue
-          // column's own 32px of top padding. Top-anchored, not centred like a board's: its sidebar is.
-          style={onConsole ? { paddingTop: CONSOLE_TOP_PX - 32 } : undefined}
+          // min-h-screen where content is vertically CENTERED: the first-task prompt box (FirstTaskView's
+          // auto margins need a full-height parent). Before the board it holds the page at the height the
+          // board will give it. Threads render in the pane or in DRAWERS, never here.
           className={`${WORKPANE_WIDTH_CLASS} flex flex-col py-5 ${
             (snap.view === "todos" && !onConsole) || !board ? "min-h-screen" : ""
           } ${
-            // Queue recedes: the CARD carries its own chrome (a sticky header), so the bordered panel
-            // frame drops away. Status lists (URL-only views) keep the panel on main.
+            // Status lists (URL-only views) draw in a panel; the first-task box stands on the page.
             snap.view === "todos" ? "" : "rounded-lg border border-border bg-panel"
           }`}
         >
           {/* Only board !== null renders real views: before it, the loader below — NEVER a view's empty
               state, which would flash "Nothing pending" on every hard reload. */}
           {board && (
-            <ErrorBoundary label="the queue" resetKeys={[snap.view]}>
+            <ErrorBoundary label="the workpane" resetKeys={[snap.view]}>
               {snap.view.startsWith("status:") && <StatusListView status={snap.view.slice(7)} />}
-              {snap.view === "todos" && <TodosView />}
+              {snap.view === "todos" && <FirstTaskView />}
             </ErrorBoundary>
           )}
         </main>

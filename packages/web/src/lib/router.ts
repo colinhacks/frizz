@@ -1,11 +1,11 @@
 import { subscribe } from "valtio"
-import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, paneEnabled, takeQueueCardNavigation } from "../store.ts"
+import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, paneEnabled } from "../store.ts"
 import { innerPath, outerPath, projectHref } from "./base-path.ts"
 import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 
-// URL ⇄ state sync, SPA-style. A board's URL is its VIEW in the path — `/` (the unified queue) or
-// `/status/<status>` (URL-only lists) — and the thread open over it in the QUERY: `?thread=<slug>`
-// names the drawer stack's topmost thread layer (or, for a queued thread, its card). The thread's own
+// URL ⇄ state sync, SPA-style. A board's URL is its VIEW in the path — `/` (the board) or
+// `/status/<status>` (URL-only lists) — and the thread open on it in the QUERY: `?thread=<slug>`
+// names the thread in the board's pane, or the drawer stack's topmost thread layer. The thread's own
 // path, `/thread/<slug>`, is its full-screen page (lib/standaloneThreadRoute.ts), which is a different
 // route and not this module's to write.
 //
@@ -15,10 +15,8 @@ import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 // A query composes with the path the way a drawer composes with the board: the drawer sits OVER a view,
 // so a status list keeps its own path under it.
 //
-// History contract (standard SPA): opening a thread layer PUSHES an entry so the browser Back
-// button unwinds it; other transitions REPLACE so transient state never buries the back stack. One
-// close is a navigation and pushes too: a door to a QUEUED thread dismissing the stack to show that
-// thread's card (store scrollToQueueCard) — replacing there left two board entries and lost the drawer.
+// History contract (standard SPA): opening a thread PUSHES an entry so the browser Back button unwinds
+// it; other transitions REPLACE so transient state never buries the back stack.
 //
 // (The focus machine this used to route through was deleted — the router writes store.view directly.)
 
@@ -88,8 +86,8 @@ export function queueDestination(inner: string, slug = store.board?.projectSlug)
 }
 
 /**
- * The URL of a board with `slug` open over it — the drawer's own address, or the queue card's for a
- * queued thread. THIS page's board by default; `project` names another project's.
+ * The URL of a board with `slug` open on it, in the pane or a drawer. THIS page's board by default;
+ * `project` names another project's.
  */
 export function boardThreadHref(slug: string, project?: string): string {
   const board = project ? projectHref(project) : queueDestination("/")
@@ -133,11 +131,9 @@ export function applyPath(path: string, search = ""): void {
     closeDrawersById(store.drawers.slice(idx + 1).map((d) => d.id))
     return
   }
-  // Otherwise PARK the slug: the destination depends on whether the thread is queued, which the
-  // board alone can say, and on a cold deep link no board has arrived yet. App settles it the first
-  // render the board is authoritative (store.resolveRoutedThread). Deciding here instead — the old
-  // unconditional pushDrawer — is what rendered a queued thread's panel twice on its URL: its full
-  // card in the main column, plus the identical panel in a drawer half-covering it.
+  // Otherwise PARK the slug: the destination depends on whether the thread is in this project, which
+  // the board alone can say, and on a cold deep link no board has arrived yet. App settles it the first
+  // render the board is authoritative (store.resolveRoutedThread).
   //
   // What the destination DISPLACES is already known, though, and must go now. The commonest way here
   // with a stack open is Back after a lateral move — thread A, then a link or a sidebar row to B: the
@@ -157,7 +153,7 @@ export function applyPath(path: string, search = ""): void {
 // not a regression of the old opacity-0-phantom bug: the layer that bug produced was one animated in
 // AFTER mount, whereas resolveRoutedThread still pushes `routed: true` (painted open, no animation),
 // and it fires on the very render the board lands — the same render that replaces App's boot spinner
-// with the queue, so the sheet and the page behind it appear together.
+// with the board, so the thread and the page around it appear together.
 export function primeRoute(path = location.pathname, search = currentSearch()): void {
   applyPath(innerPath(path), search)
 }
@@ -230,9 +226,6 @@ export function startRouter(navigate: (path: string, options: { replace: boolean
   primeRoute()
 
   return subscribe(store, () => {
-    // Taken first, on every notification: it describes the change this notification carries, and an
-    // early return below must not leave it armed for a later one.
-    const queueCardNavigation = takeQueueCardNavigation()
     // The fullscreen page is NOT the board's URL to write. Its route lives outside RootLayout, but
     // valtio delivers this notification a microtask late: StandaloneRoute clears the drawer stack on
     // its first render (it moved there from the fullscreen door's click handler for the view
@@ -245,11 +238,10 @@ export function startRouter(navigate: (path: string, options: { replace: boolean
     const pathname = queueDestination(currentViewPath())
     const search = withThreadParam(currentSearch(), thread)
     if (pathname === location.pathname && search === currentSearch()) return
-    // OPENING a thread pushes history — a URL naming a thread the address bar does not already name —
-    // and so does a door dismissing the stack for a queue card. Unwinding, non-thread transitions and a
-    // rewrite that keeps the thread (the unprefixed `/?thread=x` taking its `/project/<slug>` prefix
-    // once the board names it) replace.
+    // OPENING a thread pushes history — a URL naming a thread the address bar does not already name.
+    // Unwinding, non-thread transitions and a rewrite that keeps the thread (the unprefixed `/?thread=x`
+    // taking its `/project/<slug>` prefix once the board names it) replace.
     const opening = thread !== null && thread !== threadParam(currentSearch())
-    navigate(`${pathname}${search}`, { replace: !opening && !queueCardNavigation })
+    navigate(`${pathname}${search}`, { replace: !opening })
   })
 }

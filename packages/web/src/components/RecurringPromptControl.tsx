@@ -98,11 +98,12 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
   const trigger = useRef<HTMLButtonElement>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(hoverTimer.current), [])
-  // THE PANEL STAYS ON ITS OWN THREAD'S SURFACE — the queue card, the drawer, the /full column — AND ENDS
-  // ON ITS PROMPT BOX'S RIGHT EDGE. The glyph sits near the right end of the box, so an end-aligned panel
+  // THE PANEL STAYS ON ITS OWN THREAD'S SURFACE — the pane, the drawer, the /full column — AND ENDS ON
+  // ITS PROMPT BOX'S RIGHT EDGE. The glyph sits near the right end of the box, so an end-aligned panel
   // grows LEFTWARD, and at its full 46rem it ran past every surface it opened on: ~60px over the sidebar
-  // from a queue card, ~100px over the board behind a drawer, ~100px into the margin beside /full. The
-  // surface is the collision boundary, and its side padding is the prompt box's inset within it.
+  // from a queue card (the board's surface until 2026-11-09), ~100px over the board behind a drawer,
+  // ~100px into the margin beside /full. The surface is the collision boundary, and its side padding is
+  // the prompt box's inset within it.
   //
   // IT TAKES A SHARE OF THE BOX, NEVER THE BOX. From 2026-10-20 it filled what that boundary left, which
   // on a 720px card landed it exactly on the box's two edges, a second box stacked on the first
@@ -115,7 +116,7 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
   const [bounds, setBounds] = useState<{ surface: Element; left: number; right: number; width: number; toBoxEnd: number } | null>(null)
   useLayoutEffect(() => {
     if (!open) return
-    const surface = trigger.current?.closest('[data-queue-card-root], [role="dialog"], main')
+    const surface = trigger.current?.closest('[role="dialog"], main')
     if (!surface) {
       setBounds(null)
       return
@@ -422,10 +423,10 @@ function sameAsSent(next: Draft, sent: ReturnType<typeof draftAsSent>): boolean 
  *
  *  Extracted and exported so the test beside this file can pin all three branches cheaply. Both are
  *  ALSO driven in a real browser — an archived thread's panel opens empty and its dismissal writes
- *  nothing. Watch the selector when you re-check that: `/thread/<slug>` leaves the BOARD rendered
- *  behind the drawer, and a rested thread's queue card carries its own prompt box, so an unscoped
- *  `querySelector("[data-recurring-prompt]")` finds the board's heart rather than the drawer's and
- *  reports the wrong thread's panel. Scope to `[role=dialog]`. */
+ *  nothing. Watch the selector when you re-check that: a drawer over a status list or `/full` leaves
+ *  the page behind it rendered, and the thread there carries its own prompt box, so an unscoped
+ *  `querySelector("[data-recurring-prompt]")` can find that one rather than the drawer's and report
+ *  the wrong thread's panel. Scope to `[role=dialog]`. */
 export function seedsDefaults(
   thread: Pick<ThreadView, "archived">,
   armed: ThreadView["recurringPrompt"],

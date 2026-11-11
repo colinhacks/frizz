@@ -12,8 +12,7 @@ const wakeDivider = () => readFileSync(new URL("./WakeDivider.tsx", import.meta.
 const answersCard = () => readFileSync(new URL("./AnswersCard.tsx", import.meta.url), "utf8")
 
 // The REGRESSION this pins: `data-transcript-source-id` is load-bearing for transcript pagination —
-// captureTranscriptViewportAnchor / restoreTranscriptViewportAnchor and the virtualized
-// requestEarlier anchor all query it and expect it on ROW wrappers (which also carry
+// the virtualized requestEarlier anchor queries it and expects it on ROW wrappers (which also carry
 // data-transcript-row-key). Stamping the same attribute on each nested MESSAGE root would put non-row
 // nodes into those result sets. A message root's own handle is the SEPARATE `data-frizz-msg`
 // attribute. One legitimate site: the virtual row wrapper.
@@ -26,8 +25,7 @@ test("a message root never joins the pagination-anchor attribute", () => {
 
 // `data-frizz-msg` outlived the hover-revealed debug-id chip it was introduced for (dropped 2026-08-01,
 // maintainer: "they're not necessary anymore"). It stays because it is the only per-message handle the
-// e2e suites can select on — workingTailSpacing, metaColumnRhythm and intermediateCollapseDivider all
-// query it to find message roots and read their geometry. Losing it in a later cleanup would take
+// e2e suites can select on — workingTailSpacing and metaColumnRhythm both query it to find message roots and read their geometry. Losing it in a later cleanup would take
 // those with it, so the count is pinned here.
 test("every rendered message variant still carries its own data-frizz-msg handle", () => {
   const sources = [chatView(), wakeDivider(), answersCard()]

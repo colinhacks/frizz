@@ -78,16 +78,16 @@ const cards: { slug: string; label: string; fence: "done" | "awaiting"; body: st
   { slug: "card-legacy", label: "legacy CI (no button)", fence: "awaiting", body: "The legacy build is still running.", hints: [{ kind: "shell", value: "owner/repo#7" }] },
 ]
 
-// The QUEUE path: the queue card renders the fence through <Message dense> inside a ThreadSlugContext,
-// so this reproduces exactly how a done/awaiting card in the queue reaches FenceCard. Proves the button
-// shows in the queue too. Each renders a real assistant message whose text IS the fence block.
+// The MESSAGE path: a thread surface renders the fence through <Message> inside a ThreadSlugContext, so
+// this reproduces how a done/awaiting card in a transcript reaches FenceCard (it was the queue card's
+// path until the card went, 2026-11-10). Each renders a real assistant message whose text IS the fence block.
 const queueCards: { slug: string; label: string; text: string }[] = [
   { slug: "queue-done", label: "done", text: "Shipped it.\n\n```done\nAll green.\n```" },
   { slug: "queue-timer", label: "timer snooze", text: "```awaiting\nPark until the checkpoint.\ntimer: " + timerIso + "\n```" },
 ]
 
-// A queue thread with a LIVE sub-agent dispatch — proves that, now the queue card provides
-// ThreadSlugContext, an AgentBlock there resolves its child and goes live (running header + drill-in).
+// A thread with a LIVE sub-agent dispatch — proves that inside ThreadSlugContext an AgentBlock resolves
+// its child and goes live (running header + drill-in).
 const agentSlug = "queue-agent"
 const agentId = "sub-live-1"
 const agentThread = baseThread(agentSlug, "agent · live sub-agent", [
@@ -126,18 +126,18 @@ function Fixture() {
           </ThreadSlugContext.Provider>
         </div>
       ))}
-      <p className="petite-caps mt-4 text-[10px] text-accent">Queue path — Message dense inside ThreadSlugContext</p>
+      <p className="petite-caps mt-4 text-[10px] text-accent">Message path — Message inside ThreadSlugContext</p>
       {queueCards.map((c) => (
-        <div key={c.slug} data-queue-fixture={c.slug} className="flex flex-col gap-1.5 rounded-lg border border-border bg-panel p-3">
+        <div key={c.slug} data-message-fixture={c.slug} className="flex flex-col gap-1.5 rounded-lg border border-border bg-panel p-3">
           <p className="text-[11px] text-muted">{c.label}</p>
           <ThreadSlugContext.Provider value={c.slug}>
-            <Message m={{ role: "assistant", text: c.text, tools: [], parts: [{ kind: "text", text: c.text }] }} dense />
+            <Message m={{ role: "assistant", text: c.text, tools: [], parts: [{ kind: "text", text: c.text }] }} />
           </ThreadSlugContext.Provider>
         </div>
       ))}
-      {/* B (maintainer 2026-07-15): queue sub-agent blocks go live via ThreadSlugContext. This proves an
-          AgentBlock in a queue card resolves its running child + offers drill-in. */}
-      <div data-queue-fixture={agentSlug} className="flex flex-col gap-1.5 rounded-lg border border-border bg-panel p-3">
+      {/* B (maintainer 2026-07-15): sub-agent blocks go live via ThreadSlugContext. This proves an
+          AgentBlock resolves its running child + offers drill-in. */}
+      <div data-message-fixture={agentSlug} className="flex flex-col gap-1.5 rounded-lg border border-border bg-panel p-3">
         <p className="text-[11px] text-muted">agent · live sub-agent (drill-in)</p>
         <ThreadSlugContext.Provider value={agentSlug}>
           <Message
@@ -147,7 +147,6 @@ function Fixture() {
               tools: [],
               parts: [{ kind: "tools", tools: [{ name: "Agent", detail: "Investigate the failing test", prompt: "Go investigate the failing test and report back.", subagentType: "frizz:opus-high", agentId, status: "pending" }] }],
             }}
-            dense
           />
         </ThreadSlugContext.Provider>
       </div>

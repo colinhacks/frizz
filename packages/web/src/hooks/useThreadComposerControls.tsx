@@ -74,10 +74,9 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   // serves both from one fetch.
   //
   // ABOVE the early return, and it must stay there. This query sat below it until 2026-09-19, so the
-  // render in which a thread LEFT the board — a steered queue card whose row drops before its fade
-  // ends, exactly the moment TodosView holds the card to dissolve it — called one hook fewer than the
-  // render before, and React tore the whole queue down ("change in the order of Hooks"). Every card
-  // vanished in one frame instead of one card fading; queueSteerDissolve.e2e.test.ts is the pin.
+  // render in which a thread LEFT the board — a steered queue card whose row dropped before its fade
+  // ended — called one hook fewer than the render before, and React tore the whole queue down ("change
+  // in the order of Hooks"). Every card vanished in one frame instead of one card fading.
   // Asked of the thread's own project — named by its key on the Console (lib/threadKey.ts).
   const agentsProject = thread ? keyProject(thread.id) : undefined
   const acpAgents = useQuery({ queryKey: scopedKey(["acpAgents"], agentsProject), queryFn: () => rpcFor(agentsProject).acpAgents(), enabled: Boolean(thread) && backend === "acp" })

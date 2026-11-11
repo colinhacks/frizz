@@ -13,25 +13,6 @@ export function previousUserBoundary(messages: readonly TranscriptMessage[], cur
   return start > 0 ? 0 : null
 }
 
-// Where a queue card's visible window starts, given the message the reader explicitly expanded back to.
-//
-// The subtlety is the message going MISSING. The server's latest window is bounded — MAX_MESSAGES, reaching
-// further back only as far as the human's last message (latestWindowStart) — so on a long enough thread
-// every new message pushes one off the head of the window, and "View more" walks back INSIDE that window
-// without fetching (so nothing marks the prefix as loaded history, which is what would make a push retain
-// it). The reader's chosen start can therefore be trimmed away underneath them, and falling
-// back to `lastUserIdx` there silently collapses the card they had just expanded, all the way back to the
-// latest turn. Keep the intent instead: they asked to see further back, so show everything still held.
-export function resolveVisibleStart(
-  messages: readonly TranscriptMessage[],
-  visibleStartId: string | null,
-  lastUserIdx: number,
-): number {
-  if (!visibleStartId) return lastUserIdx
-  const explicit = messages.findIndex((message) => message.sourceId === visibleStartId)
-  return explicit >= 0 ? explicit : 0
-}
-
 function firstOverlap(
   previous: readonly TranscriptMessage[],
   incoming: readonly TranscriptMessage[],
@@ -118,76 +99,4 @@ export function prependEarlierPage(
     reachedTurnBoundary: earlier.reachedTurnBoundary,
     historyLoaded: true,
   }
-}
-
-export interface TranscriptViewportAnchor {
-  sourceId: string
-  top: number
-}
-
-// Pick the first old message intersecting the viewport. Its top-edge delta after React prepends the
-// page is the exact scroll correction, independent of variable-height markdown/tool cards.
-export function captureTranscriptViewportAnchor(
-  root: HTMLElement | null,
-  viewportTop = 0,
-): TranscriptViewportAnchor | null {
-  if (!root) return null
-  const nodes = [...root.querySelectorAll<HTMLElement>("[data-transcript-source-id]")]
-  const node = nodes.find((candidate) => candidate.getBoundingClientRect().bottom > viewportTop) ?? nodes[0]
-  const sourceId = node?.dataset.transcriptSourceId
-  return node && sourceId ? { sourceId, top: node.getBoundingClientRect().top } : null
-}
-
-export function transcriptAnchorScrollDelta(beforeTop: number, afterTop: number): number {
-  return afterTop - beforeTop
-}
-
-export function restoreTranscriptViewportAnchor(
-  root: HTMLElement | null,
-  anchor: TranscriptViewportAnchor | null,
-  scrollBy: (delta: number) => void,
-): boolean {
-  if (!root || !anchor) return false
-  const node = [...root.querySelectorAll<HTMLElement>("[data-transcript-source-id]")]
-    .find((candidate) => candidate.dataset.transcriptSourceId === anchor.sourceId)
-  if (!node) return false
-  scrollBy(transcriptAnchorScrollDelta(anchor.top, node.getBoundingClientRect().top))
-  return true
-}
-
-export interface TranscriptAnchorGeometry {
-  // Pixels the anchored message is STILL off its captured screen Y after one scrollBy correction.
-  remaining: number
-  scrollY: number
-  // documentElement.scrollHeight - innerHeight, clamped at 0. Zero means the window does not scroll.
-  maxScrollY: number
-  // Whether this pending anchor already spent its one bottom-reserve growth.
-  alreadyReserved: boolean
-}
-
-// Decide what a load-earlier viewport correction should do next.
-//
-// "reserve" — the window is pinned at its bottom with pixels still owed, so there is physically nowhere
-//   left to scroll. Grow the reserve below the card by the shortfall and re-run on the next layout pass.
-// "settle"  — done, impossible, or not converging. Hand off to the rAF settlement, which finishes with
-//   whatever the browser allows and releases the anchor.
-//
-// THIS FUNCTION EXISTS BECAUSE "reserve" RE-ARMS THE EFFECT THAT CALLS IT, so a state where it can never
-// stop saying "reserve" is an infinite render loop. Two guards make that unreachable, and both were real:
-//
-//   • `maxScrollY > 0`. A SCROLL-LOCKED document (`body{position:fixed}` — what an open thread drawer
-//     does to the board behind it) reports maxScrollY 0 and scrollY 0, so the bottom test degenerates to
-//     `0 >= -1`: true always. Worse, on a fixed body `window.scrollBy` moves nothing and margin under the
-//     card cannot grow scrollHeight, so neither `remaining` nor `maxScrollY` can ever change. Measured
-//     before this guard: 52 passes, remaining frozen at 2218.75px, reserve climbing 0 → 110,950px, until
-//     React's nested-update limit tore the QueueCard out through the ErrorBoundary.
-//   • `!alreadyReserved`. The reserve adds exactly the missing pixels, so ONE growth is by construction
-//     enough; a second request means the correction is not converging for some other reason, and settling
-//     imperfectly always beats spinning.
-export function transcriptAnchorCorrection(geometry: TranscriptAnchorGeometry): "reserve" | "settle" {
-  const { remaining, scrollY, maxScrollY, alreadyReserved } = geometry
-  if (!(remaining > 0.5)) return "settle" // converged (or a NaN/negative reading — never act on those)
-  if (maxScrollY <= 0) return "settle" // the window cannot scroll, so no reserve can buy it room
-  if (alreadyReserved) return "settle" // one growth per anchor; a second means it is not converging
-  return scrollY >= maxScrollY - 1 ? "reserve" : "settle"
 }

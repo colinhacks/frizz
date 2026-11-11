@@ -4,8 +4,8 @@ import test, { after, before } from "node:test"
 // D7 REGRESSION. `/login` and `/logout` are frizz-owned account actions, intercepted at the composer
 // submit boundary and never delivered to the worker as prompt text. That intercept used to live only in
 // the drawer's ThreadActionBar: the queue cue card had its own send path with NO alias check, so typing
-// `/login` into a card pasted the literal string into the running agent's stdin. Both surfaces now render
-// the SAME components/ThreadComposerBox, which owns the intercept — these tests pin that from BOTH.
+// `/login` into a card pasted the literal string into the running agent's stdin. Every surface now
+// renders the SAME components/ThreadComposerBox, which owns the intercept — these tests pin it there.
 //
 // Skipped unless a Vite URL serving the fixtures is provided (same pattern as the other *.e2e.test.ts
 // here): start `vite` in packages/web and set FRIZZ_COMPOSER_ALIAS_E2E_URL to its origin.
@@ -20,7 +20,6 @@ import test, { after, before } from "node:test"
 const baseUrl = process.env.FRIZZ_COMPOSER_ALIAS_E2E_URL
 
 const SLUG = "alias-thread"
-const QUEUE = 'textarea[data-surface="queueComposer"]'
 const CHAT = 'textarea[data-surface="chatComposer"]'
 
 type Worker = { sent: string[]; rpc: string[] }
@@ -52,9 +51,9 @@ const boxValue = (sel: string): Promise<string> => page!.$eval(sel, (el) => (el 
 
 // A fresh surface with an empty draft cache — drafts are localStorage-backed and deliberately survive
 // navigation, so wipe + reload between cases.
-async function open(surface: "queue" | "drawer", box: string) {
+async function open(box: string) {
   errors = []
-  await page!.goto(`${baseUrl}/composer-alias-fixture.html?surface=${surface}`, { waitUntil: "networkidle2" })
+  await page!.goto(`${baseUrl}/composer-alias-fixture.html`, { waitUntil: "networkidle2" })
   await page!.evaluate(() => localStorage.removeItem("frizz-drafts:v1"))
   await page!.reload({ waitUntil: "networkidle2" })
   await page!.waitForSelector(box)
@@ -80,14 +79,14 @@ async function dismissModal() {
   await new Promise((r) => setTimeout(r, 300))
 }
 
-for (const surface of ["queue", "drawer"] as const) {
-  const box = surface === "queue" ? QUEUE : CHAT
+for (const surface of ["drawer"] as const) {
+  const box = CHAT
 
   test(`${surface} composer: /login opens the sign-in modal and never reaches the worker`, {
     skip: !baseUrl,
     timeout: 150_000,
   }, async () => {
-    await open(surface, box)
+    await open(box)
 
     await typeAndSend(box, "/login")
     const modal = await dialogText()
@@ -107,7 +106,7 @@ for (const surface of ["queue", "drawer"] as const) {
     skip: !baseUrl,
     timeout: 150_000,
   }, async () => {
-    await open(surface, box)
+    await open(box)
 
     await typeAndSend(box, "/logout")
     const modal = await dialogText()
@@ -122,33 +121,3 @@ for (const surface of ["queue", "drawer"] as const) {
     assert.deepEqual(errors, [], "no console/page errors during the alias flow")
   })
 }
-
-test("the intercepted alias leaves the cue card mounted; an ordinary reply still dissolves it", {
-  skip: !baseUrl,
-  timeout: 150_000,
-}, async () => {
-  await open("queue", QUEUE)
-  await page!.waitForSelector(`[data-queue-card-root="${SLUG}"]`)
-
-  await typeAndSend(QUEUE, "/login")
-  assert.equal(
-    await page!.evaluate((slug) => document.querySelector(`[data-queue-card-root="${slug}"]`)?.getAttribute("data-queue-leaving") ?? "unmounted", SLUG),
-    "false",
-    "opening the sign-in modal must not dissolve the card out from under it",
-  )
-
-  await dismissModal()
-  // Sample the dissolve at the instant the send commits — the card flips data-queue-leaving="true", then
-  // unmounts after the exit budget. Either state proves the optimistic dissolve fired.
-  await page!.click(QUEUE)
-  await page!.type(QUEUE, "rotate in place")
-  await pressSendChord()
-  await new Promise((r) => setTimeout(r, 120))
-  const mid = await page!.evaluate((slug) => document.querySelector(`[data-queue-card-root="${slug}"]`)?.getAttribute("data-queue-leaving") ?? "unmounted", SLUG)
-  await new Promise((r) => setTimeout(r, 500))
-  const settled = await page!.evaluate((slug) => document.querySelector(`[data-queue-card-root="${slug}"]`)?.getAttribute("data-queue-leaving") ?? "unmounted", SLUG)
-
-  assert.deepEqual(await sent(), ["rotate in place"], "the ordinary reply reaches the worker")
-  assert.ok(mid === "true" || settled === "unmounted", `a real reply fires the optimistic dissolve (mid=${mid} settled=${settled})`)
-  assert.deepEqual(errors, [], "no console/page errors during the dissolve flow")
-})

@@ -7,11 +7,11 @@ import { overlayEach, plainEntries } from "./steering.ts"
 // clicks rather than when the server can prove it. The exact twin of lib/steering.ts, for the other
 // direction, and it exists for the same reason: a lifecycle verb whose two surfaces disagreed.
 //
-// The QUEUE card has dismissed optimistically since the optimistic-done work (see
-// queueOptimisticDone.e2e.test.ts) — click Mark as done and the card fades immediately, ahead of the
-// completeThread round-trip. The SIDEBAR had no such path: its bands are derived purely from
-// board.threads, so the row sat in Rested until the server's board delta arrived. Every millisecond
-// the server took to answer was a millisecond where the card was gone and the row was still there
+// The QUEUE card dismissed optimistically from the optimistic-done work until it went (2026-11-10):
+// click Mark as done and the card faded immediately, ahead of the completeThread round-trip. The
+// SIDEBAR had no such path: its bands are derived purely from board.threads, so the row sat in Rested
+// until the server's board delta arrived. Every millisecond the server took to answer was a
+// millisecond where the card was gone and the row was still there
 // (maintainer 2026-08-11: "often extreme delay in updating sidebar after clicking Mark as done").
 // Server latency is worth fixing on its own terms — and is, separately — but a rail that waits on a
 // round-trip to show a decision the operator already made is the wrong shape at ANY latency.

@@ -3,7 +3,6 @@
 // reached only through components/lazySurfaces.tsx, so a board's first paint neither downloads nor
 // evaluates it (nor marked and highlight.js, which only these need). See that file.
 export { ThreadView } from "./ChatView.tsx"
-export { TodosView } from "./TodosView.tsx"
 export { SubAgentSheet } from "./SubAgentSheet.tsx"
 export { ThreadDrawer } from "./ThreadDrawer.tsx"
 export { BackgroundShellSheet, MonitorSheet } from "./BackgroundShellSheet.tsx"

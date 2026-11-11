@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { ThreadView } from "./components/ChatView.tsx"
 import { StandaloneThreadPage } from "./components/StandaloneThreadPage.tsx"
-import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import "./styles.css"
@@ -16,8 +15,9 @@ import "./styles.css"
 //    "running"` on a claude thread plus queued bubbles. `deliveryId`s are set so the bubbles are also
 //    UNQUEUEABLE, which is the real-app shape and the only way to see that the hover lift still fires
 //    from the group rather than the bubble.
-// Both surfaces that render the queued tail are mounted — the drawer (ThreadView/ChatView) and the
-// queue card (TodosView) — because the pinned queued group is built separately in each.
+// `?surface=drawer` (the default) mounts ThreadView in a drawer-width column; `?surface=full` the
+// full-screen page. The queue card built its own queued group and was the third, until it went
+// (2026-11-10).
 
 const SLUG = "queued-spacing"
 const PARAMS = new URLSearchParams(location.search)
@@ -131,9 +131,9 @@ window.fetch = async (input, init) => {
   return originalFetch(input, init)
 }
 
-// ?surface=drawer renders the thread drawer, ?surface=full the full-screen page; default renders the
-// queue card. All are the REAL components, so whichever surface drops the gap shows it here.
-const surface = PARAMS.get("surface") ?? "card"
+// ?surface=drawer (the default) renders the thread drawer, ?surface=full the full-screen page. Both are
+// the REAL components, so whichever surface drops the gap shows it here.
+const surface = PARAMS.get("surface") ?? "drawer"
 
 function Fixture() {
   if (surface === "full") {
@@ -143,21 +143,10 @@ function Fixture() {
       </div>
     )
   }
-  if (surface === "drawer") {
-    return (
-      <div className="relative h-screen bg-bg text-fg text-sm">
-        <div className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border">
-          <ThreadView slug={SLUG} />
-        </div>
-      </div>
-    )
-  }
   return (
-    <div className="relative min-h-screen bg-bg text-fg text-sm">
-      <div className="flex min-h-screen justify-center">
-        <main className="w-[720px] max-w-[62vw] min-w-0 flex flex-col py-5 min-h-screen max-[800px]:w-full max-[800px]:max-w-none">
-          <TodosView />
-        </main>
+    <div className="relative h-screen bg-bg text-fg text-sm">
+      <div className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border">
+        <ThreadView slug={SLUG} />
       </div>
     </div>
   )

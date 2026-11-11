@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url"
 import test from "node:test"
 
 // A THREAD BEHAVIOUR IS WIRED ONCE, IN THE SHELL (components/ThreadSurface.tsx), and never in a surface's
-// own component. A thread is drawn on its queue card (TodosView), in its drawer and on its full-screen
-// page (both ChatView); until 2026-10-13 each of those two components assembled the thread's contexts,
+// own component. A thread is drawn in the board's pane, in its drawer and on its full-screen page (all
+// three ChatView, since the queue card went on 2026-11-10); until 2026-10-13 the card (TodosView) and
+// ChatView each assembled the thread's contexts,
 // its answering controller and its send scope by hand, so whatever was added to one was simply absent
 // from the other — a file dropped anywhere on a queue card went into its prompt box, and the same drop on
 // the drawer or the full-screen page did nothing (maintainer: "This shouldn't even be structurally
@@ -39,7 +40,7 @@ test("the thread's contexts, its answering controller and its drop zone are wire
 })
 
 test("every surface that draws a thread's prompt box mounts the shell, once", () => {
-  const surfaces = ["components/ChatView.tsx", "components/TodosView.tsx"]
+  const surfaces = ["components/ChatView.tsx"]
   assert.deepEqual(filesWith("<ThreadSurface").filter((file) => file !== SHELL), surfaces, "a new surface is added here on purpose")
   for (const file of surfaces) {
     const text = sources.get(file)!
@@ -58,8 +59,8 @@ test("every surface that draws a thread's prompt box mounts the shell, once", ()
   assert.deepEqual(filesWith("useThreadPageZone("), [PAGE_ZONE, SHELL].sort(), "only the shell hands its zone up to the page")
   for (const file of pageZones) assert.doesNotMatch(sources.get(file)!, /\bon(?:Drop|DragOver|DragEnter|DragLeave)=/)
   assert.match(sources.get(SHELL)!, /<div \{\.\.\.root\} \{\.\.\.\(pageZone \? null : zone\)\} data-thread-surface=/, "one zone: a surface whose page took it binds none on its own root")
-  // The box is drawn directly by the queue card, and through ThreadActionBar by ChatView.
-  assert.deepEqual(filesWith("<ThreadComposerBox"), ["components/ThreadActionBar.tsx", "components/TodosView.tsx"])
+  // The box is drawn through ThreadActionBar, by ChatView.
+  assert.deepEqual(filesWith("<ThreadComposerBox"), ["components/ThreadActionBar.tsx"])
   assert.deepEqual(filesWith("<ThreadActionBar"), ["components/ChatView.tsx"])
 })
 
@@ -87,14 +88,14 @@ test("what each transcript message means is derived in the shell alone, and hand
     assert.deepEqual(filesWith(prop), ["components/ChatView.tsx"], `${prop} is passed in ChatView.tsx alone`)
     assert.equal(chat.split(prop).length - 1, 1, `${prop} is passed once, by ThreadMessage`)
   }
-  assert.match(chat, /export function ThreadMessage\(\{ m, index, dense, textOnly, showSendButton \}/, "it takes the message, its index and what a layout decides — nothing a surface could get wrong")
+  assert.match(chat, /export function ThreadMessage\(\{ m, index, showSendButton \}/, "it takes the message, its index and what a layout decides — nothing a surface could get wrong")
   // Outside a surface it throws, like the prompt box.
   assert.match(sources.get(SHELL)!, /if \(!transcript\) throw new Error\(/)
 
   // Every surface draws its transcript through it. A bare Message on a surface is a line that carries no
-  // question — a queued bubble, a lifted wake — and takes the message, `dense` and its pairing only.
-  const bare = /^<Message (?:key=\{`[^`]*`\} )?m=\{[^}]+\}(?: dense)?(?: paired=\{[^}]+\})? \/>$/
-  for (const [file, viaThreadMessage, own] of [["components/TodosView.tsx", 2, 0], ["components/ChatView.tsx", 1, 1]] as const) {
+  // question — a queued bubble, a lifted wake — and takes the message and its pairing only.
+  const bare = /^<Message (?:key=\{`[^`]*`\} )?m=\{[^}]+\}(?: paired=\{[^}]+\})? \/>$/
+  for (const [file, viaThreadMessage, own] of [["components/ChatView.tsx", 1, 1]] as const) {
     const text = sources.get(file)!
     assert.equal((text.match(/<ThreadMessage\b/g) ?? []).length, viaThreadMessage, `${file} draws its transcript messages through ThreadMessage`)
     const sites = text.match(/<Message [^\n]*?\/>/g) ?? []
@@ -108,7 +109,7 @@ test("what each transcript message means is derived in the shell alone, and hand
 // 2026-10-14, and two had drifted: the thread view's model read the running background calls the card's
 // had taken out, and the line of counts went on listing watches the rail had learned to leave out.
 test("the drawn transcript, the status rung, an earlier page and a thread's ops each have one source", () => {
-  const surfaces = ["components/ChatView.tsx", "components/TodosView.tsx"]
+  const surfaces = ["components/ChatView.tsx"]
   // The list (useThreadMessages): its steps are the shell's calls, and each surface calls it once.
   for (const step of ["useTranscriptHeldForBoard(", "useRefusedFences("]) assert.deepEqual(filesWith(step), [SHELL], `${step} is a step of useThreadMessages`)
   for (const step of ["useArrivedQuestions(", "useSettledQuestions("]) assert.deepEqual(filesWith(step), ["components/RegisteredQuestionCards.tsx", SHELL], `${step} is a step of useThreadMessages`)
@@ -154,6 +155,6 @@ test("nothing handed to every message changes on a push that did not move it", (
   assert.match(sends.slice(sends.indexOf("export function usePromptBoxSends")), /^export function usePromptBoxSends\(\): boolean \{\n  const composer = useContext\(ComposerSendContext\)/)
   // And it is handed no thread: the board replaces that object on every delta, and the message never read it.
   const view = sources.get("components/ChatView.tsx")!
-  const handed = view.slice(view.indexOf("export function ThreadMessage("), view.indexOf("// Exported so the Queue card reuses the exact same message rendering"))
+  const handed = view.slice(view.indexOf("export function ThreadMessage("), view.indexOf("// Exported for the transcripts that are not a thread's own"))
   assert.doesNotMatch(handed, /\bthread=\{/)
 })

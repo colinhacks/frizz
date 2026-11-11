@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import type { BoardSnapshot, ThreadView } from "@frizz/shared"
-import { markDrawerClosing, openThread, pushDrawer, resolveRoutedThread, scrollToQueueCard, store } from "../store.ts"
+import { markDrawerClosing, openThread, pushDrawer, resolveRoutedThread, store } from "../store.ts"
 import { appPushedCurrentEntry, boardThreadHref, primeRoute, queueDestination, startRouter, threadParam, withThreadParam } from "./router.ts"
 
 // A stubbed address bar for a URL the router wrote: its path and its query, as the browser splits them.
@@ -23,23 +23,15 @@ function boardWith(threads: Array<{ id: string; needsYou?: boolean }>): void {
   store.board = { threads: threads.map((t) => ({ ...t, needsYou: t.needsYou ?? false })) } as unknown as BoardSnapshot
 }
 
-// The queue card the URL should land on when the thread is already queued. `null` = no card mounted,
-// which is how a non-queued (or not-yet-rendered) thread falls through to the drawer. With `phone` the
-// viewport is a phone's, where a thread is a drawer: with an address bar to read, a desktop board shows
-// threads in its one-thread pane instead (store.ts paneEnabled).
-function mountQueueCard(slug: string | null, { phone = false }: { phone?: boolean } = {}): () => void {
+// A stubbed page for the router to run in. With `phone` the viewport is a phone's, where a thread is a
+// drawer: with an address bar to read, a desktop board shows threads in its one-thread pane instead
+// (store.ts paneEnabled).
+function mountPage({ phone = false }: { phone?: boolean } = {}): () => void {
   const globals = globalThis as typeof globalThis & { window?: Window; document?: Document; CSS?: typeof CSS }
   const previous = { window: globals.window, document: globals.document, CSS: globals.CSS }
-  const card = {
-    getBoundingClientRect: () => ({ top: 300 }),
-    querySelector: () => null,
-    setAttribute: () => {},
-    removeAttribute: () => {},
-    offsetWidth: 0,
-  }
   globals.CSS = { escape: (value: string) => value } as typeof CSS
   globals.document = {
-    querySelector: (selector: string) => (slug !== null && selector.includes(slug) ? card : null),
+    querySelector: () => null,
   } as unknown as Document
   globals.window = {
     scrollY: 0,
@@ -65,7 +57,7 @@ test("a parked route opens the chat drawer once the board says the thread is not
   resetStore()
   primeRoute("/", "?thread=cold-load")
   boardWith([{ id: "cold-load" }])
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     resolveRoutedThread()
   } finally {
@@ -78,26 +70,11 @@ test("a parked route opens the chat drawer once the board says the thread is not
   assert.equal(store.routeThreadSlug, null)
 })
 
-test("a parked route for a QUEUED thread lands on its card instead of a second panel", () => {
+test("a queued thread opens in the drawer too where there is no pane", () => {
   resetStore()
   primeRoute("/", "?thread=queued-thread")
   boardWith([{ id: "queued-thread", needsYou: true }])
-  const restore = mountQueueCard("queued-thread")
-  try {
-    resolveRoutedThread()
-  } finally {
-    restore()
-  }
-  // The queue card IS the thread's panel. A drawer over it renders the identical thing twice.
-  assert.equal(store.drawers.length, 0)
-  assert.equal(store.routeThreadSlug, null)
-})
-
-test("a queued thread with no card mounted still falls through to the drawer", () => {
-  resetStore()
-  primeRoute("/", "?thread=queued-thread")
-  boardWith([{ id: "queued-thread", needsYou: true }])
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     resolveRoutedThread()
   } finally {
@@ -130,7 +107,7 @@ test("priming the queue unwinds a routed drawer without leaving a phantom", () =
   resetStore()
   primeRoute("/", "?thread=cold-load")
   boardWith([{ id: "cold-load" }])
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     resolveRoutedThread()
   } finally {
@@ -147,7 +124,7 @@ test("priming the queue unwinds a routed drawer without leaving a phantom", () =
 test("a direct route reopens the closing layer instead of appending a duplicate", () => {
   resetStore()
   boardWith([{ id: "rapid-forward" }])
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     primeRoute("/", "?thread=rapid-forward")
     resolveRoutedThread()
@@ -171,7 +148,7 @@ test("a direct route reopens the closing layer instead of appending a duplicate"
 test("landing on a thread already in the stack unwinds above it and parks nothing", () => {
   resetStore()
   boardWith([{ id: "below" }, { id: "above" }])
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     primeRoute("/", "?thread=below")
     resolveRoutedThread()
@@ -319,7 +296,7 @@ test("the unprefixed drawer address takes its project prefix without a history e
     writes.push({ path, replace })
     globals.location = at(path)
   })
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     store.board = { projectSlug: "fray", threads: [{ id: "cold-load", needsYou: false }] } as unknown as BoardSnapshot
     resolveRoutedThread()
@@ -355,7 +332,7 @@ test("Back onto a thread a lateral move replaced pops without writing history", 
     writes.push({ path, replace })
     globals.location = at(path)
   })
-  const restore = mountQueueCard(null, { phone: true })
+  const restore = mountPage({ phone: true })
   try {
     boardWith([{ id: "thread-a" }, { id: "thread-b" }])
     pushDrawer("thread", "thread-a")
@@ -403,7 +380,7 @@ test("in the board's pane, Back onto the thread before pops without writing hist
     writes.push({ path, replace })
     globals.location = at(path)
   })
-  const restore = mountQueueCard(null)
+  const restore = mountPage()
   try {
     boardWith([{ id: "thread-a" }, { id: "queued-b", needsYou: true }])
     pushDrawer("thread", "thread-a")
@@ -428,79 +405,6 @@ test("in the board's pane, Back onto the thread before pops without writing hist
     await settle()
     assert.deepEqual(writes, [])
     assert.equal(store.paneSlug, null, "the board, with the pane offering the first item")
-  } finally {
-    stop()
-    restore()
-    globals.location = previous
-    resetStore()
-  }
-})
-
-// A link (or a sidebar row, the palette, a notification) from inside thread A's drawer to a QUEUED
-// thread B, where the pane is off and a queued thread's surface is its card: B's surface is its card in the main column, so the door dismisses A's drawer and scrolls
-// there. The URL then reads the board — but that is a NAVIGATION, not a close. Replacing A's entry with
-// the board left two board entries in a row, so the next Back did nothing visible and A was unreachable
-// (desktop, 2026-10-08). It must push, so Back returns to A; and settling a routed `?thread=<queued>`
-// URL onto its card must still REPLACE, or Back onto that entry would leave two boards behind it.
-test("following a door to a queued thread's card pushes, so Back returns to the drawer it left", async () => {
-  resetStore()
-  const globals = globalThis as typeof globalThis & { location?: Location }
-  const previous = globals.location
-  const writes: Array<{ path: string; replace: boolean }> = []
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
-  globals.location = { pathname: "/", search: "" } as unknown as Location
-  const stop = startRouter((path, { replace }) => {
-    writes.push({ path, replace })
-    globals.location = at(path)
-  })
-  const restore = mountQueueCard("queued-b", { phone: true })
-  try {
-    boardWith([{ id: "thread-a" }, { id: "queued-b", needsYou: true }])
-    openThread("thread-a")
-    await settle()
-    openThread("queued-b") // the delegated thread-link interceptor's door (lib/thread-links)
-    await settle()
-    assert.equal(store.drawers.filter((d) => !d.closing).length, 0, "the card is B's surface; A's drawer is dismissed")
-    assert.deepEqual(writes, [{ path: "/?thread=thread-a", replace: false }, { path: "/", replace: false }])
-
-    // Back: the browser is on A's entry again, and A reopens with no further write.
-    writes.length = 0
-    globals.location = { pathname: "/", search: "?thread=thread-a" } as unknown as Location
-    primeRoute("/", "?thread=thread-a")
-    await settle()
-    resolveRoutedThread()
-    await settle()
-    assert.deepEqual(writes, [], "Back was a pop")
-    assert.deepEqual(store.drawers.filter((d) => !d.closing).map((d) => d.slug), ["thread-a"])
-
-    // The sidebar row calls the card door directly; the same push.
-    assert.equal(scrollToQueueCard("queued-b"), true)
-    await settle()
-    assert.deepEqual(writes, [{ path: "/", replace: false }])
-
-    // CONTROL — a routed `?thread=queued-b` settling onto the card replaces its own entry, as before.
-    writes.length = 0
-    pushDrawer("thread", "thread-a")
-    await settle()
-    writes.length = 0
-    globals.location = { pathname: "/", search: "?thread=queued-b" } as unknown as Location
-    primeRoute("/", "?thread=queued-b")
-    await settle()
-    resolveRoutedThread()
-    await settle()
-    assert.deepEqual(writes, [{ path: "/", replace: true }])
-
-    // And a door that finds no drawer to dismiss writes nothing, and leaves nothing armed for the
-    // next close to misread as a navigation.
-    writes.length = 0
-    assert.equal(scrollToQueueCard("queued-b"), true)
-    await settle()
-    assert.deepEqual(writes, [])
-    pushDrawer("thread", "thread-a")
-    await settle()
-    markDrawerClosing(store.drawers[0]!.id)
-    await settle()
-    assert.deepEqual(writes, [{ path: "/?thread=thread-a", replace: false }, { path: "/", replace: true }], "a plain close still replaces")
   } finally {
     stop()
     restore()

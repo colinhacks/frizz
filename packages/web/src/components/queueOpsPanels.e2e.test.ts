@@ -5,7 +5,7 @@ import test from "node:test"
 // for each of the different categories … If you hover over Files, it should show the files. If you
 // hover over the pull request watchers, it should show the pull request"). Until then the whole line
 // was one control over one panel listing every row. Hover, the pointer's path into a panel and the
-// keyboard's way in are all browser facts, so they are driven in one against the real queue card.
+// keyboard's way in are all browser facts, so they are driven in one against the real thread view.
 //
 //   nub run test:e2e -- queueOpsPanels.e2e.test.ts
 const baseUrl = process.env.FRIZZ_QUEUE_OPS_PANELS_E2E_URL
@@ -255,7 +255,7 @@ test("the Goal panel and the op panels take a share of the prompt box", { skip: 
   const browser = await launchHeadless({ protocolTimeout: 30_000 })
   try {
     const page = await browser.newPage()
-    // 1100: the card's ordinary box. 520: a box narrow enough for the panels' floor to be what holds.
+    // 1100: the thread's whole 760px column. 520: a box narrow enough for the panels' floor to be what holds.
     for (const [width, most] of [[1100, 0.72], [520, 0.75]] as const) {
       await page.setViewport({ width, height: 800, deviceScaleFactor: 1 })
       await page.goto(`${baseUrl}/queue-ops-spacing-fixture.html?agents=1&links=1&watches=1`, { waitUntil: "networkidle0" })

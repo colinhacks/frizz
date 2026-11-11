@@ -1,7 +1,7 @@
 import type { ChatMessage } from "./hooks.ts"
 
-// Shared by the inline-comment mockup sheets (inline-comments-mockup-fixture, queue-dock-mockup-fixture):
-// the fixture transcript, the comment seeds, the wire text a sent steer carries, and the anchoring +
+// Behind the inline-comment mockup sheet (inline-comments-mockup-fixture; queue-dock-mockup-fixture
+// shared it until the queue card went, 2026-11-10): the fixture transcript, the comment seeds, the wire text a sent steer carries, and the anchoring +
 // highlight engine. Not shipped UI.
 //
 // ANCHORS are character offsets over a root's own text, skipping the sheets' UI (`data-ic-ui`).

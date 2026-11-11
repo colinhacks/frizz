@@ -1,20 +1,10 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
-import { FOREGROUND_MARK_AFTER_MS, foregroundToolIsRunning, hasRunningToolIndicator, isPendingForegroundTool, isRunningOperation, liveBackgroundOperationState, runningOperations } from "../lib/operationIndicators.ts"
+import { FOREGROUND_MARK_AFTER_MS, foregroundToolIsRunning, hasRunningToolIndicator, isPendingForegroundTool, isRunningOperation, liveBackgroundOperationState } from "../lib/operationIndicators.ts"
 
-test("multiple simultaneous background operations get individual live indicators while terminal states do not", () => {
-  const operations = [
-    { label: "Inspect logs", state: "running" },
-    { label: "Run regression suite", state: "running" },
-    { label: "Watch CI", state: "running" },
-    { label: "Tail build log", state: "running" },
-    { label: "Prior investigation", state: "stale" },
-    { label: "Completed build", state: "completed" },
-    { label: "Failed build", state: "failed" },
-    { label: "Cancelled build", state: "cancelled" },
-  ]
-  assert.deepEqual(runningOperations(operations).map((operation) => operation.label), ["Inspect logs", "Run regression suite", "Watch CI", "Tail build log"])
+test("only a running operation gets a live indicator; terminal states do not", () => {
+  assert.equal(isRunningOperation("running"), true)
   for (const state of ["stale", "completed", "failed", "cancelled", undefined]) assert.equal(isRunningOperation(state), false)
 })
 

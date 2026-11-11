@@ -5,10 +5,6 @@ export function isRunningOperation(state: string | undefined): boolean {
   return state === "running"
 }
 
-export function runningOperations<T extends { state: string }>(operations: readonly T[]): readonly T[] {
-  return operations.filter((operation) => isRunningOperation(operation.state))
-}
-
 // THE DOT MEANS "A SHELL IS ALIVE RIGHT NOW" — not "a shell was detached".
 //
 // It briefly meant the narrower thing. The dot was worn by any pending call, so an ordinary Bash that

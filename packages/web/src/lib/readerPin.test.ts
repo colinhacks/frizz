@@ -1,27 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { listGainedOrReordered, readerPinIndex } from "./readerPin.ts"
+import { readerPinIndex } from "./readerPin.ts"
 
 // The two readings the hold rests on: WHEN the list changed in a way that can move the reader, and
 // WHICH item the reader is in. The browser half — that putting the item back holds the page, with and
 // without native anchoring — is pinned in queueRailSettle.e2e.test.ts.
-
-test("a card arriving anywhere, or the cards reordering, is a change the reader is held through", () => {
-  assert.equal(listGainedOrReordered(["a", "b", "c"], ["n", "a", "b", "c"]), true)
-  assert.equal(listGainedOrReordered(["a", "b", "c"], ["a", "b", "c", "n"]), true)
-  // A thread resting moves up into the asks on the phone.
-  assert.equal(listGainedOrReordered(["a", "b", "c", "d"], ["a", "d", "b", "c"]), true)
-  // Arriving and leaving in one change still arrived.
-  assert.equal(listGainedOrReordered(["a", "b"], ["n", "b"]), true)
-})
-
-test("a list that only lost cards, kept its order, or had no reader is not", () => {
-  assert.equal(listGainedOrReordered(["a", "b", "c"], ["a", "c"]), false)
-  assert.equal(listGainedOrReordered(["a", "b", "c"], ["a", "b", "c"]), false)
-  assert.equal(listGainedOrReordered(["a", "b", "c"], []), false)
-  // The first card into an empty queue: nobody was reading anything.
-  assert.equal(listGainedOrReordered([], ["n"]), false)
-})
 
 test("the reader is in the card with the most of itself on screen", () => {
   // A 900px window. The first card's last 40px, then the second filling the rest.

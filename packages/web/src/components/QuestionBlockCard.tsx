@@ -22,7 +22,7 @@ import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { optionLetter, parseQuestionBlock, splitOptionId, type BlockAnswer, type ParsedQuestion, type QuestionKind } from "../lib/questionBlocks.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { SecretCaption } from "./SecretCaption.tsx"
-import { QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
+import { TranscriptCard } from "./TranscriptCard.tsx"
 
 export interface BlockInteractive {
   answer: BlockAnswer
@@ -59,7 +59,6 @@ export function QuestionBlockCard({
   questionKind,
   danger,
   interactive,
-  wrap,
   aside,
   label,
   settled,
@@ -72,7 +71,6 @@ export function QuestionBlockCard({
   questionKind?: QuestionKind
   danger?: boolean
   interactive?: BlockInteractive
-  wrap?: boolean
   /** A control for the card's TITLE ROW, at its far right — the shared chrome's own `aside` slot.
    *  Producer 3's × for dismissing a registered question rides here rather than being absolutely
    *  positioned over the card, which put it half outside the border. Absent for the two producers
@@ -150,7 +148,7 @@ export function QuestionBlockCard({
           colour by design (and outranks a utility class on the element itself). */}
       {html && (
         <div id={questionId} className="text-fg">
-          <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={html} />
+          <LinkedHtml className="md-body" html={html} />
         </div>
       )}
       {/* The CONTEXT a question fence carries below its `---` (detailMd): what informs the ask — a table,
@@ -159,7 +157,7 @@ export function QuestionBlockCard({
           two blocks read as one body broken where the worker broke it. */}
       {parsed.detailMd && (
         <div data-question-context className={html ? "mt-[13px]" : undefined}>
-          <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={detailHtml} />
+          <LinkedHtml className="md-body" html={detailHtml} />
         </div>
       )}
       {(parsed.options.length > 0 || interactive || pending) && (
@@ -206,7 +204,7 @@ export function QuestionBlockCard({
                   wears the SAME body treatment as the context above — the FIRST group's heading is just
                   the tail of that context, so a muted caption here would make two identical things
                   render differently in one card. */}
-              {parsed.optionHeadings?.[i] && <OptionHeading md={parsed.optionHeadings[i]!} wrap={wrap} />}
+              {parsed.optionHeadings?.[i] && <OptionHeading md={parsed.optionHeadings[i]!} />}
             <Chip
               label={opt}
               index={i}
@@ -217,7 +215,6 @@ export function QuestionBlockCard({
               // click read as an accident (maintainer: "you should just be rendering it as part of the
               // answer before I click on it").
               bodyMd={parsed.optionBodies?.[i]}
-              wrap={wrap}
               multi={isMulti}
               // The recommendation renders INSIDE its option as a badge (not as a caption below);
               // the inline `(recommended: why)` rationale (or a legacy rec line) rides the chip's title.
@@ -312,8 +309,8 @@ export function QuestionBlockCard({
               ref={taRef}
               data-1p-ignore
               rows={1}
-              // Its own surface tag — deliberately NOT the queue card's `queueComposer`, which is the
-              // separate free-form prompt box at the bottom of the card. Escape climbs out onto this
+              // Its own surface tag, not the thread's prompt box (`chatComposer`), which is a separate
+              // box under the transcript. Escape climbs out onto this
               // question's own options grid (where Enter sends the answers) and stops here rather than
               // reaching App's window handler. Stopping it is not what keeps an enclosing thread drawer
               // open — Radix's DismissableLayer takes Escape on the document in the CAPTURE phase, ahead
@@ -434,7 +431,7 @@ export function QuestionBlockCard({
           question's own wrapper gives above: utilities on the element lose to `.card-md .md-body`. */}
       {parsed.trailingMd && (
         <div data-question-note className="mt-2 text-muted-70">
-          <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={trailingHtml} />
+          <LinkedHtml className="md-body" html={trailingHtml} />
         </div>
       )}
       {/* The caption fallback survives ONLY when the recommendation didn't match an option. */}
@@ -450,11 +447,11 @@ export function QuestionBlockCard({
 // dangerouslySetInnerHTML prop can be memoized per heading — a hook can't be called inside the
 // options .map(), and an inline `{ __html }` literal there would rebuild the DOM on every render
 // (see useInnerHtml).
-function OptionHeading({ md, wrap }: { md: string; wrap?: boolean }) {
+function OptionHeading({ md }: { md: string }) {
   const html = useInlineMarkdownHtml(md.split("\n").join(" "))
   return (
     <div className="mt-1 text-fg">
-      <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={html} />
+      <LinkedHtml className="md-body" html={html} />
     </div>
   )
 }
@@ -483,7 +480,6 @@ function Chip({
   label,
   index,
   bodyMd,
-  wrap,
   selected,
   settledPick,
   disabled,
@@ -500,7 +496,6 @@ function Chip({
    *  the diff, the message that would be posted. Part of the answer, so it shows before anything is
    *  picked and survives into read-only and settled cards. */
   bodyMd?: string
-  wrap?: boolean
   selected: boolean
   /** The recorded answer of a SETTLED ask named this option: the AnswersCard's quiet recessed
    *  treatment (inset panel, soft left rule) — a past choice, never the awaiting-you accent. */
@@ -603,7 +598,7 @@ function Chip({
         {bodyMd !== undefined && (
           // The space before `${` is load-bearing: Tailwind does not read a class that a `${` touches, and
           // `opacity-90${…}` was styled only because a mockup happened to spell `opacity-90` on its own.
-          <LinkedHtml className={`md-body mt-1.5 opacity-90 ${wrap ? QUEUE_WRAP : ""}`} html={bodyHtml} />
+          <LinkedHtml className="md-body mt-1.5 opacity-90" html={bodyHtml} />
         )}
       </div>
     </div>

@@ -101,19 +101,18 @@ import { answeredRow, ClosedQuestionCard, InvalidQuestionFence, OpenQuestionCopy
 // surface can render them without importing the thread view. QuestionBlockCard in particular is
 // shared with the native-AskUserQuestion path, which reaches it through InteractionCards.tsx —
 // a file THIS one imports, so the card could not have stayed here without a module cycle.
-import { BLOCK_RADIUS, CARD_ACTION_EXPLAINER, CARD_ACTION_RADIUS, CARD_BODY, CARD_LINK, CARD_PRIMARY_ACTION, CARD_PRIMARY_BUTTON, CardActions, CardContent, CardHead, QUEUE_WRAP, TranscriptCard } from "./TranscriptCard.tsx"
+import { BLOCK_RADIUS, CARD_ACTION_EXPLAINER, CARD_ACTION_RADIUS, CARD_BODY, CARD_LINK, CARD_PRIMARY_ACTION, CARD_PRIMARY_BUTTON, CardActions, CardContent, CardHead, TranscriptCard, WRAP_ANYWHERE } from "./TranscriptCard.tsx"
 import { QuestionBlockCard } from "./QuestionBlockCard.tsx"
 import { settledAskView } from "../lib/interactionQuestion.ts"
 // ONE frame for every image the chat renders — border, inset mat, centered picture. See its module
 // header for why it spans the message width rather than shrink-wrapping each picture.
 import { FRAMED_IMAGE, IMAGE_FRAME_MAT, ImageFrame } from "./ImageFrame.tsx"
-// The resting card, shared with the queue (TodosView passes it the event-Snooze; these two surfaces
-// deliberately pass no action — see the module header).
+// The resting card (see its module header for the actions each surface hands it).
 import { AwaitingBackgroundCard, AwaitingWaitTable, issueStatusLine, showsRestingCard, watchStatusLine } from "./AwaitingBackgroundCard.tsx"
 import { SnoozeCard, showsSnoozeCard } from "./SnoozeCard.tsx"
 import { drawsWorking, frozenPendingAsk } from "../lib/operatorBlock.ts"
-// Re-exported from their new homes so existing importers (TodosView, the fixtures) keep one
-// import path while the definitions live where both question producers can reach them.
+// Re-exported from their new homes so existing importers (the fixtures) keep one import path while
+// the definitions live where both question producers can reach them.
 export { CARD_BODY, CARD_PRIMARY_BUTTON, CardActions, TranscriptCard } from "./TranscriptCard.tsx"
 export { QuestionBlockCard } from "./QuestionBlockCard.tsx"
 import { SignInModal } from "./SignInModal.tsx"
@@ -127,8 +126,8 @@ import { CodexDirectiveCard, MermaidDiagram } from "./CodexRichOutput.tsx"
 import { LightboxGallery } from "./Lightbox.tsx"
 import { HUMAN_RUN_STEP, META_CARD_STEP, PICTURE_STEP, STEP, USER_TAIL_EXTRA, VSpace } from "./rhythm.tsx"
 
-// Answer types moved to lib/questionBlocks.ts (shared by the queue card, the thread view, and the
-// answering controller). Re-exported here so existing importers keep working.
+// Answer types moved to lib/questionBlocks.ts (shared by the thread view and the answering
+// controller). Re-exported here so existing importers keep working.
 export type { BlockAnswer, MessageAnswering }
 
 // ThreadSlugContext and QueueDismissContext are the thread surface's (components/ThreadSurface.tsx
@@ -199,7 +198,7 @@ export function ThreadView({ slug, onStatusApplied, onClose, showReturnToQueue =
   // says for itself (`pane.railBeside`), because it can put the rail away.
   const { splitFileViewer } = useSnapshot(store)
   // The header is handed to ChatView, which owns the thread's surface (ThreadSurface): the surface is
-  // the whole thread, header included, as the queue card's is.
+  // the whole thread, header included.
   return (
     <ChatView
       slug={slug}
@@ -227,7 +226,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   // Raw server order — each message renders its `parts` in block order (fidelity). Memoized so
   // useLiveAnswering's `liveMsg` identity check compares objects from THIS same list.
   const liveMessages = useMemo(() => q.data?.messages ?? [], [q.data])
-  // What this surface draws of it, built by the same pipeline the queue card's is (ThreadSurface
+  // What this surface draws of it, built by the thread surface's one pipeline (ThreadSurface
   // useThreadMessages): the rest the board has not reached held back, the running background calls moved
   // to the line of counts, the registered questions that have arrived, the refused fences marked.
   const { messages, openQuestions, settledQuestions, transcriptShells } = useThreadMessages(boardThread, liveMessages)
@@ -258,7 +257,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   )
   const steerStamp = useSteeredAt()[slug]
   // The send that ends a rest draws where it will land, stamped with the instant this tab sent it — see
-  // lib/restReply. The thread view's own stage: the queue card leaves on a send, so it never draws one.
+  // lib/restReply.
   const presentationMessages = useMemo(
     () => withRestReplyInline(messages, steerStamp === undefined ? undefined : new Date(steerStamp).toISOString()),
     [messages, steerStamp],
@@ -292,7 +291,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   // Question-block interactivity in the thread view: EVERY ask stays answerable, wherever it sits —
   // scroll back to a question a sub-agent return / the agent's own continuation buried and answer it in
   // place. The surface's controller wires each ask's chips AND its own bottom Send button (scoped to just
-  // that message's blocks); the queue card runs the identical scope through the same controller.
+  // that message's blocks).
   // THE PROMPT BOX SENDS THEM (lib/sendScope): with the thread's prompt box mounted under this
   // transcript, Enter in a block is that box's send, and no message draws a Send answers of its own.
   // (The SSE-mode lastActivityAt refetch effect that lived here moved into transcript-live.ts: the
@@ -352,7 +351,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           virtualizer already corrects scrollTop itself every time a row above the reader is re-measured;
           Chrome's native scroll anchoring corrects it too, off its own anchor node, and neither knows
           about the other — so both firing on one layout change moves the reader by that correction
-          TWICE. TodosView suspends native anchoring around exactly this hazard for the queue
+          TWICE. The queue's cards suspended native anchoring around exactly this hazard
           (suspendNativeAnchoring, "THE one owner"); the drawer transcript is the same hazard and was
           simply never given the same treatment. */}
       <div className="relative min-h-0 flex-1 flex flex-col">
@@ -451,8 +450,8 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
       />
       </div>
       {/* This entire footer is deliberately non-scrolling: transcript history alone overflows. */}
-      {/* ONE hairline, at the queue card's weight. `border-border/60` is exactly the rule the queue
-          card draws under its header (TodosView); the chat footer used to draw full-strength
+      {/* ONE hairline, at the header's weight. `border-border/60` is exactly the rule the queue card
+          drew under its header; the chat footer used to draw full-strength
           `border-border` AND have ThreadActionBar draw a second one under it, which stacked into a
           2px rule. Keep the separator on THIS wrapper only — the bar inside is padding-only. */}
       {/* The device's bottom inset is the LAST thing in the column, under the prompt box — the drawer
@@ -462,8 +461,8 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
       <div data-thread-chat-footer className={`z-10 shrink-0 border-t border-border/60 bg-panel ${phone ? "" : "pb-[env(safe-area-inset-bottom)]"}`}>
         <ThreadActionBar
           slug={slug}
-          // THE LIVE OPS AS ONE LINE OF COUNTS over the prompt box, their rows one hover away — the
-          // queue card's line (QueueOpsSummary), so a thread reads the same in its drawer as on its card
+          // THE LIVE OPS AS ONE LINE OF COUNTS over the prompt box, their rows one hover away
+          // (QueueOpsSummary), the line the queue card drew, so a thread reads the same on every surface
           // (maintainer 2026-10-09). The rows hung under the prompt box until then (2026-07-09).
           // The phone draws no ops at all (mockup v2 §2): a sub-agent is already a row in the transcript
           // and on the board, and the registered files and links are the ⋯ sheet's. Nor does /full while
@@ -529,8 +528,8 @@ const DEBUG_SCROLL = (() => {
 type TranscriptTransportFallback = ReturnType<typeof useTranscript>["transportFallback"]
 
 // LIVE UPDATES PAUSED — the transcript fell back from push to HTTP, so what is on screen may lag. ONE
-// banner for every surface that draws a transcript: the drawer's two paths and the queue card, which drew
-// none until 2026-10-09 and so went quietly stale with no way to refresh (maintainer: "Queue card gets
+// banner for every surface that draws a transcript. The queue card drew none until 2026-10-09 and so went
+// quietly stale with no way to refresh (maintainer: "Queue card gets
 // the 'Live transcript updates paused' banner"). `className` is the caller's placement.
 export function TranscriptSyncFallbackBanner({ fallback, isFetching, onRefresh, onRetryLive, className = "" }: {
   fallback: NonNullable<TranscriptTransportFallback>
@@ -612,9 +611,9 @@ type VirtualThreadRow =
 // THE RUNTIME-STATUS LADDER — ONE slot at the transcript's end, nine mutually exclusive rungs, hardest
 // reading first, and ONE renderer for all of it.
 //
-// The transcript draws this slot in two places — the thread view's `runtime-status` row and the queue
-// card's tail (TodosView) — and both draw it as RuntimeStatusSlot, off one model (useRuntimeTail, below).
-// The queue card kept a seventh, hand-rolled copy until 2026-10-09,
+// Every surface draws this slot as the thread view's `runtime-status` row, RuntimeStatusSlot, off one
+// model (useRuntimeTail, below). The queue card (the board's surface until 2026-11-09) kept a seventh,
+// hand-rolled copy until 2026-10-09,
 // and it had drifted exactly the way this comment predicts: no provider-failure cards at all (so a
 // failed Codex thread sat in the queue reading as an ordinary rest), several rungs able to draw at once,
 // and the policy-denial card on the other side of the ending card.
@@ -680,7 +679,6 @@ export function RuntimeStatusLadder({
   onRestingExit,
   onRestingExitFailed,
   onRestingReplied,
-  wrap,
 }: {
   state: RuntimeStatusState
   slug: string
@@ -689,15 +687,13 @@ export function RuntimeStatusLadder({
   liveRuntimeStart: string | undefined
   liveActivityLabel: string | undefined
   liveToolRun: { tools: readonly TranscriptToolCall[]; at?: string } | undefined
-  /** THE QUEUE'S optimistic card exit, and the only thing the queue card adds to the ladder: the resting
-   *  card's snooze and its steps reply fade the card the instant they are sent, and put it back if the
-   *  server declines. RuntimeStatusSlot passes the surface's exit; off the queue there is none. */
+  /** THE SURFACE'S optimistic exit: the resting card's snooze moves the pane on the instant it is sent,
+   *  and puts the thread back if the server declines. RuntimeStatusSlot passes the surface's exit; a
+   *  drawer or the full-screen page has none. */
   onRestingExit?: () => void
   onRestingExitFailed?: () => void
-  /** The steps reply where a send does not dismiss (the one-thread pane). */
+  /** The steps reply, which does not move the pane on: the human just replied to this thread. */
   onRestingReplied?: () => void
-  /** The queue card's narrower column: the done card wraps its prose there (FenceCard `wrap`). */
-  wrap?: boolean
 }) {
   const thread = state.thread
   switch (runtimeStatusRung(state)) {
@@ -720,7 +716,7 @@ export function RuntimeStatusLadder({
     // everything because `done` refuses while anything above could still be true — an open question or an
     // armed watch blocks the verb — so a thread showing this is at rest with nothing left to wait on.
     case "registered-done":
-      return <RegisteredDoneCard thread={thread!} wrap={wrap} />
+      return <RegisteredDoneCard thread={thread!} />
     // NOTHING ELSE APPLIES, and the bottom of the thread still has to say so — see RestedCard.
     case "rested":
       return <RestedCard thread={thread!} />
@@ -731,16 +727,16 @@ export function RuntimeStatusLadder({
 
 /** A registered done's card. An archived thread's board view carries only the head of the body, so the
  *  body comes through lib/registeredDoneBody, and the card waits for it rather than drawing the head. */
-function RegisteredDoneCard({ thread, wrap }: { thread: ThreadViewData; wrap?: boolean }) {
+function RegisteredDoneCard({ thread }: { thread: ThreadViewData }) {
   const body = useRegisteredDoneBody(thread)
   if (body === undefined) return null
-  return <FenceCard fenceKind="done" body={body} hints={thread.lastFence!.hints} wrap={wrap} />
+  return <FenceCard fenceKind="done" body={body} hints={thread.lastFence!.hints} />
 }
 
 /** WHAT THE SLOT DRAWS, worked out once for every surface: which rung wins, whether the slot draws at
- *  all, the space above it, and what its Working… line reads. The queue card and the thread view each
- *  derived all of this from the same predicates, in the same order, until 2026-10-14 — and the thread
- *  view twice, once per transcript column. */
+ *  all, the space above it, and what its Working… line reads. The queue card (the board's surface until
+ *  2026-11-09) and the thread view each derived all of this from the same predicates, in the same order,
+ *  until 2026-10-14 — and the thread view twice, once per transcript column. */
 export interface RuntimeTail {
   state: RuntimeStatusState
   rung: RuntimeStatusRung | null
@@ -759,8 +755,7 @@ export interface RuntimeTail {
 /** The slot's model, from the surface's transcript model (useThreadSurface's `transcript`) and the two
  *  lists only the surface has: `coalesced`, the messages it draws through coalesceToolActivityMessages,
  *  and `drawn`, that list as it finally draws it, whose last row decides the space above a Working… line.
- *  `steerSince` is the send that opened a turn the board has not reported yet — the thread view's; a
- *  queue card leaves on its own send. */
+ *  `steerSince` is the send that opened a turn the board has not reported yet. */
 export function useRuntimeTail(
   transcript: ThreadTranscript,
   coalesced: readonly ToolActivityMessage[],
@@ -807,9 +802,9 @@ export function useRuntimeTail(
  *  card. The denial is the ladder's SIBLING, not a rung: the rungs are mutually exclusive because each
  *  describes the one thing blocking now, while a denial already happened and blocks nobody, so it sits
  *  under whatever card won and stands alone without one. The resting card's snooze and steps reply take
- *  the surface's exit (QueueDismissContext): a queue card fades the instant they are sent and comes back
- *  if the server declines; a surface that stays has no exit. `wrap` is the queue card's narrower column. */
-export function RuntimeStatusSlot({ tail, wrap }: { tail: RuntimeTail; wrap?: boolean }) {
+ *  the surface's exit (QueueDismissContext): the pane moves on at a snooze and comes back if the server
+ *  declines; a drawer or the full-screen page has no exit. */
+export function RuntimeStatusSlot({ tail }: { tail: RuntimeTail }) {
   const slug = useContext(ThreadSlugContext)
   const exit = useContext(QueueDismissContext)
   const thread = tail.state.thread
@@ -827,7 +822,6 @@ export function RuntimeStatusSlot({ tail, wrap }: { tail: RuntimeTail; wrap?: bo
         onRestingExit={exit?.dismiss}
         onRestingExitFailed={exit?.cancel}
         onRestingReplied={exit?.sent}
-        wrap={wrap}
       />
       {thread?.permPolicy ? (
         <div className={tail.rung !== null ? "mt-3" : ""}>
@@ -879,18 +873,18 @@ function VirtualizedThreadTranscript({
   // the initial-scroll effect below. Read once, when the transcript first lands.
   openAtLastMessage?: boolean
   // The one-thread pane's queue window: the first message drawn, by index into `messages`. It
-  // reads from the top down, as the queue card does, and `sentAt` brings a reply back into view from there.
+  // reads from the top down, as the queue card did, and `sentAt` brings a reply back into view from there.
   windowStart?: number
   openAtTop?: boolean
   sentAt?: number
 }) {
-  // What the thread says about each message, from the surface this transcript is drawn in — the same
-  // model the queue card reads. `messages` here is the presentation list, which shares its indices with
+  // What the thread says about each message, from the surface this transcript is drawn in.
+  // `messages` here is the presentation list, which shares its indices with
   // the list the model was built over.
   const transcript = useThreadTranscript()
   const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
   // A marker in a message above the window has no message to render in, so its card goes back to its
-  // anchor group, as on the queue card.
+  // anchor group.
   const placement = useMemo(() => placedFrom(transcript.placement, windowStart), [transcript.placement, windowStart])
   // Presentation-only coalescing: provider batching must not mint one loader per pure tool turn. Original
   // indices ride beside the display message, so paired answers keep addressing server truth. Everything
@@ -921,7 +915,7 @@ function VirtualizedThreadTranscript({
       restGap: restGapOf(row.message, rows[i + 1]?.message),
     }))
   }, [activityMessages, awaitingCut, restingShown, heldIdx])
-  // The slot at the end, off the model the queue card draws its own from (useRuntimeTail). Its ROW exists
+  // The slot at the end, off the surface's one model (useRuntimeTail). Its ROW exists
   // whenever the slot draws anything — a rung, or the policy-denial card a rest with no rung still owes.
   const runtimeTail = useRuntimeTail(transcript, coalescedActivityMessages, activityMessages, steerSince)
   const hasRuntimeRow = runtimeTail.shown
@@ -1535,7 +1529,7 @@ function VirtualizedThreadTranscript({
         armed: nearTopLoadArmedRef.current,
         scrollTop: scroller.scrollTop,
         readerMoved: tailReadyRef.current && readerMovedRef.current,
-        // While the queue's window is cut, more of the thread is the reader's to ask for, as on the card.
+        // While the queue's window is cut, more of the thread is the reader's to ask for.
         hasEarlier: hasEarlier && windowStart === 0,
         loading: loadingEarlier,
       })
@@ -1695,7 +1689,7 @@ function JumpToLatest({ overlay, hidden, onJump }: { overlay: HTMLElement | null
 
 // The thread's top bar: title, then "Last active · context" (ThreadHeaderFacts), and at the far right the
 // shared HeaderActions closed by the two lifecycle verbs, snooze and mark as done (ThreadLifecycleActions)
-// — the same strip the queue card's header draws. It carried a Chat|Doc tab strip until 2026-08-06; see
+// — the same strip on every surface. It carried a Chat|Doc tab strip until 2026-08-06; see
 // ThreadView for why that went.
 export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue = false, pane }: { slug: string; onStatusApplied?: () => void; onClose?: () => void; showReturnToQueue?: boolean; pane?: ThreadPaneHooks }) {
   const thread = useThreadSnapshot(slug)
@@ -1728,7 +1722,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
         {onClose && <SheetClose onClose={onClose} />}
         <div className="min-w-0 flex-1 leading-tight">
           {/* The name and both rename verbs — click to type, hover for the Claude refresh — are the
-              shared ThreadTitle, the same element the queue card's header renders. */}
+              shared ThreadTitle. */}
           <ThreadTitle thread={thread} />
           <ThreadHeaderFacts thread={thread} />
         </div>
@@ -1745,7 +1739,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
             // The /full page is the one surface with a fullscreen to LEAVE, and it leaves through the
             // same slot it was entered by.
             collapse={showReturnToQueue}
-            // The fullscreen door, in the slot the queue card's sits in (before Retry) — only where there
+            // The fullscreen door, before Retry — only where there
             // is a drawer to leave, since the /full page is already there. The drawer mounted its own
             // after the whole strip until 2026-10-09, so the icon sat on the other side of Retry here.
             expand={Boolean(onClose) || pane?.expand === true}
@@ -1755,7 +1749,7 @@ export function ThreadHeader({ slug, onStatusApplied, onClose, showReturnToQueue
             onStatusApplied={onStatusApplied}
           />
           {/* Snooze leaves the drawer the way Mark as done does — both take the thread off the reader's
-              plate, and the queue card leaves on both (maintainer 2026-10-09). The snooze left the drawer
+              plate, and the pane moves on at both (maintainer 2026-10-09). The snooze left the drawer
               open until then. */}
           <ThreadLifecycleActions thread={thread} onArchived={onStatusApplied ?? pane?.exit.dismiss} onDismissCancel={pane?.exit.cancel} onSnoozed={onStatusApplied ?? pane?.exit.dismiss} />
         </div>
@@ -1984,15 +1978,6 @@ function signOffFenceDraws(m: ChatMessage, fence: { hints: readonly AwaitingHint
   if (!m.latestSignOff) return false
   return !awaitingDefersToQuestions(fence.hints) || awaitingProseBlock(fence.body) !== null
 }
-// Would this message render anything under `textOnly` (tool bands dropped)? Mirrors messageRendersNothing
-// but counts ONLY text parts — the queue card uses it to decide whether a first/last agent message that
-// is pure batched tool calls (no prose) contributes a visible row, or folds entirely into the bar.
-export function messageHasRenderableText(m: ChatMessage, staleAwaiting?: boolean, restingCardShown?: boolean): boolean {
-  if (m.kind === "event" || m.kind === "reasoning" || m.role === "user") return false
-  if (m.parts && m.parts.length > 0) return m.parts.some((p) => p.kind === "text" && !blankText(m, p.text, staleAwaiting, restingCardShown))
-  return typeof m.text === "string" && !blankText(m, m.text, staleAwaiting, restingCardShown)
-}
-
 // The leading gap for the shimmer that tails a live transcript. The shimmer is a quiet single-line row
 // — the LIVE continuation of the very meta column that the reasoning rows and tool bands form above
 // it — so it joins their tight run rather than breaking to STEP whenever the last rendered message ends
@@ -2307,7 +2292,7 @@ function ToolRailRows({ tools, at }: { tools: readonly CollapsedTool[]; at?: str
 // batching. Dedicated block tools split the run and remain visible: sub-agent and send cards, and — as
 // of 2026-08-01 — every LIVE background/detached lifecycle; a finished one folds back in as of
 // 2026-09-13 (see lib/toolActivity.isToolActivityException).
-function ToolCalls({ tools, at }: { tools: CollapsedTool[]; dense?: boolean; at?: string }) {
+function ToolCalls({ tools, at }: { tools: CollapsedTool[]; at?: string }) {
   const runs: { exceptional: boolean; tools: CollapsedTool[] }[] = []
   for (const tool of tools) {
     const exceptional = isToolActivityException(tool)
@@ -2448,7 +2433,7 @@ function useForegroundRunning(status: ToolStatus | undefined, backgroundState: T
 // left … its rendering should align with the agent tool call component").
 //
 // The glyphs are the shared child-op vocabulary (lib/childOps.ts + BackgroundOpsStrip), so a detached
-// shell is marked the SAME way on its transcript card, in the drawer's ops strip and on the queue card:
+// shell is marked the SAME way on its transcript card and in the ops panels over the prompt box:
 // pulsing blue = running, breathing muted blue = alive but quiet. A row with nothing live behind it keeps
 // its ordinary node.
 //
@@ -3553,9 +3538,8 @@ function UserBubble({ text, rawText, queued, held, deliveryUnconfirmed, delivery
 }
 
 // A TRANSCRIPT MESSAGE ON A THREAD SURFACE — `Message`, handed everything its thread says about it.
-// The queue card and both of the thread view's columns draw a message through this, and it takes only
-// what a LAYOUT decides (`dense`, `textOnly`, `showSendButton`) plus the message's index in the surface's
-// list. Which fence is settled, which registered question the message carries or restates, which answers
+// Both of the thread view's columns draw a message through this, and it takes only what a LAYOUT decides
+// (`showSendButton`) plus the message's index in the surface's list. Which fence is settled, which registered question the message carries or restates, which answers
 // it pairs with and whether its fenced questions are answerable all come from the surface
 // (ThreadSurface.tsx ThreadTranscript). Each of those was a prop every call site had to remember — four
 // sites in two files, kept alike by tests that grepped each one for the same line — and a prop one site
@@ -3563,14 +3547,12 @@ function UserBubble({ text, rawText, queued, held, deliveryUnconfirmed, delivery
 //
 // `Message` itself stays the component for a message that is NOT a thread's own transcript row: the
 // sub-agent sheet's, and a queued bubble, which is the human's unsent words and carries none of this.
-export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m: ChatMessage; index: number; dense?: boolean; textOnly?: boolean; showSendButton?: boolean }) {
+export function ThreadMessage({ m, index, showSendButton }: { m: ChatMessage; index: number; showSendButton?: boolean }) {
   const t = useThreadTranscript()
   const [staleAwaiting, restingCardShown] = t.hidesAwaiting(index)
   return (
     <Message
       m={m}
-      dense={dense}
-      textOnly={textOnly}
       showSendButton={showSendButton}
       answering={t.fencesLive ? t.answeringForMessage(m) : undefined}
       paired={t.paired[index]}
@@ -3587,18 +3569,18 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
   )
 }
 
-// Exported so the Queue card reuses the exact same message rendering (user bubble right, agent prose
-// left, compact tool lines) — no duplicate renderer. `answering` (Queue-only, for the live message)
-// makes each ```question block answerable in place; without it the blocks render read-only.
+// Exported for the transcripts that are not a thread's own (the sub-agent sheet) and for the fixtures; a
+// thread surface draws through ThreadMessage above. `answering` (the live message only) makes each
+// ```question block answerable in place; without it the blocks render read-only.
 //
-// MEMOIZED (the render-perf thread's chip-click fix): a queue card re-renders on EVERY chip click /
-// composer keystroke (answer + draft state live at card level) and on every board delta (TodosView's
-// snapshot scope), and each such render used to re-run every visible Message's whole subtree —
+// MEMOIZED (the render-perf thread's chip-click fix): a surface re-renders on EVERY chip click /
+// composer keystroke (answer + draft state live at surface level) and on every board delta, and each
+// such render used to re-run every visible Message's whole subtree —
 // markdown/diff/tool cards included. Props are memo-friendly by construction: `m` keeps identity for
 // unchanged messages (TanStack Query's structural sharing on both the poll and socket write paths),
 // `answering` is undefined for all but the live message (and identity-stable via useLiveAnswering's
-// useMemo unless answers/blocks actually changed), `dense` is a constant. So only the message whose
-// inputs really changed re-renders; everything else bails out at the memo boundary.
+// useMemo unless answers/blocks actually changed). So only the message whose inputs really changed
+// re-renders; everything else bails out at the memo boundary.
 // `paired` is the precomputed question↔answer pairing for a composed-answer user message (see
 // pairAllAnswers — computed at the LIST level because the lookback needs the whole message list, which
 // a per-message component deliberately doesn't get). Memo-friendly by construction: it's null (a stable
@@ -3623,7 +3605,7 @@ export function ThreadMessage({ m, index, dense, textOnly, showSendButton }: { m
 // yet draws read-only from its own bytes. One array per surface, memoized, so the memo boundary holds.
 // `stepsDone` — what the human's reply to this message's rest on steps said was done (lib/stepsAnswer
 // stepsDoneReplies), which its settled steps card draws ticked. Absent on every other row.
-type MessageProps = { m: ChatMessage; answering?: MessageAnswering; dense?: boolean; paired?: PairedAnswer[] | null; textOnly?: boolean; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; index?: number; questionHomes?: ReadonlyMap<string, number>; restingCardShown?: boolean; stepsDone?: StepsReply }
+type MessageProps = { m: ChatMessage; answering?: MessageAnswering; paired?: PairedAnswer[] | null; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; index?: number; questionHomes?: ReadonlyMap<string, number>; restingCardShown?: boolean; stepsDone?: StepsReply }
 // EVERY MESSAGE SAYS WHEN IT WAS SAID ON HOVER — `Today at 8:33 AM` as the browser's own tooltip
 // (lib/messageTime). Here, around every branch of the body, so a bubble, a prose turn, a tool run and a
 // hairline all carry it on every surface, the sub-agent sheet's included. `contents` keeps the wrapper
@@ -3653,7 +3635,7 @@ function ThreadProviderErrorCard({ error }: { error: ProviderError }) {
   return <ProviderErrorCard error={error} provider={provider} />
 }
 
-function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, index, questionHomes, restingCardShown, stepsDone }: MessageProps) {
+function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, index, questionHomes, restingCardShown, stepsDone }: MessageProps) {
   // ANSWERING ON A PHONE happens in a sheet, one question at a time (MobileAnswerSheet) — the cards in
   // the transcript stay READ-ONLY there, so the questions are still visible in the context that
   // produced them but a 44pt-thumb answer never has to land on a 24pt chip inside a scrolling message.
@@ -3671,8 +3653,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
   if (m.kind === "reasoning") return <ReasoningBlock text={m.text} sourceId={m.sourceId} />
   // A SUB-AGENT COMPLETION — the same class of event as the background-shell wake above, so it takes
   // the same divider (see AgentCompletionLine). Routed here, before the tool-band walk, so the marker
-  // copy never renders as a second AgentBlock card. Ahead of `textOnly` for the same reason the event
-  // line is: a queue card that hides tool bands still shows what came back underneath it.
+  // copy never renders as a second AgentBlock card.
   const completion = agentCompletionCall(m)
   if (completion) return <AgentCompletionLine call={completion} sourceId={m.sourceId} at={m.at} />
   // User messages: right-justified chat bubble; agent output stays left-aligned prose. A follow-up
@@ -3701,10 +3682,10 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
     // FrizzWake routes every one of them, the Goal's repeating prompt included: that used to be picked
     // off here, ahead of it, and a delivery carrying SEVERAL wakes has to be cut apart before any single
     // wake's parser is allowed to read it.
-    if (m.wake) return <FrizzWake steer={m.wakeSteer} text={text} sourceId={m.sourceId} at={m.at} wrap={dense} />
+    if (m.wake) return <FrizzWake steer={m.wakeSteer} text={text} sourceId={m.sourceId} at={m.at} />
     // A SIDEWAYS writer of a user turn the human didn't type: another top-level thread messaging this
     // one. An expandable hairline naming and linking the sender — see SessionMessageLine.
-    if (m.sessionPeer) return <SessionMessageLine peer={m.sessionPeer} text={text} queued={m.queued} sourceId={m.sourceId} at={m.at} wrap={dense} />
+    if (m.sessionPeer) return <SessionMessageLine peer={m.sessionPeer} text={text} queued={m.queued} sourceId={m.sourceId} at={m.at} />
     // …and the same correction for the OTHER writer of a user turn the human didn't type: a background
     // sub-agent pushing a report up to its parent through `SendMessage({to:"main"})`. `m.peerFrom` is the
     // server's own tell (it parsed the <agent-message> wrapper and put the body in displayText, which
@@ -3800,7 +3781,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && m.latestSignOff) {
           if (awaitingDefersToQuestions(fseg.hints)) {
             const prose = awaitingProseBlock(fseg.body)
-            if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} wrap={dense} />)
+            if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} />)
           } else push(<AwaitingBackgroundCard key={`${keyBase}-f${fi}`} fence={{ body: fseg.body, hints: fseg.hints }} />)
           continue
         }
@@ -3810,7 +3791,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         // stays, as the message's own text.
         if (fseg.fenceKind === "awaiting" && awaitingDefersToQuestions(fseg.hints)) {
           const prose = awaitingProseBlock(fseg.body)
-          if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} wrap={dense} />)
+          if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} />)
           continue
         }
         push(
@@ -3819,7 +3800,6 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
             fenceKind={fseg.fenceKind}
             body={fseg.body}
             hints={fseg.hints}
-            wrap={dense}
             pastRest={staleAwaiting}
           />,
         )
@@ -3838,7 +3818,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
               : p.kind === "directive" ? <CodexDirectiveCard key={partKey} directive={p.directive} />
               : p.kind === "mermaid" ? <MermaidDiagram key={partKey} source={p.source} />
               : p.kind === "lightbox" ? <LightboxGallery key={partKey} entries={p.entries} />
-              : <ProseHtml key={partKey} md={p.text} wrap={dense} />,
+              : <ProseHtml key={partKey} md={p.text} />,
             )
           }
           continue
@@ -3851,17 +3831,17 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         }
         // …and a refused ASK, which draws its question greyed over the server's reason…
         if (seg.kind === "refusedAsk") {
-          push(<RefusedQuestionCard key={`${keyBase}-${fi}-x${si}`} spec={seg.spec} reasons={m.refusedReasons?.get(seg.id.toLowerCase())} wrap={dense} />)
+          push(<RefusedQuestionCard key={`${keyBase}-${fi}-x${si}`} spec={seg.spec} reasons={m.refusedReasons?.get(seg.id.toLowerCase())} />)
           continue
         }
         // …and a fence that did not read: its question as far as it reads, greyed under the reader's
         // reason — or, with no `question:` line to draw, its bytes folded away under that reason.
         if (seg.kind === "invalidFence") {
           push(seg.draft ? (
-            <RefusedQuestionCard key={`${keyBase}-${fi}-i${si}`} spec={seg.draft} reasons={seg.faults} unread wrap={dense} />
+            <RefusedQuestionCard key={`${keyBase}-${fi}-i${si}`} spec={seg.draft} reasons={seg.faults} unread />
           ) : (
             <InvalidQuestionFence key={`${keyBase}-${fi}-i${si}`} faults={seg.faults}>
-              <ProseHtml md={`<details>\n<summary>What the worker wrote</summary>\n\n${seg.text}\n\n</details>`} wrap={dense} />
+              <ProseHtml md={`<details>\n<summary>What the worker wrote</summary>\n\n${seg.text}\n\n</details>`} />
             </InvalidQuestionFence>
           ))
           continue
@@ -3895,7 +3875,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
             const spec = asking ?? row.asked
             if (spec) {
               placedDrawn.add(row.id)
-              push(<ClosedQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={spec} state={row.closed} copyOf={asking ? undefined : row.id} wrap={dense} />)
+              push(<ClosedQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={spec} state={row.closed} copyOf={asking ? undefined : row.id} />)
             }
             continue
           }
@@ -3910,7 +3890,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
             }
             const settledHere = settledPlaced?.find((q) => q.id === row.id)
             if (settledHere) {
-              push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
+              push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} />)
               continue
             }
             // Anywhere else — a fence from before the human's last turn, since every naming after it is
@@ -3919,8 +3899,8 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
             const answered = answeredRow(row)
             const home = questionHomes?.get(row.id)
             push(answered
-              ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy wrap={dense} />
-              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} above={home !== undefined && index !== undefined && home < index} wrap={dense} />)
+              ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy />
+              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} above={home !== undefined && index !== undefined && home < index} />)
             continue
           }
           // AN ASK WITH NO ROW YET — the server registers a second or two behind the transcript, and never
@@ -3929,7 +3909,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
           // to nothing has nothing to draw.
           if (seg.fence.form === "ask" && !followsUp && !placedDrawn.has(`fence:${seg.fence.id}`)) {
             placedDrawn.add(`fence:${seg.fence.id}`)
-            push(<UnregisteredQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={seg.fence.spec} wrap={dense} />)
+            push(<UnregisteredQuestionCard key={`${keyBase}-${fi}-q${si}`} spec={seg.fence.spec} />)
           }
           continue
         }
@@ -3953,7 +3933,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
         const settledHere = settledPlaced && seg.registeredId ? settledPlaced.find((q) => q.id.toLowerCase() === seg.registeredId) : undefined
         if (settledHere && !placedDrawn.has(settledHere.id)) {
           placedDrawn.add(settledHere.id)
-          push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} wrap={dense} />)
+          push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} />)
           continue
         }
         // A LEGACY placement marker whose row is not standing here — withdrawn, dismissed, answered at a
@@ -3971,7 +3951,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
               onSubmit: answering.onSubmit,
             }
           : undefined
-        push(<QuestionBlockCard key={`${keyBase}-${fi}-q${si}`} raw={seg.text} questionKind={seg.questionKind} danger={seg.danger} interactive={interactive} wrap={dense} />)
+        push(<QuestionBlockCard key={`${keyBase}-${fi}-q${si}`} raw={seg.text} questionKind={seg.questionKind} danger={seg.danger} interactive={interactive} />)
       }
     }
   }
@@ -3987,11 +3967,8 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
     // seam withMessageSpacers erases across messages. Order is preserved; only invisible parts go.
     normalizeParts(m.parts).forEach((part, pi) => {
       if (part.kind === "tools") {
-        // textOnly (the queue card's first/last agent message): the batched tool band is dropped so only
-        // the agent's prose remains — its calls live inside the collapsed intermediate bar instead.
-        if (textOnly) return
         const collapsed = collapseTools(part.tools)
-        if (collapsed.length) push(<ToolCalls key={`t${pi}`} tools={collapsed} dense={dense} at={m.at} />, toolBandEdges(collapsed))
+        if (collapsed.length) push(<ToolCalls key={`t${pi}`} tools={collapsed} at={m.at} />, toolBandEdges(collapsed))
       } else {
         renderText(part.text, `x${pi}`)
       }
@@ -3999,10 +3976,8 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
   } else {
     // LEGACY fallback (a pre-restart server ships no `parts`): the old flat layout — tool band first,
     // then all prose. Degrades to today's (order-lossy) rendering until the server bounce.
-    if (!textOnly) {
-      const collapsed = collapseTools(m.tools)
-      if (collapsed.length > 0) push(<ToolCalls key="tools" tools={collapsed} dense={dense} at={m.at} />, toolBandEdges(collapsed))
-    }
+    const collapsed = collapseTools(m.tools)
+    if (collapsed.length > 0) push(<ToolCalls key="tools" tools={collapsed} at={m.at} />, toolBandEdges(collapsed))
     renderText(m.text, "leg")
   }
 
@@ -4011,8 +3986,7 @@ function MessageBody({ m, answering, dense, paired, textOnly, showSendButton, st
   if (blocks.length === 0) return null
   // The per-message Send button sits at the bottom of THIS message, scoped to just its own question
   // block(s) (answering.onSubmit → sendAnswers(thisMessageIdentity)). `answering` is present only for a
-  // message that still carries an open ask, so the button only appears where there's something to send;
-  // the queue card leaves showSendButton unset (it owns a single card-level Send instead).
+  // message that still carries an open ask, so the button only appears where there's something to send.
   if (showSendButton && answering && isMobile && askBlocks.length > 0) {
     // One verb, and it OPENS the sheet rather than sending: nothing on a phone is answered from the
     // transcript, so a "Send answers" here would be enabled by state the reader cannot see.
@@ -4088,7 +4062,7 @@ function ProseHtml({ md, wrap }: { md: string; wrap?: boolean }) {
   // prose is drawn where it stands. The splitter lifts those fences out when they are blocks of their
   // own (lib/imagePaths.ts splitProseAttachments); the ones it leaves are inside something — a
   // `<details>` section, a list item, a quote — where lifting would break the thing they are inside.
-  return <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={html} />
+  return <LinkedHtml className={`md-body${wrap ? ` ${WRAP_ANYWHERE}` : ""}`} html={html} />
 }
 
 // A local absolute image path rendered inline via the gated /local-image route, inside the shared
@@ -4276,7 +4250,7 @@ function statesFence(fence: ThreadViewData["lastFence"], body: string, hints: re
   return fence?.kind === "awaiting" && fence.body === body && JSON.stringify(fence.hints) === JSON.stringify(hints)
 }
 
-export function FenceCard({ fenceKind, body, hints, wrap, pastRest }: { fenceKind: FenceKind; body: string; hints: AwaitingHint[]; wrap?: boolean; pastRest?: boolean }) {
+export function FenceCard({ fenceKind, body, hints, pastRest }: { fenceKind: FenceKind; body: string; hints: AwaitingHint[]; pastRest?: boolean }) {
   // BLOCK markdown, not inline. A fence's prose is arbitrary Markdown since frontmatter landed
   // (2026-08-17), and inline rendering flattened a worker's paragraphs and lists into one run — the shape
   // a handoff most often takes.
@@ -4288,12 +4262,12 @@ export function FenceCard({ fenceKind, body, hints, wrap, pastRest }: { fenceKin
   // the block sheet; inside a card `.card-md` pulls it to the card's own 13px and lets the colour inherit,
   // which is why no CARD_BODY rides alongside it.
   const html = useMarkdownHtml(body)
-  // The owning thread's slug — set by the thread view AND the queue card — so the confirm button
-  // resolves its thread and renders on both surfaces (null in a sub-agent's own transcript → no button).
+  // The owning thread's slug — set by every thread surface — so the confirm button resolves its thread
+  // (null in a sub-agent's own transcript → no button).
   const slug = useContext(ThreadSlugContext)
-  // On the queue this dismisses THIS card through the user-initiated auto-scroll exit; null in the
-  // drawer. Wired into both fence actions so Mark-as-done / park scroll the next card up, exactly like
-  // the header's Mark-as-done and Snooze do (maintainer 2026-07-21: every card-dismissing control must).
+  // In the pane this moves on to the next thread through the surface's exit; null in a drawer. Wired into
+  // both fence actions so Mark-as-done / park move on exactly like the header's Mark-as-done and Snooze
+  // do (maintainer 2026-07-21: every dismissing control must).
   const queueDismiss = useContext(QueueDismissContext)
   // Resolve the owning thread + whether whole-thread lifecycle actions are applicable (session, not
   // foreign). Shared by both branches: the done card's Mark-as-done button renders only for a real,
@@ -4357,7 +4331,7 @@ export function FenceCard({ fenceKind, body, hints, wrap, pastRest }: { fenceKin
       <TranscriptCard icon={Check} kind="Done" label={doneTitle ? <span className="[overflow-wrap:anywhere]">{doneTitle}</span> : null} ruled={!!html}>
         {html || markDone ? (
           <>
-            {html && <LinkedHtml className={`md-body${wrap ? ` ${QUEUE_WRAP}` : ""}`} html={html} />}
+            {html && <LinkedHtml className="md-body" html={html} />}
             {markDone}
           </>
         ) : null}
@@ -4562,7 +4536,7 @@ export function PermPolicyDenialCard({ policy, denies }: { policy: NonNullable<T
 // elapsed fresh even when no board push arrives (a steadily-running op changes nothing to re-push).
 // Saved links/files follow their own divider; they keep the strip visible without starting that tick.
 // Since 2026-10-09 the thread's own rows live in the hover panels of the op counts over its prompt box
-// (QueueOpsSummary), one panel per kind of row (`only`), on the queue card and in the drawer alike; only
+// (QueueOpsSummary), one panel per kind of row (`only`), on every thread surface; only
 // the sub-agent drawer still hangs a scoped strip under its box. The /full page draws none of it while
 // its rail is on screen.
 export function BackgroundOpsStrip({
@@ -4578,8 +4552,8 @@ export function BackgroundOpsStrip({
   className?: string
   // "panel" in a panel over the prompt box (QueueOpsSummary), where each row is a menu's (ChildOpRow).
   density?: "sheet" | "panel"
-  // Queue cards render live sub-agents as compact child lines directly under their composer. They
-  // still use this strip for unrelated background shells/Monitors, so suppress agent duplication.
+  // The ops panels over the prompt box draw sub-agents in their own panel, and use this strip for the
+  // shells and monitors, so they suppress agent duplication.
   includeAgents?: boolean
   // ONE KIND OF ROW, and nothing else: the counts over a prompt box open a panel each (QueueOpsSummary),
   // so the shells' panel must not list the watched PRs and the files' must not list the links. The

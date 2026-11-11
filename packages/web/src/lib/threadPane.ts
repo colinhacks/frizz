@@ -46,7 +46,7 @@ export function publishPaneQueue(ids: readonly string[]): void {
 }
 
 // A thread just dismissed stays on the board for a moment after the human moved on, and the next
-// dismissal must not walk back onto it. The same window the queue gave a dismissed card (TodosView resolve).
+// dismissal must not walk back onto it. The same window the queue gave a dismissed card, before the pane.
 const LEFT_MS = 8000
 const left = new Map<string, number>()
 function liveQueue(): string[] {

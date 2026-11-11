@@ -3288,16 +3288,16 @@ const MAX_PINNED_BACKGROUND_OPERATIONS = 128
 // This is the reload/restart contract: the projector rebuilt the shellSessions lifecycle from the full
 // rollout, so slicing away the still-pending launch card at the very end discarded known live state.
 // Pin a tools-only projection at the tail, adjacent to the composer: putting it at the historical head
-// would leave it above the queue card's most-recent-user window and therefore still invisible. The
+// would leave it above the pane's most-recent-user window and therefore still invisible. The
 // paginated history carries the canonical message and the client replaces this synthetic card when
 // that page is loaded.
 // Where the latest window BEGINS: the last MAX_MESSAGES, pulled further back when that cut would land
 // past the human's own last message — and then cut from the tail at LATEST_WINDOW_MAX_BYTES, which
 // outranks both (byteBoundedStart).
 //
-// The queue card anchors itself on that message (`lastUserIdx` in TodosView) and shows everything after
-// it, so a window that does not contain it leaves the card with nothing to anchor on — it falls back to
-// the window head and opens mid-turn, on an assistant sentence answering a question the reader can no
+// The board's pane opens a queued thread on that message (its window start, as the queue card did before
+// it) and shows everything after it, so a window that does not contain it leaves nothing to anchor on —
+// it falls back to the window head and opens mid-turn, on an assistant sentence answering a question the reader can no
 // longer see. That is exactly what the maintainer has now objected to twice (2026-08-12: "queue cards
 // STILL need to go all the way back to the last user message"; 2026-08-18 on a `nub` card that opened on
 // "It replaced a generic 'keep going' stop-hook prompt"). The EARLIER-page reader has always had this

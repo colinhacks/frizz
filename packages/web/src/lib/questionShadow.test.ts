@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { allFencesShadowed, fenceRestatesRegistered, fenceStandsFor, markerIdsIn, placedFrom, placementNamesIn, placeQuestions, questionHomes, questionNames, registeredStandingAt, resolveQuestionName } from "./questionShadow.ts"
+import { fenceRestatesRegistered, fenceStandsFor, markerIdsIn, placedFrom, placementNamesIn, placeQuestions, questionHomes, questionNames, registeredStandingAt, resolveQuestionName } from "./questionShadow.ts"
 import { questionClaims, questionsByAnchor } from "./questionAnchor.ts"
 import { type MessageSegment, splitQuestionBlocks } from "./questionBlocks.ts"
 
@@ -44,15 +44,6 @@ test("nothing folds against no registration, and a head too short to mean anythi
   assert.equal(fenceRestatesRegistered(FENCE, []), false)
   const short = { spec: { question: "Proceed?", kind: "question" as const } }
   assert.equal(fenceRestatesRegistered("Proceed?\n\n- A. Yes\n- B. No", [short]), false)
-})
-
-test("allFencesShadowed is true only when every fence in the text restates a registration", () => {
-  const one = `Prose first.\n\n\`\`\`question\n${FENCE}\n\`\`\`\n`
-  const two = `${one}\n\`\`\`question\nWhich npm dist-tag should 4.5.0 publish under?\n\n- A. latest\n- B. next\n\`\`\`\n`
-  assert.equal(allFencesShadowed(one, [QUESTION]), true)
-  assert.equal(allFencesShadowed(two, [QUESTION]), false)
-  assert.equal(allFencesShadowed("No fence here at all.", [QUESTION]), false)
-  assert.equal(allFencesShadowed(one, []), false)
 })
 
 // The transcript shape of the report: a fence, two watcher wakes (user turns frizz wrote), the

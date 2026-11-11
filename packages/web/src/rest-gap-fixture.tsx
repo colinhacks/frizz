@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { ThreadView } from "./components/ChatView.tsx"
-import { TodosView } from "./components/TodosView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
 import "./styles.css"
@@ -16,9 +15,6 @@ import "./styles.css"
 //
 //   nubx vite --port 5478 --strictPort      (from packages/web)
 //   http://localhost:5478/rest-gap-fixture.html
-//
-//   ?surface=card   the same thread on its QUEUE CARD. Its window opens on the human's last ask, so the
-//                   dated rest is in the history "Load earlier messages" brings back.
 
 const SLUG = "rest-gap"
 const PARAMS = new URLSearchParams(location.search)
@@ -106,17 +102,11 @@ window.fetch = async (input, init) => {
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={new QueryClient()}>
     <TooltipProvider>
-      {PARAMS.get("surface") === "card" ? (
-        <div className="mx-auto w-[min(680px,calc(100%-32px))] py-8 text-sm">
-          <TodosView />
+      <div className="relative h-screen bg-bg text-fg text-sm">
+        <div className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border">
+          <ThreadView slug={SLUG} />
         </div>
-      ) : (
-        <div className="relative h-screen bg-bg text-fg text-sm">
-          <div className="mx-auto flex h-screen w-[760px] max-w-full flex-col border-x border-border">
-            <ThreadView slug={SLUG} />
-          </div>
-        </div>
-      )}
+      </div>
     </TooltipProvider>
   </QueryClientProvider>,
 )

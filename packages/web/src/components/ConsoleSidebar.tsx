@@ -38,7 +38,7 @@ import { DispatchForm } from "./NewThreadModal.tsx"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { ProjectSquare } from "./ProjectRail.tsx"
 import { RailViewChips } from "./RailViewChips.tsx"
-import { PinnedBand, SectionHeader, StartingRow, SubAgentRows, ThreadRow, useQueueScrollspy } from "./Sidebar.tsx"
+import { PinnedBand, SectionHeader, StartingRow, SubAgentRows, ThreadRow, usePaneMarker } from "./Sidebar.tsx"
 import { StatusRow } from "./StatusRow.tsx"
 
 // THE CONSOLE'S SIDEBAR — a project board's sidebar, drawn from every open project at once.
@@ -110,9 +110,7 @@ export function ConsoleSidebar() {
   // "By status" only. Done is asked once per settled list, not once per delta (consoleBoard.ts consoleDone).
   const snoozed = useMemo(() => (group === "status" ? consoleSnoozed(all) : []), [group, all])
   const done = useMemo(() => (group === "status" ? consoleDone(all) : []), [group, all])
-  const spy = useQueueScrollspy(snap.view, snap.drawers.length, waiting.map((t) => t.id))
-  const { railRef, navigateToQueueCard } = spy
-  const activeId = snap.paneSlug ?? spy.activeId
+  const { railRef, activeId } = usePaneMarker()
 
   const square = (t: ThreadView) => <RowSquare project={bySlug.get(keyProject(t.id) ?? "")} />
   // By status the rows speak for the Console's shelf; by project, for each project board's own.
@@ -123,10 +121,10 @@ export function ConsoleSidebar() {
     <div key={t.id}>
       <ThreadRow
         t={t}
-        // Waiting rows only: a running row has no queue card, and the marker a just-sent row arrives
-        // with is handed to the row that took its place (markerRow in lib/sidebarScrollspy).
-        active={opts.waiting && activeId === t.id}
-        onQueueNavigate={navigateToQueueCard}
+        // Whatever band it stands in: the pane shows running and done threads too, and a thread sent from
+        // the pane stays open there as its row moves to Running. (It marked waiting rows alone while the
+        // marker followed the queue's cards, which only waiting threads had.)
+        active={activeId === t.id}
         // A pinned row keeps its rest time too: its pin shows only on hover, as the unpin (ThreadRow).
         restedAge={opts.dated ?? opts.waiting}
         leading={opts.square ? square(t) : undefined}
@@ -171,7 +169,6 @@ export function ConsoleSidebar() {
                           threads={pinned}
                           railRef={railRef}
                           activeId={activeId}
-                          onQueueNavigate={navigateToQueueCard}
                           shelf="console"
                           leading={square}
                           onReorder={reorderPins}

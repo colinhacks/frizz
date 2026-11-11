@@ -9,7 +9,7 @@ const baseUrl = process.env.FRIZZ_AWAITING_STEPS_E2E_URL
 
 // STEPS FOR THE HUMAN (2026-10-03): an ```awaiting fence carrying `steps:` draws them on the resting card.
 // The steps render through the markdown sanitizer, which needs a real DOM, so this is pinned in a real
-// browser against the real queue card (awaiting-bg-fixture.html?steps=…), its own prompt box included.
+// browser against the real thread view (awaiting-bg-fixture.html?steps=…), its own prompt box included.
 // Only the RPC answers are stubbed, in the fixture; the send itself goes through the composer's own
 // eager follow-up, which is the point:
 //
@@ -19,8 +19,8 @@ const baseUrl = process.env.FRIZZ_AWAITING_STEPS_E2E_URL
 //   2. Ticking a box STAGES an answer, as picking a question's option does: the tick is saved, nothing is sent,
 //      the prompt box arms its Send and says it will carry a note, and a second click unticks it.
 //   3. The prompt box sends it: every box ticked is the word alone, part of them is a checklist, and a typed
-//      note rides under either in the same reply, bound to the thread's session, and the card leaves the
-//      queue. Enter on a ticked box itself is the same send, whether it was ticked by click or by key.
+//      note rides under either in the same reply, bound to the thread's session, and the list stays as the
+//      record of what was sent, its boxes no longer live. Enter on a ticked box itself is the same send, whether it was ticked by click or by key.
 //   4. What was finished at an earlier rest folds away, and stays one click off.
 
 const CARD = "[data-awaiting-background]"
@@ -28,7 +28,7 @@ const LIST = `${CARD} [data-awaiting-steps]`
 const BOX = `${LIST} li:first-child button[role=checkbox]`
 const FIRST = "Run `npm login --auth-type=web` in a terminal on this machine."
 const ONE_OF_THREE = `Done 1 of 3:\n- [x] ${FIRST}\n- [ ] Approve the browser prompt with the **acme-bot** account.\n- [ ] Reply here once \`npm whoami\` prints \`acme-bot\`.`
-const COMPOSER = "textarea[data-surface='queueComposer']"
+const COMPOSER = "textarea[data-surface='chatComposer']"
 const SEND = "[data-send-split] [data-send]"
 
 type Sent = { rpc: string; body: { slug?: string; sessionId?: string; message?: string; id?: string; done?: boolean; todos?: { id: string; done: boolean }[] } }
@@ -150,7 +150,8 @@ test("a steps card's checklist stages an answer the prompt box sends", {
     assert.equal((await composer()).armed, false, "and a second click unticks it")
 
     const sends = () => page.waitForFunction(() => (window as unknown as { __rpc: Sent[] }).__rpc.some((c) => c.rpc === "followUp"), { timeout: 10_000 })
-    const gone = () => page.waitForFunction((sel) => !document.querySelector(sel), { timeout: 10_000 }, CARD)
+    // The send ends the rest: the list stays, as the record of the reply, with no live box left in it.
+    const gone = () => page.waitForFunction((sel) => !document.querySelector(`${sel} button[role=checkbox]`), { timeout: 10_000 }, LIST)
     const fresh = async () => {
       await page.reload({ waitUntil: "networkidle0" })
       await page.waitForSelector(BOX)
