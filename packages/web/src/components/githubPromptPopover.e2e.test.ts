@@ -9,7 +9,7 @@ import test from "node:test"
 const baseUrl = process.env.FRIZZ_GITHUB_PROMPT_POPOVER_E2E_URL
 
 type Fixture = { settingsWrites: Record<string, unknown>[]; dispatched: unknown[]; preferenceWrites: unknown[] }
-const GEAR = 'button[aria-label="Picker settings"]'
+const GEAR = 'button[aria-label="Investigation settings"]'
 const PANEL = "[data-github-prompt-menu]"
 
 async function launch(query = "?rows=5") {
@@ -50,7 +50,7 @@ test("the header links out to the repo as right-justified text, rules frame the 
         title: title.textContent?.trim(),
         glyphs: link.querySelectorAll("svg").length,
         titleGlyphs: title.querySelectorAll("svg").length + (h2.firstElementChild?.tagName === "svg" ? 1 : 0),
-        hasGear: h2.querySelector('button[aria-label="Picker settings"]') !== null,
+        hasGear: h2.querySelector('button[aria-label="Investigation settings"]') !== null,
         linkRight: link.getBoundingClientRect().right,
         listRight: document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect().right,
         titleRight: title.getBoundingClientRect().right,
@@ -140,10 +140,16 @@ test("the header links out to the repo as right-justified text, rules frame the 
     await page.waitForFunction((panel, gearSelector) =>
       document.querySelector(panel)!.getBoundingClientRect().bottom <= document.querySelector(gearSelector)!.getBoundingClientRect().top,
     { timeout: 2000 }, PANEL, GEAR)
-    // And back across the picker from the gear, which sits at its right.
-    const [panelRight, gearRight] = await page.evaluate((panel, gearSelector) =>
-      [document.querySelector(panel)!.getBoundingClientRect().right, document.querySelector(gearSelector)!.getBoundingClientRect().right], PANEL, GEAR)
-    assert.ok(Math.abs(panelRight - gearRight) < 2, `the panel's right edge is the gear's, got ${panelRight} vs ${gearRight}`)
+    // And back across the picker from its right edge: the panel ends where the Start button does, and
+    // stays inside the picker's content edges (anchored to the gear, it once stood 22px past the left one).
+    const edges = await page.evaluate((panel) => {
+      const box = document.querySelector(panel)!.getBoundingClientRect()
+      const start = [...document.querySelectorAll("button")].find((b) => /^Start investigation/.test(b.textContent ?? ""))!.getBoundingClientRect()
+      const list = document.querySelector("[data-row-number]")!.parentElement!.getBoundingClientRect()
+      return { left: box.left, right: box.right, startRight: start.right, listLeft: list.left }
+    }, PANEL)
+    assert.ok(Math.abs(edges.right - edges.startRight) < 1, `the panel's right edge is the Start button's, got ${edges.right} vs ${edges.startRight}`)
+    assert.ok(edges.left >= edges.listLeft - 0.5, `the panel stays inside the picker, got ${edges.left} vs the list's ${edges.listLeft}`)
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
@@ -372,6 +378,46 @@ test("one prompt editor, and Reset clears the override rather than freezing the 
     assert.ok(!("githubIssuePrompt" in sent[1]!), "the merged-away key never reappears on the wire")
     assert.ok(!("githubPrPrompt" in sent[1]!))
     assert.match(await page.$eval(`${PANEL} textarea`, (el) => (el as HTMLTextAreaElement).value), /^Triage \{repo\}/, "the box shows the shipped default again")
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+// The tokens are chips under the box that insert themselves, not a list behind a second popover. A chip
+// keeps the box's focus and caret, so a token lands where the caret was, and before the caret has ever
+// been placed it lands at the end of the prompt rather than at offset 0.
+test("a token chip inserts its token at the caret, appends before the caret is placed, and explains itself on hover", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch()
+  const chip = (token: string) => `${PANEL} [data-github-prompt-tokens] button[aria-label^="Insert {${token}}"]`
+  const value = () => page.$eval(`${PANEL} textarea`, (el) => (el as HTMLTextAreaElement).value)
+  try {
+    await page.click(GEAR)
+    await page.waitForSelector(chip("title"))
+    const before = await value()
+    assert.deepEqual(
+      await page.$$eval(`${PANEL} [data-github-prompt-tokens] button`, (buttons) => buttons.map((b) => b.textContent)),
+      ["{repo}", "{n}", "{title}", "{url}", "{labels}", "{body}"],
+    )
+    assert.ok(!(await page.$$eval(`${PANEL} button`, (buttons) => buttons.some((b) => b.textContent?.trim() === "Tokens"))), "no Tokens popover trigger")
+
+    // Untouched box: the token goes at the end.
+    await page.click(chip("labels"))
+    assert.equal(await value(), `${before}{labels}`)
+    assert.equal(await page.evaluate((panel) => document.activeElement === document.querySelector(`${panel} textarea`), PANEL), true, "the box has the focus")
+
+    // A placed caret: the token goes there, and the caret follows it.
+    await page.evaluate((panel) => document.querySelector<HTMLTextAreaElement>(`${panel} textarea`)!.setSelectionRange(0, 0), PANEL)
+    await page.click(chip("n"))
+    assert.equal(await value(), `{n}${before}{labels}`)
+    assert.equal(await page.$eval(`${PANEL} textarea`, (el) => (el as HTMLTextAreaElement).selectionStart), 3)
+
+    // An inserted token saves as typing does, through the debounced write.
+    await page.waitForFunction((expected) => (window as unknown as { githubPickerRangeFixture: Fixture }).githubPickerRangeFixture.settingsWrites.at(-1)?.githubPrompt === expected, { timeout: 3000 }, `{n}${before}{labels}`)
+
+    await page.hover(chip("body"))
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="tooltip"]')].some((el) => /description, shortened if long/.test(el.textContent ?? "")), { timeout: 3000 })
+    assert.ok(await page.$(PANEL), "the settings panel is still the only panel open")
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()

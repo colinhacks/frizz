@@ -54,6 +54,8 @@ export function GithubPickerModal({ onClose }: { onClose: () => void }) {
 
 function GithubPicker({ onClose }: { onClose: () => void }) {
   const status = useGithubStatus()
+  // The footer row, which the settings panel hangs off (GithubPromptPopover says why).
+  const footerRef = useRef<HTMLDivElement>(null)
   // The batch dispatches with the SAME durable new-thread profile the prompt box uses — the selector
   // below writes it, so choosing here also becomes the composer's next default (one profile, not a
   // picker-local copy that silently diverges). A Codex cache refresh can invalidate the saved pair
@@ -338,7 +340,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             least actionable number here, and the one that goes on a phone once anything is checked)
             gives way. Checked rows can be scrolled far out of view, so this is the only place the full
             count is always visible. */}
-        <div className="-mx-5 mt-3 flex items-center gap-3 border-t border-border/60 px-5 pt-3">
+        <div ref={footerRef} className="-mx-5 mt-3 flex items-center gap-3 border-t border-border/60 px-5 pt-3">
           {pages && (
             <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-60">
               <span className={`truncate tabular-nums ${n > 0 ? "max-sm:hidden" : ""}`}>
@@ -363,7 +365,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             {/* What every thread this batch starts will be: the model and effort, and the prompt. The
                 selector is the SAME control the prompt box carries and writes the same durable preference.
                 The picker keeps its state, because the batch dispatches with it; only the control moved. */}
-            <GithubPromptPopover>
+            <GithubPromptPopover anchor={footerRef}>
               <ProfileGridSelector
                 groups={profileGroups}
                 agentSettings

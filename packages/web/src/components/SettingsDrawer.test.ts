@@ -16,14 +16,15 @@ const tooltipSource = readFileSync(new URL("./Tooltip.tsx", import.meta.url), "u
 test("settings maps each contextual explanation to a help control", () => {
   // `subagentInstructions` is gone: the settings preamble was retired in favour of FRIZZ.md, so there
   // is exactly one operator-authored surface for project conventions.
-  for (const key of ["permissionMode", "promptCacheTtl", "appearance", "notifications", "githubPrompt"]) {
+  for (const key of ["permissionMode", "promptCacheTtl", "appearance", "notifications"]) {
     assert.match(helpSource, new RegExp(`\\b${key}:`), `missing settings help mapping: ${key}`)
   }
   assert.match(source, /label="Desktop notifications" help=\{SETTINGS_HELP\.notifications\}/)
   // The runtime fields read the same table from their own surface.
   assert.match(agentSource, /label="Permissions" help=\{SETTINGS_HELP\.permissionMode\}/)
   assert.match(agentSource, /label="Prompt cache tier" help=\{SETTINGS_HELP\.promptCacheTtl\}/)
-  assert.match(promptFieldSource, /help=\{SETTINGS_HELP\.githubPrompt\}/)
+  // The GitHub picker's panel explains its two settings in a caption under each label, not behind a "?".
+  assert.doesNotMatch(promptFieldSource + promptPopoverSource, /SETTINGS_HELP|LabelWithHelp|SettingsField/)
   // The redundant "GitHub picker prompts" group label is gone; each field carries its own label.
   assert.doesNotMatch(source, /label="GitHub picker prompts"/)
 })
@@ -147,10 +148,11 @@ test("the GitHub picker carries the repo link in its header, one settings gear b
   // the modal's bottom-right corner, with the model selector inside it (maintainer 2026-11-09).
   assert.doesNotMatch(header, /<GithubPromptPopover\b/)
   const footer = pickerSource.slice(pickerSource.indexOf("{/* Footer"))
-  assert.match(footer, /<GithubPromptPopover>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<ProfileGridSelector\b[\s\S]*?<\/GithubPromptPopover>\s*<button\s+disabled=\{n === 0/)
+  assert.match(footer, /<GithubPromptPopover anchor=\{footerRef\}>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<ProfileGridSelector\b[\s\S]*?<\/GithubPromptPopover>\s*<button\s+disabled=\{n === 0/)
   assert.doesNotMatch(pickerSource, /PromptControlGroup/)
-  assert.match(promptPopoverSource, /<PopoverContent\s+side="top"\s+align="end"/)
-  assert.match(promptPopoverSource, /<SettingsField label="Model and effort"/)
+  assert.match(promptPopoverSource, /<PopoverContent\s+side="top"\s+align="end"\s+alignOffset=\{20\}/)
+  assert.match(promptPopoverSource, /<PopoverAnchor virtualRef=\{anchor/)
+  assert.match(pickerSource, /<div ref=\{footerRef\} className="-mx-5 mt-3 flex items-center gap-3 border-t border-border\/60 px-5 pt-3">/)
   // The slug is no longer an em-dashed suffix of the title (the dash must be gone from the MARKUP;
   // the comments above it are prose and may carry one).
   assert.doesNotMatch(header.slice(header.indexOf("<h2")), /—/)

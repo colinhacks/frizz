@@ -1,11 +1,9 @@
-import { useState, type ReactNode } from "react"
+import { useState, type ReactNode, type RefObject } from "react"
 import { Settings as SettingsIcon } from "lucide-react"
 import { useEscapeToClose } from "../hooks/useEscapeToClose.ts"
 import { SaveStatus, useSettingsDraft } from "../hooks/useSettingsAutosave.tsx"
-import { SETTINGS_HELP } from "../lib/settingsHelp.ts"
 import { GithubPromptEditor } from "./GithubPromptField.tsx"
-import { SettingsField } from "./SettingsField.tsx"
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/Popover.tsx"
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./ui/Popover.tsx"
 
 // The gear in the GitHub picker's footer, left of the button that starts the batch, and the panel it
 // opens: what every thread this picker dispatches will be, its model and effort (`children`, the selector
@@ -19,15 +17,20 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/Popover.tsx"
 // Escape, or its own controls. Closing it flushes a debounced edit at once, and the picker's dispatch
 // button waits on that write (useIsMutating on SETTINGS_WRITE_KEY), so a prompt edited and dispatched
 // in the same breath is the prompt the workers get.
-export function GithubPromptPopover({ children }: { children: ReactNode }) {
+//
+// `anchor` is the picker's footer row. The panel hangs off it rather than off the gear, so its right edge
+// is the Start button's and it can never run past the picker's left edge: anchored to the gear, a 560px
+// panel stood 22px outside the modal (2026-11-10).
+export function GithubPromptPopover({ anchor, children }: { anchor: RefObject<HTMLElement | null>; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   useEscapeToClose(open, () => setOpen(false))
   return (
     <Popover modal open={open} onOpenChange={setOpen}>
+      <PopoverAnchor virtualRef={anchor as RefObject<HTMLElement>} />
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Picker settings"
+          aria-label="Investigation settings"
           title="The model and prompt for every thread this picker starts"
           onMouseDown={(e) => e.preventDefault()}
           // A 15px glyph in a 30px hover square — the Start button's own height, so the two stand on
@@ -37,15 +40,18 @@ export function GithubPromptPopover({ children }: { children: ReactNode }) {
           <SettingsIcon aria-hidden="true" size={15} />
         </button>
       </PopoverTrigger>
-      {/* Opens UPWARD and back across the picker: the gear sits at the modal's bottom-right corner. */}
+      {/* Opens UPWARD over the list. The footer row spans the modal, padding included: the 20px align
+          offset is that padding (`px-5`), so the panel's right edge lands on the Start button's, and the
+          width never exceeds the content box between the two paddings. */}
       <PopoverContent
         side="top"
         align="end"
-        sideOffset={6}
-        className="w-[560px] max-w-[calc(100vw-1rem)] p-4"
+        alignOffset={20}
+        sideOffset={8}
+        className="w-[min(560px,calc(var(--radix-popover-trigger-width)_-_40px))] max-w-[calc(100vw-1rem)] overflow-hidden p-0"
         data-github-prompt-menu=""
-        // Focus lands on the panel, not its first control: that control is a help glyph, and a focused help
-        // glyph opens its tooltip, which covered the prompt every time the panel opened. Tab still starts there.
+        // Focus lands on the panel, not its first control, so opening it draws no focus ring on the model
+        // selector. Tab still starts there.
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           ;(event.currentTarget as HTMLElement).focus()
@@ -57,18 +63,29 @@ export function GithubPromptPopover({ children }: { children: ReactNode }) {
   )
 }
 
+// A header with a rule under it, as the picker's own, then two settings: the model as a label-and-control
+// row, and the prompt as a label row over its editor. Labels are sentence case at reading size; the
+// uppercase micro-labels and their `?` glyphs this replaced read as a form's chrome, not its content.
 function GithubPromptForm({ children }: { children: ReactNode }) {
   const { draft, update, saveState } = useSettingsDraft()
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[12px] font-medium text-fg">Picker settings</span>
+    <div className="flex flex-col">
+      <div className="flex min-h-[44px] items-center justify-between gap-3 border-b border-border/60 px-4">
+        <span className="text-[13px] font-medium text-fg">Investigation settings</span>
         <SaveStatus state={saveState} />
       </div>
-      <SettingsField label="Model and effort" help={SETTINGS_HELP.githubProfile}>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
-      </SettingsField>
-      {!draft ? <div className="text-[12px] text-muted">Loading…</div> : <GithubPromptEditor draft={draft} onChange={update} rows={14} />}
+      <div className="flex flex-col gap-5 p-4">
+        {/* The selector drops under its label where the two don't fit on one line (a phone), rather than
+            squeezing the label onto two lines and truncating the model's name. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-[1_1_13rem] flex-col gap-0.5">
+            <span className="text-[12.5px] text-fg/90">Model</span>
+            <span className="text-[11.5px] text-muted-70">Also the default for new threads</span>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">{children}</div>
+        </div>
+        {!draft ? <div className="text-[12px] text-muted">Loading…</div> : <GithubPromptEditor draft={draft} onChange={update} rows={14} />}
+      </div>
     </div>
   )
 }
