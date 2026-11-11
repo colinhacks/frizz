@@ -98,6 +98,10 @@ type ProfileGridSelectorProps = {
   // offers the move to the family's current edition — both only on a live thread's own picker.
   runningModelLabel?: string
   upgrade?: ProfileGridUpgrade
+  // Draw the trigger as a form field, in the input's own dark fill and full border, for a selector that
+  // stands alone on a panel's surface (the GitHub picker's settings) rather than in a row of controls.
+  // The default transparent trigger with a half-strength border vanished into a popover's fill.
+  field?: boolean
 }
 
 // ONE selector, two presentations. Below the phone breakpoint the grid popover gives way to a chip and
@@ -125,6 +129,7 @@ function DesktopProfileGridSelector({
   agentSettings = false,
   runningModelLabel,
   upgrade,
+  field = false,
 }: ProfileGridSelectorProps) {
   const joined = usePromptControlCell()
   const [open, setOpen] = useState(false)
@@ -141,7 +146,16 @@ function DesktopProfileGridSelector({
   const typography = compact ? PROFILE_GRID_COMPACT_TYPOGRAPHY_CLASS : PROFILE_GRID_TYPOGRAPHY_CLASS
   const triggerInteraction = disabled
     ? "cursor-not-allowed opacity-45"
-    : "cursor-pointer transition-colors hover:bg-hover-strong hover:text-fg"
+    : field
+      ? "cursor-pointer transition-colors hover:border-border-strong hover:text-fg"
+      : "cursor-pointer transition-colors hover:bg-hover-strong hover:text-fg"
+  const frame = joined
+    ? `${PROMPT_CONTROL_CELL} bg-transparent text-muted data-[state=open]:bg-hover-strong`
+    : field
+      // 2px less on the right: the chevron's own box carries ~2px of empty space past its ink, so equal
+      // padding drew 12.8px of air after it against 11.3px before the first letter.
+      ? "h-[30px] rounded-md border border-border bg-bg pl-2.5 pr-2 text-fg/85 data-[state=open]:border-border-strong data-[state=open]:text-fg"
+      : "rounded-md border border-border/50 bg-transparent px-2 py-1 text-muted data-[state=open]:bg-hover-strong"
   const known = profileGridSelectionKnown(groups, value)
   // `known` has already checked the effort against the row, and a row with no effort axis (an ACP
   // agent) is keyed on `effort: ""` — so the key is built whenever the model is known, not only when
@@ -243,7 +257,7 @@ function DesktopProfileGridSelector({
           title={title}
           data-profile-known={known ? "true" : "false"}
           data-profile-pending={pendingLabel ? "true" : undefined}
-          className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] ${joined ? PROMPT_CONTROL_CELL : "rounded-md border border-border/50 px-2 py-1"} bg-transparent text-left text-muted outline-none data-[state=open]:bg-hover-strong ${triggerInteraction} ${className} ${typography}`}
+          className={`profile-grid-trigger group inline-flex min-w-0 max-w-full items-center gap-[3px] ${frame} text-left outline-none ${triggerInteraction} ${className} ${typography}`}
         >
           {/* Lifted a pixel, as the permission picker's value is (`.select-trigger-readout`): petite caps sit on the
               baseline, so their ink rode 1.2px below the caret and the marks on this line. The cap band it was once

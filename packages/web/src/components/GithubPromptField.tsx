@@ -87,27 +87,12 @@ export function GithubPromptField({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-end justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-[12.5px] text-fg/90">Prompt</span>
-          <span className="text-[11.5px] text-muted-70">Each thread's first message, filled in from its issue or PR</span>
-        </div>
-        {customized && (
-          <button
-            type="button"
-            className="shrink-0 rounded text-[11.5px] text-muted-70 outline-none transition-colors hover:text-fg focus-visible:text-fg"
-            onClick={() => onChange(undefined)}
-          >
-            Reset to default
-          </button>
-        )}
-      </div>
       {/* The frame carries the border and the vertical padding, and the textarea inside it has none, so
           its height is exactly `rows` lines of 20px. A textarea's own padding scrolls with its text: at
           rest the next line showed through the bottom padding cut in half, and scrolled to the end the
           last line sat on the border. A press on the frame's padding still places the caret. */}
       <div
-        className="input mt-1 flex px-0 py-2 focus-within:border-input-focus"
+        className="input flex px-0 py-2 focus-within:border-input-focus"
         onMouseDown={(e) => {
           if (e.target !== e.currentTarget) return
           e.preventDefault()
@@ -129,24 +114,36 @@ export function GithubPromptField({
           spellCheck={false}
         />
       </div>
-      {/* Baseline, not center: the label is sans and the chips mono, whose braces reach below the
-          baseline, so centred boxes set the label's text visibly lower than the tokens'. */}
-      <div className="flex flex-wrap items-baseline gap-1" data-github-prompt-tokens="">
-        <span className="mr-1 text-[11.5px] text-muted-70">Insert</span>
-        {GH_PROMPT_TOKENS.map(({ token, gloss }) => (
-          <Tooltip key={token} label={gloss}>
-            <button
-              type="button"
-              aria-label={`Insert {${token}}: ${gloss}`}
-              // The box keeps its focus and its caret, so the token lands where the caret was.
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => insertToken(token)}
-              className="font-mono-keep rounded-[5px] bg-fg/7 px-1.5 text-[11px] leading-[20px] text-fg/75 outline-none transition-colors hover:bg-fg/12 hover:text-fg focus-visible:bg-fg/12 focus-visible:text-fg"
-            >
-              {`{${token}}`}
-            </button>
-          </Tooltip>
-        ))}
+      {/* Baseline, not center: "Insert" is sans and the chips mono, whose braces reach below the
+          baseline, so centred boxes set the word visibly lower than the tokens. Reset shares the row,
+          at its far end, now that the box has no label row above it. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-baseline gap-1" data-github-prompt-tokens="">
+          <span className="mr-1 text-[11.5px] text-muted-70">Insert</span>
+          {GH_PROMPT_TOKENS.map(({ token, gloss }) => (
+            <Tooltip key={token} label={gloss}>
+              <button
+                type="button"
+                aria-label={`Insert {${token}}: ${gloss}`}
+                // The box keeps its focus and its caret, so the token lands where the caret was.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => insertToken(token)}
+                className="font-mono-keep rounded-[5px] bg-fg/7 px-1.5 text-[11px] leading-[20px] text-fg/75 outline-none transition-colors hover:bg-fg/12 hover:text-fg focus-visible:bg-fg/12 focus-visible:text-fg"
+              >
+                {`{${token}}`}
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+        {customized && (
+          <button
+            type="button"
+            className="shrink-0 rounded text-[11.5px] text-muted-70 outline-none transition-colors hover:text-fg focus-visible:text-fg"
+            onClick={() => onChange(undefined)}
+          >
+            Reset to default
+          </button>
+        )}
       </div>
     </div>
   )

@@ -379,6 +379,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 // ever open in that order (githubPromptPopover.e2e pins all three).
                 menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z}
                 className="max-w-[min(21rem,60vw)]"
+                field
               />
               {resolved?.backend === "opencode" && <ExperimentalChip className="shrink-0" />}
             </GithubPromptPopover>

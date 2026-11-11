@@ -63,9 +63,9 @@ export function GithubPromptPopover({ anchor, children }: { anchor: RefObject<HT
   )
 }
 
-// A header with a rule under it, as the picker's own, then two settings: the model as a label-and-control
-// row, and the prompt as a label row over its editor. Labels are sentence case at reading size; the
-// uppercase micro-labels and their `?` glyphs this replaced read as a form's chrome, not its content.
+// A header with a rule under it, as the picker's own, then the two settings with no labels: a model
+// selector and a prompt box need no caption to say what they are. They had a label and a caption each
+// from 2026-11-10 until the same evening, and before that uppercase labels with `?` glyphs.
 function GithubPromptForm({ children }: { children: ReactNode }) {
   const { draft, update, saveState } = useSettingsDraft()
   return (
@@ -74,16 +74,8 @@ function GithubPromptForm({ children }: { children: ReactNode }) {
         <span className="text-[13px] font-medium text-fg">Investigation settings</span>
         <SaveStatus state={saveState} />
       </div>
-      <div className="flex flex-col gap-5 p-4">
-        {/* The selector drops under its label where the two don't fit on one line (a phone), rather than
-            squeezing the label onto two lines and truncating the model's name. */}
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="flex min-w-0 flex-[1_1_13rem] flex-col gap-0.5">
-            <span className="text-[12.5px] text-fg/90">Model</span>
-            <span className="text-[11.5px] text-muted-70">Also the default for new threads</span>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">{children}</div>
-        </div>
+      <div className="flex flex-col gap-3 p-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
         {!draft ? <div className="text-[12px] text-muted">Loading…</div> : <GithubPromptEditor draft={draft} onChange={update} rows={14} />}
       </div>
     </div>

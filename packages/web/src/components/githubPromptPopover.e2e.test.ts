@@ -241,10 +241,24 @@ test("the model selector works from inside the settings panel: its menu and the 
     await page.click(GEAR)
     await page.waitForSelector(SELECTOR)
 
-    // Opening focuses the panel: on the first control, a help glyph, its tooltip would cover the prompt.
+    // Opening focuses the panel, not the selector, so nothing on it draws a focus ring.
     await new Promise((resolve) => setTimeout(resolve, 500))
     assert.equal(await page.evaluate((panel) => document.activeElement === document.querySelector(panel), PANEL), true, "the panel holds the focus")
-    assert.doesNotMatch(await page.$eval("body", (b) => b.innerText), /same choice as the new-thread/, "and no help tooltip has opened")
+
+    // The selector names the edition, as it does everywhere else, and is drawn as a field: the input's dark
+    // fill against the panel's, not a transparent trigger that disappears into it. No label stands over it.
+    const trigger = await page.$eval(SELECTOR, (el) => ({
+      edition: el.querySelector(".profile-grid-edition")?.textContent,
+      fill: getComputedStyle(el).backgroundColor,
+      boxFill: getComputedStyle(el.closest("[data-github-prompt-menu]")!.querySelector("textarea")!.parentElement!).backgroundColor,
+      panelFill: getComputedStyle(el.closest("[data-github-prompt-menu]")!).backgroundColor,
+      // The panel is a header and a body; the body's first row is the selector itself.
+      first: el.closest("[data-github-prompt-menu]")!.firstElementChild!.lastElementChild!.firstElementChild!.contains(el),
+    }))
+    assert.equal(trigger.edition, "5.5")
+    assert.equal(trigger.fill, trigger.boxFill, "the selector wears the prompt box's fill")
+    assert.notEqual(trigger.fill, trigger.panelFill, "which is not the panel's")
+    assert.equal(trigger.first, true, "nothing stands above the selector in the panel's body")
 
     // The menu paints over the panel it opened from, and a pick lands without closing the panel.
     await page.click(SELECTOR)

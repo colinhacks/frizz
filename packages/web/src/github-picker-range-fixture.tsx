@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { BoardSnapshot, CodexModel, DispatchPreferences, GithubItem } from "@frizz/shared"
+import type { BoardSnapshot, ClaudeModel, CodexModel, DispatchPreferences, GithubItem } from "@frizz/shared"
 import { GithubPickerModal } from "./components/GithubPickerModal.tsx"
 import { Toaster } from "./components/Toaster.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
@@ -59,6 +59,14 @@ const items: GithubItem[] = NUMBERS.map((number, i) => ({
 }))
 
 const codexModels: CodexModel[] = []
+// The Claude catalogue as the claudeModels RPC answers it, so the model selector reads "Opus 5.5" as the
+// app does rather than the bare family name a picker with no catalogue falls back to.
+const claudeModels: ClaudeModel[] = [
+  { alias: "fable", label: "Fable 5.1", resolvedModel: "claude-fable-5-1", edition: "5.1" },
+  { alias: "opus", label: "Opus 5.5", resolvedModel: "claude-opus-5-5", edition: "5.5" },
+  { alias: "sonnet", label: "Sonnet 5", resolvedModel: "claude-sonnet-5", edition: "5" },
+  { alias: "haiku", label: "Haiku 4.5", resolvedModel: "claude-haiku-4-5-20251001", edition: "4.5" },
+]
 const opencode = params.get("opencode") === "1"
 const acp = params.get("acp") === "1"
 const preferences: DispatchPreferences = {
@@ -116,6 +124,7 @@ window.fetch = async (input, init) => {
     return json({ items: items.slice(from, from + perPage), total: searchTotal || items.length, page, pageCount })
   }
   if (url.pathname === "/_frizz/rpc/codexModels") return json(codexModels)
+  if (url.pathname === "/_frizz/rpc/claudeModels") return json(claudeModels)
   if (url.pathname === "/_frizz/rpc/acpAgents") {
     return json([
       ...(opencode ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }] : []),
