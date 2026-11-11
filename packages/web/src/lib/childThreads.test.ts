@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { activeBandThread, boardAskThread, drawnUnderParent, isChildThread, sectionOf, threadBandAt, type ThreadView } from "@frizz/shared"
 import { isConsolePinned, isPinned, queued, sectionThreads } from "../groups.ts"
 import { consoleDone, consolePinned, consoleQueue, consoleRunning, consoleSnoozed } from "./consoleBoard.ts"
-import { phoneQueue } from "./mobileTriage.ts"
+import { phoneBands } from "./mobileTriage.ts"
 import { settledThread } from "./boardPartition.ts"
 import { childThreadIndex, childThreadsOf, childThreadStartedAt, childThreadState } from "./childThreads.ts"
 import { queueOpsCounts } from "./queueOpsCounts.ts"
@@ -88,7 +88,8 @@ test("a child drawn under its parent is in no band, no count and no pin, on any 
     assert.deepEqual(ids(sections[key]).filter((id) => id !== "parent"), [], `no child in ${key}`)
   }
   assert.deepEqual(ids(sections.active), ["parent"])
-  assert.deepEqual(ids(phoneQueue(board, "fifo")), ["parent"], "the phone board rows the parent alone")
+  assert.deepEqual(ids(phoneBands(sections).queue), [])
+  assert.deepEqual(ids(phoneBands(sections).running), ["parent"], "the phone board rows the parent alone")
   assert.deepEqual(ids(consoleQueue(board, "fifo", "project")), [])
   assert.deepEqual(ids(consoleRunning(board)), ["parent"])
   assert.deepEqual(ids(consolePinned(board)), [])

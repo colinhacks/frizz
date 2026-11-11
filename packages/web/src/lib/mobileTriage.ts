@@ -2,7 +2,7 @@ import { boardQueuedThread, type CompletionHold, type ThreadView } from "@frizz/
 import { rpc } from "../api/rpc.ts"
 import { closeDrawersById, openThread, showToast, store } from "../store.ts"
 import { appPushedCurrentEntry } from "./router.ts"
-import { displayTitle, needsAction, sectionThreads } from "../groups.ts"
+import { displayTitle, needsAction, partitionActive, sectionThreads, type SectionedThreads } from "../groups.ts"
 import { prefs } from "./prefs.ts"
 import { archivingAtNow, clearArchived, markArchived, optimisticallyArchived } from "./optimisticArchive.ts"
 import { completionArchivesImmediately } from "./threadLifecycle.ts"
@@ -16,21 +16,38 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
 // ⋯ sheet. Both must pick the same next thread and restore the same way, so neither owns a copy.
 
 /**
- * The phone queue, top to bottom: pinned first, then the asks, then everything else in the queue's own
- * order. The SAME composition MobileBoard renders (its `queue` memo) — Done advancing to a row the board
- * would not have put next would make the loop feel random.
+ * The phone board's Queue and Running tabs, cut from the rail's own Queue/Running split
+ * (`partitionActive`), so a row sits in the same band on both shells.
+ *
+ * Queue, top to bottom: pinned first (the phone has no pinned band, and `sectionThreads` diverts a pinned
+ * thread out of every other band, so the shelf folds into the top of the Queue rather than rowing
+ * nowhere), then the asks, then the rested handoffs, each in the queue's own order. Running is the rail's
+ * Running band, newest entry first.
+ *
+ * ONE DEPARTURE FROM THE RAIL: every ask is in the Queue, whichever band the server's queue bit puts it
+ * in. The tab's lit count is every ask on the board (`boardAskThread`), and a phone shows one band at a
+ * time, so an ask rowed under Running would be counted on a tab that does not list it.
+ */
+export function phoneBands(sections: SectionedThreads): { queue: ThreadView[]; running: ThreadView[] } {
+  const { running, rested } = partitionActive(sections.active)
+  return {
+    queue: [...sections.pinned, ...sections.active.filter(needsAction), ...rested.filter((t) => !needsAction(t))],
+    running: running.filter((t) => !needsAction(t)),
+  }
+}
+
+/**
+ * The phone's Queue tab, the SAME composition MobileBoard renders (`phoneBands`) — Done advancing to a row
+ * the board would not have put next would make the loop feel random.
  */
 export function phoneQueue(threads: readonly ThreadView[], direction = prefs.queueOrder): ThreadView[] {
-  const sections = sectionThreads(threads, direction)
-  const asks = sections.active.filter(needsAction)
-  const rest = sections.active.filter((t) => !needsAction(t))
-  return [...sections.pinned, ...asks, ...rest]
+  return phoneBands(sectionThreads(threads, direction)).queue
 }
 
 /**
  * The next thread that needs you after `fromSlug`: the first row of the phone queue holding a queue card
- * (an ask, or a rested handoff waiting to be read), other than the one being filed. A running row does
- * not need you, so the loop never lands on one, and neither is a pinned thread's plain report a turn in
+ * (an ask, or a rested handoff waiting to be read), other than the one being filed. A running row is in
+ * the Running tab, so the loop never lands on one, and neither is a pinned thread's plain report a turn in
  * it: it waits on the row, on the phone as on the desktop. A thread the operator marked done a
  * moment ago whose archive the board has not echoed yet is folded through the same optimistic overlay
  * the board uses, so the loop cannot bounce back onto it.
