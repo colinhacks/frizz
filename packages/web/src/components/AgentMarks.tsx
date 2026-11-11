@@ -15,7 +15,7 @@ import { QuotaGauge, useSelectedModel, type GaugeModel } from "./QuotaBar.tsx"
 // carries the account's quota.
 //
 // ONE OPEN AT A TIME, SO ONE LIT AT A TIME (maintainer 2026-11-09: "it shouldn't be possible to hover in the middle
-// of them and have them both show up at once"). The two squares overlap a little (lib/iconRhythm.ts) and each stays
+// of them and have them both show up at once"). The two tap targets overlap a little (lib/iconRhythm.ts) and each stays
 // lit while its panel is open, so the strip holds ONE open mark rather than one each. Two rules decide who has it:
 //
 //   - The pointer reaching the plug shuts the gauge's panel in that same frame. The gauge's panel opens on a hover

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// The gauge and the plug beside a prompt box's model chip overlap a little, so neither target gives up width to a
-// gap, and only one of them is ever lit (maintainer 2026-11-09: "it shouldn't be possible to hover in the middle of
+// The tap targets of the gauge and the plug beside a prompt box's model chip overlap a little, so neither gives up
+// width to a gap, and only one of them is ever lit (maintainer 2026-11-09: "it shouldn't be possible to hover in the middle of
 // them and have them both show up at once"). Which element takes the pointer in the shared band, when a hover-opened
 // panel shuts, and what is actually painted frame by frame are all the browser's to say, so this moves a real
 // pointer over the real marks.
@@ -70,7 +70,7 @@ async function withMarks(run: (page: Page, boxes: { gauge: DOMRect; plug: DOMRec
 
 test("every pixel from the gauge's left edge to the plug's right edge belongs to one of them", { skip: !baseUrl, timeout: 90_000 }, async () => {
   await withMarks(async (page, { gauge, plug, y }) => {
-    assert.ok(plug.left < gauge.right, `the squares overlap: the gauge ends at ${gauge.right}, the plug starts at ${plug.left}`)
+    for (const [name, box] of [["gauge", gauge], ["plug", plug]] as const) assert.equal(box.width, box.height, `the ${name} draws a square`)
     const dead = await page.evaluate((from, to, row, a, b) => {
       const misses: number[] = []
       for (let x = from; x < to; x += 0.5) if (!document.elementFromPoint(x, row)?.closest(`${a},${b}`)) misses.push(x)

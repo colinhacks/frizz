@@ -126,19 +126,22 @@ export const RAIL_MARK_SQUARE = "h-6 w-6 rounded-md"
  *  chip's own 24px height and 6px corner, trimmed onto its ink so the row's one gap is a distance of ink: the
  *  rail's ~14.5px (RAIL_BOX_GAP), so one distance runs between every mark in the box.
  *
- *  EACH IS 28PX WIDE, SO NEIGHBOURS OVERLAP AND THERE IS NO DEAD GAP BETWEEN THEM (maintainer 2026-11-09: "a little
- *  overlap is fine ... there's a gap between them, which means that the tap target is just unnecessarily small").
- *  At that ink distance the gauge and the plug share a 1.7px band, and the later in the DOM, the plug, takes the
- *  pointer there. They stood 2.3px apart for two days after both were seen lit at once, which shrank both targets
- *  and fixed the wrong thing: the fault was two lit at once, which AgentMarks.tsx now rules out.
+ *  EACH IS THE RAIL'S 24PX SQUARE (maintainer 2026-11-11: "These icon buttons are the only ones that are not square
+ *  on the entire website"), AND ITS TAP TARGET REACHES 2PX PAST EACH SIDE, SO NEIGHBOURS' TARGETS OVERLAP AND THERE
+ *  IS NO DEAD GAP BETWEEN THEM (maintainer 2026-11-09: "a little overlap is fine ... there's a gap between them,
+ *  which means that the tap target is just unnecessarily small"). At that ink distance the two squares stand 2.3px
+ *  apart and their targets share a 1.7px band, where the later in the DOM, the plug, takes the pointer. The
+ *  targets stood 2.3px apart for two days after both were seen lit at once, which shrank both and fixed the wrong
+ *  thing: the fault was two lit at once, which AgentMarks.tsx now rules out. Until 2026-11-11 the reach came from
+ *  a 28px-wide box, which drew its fill 28 x 24; the `before:` reach is invisible, so the fill is the square.
  *
  *  THE FILL FADES IN AND GOES OUT AT ONCE. Fading out while the neighbour fades in is two lit at once for 150ms,
  *  so the fill's transition lives on the lit states alone. `data-quiet` is a mark standing down while its
  *  neighbour's panel is open: it takes no hover (AgentMarks.tsx). */
 export const AGENT_MARKS = "ml-[9px] flex shrink-0 items-center gap-[15px] empty:hidden"
-const AGENT_MARK = "icon-focus-outline relative flex h-6 w-7 rounded-md shrink-0 items-center justify-center text-muted outline-none transition-[color] not-data-[quiet]:hover:bg-hover-strong not-data-[quiet]:hover:text-fg not-data-[quiet]:hover:transition-[color,background-color] aria-expanded:bg-hover-strong aria-expanded:text-fg aria-expanded:transition-[color,background-color]"
-export const GAUGE_MARK = `-mx-[8.2px] ${AGENT_MARK}`
-export const PLUG_MARK = `-mx-[8.5px] ${AGENT_MARK}`
+const AGENT_MARK = `icon-focus-outline relative flex ${RAIL_MARK_SQUARE} shrink-0 items-center justify-center text-muted outline-none before:absolute before:inset-y-0 before:-inset-x-[2px] transition-[color] not-data-[quiet]:hover:bg-hover-strong not-data-[quiet]:hover:text-fg not-data-[quiet]:hover:transition-[color,background-color] aria-expanded:bg-hover-strong aria-expanded:text-fg aria-expanded:transition-[color,background-color]`
+export const GAUGE_MARK = `-mx-[6.2px] ${AGENT_MARK}`
+export const PLUG_MARK = `-mx-[6.5px] ${AGENT_MARK}`
 
 /** THE RAIL, right to left: send, the microphone (only where on-device dictation exists — see
  *  lib/dictation.ts), the paperclip, and the lead (the thread composer's Goal). Each is a 24px square

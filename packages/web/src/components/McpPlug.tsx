@@ -94,7 +94,7 @@ function LocalMcpPlug({ target, side, panel }: { target: McpTarget; side: "top" 
               aria-hidden
               data-mcp-attention-dot
               // In the lower right, a corner the plug's diagonal leaves empty.
-              className="absolute bottom-[4px] right-[4px] h-[6px] w-[6px] rounded-full"
+              className="absolute bottom-[4px] right-[2px] h-[6px] w-[6px] rounded-full"
               style={{ background: PRIMER.fgAttention, boxShadow: "0 0 0 2px var(--color-bg)" }}
             />
           )}

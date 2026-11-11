@@ -40,12 +40,16 @@ test("every bare mark in the prompt box paints one pen", () => {
 // Every pixel between the gauge and the plug belongs to one of them, so neither target gives up width to a gap
 // (maintainer 2026-11-09: "there's a gap between them, which means that the tap target is just unnecessarily
 // small"). "A little" is pinned too: each square reaches its trim past the footprint the row's gap is measured
-// between. That only one is lit at a time is agentMarksOneLit.e2e.test.ts's to prove.
-test("the agent's marks overlap a little, so there is no dead gap between their tap targets", () => {
+// between, and its target reaches a little further than its square. The squares themselves are the rail's
+// (maintainer 2026-11-11: "These icon buttons are the only ones that are not square on the entire website").
+// That only one is lit at a time is agentMarksOneLit.e2e.test.ts's to prove.
+test("the agent's marks are squares whose tap targets overlap a little, so there is no dead gap between them", () => {
   const px = (classes: string, utility: string) => Number(new RegExp(`(?:^| )${utility}\\[([\\d.]+)px\\]`).exec(classes)![1])
-  const between = px(AGENT_MARKS, "gap-") - px(GAUGE_MARK, "-mx-") - px(PLUG_MARK, "-mx-")
-  assert.ok(between <= 0, `the gauge's and the plug's squares stand ${between}px apart`)
-  assert.ok(between >= -4, `the gauge's and the plug's squares overlap by ${-between}px`)
+  for (const mark of [GAUGE_MARK, PLUG_MARK]) assert.ok(` ${mark} `.includes(` ${RAIL_MARK_SQUARE} `), `${mark} draws the rail's square`)
+  const squares = px(AGENT_MARKS, "gap-") - px(GAUGE_MARK, "-mx-") - px(PLUG_MARK, "-mx-")
+  const targets = squares - px(GAUGE_MARK, "before:-inset-x-") - px(PLUG_MARK, "before:-inset-x-")
+  assert.ok(targets <= 0, `the gauge's and the plug's targets stand ${targets}px apart`)
+  assert.ok(targets >= -4, `the gauge's and the plug's targets overlap by ${-targets}px`)
 })
 
 test("a scaled glyph keeps an even box and its ink centred in it", () => {
