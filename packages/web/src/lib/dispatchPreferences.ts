@@ -14,6 +14,8 @@ import {
 import type { SelectGroup, SelectOption } from "../components/ui/Select.tsx"
 import type { ProfileGridGroup, ProfileGridSelection } from "./profileGrid.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "./opencodeProfile.ts"
+import { acpProfileGroup, acpSelection, isAcpGroupId } from "./acpProfile.ts"
+import type { AcpAgentModelLists } from "../hooks/useAcpAgentModels.ts"
 import {
   CLAUDE_MODELS,
   claudeModelOptions,
@@ -27,9 +29,8 @@ export interface ResolvedDispatchPreferences {
   backend: Backend
   // The slug dispatch sends: a Claude alias, a Codex slug, or `acp:<agent>[@<model>]`.
   model: string
-  // The model the profile GRID is keyed on. An ACP row is one row per AGENT (`acp:<agent>`), and the
-  // agent's model lives in the dropdown beside the pill — so the grid must never see the `@<model>`
-  // tail, or a saved model would read as "unknown profile" the moment one was chosen.
+  // The profile without what a menu dropdown holds: an ACP agent's bare slug (`acp:<agent>`), and OpenCode's
+  // bare `opencode:`. The menu itself reads the whole slug (dispatchProfileValue).
   pickerModel: string
   effort: string
   codexModel?: CodexModel
@@ -43,9 +44,11 @@ export interface ResolvedDispatchPreferences {
   effortOptions: SelectOption[]
 }
 
-// What the model menu shows as chosen. OpenCode's variant is its effort there, though dispatch sends none.
+// What the model menu shows as chosen. OpenCode's variant is its effort there, though dispatch sends none,
+// and an ACP agent's group is the agent itself (lib/acpProfile.ts).
 export function dispatchProfileValue(resolved: ResolvedDispatchPreferences): ProfileGridSelection {
   if (resolved.backend === "opencode") return opencodeSelection(resolved.opencodeModel)
+  if (resolved.backend === "acp") return acpSelection(resolved.model)
   return { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }
 }
 
@@ -53,6 +56,7 @@ export function dispatchProfileValue(resolved: ResolvedDispatchPreferences): Pro
 // ACP agent has none, and OpenCode's variant rides in its model slug.
 export function dispatchProfileUpdate(selection: ProfileGridSelection): SetDispatchPreferenceInput {
   if (selection.provider === "opencode") return { field: "profile", backend: "opencode", model: opencodeSlugOf(selection) }
+  if (isAcpGroupId(selection.provider)) return { field: "profile", backend: "acp", model: selection.model }
   return {
     field: "profile",
     backend: selection.provider as Backend,
@@ -96,6 +100,8 @@ export function dispatchProfileGroups(
   opencode?: Parameters<typeof opencodeProfileGroup>[0],
   // The groups whose account is known to be signed out here (useDispatchProfile), by id.
   signedOut: readonly string[] = [],
+  // Each ACP agent's listed models (hooks/useAcpAgentModels.ts) and the saved slug, for its dropdown group.
+  acp?: AcpAgentModelLists & { saved?: string },
 ): ProfileGridGroup[] {
   // Only the agents actually on the server's PATH get a row: the catalogue lists eight, and a grid of
   // "not installed" rows would bury the two the operator has. A SAVED agent that has since gone
@@ -103,12 +109,13 @@ export function dispatchProfileGroups(
   //
   // An agent marked `native` runs on Frizz's own backend for it here, so it has that row instead.
   const opencodeNative = acpAgents.some((agent) => agent.native && agent.available)
-  const acpOptions = acpAgents.filter((agent) => agent.available && !agent.native).map((agent) => ({
-    model: acpModelSlug(agent.id),
-    label: agent.label,
-    // No effort axis: an ACP agent runs on its own CLI's model and effort (ProfileGridSelector draws
-    // one "Default" cell for an option with no efforts).
-    efforts: [],
+  // Each agent is a group of its own under its own name, holding a model dropdown (lib/acpProfile.ts).
+  const acpGroups = acpAgents.filter((agent) => agent.available && !agent.native).map((agent) => acpProfileGroup({
+    agent,
+    models: acp?.models[agent.id],
+    loading: acp?.loading[agent.id] ?? false,
+    saved: acp?.saved,
+    ...(acp ? { onRequestOptions: () => acp.request(agent.id) } : {}),
   }))
   const groups: ProfileGridGroup[] = [
     {
@@ -137,8 +144,7 @@ export function dispatchProfileGroups(
       })),
     },
     ...(opencodeNative ? [opencodeProfileGroup(opencode ?? {})] : []),
-    // One agent is its own heading. "ACP agents" names the protocol, and only earns its place as a list.
-    ...(acpOptions.length ? [{ id: "acp", label: acpOptions.length === 1 ? acpOptions[0]!.label : "ACP agents", options: acpOptions }] : []),
+    ...acpGroups,
   ]
   return firstGroup ? [...groups.filter((group) => group.id === firstGroup), ...groups.filter((group) => group.id !== firstGroup)] : groups
 }

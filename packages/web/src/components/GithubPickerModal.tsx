@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
 import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation } from "@tanstack/react-query"
 import { ArrowUpRight, Check, CircleCheck, CircleDot, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Github, Inbox, Loader2, MessageSquare } from "lucide-react"
-import { acpModelSlug, type DispatchInput, type DispatchProfileSnapshot, type GithubBatchInput, type GithubItem } from "@frizz/shared"
+import { type DispatchInput, type DispatchProfileSnapshot, type GithubBatchInput, type GithubItem } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
 import { Overlay } from "./NewThreadModal.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
-import { AcpModelSelect } from "./AcpModelSelect.tsx"
 import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
 import { SETTINGS_WRITE_KEY } from "../hooks/useSettingsAutosave.tsx"
 import { useDispatchProfile } from "../hooks/useDispatchProfile.ts"
 import { dispatchProfileGroups, dispatchProfileUpdate, dispatchProfileValue } from "../lib/dispatchPreferences.ts"
-import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z, OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z } from "../lib/overlaySurface.ts"
+import { OPAQUE_PORTAL_SURFACE_ABOVE_DIALOG_Z } from "../lib/overlaySurface.ts"
 import { buildGithubBatchInput, dispatchProfileError } from "../lib/githubDispatch.ts"
 import { GITHUB_PICKER_TITLE, useGithubStatus } from "./GithubTrigger.tsx"
 import { GithubSignInSheet } from "./GithubSignInSheet.tsx"
@@ -58,7 +57,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   // below writes it, so choosing here also becomes the composer's next default (one profile, not a
   // picker-local copy that silently diverges). A Codex cache refresh can invalidate the saved pair
   // while the picker is open; the final revalidation below then fails closed rather than downgrading.
-  const { resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, loadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, acp, loadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — the triage prompt just edited in the settings panel, a
   // compaction window picked in the selector — must land before a batch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -184,8 +183,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   const n = selected.size
   // Stable identity: ProfileGridSelector memoizes off `groups`, and this modal re-renders on every
   // row toggle.
-  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut), [codexList, acpList, claudeList, firstGroup, opencode, signedOut])
-  const acpAgent = resolved?.acpAgentId ? acpList.find((agent) => agent.id === resolved.acpAgentId) : undefined
+  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp), [codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp])
   const profile: DispatchProfileSnapshot | undefined = resolved
     ? { backend: resolved.backend, model: resolved.model, effort: (resolved.effort || undefined) as DispatchProfileSnapshot["effort"] }
     : undefined
@@ -381,16 +379,6 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 className="max-w-[min(21rem,60vw)]"
               />
               {resolved?.backend === "opencode" && <ExperimentalChip className="shrink-0" />}
-              {acpAgent && (
-                <AcpModelSelect
-                  agentId={acpAgent.id}
-                  agentLabel={acpAgent.label}
-                  modelId={resolved?.acpModelId}
-                  onValueChange={(modelId) => saveProfile({ field: "model", backend: "acp", value: acpModelSlug(acpAgent.id, modelId) })}
-                  menuZClass={OPAQUE_PORTAL_SURFACE_ABOVE_POPOVER_Z}
-                  className="max-w-[min(14rem,30vw)]"
-                />
-              )}
             </GithubPromptPopover>
             <button
               disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}

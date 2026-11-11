@@ -1,8 +1,6 @@
-import { useState } from "react"
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ThreadWatchView } from "@frizz/shared"
-import { AcpModelSelect } from "./components/AcpModelSelect.tsx"
 import { GithubWatchRow, WaitGrid } from "./components/AwaitingBackgroundCard.tsx"
 import { ProviderMark } from "./components/ProviderMark.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
@@ -13,9 +11,6 @@ const params = new URLSearchParams(location.search)
 document.documentElement.dataset.font = params.get("font") === "sans" ? "sans" : "mono"
 document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark"
 const client = new QueryClient()
-client.setQueryData(["acpAgentModels", "opencode"], {
-  models: [{ id: "model-a", name: "Model A" }, { id: "model-b", name: "Model B" }],
-})
 const agents = ["opencode", "cursor", "gemini", "copilot", "qwen", "kimi", "grok"]
 const originalFetch = window.fetch.bind(window)
 window.fetch = (input, init) => {
@@ -33,13 +28,11 @@ const issues: ThreadWatchView["issue"][] = [undefined,
 ]
 
 function Fixture() {
-  const [model, setModel] = useState<string>()
   return <main className="min-h-screen bg-bg p-4">
     <section className="max-w-xl space-y-4 rounded-lg border border-border bg-panel p-4">
       <div data-provider-marks className="space-y-2 text-[13px] leading-[19px] text-fg/90">
         {agents.map(agent => <div key={agent}>{agent}<ProviderMark backend="acp" model={`acp:${agent}`} className="ml-1" /></div>)}
       </div>
-      <AcpModelSelect agentId="opencode" agentLabel="OpenCode" modelId={model} onValueChange={setModel} />
       <div data-issue-watches>
         <WaitGrid divider={false} groups={[{ head: "Issues", rows: issues.map((issue, index) => <GithubWatchRow key={index} watch={{
           id: `issue-${index}`, kind: "github", subject: "issue", target: `acme/app#${index + 1}`,
