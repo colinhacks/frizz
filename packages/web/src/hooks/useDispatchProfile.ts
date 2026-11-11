@@ -7,6 +7,7 @@ import { showToast } from "../store.ts"
 import { scopedKey, useProjectScope } from "../lib/projectScope.tsx"
 import { settingsQuery } from "./useSettingsAutosave.tsx"
 import { useOpencodeModels } from "./useOpencodeModels.ts"
+import { useAcpAgentModels, type AcpAgentModelLists } from "./useAcpAgentModels.ts"
 import type { opencodeProfileGroup } from "../lib/opencodeProfile.ts"
 import {
   applyDispatchPreferenceUpdate,
@@ -42,6 +43,9 @@ export function useDispatchProfile(): {
   // What the model menu's OpenCode group is built from: the listed models, read only once OpenCode is
   // chosen or its list is opened (hooks/useOpencodeModels.ts), and the saved slug.
   opencode: Parameters<typeof opencodeProfileGroup>[0]
+  // The same for each ACP agent's group: its listed models, read only once that agent is chosen or its
+  // list is opened (hooks/useAcpAgentModels.ts), and the saved slug.
+  acp: AcpAgentModelLists & { saved?: string }
   loadError: boolean
   saveProfile: (update: SetDispatchPreferenceInput) => void
 } {
@@ -67,12 +71,14 @@ export function useDispatchProfile(): {
   const opencodeInstalled = acpList.some((agent) => agent.id === "opencode" && agent.available)
   const opencodeNative = acpList.some((agent) => agent.id === "opencode" && agent.available && agent.native === true)
   const opencodeProfile = opencodeAgentProfile(opencodeNative)
-  const firstGroup = defaultAgentProfile({
+  const leading = defaultAgentProfile({
     claude: settings.data?.launchPrefix?.claude?.trim() ? "unknown" : authStatus.data?.claude,
     codex: settings.data?.launchPrefix?.codex?.trim() ? "unknown" : authStatus.data?.codex,
     opencodeInstalled,
     opencodeNative,
-  })?.backend
+  })
+  // An ACP agent's group is named by its slug (lib/acpProfile.ts), so OpenCode over ACP leads as `acp:opencode`.
+  const firstGroup = leading?.backend === "acp" ? leading.model : leading?.backend
 
   const preference = useMutation({
     mutationFn: (update: SetDispatchPreferenceInput) => rpc.dispatchPreferenceSet(update),
@@ -106,6 +112,11 @@ export function useDispatchProfile(): {
     onRequestOptions: opencodeModels.request,
   }), [opencodeModels.models, opencodeModels.loading, opencodeModels.request, resolved?.opencodeModel])
 
+  const acpAgentIds = useMemo(() => acpList.filter((agent) => agent.available && !agent.native).map((agent) => agent.id), [acpList])
+  const acpModels = useAcpAgentModels(project, acpAgentIds, resolved?.backend === "acp" ? resolved.acpAgentId : undefined)
+  const acpSaved = resolved?.backend === "acp" ? resolved.model : undefined
+  const acp = useMemo(() => ({ ...acpModels, ...(acpSaved ? { saved: acpSaved } : {}) }), [acpModels, acpSaved])
+
   const claudeSignedOut = authStatus.data?.claude === "signed-out" && !settings.data?.launchPrefix?.claude?.trim()
   const codexSignedOut = authStatus.data?.codex === "signed-out" && !settings.data?.launchPrefix?.codex?.trim()
   const signedOut = useMemo(
@@ -123,6 +134,7 @@ export function useDispatchProfile(): {
     firstGroup,
     signedOut,
     opencode,
+    acp,
     loadError: preferences.isError || codexModels.isError,
     saveProfile: preference.mutate,
   }

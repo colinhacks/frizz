@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Any reverse proxy — Frizz</title>
-    <meta name="description" content="Caddy, nginx, ngrok or anything else in front of a Frizz board: terminate TLS, proxy to loopback, and name the public origin." />
+    <meta name="description" content="Caddy, nginx, ngrok or anything else in front of a Frizz board: terminate TLS, proxy to localhost, and name the public origin." />
     <link rel="canonical" href="https://frizz.sh/docs/reverse-proxy" />
     <meta property="og:type" content="article" />
     <meta property="og:title" content="Any reverse proxy — Frizz" />
-    <meta property="og:description" content="Caddy, nginx, ngrok or anything else in front of a Frizz board: terminate TLS, proxy to loopback, and name the public origin." />
+    <meta property="og:description" content="Caddy, nginx, ngrok or anything else in front of a Frizz board: terminate TLS, proxy to localhost, and name the public origin." />
     <meta property="og:url" content="https://frizz.sh/docs/reverse-proxy" />
     <meta property="og:image" content="https://frizz.sh/img/og.png?v=e931fd4a" />
     <meta property="og:image:width" content="1200" />
@@ -41,7 +41,7 @@
       <article class="doc">
         <nav class="crumb" aria-label="Breadcrumb"><a href="/#remote-access"><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3.5M7.5 4l-4 4 4 4"/></svg><span class="label">Remote access</span></a></nav>
         <h1>Any reverse proxy</h1>
-        <p class="lede">Caddy, nginx, ngrok, and other proxies all take the same setup. Terminate TLS wherever you like, proxy to the board&#8217;s loopback port, and tell Frizz the public origin.</p>
+        <p class="lede">Caddy, nginx, ngrok, and other proxies all take the same setup. Terminate TLS wherever you like, proxy to the board&#8217;s localhost port, and tell Frizz the public origin.</p>
 
         <h2>Frizz settings</h2>
         <p>Press <kbd>R</kbd> in the terminal running Frizz, choose <strong>Something else</strong>, and enter the exact origin a browser shows. It needs its scheme and no path or trailing slash.</p>

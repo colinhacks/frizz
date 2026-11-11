@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SSH port forwarding — Frizz</title>
-    <meta name="description" content="The simplest way to reach a Frizz board from another machine: forward the port over SSH and open it on loopback." />
+    <meta name="description" content="The simplest way to reach a Frizz board from another machine: forward the port over SSH and open it on localhost." />
     <link rel="canonical" href="https://frizz.sh/docs/ssh" />
     <meta property="og:type" content="article" />
     <meta property="og:title" content="SSH port forwarding — Frizz" />
-    <meta property="og:description" content="The simplest way to reach a Frizz board from another machine: forward the port over SSH and open it on loopback." />
+    <meta property="og:description" content="The simplest way to reach a Frizz board from another machine: forward the port over SSH and open it on localhost." />
     <meta property="og:url" content="https://frizz.sh/docs/ssh" />
     <meta property="og:image" content="https://frizz.sh/img/og.png?v=e931fd4a" />
     <meta property="og:image:width" content="1200" />
@@ -45,7 +45,7 @@
 
         <pre class="term"><code><span class="prompt">$</span> ssh -L 9393:127.0.0.1:9393 you@your-machine</code></pre>
         <ul>
-          <li><strong>No sign-in link.</strong> The port is loopback on both ends, so Frizz treats it as local.</li>
+          <li><strong>No sign-in link.</strong> The port is localhost on both ends, so Frizz treats it as local.</li>
           <li><strong>Nothing exposed.</strong> No port opens to the internet.</li>
           <li><strong>One session.</strong> The forward ends with the SSH session, which makes it awkward from a phone. For a phone, use <a href="/docs/frizz-sh">a frizz.sh subdomain</a> or <a href="/docs/tailscale">Tailscale</a>.</li>
         </ul>
