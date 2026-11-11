@@ -23,6 +23,15 @@ export function pageScrollY(): number {
   return Number.isNaN(top) ? window.scrollY : -top
 }
 
+// Whether the page has anything to lock: it is scrolled, or it is taller than the window. A desktop
+// board is the one-thread pane, one window tall (`h-dvh overflow-hidden`), so it has none; a status list
+// longer than the window, a brand-new project's page and the phone's board can. App takes the lock only
+// when this is true (see App.tsx for why pinning a page with nothing to scroll is not free).
+export function pageHasScrollRange(): boolean {
+  if (typeof window === "undefined" || typeof document === "undefined" || !document.documentElement) return false
+  return window.scrollY > 0 || document.documentElement.scrollHeight > window.innerHeight
+}
+
 export function isPageScrollLocked(): boolean {
   return typeof document !== "undefined" && document.body?.style.position === "fixed"
 }
