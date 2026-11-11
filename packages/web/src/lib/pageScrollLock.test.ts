@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { isPageScrollLocked, pageScrollY } from "./pageScrollLock.ts"
+import { isPageScrollLocked, pageHasScrollRange, pageScrollY } from "./pageScrollLock.ts"
 
 function withDom<T>(body: { style: { position?: string; top?: string } }, scrollY: number, fn: () => T): T {
   const globals = globalThis as typeof globalThis & { window?: Window; document?: Document }
@@ -35,4 +35,28 @@ test("pageScrollY reads the lock's own offset while the page is pinned", () => {
 // A lock applied at the very top writes `top: -0px`; -(-0) is 0, not NaN, and must not fall back.
 test("pageScrollY handles a lock taken at the top of the page", () => {
   withDom({ style: { position: "fixed", top: "-0px" } }, 0, () => assert.equal(pageScrollY(), 0))
+})
+
+function withPage<T>(scrollY: number, scrollHeight: number, innerHeight: number, fn: () => T): T {
+  const globals = globalThis as typeof globalThis & { window?: Window; document?: Document }
+  const previous = { window: globals.window, document: globals.document }
+  try {
+    globals.document = { documentElement: { scrollHeight } } as unknown as Document
+    globals.window = { scrollY, innerHeight } as unknown as typeof window
+    return fn()
+  } finally {
+    globals.window = previous.window
+    globals.document = previous.document
+  }
+}
+
+// The one-thread pane is exactly one window tall, so a desktop board has nothing for App's lock to hold,
+// and pinning its body anyway re-lays-out and re-layers the whole board under every sheet (App.tsx).
+test("a page one window tall has no scroll range, so it takes no lock", () => {
+  withPage(0, 900, 900, () => assert.equal(pageHasScrollRange(), false))
+})
+
+test("a page taller than the window, or already scrolled, has a range to lock", () => {
+  withPage(0, 2400, 900, () => assert.equal(pageHasScrollRange(), true))
+  withPage(300, 900, 900, () => assert.equal(pageHasScrollRange(), true))
 })

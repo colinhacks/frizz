@@ -4,7 +4,7 @@ import { useSnapshot } from "valtio"
 import { closeGithubPicker, store, pushDrawer, resolveRoutedThread, topDrawer, topThreadSlug, showToast } from "./store.ts"
 import { useBoard, useBoardIsEmpty } from "./hooks.ts"
 import { closeDrawerAnimated } from "./lib/overlays.ts"
-import { pageScrollY } from "./lib/pageScrollLock.ts"
+import { pageHasScrollRange, pageScrollY } from "./lib/pageScrollLock.ts"
 import { captureReaderPin, readerPinDrift } from "./lib/readerPin.ts"
 import { startRouter } from "./lib/router.ts"
 import { CONSOLE_MIRROR, nextSidebarPresence, readSidebarMirror, writeSidebarMirror, type SidebarPresence } from "./lib/sidebarPresence.ts"
@@ -62,6 +62,16 @@ export function App() {
     // track permanently reserved (html overflow-y: scroll) and the body pinned at its scroll
     // offset, locking is pixel-invisible; unlocking restores the exact scroll position.
     if (!overlayOpen) return
+    // A PAGE WITH NOTHING TO SCROLL TAKES NO LOCK. The desktop board is the one-thread pane, exactly one
+    // window tall, so there is no page scroll to stop — and pinning the body is not free. `position:
+    // fixed` on <body> re-lays-out the whole board and moves every layer of it into one new fixed-position
+    // layer on the compositor (measured 2026-11-10 with the DevTools LayerTree: the pane's thread column
+    // went from scrolling with the root to `FixedPosition, UndoOverscroll`; on 0.15.49's queue board, 27
+    // layers became one 1503x9991 body layer), and it does that the instant any sheet opens over the
+    // board. That was the only thing opening a sheet did to everything beneath it, which the maintainer
+    // reported intermittently going blank under an open drawer (2026-11-10). A status list longer than the
+    // window, a brand-new project's page and the phone still lock, exactly as before.
+    if (!pageHasScrollRange()) return
     const y = window.scrollY
     const body = document.body
     // The phone row the reader was in as the overlay opened. Nothing anchors a pinned page, so whatever
