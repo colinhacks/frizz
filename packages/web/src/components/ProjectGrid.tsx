@@ -9,8 +9,8 @@
 // square at 64px with its badge, and its name. The cards it replaced also showed each project's path, slug
 // and when it was last opened; the path is the tile's tooltip now, and the rest is in the rename dialog or
 // nowhere. A Projects | Console pill headed the page until 2026-11-10 (maintainer: "we just drop the entire
-// tab switcher between console and the projects page"); the way to the Console is a line under the icons
-// (ConsoleLink), once there is more than one project for it to gather.
+// tab switcher between console and the projects page"); the way to the Console is the All projects tile
+// beside "Add a project" (AllProjectsTile), once there is more than one project for it to gather.
 //
 // It draws from the registry index and the rail's counts — one file read and one cheap poll, no
 // databases opened. Answering a list request by opening forty projects is exactly the cost lazy
@@ -18,7 +18,7 @@
 // boot — server/tenant-prime.ts — but on its own clock, never on a request's.)
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
-import { Ellipsis, ImagePlus, Inbox, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
+import { Ellipsis, ImagePlus, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
 import { Link, useNavigate } from "react-router"
 import { useSnapshot } from "valtio"
 import { slugify, type ProjectCard, type ProjectRailCounts } from "@frizz/shared"
@@ -274,46 +274,77 @@ function AddTile({ pending, onClick }: { pending: boolean; onClick: () => void }
       <span className="mt-3 max-w-full truncate text-[12px] leading-[15px] text-muted group-hover/tile:text-fg">
         {pending ? "Choosing a folder…" : "Add a project"}
       </span>
-      <span className="mt-1 h-[13px]" />
     </button>
   )
 }
 
+/** How many projects the All projects folder shows, two by two. */
+const FOLDER_PROJECTS = 4
+
 /**
- * THE WAY TO THE CONSOLE, under the icons: one quiet line, and the queue across every project when there is
- * one. It says what the Console is, because nothing else on the page does, and a word alone ("Console")
- * meant nothing to whoever had not opened it. Drawn only with two projects or more: with one, the Console
- * is that project's board again.
+ * The folder's insides: a 1px border, 6px in from it, and 22px icons 6px apart — 1 + 6 + 22 + 6 + 22 + 6 + 1
+ * is the 64px square, so the gap between icons matches the margin round them.
  */
-function ConsoleLink({ queued }: { queued: number }) {
+const FOLDER_ICON = 22
+const FOLDER_INSET = 6
+const FOLDER_GAP = 6
+
+/**
+ * THE WAY TO THE CONSOLE: a tile of its own, second after "Add a project", named "All projects"
+ * (maintainer 2026-11-11, choosing it from five mockups; the line it replaced, "Console · every project's
+ * queue on one page", "doesn't even really look like a button"). It sits in the first row however many
+ * projects follow, and it reads as clickable for the reason its neighbours do: same square, same lift,
+ * same badge.
+ *
+ * THE SQUARE IS A FOLDER of the busiest projects' own icons, a phone home screen's folder: the projects it
+ * gathers, so it is never mistaken for one of them. Busiest by what the badge counts; a tie keeps the
+ * grid's order, and a missing folder is left out, since its greyed square is not one to open.
+ *
+ * THE BADGE IS THE SUM OF THE BADGES AROUND IT, waiting plus running, with the ring while anything runs —
+ * the tile badge's own rule, so it reads as the total of what the eye has just added up. The line counted
+ * the queue alone; the tooltip still splits the two.
+ *
+ * Drawn only with two projects or more: with one, the Console is that project's board again. No ⋯ menu,
+ * since there is nothing to rename or delete, so the name is centred on its own.
+ */
+function AllProjectsTile({ projects, counts }: { projects: readonly ProjectCard[]; counts: Record<string, ProjectRailCounts> | undefined }) {
+  let queued = 0
+  let running = 0
+  for (const c of Object.values(counts ?? {})) {
+    queued += c.queued
+    running += c.running
+  }
+  const inPlay = (p: ProjectCard) => (counts?.[p.id]?.queued ?? 0) + (counts?.[p.id]?.running ?? 0)
+  const shown = projects.filter((p) => !p.stale).sort((a, b) => inPlay(b) - inPlay(a)).slice(0, FOLDER_PROJECTS)
+  const split = railCountsLabel(queued, running)
   return (
-    <Link
-      to={CONSOLE_PATH}
-      data-home-console
-      className="group/console mt-12 flex h-7 items-center gap-2 rounded-full px-3 text-[12.5px] leading-none text-muted outline-none transition-colors hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
-    >
-      <Inbox size={14} aria-hidden className="shrink-0" />
-      <span className="text-fg/85 group-hover/console:text-fg" style={CAP_TRIM}>Console</span>
-      {queued > 0 ? (
-        <span
-          aria-label={`${queued} in the queue`}
-          data-home-console-count={queued}
-          className="flex h-[14px] shrink-0 items-center justify-center rounded-full bg-accent-fill text-[10px] font-semibold leading-none proportional-nums text-on-accent"
-          style={{ width: queued < 10 ? 14 : queued < 100 ? 20 : 26 }}
-        >
-          <span style={CAP_TRIM}>{queued}</span>
+    <Tooltip side="top" label={split ? `All projects — ${split}` : "All projects"}>
+      <Link
+        to={CONSOLE_PATH}
+        data-home-console
+        className="group/tile flex flex-col items-center pb-1 pt-1.5 outline-none"
+        style={{ width: TILE_PX }}
+      >
+        <span className="relative block transition-transform duration-150 ease-out group-hover/tile:-translate-y-[3px]">
+          <span
+            aria-hidden
+            data-home-console-folder
+            className="grid content-start rounded-[30%] border border-border bg-elevated shadow-[0_6px_18px_-6px] shadow-shadow-ink/70 group-focus-visible/tile:ring-2 group-focus-visible/tile:ring-focus-ink-60 group-focus-visible/tile:ring-offset-2 group-focus-visible/tile:ring-offset-bg"
+            style={{ width: TILE_ICON, height: TILE_ICON, padding: FOLDER_INSET, gap: FOLDER_GAP, gridTemplateColumns: `repeat(2, ${FOLDER_ICON}px)` }}
+          >
+            {shown.map((project) => (
+              <ProjectSquare key={project.id} project={project} size={FOLDER_ICON} />
+            ))}
+          </span>
+          {queued + running > 0 ? <TileBadge queued={queued} running={running} /> : null}
         </span>
-      ) : null}
-      {/* The thread header's separator ("Last active 8h ago · 79% context"): with only the gap, the name and
-          what it is read as two items. */}
-      <span aria-hidden className="text-muted-45" style={CAP_TRIM}>·</span>
-      <span className="text-muted-70" style={CAP_TRIM}>every project's queue on one page</span>
-    </Link>
+        <span data-home-console-name className="mt-3 max-w-full truncate text-[12px] leading-[15px] text-fg/90 group-hover/tile:text-fg">
+          All projects
+        </span>
+      </Link>
+    </Tooltip>
   )
 }
-
-/** Trims a label to its cap band, so `items-center` centres ink on ink rather than line box on line box. */
-const CAP_TRIM = { textBox: "trim-both cap alphabetic" } as CSSProperties
 
 /** The last path segment, on either separator: the registry stores native paths and Windows uses `\\`. */
 function folderName(path: string): string {
@@ -697,7 +728,7 @@ export function ProjectGrid() {
     queryFn: () => rpc.projectsList(),
   })
   // The rail's poll, under the rail's key: one request feeds the rail on a board, every tile here and the
-  // Console link's count.
+  // All projects tile's total.
   const counts = useQuery({
     queryKey: ["projectsRailCounts"],
     queryFn: () => rpc.projectsRailCounts(),
@@ -778,13 +809,11 @@ export function ProjectGrid() {
               style={{ gridTemplateColumns: `repeat(auto-fit, ${TILE_PX}px)` }}
             >
               <AddTile pending={pick.isPending} onClick={() => pick.mutate()} />
+              {data.length > 1 ? <AllProjectsTile projects={data} counts={counts.data} /> : null}
               {data.map((project) => (
                 <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} />
               ))}
             </div>
-            {data.length > 1 ? (
-              <ConsoleLink queued={Object.values(counts.data ?? {}).reduce((sum, c) => sum + c.queued, 0)} />
-            ) : null}
           </>
         )}
       </div>

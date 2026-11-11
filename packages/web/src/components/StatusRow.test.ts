@@ -54,7 +54,7 @@ function render(
 test("a breadcrumb leads; the icons are right-justified with settings in the corner", () => {
   const html = render("colinhacks/frizz", { projectName: "frizz" })
 
-  const home = html.indexOf('aria-label="All projects"')
+  const home = html.indexOf('aria-label="Projects"')
   const crumb = html.indexOf("data-project-crumb")
   const settings = html.indexOf('aria-label="Settings"')
 
@@ -131,19 +131,19 @@ test("a cold board still reserves the crumb's measure, and says it is loading", 
   assert.match(html, /identity-placeholder/)
   // The controls do not wait on a board — they are reachable from the first paint.
   assert.match(html, /aria-label="Settings"/)
-  assert.match(html, /aria-label="All projects"/)
+  assert.match(html, /aria-label="Projects"/)
 })
 
 test("the Console's crumb is the project chip, after the house", () => {
   // The chip stood alone from 2026-11-06 ("we drop the home icon from console"), while a Projects | Console
   // pill above the row was the way to the grid. The pill went on 2026-11-10, so the house is the way out.
   const html = render("colinhacks/frizz", { onConsole: true })
-  const home = html.indexOf('aria-label="All projects"')
+  const home = html.indexOf('aria-label="Projects"')
   const slash = html.indexOf('<span aria-hidden="true" class="shrink-0 select-none text-muted-45">/</span>')
   const chip = html.indexOf("data-chip")
   assert.ok(home >= 0 && slash > home && chip > slash, "the house, the slash, then the chip")
   assert.match(html, /<nav aria-label="Breadcrumb" class="flex min-w-0 items-center gap-2\.5">/)
-  assert.match(html, /<a [^>]*href="\/\?home=projects"[^>]*aria-label="All projects"|<a [^>]*aria-label="All projects"[^>]*href="\/\?home=projects"/, "the house goes to the grid, never the kept Console")
+  assert.match(html, /<a [^>]*href="\/\?home=projects"[^>]*aria-label="Projects"|<a [^>]*aria-label="Projects"[^>]*href="\/\?home=projects"/, "the house goes to the grid, never the kept Console")
   assert.doesNotMatch(html, /data-project-crumb/, "the chip, not a project's crumb")
   assert.ok(chip < html.indexOf('aria-label="Settings"'), "the chip leads, the icons follow")
   assert.match(html, /ml-auto/, "the icons keep the right end")
@@ -195,8 +195,8 @@ test("the home crumb is a ROUTER link, not a raw anchor that reloads the documen
 
 /** The house's own `<a …>` tag: the first link in the row, before the slash. */
 function houseOf(html: string): string {
-  const tag = html.match(/<a [^>]*aria-label="All projects"[^>]*>/)?.[0]
-  assert.ok(tag, "the row leads with an \"All projects\" house")
+  const tag = html.match(/<a [^>]*aria-label="Projects"[^>]*>/)?.[0]
+  assert.ok(tag, "the row leads with a \"Projects\" house")
   return tag
 }
 
@@ -209,7 +209,7 @@ test("the house goes to the grid even while the Console is the kept home", () =>
     const html = render(null)
     const house = houseOf(html)
     assert.ok(house.includes(`href="${PROJECTS_HREF}"`), house)
-    assert.match(house, /title="All projects"/)
+    assert.match(house, /title="Projects"/)
     assert.doesNotMatch(html, /href="\/console"/)
   } finally {
     setHomeView("projects")

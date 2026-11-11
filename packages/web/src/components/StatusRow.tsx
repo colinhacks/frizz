@@ -168,11 +168,12 @@ function ConsoleBreadcrumb({ chip }: { chip: ReactNode }) {
  * 2026-08-19 until 2026-09-04, which hard-loaded the document: measured at 116-411ms with a 0.15 CLS, and
  * it threw away the app socket and the whole query cache on the way out. It goes to the grid even while
  * the Console is the kept home (lib/homeView.ts): PROJECTS_HREF, not `/`, which would forward straight
- * back to the Console.
+ * back to the Console. Labelled "Projects", as the rail's is: "All projects" names the Console now
+ * (ProjectGrid.tsx AllProjectsTile).
  */
 function HomeLink() {
   return (
-    <Link to={PROJECTS_HREF} title="All projects" aria-label="All projects" className={STATUS_ROW_ACTION}>
+    <Link to={PROJECTS_HREF} title="Projects" aria-label="Projects" className={STATUS_ROW_ACTION}>
       <House size={STATUS_ROW_ICON} aria-hidden="true" />
     </Link>
   )

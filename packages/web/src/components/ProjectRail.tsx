@@ -726,11 +726,13 @@ export function ProjectRail() {
           rounded rect at the head of a column of identical ones.
           ALWAYS THE GRID, through PROJECTS_HREF rather than `/`, which forwards to a kept Console. It
           followed the kept home until 2026-10-27, and wore the Console's queue count while that was the
-          Console; the grid's Console link carries that count (ProjectGrid.tsx ConsoleLink). */}
-      <Tooltip side="right" label="All projects">
+          Console; the grid's All projects tile carries that count (ProjectGrid.tsx AllProjectsTile).
+          Its label is "Projects", the grid's own name. It read "All projects" until 2026-11-11, when the
+          grid's way to the Console took that name, and one name cannot point at two pages. */}
+      <Tooltip side="right" label="Projects">
         <Link
           to={PROJECTS_HREF}
-          aria-label="All projects"
+          aria-label="Projects"
           aria-current={onGrid ? "page" : undefined}
           data-rail-home
           className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[30%] text-muted-70 outline-none transition-colors hover:bg-elevated hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"

@@ -83,9 +83,12 @@ const PUBLISH_DEADLINE_MS = 2_500
 // Has the route said which projects this start covers? Until it has, every project is still to come.
 let projectsKnown = false
 
-/** The merged board's own fields. It belongs to no project, so it carries no project's identity. */
+/**
+ * The merged board's own fields. It belongs to no project, so it carries no project's identity. Its name is
+ * the one the grid's tile wears, "All projects", and the tab title reads it (App.tsx).
+ */
 function emptyUnion(): BoardSnapshot {
-  return { projectDir: "", projectName: "Console", projectLabel: "Console", threads: plainArray([]), errors: [], warnings: [] }
+  return { projectDir: "", projectName: "All projects", projectLabel: "All projects", threads: plainArray([]), errors: [], warnings: [] }
 }
 
 /** A project's thread under its key. `dependsOn` names threads of the same project, so it is keyed too. */

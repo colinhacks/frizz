@@ -6,8 +6,9 @@ import test from "node:test"
 // just drop the entire tab switcher between console and the projects page").
 //
 //   · Neither page draws a pill.
-//   · The grid's way to the Console is a line under the icons (ProjectGrid.tsx ConsoleLink), drawn once there
-//     are two projects: with one, the Console is that project's board again. It is a link, so ⌘-click works.
+//   · The grid's way to the Console is the All projects tile, second after "Add a project" (ProjectGrid.tsx
+//     AllProjectsTile), drawn once there are two projects: with one, the Console is that project's board
+//     again. It is a link, so ⌘-click works. The house is "Projects", so the two names never cross.
 //   · The Console's way out is the house at the head of its status row, before the project chip, and like
 //     every house it goes to the grid even while the Console is the kept home.
 //   · A bare `/` forwards to a kept Console; the launcher's `/?add=<dir>` offer does not.
@@ -27,7 +28,7 @@ const baseUrl = process.env.FRIZZ_HOME_NAV_E2E_URL
 const addDir = process.env.FRIZZ_HOME_NAV_E2E_ADD_DIR
 
 const KEY = "frizz:home-view"
-const HOUSE = '[data-status-row] a[aria-label="All projects"]'
+const HOUSE = '[data-status-row] a[aria-label="Projects"]'
 
 type Page = import("puppeteer").Page
 type Project = { id: string; slug: string; path: string }
@@ -69,14 +70,16 @@ test("no switcher: the grid links to the Console once there are two projects, an
     })
     assert.ok(Math.abs(centre) < 1, `the icons stand in the middle of the page (off by ${centre})`)
 
-    // TWO PROJECTS: the line under the icons links to the Console.
+    // TWO PROJECTS: the All projects tile, right after "Add a project", links to the Console.
     added = (await api.mutate("projectAdd", { path: addDir })) as Project
     // The Console lists the projects the server has opened, and a test stack opens one on its first read.
     await createRpcClient(`${baseUrl}/`, added.id).query("board")
     await page.reload({ waitUntil: "networkidle2" })
     await page.waitForSelector("[data-home-console]")
     assert.equal(await page.$eval("[data-home-console]", (a) => a.getAttribute("href")), "/console")
-    assert.match(await page.$eval("[data-home-console]", (a) => a.textContent ?? ""), /^Console·every project's queue on one page$/)
+    assert.equal(await page.$eval("[data-home-console-name]", (el) => el.textContent), "All projects")
+    assert.equal(await page.$eval("[data-home-grid]", (grid) => grid.children[1]?.matches("[data-home-console]")), true, "second, after Add a project")
+    assert.equal(await page.$$eval("[data-home-console-folder] > *", (squares) => squares.length), 2, "the folder holds both projects")
     await page.click("[data-home-console]")
     await page.waitForFunction(() => location.pathname === "/console", { timeout: 15_000 })
     await page.waitForSelector(HOUSE)
@@ -92,7 +95,7 @@ test("no switcher: the grid links to the Console once there are two projects, an
         heading: [...document.querySelectorAll("h2")].some((h) => h.textContent === "What should the agent do?"),
         centreOffset: (box.left + box.right) / 2 - innerWidth / 2,
         row: [...document.querySelector("[data-status-row] nav[aria-label='Breadcrumb']")!.children].map((el) =>
-          el.matches("a[aria-label='All projects']") ? "house" : el.textContent === "/" ? "/" : el.querySelector("[data-console-project-chip]") ? "chip" : "?",
+          el.matches("a[aria-label='Projects']") ? "house" : el.textContent === "/" ? "/" : el.querySelector("[data-console-project-chip]") ? "chip" : "?",
         ),
       }
     })
@@ -139,7 +142,7 @@ test("no switcher: the grid links to the Console once there are two projects, an
     await page.goto(`${baseUrl}/console`, { waitUntil: "networkidle2" })
     await page.waitForFunction((key) => localStorage.getItem(key) === "console", { timeout: 5_000 }, KEY)
     await page.goto(`${baseUrl}/project/${launching.slug}`, { waitUntil: "domcontentloaded" })
-    const boardHouse = '[data-status-row] a[aria-label="All projects"]'
+    const boardHouse = '[data-status-row] a[aria-label="Projects"]'
     await page.waitForSelector(boardHouse)
     await page.click(boardHouse)
     await onGrid(page)

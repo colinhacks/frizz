@@ -4,7 +4,7 @@ import type { BoardSnapshot, ThreadView } from "@frizz/shared"
 import { dropProject, keyThread, mergeDelta, mergeKeyframe } from "./consoleFeed.ts"
 
 const thread = (id: string, over: Partial<ThreadView> = {}): ThreadView => ({ id, title: id, dependsOn: [], ...over }) as ThreadView
-const union = (): BoardSnapshot => ({ projectDir: "", projectName: "Console", projectLabel: "Console", threads: [], errors: [], warnings: [] })
+const union = (): BoardSnapshot => ({ projectDir: "", projectName: "All projects", projectLabel: "All projects", threads: [], errors: [], warnings: [] })
 const board = (threads: ThreadView[], over: Partial<BoardSnapshot> = {}): BoardSnapshot =>
   ({ projectDir: "/p", projectName: "p", threads, errors: [], warnings: [], ...over }) as BoardSnapshot
 
@@ -48,7 +48,7 @@ test("a project that leaves the Console takes exactly its threads with it", () =
 test("a keyframe's board-level identity is not the merged board's", () => {
   const merged = union()
   mergeKeyframe(merged, "nub", board([], { projectName: "nub", projectSlug: "nub", homeDir: "/Users/x" }))
-  assert.equal(merged.projectName, "Console")
+  assert.equal(merged.projectName, "All projects")
   assert.equal(merged.homeDir, "/Users/x", "the machine's home directory is the same whichever project says it")
 })
 

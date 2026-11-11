@@ -37,7 +37,7 @@ test("the chip follows the house in the status row, and its menu picks a project
       const crumb = row.firstElementChild!
       const [house, slash, last] = [...crumb.children]
       return {
-        houseLeads: house.matches('a[aria-label="All projects"]') && house.getAttribute("href") === "/?home=projects",
+        houseLeads: house.matches('a[aria-label="Projects"]') && house.getAttribute("href") === "/?home=projects",
         slash: slash.textContent,
         chipFollows: last.querySelector(chip) !== null,
         inBox: box.querySelector(chip) !== null,
