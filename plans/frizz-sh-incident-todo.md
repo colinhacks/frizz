@@ -24,8 +24,8 @@ The commands are in that script's header. In order:
 4. `--only=deploy`, then dispatch `workers-deploy.yml` with target `both` within the hour.
 5. `--revoke-deploy`, then `nub scripts/verify-relay-live.mjs`.
 6. If `BASELINE.claims` in `scripts/workers-drift.mjs` lacks a custom name a board serves, add its key and push; the registrar's `GET /claim/<name>` that drift reads it through shipped on 2026-11-07. None is pinned today: the maintainer dropped `colin.frizz.sh` that day and will claim `colinhacks.frizz.sh` from the R pane once a release carries it, so pin that one then.
-7. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Two things can keep it red:
-   - **The sitting's own changes.** Any change in the audit log that CI would not make fails the check until it is two hours old, including removing a member or turning on DNSSEC.
+7. Dispatch drift again. `--only=deploy` added the new token's id to `WORKERS_CI_AUTHOR`, because an account-owned token uploads as its own id with no address (first seen 2026-11-06). Every token the script mints also goes into `WORKERS_MINTED_TOKENS`, so the audit log's create and revoke of the sitting's own tokens pass, and so does the settings write beside each CI upload (2026-11-11; before that, every deploy failed about four runs). Two things can keep it red:
+   - **The sitting's own changes.** Any other change in the audit log that CI would not make fails the check until it is two hours old, including removing a member or turning on DNSSEC.
    - **Something CI's own run does.** Add it to `JUDGED_BY_VERSION` only if `checkAccount` already compares what that action can change.
 8. `exit`, which revokes the sign-in. A dashboard-made token from step 1 is deleted by the maintainer instead.
 
