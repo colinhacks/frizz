@@ -116,7 +116,8 @@ export const BASELINE = {
       crons: ["17 4 * * *"],
     },
   },
-  claims: {},
+  // The maintainer's own board, claimed from the R menu through Frizz's GitHub sign-in on 2026-11-11.
+  claims: { colinhacks: "d9kLXHjYy72vpsoYcWCsO04DjxKJk39M4QukIDPeIpE" },
 }
 
 /** The sha and run id a CI deploy stamps, or null for any other message. */
