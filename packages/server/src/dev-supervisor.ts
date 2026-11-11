@@ -25,7 +25,7 @@ import {
   writeProjectStatus,
   type ProjectLaunchTarget,
 } from "./project-launch.ts"
-import type { SessionDirectory } from "./access-codes.ts"
+import type { SessionDirectory, SessionRecord } from "./access-codes.ts"
 import type { RelayAccess } from "@frizz/shared"
 import { auditLogPathForStateDir, fileAuditLog } from "./audit.ts"
 import { RestartSupervisorProxy, type RestartResult } from "./restart-supervisor.ts"
@@ -240,6 +240,10 @@ export interface DevSupervisor {
   setRelayAccess(access: RelayAccess | undefined): void
   /** How many devices hold a live session. */
   signedInDevices(): number
+  /** The devices holding a live session, newest first. See RestartSupervisorProxy.signedInDeviceList. */
+  signedInDeviceList(): SessionRecord[]
+  /** Sign one device out. See RestartSupervisorProxy.signOutDevice. */
+  signOutDevice(id: string): boolean
   /** Sign every device out. See RestartSupervisorProxy.signOutAllDevices. */
   signOutAllDevices(): number
   /** The port the relay agent dials, on which every request is public. See RestartSupervisorProxy.relayListener. */
@@ -735,6 +739,14 @@ class Supervisor implements DevSupervisor {
 
   signedInDevices(): number {
     return this.publicProxy.signedInDevices()
+  }
+
+  signedInDeviceList(): SessionRecord[] {
+    return this.publicProxy.signedInDeviceList()
+  }
+
+  signOutDevice(id: string): boolean {
+    return this.publicProxy.signOutDevice(id)
   }
 
   signOutAllDevices(): number {

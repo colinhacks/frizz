@@ -504,7 +504,7 @@ async function runSupervisor(
         claim: (name, progress) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), { say: progress, promptHint: false }),
         githubLogin: frizzGithubLogin,
         issueLink: () => supervisor.issueAccessLink(),
-        devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
+        devices: { list: () => supervisor.signedInDeviceList(), signOut: (id) => supervisor.signOutDevice(id), signOutAll: () => supervisor.signOutAllDevices() },
         probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
         onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "localhost only"),
         // The readout above the pane still names the setup this launch started with; say the new one under it.
@@ -555,7 +555,7 @@ async function runSupervisor(
   void supervisor.stopRequested.then(stop);
   await supervisor.firstBoot;
   const heldSessions = liveSessions(sessions.directory).length;
-  if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · frizz --sessions lists them`);
+  if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · R lists them`);
   // The re-exec'd generation prints no boot block (it is not an interactive launch), so this one line
   // is the only thing that tells the operator the handoff finished. Two different things arrive here:
   // Update Frizz execs into a promoted artifact and names its digest, while `--dev` re-execs this

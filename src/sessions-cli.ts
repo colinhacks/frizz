@@ -1,5 +1,5 @@
 import { SUPERVISOR_SESSIONS_PATH } from "@frizz/server/restart-supervisor";
-import type { SessionRecord } from "@frizz/server/access-codes";
+import { signedInAgo, type SessionRecord } from "@frizz/server/access-codes";
 
 /**
  * `--sessions` and `--sign-out`, for whichever launcher is asking.
@@ -12,16 +12,6 @@ import type { SessionRecord } from "@frizz/server/access-codes";
  * session directory lives. The endpoint refuses anything that did not arrive on loopback, so a stolen
  * session cannot sign the real owner out.
  */
-
-const ago = (at: number, now = Date.now()): string => {
-  const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 90) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 90) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 36) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-};
 
 async function call(port: number, init?: RequestInit): Promise<Record<string, unknown> | undefined> {
   const response = await fetch(`http://127.0.0.1:${port}${SUPERVISOR_SESSIONS_PATH}`, {
@@ -54,7 +44,7 @@ export async function listSessions(port: number): Promise<never> {
   // The id is what the operator types back into --sign-out, so it leads.
   const width = Math.max(...live.map((s) => s.id.length));
   for (const session of live) {
-    console.log(`  ${session.id.padEnd(width)}  ${session.label}  ${ago(session.createdAt)}`);
+    console.log(`  ${session.id.padEnd(width)}  ${session.label}  ${signedInAgo(session.createdAt)}`);
   }
   console.log(`\n  frizz --sign-out <id>   sign one out\n  frizz --sign-out all    sign every device out`);
   process.exit(0);

@@ -1,5 +1,5 @@
 import { isAnonymousClaimName, type RelayAccess } from "@frizz/shared";
-import { remoteDevicesLine } from "@frizz/server/access-codes";
+import { signedInAgo, type SessionRecord } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import type { AccessLink } from "./access-pane.ts";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, DIM, fitScreen, HIDE_CURSOR, type OptionalLine, RESET, SHOW_CURSOR } from "./access-pane.ts";
@@ -46,8 +46,15 @@ export interface RemotePaneOptions {
   githubLogin?: () => string | null;
   /** A fresh single-use link for the origin now in force, for the done screen. */
   issueLink: () => AccessLink | null;
-  /** The devices holding a session, for the Devices section's last row, which signs every one of them out. */
-  devices?: { count: () => number; signOutAll: () => number };
+  /**
+   * The devices signed in to this board, newest first, which the Devices section lists one row each,
+   * and the calls that sign one or all of them out. `signOut` is false when the device was already gone.
+   */
+  devices?: {
+    list: () => Array<Pick<SessionRecord, "id" | "label" | "createdAt">>;
+    signOut: (id: string) => boolean;
+    signOutAll: () => number;
+  };
   probes: {
     cloudflared: () => Promise<CloudflaredProbe>;
     tailscale: () => Promise<TailscaleProbe>;
@@ -66,9 +73,11 @@ export interface RemotePaneOptions {
 }
 
 interface Choice {
-  kind: RemoteKind | "access" | "devices";
+  kind: RemoteKind | "access" | "device" | "sign-out-all";
   title: string;
   blurb: string;
+  /** A signed-in device's session id, on its own row. */
+  id?: string;
 }
 
 /** What a device signed in through the relay may do, in the order the question lists it. */
@@ -94,7 +103,7 @@ const CHOICES: Choice[] = [
 ];
 
 /** Rows about the devices already signed in, drawn under their own heading below the setups. */
-const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind === "devices";
+const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind === "device" || choice.kind === "sign-out-all";
 
 /**
  * The rows the menu lists for a board whose setup is `current`.
@@ -104,16 +113,20 @@ const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind 
  * current. Choosing that row then serves the saved name again, renewed by the keypair alone; it never
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
-function choicesFor(current: CloudConfig | null, devices?: number, githubLogin?: string | null): Choice[] {
+function choicesFor(current: CloudConfig | null, devices: Array<Pick<SessionRecord, "id" | "label" | "createdAt">>, githubLogin?: string | null): Choice[] {
   // The Devices section, after the setups and drawn apart from them: these rows change who is signed in
   // and what they may do, not how the board is reached. What they can do appears only where there is a
-  // relay to ask about. Signing out is listed on every board, because sessions outlive a setup: a board
-  // turned Off still holds them for the next time it is reachable.
+  // relay to ask about. Each signed-in device is a row of its own, named by the browser and system it
+  // signed in from, on every board: sessions outlive a setup, so a board turned Off still holds them for
+  // the next time it is reachable. "Sign out all" appears beside two or more, and with nobody signed in
+  // there is nothing to list and no row saying so (maintainer, 2026-11-10: a sign-out row that cannot
+  // say which devices it means "doesn't make human sense").
   const access: Choice[] = [
     ...(current && isRelayConfig(current)
       ? [{ kind: "access" as const, title: "What they can do", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
       : []),
-    ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out all", blurb: remoteDevicesLine(devices) }]),
+    ...devices.map((device) => ({ kind: "device" as const, title: device.label, blurb: `signed in ${signedInAgo(device.createdAt)}`, id: device.id })),
+    ...(devices.length > 1 ? [{ kind: "sign-out-all" as const, title: "Sign out all", blurb: "" }] : []),
   ];
   if (customNamesOffered()) {
     // A custom name is the account's own GitHub username, so once Frizz is signed in the row names it.
@@ -224,7 +237,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
 
   const check = (ok: boolean, text: string) => (ok ? `${text} ✓` : text);
   // Read on every use: the current setup moves under the pane, and the custom row follows it.
-  const choices = () => choicesFor(options.current(), options.devices?.count(), options.githubLogin?.());
+  const choices = () => choicesFor(options.current(), options.devices?.list() ?? [], options.githubLogin?.());
   /** The row for `kind`, or the first row when the menu does not list it. */
   const rowOf = (kind: Choice["kind"]) => Math.max(0, choices().findIndex((choice) => choice.kind === kind));
 
@@ -240,8 +253,9 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
       // The cursor, then a check on the setup in force: Off on a board that was never set up.
       const row = (choice: Choice, index: number) =>
         wrap(choice.blurb, width).map((line, at) => {
-          const lead = at > 0 ? " ".repeat(BLURB_COLUMN - 2) : `${index === s.index ? "❯" : " "} ${choice.kind === current ? "✓" : " "} ${choice.title.padEnd(20)}`;
-          return `${lead}${DIM}${line}${RESET}`;
+          const lead = at > 0 ? " ".repeat(BLURB_COLUMN - 2) : `${index === s.index ? "❯" : " "} ${choice.kind === current ? "✓" : " "} ${choice.title.padEnd(19)} `;
+          // "Sign out all" has no blurb: the title says what it does.
+          return line ? `${lead}${DIM}${line}${RESET}` : lead.trimEnd();
         });
       const devices = rows.findIndex(isDeviceRow);
       write([
@@ -559,7 +573,8 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     paint();
   };
 
-  // No question first: a device signed out by mistake signs in again with a code from L.
+  // No question first: the row says what it does, and a device signed out by mistake signs in again
+  // with a code from L.
   const signOutDevices = () => {
     try {
       const count = options.devices!.signOutAll();
@@ -568,8 +583,33 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
         : `Signed out ${count === 1 ? "1 device" : `${count} devices`}. Each needs a new code from L to sign in again.`;
       screen = { name: "done", message, link: null, config: options.current() };
     } catch (error) {
-      screen = { name: "error", message: error instanceof Error ? error.message : String(error), back: { name: "menu", index: rowOf("devices") } };
+      screen = { name: "error", message: error instanceof Error ? error.message : String(error), back: { name: "menu", index: rowOf("sign-out-all") } };
     }
+    paint();
+  };
+
+  // A device's row names the device, not an act, so enter asks before it signs that one out.
+  const confirmSignOut = (device: Choice, back: Extract<Screen, { name: "menu" }>) => {
+    screen = {
+      name: "confirm",
+      lines: [
+        `Sign out ${device.title}?`,
+        "",
+        ...wrap(`It ${device.blurb}. To get back in, it needs a new sign-in link from L.`),
+      ],
+      then: () => {
+        try {
+          const gone = options.devices!.signOut(device.id!);
+          const message = gone ? `Signed out ${device.title}. It needs a new code from L to sign in again.` : `${device.title} was already signed out.`;
+          screen = { name: "done", message, link: null, config: options.current() };
+        } catch (error) {
+          screen = { name: "error", message: error instanceof Error ? error.message : String(error), back };
+        }
+        paint();
+      },
+      back,
+      keys: "enter sign out · esc back",
+    };
     paint();
   };
 
@@ -639,7 +679,8 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           const firstPick = choice.kind !== kindOf(current);
           const go = () => {
             if (choice.kind === "off") void turnOff();
-            else if (choice.kind === "devices") signOutDevices();
+            else if (choice.kind === "sign-out-all") signOutDevices();
+            else if (choice.kind === "device") confirmSignOut(choice, s);
             else if (choice.kind === "access") askAccess(s, changeAccess);
             else if (choice.kind === "private") {
               // A board already on a random name is public already, so picking the row again only serves it.
@@ -658,7 +699,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           // While custom names are paused, the custom row is listed only for the board serving one, so moving
           // to any other setup takes away the one way back to it. On 2026-11-06 the maintainer's board left
           // colin.frizz.sh for a random name in two keystrokes, and only an edit to cloud.json undid it.
-          const strands = current && kindOf(current) === "frizz" && !customNamesOffered() && !["frizz", "access", "devices"].includes(choice.kind);
+          const strands = current && kindOf(current) === "frizz" && !customNamesOffered() && !["frizz", "access", "device", "sign-out-all"].includes(choice.kind);
           if (strands) {
             screen = {
               name: "confirm",

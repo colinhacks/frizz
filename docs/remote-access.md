@@ -16,9 +16,6 @@ Press **R** in the terminal running Frizz. A walkthrough offers four ways to rea
       Cloudflare Tunnel   a domain on Cloudflare; cloudflared on this machine
       Tailscale           only devices on your tailnet
       Something else      any proxy or tunnel you run — tell Frizz its address
-
-  Devices
-      Sign out all        no remote device signed in
 ```
 
 Whichever you pick, the board itself stays on localhost, and a frizz.sh subdomain asks for confirmation before it puts the board on the internet. Once the setup is done, the pane shows a QR: scanning it trades a single-use code for a session cookie, so the link stops working the moment it is used. A later launch serves the saved setup without minting a link. Press **L** for one at any time. A session lasts 30 days, after which the device needs a fresh link.
@@ -29,7 +26,7 @@ npx frizz --sessions      # the devices holding a session
 npx frizz --sign-out all  # revoke them
 ```
 
-A device can sign itself out: **Sign out this device** in Settings ends that browser's session and nothing else. Signing out any other device happens on the host (SSH counts): `frizz --sign-out`, or **Sign out devices** in the **R** menu, which signs out every one. A stolen phone cannot sign out the laptop.
+A device can sign itself out: **Sign out this device** in Settings ends that browser's session and nothing else. Signing out any other device happens on the host (SSH counts): `frizz --sign-out`, or the **Devices** section of the **R** menu, which lists each signed-in device by its browser and system and when it signed in, and signs out one of them or all. A stolen phone cannot sign out the laptop.
 
 ## What a remote session can do
 
@@ -70,7 +67,7 @@ Pick it and answer one question. It needs no account, no domain, no Tailscale, a
     Read and answer   read the board and pick options on cards
 ```
 
-To change the answer later, press **R** and pick **Device access**. The new answer applies to devices already signed in. [What a remote session can do](#what-a-remote-session-can-do) lists both levels.
+To change the answer later, press **R** and pick **What they can do** under **Devices**. The new answer applies to devices already signed in. [What a remote session can do](#what-a-remote-session-can-do) lists both levels.
 
 ```
   Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).

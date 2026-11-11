@@ -158,6 +158,21 @@ export function liveSessions(directory: Pick<SessionDirectory, "list">, now = Da
   return directory.list().filter((session) => session.revokedAt === undefined && (session.expiresAt === undefined || session.expiresAt > now))
 }
 
+/**
+ * How long ago a device signed in, for the R pane's device rows and `frizz --sessions`: "just now",
+ * then `40m ago`, `3h ago`, `2d ago` in the house duration grammar. Coarse on purpose, because it only
+ * has to tell two devices apart.
+ */
+export function signedInAgo(at: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  if (seconds < 90) return "just now"
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 90) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 36) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
+}
+
 /** What a launcher's readout says about the remote devices it holds. */
 export function remoteDevicesLine(count: number): string {
   if (count === 0) return "no remote device signed in"

@@ -45,16 +45,16 @@ function build(overrides: Partial<Parameters<typeof createRemotePane>[0]> = {}) 
 }
 
 test("R opens on a checked Off, first, says plainly that Frizz runs on localhost, and Off keeps it there", async () => {
-  const { pane, out, applied } = build({ devices: { count: () => 0, signOutAll: () => 0 } });
+  const { pane, out, applied } = build({ devices: { list: () => [], signOut: () => false, signOutAll: () => 0 } });
   assert.equal(pane.open(), true);
   const screen = lastScreen(out.text());
   const rows = screen.split("\n").filter((row) => /^ {2}[❯ ] [✓ ] \S/.test(row)).map((row) => row.slice(6, 26).trim());
-  assert.deepEqual(rows, ["Off", "frizz.sh subdomain", "Custom subdomain", "Cloudflare Tunnel", "Tailscale", "Something else", "Sign out all"]);
+  assert.deepEqual(rows, ["Off", "frizz.sh subdomain", "Custom subdomain", "Cloudflare Tunnel", "Tailscale", "Something else"]);
   assert.match(screen, /^ {2}❯ ✓ Off {17}localhost only$/m, "a board never set up opens with the cursor on a checked Off");
   assert.match(prose(screen), /Frizz runs on localhost, so only this computer can open the board\./);
   assert.doesNotMatch(screen, /127\.0\.0\.1|loopback|binds|\(current\)/);
-  // Signing devices out is not a way to reach the board, so it sits under its own heading.
-  assert.match(screen, /Something else.*\n {2}\n {2}Devices\n {6}Sign out all/);
+  // With nobody signed in there is no device to list, so there is no Devices section and no row saying so.
+  assert.doesNotMatch(screen, /Devices|Sign out|signed in/);
   pane.key("1");
   assert.equal(pane.key("\r"), "keep");
   await settle();
@@ -459,54 +459,111 @@ test("moving a read-and-answer board to a new frizz.sh setup asks again, with it
   assert.match(lastScreen(out.text()), /❯ Read and answer/);
 });
 
-test("the last row signs every device out, says how many it was, and lists the count first", async () => {
-  let held = 2;
-  const signOuts: number[] = [];
-  const { pane, out } = build({
+/** A signed-in device, `hours` after it signed in. */
+const device = (id: string, label: string, hours: number) => ({ id, label, createdAt: Date.now() - hours * 3_600_000 });
+
+/** A board whose signed-in devices are `held`; the sign-outs it was asked for land in `signedOut`. */
+function withDevices(held: Array<ReturnType<typeof device>>, overrides: Partial<Parameters<typeof createRemotePane>[0]> = {}) {
+  const signedOut: string[] = [];
+  const built = build({
     devices: {
-      count: () => held,
+      list: () => held,
+      signOut: (id) => {
+        const at = held.findIndex((d) => d.id === id);
+        if (at < 0) return false;
+        held.splice(at, 1);
+        signedOut.push(id);
+        return true;
+      },
       signOutAll: () => {
-        signOuts.push(held);
-        const was = held;
-        held = 0;
-        return was;
+        const count = held.length;
+        signedOut.push(...held.map((d) => d.id));
+        held.length = 0;
+        return count;
       },
     },
+    ...overrides,
   });
+  return { ...built, signedOut };
+}
+
+test("each signed-in device is a row of its own under Devices, named by its browser and when it signed in", () => {
+  const { pane, out } = withDevices([device("s1", "Safari on iPhone", 3), device("s2", "Chrome on macOS", 50)]);
   pane.open();
-  assert.match(out.text(), /Sign out all\s.*2 remote devices signed in/);
-  // Six setups, no relay so no access row, then this one.
+  const screen = lastScreen(out.text());
+  assert.match(
+    screen,
+    /Something else.*\n {2}\n {2}Devices\n {6}Safari on iPhone {4}signed in 3h ago\n {6}Chrome on macOS {5}signed in 2d ago\n {6}Sign out all\n/,
+    "under their own heading, below the setups",
+  );
+  assert.doesNotMatch(screen, /remote devices? signed in/, "no count standing in for the list");
+});
+
+test("a device's row asks before it signs that one device out, and escape keeps it", () => {
+  const { pane, out, signedOut } = withDevices([device("s1", "Safari on iPhone", 3), device("s2", "Chrome on macOS", 50)]);
+  pane.open();
+  // Six setups, no relay so no access row, then the devices newest first.
   pane.key("7");
-  out.reset();
+  pane.key("\r");
+  const asked = lastScreen(out.text());
+  assert.match(prose(asked), /^Sign out Safari on iPhone\? It signed in 3h ago\. To get back in, it needs a new sign-in link from L\./);
+  assert.match(asked, /enter sign out · esc back/);
+  assert.deepEqual(signedOut, [], "nothing is signed out by choosing the row");
+  pane.key("\x1b");
+  assert.match(lastScreen(out.text()), /❯ {3}Safari on iPhone/, "escape goes back to the menu, on the same row");
+  assert.deepEqual(signedOut, []);
+
+  pane.key("\r");
   assert.equal(pane.key("\r"), "keep");
-  assert.deepEqual(signOuts, [2]);
-  assert.match(out.text(), /Signed out 2 devices\. Each needs a new code from L to sign in again\./);
+  assert.deepEqual(signedOut, ["s1"], "only that device");
+  assert.match(lastScreen(out.text()), /Signed out Safari on iPhone\. It needs a new code from L to sign in again\./);
   assert.equal(pane.key("x"), "close");
 
   pane.open();
-  assert.match(out.text(), /Sign out all\s.*no remote device signed in/);
+  const after = lastScreen(out.text());
+  assert.match(after, /Devices\n {6}Chrome on macOS {5}signed in 2d ago\n {2}\n/, "one device left, and no Sign out all beside it");
+  assert.doesNotMatch(after, /Safari on iPhone|Sign out all/);
 });
 
-test("signing out with nobody signed in says so, and a failure goes back to the menu", () => {
-  const { pane, out } = build({ devices: { count: () => 0, signOutAll: () => 0 } });
+test("Sign out all signs every listed device out and says how many it was", () => {
+  const { pane, out, signedOut } = withDevices([device("s1", "Safari on iPhone", 3), device("s2", "Chrome on macOS", 50)]);
   pane.open();
-  pane.key("7");
-  pane.key("\r");
-  assert.match(out.text(), /No device was signed in\./);
+  pane.key("9");
+  out.reset();
+  assert.equal(pane.key("\r"), "keep");
+  assert.deepEqual(signedOut, ["s1", "s2"]);
+  assert.match(out.text(), /Signed out 2 devices\. Each needs a new code from L to sign in again\./);
+  assert.equal(pane.key("x"), "close");
+  pane.open();
+  assert.doesNotMatch(out.text(), /Devices|Sign out all/, "with nobody left, the section is gone");
+});
 
-  const broken = build({ devices: { count: () => 1, signOutAll: () => { throw new Error("the session key could not be saved"); } } });
+test("a sign-out that fails says so and goes back to the menu", () => {
+  const broken = withDevices([device("s1", "Safari on iPhone", 3), device("s2", "Chrome on macOS", 50)], {
+    devices: {
+      list: () => [device("s1", "Safari on iPhone", 3), device("s2", "Chrome on macOS", 50)],
+      signOut: () => { throw new Error("the session list could not be saved"); },
+      signOutAll: () => { throw new Error("the session key could not be saved"); },
+    },
+  });
   broken.pane.open();
-  broken.pane.key("7");
+  broken.pane.key("9");
   broken.pane.key("\r");
   assert.match(broken.out.text(), /Could not apply that: the session key could not be saved/);
   assert.equal(broken.pane.key("x"), "keep");
-  assert.match(broken.out.text(), /❯ {3}Sign out all/);
+  assert.match(lastScreen(broken.out.text()), /❯ {3}Sign out all/);
+  broken.pane.key("7");
+  broken.pane.key("\r");
+  broken.pane.key("\r");
+  assert.match(lastScreen(broken.out.text()), /Could not apply that: the session list could not be saved/);
+  assert.equal(broken.pane.key("x"), "keep");
+  assert.match(lastScreen(broken.out.text()), /❯ {3}Safari on iPhone/);
 });
 
-test("a pane built without devices lists no sign-out row", () => {
+test("a pane built without devices lists no Devices section", () => {
   const { pane, out } = build();
   pane.open();
-  assert.doesNotMatch(out.text(), /Sign out all/);
+  assert.doesNotMatch(out.text(), /Devices|Sign out/);
 });
 
 
@@ -585,7 +642,7 @@ test("a refused claim names what it could not claim, and wraps between words und
 
 test("at 80 columns no menu row reaches the window's edge, and a long blurb wraps under its column", () => {
   for (const login of [null, "ada", "abcdefghjkmnpqrstuvw"]) {
-    const { pane, out } = build({ githubLogin: () => login, current: () => ({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }), devices: { count: () => 2, signOutAll: () => 2 } });
+    const { pane, out } = build({ githubLogin: () => login, current: () => ({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }), devices: { list: () => [device("s1", "Firefox on Android", 1), device("s2", "Chrome on Windows", 30)], signOut: () => true, signOutAll: () => 2 } });
     Object.assign(out.stream, { columns: 80, rows: 24 });
     pane.open();
     const screen = lastScreen(out.text());

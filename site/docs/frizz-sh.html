@@ -70,7 +70,7 @@ Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for 
           <li>restarts and updates;</li>
           <li>reading a file outside a registered project or a thread&#8217;s scratch and attachment directories, or a secret-looking file inside one (<code>.env</code>, a key, anything under a dotted folder other than <code>.frizz</code>).</li>
         </ul>
-        <p>To change the answer later, press <kbd>R</kbd> and pick <strong>Device access</strong>. The new answer applies to devices already signed in. A refused call is written to <code>logs/audit.jsonl</code> under Frizz&#8217;s data folder, with the session and device that made it.</p>
+        <p>To change the answer later, press <kbd>R</kbd> and pick <strong>What they can do</strong> under <strong>Devices</strong>. The new answer applies to devices already signed in. A refused call is written to <code>logs/audit.jsonl</code> under Frizz&#8217;s data folder, with the session and device that made it.</p>
 
         <h2>Connection</h2>
         <p>This option needs no Tailscale or Cloudflare Tunnel. Your board stays on localhost and opens one outbound connection to a relay Frizz runs, and visitors&#8217; requests travel down that connection.</p>

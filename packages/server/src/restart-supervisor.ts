@@ -13,6 +13,7 @@ import {
   secretsMatch,
   type AccessCode,
   type SessionDirectory,
+  type SessionRecord,
 } from "./access-codes.ts"
 import {
   allowedLocalCorsOrigin,
@@ -381,6 +382,16 @@ export class RestartSupervisorProxy {
   /** How many devices hold a live session. */
   signedInDevices(): number {
     return liveSessions(this.access.sessions).length
+  }
+
+  /** The devices holding a live session, newest first: what the R pane lists, one row each. */
+  signedInDeviceList(): SessionRecord[] {
+    return liveSessions(this.access.sessions)
+  }
+
+  /** Sign one device out, as `frizz --sign-out <id>` does. False when no live device has that id. */
+  signOutDevice(id: string): boolean {
+    return this.access.revokeSession(id)
   }
 
   /** Sign every device out, as `frizz --sign-out all` does: new key, every session and unused code gone. Returns how many. */

@@ -755,7 +755,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     claim: (name, progress) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), { say: progress, promptHint: false }),
     githubLogin: frizzGithubLogin,
     issueLink: () => supervisor.issueAccessLink(),
-    devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
+    devices: { list: () => supervisor.signedInDeviceList(), signOut: (id) => supervisor.signOutDevice(id), signOutAll: () => supervisor.signOutAllDevices() },
     probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
     onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "localhost only"),
     // The readout above the pane still names the setup this launch started with; say the new one under it.
@@ -808,7 +808,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   launcherNoticeReady = true;
   announceLauncherUpdate();
   const heldSessions = liveSessions(sessions.directory).length;
-  if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · frizz --sessions lists them`);
+  if (heldSessions > 0) activityReadout?.notice("done", "Remote", `${remoteDevicesLine(heldSessions)} · R lists them`);
   // The execve'd generation prints no boot block (it is not an interactive launch), so this one line
   // is the only thing that tells the operator the update finished and this terminal still owns it.
   if (reexec) {

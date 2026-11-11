@@ -18,6 +18,7 @@ import {
   secretsMatch,
   SESSION_EPOCH,
   sessionEpochNotice,
+  signedInAgo,
 } from "./access-codes.ts"
 
 /** A clock the test drives, so expiry is exercised without sleeping through it. */
@@ -30,6 +31,15 @@ function counter() {
   let n = 0
   return () => `token-${++n}`
 }
+
+test("a device's sign-in age reads in the house duration grammar, coarse enough to tell two apart", () => {
+  const now = 1_000_000_000
+  assert.equal(signedInAgo(now - 30_000, now), "just now")
+  assert.equal(signedInAgo(now - 40 * 60_000, now), "40m ago")
+  assert.equal(signedInAgo(now - 3 * 3_600_000, now), "3h ago")
+  assert.equal(signedInAgo(now - 50 * 3_600_000, now), "2d ago")
+  assert.equal(signedInAgo(now + 5_000, now), "just now", "a clock that moved back reads as now, not negative")
+})
 
 test("a code works exactly once, and the second attempt says so", () => {
   // The property the whole design rests on. If a code can be spent twice, "single-use" is a comment.
