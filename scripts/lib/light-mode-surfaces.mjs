@@ -32,6 +32,7 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   await page.goto(url, { waitUntil: "networkidle2" })
   await page.evaluate(async () => {
     const { store } = await import("/src/store.ts")
+    store.sidebarCollapsed.running = false
     store.sidebarCollapsed.snoozed = false
     store.sidebarCollapsed.inactive = false
   })

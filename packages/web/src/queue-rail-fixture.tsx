@@ -103,6 +103,8 @@ store.board = {
   threads: surface === "console" ? consoleThreads() : surface === "first-run" ? [] : CARDS.map((c, i) => makeThread(c.id, c.title, i)),
 } as BoardSnapshot
 store.drawers = []
+// The dispatch lands as a Running row, so the band is open here; it starts collapsed in the product.
+store.sidebarCollapsed.running = false
 
 const setThreads = (next: (threads: readonly ThreadViewModel[]) => ThreadViewModel[]) => {
   if (store.board) store.board = { ...store.board, threads: next(store.board.threads as ThreadViewModel[]) } as BoardSnapshot

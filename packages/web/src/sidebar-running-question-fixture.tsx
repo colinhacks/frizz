@@ -88,6 +88,8 @@ function show(threads: ThreadView[]) {
 }
 
 store.drawers = []
+// The rows under study spin, so the Running band is open here; it starts collapsed in the product.
+store.sidebarCollapsed.running = false
 if (mode === "play") {
   let i = 0
   let timer: ReturnType<typeof setInterval> | undefined

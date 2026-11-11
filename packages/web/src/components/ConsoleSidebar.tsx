@@ -178,10 +178,24 @@ export function ConsoleSidebar() {
                     {queueRows.length > 0 && <SectionHeader label="Queue" count={queueRows.length} />}
                     {queueRows.map((t) => row(t, { square: true, waiting: true }))}
                     {runningCount > 0 && queueRows.length > 0 && <hr className="my-3 border-border/50" />}
-                    {runningCount > 0 && <SectionHeader label="Running" count={runningCount} />}
-                    {/* Newest first, the band's own order: a thread that starts lands at the top. */}
-                    {[...starting].reverse().map((entry) => startingRow(entry, { square: true }))}
-                    {runningRows.map((t) => row(t, { square: true, waiting: false }))}
+                    {/* Collapsible, collapsed by default, and the same switch as a project board's Running
+                        band (store.sidebarCollapsed.running). "By project" has no Running label to fold:
+                        each block caps its own running rows behind "Show more" (RunningRows). */}
+                    {runningCount > 0 && (
+                      <SectionHeader
+                        label="Running"
+                        count={runningCount}
+                        collapsed={snap.sidebarCollapsed.running}
+                        onToggle={() => (store.sidebarCollapsed.running = !store.sidebarCollapsed.running)}
+                      />
+                    )}
+                    {!snap.sidebarCollapsed.running && (
+                      <>
+                        {/* Newest first, the band's own order: a thread that starts lands at the top. */}
+                        {[...starting].reverse().map((entry) => startingRow(entry, { square: true }))}
+                        {runningRows.map((t) => row(t, { square: true, waiting: false }))}
+                      </>
+                    )}
                   </>
                 )}
                 {/* SNOOZED and DONE — collapsed until opened, then a page at a time (lib/consoleBoard.ts). Each

@@ -90,6 +90,7 @@ test("the Snoozed band dates each row; a spinning row in Active does not", async
   const running = { ...base, id: "port-the-drivers", title: "Port the drivers", needsYou: false, runtime: "running", lastActivityAt: ago(60_000) }
   store.board = { projectDir: "/fixture", threads: [snoozed, running] } as unknown as typeof store.board
   store.sidebarCollapsed.snoozed = false
+  store.sidebarCollapsed.running = false
   const html = renderToStaticMarkup(
     createElement(
       QueryClientProvider,

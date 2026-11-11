@@ -52,9 +52,9 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 // Sections: FOUR bands top→bottom, in the names ARCHITECTURE.md § Board nomenclature fixes — RESTED
 // (everything at rest = the queue's own rows, a.k.a. the cue), ACTIVE (the rows currently spinning),
 // then a labeled DIMMED HELD band (every declared clock/hourglass/timed wait), then DONE — each split
-// by a bare <hr>, and Snoozed and Done both collapsible. Rested and Active are ONE uncollapsible <section>
-// (you can't hide your queue or your live work); the <hr> between them is the whole distinction, so
-// never describe a rested row as active. A thread merely awaiting its OWN sub-agents is INTERNAL work
+// by a bare <hr>, and Active, Snoozed and Done collapsible. Rested and Active are ONE <section> (the
+// queue never collapses); the <hr> between them is the whole distinction, so never describe a rested
+// row as active. A thread merely awaiting its OWN sub-agents is INTERNAL work
 // and stays spinning in Active undimmed; only external waiters drop into the dimmed band (groups.ts
 // isSnoozed).
 // Needs-you renders as the row INDICATOR + the queue; awaiting as the hint gloss.
@@ -222,8 +222,9 @@ export function Sidebar() {
               something comes to rest but it doesn't have anything actionable for the human, then why bother
               giving it a dot?"); a row with an ask or a failure keeps its card.
               LABELED since 2026-09-19, like every band below it, and NOT collapsible (maintainer: the Pinned,
-              Queue and Running labels "should not be collapsible") — the header is the static form of
-              SectionHeader, so it lines up with the collapsible Snoozed/Done headers. */}
+              Queue and Running labels "should not be collapsible"; Running became collapsible on
+              2026-11-11) — the header is the static form of SectionHeader, so it lines up with the
+              collapsible Running/Snoozed/Done headers. */}
           {sections.pinned.length > 0 && (
             <section aria-label="Pinned">
               <SectionHeader label="Pinned" count={sections.pinned.length} />
@@ -234,10 +235,13 @@ export function Sidebar() {
               {openCount > 0 && <hr className="my-3 border-border/50" />}
             </section>
           )}
-          {/* RESTED + ACTIVE — always shown, NEVER collapsible (you can't hide your queue or your live
-              work). Two rule-separated bands (see groups.ts orderActive/partitionActive), each under a
-              static label since 2026-09-19 (maintainer: "sidebar labels for pinned, queue, and running
-              … should not be collapsible"). The labels use the maintainer's own words for the bands —
+          {/* RESTED + ACTIVE — two rule-separated bands (see groups.ts orderActive/partitionActive), each
+              under a label since 2026-09-19. The QUEUE label is static: you can't hide your queue
+              (maintainer: "sidebar labels for pinned, queue, and running … should not be collapsible").
+              RUNNING is COLLAPSIBLE, and collapsed by default, since 2026-11-11 (maintainer: "make the
+              running rail collapsible … collapsed by default"): nothing in it waits on the reader, so
+              its count is the glance, like Snoozed's. A dispatch still ticks that count at the click;
+              its StartingRow is drawn only while the band is open. The labels use the maintainer's own words for the bands —
               QUEUE for the cue, RUNNING for the spinning rows — rather than the code's Rested/Active
               keys, because the label is copy the human reads, and "the queue" is what they call it.
               RESTED — the cue — sits FIRST, right under the prompt box (maintainer 2026-08-08), in the
@@ -261,19 +265,27 @@ export function Sidebar() {
                 </div>
               ))}
               {runningCount > 0 && rested.length > 0 && <hr className="my-3 border-border/50" />}
-              {runningCount > 0 && <SectionHeader label="Running" count={runningCount} />}
+              {runningCount > 0 && (
+                <SectionHeader
+                  label="Running"
+                  count={runningCount}
+                  collapsed={collapsed.running}
+                  onToggle={() => (store.sidebarCollapsed.running = !store.sidebarCollapsed.running)}
+                />
+              )}
               {/* Newest first, the band's own order (orderRunning): a thread that starts lands at the
                   top, so that is where the row standing in for it is drawn. */}
-              {[...starting].reverse().map((entry) => <StartingRow key={entry.key} entry={entry} />)}
+              {!collapsed.running && [...starting].reverse().map((entry) => <StartingRow key={entry.key} entry={entry} />)}
               {/* NEVER the scroll marker: no Running row has a queue card. A row arrives here still
                   named by the reading rule on every send — the card it left is fading under the
                   reader — and the marker is handed to the row that took its place (markerRow). */}
-              {running.map((t) => (
-                <div key={t.id}>
-                  <ThreadRow t={t} active={activeId === t.id} />
-                  <SubAgentRows t={t} />
-                </div>
-              ))}
+              {!collapsed.running &&
+                running.map((t) => (
+                  <div key={t.id}>
+                    <ThreadRow t={t} active={activeId === t.id} />
+                    <SubAgentRows t={t} />
+                  </div>
+                ))}
             </>
           )}
           {/* HELD — every deliberate clock/hourglass/timed wait, visibly de-emphasized and labeled so
@@ -602,9 +614,9 @@ export function StartingRow({ entry, leading }: { entry: PendingDispatchEntry; l
 }
 
 // A section header: an optional collapse caret, the label, and the count. ONE source of truth for
-// every band header so they can never visually drift apart again. Snoozed, Done and External are
-// collapsible; Pinned, Queue and Running (since 2026-09-19) omit onToggle and render as a static div
-// with a caret-width spacer, so a non-collapsible label still aligns with the collapsible ones.
+// every band header so they can never visually drift apart again. Running (since 2026-11-11), Snoozed,
+// Done and External are collapsible; Pinned and Queue omit onToggle and render as a static div with a
+// caret-width spacer, so a non-collapsible label still aligns with the collapsible ones.
 export function SectionHeader({ label, count, collapsed, onToggle }: { label: string; count: number; collapsed?: boolean; onToggle?: () => void }) {
   const inner = (
     <>
@@ -627,12 +639,13 @@ export function SectionHeader({ label, count, collapsed, onToggle }: { label: st
   // and every rest moved the whole queue by the remainder — the cards read 1px off at the send and 1px
   // back at the return in 3 of 3 recordings at 780x900 (2026-10-13).
   const cls = "flex w-full items-center gap-1 px-1.5 py-1 text-[11px] leading-4 uppercase tracking-wide text-muted-70"
+  const band = label.toLowerCase()
   return onToggle ? (
-    <button onClick={onToggle} className={`${cls} transition-colors hover:text-fg`}>
+    <button onClick={onToggle} aria-expanded={!collapsed} data-band-header={band} className={`${cls} transition-colors hover:text-fg`}>
       {inner}
     </button>
   ) : (
-    <div className={cls}>{inner}</div>
+    <div data-band-header={band} className={cls}>{inner}</div>
   )
 }
 
