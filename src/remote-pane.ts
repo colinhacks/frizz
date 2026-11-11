@@ -29,7 +29,7 @@ export type RemoteKind = "private" | "frizz" | "cloudflare" | "tailscale" | "oth
 export interface RemotePaneOptions {
   port: number;
   current: () => CloudConfig | null;
-  /** Switch the running board to `next`, or to loopback-only with null. Rejects with a message. */
+  /** Switch the running board to `next`, or back to localhost only with null. Rejects with a message. */
   apply: (next: CloudConfig | null, options?: { justClaimed?: boolean }) => Promise<void>;
   /** Change what a device signed in through the relay may do, on a board the relay already serves. */
   setRelayAccess: (access: RelayAccess) => void;
@@ -46,7 +46,7 @@ export interface RemotePaneOptions {
   githubLogin?: () => string | null;
   /** A fresh single-use link for the origin now in force, for the done screen. */
   issueLink: () => AccessLink | null;
-  /** The devices holding a session, for the menu's last row, which signs every one of them out. */
+  /** The devices holding a session, for the Devices section's last row, which signs every one of them out. */
   devices?: { count: () => number; signOutAll: () => number };
   probes: {
     cloudflared: () => Promise<CloudflaredProbe>;
@@ -78,15 +78,23 @@ const RELAY_ACCESS: Array<{ access: RelayAccess; title: string; blurb: string; c
 ];
 const accessChoice = (access: RelayAccess | undefined) => RELAY_ACCESS.find((choice) => choice.access === (access ?? "full"))!;
 
-/** Every setup, in menu order. The menu shows the subset `choicesFor` picks, never this list directly. */
+/**
+ * Every setup, in menu order. The menu shows the subset `choicesFor` picks, never this list directly.
+ *
+ * Off leads, so a board that has never been set up opens the menu with its cursor on a checked Off: the
+ * first thing read is that the board is on localhost only (maintainer, 2026-11-10).
+ */
 const CHOICES: Choice[] = [
+  { kind: "off", title: "Off", blurb: "localhost only" },
   { kind: "private", title: "frizz.sh subdomain", blurb: "a random address and a one-time QR code; no account" },
   { kind: "frizz", title: "Custom subdomain", blurb: "your GitHub username.frizz.sh; needs Frizz's GitHub sign-in" },
   { kind: "cloudflare", title: "Cloudflare Tunnel", blurb: "a domain on Cloudflare; cloudflared on this machine" },
-  { kind: "tailscale", title: "Tailscale", blurb: "your tailnet; tailscale serve does the TLS" },
+  { kind: "tailscale", title: "Tailscale", blurb: "only devices on your tailnet" },
   { kind: "other", title: "Something else", blurb: "any proxy or tunnel you run — tell Frizz its address" },
-  { kind: "off", title: "Off", blurb: "loopback only" },
 ];
+
+/** Rows about the devices already signed in, drawn under their own heading below the setups. */
+const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind === "devices";
 
 /**
  * The rows the menu lists for a board whose setup is `current`.
@@ -97,14 +105,15 @@ const CHOICES: Choice[] = [
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
 function choicesFor(current: CloudConfig | null, devices?: number, githubLogin?: string | null): Choice[] {
-  // Last, so a digit still picks the setup it always has. Device access appears only where there is a relay
-  // to ask about. Signing devices out is listed on every board, because sessions outlive a setup: a board
+  // The Devices section, after the setups and drawn apart from them: these rows change who is signed in
+  // and what they may do, not how the board is reached. What they can do appears only where there is a
+  // relay to ask about. Signing out is listed on every board, because sessions outlive a setup: a board
   // turned Off still holds them for the next time it is reachable.
   const access: Choice[] = [
     ...(current && isRelayConfig(current)
-      ? [{ kind: "access" as const, title: "Device access", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
+      ? [{ kind: "access" as const, title: "What they can do", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
       : []),
-    ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out devices", blurb: remoteDevicesLine(devices) }]),
+    ...(devices === undefined ? [] : [{ kind: "devices" as const, title: "Sign out all", blurb: remoteDevicesLine(devices) }]),
   ];
   if (customNamesOffered()) {
     // A custom name is the account's own GitHub username, so once Frizz is signed in the row names it.
@@ -169,11 +178,11 @@ function kindOf(config: CloudConfig | null): RemoteKind {
  * address still fits 80 columns, where a "press L for a sign-in link" tail wrapped even at 100.
  */
 export function remoteReachedLine(config: CloudConfig | null): string {
-  return config ? `now at https://${config.hostname}` : "loopback only now";
+  return config ? `now at https://${config.hostname}` : "localhost only now";
 }
 
-/** Where a menu row's blurb starts, after the two-column indent: the marker, a space and the title's 20. */
-const BLURB_COLUMN = 24;
+/** Where a menu row's blurb starts, after the two-column indent: the cursor, the check, a space after each, and the title's 20. */
+const BLURB_COLUMN = 26;
 
 function wrap(text: string, width = 74): string[] {
   const lines: string[] = [];
@@ -224,27 +233,25 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     const s = screen;
     if (s.name === "menu") {
       const current = kindOf(options.current());
+      const rows = choices();
+      // A blurb too long for the window wraps between words, its continuation hanging under the blurb
+      // column. The terminal would otherwise break it mid-word at the edge, back at column 0.
+      const width = Math.max(20, (output.columns ?? 80) - BLURB_COLUMN - 1);
+      // The cursor, then a check on the setup in force: Off on a board that was never set up.
+      const row = (choice: Choice, index: number) =>
+        wrap(choice.blurb, width).map((line, at) => {
+          const lead = at > 0 ? " ".repeat(BLURB_COLUMN - 2) : `${index === s.index ? "❯" : " "} ${choice.kind === current ? "✓" : " "} ${choice.title.padEnd(20)}`;
+          return `${lead}${DIM}${line}${RESET}`;
+        });
+      const devices = rows.findIndex(isDeviceRow);
       write([
-        "Reach this board from anywhere",
+        "Reach this board from other devices",
         "",
         ...wrap(
-          "Frizz binds 127.0.0.1 and has no login. Reaching it from another device means something in front of it does the authenticating. Whatever you pick here is remembered; from then on a plain `npx frizz` serves it.",
+          "Frizz runs on localhost, so only this computer can open the board. To open it from a phone or another computer, pick a way in below. Frizz remembers your choice and uses it every time it starts.",
         ),
         "",
-        ...choices().flatMap((choice, index) => {
-          const marker = index === s.index ? "❯" : " ";
-          const title = choice.title.padEnd(20);
-          // A blurb too long for the window wraps between words, its continuation hanging under the blurb
-          // column. The terminal would otherwise break it mid-word at the edge, back at column 0.
-          const width = Math.max(20, (output.columns ?? 80) - BLURB_COLUMN - 1);
-          const lines = wrap(choice.blurb, width);
-          if (choice.kind === current) {
-            const last = lines.length - 1;
-            if (lines[last]!.length + "  (current)".length <= width) lines[last] += "  (current)";
-            else lines.push("(current)");
-          }
-          return lines.map((line, row) => `${row === 0 ? `${marker} ${title}` : " ".repeat(BLURB_COLUMN - 2)}${DIM}${line}${RESET}`);
-        }),
+        ...rows.flatMap((choice, index) => [...(index === devices ? ["", "Devices"] : []), ...row(choice, index)]),
         "",
         `${DIM}↑↓ move · enter choose · esc back${RESET}`,
       ]);
@@ -435,7 +442,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   };
 
   // No form: the name is minted, so the confirmation before it is the only place to say what it does.
-  const claimPrivate = (relayAccess?: RelayAccess) => claimAndServe("", relayAccess, { name: "menu", index: 0 });
+  const claimPrivate = (relayAccess?: RelayAccess) => claimAndServe("", relayAccess, { name: "menu", index: rowOf("private") });
 
   // Putting the board on the internet takes an enter that names it. Until 2026-11-09 this row claimed on
   // the access answer alone, so a digit and two enters after R made a board public with full control,
@@ -567,12 +574,12 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
   };
 
   const turnOff = async () => {
-    screen = { name: "busy", message: "back to loopback only…" };
+    screen = { name: "busy", message: "back to localhost only…" };
     paint();
     try {
       await options.apply(null);
       changedTo(null);
-      screen = { name: "done", message: "Loopback only. This board is reachable from this machine alone.", link: null, config: null };
+      screen = { name: "done", message: "Back to localhost only: this computer alone can open the board.", link: null, config: null };
     } catch (error) {
       screen = { name: "error", message: error instanceof Error ? error.message : String(error), back: { name: "menu", index: rowOf("off") } };
     }

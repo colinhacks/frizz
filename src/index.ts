@@ -506,7 +506,7 @@ async function runSupervisor(
         issueLink: () => supervisor.issueAccessLink(),
         devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
         probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
-        onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "loopback only"),
+        onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "localhost only"),
         // The readout above the pane still names the setup this launch started with; say the new one under it.
         onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
         sandbox: sandbox !== null,

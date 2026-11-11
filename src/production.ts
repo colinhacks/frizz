@@ -155,7 +155,7 @@ Options:
 To reach the board from a phone or another machine, press R in the terminal running it: a short
 walkthrough sets up a frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
 Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
-on. The board stays on loopback, and a phone signs in with a single-use link: press L for one
+on. The board stays on localhost, and a phone signs in with a single-use link: press L for one
 as a QR, or run --link from another shell.`,
   );
   process.exit(0);
@@ -757,7 +757,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     issueLink: () => supervisor.issueAccessLink(),
     devices: { count: () => supervisor.signedInDevices(), signOutAll: () => supervisor.signOutAllDevices() },
     probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
-    onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "loopback only"),
+    onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "localhost only"),
     // The readout above the pane still names the setup this launch started with; say the new one under it.
     onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
     sandbox: sandbox !== null,

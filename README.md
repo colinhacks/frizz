@@ -66,7 +66,7 @@ Frizz is a browser tab, a queue, and the agent CLIs you already pay for. It brin
 - 🐙 **GitHub integration.** Browse your repo's issues and pull requests without leaving the composer, and turn a selection of them into threads. Workers can read issues, diffs, and CI on their own.
 - 👀 **Built-in CI and PR watchers.** A worker waiting on a build or a review doesn't hand the thread back to you to be told "keep going." It watches, and picks the work back up when the run goes green or a review lands.
 - 📝 **No magic.** A thread behaves like a Claude Code session you started yourself. Frizz adds no worktrees, no branches, no dev server, no build integration, no workflow engine to fight with.
-- 🔒 **Local only.** No cloud, no account, no telemetry. The server binds `127.0.0.1` by default and its state lives in your user directory, never in your checkout. To reach a board from a phone, press R in its terminal — see [Remote access](docs/remote-access.md).
+- 🔒 **Local only.** No cloud, no account, no telemetry. The server runs on localhost by default and its state lives in your user directory, never in your checkout. To reach a board from a phone, press R in its terminal — see [Remote access](docs/remote-access.md).
 
 ### Projects
 
@@ -171,7 +171,7 @@ Options:
 To reach the board from a phone or another machine, press R in the terminal running it: a short
 walkthrough sets up a frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
 Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
-on. The board stays on loopback, and a phone signs in with a single-use link: press L for one
+on. The board stays on localhost, and a phone signs in with a single-use link: press L for one
 as a QR, or run --link from another shell.
 ```
 <!-- help:end -->
@@ -227,7 +227,7 @@ as a QR, or run --link from another shell.
 <details>
 <summary><b>Can I reach it from another machine?</b></summary>
 
-> Yes. Press **R** in the terminal running Frizz. A short walkthrough sets up one of four ways to reach the board — a frizz.sh subdomain, a Cloudflare Tunnel you own, Tailscale, or any proxy you run — checks what each needs, prints the commands, and remembers your choice. From then on a plain `npx frizz` serves it; pick **Off** in the same place to go back to loopback only.
+> Yes. Press **R** in the terminal running Frizz. A short walkthrough sets up one of four ways to reach the board — a frizz.sh subdomain, a Cloudflare Tunnel you own, Tailscale, or any proxy you run — checks what each needs, prints the commands, and remembers your choice. From then on a plain `npx frizz` serves it; pick **Off** in the same place to go back to localhost only.
 >
 > To try any of this without touching the board you run, launch a second one with `npx frizz --sandbox` — a throwaway home and project on its own port, deleted on ctrl-c.
 >

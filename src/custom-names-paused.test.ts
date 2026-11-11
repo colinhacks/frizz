@@ -172,7 +172,7 @@ function buildPane(initial: CloudConfig | null) {
 /** The menu rows of the last paint, without escape codes. */
 function menuRows(text: string): string[] {
   const screen = text.split("\x1b[2J\x1b[H").pop()!.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
-  return screen.split("\n").filter((row) => /^ {2}[❯ ] \S/.test(row));
+  return screen.split("\n").filter((row) => /^ {2}[❯ ] [✓ ] \S/.test(row));
 }
 
 test("while custom names are paused, the R menu does not offer one, and every number still lands", async () => {
@@ -182,18 +182,18 @@ test("while custom names are paused, the R menu does not offer one, and every nu
   assert.doesNotMatch(out.text(), /GitHub/, "no row mentions a GitHub account");
   const rows = menuRows(out.text());
   assert.deepEqual(
-    rows.map((row) => row.slice(4, 24).trim()),
-    ["frizz.sh subdomain", "Cloudflare Tunnel", "Tailscale", "Something else", "Off"],
+    rows.map((row) => row.slice(6, 26).trim()),
+    ["Off", "frizz.sh subdomain", "Cloudflare Tunnel", "Tailscale", "Something else"],
   );
-  assert.match(rows[4]!, /\(current\)/, "Off is current, and the cursor is on it");
-  assert.match(rows[4]!, /^ {2}❯/);
+  assert.match(rows[0]!, /^ {2}❯ ✓ Off/, "Off is first and current, and the cursor is on it");
   // A number past the end is ignored rather than selecting a row that is not there.
-  pane.key("6");
-  assert.match(menuRows(out.text())[4]!, /^ {2}❯/);
   pane.key("5");
+  pane.key("6");
+  assert.match(menuRows(out.text())[4]!, /^ {2}❯ {3}Something else/);
+  pane.key("1");
   pane.key("\r");
   await settle();
-  assert.deepEqual(applied, [null], "5 is Off now that the custom row is gone");
+  assert.deepEqual(applied, [null], "1 is Off, with or without the custom row");
 });
 
 test("while custom names are paused, a board already on a custom name shows it, and choosing it renews without a claim", async () => {
@@ -204,11 +204,11 @@ test("while custom names are paused, a board already on a custom name shows it, 
   pane.open();
   const rows = menuRows(out.text());
   assert.equal(rows.length, 7, "the custom row stays while it is the current setup, and what a device may do is the last");
-  assert.match(rows[6]!, /^ {2}  Device access\s+Full control/);
-  assert.match(rows[1]!, /^ {2}❯ Custom subdomain\s+colin\.frizz\.sh — kept and renewed;/);
+  assert.match(rows[6]!, /^ {6}What they can do\s+Full control/);
+  assert.match(rows[2]!, /^ {2}❯ ✓ Custom subdomain\s+colin\.frizz\.sh — kept and renewed;/);
   // The blurb wraps at 80 columns, its continuation hanging under the blurb column.
   const screen = out.text().split("\x1b[2J\x1b[H").pop()!.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
-  assert.match(screen, /kept and renewed; new custom\n {24}subdomains are paused {2}\(current\)/);
+  assert.match(screen, /kept and renewed; new custom\n {26}subdomains are paused\n/);
   assert.doesNotMatch(out.text(), /needs a GitHub account/);
   pane.key("\r");
   await settle();
@@ -222,7 +222,7 @@ test("while custom names are paused, leaving a custom name says the menu cannot 
   const saved: CloudConfig = { hostname: "colin.frizz.sh", claim: "colin", serve: "relay" };
   const { pane, out, applied } = buildPane(saved);
   pane.open();
-  pane.key("1");
+  pane.key("2");
   pane.key("\r");
   await settle();
   assert.deepEqual(applied, [], "a random name was claimed before anyone was asked");
@@ -230,22 +230,22 @@ test("while custom names are paused, leaving a custom name says the menu cannot 
   assert.match(out.text(), /cannot bring\s+colin\.frizz\.sh\s+back/);
   pane.key("\x1b");
   assert.equal(menuRows(out.text()).length, 7, "escape goes back to the menu");
-  assert.match(menuRows(out.text())[0]!, /^ {2}❯ frizz\.sh subdomain/);
+  assert.match(menuRows(out.text())[1]!, /^ {2}❯ {3}frizz\.sh subdomain/);
 
-  pane.key("6");
+  pane.key("1");
   pane.key("\r");
   assert.match(out.text(), /Leave colin\.frizz\.sh\?/);
   assert.deepEqual(applied, []);
   pane.key("\r");
   await settle();
   assert.deepEqual(applied, [null], "enter goes ahead with the switch");
-  assert.match(out.text(), /Loopback only/);
+  assert.match(out.text(), /Back to localhost only/);
 });
 
 test("a board on a random name switches without being asked", async () => {
   const { pane, applied } = buildPane({ hostname: "h2cioy5ilpwjdwptl7yz.frizz.sh", claim: "h2cioy5ilpwjdwptl7yz", serve: "relay" });
   pane.open();
-  pane.key("5");
+  pane.key("1");
   pane.key("\r");
   await settle();
   assert.deepEqual(applied, [null]);

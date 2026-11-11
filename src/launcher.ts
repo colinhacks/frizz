@@ -466,7 +466,7 @@ Commands:
 To reach the board from a phone or another machine, press R in the terminal running it: a short
 walkthrough sets up a frizz.sh subdomain (no account needed), a Cloudflare Tunnel,
 Tailscale, or a proxy of your own, and remembers the choice, so a plain launch serves it from then
-on. The board stays on loopback, and a phone signs in with a single-use link: press L for one
+on. The board stays on localhost, and a phone signs in with a single-use link: press L for one
 as a QR, or run --link from another shell.
 
 An immutable artifact is the default. --dev is the only explicit unsafe source watcher/HMR mode.
