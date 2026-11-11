@@ -402,6 +402,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   try {
     const problems = await checkClaims({ read: claimReader() })
+    const pinned = Object.keys(BASELINE.claims).map((name) => `${name}.${BASELINE.zone}`)
+    if (problems.length === 0) console.log(`✓ the registry: ${pinned.length ? `${pinned.join(", ")} owned by the expected key` : "no names pinned"}`)
     for (const problem of problems) console.error(`::error::${problem}`)
     failed ||= problems.length > 0
   } catch (error) {
