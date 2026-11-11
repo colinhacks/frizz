@@ -8,7 +8,7 @@ import { ACCOUNT_ID, auditLogProblems, BASELINE, checkAccount, checkClaims, chec
 // The bodies below follow the shapes Cloudflare documents for
 //   GET /accounts/{account_id}/workers/scripts/{script}/deployments
 //   GET /accounts/{account_id}/workers/scripts/{script}/versions[/{version_id}]
-// and GitHub's GET /repos/{owner}/{repo}/actions/runs/{run_id}[/approvals|/jobs], cut down to the fields the check
+// and GitHub's GET /repos/{owner}/{repo}/actions/runs/{run_id}[/jobs], cut down to the fields the check
 // reads. They are NOT captured from the live account: nothing that wrote this held a read token. The
 // first scheduled run is the one that meets the real API, and it fails loudly on any shape it
 // cannot read rather than passing.
@@ -51,7 +51,6 @@ const run = (overrides = {}) => ({
 })
 
 /** Fake `cf` and `gh` over fixed bodies; a path nobody recorded is a test bug, so it throws. */
-const approved = [{ state: "approved", environments: [{ name: "workers-deploy" }], user: { login: "colinhacks" }, comment: "" }]
 const deployJobs = (overrides = {}) => ({
   jobs: [{
     name: "deploy",
@@ -62,7 +61,7 @@ const deployJobs = (overrides = {}) => ({
   }],
 })
 
-function apis({ deployments, versions, runs = { [RUN]: run() }, approvals = approved, jobs = deployJobs() }) {
+function apis({ deployments, versions, runs = { [RUN]: run() }, jobs = deployJobs() }) {
   const requested = []
   const cf = async (path) => {
     requested.push(path)
@@ -77,9 +76,8 @@ function apis({ deployments, versions, runs = { [RUN]: run() }, approvals = appr
     throw new Error(`unrecorded Cloudflare path ${path}`)
   }
   const gh = async (path) => {
-    const match = new RegExp(`^/repos/${REPO}/actions/runs/(\\d+)(/approvals|/jobs)?$`).exec(path)
+    const match = new RegExp(`^/repos/${REPO}/actions/runs/(\\d+)(/jobs)?$`).exec(path)
     if (!match) throw new Error(`unrecorded GitHub path ${path}`)
-    if (match[2] === "/approvals") return approvals
     if (match[2] === "/jobs") return jobs
     return runs[match[1]] ?? null
   }
@@ -151,7 +149,7 @@ test("a forged CI message is caught by the run: replayed outside its window, wro
   assert.ok(missing.some((p) => p.includes(`run ${RUN}, which does not exist in ${REPO}`)), missing.join("\n"))
 })
 
-test("a run only vouches for an upload once it has finished well, was approved, and the upload is inside its Deploy step", async () => {
+test("a run only vouches for an upload once it has finished well and the upload is inside its Deploy step", async () => {
   const stamped = (fixture) => check({
     deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1])],
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z")],
@@ -166,9 +164,6 @@ test("a run only vouches for an upload once it has finished well, was approved, 
   await refusedFor({ runs: { [RUN]: run({ conclusion: "cancelled" }) } }, "completed/cancelled, not a finished")
   await refusedFor({ runs: { [RUN]: run({ conclusion: "failure" }) } }, "completed/failure, not a finished")
   await refusedFor({ runs: { [RUN]: run({ run_attempt: 2 }) } }, "on attempt 2")
-  await refusedFor({ approvals: [] }, "nobody approved")
-  await refusedFor({ approvals: [{ state: "rejected", environments: [{ name: "workers-deploy" }] }] }, "nobody approved")
-  await refusedFor({ approvals: [{ state: "approved", environments: [{ name: "npm-publish" }] }] }, "nobody approved")
   await refusedFor({ jobs: deployJobs({ conclusion: "skipped" }) }, "Deploy step did not succeed")
   await refusedFor({ jobs: { jobs: [] } }, "Deploy step did not succeed")
   // Inside the run, but long before the step that uploads.
@@ -257,7 +252,7 @@ test("an upload by a member's own token fails however it is stamped, even with W
   const member = "owner@example.com"
   const members = [createHash("sha256").update(member).digest("hex")]
   const mine = { author_id: "user1234", author_email: member, created_on: "2026-10-09T09:03:05Z", source: "wrangler" }
-  // A forged stamp of a real, approved run, inside its Deploy step: the only thing left to go on is who uploaded.
+  // A forged stamp of a real, finished run, inside its Deploy step: the only thing left to go on is who uploaded.
   const fixture = {
     deployments: [deployment(d1, "2026-10-09T09:03:10Z", [v1], `ci:${SHA} run:${RUN}`, member)],
     versions: [ciVersion(v1, "2026-10-09T09:03:05Z", { metadata: mine })],

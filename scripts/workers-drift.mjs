@@ -13,12 +13,15 @@
 //   version AND the deployment. Anyone with a token can type that, so on its own it proves nothing;
 //   what it buys is the run id for the next check.
 // - The run. The named run must exist in THIS repository, be a `workflow_dispatch` of
-//   workers-deploy.yml on main at the named sha, have FINISHED and succeeded on its first attempt,
-//   carry an approval on the `workers-deploy` environment, and the upload must fall inside its Deploy
-//   step. Until 2026-11-05 any run that was merely live counted, so an upload stamped with a run still
-//   waiting for approval, or one later cancelled, passed. A Cloudflare token cannot create a GitHub
-//   run, and a replayed message lands outside the step. A drift run that fires during a real deploy
-//   therefore fails once, because that deploy has not finished yet.
+//   workers-deploy.yml on main at the named sha, have FINISHED and succeeded on its first attempt, and
+//   the upload must fall inside its Deploy step. Until 2026-11-05 any run that was merely live counted,
+//   so an upload stamped with a run still in progress, or one later cancelled, passed. A Cloudflare
+//   token cannot create a GitHub run, and a replayed message lands outside the step. A drift run that
+//   fires during a real deploy therefore fails once, because that deploy has not finished yet.
+//   From 2026-11-05 to 2026-11-11 the run also had to carry an approval on the `workers-deploy`
+//   environment. The maintainer dropped that reviewer (2026-11-11: one approval per deploy, the
+//   Cloudflare Authorize click that mints its token), since whatever could dispatch the run as him held
+//   the GitHub token that could approve it too.
 // - The author. Every version records who uploaded it. CI uploads with an account-owned token that
 //   nothing else holds, and such a token uploads as its own id with no address (seen on the first CI
 //   deploy, 2026-11-06), so its author differs from any laptop's. A deploy token lasts one hour, so each
@@ -28,7 +31,7 @@
 //   dashboard edit or a raw API upload fails it for free.
 //
 // WHAT IT CANNOT CATCH. A genuine CI run of bad code passes every check here, and so does anyone who can
-// dispatch and approve one. This is detection, not the gate.
+// push to main and dispatch one in the hour a deploy token exists. This is detection, not the gate.
 //
 // THE WHOLE ACCOUNT, compared with BASELINE below. Everything a deploy token or a dashboard login can
 // change without uploading to these two Workers: a third Worker with a more specific route, a custom
@@ -70,7 +73,6 @@ import { pathToFileURL } from "node:url"
 export const ACCOUNT_ID = "dde3ec1f6b1f0a397ea82a9ed322f5ce"
 export const WORKERS = ["frizz-relay", "frizz-registrar"]
 export const DEPLOY_WORKFLOW = ".github/workflows/workers-deploy.yml"
-export const DEPLOY_ENVIRONMENT = "workers-deploy"
 // The step of that workflow that uploads. Renaming it there fails every deploy's check here.
 export const DEPLOY_STEP = "Deploy"
 export const LOOKBACK_MS = 2 * 60 * 60 * 1000
@@ -188,11 +190,8 @@ export async function checkWorker(script, { cf, gh, repo, expectedAuthors = [], 
     if (run.status !== "completed" || run.conclusion !== "success") {
       return `it names run ${ci.runId}, which is ${run.status}${run.conclusion ? `/${run.conclusion}` : ""}, not a finished, successful deploy`
     }
-    // A re-run reopens an old run, so it could lend a months-old approval to a new upload.
+    // A re-run reopens an old run: it uploads whatever commit that run built, under a stamp already vouched for.
     if (run.run_attempt !== 1) return `it names run ${ci.runId}, on attempt ${run.run_attempt}; only a first attempt counts`
-    const approvals = (await ask(`${runPath}/approvals`)) ?? []
-    const approved = approvals.some((a) => a.state === "approved" && (a.environments ?? []).some((e) => e.name === DEPLOY_ENVIRONMENT))
-    if (!approved) return `it names run ${ci.runId}, which nobody approved on ${DEPLOY_ENVIRONMENT}`
     const jobs = (await ask(`${runPath}/jobs`))?.jobs ?? []
     const step = jobs.flatMap((job) => job.steps ?? []).find((s) => s.name === DEPLOY_STEP && s.conclusion === "success")
     if (!step) return `it names run ${ci.runId}, whose ${DEPLOY_STEP} step did not succeed`

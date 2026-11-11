@@ -21,6 +21,11 @@ name: workers-deploy
 # header says why. Dispatching with the secret empty fails at Deploy, having changed nothing. It is an
 # account-owned Cloudflare token with Workers Scripts Edit and no route permission.
 #
+# THE GATE is that token. It exists only after the maintainer authorizes a Cloudflare sign-in, so the
+# `workers-deploy` environment asks for no reviewer: it keeps only its rule that main alone may deploy.
+# A GitHub approval on top was dropped on 2026-11-11 (maintainer: one approval per deploy), because
+# whatever could dispatch this run as him held the GitHub token that could approve it too.
+#
 # `wrangler versions` rather than `wrangler deploy`, which deletes and recreates each Worker's routes on
 # every run and so would need a token that can point any board's name at any Worker. This leaves routes
 # and crons alone, so changing either in wrangler.toml is not deployed by this workflow: that is a

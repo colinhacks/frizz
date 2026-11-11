@@ -10,10 +10,11 @@
 // with a Cloudflare token copied off the maintainer's disk (`~/.frizz-cf-token`, a plain file).
 //
 // NO STANDING DEPLOY TOKEN. A token parked in the `workers-deploy` environment is not safe either: the
-// repository owner's GitHub token, in one `keyward -- gh` window, can remove the environment's reviewers
-// and read the secret from a branch workflow, with nothing on main, and a Cloudflare token works from
+// repository owner's GitHub token, in one `keyward -- gh` window, can loosen the environment's main-only
+// rule and read the secret from a branch workflow, with nothing on main, and a Cloudflare token works from
 // anywhere until it expires. So one exists only for the hour around a deploy, and between deploys there
-// is nothing to steal. The last Worker upload before this rule was five weeks old, so it rarely costs
+// is nothing to steal. That hour is also the gate: minting the token takes the maintainer's Authorize
+// click, so the environment asks for no reviewer (2026-11-11). The last Worker upload before this rule was five weeks old, so it rarely costs
 // anything. It has no route permission because the workflow uses `wrangler versions`, which leaves routes
 // alone. Whether Cloudflare can narrow it to the two scripts is checked by `--dry-run`, which lists the
 // account's Workers permission groups.
@@ -40,7 +41,7 @@
 //   T="$(cat '<secret pipe>')"
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --audit [--out=<dir>]
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=drift          once, then yearly
-//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=deploy         then dispatch and approve within the hour
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=deploy         then dispatch within the hour
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --revoke-deploy       right after the deploy
 //
 // Add `--dry-run` to a mint to see the plan and mint nothing.
