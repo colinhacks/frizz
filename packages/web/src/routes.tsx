@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from "react"
 import { useSnapshot } from "valtio"
+import { useQuery } from "@tanstack/react-query"
 import { Navigate, Outlet, createBrowserRouter, useLocation, useNavigate, useParams, useRevalidator, useRouteError } from "react-router"
 import { App } from "./App.tsx"
 import { RootErrorPage } from "./components/ErrorBoundary.tsx"
@@ -9,16 +10,15 @@ import { StandaloneThreadPage } from "./components/lazySurfaces.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { PageHosts } from "./components/PageHosts.tsx"
 import { applyPath, registerNavigate, threadParam, withThreadParam } from "./lib/router.ts"
-import { CONSOLE_PATH, innerPath, isConsolePath } from "./lib/base-path.ts"
+import { CONSOLE_PATH, innerPath } from "./lib/base-path.ts"
 import { bindConsole, feedIsBoundTo, feedIsConsole, leaveConsole, rebindProject } from "./api/socket.ts"
 import { noteStandaloneThreadRender, primeFullscreenReturn, resetProjectState, store } from "./store.ts"
 import { useProjectRailVisible } from "./lib/projectRail.ts"
 import { ownedByThisPage } from "./lib/projectOwnership.ts"
-import { choseProjects, setHomeView, useHomeView, withoutProjectsChoice } from "./lib/homeView.ts"
+import { choseProjects, PROJECTS_HREF, setHomeView, useHomeView, withoutProjectsChoice } from "./lib/homeView.ts"
 import { useConsoleFeedProjects } from "./lib/consoleProjects.ts"
-import { HomeSwitcher } from "./components/HomeSwitcher.tsx"
-import { paneProto, paneSidebarLeft, usePaneWide } from "./lib/threadPane.ts"
 import { useIsMobile } from "./lib/mobile.ts"
+import { rpc } from "./api/rpc.ts"
 
 // THE ROUTE TREE — and, more to the point, the LAYOUT that outlives a navigation.
 //
@@ -62,7 +62,6 @@ function RootLayout() {
   // launching project's board, not the grid: RootRoute.)
   const onGrid = pathname === "/" && threadParam(search) === null
   const railVisible = railOn && !onGrid
-  const isMobile = useIsMobile()
   return (
     <TooltipProvider>
       {/* Outside the <Outlet/> on purpose: this is the element that must survive the navigation.
@@ -77,26 +76,12 @@ function RootLayout() {
       <div className={railVisible ? RAIL_INSET_CLASS : undefined}>
         <Outlet />
       </div>
-      {/* The Console's placement of the Projects | Console pill. The grid draws its own, at the head of
-          the page (HomeSwitcher.tsx). */}
-      {isConsolePath(pathname) && !isMobile ? <ConsoleHomeSwitcher railVisible={railVisible} /> : null}
       {/* HOSTED BY THE LAYOUT, not by the board: the toaster lived inside <App/>, so `showToast` from
           anywhere else raised a toast with nowhere to render — silently, since the store field is set
           either way. The full-screen page, outside this layout, mounts the same set (PageHosts). */}
       <PageHosts />
     </TooltipProvider>
   )
-}
-
-// THE ONE-THREAD PANE: the pill's corner belongs to the sidebar, which full screen puts away.
-// It follows the sidebar's own left edge, which is not the centred pair's (ThreadPane.tsx). With a file
-// open the columns fill the page, so that edge is the page's.
-function ConsoleHomeSwitcher({ railVisible }: { railVisible: boolean }) {
-  const { folded, railHidden } = useSnapshot(paneProto)
-  const { paneSlug, filePanels } = useSnapshot(store)
-  const wide = usePaneWide()
-  if (folded && paneSlug) return null
-  return <HomeSwitcher railVisible={railVisible} sidebarInset={wide && filePanels.length > 0 ? "16px" : `calc(${paneSidebarLeft(wide && !railHidden)} + 16px)`} />
 }
 
 /**
@@ -204,11 +189,10 @@ function RootRoute() {
  * was a no-op in every case, so removing it changes nothing that ever ran.)
  */
 function GridRoute() {
-  // `/` is the home the operator KEEPS: while that is the Console, the grid forwards to it. The switcher's
-  // Projects tab links to the grid's own address (lib/homeView.ts PROJECTS_HREF), which never forwards,
-  // so the grid is always one click away. Not on a phone: it has no switcher, and its board's back arrow
-  // comes HERE for the projects list — forwarding would send that arrow straight back to the Console it
-  // was leaving.
+  // `/` is the home the operator KEEPS: while that is the Console, the grid forwards to it. The houses link
+  // to the grid's own address (lib/homeView.ts PROJECTS_HREF), which never forwards, so the grid is always
+  // one click away. Not on a phone: its board's back arrow comes HERE for the projects list — forwarding
+  // would send that arrow straight back to the Console it was leaving.
   //
   // Only a BARE `/` forwards. Anything after it is for the grid to read — PROJECTS_HREF's marker, the
   // launcher's `?add=<dir>`, the server's `?unknown=<slug>` (ProjectGrid) — and the forward dropped it: run
@@ -274,10 +258,17 @@ function ConsoleRoute() {
   // Which projects the feed connects to: the server's open ones, in rail order (lib/consoleProjects.ts).
   useConsoleFeedProjects()
   useRouteToStore()
-  // Arriving here by any door makes the Console the home that is kept — the switcher's own click, a
+  // Arriving here by any door makes the Console the home that is kept — the grid's Console link, a
   // bookmark, a link — so a bare `/` comes back to it. The houses do not: they always go to the grid
   // (lib/homeView.ts).
   useEffect(() => setHomeView("console"), [])
+  // A machine with no project has nothing for the Console to show and nowhere for its prompt box to send:
+  // it drew an empty sidebar whose box said "Profile loading…" for good. The grid's welcome is the page
+  // for that, through PROJECTS_HREF so the kept home becomes the grid and a bare `/` does not forward back
+  // here. The registry's own list, not the Console's open projects: a project the server has not opened
+  // yet is still a project.
+  const registry = useQuery({ queryKey: ["projectsList"], queryFn: () => rpc.projectsList() })
+  if (registry.data?.length === 0) return <Navigate to={PROJECTS_HREF} replace />
   if (!ready) return null
   return <App key="@console" />
 }

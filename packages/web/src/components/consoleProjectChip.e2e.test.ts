@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): at the upper left of the status row, over the prompt
-// box it points, where the house stood until 2026-11-06. Clicking a row of its menu picks the project a
+// THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): the status row's crumb, after the house, over the
+// prompt box it points. It led the row alone from 2026-11-06 until the Projects | Console pill above it went on
+// 2026-11-10, and the house came back as the way out. Clicking a row of its menu picks the project a
 // prompt goes to. Each row's arrow, in a rail down the menu's right edge, opens that project in a new tab,
 // and that must not move the pick: the two sit on one line, and a pick nobody meant sends the next thread to
 // the wrong project.
@@ -15,7 +16,7 @@ const baseUrl = process.env.FRIZZ_CONSOLE_PROJECT_CHIP_E2E_URL
 const CHIP = "[data-console-project-chip]"
 const PICK_KEY = "frizz:console-dispatch-project"
 
-test("the chip leads the status row, and its menu picks a project or opens one in a new tab", { skip: !baseUrl, timeout: 120_000 }, async () => {
+test("the chip follows the house in the status row, and its menu picks a project or opens one in a new tab", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   // The Console lists the projects the server has opened, and a server opens one on its first read.
@@ -33,17 +34,17 @@ test("the chip leads the status row, and its menu picks a project or opens one i
     const place = await page.evaluate((chip) => {
       const box = document.querySelector("[data-composer-box]")!
       const row = document.querySelector("[data-status-row]")!
-      const first = row.firstElementChild!
-      const square = first.querySelector("*")!.getBoundingClientRect()
+      const crumb = row.firstElementChild!
+      const [house, slash, last] = [...crumb.children]
       return {
-        leads: first.matches(chip),
+        houseLeads: house.matches('a[aria-label="All projects"]') && house.getAttribute("href") === "/?home=projects",
+        slash: slash.textContent,
+        chipFollows: last.querySelector(chip) !== null,
         inBox: box.querySelector(chip) !== null,
-        above: first.getBoundingClientRect().bottom <= box.getBoundingClientRect().top,
-        squareToBoxEdge: Math.abs(square.left - box.getBoundingClientRect().left),
-        house: row.querySelector('a[aria-label="All projects"]') !== null,
+        above: crumb.getBoundingClientRect().bottom <= box.getBoundingClientRect().top,
       }
     }, CHIP)
-    assert.deepEqual(place, { leads: true, inBox: false, above: true, squareToBoxEdge: 0, house: false })
+    assert.deepEqual(place, { houseLeads: true, slash: "/", chipFollows: true, inBox: false, above: true })
 
     const shown = () => page.$eval(CHIP, (el) => el.getAttribute("data-console-project-chip")!)
     const start = await shown()

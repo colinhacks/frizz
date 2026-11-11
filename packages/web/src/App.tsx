@@ -41,8 +41,8 @@ function maybeShowSignInHint() {
 export function App() {
   const snap = useSnapshot(store)
   // THE CONSOLE is this same board shell over every project's threads (routes.tsx ConsoleRoute): its own
-  // sidebar, its own feed (each project's board read and merged by api/consoleFeed.ts), and room at the
-  // top for the home switcher. A project page's board is read by api/socket.ts as the page loads.
+  // sidebar and its own feed (each project's board read and merged by api/consoleFeed.ts). A project page's
+  // board is read by api/socket.ts as the page loads.
   const onConsole = isConsolePath()
   const sidebarPresence = useRef<SidebarPresence>({ projectDir: null, hasBeenVisible: false })
 
@@ -214,8 +214,7 @@ export function App() {
               there is leftover space anyway and the padding stops binding.
             · the gutter scales clamp(28px → 3.4vw → 52px): ~28px where space is scarce, back to the
               tuned 52px by ~1530px, where the pair has margins to spare. Wide layouts are unchanged.
-          The classes are lib/boardColumns.ts's: the home switcher lays out an empty copy of this pair to
-          find the top-left corner of the Console's sidebar, where it sits. */}
+          The classes are lib/boardColumns.ts's. */}
       {/* THE ONE-THREAD PANE, on every board that has had a thread, read as the sidebar reads it
           (lib/sidebarPresence): an empty keyframe while the live stream reconnects or catches up must not
           unmount the pane and the thread open in it. A brand-new project keeps its centered first-task

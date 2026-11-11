@@ -6,10 +6,11 @@
 // grid is the rail drawn larger.
 //
 // A HOME SCREEN, not a list of cards (maintainer 2026-11-03, choosing it from six mockups): the project's
-// square at 64px with its badge, and its name. The page's head is
-// the Projects | Console pill, where the mockup had a search field (HomeSwitcher.tsx). The cards it
-// replaced also showed each project's path, slug and when it was last opened; the path is the tile's
-// tooltip now, and the rest is in the rename dialog or nowhere.
+// square at 64px with its badge, and its name. The cards it replaced also showed each project's path, slug
+// and when it was last opened; the path is the tile's tooltip now, and the rest is in the rename dialog or
+// nowhere. A Projects | Console pill headed the page until 2026-11-10 (maintainer: "we just drop the entire
+// tab switcher between console and the projects page"); the way to the Console is a line under the icons
+// (ConsoleLink), once there is more than one project for it to gather.
 //
 // It draws from the registry index and the rail's counts — one file read and one cheap poll, no
 // databases opened. Answering a list request by opening forty projects is exactly the cost lazy
@@ -17,18 +18,17 @@
 // boot — server/tenant-prime.ts — but on its own clock, never on a request's.)
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
-import { Ellipsis, ImagePlus, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
+import { Ellipsis, ImagePlus, Inbox, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
 import { Link, useNavigate } from "react-router"
 import { useSnapshot } from "valtio"
 import { slugify, type ProjectCard, type ProjectRailCounts } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
-import { projectHref } from "../lib/base-path.ts"
+import { CONSOLE_PATH, projectHref } from "../lib/base-path.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { showToast, store } from "../store.ts"
 import { AddProjectDialog } from "./AddProjectDialog.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/Menu.tsx"
-import { HomeTabs } from "./HomeSwitcher.tsx"
 import { ProjectSquare, projectSquareLabel, railCountsLabel, useProjectIconChange, warmProjectPicker } from "./ProjectRail.tsx"
 import { Tooltip } from "./Tooltip.tsx"
 import { SettingsDrawer } from "./SettingsDrawer.tsx"
@@ -278,6 +278,42 @@ function AddTile({ pending, onClick }: { pending: boolean; onClick: () => void }
     </button>
   )
 }
+
+/**
+ * THE WAY TO THE CONSOLE, under the icons: one quiet line, and the queue across every project when there is
+ * one. It says what the Console is, because nothing else on the page does, and a word alone ("Console")
+ * meant nothing to whoever had not opened it. Drawn only with two projects or more: with one, the Console
+ * is that project's board again.
+ */
+function ConsoleLink({ queued }: { queued: number }) {
+  return (
+    <Link
+      to={CONSOLE_PATH}
+      data-home-console
+      className="group/console mt-12 flex h-7 items-center gap-2 rounded-full px-3 text-[12.5px] leading-none text-muted outline-none transition-colors hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+    >
+      <Inbox size={14} aria-hidden className="shrink-0" />
+      <span className="text-fg/85 group-hover/console:text-fg" style={CAP_TRIM}>Console</span>
+      {queued > 0 ? (
+        <span
+          aria-label={`${queued} in the queue`}
+          data-home-console-count={queued}
+          className="flex h-[14px] shrink-0 items-center justify-center rounded-full bg-accent-fill text-[10px] font-semibold leading-none proportional-nums text-on-accent"
+          style={{ width: queued < 10 ? 14 : queued < 100 ? 20 : 26 }}
+        >
+          <span style={CAP_TRIM}>{queued}</span>
+        </span>
+      ) : null}
+      {/* The thread header's separator ("Last active 8h ago · 79% context"): with only the gap, the name and
+          what it is read as two items. */}
+      <span aria-hidden className="text-muted-45" style={CAP_TRIM}>·</span>
+      <span className="text-muted-70" style={CAP_TRIM}>every project's queue on one page</span>
+    </Link>
+  )
+}
+
+/** Trims a label to its cap band, so `items-center` centres ink on ink rather than line box on line box. */
+const CAP_TRIM = { textBox: "trim-both cap alphabetic" } as CSSProperties
 
 /** The last path segment, on either separator: the registry stores native paths and Windows uses `\\`. */
 function folderName(path: string): string {
@@ -660,8 +696,8 @@ export function ProjectGrid() {
     queryKey: ["projectsList"],
     queryFn: () => rpc.projectsList(),
   })
-  // The rail's poll, under the rail's key: one request feeds the rail on a board, the Console tab's count
-  // and every tile here.
+  // The rail's poll, under the rail's key: one request feeds the rail on a board, every tile here and the
+  // Console link's count.
   const counts = useQuery({
     queryKey: ["projectsRailCounts"],
     queryFn: () => rpc.projectsRailCounts(),
@@ -687,8 +723,8 @@ export function ProjectGrid() {
     )
   }
 
-  // An empty machine has nothing to switch between and nothing to show in a grid: it gets the welcome,
-  // and the one card that does something about it.
+  // An empty machine has nothing to show in a grid: it gets the welcome, and the one card that does
+  // something about it.
   if (empty) {
     return (
       <div className="flex min-h-dvh w-full flex-col px-6 py-14">
@@ -724,25 +760,32 @@ export function ProjectGrid() {
     <div data-home-grid-page className="flex min-h-dvh w-full flex-col px-10 py-16">
       <div className="m-auto flex w-full flex-col items-center">
         <h1 className="sr-only">Projects</h1>
-        <HomeTabs />
         {error ? (
-          <p className="mt-14 text-[13px] text-muted">Could not read the project registry: {String(error)}</p>
+          <p className="text-[13px] text-muted">Could not read the project registry: {String(error)}</p>
         ) : isPending ? (
-          <p className="mt-14 text-[13px] text-muted">Loading…</p>
+          <p className="text-[13px] text-muted">Loading…</p>
         ) : (
-          // AS MANY ACROSS AS THE WINDOW HOLDS, EIGHT AT MOST: fixed-width tracks, so a tile is the same
-          // size in every window and the row centres rather than stretching its gaps. 952px is eight
-          // 112px tiles and their seven 8px gaps.
-          <div
-            data-home-grid
-            className="mt-14 grid w-full max-w-[952px] justify-center gap-x-2 gap-y-6"
-            style={{ gridTemplateColumns: `repeat(auto-fill, ${TILE_PX}px)` }}
-          >
-            <AddTile pending={pick.isPending} onClick={() => pick.mutate()} />
-            {data.map((project) => (
-              <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} />
-            ))}
-          </div>
+          <>
+            {/* AS MANY ACROSS AS THE WINDOW HOLDS, EIGHT AT MOST: fixed-width tracks, so a tile is the same
+                size in every window and the row centres rather than stretching its gaps. 952px is eight
+                112px tiles and their seven 8px gaps. `auto-fit`, not `auto-fill`: the tracks no tile fills
+                collapse, so two tiles stand in the middle of the page and not at the left of a row of
+                eight empty cells, as they did under a centred pill. A last row that is not full starts at
+                the left, as a home screen's does. */}
+            <div
+              data-home-grid
+              className="grid w-full max-w-[952px] justify-center gap-x-2 gap-y-6"
+              style={{ gridTemplateColumns: `repeat(auto-fit, ${TILE_PX}px)` }}
+            >
+              <AddTile pending={pick.isPending} onClick={() => pick.mutate()} />
+              {data.map((project) => (
+                <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} />
+              ))}
+            </div>
+            {data.length > 1 ? (
+              <ConsoleLink queued={Object.values(counts.data ?? {}).reduce((sum, c) => sum + c.queued, 0)} />
+            ) : null}
+          </>
         )}
       </div>
       {fallbackDialog}

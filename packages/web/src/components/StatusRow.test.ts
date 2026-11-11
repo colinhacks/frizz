@@ -134,15 +134,18 @@ test("a cold board still reserves the crumb's measure, and says it is loading", 
   assert.match(html, /aria-label="All projects"/)
 })
 
-test("the Console's row leads with the project chip, and draws no house and no crumb", () => {
-  // "The project chip should show up to the upper left in the console … we drop the home icon from
-  // console" (maintainer 2026-11-06). The switcher above the row is the way to the grid.
+test("the Console's crumb is the project chip, after the house", () => {
+  // The chip stood alone from 2026-11-06 ("we drop the home icon from console"), while a Projects | Console
+  // pill above the row was the way to the grid. The pill went on 2026-11-10, so the house is the way out.
   const html = render("colinhacks/frizz", { onConsole: true })
-  assert.doesNotMatch(html, /aria-label="All projects"/)
-  assert.doesNotMatch(html, /aria-label="Breadcrumb"/)
-  assert.doesNotMatch(html, /data-project-crumb/)
-  assert.doesNotMatch(html, />\/<\/span>/, "no slash: the chip stands alone")
-  assert.ok(html.indexOf("data-chip") >= 0 && html.indexOf("data-chip") < html.indexOf('aria-label="Settings"'), "the chip leads, the icons follow")
+  const home = html.indexOf('aria-label="All projects"')
+  const slash = html.indexOf('<span aria-hidden="true" class="shrink-0 select-none text-muted-45">/</span>')
+  const chip = html.indexOf("data-chip")
+  assert.ok(home >= 0 && slash > home && chip > slash, "the house, the slash, then the chip")
+  assert.match(html, /<nav aria-label="Breadcrumb" class="flex min-w-0 items-center gap-2\.5">/)
+  assert.match(html, /<a [^>]*href="\/\?home=projects"[^>]*aria-label="All projects"|<a [^>]*aria-label="All projects"[^>]*href="\/\?home=projects"/, "the house goes to the grid, never the kept Console")
+  assert.doesNotMatch(html, /data-project-crumb/, "the chip, not a project's crumb")
+  assert.ok(chip < html.indexOf('aria-label="Settings"'), "the chip leads, the icons follow")
   assert.match(html, /ml-auto/, "the icons keep the right end")
 })
 

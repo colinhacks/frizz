@@ -57,12 +57,13 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 // this spacing. UIs are conflicting here"). `gap-2.5` leaves 4px between the slash and either surface
 // when lit, and 10px of ink a side at rest: the slash stands centred between the house and the name.
 
-// THE CONSOLE'S ROW LEADS WITH THE PROJECT CHIP, WITH NO HOUSE AND NO CRUMB (maintainer 2026-11-06: "the
-// project chip should show up to the upper left in the console … we drop the home icon from console"). The
-// chip picks where the prompt below it goes, and each row of its menu opens that project in a new tab
-// (ConsoleProjectChip.tsx). The switcher directly above this row is the way to the grid (HomeSwitcher.tsx).
-// The row read `⌂ / All projects ▾` until 2026-10-29, a second project menu over the chip that then rode inside
-// the prompt box, and then the house alone (maintainer 2026-11-01: "keep the home icon!").
+// THE CONSOLE'S CRUMB IS THE PROJECT CHIP, after the same house: `⌂ / ▣ acme ▾`. The chip picks where the
+// prompt below it goes, and each row of its menu opens that project in a new tab (ConsoleProjectChip.tsx).
+// The row read `⌂ / All projects ▾` until 2026-10-29, a second project menu over the chip that then rode
+// inside the prompt box, and then the house alone (maintainer 2026-11-01: "keep the home icon!"). From
+// 2026-11-06 the chip stood alone (maintainer: "we drop the home icon from console"), because a Projects |
+// Console pill above the row was the way to the grid; the pill went on 2026-11-10, and the house came back
+// as the way out.
 
 /**
  * Takes nothing beyond the Console's flag and its chip, and reads its live values itself. Its call sites
@@ -79,7 +80,7 @@ export function StatusRow({ onConsole = false, projectChip }: { onConsole?: bool
       // block rather than a strip parked above a box.
       className="mb-2.5 flex min-w-0 items-center gap-3 text-[12px]"
     >
-      {onConsole ? projectChip : <Breadcrumb />}
+      {onConsole ? <ConsoleBreadcrumb chip={projectChip} /> : <Breadcrumb />}
       {/* THE ICONS, right-justified, with settings in the corner. Each is shrink-0, so the crumb gives way
           before any of them does. */}
       <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -141,6 +142,17 @@ function Breadcrumb() {
           <span className="identity-placeholder w-24" aria-hidden="true" />
         )}
       </span>
+    </nav>
+  )
+}
+
+/** The Console's: the way out, and the chip saying which project the prompt box sends to. */
+function ConsoleBreadcrumb({ chip }: { chip: ReactNode }) {
+  return (
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2.5">
+      <HomeLink />
+      <span aria-hidden="true" className="shrink-0 select-none text-muted-45">/</span>
+      <span className="flex min-w-0 items-center">{chip}</span>
     </nav>
   )
 }

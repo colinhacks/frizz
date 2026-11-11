@@ -31,7 +31,7 @@
 // string as well as a number; the order test checks the two agree.
 
 export const LAYER = {
-  /** Persistent fixed chrome: the project rail, the home switcher, the phone board's header and its
+  /** Persistent fixed chrome: the project rail, the phone board's header and its
    *  new-thread button. Above the page's own sticky headers (≤ 20), under every drawer, modal and scrim
    *  — a modal's scrim has to cover it. The rail sat at 60 and punched through the Settings scrim. */
   chrome: 30,

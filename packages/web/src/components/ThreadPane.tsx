@@ -89,9 +89,9 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
     : "1 1 0"
   const [peek, setPeek] = useState(false)
   if (!folded && peek) setPeek(false)
-  // A board's sidebar keeps 12px clear above and below what it centres (its 52px top was the line the
-  // first queue card opened on). The Console's top is held by the home switcher above its status row.
-  const boardTop = isConsolePath() ? "" : "[&>aside]:!py-3"
+  // The sidebar keeps 12px clear above and below what it centres (a board's 52px top was the line the first
+  // queue card opened on), the Console's as a project's.
+  const boardTop = "[&>aside]:!py-3"
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

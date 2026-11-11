@@ -1,9 +1,5 @@
 // THE BOARD'S TWO COLUMNS — the sidebar and the workpane beside it — as the classes that size and place
-// them. App.tsx lays a board and the Console out with these, and the home switcher
-// (components/HomeSwitcher.tsx) lays out an EMPTY copy of the same pair to find where the Console's
-// sidebar begins, so it can sit at that column's top-left on both homes without measuring anything. A
-// width written here moves the switcher with the column; a width written anywhere else would leave it
-// behind.
+// them. App.tsx lays a board and the Console out with these.
 
 /** The pair, centred, with the scaling gutter between the columns (App.tsx explains each number). */
 export const BOARD_PAIR_CLASS =

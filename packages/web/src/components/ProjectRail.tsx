@@ -726,7 +726,7 @@ export function ProjectRail() {
           rounded rect at the head of a column of identical ones.
           ALWAYS THE GRID, through PROJECTS_HREF rather than `/`, which forwards to a kept Console. It
           followed the kept home until 2026-10-27, and wore the Console's queue count while that was the
-          Console; the switcher's Console tab carries that count (HomeSwitcher.tsx). */}
+          Console; the grid's Console link carries that count (ProjectGrid.tsx ConsoleLink). */}
       <Tooltip side="right" label="All projects">
         <Link
           to={PROJECTS_HREF}

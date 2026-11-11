@@ -32,7 +32,6 @@ import { rpcFor } from "../api/rpc.ts"
 import { unlandedDispatches, useConsolePendingDispatches, type PendingDispatchEntry } from "../lib/pendingDispatch.ts"
 import { ProjectScope } from "../lib/projectScope.tsx"
 import { STACKED_RAIL_ANCHOR_CLASS, stackedRailAnchor } from "../lib/stackedRailAnchor.ts"
-import { CONSOLE_TOP_PX } from "../lib/homeView.ts"
 import { SIDEBAR_WIDTH_CLASS } from "../lib/boardColumns.ts"
 import { DispatchForm } from "./NewThreadModal.tsx"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
@@ -46,18 +45,18 @@ import { StatusRow } from "./StatusRow.tsx"
 // The same column as a project's (Sidebar.tsx): the status row and the prompt box at its top, the rows
 // under them, the scroll marker opposite the card being read. What differs is what it holds, and where
 // it sits:
-//   · the status row leads with the PROJECT chip, saying where a new task goes, in place of the house and
-//     the crumb (StatusRow.tsx): the switcher above it is the way to the grid, and the chip's menu the way
-//     to a project;
+//   · the status row's crumb is the PROJECT chip, saying where a new task goes, after the house that is
+//     the way to the grid (StatusRow.tsx); the chip's menu is the way to a project;
 //   · "By status" adds Snoozed and Done under Queue and Running, collapsed until opened and paged behind
 //     "Show more" (lib/consoleBoard.ts); "By project" stays Queue and Running alone, what needs the
 //     operator now;
 //   · a chip choosing between the two groupings, "By status" and "By project", in front of the queue
 //     order's chip that every board has (RailViewChips.tsx);
 //   · "By status" keeps a pin shelf of its own, apart from every project board's (lib/consoleBoard.ts
-//     PINS): a Pinned band above Queue, drawn and dragged like a board's;
-//   · the home switcher between the grid and the Console stands at its top-left (HomeSwitcher.tsx), so
-//     the column opens CONSOLE_TOP_PX down, under the pill, rather than centred in the window.
+//     PINS): a Pinned band above Queue, drawn and dragged like a board's.
+//
+// It sits where a project's does, centred in the window by the one-thread pane (ThreadPane.tsx). It opened
+// 70px down instead while a Projects | Console pill stood above it, until 2026-11-10.
 
 export const CONSOLE_SIDEBAR_COLUMN_CLASS =
   `sticky top-0 self-start h-screen ${SIDEBAR_WIDTH_CLASS} flex flex-col pb-4 max-[800px]:static max-[800px]:h-auto max-[800px]:pt-16`
@@ -138,7 +137,7 @@ export function ConsoleSidebar() {
   )
 
   return (
-    <aside ref={stackedRailAnchor} className={`${CONSOLE_SIDEBAR_COLUMN_CLASS} ${STACKED_RAIL_ANCHOR_CLASS}`} style={{ paddingTop: CONSOLE_TOP_PX }} data-console-sidebar>
+    <aside ref={stackedRailAnchor} className={`${CONSOLE_SIDEBAR_COLUMN_CLASS} ${STACKED_RAIL_ANCHOR_CLASS}`} data-console-sidebar>
       <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col max-[800px]:max-h-none">
         <div className="mb-5 shrink-0 px-0.5">
           <ConsoleDispatch />
