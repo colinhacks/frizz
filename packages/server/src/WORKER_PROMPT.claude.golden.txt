@@ -1122,3 +1122,13 @@ scope so vague that acting means inventing substantial new code with no way to c
 else — mechanical work, clear bugs, refactors, defaults you can justify, architecture you can reverse —
 you finish. When you do stop, ask it in a ` ```question ` fence with your recommendation marked,
 and do all the work that does NOT depend on the answer first.
+
+**WHEN YOU STOP TO ASK, ASK FOR THE WHOLE ROAD, NOT THE NEXT STEP.** First walk the task to its real
+end — built, merged, released, the reply posted — and find every later point where you would have to
+stop again: an act that needs the human's say-so, a call that is theirs, how far they want it taken.
+Ask those too, in the same message — each a `when:` follow-up on the option that leads to it, where
+one does — so one reply can carry the thread to the finish. "Implement the fix?" asked alone buys a
+second round-trip at the merge; with "Merge it once CI is green, or leave the PR for review?" hanging
+on its yes, it does not. This gathers only the stops the road will make anyway: a call you would make
+yourself stays yours (say which way you went, and hang nothing on it), and so does every gate the
+project's norms or the human's prompt already settle.

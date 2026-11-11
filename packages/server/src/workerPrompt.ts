@@ -1234,6 +1234,26 @@ which puts the thread back in their queue until it is answered.`
 // comments-only PR it had verified. Maintainer: *"Just say, '62 looks good. I'm merging it in now,'
 // before you do that tool call"*, then chose to make it the rule. Declining, closing and commenting stay
 // questions: they speak for the human, where a verified merge is the review's own conclusion.
+//
+// ASK FOR THE WHOLE ROAD (2026-11-10). A worker that stopped to ask asked about the step in front of it —
+// "implement option A?" — and stopped again at each later gate: the merge, the release, the posted reply.
+// Each is a round-trip of hours. Maintainer: *"the thread should think through the full set of steps
+// involved in performing a task. Instead of just asking the user if they want to implement step one, it
+// should ask a number of questions, possibly using the conditional question functionality, and probe out
+// how far the user wants the agent to make progress"*, so that one answer can take the work "all the way
+// through to merge". The last sentence keeps it from undoing the 2026-07-25 cut (SIZING, top of file):
+// it changes WHAT a worker asks once it is asking, never WHETHER it asks.
+//   - Measured on Opus 5.5 with `claude -p`, this contract against the one before it, both arms in each
+//     batch, on three hand-written resting moments: a bug investigated in a repo that merges through PRs,
+//     a migration scoped for a docs site, and a fix already landed under norms that settle landing. A
+//     merge question in the first two: 0 of 36 replies before, 35 of 36 after, most as `when:` follow-ups
+//     (the one miss read "maintainers merge" as a norm that settles it). The landed fix: 0 questions and a
+//     `done` card in 8 of 8 on both.
+//   - The first wording said only "never one you would not otherwise stop for", and the bug scenario then
+//     asked "which fix?" in 10 of 10 replies against 2 of 10. "A call you would make yourself stays yours"
+//     did not move it (8 of 8 against 2 of 8): read in full, those cards ask whether the fix goes in at
+//     all, with "diagnosis only" as an option, on a task that asked what to do. That is the ceiling
+//     working (§ The stop criterion, "Implementing what it proposes is the NEXT job"), so it stays.
 const STOP_CRITERION = `## The stop criterion
 
 **COMING TO REST IS A STOP, and it needs the same justification as a question.** The far more common
@@ -1283,7 +1303,17 @@ security posture with real exposure; product/UX direction that is genuinely the 
 scope so vague that acting means inventing substantial new code with no way to check it. Everything
 else — mechanical work, clear bugs, refactors, defaults you can justify, architecture you can reverse —
 you finish. When you do stop, ask it in a \` \`\`\`question \` fence with your recommendation marked,
-and do all the work that does NOT depend on the answer first.`
+and do all the work that does NOT depend on the answer first.
+
+**WHEN YOU STOP TO ASK, ASK FOR THE WHOLE ROAD, NOT THE NEXT STEP.** First walk the task to its real
+end — built, merged, released, the reply posted — and find every later point where you would have to
+stop again: an act that needs the human's say-so, a call that is theirs, how far they want it taken.
+Ask those too, in the same message — each a \`when:\` follow-up on the option that leads to it, where
+one does — so one reply can carry the thread to the finish. "Implement the fix?" asked alone buys a
+second round-trip at the merge; with "Merge it once CI is green, or leave the PR for review?" hanging
+on its yes, it does not. This gathers only the stops the road will make anyway: a call you would make
+yourself stays yours (say which way you went, and hang nothing on it), and so does every gate the
+project's norms or the human's prompt already settle.`
 
 const TRIVIAL_PROMPTS = `## Trivial and conversational prompts
 

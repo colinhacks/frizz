@@ -71,6 +71,21 @@ test("the contract bounds the work to the task, not only the stopping", () => {
   }
 })
 
+// THE WHOLE ROAD (2026-11-10; the reasons are beside STOP_CRITERION). A worker that stops to ask asks for
+// every later stop on the way to the finish as well, as `when:` follow-ups, so one reply can carry the
+// thread to merge. The guard clause is half the rule: without it, this reads as licence to ask more often.
+test("a worker that stops to ask also asks what every later step will need", () => {
+  for (const backend of ["claude", "codex", "acp"] as const) {
+    const c = buildWorkerPrompt(backend).replace(/\s+/g, " ")
+    assert.match(c, /\*\*WHEN YOU STOP TO ASK, ASK FOR THE WHOLE ROAD, NOT THE NEXT STEP\.\*\*/, backend)
+    assert.match(c, /how far they want it taken/, backend)
+    assert.match(c, /each a `when:` follow-up on the option that leads to it, where one does — so one reply can carry the thread to the finish/, backend)
+    // Measured 2026-11-10: without "a call you would make yourself stays yours", a worker turned a fix it
+    // had already chosen into a question, to have something to hang the merge follow-up on.
+    assert.match(c, /a call you would make yourself stays yours \(say which way you went, and hang nothing on it\), and so does every gate the project's norms or the human's prompt already settle/, backend)
+  }
+})
+
 // THE QUESTION FENCE (2026-10-13). The contract has taught five things here, and a stale assertion would
 // resurrect the wrong one. (1) Until 2026-08-27 a free-form ```question fence was the only way to ask.
 // (2) `ask` registered a ROW beside it, and both were taught. (3) 2026-09-11 the free-form fence was
