@@ -32,9 +32,11 @@ async function claimServer(reply: unknown = { hostname: "x.frizz.sh", leaseExpir
     req.setEncoding("utf8");
     req.on("data", (chunk: string) => (body += chunk));
     req.on("end", () => {
-      claims.push(JSON.parse(body));
+      const claim = JSON.parse(body) as Record<string, unknown>;
+      claims.push(claim);
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(reply));
+      // Answered for the name asked, as a real registrar does; the launcher refuses any other hostname.
+      res.end(JSON.stringify(reply && typeof reply === "object" ? { ...reply, hostname: `${String(claim.name)}.frizz.sh` } : reply));
     });
   });
   server.listen(0, "127.0.0.1");

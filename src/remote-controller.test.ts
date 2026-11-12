@@ -175,7 +175,7 @@ test("a served name renews its lease while the board runs, and stops when it sto
 test("a refused renewal tells the operator, because the name lapses if it goes on", async (t) => {
   const { said } = await serving(t, 409);
   await until(() => said.length > 0);
-  assert.match(said[0]!, /could not renew colin\.invalid.*already taken/);
+  assert.match(said[0]!, /could not renew colin\.invalid.*now belongs to another machine: a sign-in to the GitHub account colin claimed it there/);
 });
 
 test("a saved name the registrar had to create again signs out what was signed in under it, and a renewal does not", async () => {

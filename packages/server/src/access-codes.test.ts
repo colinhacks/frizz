@@ -567,3 +567,17 @@ test("a name claimed afresh signs out the devices signed in under it, and only t
   assert.equal(store.verifySession(first.session), false)
   assert.equal(store.revokeSessionsFor("ada.frizz.sh"), 0, "nothing left to sign out")
 })
+
+test("a sign-in code redeems only on the name it was minted for, and still does if the board comes back within its life", () => {
+  const store = new AccessStore()
+  store.setHost("ada.frizz.sh")
+  const code = store.issue().code
+  store.setHost("colin.frizz.sh")
+  assert.deepEqual(store.redeem(code, "iPhone"), { ok: false, reason: "unknown" }, "a link for the old name signs nobody in under the new one")
+  store.setHost(undefined)
+  assert.deepEqual(store.redeem(code, "iPhone"), { ok: false, reason: "unknown" })
+  store.setHost("ada.frizz.sh")
+  const redeemed = store.redeem(code, "iPhone")
+  assert.ok(redeemed.ok, "the control: on its own name the same code still works, once")
+  assert.equal(store.sessions.get(redeemed.id)?.host, "ada.frizz.sh")
+})

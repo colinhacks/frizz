@@ -1,4 +1,4 @@
-import { CLAIM_PROTOCOL_VERSION, signClaim } from "@frizz/shared";
+import { CLAIM_PROTOCOL_VERSION, normalizeClaimName, signClaim } from "@frizz/shared";
 
 /**
  * The CLI half of claiming `<name>.frizz.sh`.
@@ -11,6 +11,9 @@ import { CLAIM_PROTOCOL_VERSION, signClaim } from "@frizz/shared";
 
 /** Overridable so a test, or a self-hoster running their own registrar, can point somewhere else. */
 export const DEFAULT_REGISTRAR = "https://registrar.frizz.sh";
+
+/** The zone Frizz's own registrar hands names out in. Every hostname inside it is served by the relay. */
+export const CLAIM_ZONE = "frizz.sh";
 
 export function registrarOrigin(env: NodeJS.ProcessEnv = process.env): string {
   return env.FRIZZ_REGISTRAR?.trim() || DEFAULT_REGISTRAR;
@@ -139,21 +142,44 @@ export async function claimName(options: ClaimOptions): Promise<ClaimResult> {
     | null;
 
   if (!response.ok) {
-    const code = typeof body?.error === "string" ? body.error : `http-${response.status}`;
-    throw new ClaimError(ADVICE[code] ?? body?.message ?? `the registrar refused the claim (${code})`, code);
+    const code = typeof body?.error === "string" ? terminalSafe(body.error, 64) : `http-${response.status}`;
+    const said = typeof body?.message === "string" ? terminalSafe(body.message, 300) : "";
+    throw new ClaimError(ADVICE[code] ?? (said || `the registrar refused the claim (${code})`), code);
   }
 
-  if (typeof body?.hostname !== "string") {
-    throw new ClaimError(
+  const malformed = () =>
+    new ClaimError(
       `the registrar at ${origin} answered something this version does not understand (protocol v${CLAIM_PROTOCOL_VERSION})`,
       "malformed-response",
     );
-  }
+  if (typeof body?.hostname !== "string") throw malformed();
+
+  // THE ANSWER IS CHECKED, NOT TRUSTED (2026-11-12). The launcher saves the hostname, dials it as the
+  // relay with a handshake good for five minutes, gates it as the board's public origin and prints sign-in
+  // links for it, and a run token in the answer used to start a cloudflared tunnel whose routes the token's
+  // issuer writes. So whoever answered as Frizz's registrar could send a board to a host of their choosing,
+  // or expose this machine through a tunnel of their own. From Frizz's own registrar the hostname must be
+  // the name asked for in its zone, and a token is ignored: every name there is served by the relay. A
+  // registrar the operator pointed at (FRIZZ_REGISTRAR, or a test) is theirs to trust, and only has to
+  // answer for the name asked.
+  const name = normalizeClaimName(options.name);
+  const official = origin === DEFAULT_REGISTRAR;
+  const hostname = body.hostname;
+  if (official ? hostname !== `${name}.${CLAIM_ZONE}` : !hostname.startsWith(`${name}.`) || !/^[a-z0-9.-]+$/.test(hostname)) throw malformed();
 
   return {
-    hostname: body.hostname,
-    ...(typeof body.token === "string" && body.token ? { token: body.token } : {}),
+    hostname,
+    ...(!official && typeof body.token === "string" && body.token ? { token: body.token } : {}),
     leaseExpiresAt: typeof body.leaseExpiresAt === "number" ? body.leaseExpiresAt : 0,
     renewed: body.renewed === true,
   };
+}
+
+/**
+ * Text from the registrar, fit to print in the operator's terminal: control characters out, so an answer
+ * cannot retitle the window, clear the screen or colour what follows, and cut to a sentence's length.
+ */
+function terminalSafe(text: string, limit: number): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, limit);
 }

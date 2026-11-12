@@ -74,7 +74,9 @@ async function claimServer(
       held.set(name, claim.pubkey);
       accepted.push(claim);
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(reply));
+      // A hostname of "*" answers for whatever name was asked, as a real registrar does.
+      const answer = reply && typeof reply === "object" && (reply as { hostname?: unknown }).hostname === "*" ? { ...reply, hostname: `${name}.frizz.sh` } : reply;
+      res.end(JSON.stringify(answer));
     });
   });
   server.listen(0, "127.0.0.1");
@@ -526,7 +528,7 @@ test("an EMPTY answer claims a private unguessable name, and GitHub is never con
   // The auth-free default: no account, no sign-in. The stand-in below throws on any touch,
   // so this also proves the anonymous path never starts a GitHub sign-in.
   const home = tempHome();
-  const server = await claimServer({ hostname: "x.frizz.sh", leaseExpiresAt: 0, renewed: false });
+  const server = await claimServer({ hostname: "*", leaseExpiresAt: 0, renewed: false });
   const untouchable = {
     authorize: async (): Promise<never> => { throw new Error("GitHub must not be consulted"); },
   };
@@ -547,7 +549,7 @@ test("a name that already HAS the anonymous shape re-claims without GitHub too",
   // reconcileCloudConfig re-claims a saved label through establishCloudConfig, so an anonymous label
   // arriving as TEXT must ride the anonymous path — or a reconcile would suddenly demand a GitHub sign-in.
   const home = tempHome();
-  const server = await claimServer({ hostname: "x.frizz.sh", leaseExpiresAt: 0, renewed: true });
+  const server = await claimServer({ hostname: "*", leaseExpiresAt: 0, renewed: true });
   const untouchable = {
     authorize: async (): Promise<never> => { throw new Error("GitHub must not be consulted"); },
   };

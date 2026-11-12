@@ -7,7 +7,7 @@ import { frizzPaths } from "@frizz/server/frizz-paths";
 import { claimNameIsValid, exportClaimPublicKey, isAnonymousClaimName, normalizeClaimName, pickAnonymousClaimName, type RelayAccess } from "@frizz/shared";
 import { loadOrCreateClaimIdentity } from "./identity.ts";
 import { frizzGithubSignIn, type GithubAuthorizer } from "./github-claim-identity.ts";
-import { ClaimError, claimName } from "./registrar-client.ts";
+import { CLAIM_ZONE, ClaimError, claimName } from "./registrar-client.ts";
 import { connectRelay } from "./relay-connection.ts";
 
 /**
@@ -147,8 +147,8 @@ export function isRelayConfig(config: CloudConfig): boolean {
   return isClaimedConfig(config) && config.serve === "relay";
 }
 
-/** The zone the registrar hands names out in. Every hostname inside it is served by the relay. */
-export const CLAIM_ZONE = "frizz.sh";
+/** The zone the registrar hands names out in (registrar-client.ts). Every hostname inside it is served by the relay. */
+export { CLAIM_ZONE };
 
 /**
  * The claim label a hostname inside the zone stands for: `colin.frizz.sh` → `colin`. Null for a
@@ -480,6 +480,16 @@ export async function resolveRunToken(
     writeTunnelToken(result.token, home);
     return result.token;
   } catch (error) {
+    // A CUSTOM NAME FOLLOWS ITS GITHUB ACCOUNT (claim-handler.ts): a sign-in to that account on another
+    // machine takes it from this one. Said as what happened and what to do, since "that name is already
+    // taken" reads like a name this board never had.
+    if (error instanceof ClaimError && error.code === "name-taken" && !isAnonymousClaimName(config.claim!)) {
+      throw new ClaimError(
+        `${config.hostname} now belongs to another machine: a sign-in to the GitHub account ${config.claim} claimed it there. ` +
+          `If that was not you, revoke Frizz's access at https://github.com/settings/apps/authorizations, then press R and claim ${config.claim} again`,
+        error.code,
+      );
+    }
     // A registrar that is down, or failing on its own side, is not a refusal: the lease runs 30 days,
     // so a relay board serves on (the relay checks its key, not the registrar), and a tunnel board runs
     // the token from last time. Only an answer that refuses the name stops the launch.

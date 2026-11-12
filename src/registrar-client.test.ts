@@ -207,3 +207,44 @@ test("a redirect from the registrar is not followed, so the token is not re-sent
     await elsewhere.close();
   }
 });
+
+test("Frizz's own registrar must answer with the name asked for, in its zone, and no tunnel token", async () => {
+  // A hostile or hijacked registrar used to send a board to any host, or hand it a tunnel token whose routes
+  // it wrote (security review 2, finding 8).
+  const identity = await generateClaimIdentity();
+  const answering = (body: unknown) =>
+    (async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+  for (const hostname of ["relay.attacker.example", "colin.frizz.sh.attacker.example", "other.frizz.sh", "colin.frizz.sh."]) {
+    await assert.rejects(
+      claimName({ name: "colin", port: 9393, identity, origin: DEFAULT_REGISTRAR, fetchImpl: answering({ hostname, leaseExpiresAt: 1, renewed: true }) }),
+      (error: ClaimError) => error.code === "malformed-response",
+      hostname,
+    );
+  }
+  const result = await claimName({
+    name: "colin",
+    port: 9393,
+    identity,
+    origin: DEFAULT_REGISTRAR,
+    fetchImpl: answering({ hostname: "colin.frizz.sh", token: "their-tunnel", leaseExpiresAt: 1, renewed: false }),
+  });
+  assert.deepEqual(result, { hostname: "colin.frizz.sh", leaseExpiresAt: 1, renewed: false }, "the control: a right answer passes, without the token");
+  // A registrar the operator pointed at is theirs to trust, but it still answers for the name asked.
+  await assert.rejects(
+    claimName({ name: "colin", port: 9393, identity, origin: "https://mine.example", fetchImpl: answering({ hostname: "other.mine.example", leaseExpiresAt: 1, renewed: true }) }),
+    (error: ClaimError) => error.code === "malformed-response",
+  );
+  const own = await claimName({ name: "colin", port: 9393, identity, origin: "https://mine.example", fetchImpl: answering({ hostname: "colin.mine.example", token: "t", leaseExpiresAt: 1, renewed: true }) });
+  assert.equal(own.token, "t");
+});
+
+test("a refusal's own words reach the terminal without control characters", async () => {
+  const identity = await generateClaimIdentity();
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ error: "something-new", message: "\u001b]0;pwned\u0007\u001b[2Jcleared \u009b31mred" }), { status: 400 })) as unknown as typeof fetch;
+  await assert.rejects(claimName({ name: "colin", port: 9393, identity, origin: DEFAULT_REGISTRAR, fetchImpl }), (error: ClaimError) => {
+    assert.equal(error.message, "]0;pwned[2Jcleared 31mred");
+    assert.doesNotMatch(error.message, /[\u0000-\u001f\u007f-\u009f]/);
+    return true;
+  });
+});

@@ -925,7 +925,11 @@ export class RestartSupervisorProxy {
    */
   private remoteAccess(req: IncomingMessage): RelayAccess {
     if (this.relayedSockets.has(req.socket)) return this.relayAccess ?? "full"
-    return this.callerVia(req) === "public" ? "full" : "read-and-answer"
+    // A board served through the relay is reached at its public name through the relay and nowhere else, so
+    // a request naming that host on the main port is a cookie carried around the relay, not a second way in.
+    // It gets no more than the relay would give it (security review 2, finding 12): a device signed in under
+    // "read and answer" stayed that through the relay and had full control on an exposed main port.
+    return this.callerVia(req) === "public" ? (this.relayAccess ?? "full") : "read-and-answer"
   }
 
   /** Answer a remote caller who asked for something only the machine itself may do, and write it down. */

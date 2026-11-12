@@ -1521,9 +1521,10 @@ test("what a relay session may do is the launcher's to say: the same cookie is j
     }
     assert.deepEqual((await said(relay)).status, "read-and-answer")
 
-    // The relay is the only hop this setting is about. The same device through a proxy of the owner's on the
-    // board's own port is not limited by it, and the machine's own tab is not told any of this.
-    assert.deepEqual(await said(port), { status: "full", stamp: "full", via: "public", session: true })
+    // The same cookie carried around the relay to the board's own port, naming the public host, gets no more
+    // than the relay gives it: the relay saw that cookie, so the limit would otherwise be one exposed port wide
+    // (security review 2, finding 12). The machine's own tab is not told any of this.
+    assert.deepEqual(await said(port), { status: "read-and-answer", stamp: "read-and-answer", via: "public", session: true })
     const local = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }
     assert.equal(JSON.parse((await proxied(port, SUPERVISOR_STATUS_PATH, local)).body).remoteAccess, undefined)
     assert.equal((await proxied(port, "/", local)).status, 200)

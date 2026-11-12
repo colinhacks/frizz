@@ -61,6 +61,8 @@ export interface AccessCode {
 
 interface StoredCode extends AccessCode {
   consumedAt?: number
+  /** The public host the code was minted for, and the only one it redeems on (redeem says why). */
+  host?: string
 }
 
 export interface AccessStoreOptions {
@@ -260,6 +262,7 @@ export class AccessStore {
       code: this.options.randomToken(CODE_BYTES),
       createdAt: now,
       expiresAt: now + this.options.codeTtlMs,
+      ...(this.host ? { host: this.host } : {}),
     }
     this.codes.set(code.code, code)
     return { code: code.code, createdAt: code.createdAt, expiresAt: code.expiresAt }
@@ -287,6 +290,11 @@ export class AccessStore {
       this.sweep()
       return { ok: false, reason: "expired" }
     }
+    // ONLY ON THE NAME IT WAS MINTED FOR (2026-11-12), as a session verifies only on the host it was issued
+    // under. A link printed for one name and opened after the board moved to another would sign a device in
+    // under the new name, and so would a code someone copied while they served the old one. Not consumed,
+    // so the link still works if the board comes back to that name within its five minutes.
+    if (stored.host !== this.host) return { ok: false, reason: "unknown" }
     stored.consumedAt = now
     this.sweep()
     this.options.onConsumed?.(code)
