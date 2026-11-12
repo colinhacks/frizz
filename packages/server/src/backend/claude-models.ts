@@ -84,6 +84,9 @@ function isNamedForAlias(row: Record<string, unknown>): boolean {
 // backoff: the runtime may simply not be ready yet (first boot, a Defender scan on Windows), and the
 // fallback labels are the honest answer meanwhile.
 const PROBE_TIMEOUT_MS = 15_000
+// How long the probe waits for the runtime to say what each alias runs, once the rows are in. Eight local
+// round trips took about 0.4s on Claude Code 2.1.322.
+const ASK_BUDGET_MS = 5_000
 const FAILURE_BACKOFF_MS = 30_000
 const resolved = new Map<string, ClaudeModel[]>()
 const inFlight = new Map<string, Promise<ClaudeModel[]>>()
@@ -158,15 +161,23 @@ export async function probeClaudeModels(executable: string, cwd: string): Promis
   const read = async (): Promise<ClaudeModel[]> => {
     const rows = await q.supportedModels()
     const runs: Partial<Record<ClaudeModelAlias, string>> = {}
-    for (const alias of CLAUDE_MODEL_ALIASES) {
-      try {
-        await q.setModel(alias)
-        runs[alias] = (await q.getContextUsage({ detail: "summary" })).model
-      } catch {
-        // A runtime that predates the request, or an alias this account cannot select: its rows decide.
+    const ask = async (): Promise<void> => {
+      for (const alias of CLAUDE_MODEL_ALIASES) {
+        try {
+          await q.setModel(alias)
+          runs[alias] = (await q.getContextUsage({ detail: "summary" })).model
+        } catch {
+          // A runtime that predates the request, or an alias this account cannot select: its rows decide.
+        }
       }
     }
-    return resolveClaudeModels(rows, runs)
+    // The rows are already in hand, so a runtime that never answers these requests must not cost them:
+    // the Claude Code float accepts a newer build only if this probe returns (verifyClaudeBuild). Today's
+    // CLI answers a request it does not know with an error, which the catch above takes in milliseconds.
+    let budget: NodeJS.Timeout | undefined
+    await Promise.race([ask(), new Promise<void>((resolve) => (budget = setTimeout(resolve, ASK_BUDGET_MS)))])
+    clearTimeout(budget)
+    return resolveClaudeModels(rows, { ...runs })
   }
   let timer: NodeJS.Timeout | undefined
   try {
