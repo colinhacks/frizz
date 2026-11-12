@@ -96,7 +96,7 @@ const accessChoice = (access: RelayAccess | undefined) => RELAY_ACCESS.find((cho
 const CHOICES: Choice[] = [
   { kind: "off", title: "Off", blurb: "localhost only" },
   { kind: "private", title: "frizz.sh subdomain", blurb: "a random address and a one-time QR code; no account" },
-  { kind: "frizz", title: "Custom subdomain", blurb: "your GitHub username.frizz.sh; needs Frizz's GitHub sign-in" },
+  { kind: "frizz", title: "Custom subdomain", blurb: "your GitHub username; needs Frizz's GitHub sign-in" },
   { kind: "cloudflare", title: "Cloudflare Tunnel", blurb: "a domain on Cloudflare; cloudflared on this machine" },
   { kind: "tailscale", title: "Tailscale", blurb: "only devices on your tailnet" },
   { kind: "other", title: "Something else", blurb: "any proxy or tunnel you run — tell Frizz its address" },
@@ -108,7 +108,7 @@ const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind 
 /**
  * The rows the menu lists for a board whose setup is `current`.
  *
- * "Custom subdomain" is withdrawn while custom names are paused (CUSTOM_NAMES_OFFERED in cloud.ts) — except
+ * "Custom subdomain" is left out while custom names are withdrawn (customNamesOffered in cloud.ts) — except
  * on a board ALREADY served by a custom claim, which keeps the row so the menu still marks what is
  * current. Choosing that row then serves the saved name again, renewed by the keypair alone; it never
  * opens the claim form, because a new custom claim is exactly what is paused.
@@ -545,7 +545,7 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
     paint();
   };
 
-  // The custom row while custom names are paused: serve the saved claim again, with no claim call of
+  // The custom row while custom names are withdrawn: serve the saved claim again, with no claim call of
   // its own — apply renews the lease by keypair, exactly as every launch does.
   const serveCurrent = async () => {
     const current = options.current();

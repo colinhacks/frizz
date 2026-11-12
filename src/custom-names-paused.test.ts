@@ -17,12 +17,13 @@ import {
 import { createRemotePane } from "./remote-pane.ts";
 
 /**
- * Custom frizz.sh names as they SHIP while withdrawn (2026-10-08): CUSTOM_NAMES_OFFERED is false and
- * nothing here sets `FRIZZ_CUSTOM_NAMES`. cloud.test.ts and remote-pane.test.ts turn the override on
- * for their whole file to keep driving the path behind the gate; this file is the other half, and
- * runs as its own process, so their setting never reaches it.
+ * Custom frizz.sh names WITHDRAWN, the kill switch behind CUSTOM_NAMES_OFFERED. They ship offered (since
+ * 2026-11-12), and cloud.test.ts and remote-pane.test.ts drive that; this file turns them off with
+ * `FRIZZ_CUSTOM_NAMES=0` for its whole process, because `nub --test` runs a file's tests concurrently and
+ * runs each file as its own process, so the setting reaches nothing else.
  */
-for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "FRIZZ_CUSTOM_NAMES"]) delete process.env[name];
+for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete process.env[name];
+process.env.FRIZZ_CUSTOM_NAMES = "0";
 
 /** A registrar that answers every claim and records it, so "never called" is an observation. */
 async function claimServer(reply: unknown = { hostname: "x.frizz.sh", leaseExpiresAt: 0, renewed: false }) {
@@ -61,12 +62,12 @@ const untouchableGithub = {
   authorize: async (): Promise<never> => { throw new Error("GitHub must not be consulted"); },
 };
 
-// 2026-10-08: custom names are withdrawn until Frizz's GitHub OAuth app exists. Before the gate, a
-// custom claim reached the device flow and only then refused with "not-configured".
-test("custom names are off by default, and only FRIZZ_CUSTOM_NAMES=1 turns them on", () => {
-  assert.equal(CUSTOM_NAMES_OFFERED, false, "withdrawn until the GitHub OAuth app is registered");
-  assert.equal(customNamesOffered({}), false);
-  assert.equal(customNamesOffered({ FRIZZ_CUSTOM_NAMES: "true" }), false, "only the exact value 1 counts");
+// Withdrawn from 2026-10-08 until the registrar and relay were hardened and deployed on 2026-11-12.
+test("custom names ship offered, and only FRIZZ_CUSTOM_NAMES=0 withdraws them", () => {
+  assert.equal(CUSTOM_NAMES_OFFERED, true);
+  assert.equal(customNamesOffered({}), true);
+  assert.equal(customNamesOffered({ FRIZZ_CUSTOM_NAMES: "0" }), false);
+  assert.equal(customNamesOffered({ FRIZZ_CUSTOM_NAMES: "false" }), true, "only the exact value 0 withdraws them");
   assert.equal(customNamesOffered({ FRIZZ_CUSTOM_NAMES: "1" }), true);
 });
 

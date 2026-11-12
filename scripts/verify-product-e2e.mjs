@@ -10,10 +10,9 @@
  *
  * WHAT IT COSTS: a 30-day lease on the name. The seeded config is a relay claim, so the launch RENEWS
  * it with the owning key alone — no GitHub sign-in, nothing new consumed. The name must therefore be
- * held by that key already. A renewal works while custom names are withdrawn (CUSTOM_NAMES_OFFERED in
- * src/cloud.ts), because it never touches GitHub; a custom name nobody holds yet cannot be claimed at
- * all until they return, and then only through the R pane's GitHub device-flow sign-in, which this
- * harness cannot answer.
+ * held by that key already. A renewal never touches GitHub, so it works even with custom names
+ * withdrawn (CUSTOM_NAMES_OFFERED in src/cloud.ts); a custom name nobody holds yet is claimed only
+ * through Frizz's GitHub sign-in, which this harness cannot answer.
  *
  * Three things it has to do that a naive harness gets wrong, each of which cost a run:
  *

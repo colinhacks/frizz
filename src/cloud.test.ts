@@ -32,11 +32,10 @@ import {
 // would point the writes at the operator's real `$XDG_DATA_HOME/frizz`, where the cleanup never looks.
 for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete process.env[name];
 
-// Custom names are withdrawn (CUSTOM_NAMES_OFFERED is false), but the path behind the gate is kept to
-// be switched back on, and most claims below drive it — so this whole file runs with the override on.
-// It is set for the FILE, not per test: `nub --test` runs a file's tests concurrently, so a per-test
-// toggle would leak into its neighbours. The shipped default is pinned in custom-names-paused.test.ts.
-process.env.FRIZZ_CUSTOM_NAMES = "1";
+// Custom names as they ship: offered (CUSTOM_NAMES_OFFERED). An operator's own override would change
+// what the claims below drive, so it is cleared for the whole file. The withdrawn path is pinned in
+// custom-names-paused.test.ts.
+delete process.env.FRIZZ_CUSTOM_NAMES;
 
 // Claiming a NAME binds it to a GitHub account, which establishCloudConfig confirms through Frizz's
 // own GitHub sign-in. The claim tests hand in this stand-in for it, so no test reads a real one

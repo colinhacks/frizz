@@ -3,11 +3,10 @@ import { test } from "node:test";
 import type { CloudConfig } from "./cloud.ts";
 import { createRemotePane, remoteReachedLine } from "./remote-pane.ts";
 
-// The menu lists "Custom subdomain" only while custom names are offered. They are withdrawn for now, but the
-// claim behind the row is kept, and several cases below drive it — so this file runs with the override
-// on, for the whole file because `nub --test` runs a file's tests concurrently. The withdrawn menu is
-// pinned in custom-names-paused.test.ts.
-process.env.FRIZZ_CUSTOM_NAMES = "1";
+// The menu lists "Custom subdomain" while custom names are offered, which is how they ship. An operator's
+// own override would change the menu, so it is cleared for the whole file. The withdrawn menu is pinned in
+// custom-names-paused.test.ts.
+delete process.env.FRIZZ_CUSTOM_NAMES;
 
 function fakeOutput() {
   const chunks: string[] = [];
