@@ -1,13 +1,15 @@
 import {
   handleClaim,
+  reject,
   sweepExpiredClaims,
   type ClaimRecord,
   type ClaimStore,
   type GithubIdentity,
+  type GithubVerifier,
 } from "./claim-handler.ts"
 import { createCloudflareApi } from "./cloudflare.ts"
-import { d1ClaimStore, d1HourlyBudget, dropSpentBudgets, importFromKv, RegistrarBusy, withClaimLock, type D1Database } from "./claim-db.ts"
-import { FRIZZ_GITHUB_APP_CLIENT_ID } from "@frizz/shared"
+import { d1ClaimStore, d1HourlyBudget, dropSpentBudgets, ensureSchema, importFromKv, recountClaims, RegistrarBusy, withClaimLock, type D1Database } from "./claim-db.ts"
+import { FRIZZ_GITHUB_APP_CLIENT_ID, verifyClaim } from "@frizz/shared"
 
 /**
  * The registration Worker for `<name>.frizz.sh`.
@@ -74,8 +76,8 @@ export function githubVerifier(
         },
         // A redirect is never followed: it would carry the token's request somewhere else.
         redirect: "manual",
-        // Every claim waits on this one behind the registry's lock (claim-db.ts), so a GitHub that hangs
-        // must not hold the rest up past the lock's lease.
+        // Asked before the claim takes the registry's lock (fetch, below), so a GitHub that hangs holds up
+        // only the claim that asked it; this bounds how long that one waits.
         signal: AbortSignal.timeout(timeoutMs),
       })
       if (!response.ok) return null
@@ -222,8 +224,18 @@ const MAX_NAMES = 180
 /**
  * Relay mode has no per-name DNS record, so the zone's 200-record cap no longer bounds the namespace.
  * The ceiling stays only as a blunt guard against a runaway, at a level no real launch would reach.
+ *
+ * A million, not the hundred thousand it was until 2026-11-12. NEW_NAMES_PER_HOUR now bounds how fast the
+ * namespace can fill, and at that rate a hundred thousand was two weeks of someone claiming from many
+ * networks, after which every new board was refused. A million rows is well inside one D1 database.
  */
-const MAX_NAMES_RELAY = 100_000
+const MAX_NAMES_RELAY = 1_000_000
+
+/**
+ * Names one sweep releases. Each release is about seven D1 queries, and a Worker invocation may make a
+ * thousand, so this leaves the sweep's own reads room.
+ */
+const SWEEP_LIMIT = 100
 
 /**
  * The registry as KV held it until 2026-11-12: one small JSON row per name, plus its indexes. Still how
@@ -299,7 +311,8 @@ const json = (status: number, body: unknown): Response =>
 function claimDeps(
   env: RegistrarEnv,
   db: D1Database,
-  budgets: { anonymousBudget?: () => Promise<boolean>; githubBudget?: () => Promise<boolean>; newNameBudget?: () => Promise<boolean> } = {}
+  budgets: { anonymousBudget?: () => Promise<boolean>; githubBudget?: () => Promise<boolean>; newNameBudget?: () => Promise<boolean> } = {},
+  github: GithubVerifier = githubVerifier()
 ) {
   return {
     ...budgets,
@@ -320,9 +333,7 @@ function claimDeps(
     now: () => Date.now(),
     // ON unless explicitly disabled. A gate that defaults off is a gate that ships off by accident.
     maxNames: env.MAX_NAMES ? Number(env.MAX_NAMES) : env.CLOUD_MODE === "tunnel" ? MAX_NAMES : MAX_NAMES_RELAY,
-    ...(env.REQUIRE_GITHUB === "0"
-      ? {}
-      : { github: githubVerifier(), minAccountAgeMs: MIN_GITHUB_ACCOUNT_AGE_MS }),
+    ...(env.REQUIRE_GITHUB === "0" ? {} : { github, minAccountAgeMs: MIN_GITHUB_ACCOUNT_AGE_MS }),
   }
 }
 
@@ -350,16 +361,15 @@ export default {
   async scheduled(_event: unknown, env: RegistrarEnv): Promise<void> {
     if (!env.CLAIMS_DB) throw new Error("the registrar has no CLAIMS_DB binding, so it cannot sweep")
     const db = env.CLAIMS_DB
-    const { before, result, deps } = await underLock({ ...env, CLAIMS_DB: db }, async () => {
+    const { taken, result, deps } = await underLock({ ...env, CLAIMS_DB: db }, async () => {
       const deps = claimDeps(env, db)
-      const before = await deps.store.count()
-      const result = await sweepExpiredClaims(deps)
+      const result = await sweepExpiredClaims(deps, SWEEP_LIMIT)
       await dropSpentBudgets(db, Date.now())
-      return { before, result, deps }
+      // Counted afresh once a day, so the number new claims read can never drift for long.
+      return { taken: await recountClaims(db), result, deps }
     })
     // The only regular look at how full the namespace is. Nothing else would notice it filling until
     // a claim failed, which is exactly the surprise the ceiling should never be.
-    const taken = before - result.released.length
     const ceiling = deps.maxNames ?? Infinity
     if (taken >= ceiling * 0.8) {
       console.warn(`namespace is ${taken}/${ceiling} full — upgrade the zone before it stops accepting names`)
@@ -388,6 +398,12 @@ export default {
     if (request.method !== "POST") {
       return new Response(null, { status: 405, headers: { allow: "POST" } })
     }
+    // JSON ONLY, so no web page can send a claim. A cross-site POST with no preflight may carry only a
+    // plain-text, form or multipart body, so without this any page a person opened could sign claims with
+    // keys of its own from their browser, spending their network's hourly budget and adding to the hour's
+    // names. A page that sets this type is asked about it first, and nothing here answers that question.
+    const type = (request.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase()
+    if (type !== "application/json") return json(415, { error: "malformed", message: "a claim is sent as application/json" })
 
     // A body that is not JSON is the claimant's mistake, not a crash. The handler validates
     // everything past this point, including that the thing parsed is shaped like a claim at all.
@@ -403,11 +419,39 @@ export default {
     if (!env.CLAIMS_DB) return json(503, { error: "registrar-busy", message: "the registrar is not taking claims right now — try again later" })
     const db = env.CLAIMS_DB
 
+    // EVERYTHING THAT NEEDS NO REGISTRY HAPPENS BEFORE THE LOCK. Claims take the lock one at a time, so
+    // whatever a claim does while holding it, every other claim waits for. An unsigned or malformed body
+    // never reaches it, and neither does GitHub: a claim carrying a token is asked about there first, and
+    // the answer is handed in. Asked inside, a stream of made-up tokens from many networks would have kept
+    // the lock busy with GitHub's round trips, and renewals behind it would have been told the registrar
+    // was busy.
+    const verdict = await verifyClaim(body, Date.now())
+    if (!verdict.ok) {
+      const refused = reject(verdict.reason)
+      return json(refused.status, refused.body)
+    }
+
     // The budget key is the connecting address, which Cloudflare stamps on every request it fronts.
     // Absent (a direct hit on the Worker in a test) the budget still exists under one shared key,
     // because an absent header must never mean an absent limit.
     const address = budgetAddress(request.headers.get("cf-connecting-ip") ?? "unknown")
-    const work = underLock({ ...env, CLAIMS_DB: db }, () => handleClaim(body, claimDeps(env, db, claimBudgets(db, address, env)))).catch((error: unknown) => {
+    const { githubBudget, ...budgets } = claimBudgets(db, address, env)
+    const ask = githubVerifier()
+    let github: GithubVerifier = ask
+    const token = verdict.payload.github
+    if (token !== undefined && env.REQUIRE_GITHUB !== "0") {
+      await ensureSchema(db)
+      // Spent here rather than when the handler finds it needs GitHub: the lookup happens here. Only a
+      // first claim of a custom name, or taking one back, carries a token at all (claimName, src/registrar-client.ts).
+      if (!(await githubBudget())) {
+        const refused = reject("too-many-claims", 429)
+        return json(refused.status, refused.body)
+      }
+      const answer = await ask(token)
+      github = async (asked) => (asked === token ? answer : ask(asked))
+    }
+
+    const work = underLock({ ...env, CLAIMS_DB: db }, () => handleClaim(body, claimDeps(env, db, budgets, github))).catch((error: unknown) => {
       if (error instanceof RegistrarBusy) return { status: 503 as const, body: { error: "registrar-busy", message: "the registrar is busy with other claims — try again in a minute" } }
       throw error
     })

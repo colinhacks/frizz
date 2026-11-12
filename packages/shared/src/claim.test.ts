@@ -281,3 +281,27 @@ test("an anonymous name signs and verifies like any other claim", async () => {
   assert.ok(verdict.ok)
   assert.equal(verdict.ok && verdict.payload.name, name)
 })
+
+test("one key has one spelling: the three other spellings of its last character are refused", async () => {
+  const { identity, request } = await claim()
+  const canonical = await exportClaimPublicKey(identity.publicKey)
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+  const last = alphabet.indexOf(canonical.at(-1)!)
+  // The last of 43 characters carries 6 bits and only the top 4 belong to the key, so these decode to it too.
+  const others = [1, 2, 3].map((spare) => canonical.slice(0, -1) + alphabet[(last & ~3) | ((last + spare) & 3)])
+  assert.ok(await importClaimPublicKey(canonical), "the control: the canonical spelling imports")
+  for (const spelling of others) {
+    assert.notEqual(spelling, canonical)
+    assert.equal(await importClaimPublicKey(spelling), null, spelling)
+    const verdict = await verifyClaim({ ...request, pubkey: spelling }, NOW)
+    assert.equal(verdict.ok === false && verdict.reason, "bad-pubkey", spelling)
+  }
+})
+
+test("names mail and browser clients look up by themselves are reserved", async () => {
+  for (const reserved of ["autodiscover", "autoconfig", "mta-sts", "wpad", "cdn-cgi", "security", "signin", "oauth"]) {
+    const { request } = await claim()
+    const verdict = await verifyClaim({ ...request, name: reserved }, NOW)
+    assert.equal(verdict.ok === false && verdict.reason, "reserved", reserved)
+  }
+})

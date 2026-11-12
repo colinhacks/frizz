@@ -948,7 +948,7 @@ test("a random name is never taken back through GitHub, since no account stands 
   assert.equal(refused.status, 409)
 })
 
-test("the hourly ceiling on new names refuses a new name of either kind, and never a renewal", async () => {
+test("the hourly ceiling refuses a new random name, and never a custom name or a renewal", async () => {
   const st = fakeStore()
   const identity = await generateClaimIdentity()
   let allow = true
@@ -959,12 +959,17 @@ test("the hourly ceiling on new names refuses a new name of either kind, and nev
   assert.equal(spent, 1)
 
   allow = false
-  const refused = await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "ghu_colin" }, identity), d)
+  const stranger = await generateClaimIdentity()
+  const refused = await handleClaim(await claimFor(stranger, await ownRandom(stranger)), d)
   assert.equal(refused.status, 503)
   assert.equal("error" in refused.body && refused.body.error, "too-many-names")
-  assert.equal(st.rows.has("colin"), false)
   const fresh = await handleClaim(await claimFor(await generateClaimIdentity(), await ownRandom(await generateClaimIdentity())), d)
   assert.equal(fresh.status, 400, "a chosen name is refused before any budget is asked")
+
+  // Someone holding the ceiling down from many networks must not shut out a person claiming their username.
+  const custom = await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "ghu_colin" }, await generateClaimIdentity()), d)
+  assert.equal(custom.status, 200)
+  assert.equal(spent, 1, "a custom name spends none of the hour's names")
 
   const renewal = await handleClaim(await claimFor(identity, random, 9494), d)
   assert.equal(renewal.status, 200, "a board already serving keeps its name whatever the hour looks like")
@@ -976,12 +981,26 @@ test("a claim refused late releases nothing: a lapsed name stays with its last h
   const first = await generateClaimIdentity()
   const second = await generateClaimIdentity()
   const year = NOW - 365 * 86_400_000
-  const github = fakeGithub({ "ghu_a": { id: 1, login: "colin", createdAt: year }, "ghu_b": { id: 2, login: "colin", createdAt: year } })
+  const github = fakeGithub({
+    "ghu_a": { id: 1, login: "colin", createdAt: year },
+    "ghu_b": { id: 2, login: "colin", createdAt: year },
+    "ghu_c": { id: 3, login: "ada", createdAt: year },
+  })
   assert.equal((await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: NOW, github: "ghu_a" }, first), deps({ api: undefined, store: st.store, github }))).status, 200)
   const later = NOW + CLAIM_LEASE_MS + 1
-  const busy = deps({ api: undefined, store: st.store, github, now: () => later, newNameBudget: async () => false })
-  const refused = await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: later, github: "ghu_b" }, second), busy)
-  assert.equal(refused.status, 503)
+  const after = deps({ api: undefined, store: st.store, github, now: () => later })
+  // The second key already serves a custom name of its own, so its claim on colin fails a gate that comes
+  // after the account is proved: one live custom name per key.
+  assert.equal((await handleClaim(await signClaim({ name: "ada", port: 9393, issuedAt: later, github: "ghu_c" }, second), after)).status, 200)
+  const refused = await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: later, github: "ghu_b" }, second), after)
+  assert.equal(refused.status, 409)
+  assert.equal("error" in refused.body && refused.body.error, "one-name-per-key")
   assert.equal(st.rows.get("colin")?.pubkey, (await claimFor(first)).pubkey, "the lapsed row is still there")
+  assert.equal(st.githubOwners.get(1), "colin")
+
+  // A stranger with no GitHub sign-in at all is refused before anything is touched.
+  const anyone = await handleClaim(await signClaim({ name: "colin", port: 9393, issuedAt: later }, await generateClaimIdentity()), after)
+  assert.equal("error" in anyone.body && anyone.body.error, "github-required")
+  assert.equal(st.rows.get("colin")?.pubkey, (await claimFor(first)).pubkey)
   assert.equal(st.githubOwners.get(1), "colin")
 })

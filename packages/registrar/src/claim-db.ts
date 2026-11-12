@@ -115,6 +115,11 @@ export async function withClaimLock<T>(db: D1Database, work: () => Promise<T>, o
 /** The registry in D1, with each claim row copied to KV for the relay. Call only inside withClaimLock. */
 export function d1ClaimStore(db: D1Database, kv: KvNamespace): ClaimStore & { count(): Promise<number> } {
   const one = async (sql: string, ...values: unknown[]) => (await db.prepare(sql).bind(...values).first<{ value: string }>())?.value ?? null
+  // HOW MANY NAMES, KEPT AS A NUMBER rather than counted. A new name asks it, and D1 bills a COUNT(*) by
+  // every row it reads, which at a full namespace and a busy hour would be most of a month's allowance. It
+  // moves with each row written or removed here, all under the lock; when it is missing (a fresh database,
+  // or right after the import) it is counted once and kept, and the daily sweep counts it again.
+  const bump = (by: 1 | -1) => db.prepare("UPDATE meta SET value = CAST(value AS INTEGER) + ?1 WHERE key = 'claim-count'").bind(by).run()
   return {
     async read(name) {
       const raw = await one("SELECT record AS value FROM claims WHERE name = ?1", name)
@@ -127,11 +132,14 @@ export function d1ClaimStore(db: D1Database, kv: KvNamespace): ClaimStore & { co
     },
     async write(name, record) {
       const raw = JSON.stringify(record)
-      await db.prepare("INSERT INTO claims (name, record) VALUES (?1, ?2) ON CONFLICT (name) DO UPDATE SET record = excluded.record").bind(name, raw).run()
+      const inserted = await db.prepare("INSERT OR IGNORE INTO claims (name, record) VALUES (?1, ?2)").bind(name, raw).run()
+      if (inserted.meta.changes === 1) await bump(1)
+      else await db.prepare("UPDATE claims SET record = ?2 WHERE name = ?1").bind(name, raw).run()
       await kv.put(`claim:${name}`, raw)
     },
     async remove(name) {
-      await db.prepare("DELETE FROM claims WHERE name = ?1").bind(name).run()
+      const removed = await db.prepare("DELETE FROM claims WHERE name = ?1").bind(name).run()
+      if (removed.meta.changes === 1) await bump(-1)
       await kv.delete(`claim:${name}`)
     },
     async list() {
@@ -139,7 +147,29 @@ export function d1ClaimStore(db: D1Database, kv: KvNamespace): ClaimStore & { co
       return results.map((row) => row.name)
     },
     async count() {
-      return Number((await db.prepare("SELECT COUNT(*) AS value FROM claims").first<{ value: number }>())?.value ?? 0)
+      const kept = await one("SELECT value FROM meta WHERE key = 'claim-count'")
+      if (kept !== null) return Number(kept)
+      return recountClaims(db)
+    },
+    async expired(before, limit) {
+      // The lease's end is inside each row's JSON, so SQLite reads it there: one query for the whole sweep,
+      // where reading every row by name cost a query each and stopped at D1's thousand per invocation.
+      const { results } = await db
+        .prepare("SELECT name, record FROM claims WHERE json_extract(record, '$.renewedAt') < ?1 ORDER BY json_extract(record, '$.renewedAt') LIMIT ?2")
+        .bind(before, limit)
+        .all<{ name: string; record: string }>()
+      const rows: Array<{ name: string; record: ClaimRecord }> = []
+      for (const row of results) {
+        try {
+          rows.push({ name: row.name, record: JSON.parse(row.record) as ClaimRecord })
+        } catch {
+          // A row that does not parse reads as absent everywhere else, so the sweep leaves it alone too.
+        }
+      }
+      return rows
+    },
+    async countExpired(before) {
+      return Number((await db.prepare("SELECT COUNT(*) AS value FROM claims WHERE json_extract(record, '$.renewedAt') < ?1").bind(before).first<{ value: number }>())?.value ?? 0)
     },
     readOwner: (pubkey) => one("SELECT name AS value FROM owners WHERE pubkey = ?1", pubkey),
     async writeOwner(pubkey, name) {
@@ -163,21 +193,30 @@ export function d1ClaimStore(db: D1Database, kv: KvNamespace): ClaimStore & { co
   }
 }
 
+/** Count the names afresh and keep the number (d1ClaimStore's count says why it is kept). Under the lock. */
+export async function recountClaims(db: D1Database): Promise<number> {
+  const counted = Number((await db.prepare("SELECT COUNT(*) AS value FROM claims").first<{ value: number }>())?.value ?? 0)
+  await db.prepare("INSERT INTO meta (key, value) VALUES ('claim-count', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(String(counted)).run()
+  return counted
+}
+
 /**
- * An hourly budget counted exactly, in D1. Inside the lock, so two claims cannot both read the same count,
- * which the KV counters this replaced allowed.
+ * An hourly budget counted exactly, in D1. Spending is one statement, which SQLite runs whole: it adds one
+ * only while the hour has room, and answers with a row only when it did. So two claims can never both spend
+ * the last unit, inside the lock or out of it, which the KV counters this replaced allowed (one address
+ * minted 200 names in a burst while the counter read 1).
  */
 export function d1HourlyBudget(db: D1Database, key: string, perHour: number, now: () => number = Date.now): () => Promise<boolean> {
   return async () => {
+    if (perHour < 1) return false
     const bucket = Math.floor(now() / 3_600_000)
-    const row = `${key}:${bucket}`
-    const used = Number((await db.prepare("SELECT used AS value FROM budgets WHERE key = ?1").bind(row).first<{ value: number }>())?.value ?? 0)
-    if (used >= perHour) return false
-    await db
-      .prepare("INSERT INTO budgets (key, used, expires_at) VALUES (?1, 1, ?2) ON CONFLICT (key) DO UPDATE SET used = used + 1")
-      .bind(row, (bucket + 2) * 3_600_000)
-      .run()
-    return true
+    const spent = await db
+      .prepare(
+        "INSERT INTO budgets (key, used, expires_at) VALUES (?1, 1, ?2) ON CONFLICT (key) DO UPDATE SET used = used + 1 WHERE used < ?3 RETURNING used AS value"
+      )
+      .bind(`${key}:${bucket}`, (bucket + 2) * 3_600_000, perHour)
+      .first<{ value: number }>()
+    return spent !== null
   }
 }
 

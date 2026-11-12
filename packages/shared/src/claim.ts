@@ -39,38 +39,60 @@ export const CLAIM_LEASE_MS = 30 * 24 * 60 * 60_000
  *
  * `_acme-challenge` is the one that actually matters — handing it out would let someone obtain a
  * certificate for a name in the zone. The rest are the ordinary infrastructure labels that would be
- * confusing or phishable in someone else's hands.
+ * confusing or phishable in someone else's hands, and the ones mail and browser clients look up by
+ * themselves (`autodiscover`, `mta-sts`, `wpad`). Since custom names are GitHub usernames, an account
+ * with one of these logins is the one that cannot have its name.
  */
 export const RESERVED_CLAIM_NAMES: ReadonlySet<string> = new Set([
   "_acme-challenge",
+  "abuse",
+  "account",
+  "accounts",
   "acme",
   "admin",
   "api",
   "app",
+  "auth",
+  "autoconfig",
+  "autodiscover",
   "billing",
   "blog",
   "board",
   "cdn",
+  "cdn-cgi",
   "dashboard",
   "docs",
+  "download",
   "frizz",
   "ftp",
+  "get",
   "help",
+  "install",
   "localhost",
   "login",
   "mail",
+  "mta-sts",
   "ns",
   "ns1",
   "ns2",
+  "oauth",
+  "postmaster",
   "registrar",
   "relay",
   "root",
+  "secure",
+  "security",
+  "signin",
   "smtp",
   "ssl",
+  "sso",
   "staging",
   "status",
   "support",
   "test",
+  "verify",
+  "webmail",
+  "wpad",
   "www",
 ])
 
@@ -291,6 +313,11 @@ export async function exportClaimPublicKey(key: CryptoKey): Promise<string> {
 export async function importClaimPublicKey(pubkey: string): Promise<CryptoKey | null> {
   const bytes = fromBase64Url(pubkey)
   if (!bytes || bytes.byteLength !== 32) return null
+  // ONE SPELLING PER KEY. 43 base64url characters carry 258 bits, so the last character has two spare
+  // bits and four spellings decode to the same key. The registry compares keys as strings, so each would
+  // have been a separate identity with its own one-name limit and its own random names. Only the spelling
+  // exportClaimPublicKey writes is accepted.
+  if (toBase64Url(bytes) !== pubkey) return null
   try {
     return await crypto.subtle.importKey("raw", bytes, { name: "Ed25519" }, true, ["verify"])
   } catch {

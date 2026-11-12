@@ -36,6 +36,10 @@ export interface ClaimStore {
   list(): Promise<string[]>
   /** How many names are claimed, where the store can say so without listing them all. */
   count?(): Promise<number>
+  /** Up to `limit` names whose last renewal is before `before`, oldest first: the sweep, in one read. */
+  expired?(before: number, limit: number): Promise<Array<{ name: string; record: ClaimRecord }>>
+  /** How many names expired() would find with no limit. */
+  countExpired?(before: number): Promise<number>
   /** The name this key already holds, if any. One key, one name. */
   readOwner(pubkey: string): Promise<string | null>
   writeOwner(pubkey: string, name: string): Promise<void>
@@ -120,10 +124,12 @@ export interface ClaimDeps {
    */
   githubBudget?: () => Promise<boolean>
   /**
-   * May one more NEW name be handed out this hour, by anyone? Consulted for every name a claim creates,
-   * random or custom, after its own budget and identity are settled; never for a renewal. The per-network
-   * budget above does nothing against many networks at once, and this is the ceiling over all of them.
-   * Absent means unlimited, which is only ever right in tests.
+   * May one more new RANDOM name be handed out this hour, by anyone? The per-network budget above does
+   * nothing against many networks at once, and this is the ceiling over all of them. Never consulted for a
+   * renewal, so a board already serving keeps its name whatever the hour looks like, and never for a custom
+   * name: GitHub is that path's cost, one name per account, and someone holding this ceiling down with
+   * claims from many networks must not shut out a person claiming their own username. Absent means
+   * unlimited, which is only ever right in tests.
    */
   newNameBudget?: () => Promise<boolean>
 }
@@ -179,7 +185,8 @@ const MESSAGES: Record<ClaimFailure, string> = {
   "registrar-busy": "the registrar is busy with other claims — try again in a minute",
 }
 
-const reject = (error: ClaimFailure, status: 400 | 409 | 429 | 502 | 503 = 400): ClaimOutcome => ({
+/** The answer for a refusal, worded as the handler words it. The Worker's own early refusals use it too. */
+export const reject = (error: ClaimFailure, status: 400 | 409 | 429 | 502 | 503 = 400): ClaimOutcome => ({
   status,
   body: { error, message: MESSAGES[error] },
 })
@@ -315,7 +322,7 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   }
 
   // Last of the gates, so a claim refused for anything else spends none of the hour's names.
-  if (deps.newNameBudget && !(await deps.newNameBudget())) return reject("too-many-names", 503)
+  if (anonymous && deps.newNameBudget && !(await deps.newNameBudget())) return reject("too-many-names", 503)
 
   if (releasing) {
     // If the old tunnel will not die, do NOT proceed: creating its replacement would fail on the
@@ -522,16 +529,25 @@ export async function sweepExpiredClaims(
   limit = 50
 ): Promise<{ released: string[]; failed: string[]; remaining: number }> {
   const now = deps.now()
-  const names = await deps.store.list()
   const released: string[] = []
   const failed: string[] = []
   let expired = 0
+  let lapsed: Array<{ name: string; record: ClaimRecord }>
+  if (deps.store.expired && deps.store.countExpired) {
+    const before = now - CLAIM_LEASE_MS
+    lapsed = await deps.store.expired(before, limit)
+    expired = await deps.store.countExpired(before)
+  } else {
+    lapsed = []
+    for (const name of await deps.store.list()) {
+      const record = await deps.store.read(name)
+      if (!record || !claimLeaseExpired(record.renewedAt, now)) continue
+      expired++
+      if (lapsed.length < limit) lapsed.push({ name, record })
+    }
+  }
 
-  for (const name of names) {
-    const record = await deps.store.read(name)
-    if (!record || !claimLeaseExpired(record.renewedAt, now)) continue
-    expired++
-    if (released.length + failed.length >= limit) continue
+  for (const { name, record } of lapsed) {
     const hostname = `${name}.${deps.zone}`
     try {
       await release(deps, name, hostname, record.tunnelId, record.pubkey, record.githubId)
