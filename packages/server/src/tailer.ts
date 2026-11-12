@@ -764,6 +764,9 @@ export interface FenceView {
   // Set by the board alone, on the fence it synthesizes from a REGISTERED done (board.registeredDoneFence);
   // the tailer never sets it, because everything it parses came from a message.
   registered?: true
+  // An ```awaiting fence whose `steps:` is written empty: nothing on the to-do list is owed any more
+  // (shared splitAwaitingFrontmatter). The fold drops what is still unticked, as a done does.
+  clearsSteps?: true
 }
 
 // Per-session derived telemetry surfaced to the board overlay. Structurally a NormalizedTail (the
@@ -1447,8 +1450,8 @@ export function parseSignalFence(text: string | undefined): FenceView | undefine
   // YAML cutover moved one and not the other, and a correct fence promptly printed its own raw
   // frontmatter at the human in the in-chat card. One function, called twice, is the only thing that
   // actually prevents that. See `splitAwaitingFrontmatter` for the grammar and its failure modes.
-  const { body, hints } = splitAwaitingFrontmatter(raw)
-  return { kind, body: capFenceBody(body), hints }
+  const { body, hints, clearsSteps } = splitAwaitingFrontmatter(raw)
+  return { kind, body: capFenceBody(body), hints, ...(clearsSteps ? { clearsSteps } : {}) }
 }
 
 /** Does this message say NOTHING but its signal fence — no prose around it, no body or ledger inside it,
@@ -2978,8 +2981,12 @@ function settleHumanSteps(state: FoldState, replyText: string): void {
   // every rest after it (2026-11-11). A ticked item stays as the record of what was done; that is the
   // view's rule, and the fold does not know ticks. A registered `frizzctl done` is in no message, so the
   // board does the same off its row's instant (humanTodoView `retiredAt`).
-  if (state.lastFence?.kind === "done") {
-    if (state.humanSteps?.some((step) => step.listed)) state.humanSteps = state.humanSteps.map((step) => (step.listed ? { ...step, listed: false } : step))
+  //
+  // …AND SO IS ONE WHOSE FENCE WROTE `steps:` EMPTY: the worker saying nothing on the list is owed any more.
+  if (state.lastFence?.kind === "done" || state.lastFence?.clearsSteps) {
+    state.humanSteps = unlistSteps(state.humanSteps)
+    // Nothing owed answers the handoff that listed them, after this rest as during it (board handoffStands).
+    if (state.lastFence.clearsSteps && state.lastAssistantAt) state.stepsDoneAt = state.lastAssistantAt
     return
   }
   const steps = state.lastFence?.kind === "awaiting" ? awaitingStepItems(state.lastFence.hints) : []
@@ -2993,7 +3000,21 @@ function settleHumanSteps(state: FoldState, replyText: string): void {
 // and base list, so the board's memos see the same array on every read of a thread that has not moved.
 const humanStepsAtRest = new WeakMap<FenceView, { base: HumanStep[] | undefined; steps: HumanStep[] }>()
 
+// Every step taken off the list (`listed: false`): what is unticked goes, and a ticked one stays as the
+// record (human-todos.ts humanTodoView). The same array when nothing was listed.
+function unlistSteps(steps: HumanStep[] | undefined): HumanStep[] | undefined {
+  return steps?.some((step) => step.listed) ? steps.map((step) => (step.listed ? { ...step, listed: false } : step)) : steps
+}
+
+const unlistedAtRest = new WeakMap<HumanStep[], HumanStep[] | undefined>()
+
 function humanStepsOf(state: FoldState): HumanStep[] | undefined {
+  // A rest on an empty `steps:` has cleared the list already, before anything settles it.
+  if (state.turn === "idle" && state.lastFence?.clearsSteps && state.humanSteps) {
+    const base = state.humanSteps
+    if (!unlistedAtRest.has(base)) unlistedAtRest.set(base, unlistSteps(base))
+    return unlistedAtRest.get(base)
+  }
   const fence = state.turn === "idle" && state.lastFence?.kind === "awaiting" ? state.lastFence : undefined
   const steps = fence ? awaitingStepItems(fence.hints) : []
   const atMs = Date.parse(state.handoffAt ?? "")

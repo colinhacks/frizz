@@ -28,7 +28,7 @@ const GREEN: GithubWatchStatus = { checks: "passing", running: 0, passed: 9, fai
 const user = (minute: number, text: string, uuid: string) => JSON.stringify({ type: "user", uuid, timestamp: at(minute), message: { role: "user", content: text } })
 const reply = (minute: number, text: string) => JSON.stringify({ type: "assistant", timestamp: at(minute), message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text }] } })
 
-async function view(rest: string, opts: { held: boolean; ask?: boolean; said?: string }): Promise<ThreadView> {
+async function view(rest: string, opts: { held: boolean; ask?: boolean; said?: string; park?: string }): Promise<ThreadView> {
   const root = mkdtempSync(join(tmpdir(), "frizz-held-release-"))
   const dir = join(root, "project")
   mkdirSync(join(dir, ".frizz"), { recursive: true })
@@ -50,7 +50,7 @@ async function view(rest: string, opts: { held: boolean; ask?: boolean; said?: s
     user(0, `own ${PR}`, "d-first"),
     reply(2, rest),
     user(2.01, opts.said ?? "also bump the version while you are at it", "d-held"),
-    reply(5, QUIET),
+    reply(5, opts.park ?? QUIET),
   ].map((line) => line + "\n").join(""))
   const tailer = createTailer({ project, storage, bus: new Bus(), onChange: () => {}, sessionLogDir: logDir, now: () => T0 + 120 * 60_000, brokerDaemonAlive: () => true, shellAlive: () => true })
   for (let i = 0; i < 200 && !tailer.get(slug); i++) tailer.tick()
@@ -91,4 +91,17 @@ test("through the real tailer, a partial steps report holds the thread and a ful
   const all = await view(STEPS, { held: false, said: "Done" })
   assert.equal(all.needsYou, false, "every step reported done answers the handoff")
   assert.deepEqual(all.humanTodos?.filter((t) => !t.done).map((t) => t.text), [], "and the list owes nothing")
+})
+
+// AN EMPTY `steps:` AT REST: the list owes nothing and the earlier steps handoff no longer holds the queue,
+// read through the tailer's own projection (humanStepsOf) and the board.
+test("through the real tailer, a park with an empty steps line clears the list and lets the thread go", async () => {
+  const wake = "✅ CI PASSED on acme/app#391.\n\n<!-- frizz-wake:0a1b2c3d -->"
+  const cleared = await view(STEPS, { held: false, said: wake, park: "```awaiting\nprs: [acme/app#391]\nsteps: []\nstatus: watching\nfor: 180d\n```" })
+  assert.deepEqual((cleared.humanTodos ?? []).filter((t) => !t.done).map((t) => t.text), [])
+  assert.equal(cleared.needsYou, false)
+  // Control: the same park without the empty steps line is held in the queue on the steps it still owes.
+  const held = await view(STEPS, { held: false, said: wake })
+  assert.equal(held.needsYou, true)
+  assert.deepEqual(held.humanTodos?.filter((t) => !t.done).map((t) => t.text), ["Merge the PR.", "Delete the old branch."])
 })

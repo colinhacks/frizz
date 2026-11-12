@@ -90,3 +90,28 @@ test("humanTodoView: a registered done retires what no fence has listed since", 
   assert.deepEqual(shown(3_000), [APPROVE], "listed before the done: given up on; listed after it: owed")
   assert.deepEqual(shown(3_000, [{ item_id: "a", done_at: 2_000, reported_at: null }]), [`${SIGN_IN} ✓`, APPROVE], "a ticked one stays as the record")
 })
+
+// AN EMPTY `steps:` TAKES WHAT IS UNTICKED OFF THE LIST, for good, the way a done does: the worker's way to
+// say nothing on it is owed any more. The usual case: the rest ended on a wake that showed the steps done.
+test("a rest on an empty steps line retires what the list still owes, past the human's next message", () => {
+  const wake = "Monitor PASSED: the registrar claim is live.\n\n<!-- frizz-wake:0a1b2c3d -->"
+  const cleared = "Confirmed live.\n\n```awaiting\nsteps: []\nstatus: watching\nfor: 1h\n```"
+  const state = fold(
+    assistant("2026-11-09T10:00:00.000Z", fence(SIGN_IN, APPROVE)),
+    humanString("2026-11-09T10:20:00.000Z", wake),
+    assistant("2026-11-09T10:21:00.000Z", cleared),
+    humanString("2026-11-09T11:00:00.000Z", "Anything else?"),
+  )
+  assert.deepEqual(owed(state), [], "nothing owed, though the human has typed since")
+  assert.equal(state.stepsDoneAt, "2026-11-09T10:21:00.000Z", "and the handoff that listed them is answered")
+  // Control: the same park with no `steps:` key leaves both owed.
+  const kept = fold(
+    assistant("2026-11-09T10:00:00.000Z", fence(SIGN_IN, APPROVE)),
+    humanString("2026-11-09T10:20:00.000Z", wake),
+    assistant("2026-11-09T10:21:00.000Z", "Confirmed live.\n\n```awaiting\nstatus: watching\nfor: 1h\n```"),
+    humanString("2026-11-09T11:00:00.000Z", "Anything else?"),
+  )
+  assert.deepEqual(owed(kept), [SIGN_IN, APPROVE])
+  // A ticked step stays on the list as the record of what was done.
+  assert.deepEqual(humanTodoView(state.humanSteps, [{ item_id: state.humanSteps![0].id, done_at: Date.parse("2026-11-09T10:10:00.000Z"), reported_at: null }]).map((todo) => [todo.text, todo.done]), [[SIGN_IN, true]])
+})

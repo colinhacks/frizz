@@ -884,7 +884,7 @@ const indentOf = (line: string) => line.length - line.trimStart().length
  *  item, the next key or the `---`. Inside a body a `---` is a rule, not the delimiter, and a code block
  *  is carried whole. Only an outer fence longer than the code fences inside it can hold one (the signal
  *  fence scanners take any run of three or more backticks). */
-export function splitAwaitingFrontmatter(raw: string): { body: string; hints: AwaitingHint[] } {
+export function splitAwaitingFrontmatter(raw: string): { body: string; hints: AwaitingHint[]; clearsSteps?: true } {
   const lines = raw.split("\n").map((l) => l.replace(/\r$/, ""))
   const rest: string[] = []
   const yamlLines: string[] = []
@@ -900,6 +900,9 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   let structural = true
   let inTitle = false
   let inSteps = false
+  // A `steps:` key with nothing on it or under it (`steps:` alone, or `steps: []`): see `clearsSteps`.
+  let stepsKey = false
+  let stepsWritten = false
   let delimiter = -1
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -928,8 +931,14 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
     }
     if (inTitle) titleLines.push(m && key === "title" ? (m[2] ?? "") : line)
     else if (inSteps) {
-      if (m && key === "steps") steps.push(...inlineSteps(m[2] ?? "").map((title) => ({ title: [title], body: undefined, dash: Number.POSITIVE_INFINITY, fence: undefined })))
-      else readStepLine(steps, line)
+      if (m && key === "steps") {
+        stepsKey = true
+        if (!/^\[\s*\]$/.test((m[2] ?? "").trim()) && (m[2] ?? "").trim()) stepsWritten = true
+        steps.push(...inlineSteps(m[2] ?? "").map((title) => ({ title: [title], body: undefined, dash: Number.POSITIVE_INFINITY, fence: undefined })))
+      } else {
+        if (line.trim()) stepsWritten = true
+        readStepLine(steps, line)
+      }
     }
     else (structural ? yamlLines : rest).push(line)
   }
@@ -952,7 +961,13 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   // The cap counts named items alone (see AWAITING_HINT_MAX); every scalar survives it, in written order.
   let items = 0
   const capped = parsed.hints.filter((h) => h.kind !== "question" && (AWAITING_SCALAR_KINDS.has(h.kind) || items++ < AWAITING_HINT_MAX))
-  return { body: rest.join("\n").trim(), hints: [...capped, ...questionHints, ...stepHints] }
+  // AN EMPTY `steps:` SAYS NOTHING IS OWED (maintainer 2026-11-12). A rest with no `steps:` changes nothing
+  // on the human's to-do list, so a worker whose steps stopped mattering — the rest ended on a wake that
+  // showed them done, or the plan changed — had no way to take them off short of signing off `done`, and
+  // the list owed them for good (37 threads on 2026-11-11). Anything written on or under the key, even a
+  // malformed list, is not this: a slip must not clear the list.
+  const clearsSteps = stepsKey && !stepsWritten
+  return { body: rest.join("\n").trim(), hints: [...capped, ...questionHints, ...stepHints], ...(clearsSteps ? { clearsSteps: true as const } : {}) }
 }
 
 /** One line under `steps:`, onto the list of steps as written (splitAwaitingFrontmatter has the grammar). */

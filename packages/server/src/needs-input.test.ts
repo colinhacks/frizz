@@ -319,3 +319,18 @@ test("a steps fence queues the thread — new contract, legacy, and with a false
   // A question still outranks it, exactly as it outranks every awaiting card.
   assert.equal(deriveAwaitingBackground(row(), tele(stepsFence()), "turn-idle", false, NOW, undefined, false, {}, new Set(), new Set(), [], 1), false)
 })
+
+// AN EMPTY `steps:` SAYS NOTHING ON THE TO-DO LIST IS OWED (maintainer 2026-11-12): the one way a worker can
+// take steps off the list short of signing off done. Only a key with nothing on it or under it: a list the
+// worker meant to write, malformed, must not clear anything.
+test("an empty steps line clears the list; a written one, or none at all, does not", () => {
+  const read = (...lines: string[]) => splitAwaitingFrontmatter(lines.join("\n"))
+  assert.equal(read("steps: []", "status: watching", "shells: [bzvt]").clearsSteps, true)
+  assert.equal(read("status: watching", "steps:", "---", "Nothing on the list is needed now.").clearsSteps, true)
+  assert.equal(read("steps: [ ]").clearsSteps, true)
+  assert.equal(read("steps:", "  - Merge the PR.").clearsSteps, undefined)
+  assert.equal(read("steps: [Merge the PR.]").clearsSteps, undefined)
+  assert.equal(read("steps:", "  Merge the PR, then delete the branch.").clearsSteps, undefined, "a list written without its dashes is a slip, not a clear")
+  assert.equal(read("status: watching", "shells: [bzvt]").clearsSteps, undefined)
+  assert.deepEqual(awaitingSteps(read("steps: []", "status: watching").hints), [])
+})

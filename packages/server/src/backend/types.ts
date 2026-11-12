@@ -264,7 +264,8 @@ export interface FoldState {
   // `handoffAt` as it stood before the newest stamp, put back when the fence that stamped it is replaced
   // before anything answered it: it was never a rest (tailer unstampHandoff).
   handoffBefore?: string
-  // WHEN THE HUMAN LAST REPORTED EVERY STEP DONE: a "Done" from the to-do list's send, or typed. A steps
+  // WHEN THE HUMAN LAST REPORTED EVERY STEP DONE: a "Done" from the to-do list's send, or typed — or the
+  // worker said nothing is owed any more, with an empty `steps:` (tailer settleHumanSteps). A steps
   // report is not typing (shared isHumanTypedMessage), so it leaves `restFromAt` and every question
   // standing beside the steps where they were; a report of everything done still answers the handoff, as
   // settling a question does (board handoffStands). A partial one ("Done 1 of 2") answers nothing: the

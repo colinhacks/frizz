@@ -1498,6 +1498,8 @@ function quietParkHolds(
 function handoffStands(row: Pick<SessionRow, "bg_snooze_rested_at">, tele: SessionTelemetry | undefined, questionSettledAt?: number): boolean {
   const handoffMs = Date.parse(tele?.handoffAt ?? "")
   if (!Number.isFinite(handoffMs)) return false
+  // A rest on an empty `steps:` says nothing on the list is owed any more: no steps to hold the thread for.
+  if (tele?.lastFence?.clearsSteps) return false
   const reached = [tele?.restFromAt ?? tele?.lastUserAt, row.bg_snooze_rested_at, tele?.stepsDoneAt].map((at) => Date.parse(at ?? ""))
   return ![...reached, questionSettledAt ?? Number.NaN].some((ms) => ms >= handoffMs)
 }

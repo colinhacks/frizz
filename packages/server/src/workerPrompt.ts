@@ -588,7 +588,8 @@ exactly ONE of them.
     **FRIZZ KEEPS ONE TO-DO LIST FOR THE HUMAN PER THREAD, AND EVERY \`steps:\` LANDS ON IT.** A step is its
     own text: the same words in a later fence keep the same box, and an unticked step your newest
     \`steps:\` leaves out drops off the list, so each \`steps:\` names everything still owed. A rest with
-    no \`steps:\` changes nothing on it. Their card, headed **Awaiting human**, shows the list with one
+    no \`steps:\` changes nothing on it, and \`steps: []\` clears what is still unticked, for when nothing
+    on it is owed any more. Their card, headed **Awaiting human**, shows the list with one
     checkbox per step. Everything ticked and sent comes back to you as their reply, \`Done\`, the same as
     anything they type; only some of it comes back as \`Done 1 of 3:\` over a \`- [x]\` / \`- [ ]\`
     checklist, and an unticked step has NOT happened. Listing a step they reported done reopens its box,
