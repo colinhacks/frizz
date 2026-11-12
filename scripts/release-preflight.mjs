@@ -53,7 +53,7 @@ const root = path.dirname(here);
  */
 export const NOTES_SINCE = "2026-10-16T20:00";
 const REVIEWER = "colinhacks";
-const ENVIRONMENTS = ["npm-publish", "release-approval"];
+const ENVIRONMENTS = ["npm-publish"];
 
 // ── The judgements, each on plain data so it can be tested without a network ───────────────────────
 
@@ -343,7 +343,7 @@ async function main(argv) {
     }
   });
 
-  // approvals ─ the two human gates are still where they were put (2026-10-12, 2026-11-05).
+  // approvals ─ the human gate on every run is still where it was put (2026-10-12, 2026-11-05).
   await attempt("approvals", async () => {
     const environments = JSON.parse(gh("Read the release environments", ["api", `repos/${repo}/environments`, "--jq", ".environments"]));
     for (const name of ENVIRONMENTS) {

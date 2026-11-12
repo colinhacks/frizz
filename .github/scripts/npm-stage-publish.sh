@@ -19,7 +19,8 @@ shift
 name="$(node -p "require(require('node:path').resolve('$dir', 'package.json')).name")"
 version="$(node -p "require(require('node:path').resolve('$dir', 'package.json')).version")"
 
-# The registry URL, not `npm view`: see npm-wait-served.sh.
+# The registry URL, not `npm view`, which revalidates a cached packument and can report a live version
+# as missing for minutes (pullfrog, diagnosing its 0.1.66 and 0.1.72 releases).
 if curl -sf "https://registry.npmjs.org/$name/$version" > /dev/null; then
   echo "✓ $name@$version is already published — skipping"
   exit 0

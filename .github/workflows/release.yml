@@ -45,9 +45,12 @@ name: release
 #
 # It ran once before, from 2026-09-22, and was dropped on 2026-09-30 as too onerous: an approval per
 # package, and a wait inside the job that gave up after 350 minutes, so a late approval cost a re-run.
-# Now `stager` approves both packages with one code from one notification, and the wait is `finish`, a
-# job GitHub holds on the `release-approval` environment with no runner for up to 30 days. Zod's, nub's
-# and reylo's releases work the same way.
+# Now `stager` approves both packages with one code from one notification, and nothing here waits for
+# it: the run ends once both versions are staged. Until 2026-11-12 a `finish` job waited on a
+# `release-approval` environment for npm to serve both, and resuming it cost a Touch ID on every
+# approval for a job that published and tagged nothing (maintainer: "I thought the whole point of
+# Stager is that it can resume those runs on its own"). `stager await` and the releaser, before it
+# tags, are what check that npm serves both.
 #
 # A REVIEWER GATES EVERY RUN (2026-11-05). `npm-publish` requires an approval from `colinhacks`, so a
 # run waits until the releaser approves it (AGENTS.md § Cutting a release). The dispatch alone didn't
@@ -60,7 +63,7 @@ name: release
 # its own manifest from the registry on first boot, so a shell that goes live before that server does
 # is broken for anyone who installs it in between. Staging queues both, so no step here can order
 # them. `stager` approves a release's packages in the order they were staged, so `stage` stages the
-# server first. `finish` then waits until npm serves both, so a green run means it does.
+# server first. A green run means both are staged, not that npm serves them.
 #
 # TAGS AND GITHUB RELEASES ARE NOT MADE HERE (2026-10-12). The shell is tagged at npm's recorded
 # gitHead, and GitHub refuses this job's token a ref whose commit carries a different
@@ -98,14 +101,14 @@ on:
         default: false
 
 # Two releases racing would fight over the same version; let an in-flight one finish rather than
-# cancelling it mid-stage. Held across the approval wait, so a second dispatch queues instead of staging
-# next to a held run.
+# cancelling it mid-stage. A dispatch while an earlier version is still in npm's review is refused by
+# npm-refuse-overtake.sh, not by this group, since the run no longer waits for the approval.
 concurrency:
   group: release-frizz
   cancel-in-progress: false
 
 jobs:
-  # Builds and stages. The wait for the approval is `finish`, which holds no runner until it's approved.
+  # Builds and stages, and that is the whole run: the approval happens on npm, through stager.
   stage:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -115,9 +118,6 @@ jobs:
     permissions:
       id-token: write # required for Trusted Publishing (OIDC)
       contents: read # tags and GitHub releases are the releaser's (scripts/tag-release.mjs)
-    outputs:
-      version: ${{ steps.decide.outputs.version }}
-      server_version: ${{ steps.decide.outputs.server_version }}
     steps:
       # `release`, not main: this repo publishes the commit someone verified and moved the branch to,
       # never whatever main happens to hold (see the header). A step rather than a job-level `if:`,
@@ -229,44 +229,10 @@ jobs:
           {
             echo "## Staged on npm, waiting for approval"
             echo
-            echo "Neither version is installable until a maintainer approves it with 2FA. This run is now held on the \`release-approval\` environment, with no runner, until then."
+            echo "Neither version is installable until a maintainer approves it with 2FA. This run is done; the approval happens on npm."
             echo
             echo '```'
-            echo "stager ask 'frizz-server@$SERVER_VERSION' 'frizz@$VERSION'     # posts the notification: Approve, then ONE authenticator code approves both and resumes this run"
-            echo "stager reject 'frizz-server@$SERVER_VERSION' 'frizz@$VERSION'  # drops both and fails this run"
+            echo "stager ask 'frizz-server@$SERVER_VERSION' 'frizz@$VERSION'     # posts the notification: Approve, then ONE authenticator code approves both"
+            echo "stager reject 'frizz-server@$SERVER_VERSION' 'frizz@$VERSION'  # drops both"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-  finish:
-    needs: stage
-    # Held by the environment's required reviewer, not by a runner: GitHub keeps the run waiting for up
-    # to 30 days. `stager` resumes it once npm has the approval. GitHub lets only the `release` branch
-    # deploy here, and this job holds no OIDC permission, so it can't reach npm at all.
-    environment: release-approval
-    runs-on: ubuntu-latest
-    # Six hours is a GitHub job's maximum, not a tunable. Both waits below share one deadline set under
-    # it, so a stall is reported by the wait step, not by a job timeout. A version npm serves later is
-    # not lost: re-run the job and it resumes from there.
-    timeout-minutes: 360
-    permissions:
-      contents: read
-    steps:
-      # Pinned by SHA, like the checkout in `stage`.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # The approval that resumed this job says nothing about npm, so the registry decides: a run
-      # resumed with nothing approved fails at the deadline instead of going green.
-      - name: Set the deadline both waits share
-        run: echo "RELEASE_DEADLINE=$(( $(date +%s) + 340 * 60 ))" >> "$GITHUB_ENV"
-
-      - name: Wait for npm to serve frizz-server
-        env:
-          SERVER_VERSION: ${{ needs.stage.outputs.server_version }}
-        run: bash .github/scripts/npm-wait-served.sh frizz-server "$SERVER_VERSION"
-
-      # A green run means npm serves the shell too, so the releaser's tag (scripts/tag-release.mjs)
-      # never describes a version npm does not serve.
-      - name: Wait for npm to serve frizz
-        env:
-          VERSION: ${{ needs.stage.outputs.version }}
-        run: bash .github/scripts/npm-wait-served.sh frizz "$VERSION"
