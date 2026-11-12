@@ -1,14 +1,14 @@
 import { isAbsolute } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { ThreadLinkView } from "@frizz/shared"
-import { resolveOpenableFile } from "./local-file.ts"
+import { resolveOpenableFile, type LocalFileRoot } from "./local-file.ts"
 import type { ThreadLinkRow } from "./storage.ts"
 
 export function threadLinkView(row: ThreadLinkRow): ThreadLinkView {
   return { id: row.id, kind: row.kind, label: row.label, target: row.target }
 }
 
-export function resolveThreadLink(target: string, projectDir: string, roots: readonly string[]): Pick<ThreadLinkView, "kind" | "target"> {
+export function resolveThreadLink(target: string, projectDir: string, roots: readonly LocalFileRoot[]): Pick<ThreadLinkView, "kind" | "target"> {
   if (/^https?:\/\//i.test(target)) {
     const url = new URL(target)
     if (url.username || url.password) throw new Error("Link URLs must not contain credentials")

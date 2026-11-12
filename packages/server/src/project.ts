@@ -11,6 +11,8 @@ import type { ProjectLaunchTarget } from "./project-launch.ts"
 import { discoverProjectRoot, ensureProjectIdFile, writeProjectIdFile } from "./project-root.ts"
 import { registerProject, seedProjectId } from "./project-registry.ts"
 import { projectStateDir } from "./frizz-paths.ts"
+import type { LocalFileRoot } from "./local-file.ts"
+import { inRegisteredCheckout } from "./registered-checkout.ts"
 import { originRemoteUrl, parseRepoLabel, resolveProjectLabel } from "./project-identity.ts"
 import { githubRemoteNameWithOwner } from "./github.ts"
 
@@ -68,9 +70,12 @@ export function trustedLocalFileRoots(project: Pick<Project, "dir" | "stateDir">
 // like ~/.claude/CLAUDE.md opens, while system trees (/etc, /usr, …) stay out. Opening spawns the desktop
 // opener (no bytes enter the page) and is still realpath-confined by the caller's isUnder check — never
 // the whole filesystem. homedir() subsumes ~/Screenshots and an in-home project/attachments dir; the temp
-// trees and an out-of-home checkout are kept explicit via the trusted set.
-export function openableFileRoots(project: Pick<Project, "dir" | "stateDir">): string[] {
-  return [homedir(), ...trustedLocalFileRoots(project)]
+// trees and an out-of-home checkout are kept explicit via the trusted set. Last, any checkout of a
+// registered project's repository, wherever it is (registered-checkout.ts): a worker's worktree on an
+// external volume. It is the same set for every project, so the Console, which asks whichever project's
+// board holds a path or else the first one (web lib/consoleProjects.ts), gets the same answer from each.
+export function openableFileRoots(project: Pick<Project, "dir" | "stateDir">): LocalFileRoot[] {
+  return [homedir(), ...trustedLocalFileRoots(project), (real) => inRegisteredCheckout(real)]
 }
 
 function isNotGitRepositoryError(error: unknown): boolean {
