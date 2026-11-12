@@ -9,7 +9,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingStepItems, fenceWaitsOnHuman, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingStepItems, DONE_FENCE_CORRECTION_LEAD, fenceWaitsOnHuman, isParkCorrection, SIGNOFF_CORRECTION_LEAD, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -1451,6 +1451,41 @@ export function parseSignalFence(text: string | undefined): FenceView | undefine
   return { kind, body: capFenceBody(body), hints }
 }
 
+/** Does this message say NOTHING but its signal fence — no prose around it, no body or ledger inside it,
+ *  no `steps:`, no question fence? That is a worker resting with nothing new for the human (2026-11-11):
+ *  its sign-off before stays the handoff, and the board keeps drawing that one (sign-offs.ts). */
+export function signalFenceAlone(text: string | undefined): boolean {
+  const fence = parseSignalFence(text)
+  if (!fence || typeof text !== "string") return false
+  if (fence.body.trim() !== "" || (fence.kind === "awaiting" && fenceWaitsOnHuman(fence.hints))) return false
+  if (hasQuestionBlock(text)) return false
+  const norm = text.replace(/\r\n/g, "\n")
+  const signal = signalFenceOf(norm)
+  return signal !== undefined && norm.slice(0, signal.start).trim() === ""
+}
+
+/** Is there nothing in this message but question fences and, at most, an empty signal fence? A message
+ *  that only names questions, with no prose around them (scheduler SOURCE 18's re-listing). */
+export function questionFencesOnly(text: string | undefined): boolean {
+  if (typeof text !== "string" || !mayHoldQuestionFence(text)) return false
+  const blocks = questionFenceBlocks(text)
+  if (blocks.length === 0) return false
+  let rest = ""
+  let from = 0
+  for (const b of blocks) {
+    rest += text.slice(from, b.start)
+    from = b.end
+  }
+  rest = (rest + text.slice(from)).replace(/\r\n/g, "\n")
+  const fence = parseSignalFence(rest)
+  if (fence) {
+    if (fence.body.trim() !== "") return false
+    const signal = signalFenceOf(rest)
+    if (signal) rest = rest.slice(0, signal.start) + rest.slice(signal.end)
+  }
+  return !/[\p{L}\p{N}]/u.test(rest)
+}
+
 // A user record is a REAL user interaction (a typed prompt / answer / steer / dispatch) rather than a
 // mere tool_result fed back to the model mid-turn. The distinction matters for the chronological
 // listing order: only the user's OWN messages should bump a row, never the agent's tool activity.
@@ -1528,6 +1563,21 @@ function noteUserRecordForQuestions(state: FoldState, text: string, at: string, 
   // stale entry would swallow the human typing the same words again later.
   if (queued.length > 0) state.queuedHumanTexts = undefined
   if (carriesQuestionFenceCorrection(text)) state.questionCorrectedAt = at
+  if (carriesRepairCorrection(text)) state.repairAskedAt = at
+}
+
+// A correction that asks the worker to REPAIR a fence — a ```question fence that could not register, a park
+// naming something dead or nothing — rather than to write a new sign-off. The turn answering one is a fix-up
+// (SOURCE 14's own words: "a fence that registers needs nothing else"), so scheduler SOURCE 18 does not
+// hold it to naming every open question. The sign-off and done corrections are not repairs: each asks for
+// the whole handoff.
+function carriesRepairCorrection(text: string): boolean {
+  if (!text.includes("⚠️ Your ")) return false
+  const repair = (body: string) => {
+    const t = body.trimStart()
+    return isParkCorrection(t) && !t.startsWith(SIGNOFF_CORRECTION_LEAD) && !t.startsWith(DONE_FENCE_CORRECTION_LEAD)
+  }
+  return splitWakeDeliveries(text).some((delivery) => repair(delivery) || (parseMergedWake(delivery) ?? []).some((part) => repair(part.body)))
 }
 
 // The LEGACY question flag (a ```question fence on the final message — what queues a thread spawned
@@ -2758,6 +2808,8 @@ export function applyRecord(state: TailState, rec: Record): void {
       // Same lifecycle for the stop-hook sentinel: it only means "nothing actionable" while it
       // is the FINAL word, so a later assistant text that omits it re-opens the loop by itself.
       state.lastAssistantAllDone = saysAllDone(raw)
+      state.lastAssistantFenceAlone = signalFenceAlone(raw)
+      state.lastAssistantFencesOnly = questionFencesOnly(raw)
       // Recompute the done/awaiting signal fence from THIS text — an assistant text with no fence
       // clears it (the fence only signals while it is the final message). Same lifecycle as the
       // question flag: set per assistant text, cleared by any user record below.
@@ -2803,6 +2855,8 @@ export function applyRecord(state: TailState, rec: Record): void {
     // classifier, so the two projections cannot drift again — but the chat draws Frizz's own deliveries
     // too, so it is only the first gate. The question asks the narrower one below the row-order key.
     state.lastAssistantAllDone = false
+    state.lastAssistantFenceAlone = false
+    state.lastAssistantFencesOnly = false
     // Whatever kind of turn this is, the worker now holds its text: a wake's token in it is that wake arriving.
     noteWakeTokens(state, userMessageText(rec.message?.content))
     // A tool result answers a call made in the same message, so that fence was never the thread's last word.
@@ -2879,6 +2933,8 @@ function applyFinalText(state: FoldState, text: string): void {
   setAssistantPreview(state, text)
   state.lastAssistantHasQuestion = hasQuestionBlock(text)
   state.lastAssistantAllDone = saysAllDone(text)
+  state.lastAssistantFenceAlone = signalFenceAlone(text)
+  state.lastAssistantFencesOnly = questionFencesOnly(text)
   setSignalFence(state, text)
   noteHandoff(state)
 }
@@ -2985,6 +3041,8 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.lastFence = undefined
       state.strayFence = undefined
       state.lastAssistantAllDone = false
+      state.lastAssistantFenceAlone = false
+      state.lastAssistantFencesOnly = false
       state.lastAssistantHasQuestion = false
       if (typeof ev.at === "string") state.lastAssistantAt = ev.at
       break
@@ -3060,6 +3118,8 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.limitFault = undefined
       state.turn = "in-flight"
       state.lastAssistantAllDone = false
+      state.lastAssistantFenceAlone = false
+      state.lastAssistantFencesOnly = false
       settleHumanSteps(state, ev.text ?? "")
       state.lastFence = undefined
       state.strayFence = undefined
@@ -6712,7 +6772,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: heldTypedAt(s, row), handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastAssistantFenceAlone: s.lastAssistantFenceAlone, lastAssistantFencesOnly: s.lastAssistantFencesOnly, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: heldTypedAt(s, row), handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, repairAskedAt: s.repairAskedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

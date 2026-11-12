@@ -46,7 +46,7 @@ function world(over: Partial<SessionRow> = {}) {
     turn: "idle", permPrompt: false, subAgents: [], bgShells: [], retiredShells: [], retiredSubAgents: [],
     lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant,
     lastAssistantLine: s.lastAssistantLine, questionSightings: s.questionSightings, pendingQuestion: false,
-    lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, restFromAt: s.restFromAt, questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText,
+    lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, restFromAt: s.restFromAt, questionCorrectedAt: s.questionCorrectedAt, repairAskedAt: s.repairAskedAt, lastUserText: s.lastUserText,
     lastFence: s.lastFence, ...extra,
   } as SessionTelemetry)
   const tailer = {

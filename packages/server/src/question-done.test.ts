@@ -56,7 +56,7 @@ function world(over: Partial<SessionRow> = {}, opts: { quietWindowMs?: number } 
     turn: "idle", permPrompt: false, subAgents: [], bgShells: [], retiredShells: [], retiredSubAgents: [],
     lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant,
     lastAssistantLine: s.lastAssistantLine, questionSightings: s.questionSightings, pendingQuestion: false,
-    lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, restFromAt: s.restFromAt, questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText,
+    lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, restFromAt: s.restFromAt, questionCorrectedAt: s.questionCorrectedAt, repairAskedAt: s.repairAskedAt, lastUserText: s.lastUserText,
     lastFence: s.lastFence, ...extra,
   } as SessionTelemetry)
   const tailer = {
@@ -141,7 +141,7 @@ test("a ```done fence over an open question draws ONE correction, naming the que
       "Your next message is the rest that counts, and it takes one of two shapes:",
       "",
       "- You withdrew it: sign off done again, and it stands.",
-      "- You still need the answer: write no ```done fence. End on a ```question fence carrying its `id:` alone, which keeps the thread in the human's queue on it, and sign off done once it is answered.",
+      "- You still need the answer: write no ```done fence. Sign off with the whole handoff instead, the question named by a ```question fence carrying its `id:` alone under the paragraph it belongs to, which keeps the thread in the human's queue on it, and sign off done once it is answered.",
     ].join("\n"))
     assert.equal(w.bumps(), 1, "counted against the corrective cap")
     // What the board says is what it said before: the question first, the done fence still on the row.

@@ -19,8 +19,18 @@
 // for: a sign-off makes it part of that sign-off (the worker wrote its write-up, forgot the fence, and
 // added the fence on its own), and a quiet park takes it back (it was a status line). A bare rest nobody
 // has answered yet stays a sign-off, because that is what the board queued it as.
+//
+// A REST ON THE FENCE ALONE LEAVES THE SIGN-OFF BEFORE IT STANDING (2026-11-11). A sign-off is the whole
+// handoff, written to stand alone, and the board folds everything else since the human last typed behind
+// one row (web lib/stretchFolds). So a worker woken with nothing new rests without writing a new one: a
+// quiet park, or a needs_input or done fence with nothing around it and nothing in it (tailer
+// signalFenceAlone). That rest still reads as a sign-off, since what the board queued it as is unchanged
+// and a bare rest's reminder reads it so, but it marks no message: the sign-off it rested on is the one
+// before. Measured before the rule: of every rest since 2026-11-04 on a needs_input or done fence with
+// nothing around it, none had a write-up earlier in its turn (3 rests), so nothing a worker wrote is left
+// unmarked by it.
 import { awaitingStatus, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, type TranscriptMessage } from "@frizz/shared"
-import { hasQuestionBlock, parseSignalFence } from "./tailer.ts"
+import { hasQuestionBlock, parseSignalFence, signalFenceAlone } from "./tailer.ts"
 
 /** What one rest said about the human: written for them, a quiet park, or no fence at all. */
 export type RestReading = "signOff" | "quiet" | "bare"
@@ -97,7 +107,9 @@ export function readRests(messages: readonly TranscriptMessage[]): Rest[] {
     let registered = -1
     for (let i = turnStart; i < r; i++) if (messages[i].role === "assistant" && carriesDoneRegistration(messages[i])) registered = i
     const reading = registered >= 0 ? "signOff" : readingOf(messages[at]) ?? "bare"
-    rests.push({ at: at >= 0 ? at : registered, reading, nudged: nudgedAfter(messages, r) })
+    // The fence alone, with nothing new: the sign-off before stands (see the header).
+    const stands = registered < 0 && reading === "signOff" && at >= 0 && signalFenceAlone(messages[at].text)
+    rests.push({ at: stands ? -1 : at >= 0 ? at : registered, reading, nudged: nudgedAfter(messages, r) })
     turnStart = r + 1
   }
   return rests

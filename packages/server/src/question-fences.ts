@@ -138,7 +138,7 @@ function rowNames(row: ThreadQuestionRow, cache: Map<string, string[]>): string[
 /** Every name the thread's rows answer to, each pointing at the ROOT row carrying it — as of `upTo`: only
  *  rows asked at or before that instant, and where several carry one name (an id asked again once its
  *  question settled), the one asked LAST. */
-function handleIndex(rows: readonly ThreadQuestionRow[], upTo = Number.POSITIVE_INFINITY, cache = new Map<string, string[]>()): Map<string, ThreadQuestionRow> {
+export function handleIndex(rows: readonly ThreadQuestionRow[], upTo = Number.POSITIVE_INFINITY, cache = new Map<string, string[]>()): Map<string, ThreadQuestionRow> {
   const index = new Map<string, ThreadQuestionRow>()
   for (const row of rows) {
     if (row.asked_at > upTo) continue

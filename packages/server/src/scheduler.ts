@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
-import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, GithubWatchStatus, shortCommit, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
+import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, signOffCorrection, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, GithubWatchStatus, shortCommit, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { takeLoopTurn } from "./loop-turns.ts"
+import { readSignOffFaults } from "./signoff-completeness.ts"
 import { autonomousGoalOf, childOfRow, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
 import { GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, githubStatusKey, idlePrsOf, liveActivityOf, parkExpiresAt, parkIsHonoured, parkOnHuman, parkWaitsOnThisSide, readAwaitingPark, readGithubStatusBook, unaccountedItems, type AwaitingPark, type GithubStatusBook } from "./awaiting.ts"
 import type { CommandWatchRow, PrWatchRow, SessionRow, Storage, ThreadQuestionRow } from "./storage.ts"
@@ -1198,6 +1199,9 @@ const QUESTION_FENCE_CAUSE = "question-fence"
 /** The cause a ```done fence's correction rides under when it closed a rest over an open question
  *  (SOURCE 15): `park:done-open-question:<rest>`. A park cause for the same two reasons. */
 const DONE_OVER_QUESTION_CAUSE = "done-open-question"
+/** The cause SOURCE 18's correction rides under: `park:signoff-incomplete:<rest>`. A park cause for the
+ *  same two reasons as the two above. */
+const SIGNOFF_INCOMPLETE_CAUSE = "signoff-incomplete"
 /** No ```done fence written before this instant is corrected for an open question. The gate arrived with
  *  the ```question fence's own cutover, and a refold of an older transcript must not wake a thread that
  *  has rested on a done card for a week to tell it about a rule it was never under. */
@@ -1422,6 +1426,10 @@ export interface SchedulerDeps {
   // recovery can prove a crash-window delivery before retrying (the production composition does both).
   resume: (slug: string, message: string, deliveryId: string) => void | Promise<void>
   now?: () => number
+  /** SOURCE 18 corrects no rest written before this instant. Default: when this scheduler was created, so a
+   *  rest written under the old contract is never woken to be told about the new one when the server that
+   *  enforces it first boots. Tests set it to a fixture's own clock. */
+  signOffRulesFromMs?: number
   // The provider quota snapshot, used ONLY to decide whether an exhausted window has rolled when the
   // limit message's own text can't say (every weekly limit, since its clock carries no date). Absent
   // in tests that exercise the text path; a read that throws is treated as indeterminate.
@@ -2355,6 +2363,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const questionRows = deps.storage.listThreadQuestions(row.slug)
       const standing = standingQuestions(questionRows, tele, deps.questionFaults?.of(row.slug))
       if (outbox.get(wakeDeliveryId(row.slug, row.session_id, parkFenceId(QUESTION_FENCE_CAUSE, spokeAt)))) continue
+      // SOURCE 18 took a bare rest that left out an open question: its correction already says what to write.
+      if (signOffFaultRests.get(row.slug) === spokeAt) continue
       if (
         tele.lastFence ||
         tele.pendingQuestion ||
@@ -2759,6 +2769,71 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   }
 
+  // ---- SOURCE 18: A SIGN-OFF THAT IS NOT THE WHOLE HANDOFF -----------------------------------------
+  //
+  // A sign-off replaces the one before it, and the board folds everything else since the human last typed
+  // behind one row, so the newest sign-off is all the human reads (signoff-completeness.ts has the rule and
+  // the measurement behind it). This pass refuses, with one correction for the rest, a sign-off that leaves
+  // out an open question, and a message that only re-lists questions still on screen — the maintainer's
+  // choice over drawing the duplicate quietly (2026-11-11).
+  //
+  // ONE VOICE PER REST, as SOURCE 15: a rest SOURCE 14 or 15 already took is left to that correction, and
+  // SOURCE 12 reads `signOffFaultRests` so an honoured park beside a refused naming does not hand the
+  // allowance back. Capped like the other two: PARK_BUMP_MAX on the shared count, and three for this cause
+  // since the human last typed. Not on a Goal thread (it asks nothing), a child thread (its asks are its
+  // parent's to answer), a thread on the legacy question contract, or while an answer is on its way.
+  const signOffRulesFromMs = deps.signOffRulesFromMs ?? Date.now()
+  const signOffFaultRests = new Map<string, string>()
+  function evalSignOffCompleteness(nowMs: number): void {
+    signOffFaultRests.clear()
+    for (const row of deps.storage.allSessions()) {
+      if (row.state === "archived" || row.archived === 1) continue
+      const tele = deps.tailer.get(row.slug)
+      if (!tele || tele.turn !== "idle") continue
+      // The agent must have spoken last, and the turn must have reached the model — SOURCE 9's guards.
+      const spokeAt = tele.lastAssistantAt
+      if (!spokeAt || !(Date.parse(spokeAt) >= signOffRulesFromMs)) continue
+      if (tele.lastUserAt && Date.parse(tele.lastUserAt) >= Date.parse(spokeAt)) continue
+      if (tele.authFault || tele.apiFault) continue
+      if (questionFencesLive(row.spawned_at) || autonomousGoalOf(row) !== undefined || childOfRow(deps.storage, row)) continue
+      const rows = deps.storage.listThreadQuestions(row.slug)
+      if (answersInFlight(rows, answersReceivedAt(tele), false) !== undefined) continue
+      const faults = readSignOffFaults({
+        restAt: spokeAt,
+        turnFrom: tele.lastUserAt,
+        sightings: tele.questionSightings ?? [],
+        lastFence: tele.lastFence,
+        fenceAlone: tele.lastAssistantFenceAlone,
+        fencesOnly: tele.lastAssistantFencesOnly,
+        repair: tele.repairAskedAt !== undefined && tele.repairAskedAt === tele.lastUserAt,
+        rows,
+        spec: (q) => safeQuestionSpec(q.spec),
+      })
+      if (faults.missing.length === 0 && faults.relisted.length === 0) continue
+      signOffFaultRests.set(row.slug, spokeAt)
+      const tookRest = (cause: string) => outbox.get(wakeDeliveryId(row.slug, row.session_id, parkFenceId(cause, spokeAt)))
+      if (tookRest(QUESTION_FENCE_CAUSE) || tookRest(DONE_OVER_QUESTION_CAUSE)) continue
+      if (parkCapSpent(row, spokeAt) || !correctionAllowedSinceHuman(row.slug, SIGNOFF_INCOMPLETE_CAUSE, tele)) continue
+      const fenceId = parkFenceId(SIGNOFF_INCOMPLETE_CAUSE, spokeAt)
+      const deliveryId = wakeDeliveryId(row.slug, row.session_id, fenceId)
+      if (outbox.get(deliveryId)) continue
+      const reason = faults.missing.length > 0 ? `sign-off leaves out ${faults.missing.length} open question(s)` : `sign-off only re-lists ${faults.relisted.length} question(s)`
+      const item = outbox.enqueue({
+        id: deliveryId,
+        slug: row.slug,
+        sessionId: row.session_id,
+        fenceId,
+        hintKey: fenceId,
+        message: `${signOffCorrection(faults)}\n\n${wakeTimeHeader(nowMs, spokeAt)}`,
+        reason,
+      }, nowMs).delivery
+      deps.storage.countParkBump(row.slug, spokeAt)
+      noteCorrectionSinceHuman(row.slug, SIGNOFF_INCOMPLETE_CAUSE, tele)
+      log(`waker: queued ${row.slug} — ${item.reason}`)
+      checkpoint("after-enqueue", item)
+    }
+  }
+
   function evalParkIntegrity(nowMs: number): void {
     // Read once per pass: what each watched PR last said. Which of them wait on nothing but their own
     // thread (parkWaitsOnThisSide) is asked per rest, because only a reading newer than the rest can say.
@@ -2872,7 +2947,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // CHILD THREADS: a child's `status: needs_input` names its PARENT the way `steps:` name the human — the
       // parent's reply is the wake, and SOURCE 17 hands it the handoff — so it needs nothing else named.
       const onParent = awaitingNeedsInput(tele.lastFence.hints) === true && childOfRow(deps.storage, row) !== undefined
-      const nameless = park.items.length === 0 && !parkOnHuman(park) && !onParent
+      // A QUESTION STILL STANDING names the human too (2026-11-11). A worker woken with nothing new rests on
+      // its fence alone and leaves the sign-off before it standing (sign-offs.ts), and with nothing running
+      // the one thing it waits on is the answer to the question that sign-off asked — which queues the
+      // thread by itself. Refused here, that rest had no valid shape at all but a new sign-off restating the
+      // last one, which is the repetition the rule exists to end.
+      const onQuestion = park.items.length === 0 && standingQuestions(deps.storage.listThreadQuestions(row.slug), tele, deps.questionFaults?.of(row.slug)).length > 0
+      const nameless = park.items.length === 0 && !parkOnHuman(park) && !onParent && !onQuestion
       // HONOURED ⇒ the corrective allowance comes back. A park frizz can actually honour is the one
       // event that proves a correction landed, and — unlike any activity signal — not one frizz can
       // cause by correcting. Guarded on a non-zero count so this is a transition, not a write on every
@@ -2893,7 +2974,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // corrections, the count never off zero). Keyed on the FAULT, not on a correction having gone out:
       // keyed on the correction, the rest the cap silenced reset the count and the loop resumed three
       // rests later. An honoured park proves the PARK is right, not the other fence in the same message.
-      const questionFaulted = questionFaultRests.get(row.slug) === spokeAt
+      // A naming SOURCE 18 refused beside an honoured quiet park is the same case.
+      const questionFaulted = questionFaultRests.get(row.slug) === spokeAt || signOffFaultRests.get(row.slug) === spokeAt
       if (parkIsHonoured(park, live) && !unanswered && !questionFaulted && (row.park_bumps ?? 0) > 0) deps.storage.resetParkBumps(row.slug)
       if (dead.length === 0 && !expired && !nameless) {
         // EVERY PR IT NAMES WAITS ON THIS SIDE (parkWaitsOnThisSide). Each is registered and its watcher
@@ -3138,6 +3220,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ].join("\n")
 
       const cause = retired.length > 0 ? "retired" : nameless ? "nameless" : expired ? "expired" : "dead"
+      // SOURCE 18 took this rest (it runs first in the tick): one voice per rest, and its correction asks for
+      // the whole sign-off, which carries the fence too.
+      if (signOffFaultRests.get(row.slug) === spokeAt) continue
       // THE IDS, INLINE — not a tool name. Every correction here used to end at "use
       // `mcp__frizz__activity`", which a worker dispatched before that tool existed cannot call: its MCP
       // server is frozen at dispatch. Those are precisely the threads still writing fences this check
@@ -5418,6 +5503,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // SOURCE 15 after it, for the same reason: a rest that has both wrong gets SOURCE 14's message with
       // this one's paragraph in it, and this pass reads the outbox to stand down.
       evalDoneOverQuestions(now())
+      // SOURCE 18 after both, which it stands down for, and before the nudge and SOURCE 12, which read it.
+      evalSignOffCompleteness(now())
       evalSignoffNudges(now())
       // SOURCE 12, beside the nudge because they are the same job from two directions: the nudge catches
       // a rest that declared NOTHING, this catches one whose declaration stopped being true.

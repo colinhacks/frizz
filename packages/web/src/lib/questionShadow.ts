@@ -237,11 +237,18 @@ export function markerIdsIn(text: string): string[] {
 }
 
 /** Where each registered question renders, given what the messages from its claiming rest onward
- *  actually wrote: EVERY message naming it since the human's last turn before the newest message naming
- *  it, so one question can be placed in several messages, each drawing it live and all sharing one answer
- *  (RegisteredQuestionCards' answering state is keyed by the row). A question no loaded message names is
- *  absent from `placed` and renders at its anchor. Human turns never place anything — a wake carries no
- *  marker of the worker's.
+ *  actually wrote: ONE message, the newest SIGN-OFF naming it since the human's last turn before the
+ *  newest message naming it (`signOff`, server sign-offs.ts), or the newest naming of that stretch when no
+ *  sign-off in it names the question. Every other naming draws the read-only copy pointing at it. A
+ *  question no loaded message names is absent from `placed` and renders at its anchor. Human turns never
+ *  place anything — a wake carries no marker of the worker's.
+ *
+ *  ONE LIVE CARD, IN THE NEWEST SIGN-OFF (2026-11-11). A sign-off is the whole handoff now and replaces the
+ *  one before it: it names every open question (scheduler SOURCE 18 refuses one that does not), and the
+ *  board folds everything since the human's last message behind one row except that sign-off
+ *  (lib/stretchFolds). So its cards are the ones the human answers, and an earlier naming in the same
+ *  stretch is a copy (maintainer 2026-11-11: "That way, there's only one copy of each question"). A naming
+ *  that is no sign-off (narration mid-turn) never takes the card from one that is.
  *
  *  Until 2026-11-09 it was simply the LAST message naming it — the newest handoff, on the reading that an
  *  older placement is history. It is not history while the human has not come back since: the worker had
@@ -255,9 +262,9 @@ export function markerIdsIn(text: string): string[] {
  *  that stretch and greyed every later naming, and the next day a triage thread that re-listed one open
  *  question in each of a dozen reports showed it greyed in the newest one, twelve hours below its live
  *  card (maintainer 2026-11-10: "That question is grayed out. But I haven't sent any messages in the
- *  meantime"). Both reports are one rule: an open question goes grey only once the human has put a turn in
- *  since (lib/messagePresentation isHumanTurn: an answer, or anything they typed). So it is live in every
- *  message of the newest stretch that names it, and a message from before that turn draws the copy. */
+ *  meantime"). From 2026-11-10 it was live in every message of the stretch naming it, which drew each
+ *  re-listing as another live card; 2026-11-11 answered both reports at the source instead — the re-listing
+ *  is refused, and the newest sign-off is complete and the only message of the stretch left unfolded. */
 export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { askedAt: string; spec?: AskedQuestion }>(
   messages: readonly AnchorMessage[],
   questions: readonly Q[],
@@ -291,11 +298,12 @@ export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { 
         humanSince = false
       }
       if (stretch.length === 0) continue
-      for (const at of stretch) {
-        const group = placed.get(at)
-        if (group) group.push(q)
-        else placed.set(at, [q])
-      }
+      // The newest SIGN-OFF naming it, or the newest naming when no sign-off of the stretch does.
+      const signed = stretch.filter((i) => messages[i].signOff === true)
+      const at = signed.length > 0 ? signed[signed.length - 1] : stretch[stretch.length - 1]
+      const here = placed.get(at)
+      if (here) here.push(q)
+      else placed.set(at, [q])
       placedIds.add(q.id)
     }
   }

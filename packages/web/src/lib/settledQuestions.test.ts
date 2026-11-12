@@ -164,9 +164,10 @@ test("the answer's own optimistic bubble cannot pull the card it answers out of 
   assert.deepEqual([...plain.anchored.keys()], [1])
 })
 
-// A recap the worker wrote after a wake, before the human's next turn, drew the open card live beside the
-// write-up's (lib/questionShadow placeQuestions), so the answered card stands in both.
-test("a question answered after a wake-driven recap stays answered in the write-up and the recap", () => {
+// A recap the worker wrote after a wake, before the human's next turn, holds the one live card (lib/questionShadow
+// placeQuestions: the newest sign-off naming it, else the newest naming), so the answered card stands there
+// alone. It stood in the write-up too until 2026-11-11, one card per naming.
+test("a question answered after a wake-driven recap stays answered where its one card was", () => {
   const ask = "```question\nid: store\nkind: choice\nquestion: SQLite or JSON?\noptions:\n  - SQLite\n  - JSON\n```"
   const messages = [
     msg("user", "2026-11-09T20:20:00.000Z", "Design the store."),
@@ -176,5 +177,5 @@ test("a question answered after a wake-driven recap stays answered in the write-
     { role: "user", at: "2026-11-09T22:40:00.000Z", wake: true as const, text: "Answers to earlier questions:\n1. `store` “SQLite or JSON?” → SQLite" },
   ]
   const row = { ...settled("qst_store", "2026-11-09T21:57:00.000Z", "2026-11-09T22:39:00.000Z"), spec: { handle: "store", question: "SQLite or JSON?", kind: "question" as const, options: [{ label: "SQLite" }, { label: "JSON" }] } }
-  assert.deepEqual([...settledQuestionPositions(messages, [row]).placed.keys()], [1, 3])
+  assert.deepEqual([...settledQuestionPositions(messages, [row]).placed.keys()], [3])
 })

@@ -101,6 +101,22 @@ test("a bare rest is read by the answer to frizz's reminder about it", () => {
   assert.deepEqual(marked(project(human("Fix the cache."), rest(writeUp), wake("💬 New review on acme/app#391"), rest(QUIET))), [writeUp])
 })
 
+test("a rest on the fence alone leaves the sign-off before it standing", () => {
+  const bareNeeds = fence("awaiting", "prs: [acme/app#391]\nstatus: needs_input\nfor: 180d")
+  // Woken by CI with nothing new: the hand-off before is still the one to read.
+  const woken = project(human("Fix the flaky upload."), rest(NEEDS_INPUT), wake("✅ CI PASSED on acme/app#391"), narrate("Checking the run."), rest(bareNeeds))
+  assert.deepEqual(marked(woken), ["The fix is on acme/app#391 and CI is green; the merge is yours."])
+  // A bare `done` fence over nothing is the same: the write-up it closes is the sign-off.
+  assert.deepEqual(marked(project(human("Fix it."), rest(NEEDS_INPUT), wake("✅ merged"), rest(fence("done", "")))), ["The fix is on acme/app#391 and CI is green; the merge is yours."])
+  // Anything in or around the fence is a new sign-off: a body, steps, a question, or prose.
+  assert.deepEqual(marked(project(human("Go."), rest(NEEDS_INPUT), wake("✅"), rest(fence("awaiting", "status: needs_input\nfor: 1h\n---\nNow merged.")))).length, 2)
+  assert.deepEqual(marked(project(human("Go."), rest(NEEDS_INPUT), wake("✅"), rest(fence("awaiting", "status: needs_input\nsteps:\n  - Approve it.")))).length, 2)
+  assert.deepEqual(marked(project(human("Go."), rest(NEEDS_INPUT), wake("✅"), rest(`Merged.\n\n${bareNeeds}`))).length, 2)
+  // It still answers a reminder as a sign-off, so the bare write-up it answered stays marked.
+  const writeUp = "Everything is fixed: the cache keys on the normalized id now, and `npm test` is green."
+  assert.deepEqual(marked(project(human("Fix the cache."), rest(writeUp), wake(SIGNOFF_NUDGE_MESSAGE), rest(bareNeeds))), [writeUp])
+})
+
 test("projectSignOffs copies what it marks and clears a stale mark", () => {
   const msgs = project(human("Go."), rest("Pushed; CI is running."), wake(SIGNOFF_NUDGE_MESSAGE), rest(WORKING))
   const bare = msgs.findIndex((m) => m.text === "Pushed; CI is running.")

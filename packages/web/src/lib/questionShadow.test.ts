@@ -333,7 +333,10 @@ test("a row known only by its handle — a question that closed without an answe
   assert.equal(resolveQuestionName("other", [closed]), undefined)
 })
 
-// ---- A RECAP AFTER A WAKE LEAVES THE CARDS IN THE WRITE-UP, AND IS LIVE TOO (2026-11-09, 2026-11-10) ----
+// ---- A RECAP AFTER A WAKE (2026-11-09, 2026-11-10, 2026-11-11) ----
+// Since 2026-11-11 a sign-off is the whole handoff and replaces the one before it, so the card is live in
+// ONE message: the newest sign-off naming it in the stretch, and every other naming draws the copy. The
+// history below is why the stretch boundary is the human's turn.
 // The worker wrote a write-up with its questions interleaved in the prose, each under the paragraph it
 // decides. Before the human read it, another thread's steer woke the worker, Frizz corrected the park it
 // rested on, and the worker rested again on a short note listing every open question as an `id:` reference
@@ -354,16 +357,25 @@ const REPORT = { role: "user", at: at(9), text: "The audit is done.", peerFrom: 
 const RECAP = { role: "assistant", at: at(10), text: `Nothing has changed. This is what's open:\n\n${REF_FENCE("settings-store")}` }
 const WOKEN = [...ASKED, STEER, CORRECTION, REPORT, RECAP]
 
-test("a recap written after a wake, before the human's next turn, draws the card live beside the write-up's", () => {
-  assert.deepEqual([...placeQuestions(WOKEN, [FENCED_ROW]).placed.keys()], [1, 5])
+test("a recap written after a wake, before the human's next turn, takes the card: one live copy, the newest", () => {
+  assert.deepEqual([...placeQuestions(WOKEN, [FENCED_ROW]).placed.keys()], [5])
   assert.equal(questionClaims(WOKEN).get("settings-store"), 1, "the write-up keeps the claim")
   assert.deepEqual([...questionsByAnchor(WOKEN, [FENCED_ROW]).keys()], [1])
   // Negative control: the same recap after the human TYPED takes the card, as it always has.
   const typed = [...ASKED, { role: "user", at: at(8), text: "Do the docs first." }, RECAP]
   assert.deepEqual([...placeQuestions(typed, [FENCED_ROW]).placed.keys()], [3])
-  // Every naming of the same stretch is live: a triage thread's dozen reports each re-listing the question.
+  // A triage thread's dozen reports each re-listing the question: the newest holds it.
   const reports = [...WOKEN, CORRECTION, { ...RECAP, at: at(11) }, CORRECTION, { ...RECAP, at: at(12) }]
-  assert.deepEqual([...placeQuestions(reports, [FENCED_ROW]).placed.keys()], [1, 5, 7, 9])
+  assert.deepEqual([...placeQuestions(reports, [FENCED_ROW]).placed.keys()], [9])
+})
+
+test("the newest SIGN-OFF naming a question holds its card, not narration written after it", () => {
+  const signedWriteUp = WOKEN.map((m, i) => (i === 1 ? { ...m, signOff: true } : m))
+  // The recap at 5 is narration (no sign-off mark): the write-up keeps the card.
+  assert.deepEqual([...placeQuestions(signedWriteUp, [FENCED_ROW]).placed.keys()], [1])
+  // Marked as a sign-off too, the recap is the newer handoff and takes it.
+  const signedRecap = signedWriteUp.map((m, i) => (i === 5 ? { ...m, signOff: true } : m))
+  assert.deepEqual([...placeQuestions(signedRecap, [FENCED_ROW]).placed.keys()], [5])
 })
 
 test("the human's next turn ends the hold: a reference after it takes the card", () => {

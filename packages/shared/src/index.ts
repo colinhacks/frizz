@@ -2151,10 +2151,10 @@ function signoffNudgeText(needsInput: boolean): string {
   "  a Markdown body indented under it after a blank line. Steps name the HUMAN as the wait,",
   "  so the fence needs no other name and no `for:`, and the thread goes into their queue. Their Done",
   "  comes back to you as their reply; anything else they need to say comes as a message of their own.",
-  "- A question you asked at an EARLIER rest, whose answer you still need: write a ```question fence",
-  "  carrying its `id:` alone. That draws its card in this message and keeps the thread in the human's",
-  "  queue. One you no longer need, withdraw with `frizzctl unask <id>`; one you leave unmentioned stays",
-  "  answerable where you asked it.",
+  "- A question you asked at an EARLIER rest and have not had answered: a sign-off names EVERY open",
+  "  question, so write a ```question fence carrying its `id:` alone under the paragraph it belongs to.",
+  "  That draws its card in this message and keeps the thread in the human's queue. One you no longer",
+  "  need, withdraw with `frizzctl unask <id>` first.",
   "",
   "**STILL OWED counts things you are not going to do yourself.** A decision you are RECOMMENDING, a",
   "draft you wrote but did not send, follow-up work you discovered — all of it dies with the card, even",
@@ -2225,10 +2225,40 @@ export const QUESTION_FENCE_CORRECTION_LEAD = "⚠️ Your ```question fence "
  *  open. `frizzctl done` refuses there and a fence cannot be refused, so this is the same gate applied
  *  after the fact (scheduler SOURCE 15). */
 export const DONE_FENCE_CORRECTION_LEAD = "⚠️ Your ```done fence "
+/** The seventh (2026-11-11): a sign-off that is not the whole handoff — it leaves out an open question, or
+ *  re-lists questions with nothing around them (scheduler SOURCE 18, server signoff-completeness.ts). */
+export const SIGNOFF_CORRECTION_LEAD = "⚠️ Your sign-off "
 /** Is this delivered wake one of frizz's fence corrections? */
 export function isParkCorrection(text: string): boolean {
   const t = text.trimStart()
-  return t.startsWith(PARK_CORRECTION_NAMES_LEAD) || t.startsWith(PARK_CORRECTION_RETIRED_LEAD) || t.startsWith(PARK_CORRECTION_QUESTION_LEAD) || t.startsWith(PARK_CORRECTION_NEEDS_INPUT_LEAD) || t.startsWith(QUESTION_FENCE_CORRECTION_LEAD) || t.startsWith(DONE_FENCE_CORRECTION_LEAD)
+  return t.startsWith(PARK_CORRECTION_NAMES_LEAD) || t.startsWith(PARK_CORRECTION_RETIRED_LEAD) || t.startsWith(PARK_CORRECTION_QUESTION_LEAD) || t.startsWith(PARK_CORRECTION_NEEDS_INPUT_LEAD) || t.startsWith(QUESTION_FENCE_CORRECTION_LEAD) || t.startsWith(DONE_FENCE_CORRECTION_LEAD) || t.startsWith(SIGNOFF_CORRECTION_LEAD)
+}
+
+/** SOURCE 18's message, one paragraph per fault the rest has, then the rule. */
+export function signOffCorrection(faults: { missing: readonly { id: string; question: string }[]; relisted: readonly string[] }): string {
+  const ids = (names: readonly string[]) => names.map((n) => `\`${n}\``).join(", ")
+  const parts: string[] = []
+  if (faults.missing.length > 0) {
+    const one = faults.missing.length === 1
+    parts.push(
+      `leaves out ${one ? "a question" : "questions"} still open on this thread. A new sign-off replaces the one before it, and the human reads only the newest, so it names every open question:`,
+      "",
+      ...faults.missing.map((q) => `- \`${q.id}\` — ${q.question}`),
+      "",
+      `Your next message is the sign-off that counts. Write it whole, everything the human needs since they last typed, with ${one ? "that question" : "each of them"} as a \`\`\`question fence carrying ${one ? "its" : "the"} \`id:\` alone, under the paragraph it belongs to. A question you no longer need, withdraw with \`frizzctl unask <id>\` first. If you had nothing new for the human, rest on your signal fence alone instead, and the sign-off before stands.`,
+    )
+  } else if (faults.relisted.length > 0) {
+    parts.push(
+      `only re-lists ${ids(faults.relisted)}, with nothing written around ${faults.relisted.length === 1 ? "it" : "them"}. Those cards are still on screen where you asked them, so this shows the human nothing new.`,
+      "",
+      "With nothing new to say, rest on your signal fence alone: the sign-off before stays the one the human reads. To replace it, write a whole new sign-off, each open question under the paragraph it belongs to.",
+    )
+  }
+  return [
+    `${SIGNOFF_CORRECTION_LEAD}${parts.join("\n")}`,
+    "",
+    "The rule: a sign-off is the whole handoff and replaces the one before it. Nothing new: the fence alone. Something new: all of it again, every open question named with `id:` alone under its paragraph. To change a question, withdraw it with `frizzctl unask <id>` and ask the new one.",
+  ].join("\n")
 }
 
 // ---- SIGNING OFF AS DONE OVER AN OPEN QUESTION: ONE GATE, TWO SIGN-OFFS ----------------------------
@@ -2279,8 +2309,8 @@ export function doneOverOpenQuestionsBody(questions: readonly DoneBlockingQuesti
     "",
     `- You withdrew ${one ? "it" : "every one"}: sign off done again, and it stands.`,
     one
-      ? "- You still need the answer: write no ```done fence. End on a ```question fence carrying its `id:` alone, which keeps the thread in the human's queue on it, and sign off done once it is answered."
-      : "- You still need an answer: write no ```done fence. End on a ```question fence for each one you still need, carrying its `id:` alone, which keeps the thread in the human's queue on them, and sign off done once they are answered.",
+      ? "- You still need the answer: write no ```done fence. Sign off with the whole handoff instead, the question named by a ```question fence carrying its `id:` alone under the paragraph it belongs to, which keeps the thread in the human's queue on it, and sign off done once it is answered."
+      : "- You still need an answer: write no ```done fence. Sign off with the whole handoff instead, each question you still need named by a ```question fence carrying its `id:` alone under the paragraph it belongs to, which keeps the thread in the human's queue on them, and sign off done once they are answered.",
   ].join("\n")
 }
 
