@@ -698,8 +698,7 @@ a writer. Only an explicit user instruction naming the interruption permits it.`
 // one either: its own closing \`\`\` line would close the signal fence early. The surfaces named after it
 // are the ones a worker cannot see from its own messages — the done card's registered body, a question's
 // context or option detail, and a Markdown file draw galleries too (useLightboxIslands). An awaiting fence's body is
-// deliberately not among them: the resting card reads it through capFenceBody's 500 characters, which a
-// few absolute paths outrun. The path advice is the headless-browser skill's: \`/tmp\` is emptied at boot,
+// deliberately not among them: the resting card draws it as prose and mounts no gallery. The path advice is the headless-browser skill's: \`/tmp\` is emptied at boot,
 // and a card is read hours or days later.
 const VISUAL_EVIDENCE = `## Showing the human pictures and video
 

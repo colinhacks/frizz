@@ -1394,9 +1394,13 @@ const SIGNAL_FENCE_RE = /^(`{3,})(done|awaiting)[ \t]*\n([\s\S]*?)\n\1`*[ \t]*$/
 // which is the whole point of having a delimiter (2026-08-17). Hyphens are in the class because the
 // oldest retired kind is `pr-watch:`, and a regex that could not see it let one pass as prose.
 const AWAITING_HINT_RE = /^([a-z][a-z-]*):\s*(\S.*)?$/i
-const FENCE_BODY_MAX = 500 // defensive: never let a worker's fence body fatten the snapshot
-const HINT_MAX = 8 // defensive cap on parsed hint lines
-const HINT_VALUE_MAX = 200 // defensive cap on a single hint value
+// THE BODY CAP IS DEFENSIVE, NOT A FIT — the same rule as the steps' caps (shared AWAITING_STEP_VALUE_MAX).
+// Every thread's last fence rides the board, so a runaway body must not fatten it; that is the whole job.
+// It was 500 until 2026-11-11, and that cut real handoffs: the resting card draws THIS body and the
+// transcript hides the message's own copy because the card states it, so everything past character 500
+// was drawn nowhere while the thread rested — the email to paste, the last instruction, a link. 69 of
+// 9,905 resting fences on this Mac ran past 500 (the longest 1,570), 20 of them steps handoffs.
+export const FENCE_BODY_MAX = 8_000
 
 function capFenceBody(s: string): string {
   return s.length > FENCE_BODY_MAX ? `${s.slice(0, FENCE_BODY_MAX)}…` : s

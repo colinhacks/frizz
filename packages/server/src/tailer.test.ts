@@ -11,7 +11,7 @@ import type { CodexModel, ServerEvent } from "@frizz/shared"
 import { AwaitingHint, QUESTION_FENCE_RETIRED_AT, shellDoneMessage, wakeDeliveryToken } from "@frizz/shared"
 import { permMarkerPath, type Project } from "./project.ts"
 import { degradeIfAwaitingAnswer, deriveNeedsYou } from "./board.ts"
-import { frizzHookFailure, hookFailureLine, FRIZZ_HOOK_FILES, HOOK_FAILURE_REPORT_EVERY_MS, type HookFailure, parseLine, applyRecord, applyEvent, computeTurn, newTailState, createTailer, shellProbeTtlMs, defaultBrokerDaemonAlive, hasQuestionBlock, isClaudeAuthErrorText, isRealUserMessage, parseSignalFence, markerDecision, pendingCallDeadline, unwrapShellCommand, FOREIGN_FRESH_MS, parseWindowsShellHolderReport, probeShellsAlive, probeShellVerdicts, findShellProcesses, windowsShellHolderCommand, type ShellLaunch, type ShellVerdict } from "./tailer.ts"
+import { frizzHookFailure, hookFailureLine, FRIZZ_HOOK_FILES, HOOK_FAILURE_REPORT_EVERY_MS, type HookFailure, parseLine, applyRecord, applyEvent, computeTurn, newTailState, createTailer, shellProbeTtlMs, defaultBrokerDaemonAlive, hasQuestionBlock, isClaudeAuthErrorText, isRealUserMessage, parseSignalFence, FENCE_BODY_MAX, markerDecision, pendingCallDeadline, unwrapShellCommand, FOREIGN_FRESH_MS, parseWindowsShellHolderReport, probeShellsAlive, probeShellVerdicts, findShellProcesses, windowsShellHolderCommand, type ShellLaunch, type ShellVerdict } from "./tailer.ts"
 import { claudeBrokerRecordPath } from "./backend/claude-broker-host.ts"
 import { buildClaudePermissionInteraction } from "./backend/claude-permission-interactions.ts"
 import type { AgentBackend, NormalizedEvent } from "./backend/types.ts"
@@ -3336,8 +3336,8 @@ test("parseSignalFence: a done fence's leading title: is a hint, and the ledger 
     hints: [{ kind: "title", value: "Resolver cache keyed on the normalized id" }],
   })
   // The body cap applies to the ledger alone, after the title is lifted out.
-  const long = parseSignalFence(`\`\`\`done\ntitle: Landed\n---\n${"x".repeat(600)}\n\`\`\``)
-  assert.equal(long?.body, `${"x".repeat(500)}…`)
+  const long = parseSignalFence(`\`\`\`done\ntitle: Landed\n---\n${"x".repeat(FENCE_BODY_MAX + 100)}\n\`\`\``)
+  assert.equal(long?.body, `${"x".repeat(FENCE_BODY_MAX)}…`)
   assert.deepEqual(long?.hints, [{ kind: "title", value: "Landed" }])
   // A --- with no title above it is the worker's horizontal rule.
   assert.deepEqual(parseSignalFence("```done\nShipped.\n\n---\n\n- Fixed.\n```"), { kind: "done", body: "Shipped.\n\n---\n\n- Fixed.", hints: [] })
@@ -3436,10 +3436,18 @@ test("parseSignalFence: tolerates CRLF line endings", () => {
   assert.deepEqual(parseSignalFence("```done\r\nWindows body\r\n```"), { kind: "done", body: "Windows body", hints: [] })
 })
 
-test("parseSignalFence: the body is capped at 500 chars with a trailing ellipsis", () => {
-  const f = parseSignalFence("```done\n" + "x".repeat(900) + "\n```")
-  assert.equal(f?.body.length, 501) // 500 + the ellipsis char
+test("parseSignalFence: the body is capped, defensively, with a trailing ellipsis", () => {
+  const f = parseSignalFence("```done\n" + "x".repeat(FENCE_BODY_MAX + 400) + "\n```")
+  assert.equal(f?.body.length, FENCE_BODY_MAX + 1) // the cap + the ellipsis char
   assert.ok(f?.body.endsWith("…"))
+})
+
+// The resting card draws the board's copy of the body and the transcript hides the message's own, so a
+// cut here is text drawn nowhere. A real steps handoff on this Mac ran 1,570 characters (2026-11-07).
+test("parseSignalFence: a long awaiting handoff reaches the board whole", () => {
+  const prose = Array.from({ length: 30 }, (_, i) => `Sentence ${i + 1} of the handoff, which the human reads in full.`).join(" ")
+  const f = parseSignalFence(`Handing over.\n\n\`\`\`awaiting\nsteps:\n  - Paste the reply below and send it\n---\n${prose}\n\`\`\``)
+  assert.equal(f?.body, prose)
 })
 
 // ---- signal-fence lifecycle (set by final assistant text, cleared by newer activity) ----
