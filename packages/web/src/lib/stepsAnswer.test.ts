@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { BURIED_ANSWERS_HEADER, questionAnswerMessage, repliesStepsDone, withAnswersNote } from "@frizz/shared"
-import { repliedSteps, stepsDoneReplies, stepsReport, withStepsReport } from "./stepsAnswer.ts"
+import { BURIED_ANSWERS_HEADER, isHumanTypedMessage, questionAnswerMessage, repliesStepsDone, stepsReportOf, withAnswersNote } from "@frizz/shared"
+import { owesSteps, repliedSteps, stepsDoneReplies, stepsReport, withStepsReport } from "./stepsAnswer.ts"
 
 // Every shape the prompt box's one send gives a report (ThreadComposerBox `send`): the word alone, the
 // word over a typed note, under the fenced answers' wire, and under the server's registered answers too.
@@ -41,6 +41,25 @@ test("a reply is a report when its words open the human's own, under any answers
   for (const reply of [withStepsReport(SOME, ""), withStepsReport(SOME, "It never came."), withAnswersNote(REGISTERED, withStepsReport(SOME, ""))]) {
     assert.deepEqual(repliedSteps(reply), new Set(["Sign in."]), reply)
     assert.equal(repliesStepsDone(reply), false, "and it does not say everything is done")
+  }
+})
+
+// The server reads the same message to decide whether the human typed past the rest (shared
+// isHumanTypedMessage): a report is an answer to the to-do card, and only what is typed under it is typing.
+test("a report the send composes is not typing, under any answers, unless words are typed under it", () => {
+  for (const report of [withStepsReport(ALL, ""), withStepsReport(SOME, "")]) {
+    assert.equal(isHumanTypedMessage(report), false, report)
+    assert.equal(isHumanTypedMessage(withAnswersNote(FENCED, report)), false)
+    assert.equal(isHumanTypedMessage(withAnswersNote(REGISTERED, withAnswersNote(FENCED, report))), false, "nested answers, nothing typed")
+  }
+  assert.equal(isHumanTypedMessage(withStepsReport(SOME, "The prompt never came.")), true)
+  assert.equal(isHumanTypedMessage(withAnswersNote(FENCED, withStepsReport(ALL, "Used the bot account."))), true)
+  assert.equal(isHumanTypedMessage(withAnswersNote(REGISTERED, FENCED)), false, "two sets of answers and nothing typed is not typing either")
+  assert.deepEqual(stepsReportOf(withStepsReport(SOME, "")), { all: false, note: "" })
+  assert.deepEqual(stepsReportOf(withStepsReport(ALL, "Used the bot account.")), { all: true, note: "Used the bot account." })
+  for (const typed of ["Done.", "Done, thanks", "Done 1 of 2: nearly", "Ship it"]) {
+    assert.equal(stepsReportOf(typed), null, typed)
+    assert.equal(isHumanTypedMessage(typed), true, typed)
   }
 })
 
@@ -116,4 +135,16 @@ test("what the worker said after the reply was sent never takes it, and what it 
     { role: "user", text: "Done", at: at(10) },
   ].map((m) => ({ kind: undefined, ...m })) as Parameters<typeof stepsDoneReplies>[0]
   assert.deepEqual([...stepsDoneReplies(beforeSend)], [], "written before it: the reply answers that, not the steps")
+})
+
+// The phone bar's Done means "archive the thread", so it is not offered beside boxes still owed — including
+// the ones a quiet park left owed behind a last fence that names no steps (2026-11-11).
+test("owesSteps: the last fence's steps, or anything the to-do list has not ticked", () => {
+  const park = { kind: "awaiting" as const, body: "", hints: [{ kind: "status" as const, value: "watching" }] }
+  const steps = { kind: "awaiting" as const, body: "", hints: [{ kind: "step" as const, value: "Sign in" }] }
+  assert.equal(owesSteps({ lastFence: steps }), true)
+  assert.equal(owesSteps({ lastFence: park, humanTodos: [{ id: "a", text: "Sign in", done: false, staged: false }] }), true)
+  assert.equal(owesSteps({ lastFence: park, humanTodos: [{ id: "a", text: "Sign in", done: true, staged: false }] }), false)
+  assert.equal(owesSteps({ lastFence: park }), false)
+  assert.equal(owesSteps(undefined), false)
 })

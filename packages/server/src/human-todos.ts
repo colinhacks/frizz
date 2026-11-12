@@ -85,11 +85,11 @@ export function closeHumanSteps(list: readonly HumanStep[], steps: readonly stri
  *  so what was never ticked goes and what was done stays. `retiredAt` is the instant of a registered
  *  `frizzctl done`, in ms: an item no fence has listed since is just as finished, for good, and is not
  *  owed again because the human later typed to the thread. (A fenced done retires its items in the fold,
- *  tailer settleHumanSteps.) */
+ *  tailer settleHumanSteps.) `onTheirWay` is the ticks a held or in-flight send carries. */
 export function humanTodoView(
   steps: readonly HumanStep[] | undefined,
   ticks: readonly HumanTodoTick[] | undefined,
-  options: { finished?: boolean; retiredAt?: number } = {},
+  options: { finished?: boolean; retiredAt?: number; onTheirWay?: ReadonlyMap<string, boolean> } = {},
 ): HumanTodo[] {
   if (!steps?.length) return []
   const byId = new Map(ticks?.map((tick) => [tick.item_id, tick]))
@@ -108,7 +108,9 @@ export function humanTodoView(
       text: step.text,
       ...(step.body ? { body: step.body } : {}),
       done,
-      staged: tick ? done !== (reportedAt !== null) : false,
+      // A tick a message still on its way already reports, as it stands now, is owed nothing more
+      // (delivery-ledger ticksOnTheirWay).
+      staged: tick ? done !== (reportedAt !== null) && options.onTheirWay?.get(step.id) !== done : false,
       ...(reportedAt !== null ? { reportedAt } : {}),
     })
   }

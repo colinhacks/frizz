@@ -37,6 +37,15 @@ export function restingOnSteps(thread: Omit<StepsThread, "id"> | undefined, step
   return live.length === steps.length && live.every((step, i) => step === steps[i])
 }
 
+/** Does the thread still owe the human steps? Its last fence's `steps:`, or anything the to-do list has
+ *  not ticked: a quiet park after a steps rest leaves the steps owed behind a last fence that names none
+ *  (board heldHandoff). What the phone bar's Done reads, since a check beside a list of boxes would mean
+ *  "archive the thread" (2026-11-11). */
+export function owesSteps(thread: Pick<ThreadView, "lastFence" | "humanTodos"> | undefined): boolean {
+  if (thread?.lastFence?.kind === "awaiting" && awaitingSteps(thread.lastFence.hints).length > 0) return true
+  return (thread?.humanTodos ?? []).some((todo) => !todo.done)
+}
+
 /** Are these the same step? A step is its own text, compared as the server keys it (human-todos.ts
  *  humanStepId): trimmed, every run of whitespace one space, so a re-wrapped copy is the same item. */
 export function sameStep(a: string, b: string): boolean {
@@ -47,7 +56,9 @@ export function sameStep(a: string, b: string): boolean {
 // ---- the ticks in flight --------------------------------------------------------------------------
 // What this tab has done that the board has not shown yet. An entry goes the moment the board agrees,
 // because from then on the board may know better: a worker that re-lists a step reopens its box. The
-// timer is for a push that never comes.
+// timer is for a push that never comes, and it starts once the save or the send has answered: a send's
+// ticks timed from the click lapsed under a send slower than the timer (a worker being resumed, a send
+// queued behind another), staging them again for the next send to report twice (2026-11-11).
 
 interface PendingTick {
   done: boolean
@@ -202,6 +213,8 @@ export interface StepsTake {
   compose: (note: string) => string
   /** The send has committed locally: nothing is staged any more, so a second Enter cannot repeat it. */
   onOptimistic: () => void
+  /** The server took the send: from here the board catches up. */
+  onSuccess: () => void
   /** The send was refused: the ticks are staged again. */
   onRollback: () => void
 }
@@ -221,10 +234,13 @@ export function useStepsAnswer(thread: TodoThread | undefined): { staged: boolea
         const reportedAt = Date.now()
         report.forEach((todo, i) => {
           const reportedWas = thread.humanTodos?.find((listed) => listed.id === todo.id)?.reportedAt ?? null
+          // Held until the send answers: the server reports the ticks only once it is delivered.
+          clearTimeout(settling.get(keys[i]))
+          settling.delete(keys[i])
           pending[keys[i]] = { done: todo.done, staged: false, reportedAt, reportedWas }
-          settleLater(keys[i])
         })
       },
+      onSuccess: () => keys.forEach((key) => { if (pending[key]) settleLater(key) }),
       onRollback: () => keys.forEach(forgetTick),
     }
   }

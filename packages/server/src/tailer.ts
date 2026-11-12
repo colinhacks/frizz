@@ -25,7 +25,7 @@ import { classifyLimitRecord } from "./backend/usage-limit.ts"
 import { codexLimitFault } from "./backend/codex-usage-limit.ts"
 import { claudeBrokerDiagnosticLogPath } from "./backend/claude-broker-diagnostics.ts"
 import { claudeBrokerRecordPath, readBrokerRecord } from "./backend/claude-broker-host.ts"
-import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, ledgerAwaitsTranscript, type DeliveryLedgerItem } from "./delivery-ledger.ts"
+import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, ledgerAwaitsTranscript, heldReleaseAt, type DeliveryLedgerItem } from "./delivery-ledger.ts"
 import { createCodexSubAgentTracker, type CodexSubAgentTracker } from "./codex-subagents.ts"
 import { defaultCodexHome, readCodexThreadNames, scanForeignRollouts } from "./backend/codex.ts"
 import {
@@ -1224,6 +1224,19 @@ export function isSyntheticPlaceholder(rec: { type?: unknown; isApiErrorMessage?
   return rec.type === "assistant" && rec.message?.model === "<synthetic>" && rec.isApiErrorMessage !== true
 }
 
+// WHEN THE HUMAN LAST TYPED, read through a held release (FoldState.restFromRecord): when the record that
+// moved the boundary is a message "Send to queue" held, the boundary is the instant they sent it, never
+// earlier than where it stood before that record. Here and not in the fold because the instant lives in
+// storage (SessionRow.held_releases), and the fold reads nothing but records. Every reader of
+// `restFromAt` takes it from here — the board's handoff hold, the question registry, the scheduler.
+function heldTypedAt(s: Pick<FoldState, "restFromAt" | "restFromRecord">, row: Pick<SessionRow, "held_releases"> | undefined): string | undefined {
+  if (!s.restFromAt || !s.restFromRecord || !row?.held_releases) return s.restFromAt
+  const heldAt = heldReleaseAt(row.held_releases, s.restFromRecord.uuid)
+  if (heldAt === undefined || heldAt >= Date.parse(s.restFromAt)) return s.restFromAt
+  const before = Date.parse(s.restFromRecord.before ?? "")
+  return Number.isFinite(before) && before > heldAt ? s.restFromRecord.before : new Date(heldAt).toISOString()
+}
+
 // A fresh, unread tail cursor for a session (exported for tick + tests).
 export function newTailState(
   slug: string,
@@ -1484,6 +1497,7 @@ function noteQueuedMessage(state: FoldState, rec: Record): void {
   if ((rec as { operation?: unknown }).operation !== "enqueue" || typeof rec.content !== "string" || typeof rec.timestamp !== "string") return
   if (!isHumanTypedMessage(rec.content)) return
   state.restFromAt = rec.timestamp
+  state.restFromRecord = undefined
   state.queuedHumanTexts = [...(state.queuedHumanTexts ?? []), rec.content].slice(-QUEUED_HUMAN_TEXTS_MAX)
 }
 
@@ -1499,11 +1513,17 @@ function wasQueued(queued: readonly string[], message: string): boolean {
   return false
 }
 
-function noteUserRecordForQuestions(state: FoldState, text: string, at: string): void {
+function noteUserRecordForQuestions(state: FoldState, text: string, at: string, uuid?: string): void {
   const queued = state.queuedHumanTexts ?? []
   // A message the queue already announced moved the boundary when it was typed; delivering it is not the
-  // human typing again. Anything else human-typed in this record is new, and the boundary is now.
-  if (humanTypedMessagesIn(text).some((message) => !wasQueued(queued, message))) state.restFromAt = at
+  // human typing again. Anything else human-typed in this record is new, and the boundary is now — or,
+  // for a message Frizz held and released, when it was sent (restFromRecord, heldTypedAt).
+  if (humanTypedMessagesIn(text).some((message) => !wasQueued(queued, message))) {
+    state.restFromRecord = uuid ? { uuid, ...(state.restFromAt ? { before: state.restFromAt } : {}) } : undefined
+    state.restFromAt = at
+  }
+  // A report of every step done answers the handoff without being typing (FoldState.stepsDoneAt).
+  if (splitWakeDeliveries(text).some(repliesStepsDone)) state.stepsDoneAt = at
   // The queue drains into the record that delivers it, so whatever it held is spent — kept past here, a
   // stale entry would swallow the human typing the same words again later.
   if (queued.length > 0) state.queuedHumanTexts = undefined
@@ -2787,6 +2807,7 @@ export function applyRecord(state: TailState, rec: Record): void {
     noteWakeTokens(state, userMessageText(rec.message?.content))
     // A tool result answers a call made in the same message, so that fence was never the thread's last word.
     if (isRealUserMessage(rec.message?.content)) settleHumanSteps(state, userText)
+    else unstampHandoff(state)
     state.lastFence = undefined
     state.strayFence = undefined
     const humanSpoke = isHumanSpeaking(rec, userText, systemUserRec, compactSummaryRec)
@@ -2803,7 +2824,7 @@ export function applyRecord(state: TailState, rec: Record): void {
     // purpose: every "the agent spoke last" guard reads it to know a wake is still unanswered.
     if (humanSpoke && typeof rec.timestamp === "string") {
       state.lastUserAt = rec.timestamp
-      noteUserRecordForQuestions(state, userMessageText(rec.message?.content), rec.timestamp)
+      noteUserRecordForQuestions(state, userMessageText(rec.message?.content), rec.timestamp, typeof rec.uuid === "string" ? rec.uuid : undefined)
       settleLegacyQuestion(state)
       // SET ONCE. This is what names an external session whose harness never named it, so it has to be
       // the turn the conversation STARTED on, not the newest one.
@@ -2864,6 +2885,7 @@ function applyFinalText(state: FoldState, text: string): void {
 
 // The signal fence of the newest assistant text, and whether that text wrote one that does not close it.
 function setSignalFence(state: FoldState, text: string): void {
+  unstampHandoff(state)
   state.lastFence = parseSignalFence(text)
   state.strayFence = (!state.lastFence && signalFenceBlocks(text.replace(/\r\n/g, "\n")).length > 0) || undefined
 }
@@ -2875,7 +2897,19 @@ function setSignalFence(state: FoldState, text: string): void {
 // stamp is that message's own instant.
 function noteHandoff(state: FoldState): void {
   const fence = state.lastFence
-  if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints) && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
+  if (fence?.kind !== "awaiting" || !fenceWaitsOnHuman(fence.hints) || !state.lastAssistantAt) return
+  if (state.handoffAt !== state.lastAssistantAt) state.handoffBefore = state.handoffAt
+  state.handoffAt = state.lastAssistantAt
+}
+
+// …AND TAKE IT BACK when that fence turns out not to have been a rest: still the newest fence when a tool
+// result or more of the worker's text replaced it, so nothing answered it. A Claude turn recomputes the
+// fence on every text block, and a steps fence written before a tool call held the thread's next quiet
+// park in the queue over steps that never reached the to-do list: a card with nothing to tick (2026-11-11,
+// found by a harness, never yet on a real board).
+function unstampHandoff(state: FoldState): void {
+  const fence = state.lastFence
+  if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints)) state.handoffAt = state.handoffBefore
 }
 
 // A REST ON `steps:` IS OVER, so what it handed the human joins the thread's list (human-todos.ts). Here
@@ -6678,7 +6712,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: heldTypedAt(s, row), handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

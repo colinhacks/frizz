@@ -231,6 +231,11 @@ export interface SessionRow {
   // The child's rest (`lastAssistantAt`, ISO) whose handoff was last handed to its parent, so each rest is
   // reported exactly once however many ticks see it, across restarts and outbox pruning alike.
   child_reported_at?: string | null
+  // The messages "Send to queue" held and Frizz released at a rest: each one's delivery id and the instant
+  // the human sent it, newest last, a small JSON array (delivery-ledger.ts noteHeldRelease). The record a
+  // release lands as is stamped at the rest, after any steps or question that rest handed over; this is
+  // what lets the fold's reader put the human's words back at the instant they were written.
+  held_releases?: string | null
 }
 
 /** Whether `row`'s worker was taught the MCP tools rather than the command line, and so still needs
@@ -954,6 +959,11 @@ export interface Storage {
   /** The human's x. Distinct from `withdrawn` on purpose: the two states answer different questions
    *  about what happened, and the worker is told which. */
   dismissThreadQuestion(id: string, atMs: number): boolean
+  /** A send that carried these settlements never reached the worker and the human threw it away (router
+   *  dismissFailedFollowUp): an ANSWERED row goes back to open, its card answerable again, and a DISMISSED
+   *  row goes back to undelivered, to ride the next send. Thread-scoped; false when the row is in neither
+   *  state any more. */
+  unsettleUndelivered(slug: string, id: string): boolean
   // ---- THE WORKER'S OWN COMPLETION ----------------------------------------------------------------
   /** Record this thread as done, replacing any earlier record — a worker declaring itself done twice
    *  has not finished two things. The GATE (open questions, live registrations) lives at the RPC, not
@@ -1129,6 +1139,7 @@ export interface Storage {
   setControlErrorIfCurrent(slug: string, sessionId: string, generation: number, error: string | null): boolean
   setControlError(slug: string, error: string | null): void
   setDeliveryLedger(slug: string, ledger: string | null): void
+  setHeldReleases(slug: string, releases: string | null): void
   getSetting(key: string): unknown
   setSetting(key: string, value: unknown): void
   deleteSetting(key: string): void
@@ -1214,6 +1225,8 @@ export const STORAGE_SCHEMA = `
       -- rest last reported to it. Both in the ALTER list below.
       parent_slug TEXT,
       child_reported_at TEXT,
+      -- SessionRow.held_releases. Also in the ALTER list below.
+      held_releases TEXT,
       -- THE RECURRING PROMPT (scheduler.ts SOURCES 4, 5 and 7): one text, three independent triggers —
       -- every time the thread rests, every N ms on a clock, and/or every time its context is compacted.
       -- All flags 0 = off; there is no separate enable column, because another flag could only ever
@@ -1537,7 +1550,7 @@ export function ensureStorageSchema(db: Database): void {
   // a file that already exists, and every live install predates any column below — so each rides one
   // additive ALTER here, exactly the stack the schema comment above says the unified file was born
   // without. Keep the list append-only; the try/catch is the "already there" case.
-  for (const column of ["pinned_at TEXT", "acp_agent TEXT", "worker_surface TEXT", "console_pinned_at TEXT", "archived_at TEXT", "running_since TEXT", "parent_slug TEXT", "child_reported_at TEXT"]) {
+  for (const column of ["pinned_at TEXT", "acp_agent TEXT", "worker_surface TEXT", "console_pinned_at TEXT", "archived_at TEXT", "running_since TEXT", "parent_slug TEXT", "child_reported_at TEXT", "held_releases TEXT"]) {
     try {
       db.exec(`ALTER TABLE session ADD COLUMN ${column}`)
     } catch {
@@ -2345,6 +2358,14 @@ export function createStorage(source: string | Database, projectId: string): Sto
     UPDATE thread_question SET state = 'dismissed', settled_at = ?
     WHERE project_id = @project_id AND id = ? AND state = 'open'
   `)
+  const reopenAnsweredStmt = scope.prepare(`
+    UPDATE thread_question SET state = 'open', answer = NULL, settled_at = NULL, delivered = 0, delivery_id = NULL
+    WHERE project_id = @project_id AND id = ? AND thread_slug = ? AND state = 'answered'
+  `)
+  const undeliverDismissalStmt = scope.prepare(`
+    UPDATE thread_question SET delivered = 0, delivery_id = NULL
+    WHERE project_id = @project_id AND id = ? AND thread_slug = ? AND state = 'dismissed'
+  `)
   const delThreadQuestions = scope.prepare("DELETE FROM thread_question WHERE project_id = @project_id AND thread_slug = ?")
   const delThreadDone = scope.prepare("DELETE FROM thread_done WHERE project_id = @project_id AND thread_slug = ?")
   const delSubAgentSteers = scope.prepare("DELETE FROM subagent_steer WHERE project_id = @project_id AND thread_slug = ?")
@@ -2628,6 +2649,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
   )
   const controlErrorStmt = scope.prepare("UPDATE session SET control_error = ? WHERE project_id = @project_id AND slug = ?")
   const deliveryLedgerStmt = scope.prepare("UPDATE session SET delivery_ledger = ? WHERE project_id = @project_id AND slug = ?")
+  const heldReleasesStmt = scope.prepare("UPDATE session SET held_releases = ? WHERE project_id = @project_id AND slug = ?")
   const getSet = scope.prepare<[string], { value: string }>("SELECT value FROM settings WHERE project_id = @project_id AND key = ?")
   const putSet = scope.prepare(
     "INSERT INTO settings (project_id, key, value) VALUES (@project_id, ?, ?) ON CONFLICT(project_id, key) DO UPDATE SET value = excluded.value",
@@ -2662,6 +2684,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     worker_surface: row.worker_surface ?? null,
     parent_slug: row.parent_slug ?? null,
     child_reported_at: row.child_reported_at ?? null,
+    held_releases: row.held_releases ?? null,
   })
 
   const getAdoptionRuntimeSnapshot = db.transaction((slug: string) => ({
@@ -3144,6 +3167,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     markSettlementDelivered: (id) => markSettlementDeliveredStmt.run(id).changes === 1,
     withdrawThreadQuestion: (slug, id, atMs) => withdrawThreadQuestionStmt.run(atMs, id, slug).changes === 1,
     dismissThreadQuestion: (id, atMs) => dismissThreadQuestionStmt.run(atMs, id).changes === 1,
+    unsettleUndelivered: (slug, id) => reopenAnsweredStmt.run(id, slug).changes === 1 || undeliverDismissalStmt.run(id, slug).changes === 1,
     markThreadDone: (slug, body, atMs) => { markThreadDoneStmt.run(slug, body, atMs) },
     getThreadDone: (slug) => {
       const row = getThreadDoneStmt.get(slug) as { body: string; done_at: number } | undefined
@@ -3368,6 +3392,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
       controlErrorIfCurrentStmt.run(error, slug, sessionId, generation).changes === 1,
     setControlError: (slug, error) => void controlErrorStmt.run(error, slug),
     setDeliveryLedger: (slug, ledger) => void deliveryLedgerStmt.run(ledger, slug),
+    setHeldReleases: (slug, releases) => void heldReleasesStmt.run(releases, slug),
     getSetting: (key) => {
       const row = getSet.get(key)
       if (!row) return undefined

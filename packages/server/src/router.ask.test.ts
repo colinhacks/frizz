@@ -284,6 +284,43 @@ test("answering stores the answer WITHOUT delivering it, and leaves the row for 
   } finally { h.close() }
 })
 
+test("answering a card on an archived thread reopens it, so the answer has somebody to reach", async () => {
+  const h = harness()
+  try {
+    h.storage.upsertSession(row("t"))
+    const { registered } = await h.router.ask.handler({ input: { slug: "t", questions: [simple(), simple("Ship it?")] } })
+    const [a, b] = registered
+    // Marked done with its questions still open: nothing closes them, and the scheduler delivers nothing
+    // to an archived thread, so an answer given here used to be stored and reach nobody.
+    h.storage.setState("t", "archived")
+    assert.equal(h.storage.getSession("t")?.state, "archived")
+
+    // An answer naming no open row of this thread changes nothing, the thread stays where it was put.
+    h.storage.upsertSession(row("other"))
+    const { registered: [foreign] } = await h.router.ask.handler({ input: { slug: "other", questions: [simple()] } })
+    await h.router.answerQuestions.handler({ input: { slug: "t", answers: [
+      { questionId: foreign.id, question: foreign.spec.question, chosen: ["SQLite"] },
+    ] } })
+    assert.equal(h.storage.getSession("t")?.state, "archived", "an id from another thread reopens nothing")
+
+    const result = await h.router.answerQuestions.handler({ input: { slug: "t", answers: [
+      { questionId: a.id, question: a.spec.question, chosen: ["SQLite"] },
+    ] } })
+    assert.deepEqual(result.answered, [a.id])
+    assert.equal(h.storage.getSession("t")?.state, "open", "the answer reopens the thread")
+    assert.equal(h.storage.getSession("t")?.archived, 0)
+    assert.ok(h.refreshes() > 0, "and the board redraws it out of Done")
+
+    // Re-archived, an answer that settles nothing (the row is already answered) leaves it archived.
+    h.storage.setState("t", "archived")
+    await h.router.answerQuestions.handler({ input: { slug: "t", answers: [
+      { questionId: a.id, question: a.spec.question, chosen: ["JSON"] },
+    ] } })
+    assert.equal(h.storage.getSession("t")?.state, "archived", "a settled row reopens nothing")
+    assert.equal(h.storage.getThreadQuestion(b.id)?.state, "open")
+  } finally { h.close() }
+})
+
 test("the transcript reads back the ANSWERED questions with their answers, and nothing else", async () => {
   const h = harness()
   try {

@@ -4052,6 +4052,19 @@ export function repliesStepsDone(text: string): boolean {
   return said === STEPS_DONE || said.startsWith(`${STEPS_DONE}\n\n`)
 }
 
+/** A STEPS REPORT, the reply the to-do list's send composes (web stepsAnswer withStepsReport): the bare
+ *  word when every step is done, or "Done 2 of 3:" over its checklist, with whatever the human typed under
+ *  it as `note`. Null for anything else. Read on the human's own words (wordsUnderAnswers). */
+export function stepsReportOf(said: string): { all: boolean; note: string } | null {
+  const text = said.trim()
+  if (text === STEPS_DONE || text.startsWith(`${STEPS_DONE}\n\n`)) return { all: true, note: text.slice(STEPS_DONE.length).trim() }
+  const [head, ...rows] = text.split("\n")
+  if (!new RegExp(`^${STEPS_DONE} \\d+ of \\d+:$`).test(head)) return null
+  let n = 0
+  while (n < rows.length && /^- \[( |x)\] /.test(rows[n])) n++
+  return n > 0 ? { all: false, note: rows.slice(n).join("\n").trim() } : null
+}
+
 /** What the human wrote themselves, under any answers that rode the same send. */
 export function wordsUnderAnswers(text: string): string {
   let said = text.trim()
@@ -6792,6 +6805,15 @@ export function parseThreadMessage(text: string): (ThreadMessageSender & { body:
 // delivery token, and it used to count: answering one of two questions from the prompt box retired the
 // other, where the same answer sent from the card (the scheduler's delivery) did not. It is the human
 // typing only when they typed something BESIDE the answers, which is the note under ANSWERS_NOTE_HEADER.
+// Under every note header: a send carrying registered AND fenced answers nests them, and the first
+// note is then the second set of answers, not anything typed.
+//
+// A STEPS REPORT is the third (2026-11-11). Ticking boxes and pressing Send answers the to-do card the way
+// picking an option answers a question card, and the report counted as typing: a "Done 1 of 2" released
+// the hold on the step it said was NOT done, so the next quiet park took the thread out of the queue with
+// the list still owing it, and a tick sent with nothing typed retired the questions asked beside the
+// steps. It is typing when something is typed under it. A report of every step done still settles the
+// handoff it answers, as settling a question does (board handoffStands, FoldState.stepsDoneAt).
 /** What Retry and "Continue now" send (web lib/retrySession.ts and ChatView's LimitPauseCard post this constant). */
 export const RETRY_FOLLOW_UP = "Continue exactly where you left off."
 
@@ -6801,8 +6823,11 @@ export function isHumanTypedMessage(text: string): boolean {
   if (isInjectedNoise(text) || isInterruptMarker(text) || isWakeDelivery(text)) return false
   if (parseThreadMessage(text) || parseCrossSessionMessage(text) || parseAgentMessage(text)) return false
   const own = stripHumanGapNote(text).trim()
-  if (own.startsWith(`${BURIED_ANSWERS_HEADER}\n`)) return splitAnswersNote(own).note !== ""
-  return own !== RETRY_FOLLOW_UP
+  const answers = (words: string) => words.startsWith(`${BURIED_ANSWERS_HEADER}\n`)
+  // Answers with no note under them come back from wordsUnderAnswers as themselves: nothing typed.
+  const said = answers(own) ? wordsUnderAnswers(own) : own
+  const typed = answers(said) ? "" : stepsReportOf(said)?.note ?? said
+  return typed !== "" && typed !== RETRY_FOLLOW_UP
 }
 
 /** The human-typed messages a user RECORD carries. The runtime merges whatever was queued while the

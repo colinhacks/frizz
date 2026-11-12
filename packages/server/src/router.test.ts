@@ -9,7 +9,7 @@ import { mountRouter } from "@frizz/rpc/server"
 import { DISPATCH_TASK_BANNER_MARKER, formatThreadMessage, parseThreadMessage, type BoardSnapshot, type Settings, type ThreadView, type TranscriptMessage } from "@frizz/shared"
 import type { AuditRecord } from "./audit.ts"
 import { deriveDeliveryInFlight, deriveNeedsYou, type BoardManager } from "./board.ts"
-import { appendDelivery, holdDelivery, parseDeliveryLedger, projectDeliveryLedger, serializeDeliveryLedger } from "./delivery-ledger.ts"
+import { appendDelivery, holdDelivery, parseDeliveryLedger, projectDeliveryLedger, serializeDeliveryLedger, ticksOnTheirWay } from "./delivery-ledger.ts"
 import { createWakeDeliveryStore } from "./wake-store.ts"
 import { Bus, Emitter } from "./bus.ts"
 import { createClaudeBackend } from "./backend/claude.ts"
@@ -2449,6 +2449,47 @@ test("a message sent to the queue mid-turn is held, and the rest delivers that s
   assert.deepEqual(sent.map((s) => s.deliveryId), ["d-hold"], "the same id: the bubble on screen becomes the delivered message")
   assert.match(sent[0].text, /^after this, rebase/)
   assert.deepEqual(ledger().map((i) => [i.id, i.state]), [["d-hold", "delivered"]], "it opened the next turn, so it is read, not waiting")
+  // …and the instant the human sent it outlives the ledger entry, so the record it lands as is not read as
+  // a reply to whatever the rest it was released into handed over (tailer heldTypedAt).
+  const releases: { id: string; heldAt: number }[] = JSON.parse(h.storage.getSession(slug)?.held_releases ?? "[]")
+  assert.deepEqual(releases.map((r) => r.id), ["d-hold"])
+  assert.ok(releases[0].heldAt <= Date.now(), "the instant it was sent, not the release")
+  h.storage.close()
+})
+
+// A held send's steps report is told to the worker when the send is released, never at the hold: a send
+// taken back, or whose release failed, left the box reading done and heard while the worker had heard
+// nothing, and the next report left it out (2026-11-11).
+test("a held send's ticks are reported when it is released, not when it is held", async () => {
+  const { h, slug, sid, rest } = holdHarness()
+  const tick = () => h.storage.humanTodoTicksBySlug().get(slug)?.find((t) => t.item_id === "step-1")
+  h.storage.setHumanTodo(slug, "step-1", true, Date.now())
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, message: "Done 1 of 2:\n- [x] Sign in\n- [ ] Approve", deliveryId: "d-report", hold: true, todos: [{ id: "step-1", done: true }] } })
+  assert.equal(tick()?.reported_at, null, "nothing is told to the worker while the message waits")
+  // …and nothing is owed about it either: the board reads it as on its way, so the boxes do not stage
+  // again for the next send to report a second time.
+  assert.deepEqual([...(ticksOnTheirWay(h.storage.getSession(slug)?.delivery_ledger) ?? [])], [["step-1", true]])
+  await rest()
+  assert.equal(typeof tick()?.reported_at, "number", "told once it is handed over")
+  h.storage.close()
+})
+
+test("the Retry of a failed send reports the ticks it carried; a failed send's ticks are not on their way", async () => {
+  const { h, slug, sid, setTurn } = holdHarness()
+  setTurn("idle")
+  const tick = () => h.storage.humanTodoTicksBySlug().get(slug)?.find((t) => t.item_id === "step-1")
+  h.storage.setHumanTodo(slug, "step-1", true, Date.now())
+  const broker = h.ctx as { claudeBroker?: unknown }
+  const working = broker.claudeBroker
+  broker.claudeBroker = { followUp: async () => { throw new Error("boom") } }
+  const report = "Done 1 of 2:\n- [x] Sign in\n- [ ] Approve"
+  await assert.rejects(h.router.followUp.handler({ input: { slug, sessionId: sid, message: report, deliveryId: "d-fail", todos: [{ id: "step-1", done: true }] } }))
+  assert.equal(tick()?.reported_at, null)
+  assert.equal(ticksOnTheirWay(h.storage.getSession(slug)?.delivery_ledger), undefined, "a failed send's ticks stage again")
+  // The bubble's Retry: the kept words under a new id, and no ticks of its own.
+  broker.claudeBroker = working
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, message: report, deliveryId: "d-retry", supersedes: "d-fail" } })
+  assert.equal(typeof tick()?.reported_at, "number", "the retry told the worker, so the tick is reported")
   h.storage.close()
 })
 
@@ -2797,5 +2838,32 @@ test("a dismissal a scheduler wake is already carrying is left to that wake", as
   await h.router.followUp.handler({ input: { slug, sessionId: sid, deliveryId: "d-steer", message: "carry on" } })
   assert.equal(sent[0].text.startsWith("carry on"), true, sent[0].text)
   assert.equal(h.storage.getThreadQuestion("qst_name")?.delivered, 0, "still that wake's to deliver")
+  h.storage.close()
+})
+
+// A send carrying answers that fails is kept as a failed bubble, with the answers already settled and
+// marked delivered. Dismissing that bubble used to leave the cards reading answered for answers nobody
+// received; the rows come back instead (2026-11-11).
+test("dismissing a failed send gives back the answers and dismissals it carried", async () => {
+  const { h, slug, sid, setTurn } = holdHarness()
+  setTurn("idle")
+  ask(h, slug, "qst_store", "Which store?")
+  ask(h, slug, "qst_path", "Which path?")
+  ask(h, slug, "qst_name", "Which name?")
+  await h.router.dismissQuestions.handler({ input: { slug, ids: ["qst_name"] } })
+  ;(h.ctx as { claudeBroker?: unknown }).claudeBroker = { followUp: async () => { throw new Error("boom") } }
+  await assert.rejects(h.router.followUp.handler({
+    input: {
+      slug, sessionId: sid, deliveryId: "d-fail", message: "and keep it small",
+      answers: [{ questionId: "qst_store", question: "Which store?", chosen: ["SQLite"] }, { questionId: "qst_path", question: "Which path?", chosen: ["JSON file"] }],
+    },
+  }))
+  assert.equal(h.storage.getThreadQuestion("qst_store")?.state, "answered", "the send settled them before it failed")
+  assert.deepEqual(await h.router.dismissFailedFollowUp.handler({ input: { slug, deliveryId: "d-fail" } }), { dismissed: true })
+  assert.equal(h.storage.getThreadQuestion("qst_store")?.state, "open", "the card is answerable again")
+  assert.equal(h.storage.getThreadQuestion("qst_path")?.state, "open", "every answer, not only the first")
+  assert.equal(h.storage.getThreadQuestion("qst_store")?.answer, null)
+  assert.equal(h.storage.getThreadQuestion("qst_name")?.state, "dismissed")
+  assert.equal(h.storage.getThreadQuestion("qst_name")?.delivered, 0, "the dismissal rides the next send")
   h.storage.close()
 })

@@ -615,7 +615,8 @@ function settledParentFault(parent: string, state: ThreadQuestionRow["state"]): 
  * isHumanTypedMessage). Nothing Frizz delivers does: no wake of any kind, no correction, no sign-off
  * reminder, no Goal prompt, no timer or watch wake, no limit resume, no other thread's steer, and not
  * the delivery of an ANSWER to a different question — answering one of two is not replying past the
- * other, and the human has the card's × for that. The first cut of this rule (2026-10-13, same day)
+ * other, and the human has the card's × for that — and not a steps report sent with nothing typed under
+ * it, which answers the to-do card and no question. The first cut of this rule (2026-10-13, same day)
  * read every user record as the boundary, the way the rest rules around it do, and a question asked
  * beside a `status: working` park left the queue the moment its shell finished and the worker re-parked
  * with the fence alone — which is exactly what the contract tells a worker a quiet park is. The human

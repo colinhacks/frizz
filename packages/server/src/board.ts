@@ -26,7 +26,7 @@ import { frizzDirExists } from "./frizz.ts"
 import { githubStatusKey, idlePrsOf, liveActivityOf, needsInputParkHolds, parseIssueRef, parsePrRef, readAwaitingPark, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, type GithubIssueStatusBook, type GithubStatusBook } from "./awaiting.ts"
 import { findByPathCached } from "./project-registry.ts"
 import { jsonEqual } from "./json-value.ts"
-import { parseDeliveryLedger } from "./delivery-ledger.ts"
+import { parseDeliveryLedger, ticksOnTheirWay } from "./delivery-ledger.ts"
 import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 import { effectivePermissionMode, fallbackTitle, resolveLegacyThreadFile } from "./dispatch.ts"
 import { ProducerStoppedError } from "./shutdown.ts"
@@ -1480,7 +1480,8 @@ function quietParkHolds(
 
 // Whether the newest handoff is still unreached: the human has not typed to the thread since it
 // (`restFromAt`), snoozed a rest at or after it (`bg_snooze_rested_at`, stamped by the resting card's
-// Snooze and the header's "Until activity") or settled a question since it (`questionSettledAt`).
+// Snooze and the header's "Until activity"), settled a question since it (`questionSettledAt`) or
+// reported every step done (`stepsDoneAt`, which is not typing either, for the same reason).
 //
 // The snooze counts because it is the human's own answer to the card. Without it, a snooze pressed on the
 // handoff lasted one rest (bgSnoozeArmed), and the next no-news park put the card straight back, on every
@@ -1497,7 +1498,7 @@ function quietParkHolds(
 function handoffStands(row: Pick<SessionRow, "bg_snooze_rested_at">, tele: SessionTelemetry | undefined, questionSettledAt?: number): boolean {
   const handoffMs = Date.parse(tele?.handoffAt ?? "")
   if (!Number.isFinite(handoffMs)) return false
-  const reached = [tele?.restFromAt ?? tele?.lastUserAt, row.bg_snooze_rested_at].map((at) => Date.parse(at ?? ""))
+  const reached = [tele?.restFromAt ?? tele?.lastUserAt, row.bg_snooze_rested_at, tele?.stepsDoneAt].map((at) => Date.parse(at ?? ""))
   return ![...reached, questionSettledAt ?? Number.NaN].some((ms) => ms >= handoffMs)
 }
 
@@ -2218,7 +2219,11 @@ function sessionThreadView(
     pendingAsk: Boolean(tele?.pendingAsk),
     pendingQuestion: Boolean(tele?.pendingQuestion),
     standingQuestions: standingCount,
-    humanSteps: hasHumanSteps(tele),
+    // A HANDOFF THE QUIET PARK COULD NOT TAKE BACK is steps or questions still owed, though the last word
+    // is the park: the thread queues for what the human must DO, never as a report they only had to read.
+    // Read off the last fence alone, a pinned thread holding its steps behind a `status: watching` re-park
+    // came out a plain report, and the board and the Console drop those for a pinned row (2026-11-11).
+    humanSteps: hasHumanSteps(tele) || queuedBy.heldHandoff === true,
     crashed,
     limitPause: Boolean(limitPause),
     providerError: Boolean(tele?.providerError && !tele.providerError.retrying),
@@ -2241,6 +2246,7 @@ function sessionThreadView(
   const humanTodos = archived ? [] : humanTodoView(tele?.humanSteps, registries.humanTodos.get(row.slug), {
     finished: tele?.lastFence?.kind === "done",
     retiredAt: registries.done.get(row.slug)?.doneAt,
+    onTheirWay: ticksOnTheirWay(row.delivery_ledger),
   })
   return {
     id: row.slug,

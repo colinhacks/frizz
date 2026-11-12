@@ -6,7 +6,7 @@ import { execFile } from "node:child_process"
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { clearSecrets, secretFilePath, serveSecret } from "./secret-files.ts"
+import { clearSecrets, rearmSecretsIn, secretFilePath, serveSecret } from "./secret-files.ts"
 
 const cat = (path: string, timeout = 5_000) => new Promise<string>((resolve, reject) =>
   execFile("cat", [path], { timeout }, (error, stdout) => (error ? reject(error) : resolve(stdout))))
@@ -59,6 +59,23 @@ test("an unread value expires, and removing the path discards it", async () => {
     // Re-creating the name as a plain file must not make the server start writing into it.
     await new Promise((r) => setTimeout(r, 300))
     assert.equal(existsSync(discarded), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+// The clock starts when the message naming the path reaches the worker: a held send or a held answer wake
+// can sit for minutes after the human pasted (2026-11-11). A fake clock moves time; the poll reads it.
+test("delivering the message that names a path restarts its clock; another path's is untouched", async () => {
+  const dir = stateDir()
+  try {
+    let clock = 0
+    const named = serveSecret(dir, "t", "qst_named", "v1", { ttlMs: 1_000, now: () => clock })
+    const other = serveSecret(dir, "t", "qst_other", "v2", { ttlMs: 1_000, now: () => clock })
+    clock = 900
+    assert.equal(rearmSecretsIn(`Answers to earlier questions:\n1. “Token?” → secret ready at ${named}`), 1)
+    clock = 1_200
+    await until(() => !existsSync(other))
+    assert.equal(existsSync(named), true, "restarted at 900, so it runs to 1,900")
+    assert.equal(await cat(named), "v1")
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

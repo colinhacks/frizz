@@ -123,6 +123,8 @@ export interface NormalizedTail {
   restFromAt?: string
   // When the worker last rested on steps or questions for the human — see FoldState.handoffAt.
   handoffAt?: string
+  // When the human last reported every step done — see FoldState.stepsDoneAt.
+  stepsDoneAt?: string
   // What the worker has handed the human to do across the thread — see FoldState.humanSteps. Includes the
   // fence the thread is resting on now, which the fold has not settled yet.
   humanSteps?: HumanStep[]
@@ -234,6 +236,12 @@ export interface FoldState {
   // the human wrote it (applyRecord, noteQueuedMessage). Absent (a tail cached before 2026-10-13) reads
   // as `lastUserAt`.
   restFromAt?: string
+  // The record that last moved `restFromAt`, when it was one Frizz handed the runtime under its own input id
+  // (the SDK echoes it as the record's uuid), with the boundary as it stood before that record. A message
+  // HELD by "Send to queue" is typed mid-turn and delivered at the rest, so its record lands after the very
+  // handoff it was typed before; the telemetry projection reads the boundary back to the instant the human
+  // wrote it (tailer heldTypedAt, SessionRow.held_releases).
+  restFromRecord?: { uuid: string; before?: string }
   // WHEN THE WORKER LAST HANDED THE HUMAN SOMETHING TO DO: an ```awaiting fence listing `steps:` or
   // `questions:` (shared fenceWaitsOnHuman). Unlike `lastFence` it is NOT cleared by a user record,
   // because what it records is an obligation on the reader, like a question: a later wake carrying no
@@ -245,6 +253,15 @@ export interface FoldState {
   // needed from you", and each one then held every CI and shell park after it in the queue until the
   // human typed: 204 parks in one 36h window. The worker's own next `status:` decides those now.
   handoffAt?: string
+  // `handoffAt` as it stood before the newest stamp, put back when the fence that stamped it is replaced
+  // before anything answered it: it was never a rest (tailer unstampHandoff).
+  handoffBefore?: string
+  // WHEN THE HUMAN LAST REPORTED EVERY STEP DONE: a "Done" from the to-do list's send, or typed. A steps
+  // report is not typing (shared isHumanTypedMessage), so it leaves `restFromAt` and every question
+  // standing beside the steps where they were; a report of everything done still answers the handoff, as
+  // settling a question does (board handoffStands). A partial one ("Done 1 of 2") answers nothing: the
+  // step it says is not done is still owed, and a quiet park after it stays in the queue.
+  stepsDoneAt?: string
   // THE HUMAN'S TO-DO LIST, as far as the transcript can say (human-todos.ts): every step of every rest
   // that is over. The ticks live in the thread_human_todo table. Absent on a tail cached before the list
   // existed, which reads as no history: only the fences after it count.
