@@ -1,9 +1,9 @@
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, forwardRef } from "react"
 import { createPortal } from "react-dom"
 import { subscribe, useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
-import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon } from "lucide-react"
+import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, ChevronsUpDown, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon, type LucideProps } from "lucide-react"
 import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP } from "@frizz/shared"
 import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, ProviderError, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
 import { store, threadBySlug, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
@@ -37,7 +37,7 @@ import { FrizzWake } from "./FrizzWake.tsx"
 import { LinkifiedText } from "./LinkifiedText.tsx"
 import { parseSentContext, splitProseByTokens, tokenLabel, type SentContextItem } from "../lib/composerContext.ts"
 import { AnswersCard } from "./AnswersCard.tsx"
-import { DividerQuotedTitle, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
+import { DividerHint, DividerQuotedTitle, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
 import { usePromptBoxSends } from "../lib/sendScope.tsx"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { lastAssistantIndex } from "../lib/lastAssistant.ts"
@@ -56,7 +56,7 @@ import { useFailedDeliveryActions } from "../lib/failedDelivery.ts"
 import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending, useThreadCanSteer } from "../lib/deliverQueuedNow.ts"
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
-import { foldSummary, stretchFoldRanges } from "../lib/stretchFolds.ts"
+import { foldCounts, stretchFoldRanges, type FoldRange } from "../lib/stretchFolds.ts"
 import { latestSignOffs } from "../lib/signOffs.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
@@ -619,9 +619,9 @@ type VirtualThreadRow =
   | { key: "transport-fallback"; kind: "transport-fallback" }
   | { key: string; kind: "earlier-history" }
   | ({ kind: "message"; restGap: string | null } & VirtualTranscriptMessageRow)
-  // THE WORK BETWEEN THE HUMAN'S MESSAGE AND THE SIGN-OFF, as one disclosure row — see lib/stretchFolds.
-  // Open, it stays above the rows it folded, which follow it as ordinary message rows.
-  | { key: string; kind: "fold"; label: string; open: boolean; gap: number }
+  // THE WORK BETWEEN THE WORKER'S FIRST WORDS AND ITS SIGN-OFF, as one elision hairline — see
+  // lib/stretchFolds. It expands one way, into the rows it stood for.
+  | { key: string; kind: "fold"; rounds: number; calls: number; gap: number }
   | { key: "runtime-status"; kind: "runtime-status" }
   | { key: string; kind: "queued"; message: ChatMessage; messageIndex: number; gap: number }
   | { key: "queued-send-now"; kind: "queued-send-now" }
@@ -1010,9 +1010,9 @@ function VirtualizedThreadTranscript({
     }
     const before = questionGroups.byRow.get(-1)
     if (before) next.push({ key: "questions:head", kind: "questions", questions: before, send: questionGroups.sendRows.has(-1) })
-    const pushMessage = (i: number, gap: number) => {
+    const pushMessage = (i: number, gap: number, message = messageRows[i].message) => {
       const row = messageRows[i]
-      next.push({ ...row, gap, kind: "message" as const })
+      next.push({ ...row, message, gap, kind: "message" as const })
       // Answered before anything still open at the same slot was, so drawn above it.
       const settledGroup = settledByRow.get(i)
       if (settledGroup) next.push({ key: `settled-questions:${row.key}`, kind: "settled-questions", questions: settledGroup })
@@ -1023,8 +1023,11 @@ function VirtualizedThreadTranscript({
     // with a live card placed inside it. A worker held to the whole-handoff rule names every open question
     // in its sign-off, so this only catches one that did not.
     const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex)
+    // Which runs of rows each range hides, first: a shut fold's LEAD (the worker's first words) is drawn as
+    // its words alone, its tool calls counted on the hairline under it, so the lead's row has to know.
+    const shut = new Map<number, { end: number; key: string; range: FoldRange; to: number }>()
+    const leads = new Set<number>()
     let range = 0
-    let afterFold = false
     for (let i = 0; i < messageRows.length;) {
       const at = messageRows[i].messageIndex
       while (range < folds.length && folds[range].to < at) range++
@@ -1033,20 +1036,35 @@ function VirtualizedThreadTranscript({
       if (fold && at >= fold.from) {
         while (end < messageRows.length && messageRows[end].messageIndex <= fold.to && !keeps(end)) end++
       }
-      // One row standing in for one row hides nothing.
-      if (end - i < 2) {
-        pushMessage(i, afterFold ? messageGap(FOLD_PROBE, messageRows[i].message) : messageRows[i].gap)
+      const lead = fold?.lead !== undefined && i > 0 && messageRows[i - 1].messageIndex === fold.lead ? i - 1 : -1
+      const key = `fold:${messageRows[i].key}`
+      // One row standing in for one row hides nothing, unless the lead's calls fold with it. An OPEN fold
+      // still claims its run, or the run's second row would start a fold of its own.
+      if (end - i >= (lead >= 0 ? 1 : 2)) {
+        if (!openFolds.has(key)) {
+          const to = end < messageRows.length && messageRows[end].messageIndex <= fold.to ? messageRows[end].messageIndex - 1 : fold.to
+          shut.set(i, { end, key, range: fold, to })
+          if (lead >= 0) leads.add(lead)
+        }
+        i = end
+      } else i++
+    }
+    let afterFold = false
+    for (let i = 0; i < messageRows.length;) {
+      const fold = shut.get(i)
+      if (!fold) {
+        const gap = afterFold ? messageGap(FOLD_PROBE, messageRows[i].message) : messageRows[i].gap
+        const message = messageRows[i].message
+        if (leads.has(i)) pushMessage(i, gap, { ...message, tools: [], parts: (message.parts ?? []).filter((part) => part.kind !== "tools") })
+        else pushMessage(i, gap)
         afterFold = false
         i++
         continue
       }
-      const key = `fold:${messageRows[i].key}`
-      const open = openFolds.has(key)
-      const to = end < messageRows.length && messageRows[end].messageIndex <= fold.to ? messageRows[end].messageIndex - 1 : fold.to
-      next.push({ key, kind: "fold", label: foldSummary(messages, { from: at, to }), open, gap: i === 0 ? 0 : messageGap(messageRows[i - 1].message, FOLD_PROBE) })
-      if (open) for (let j = i; j < end; j++) pushMessage(j, j === i ? messageGap(FOLD_PROBE, messageRows[j].message) : messageRows[j].gap)
-      afterFold = !open
-      i = end
+      const counts = foldCounts(messages, { from: messageRows[i].messageIndex, to: fold.to, lead: leads.has(i - 1) ? fold.range.lead : undefined })
+      next.push({ key: fold.key, kind: "fold", ...counts, gap: i === 0 ? 0 : messageGap(messageRows[i - 1].message, FOLD_PROBE) })
+      afterFold = true
+      i = fold.end
     }
     // THE ASK GOES AT THE TAIL. It was row 0 until 2026-08-02, which put an answerable card ABOVE the
     // operator's own first message — a transcript scrolled to its end (this list anchors there) left it
@@ -1086,7 +1104,7 @@ function VirtualizedThreadTranscript({
       if (row.kind === "runtime-status") return 54
       if (row.kind === "questions") return 220
       if (row.kind === "settled-questions") return 140
-      if (row.kind === "fold") return 20 + row.gap
+      if (row.kind === "fold") return 28 + row.gap
       return row.kind === "message" ? 108 + row.gap : 82 + row.gap
     },
     overscan: 8,
@@ -1487,17 +1505,19 @@ function VirtualizedThreadTranscript({
     readerAnchorRef.current = captureReaderAnchor() ?? readerAnchorRef.current
   }, [captureReaderAnchor, transcriptRef])
 
-  // OPENING A FOLD KEEPS ITS ROW WHERE IT WAS CLICKED. The rows it folded mount below it, and a reader at the
-  // tail is otherwise tail-follow's: the growth read as content arriving under them, the bottom stayed put,
-  // and the row they clicked went up past the top of the pane with everything it opened (measured on a
-  // stack, 2026-11-11: from 84px to -597px). So the click claims the scroller the way a pin move does and
-  // holds the row at its height while the new rows measure; tail-follow reconciles once the hold ends, from
-  // wherever that leaves the reader.
-  const toggleFold = useCallback((key: string) => {
+  // OPENING A FOLD KEEPS THE PAGE WHERE IT WAS. The rows it stood for mount under the row above it, and a
+  // reader at the tail is otherwise tail-follow's: the growth read as content arriving under them, the
+  // bottom stayed put, and what they had been reading went up past the top of the pane (measured on a stack,
+  // 2026-11-11: the clicked row from 84px to -597px). So the click claims the scroller the way a pin move
+  // does and holds the row ABOVE the hairline at its height while the new rows measure — the hairline itself
+  // unmounts, one way, as the queue card's did; tail-follow reconciles once the hold ends.
+  const openFold = useCallback((key: string) => {
     const scroller = transcriptRef.current
-    const row = scroller?.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(key)}"]`)
-    if (scroller && row) {
-      const anchor = { rowKey: key, viewportTop: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top }
+    const at = rows.findIndex((row) => row.key === key)
+    const above = at > 0 ? rows[at - 1].key : null
+    const row = above ? scroller?.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(above)}"]`) : null
+    if (scroller && above && row) {
+      const anchor = { rowKey: above, viewportTop: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top }
       followingTailRef.current = false
       const until = performance.now() + ANCHOR_RESTORE_MS
       anchorRestoreUntilRef.current = until
@@ -1512,12 +1532,8 @@ function VirtualizedThreadTranscript({
       }
       requestAnimationFrame(hold)
     }
-    setOpenFolds((open) => {
-      const next = new Set(open)
-      if (!next.delete(key)) next.add(key)
-      return next
-    })
-  }, [alignToAnchor, syncTailFollow, transcriptRef])
+    setOpenFolds((open) => new Set(open).add(key))
+  }, [alignToAnchor, rows, syncTailFollow, transcriptRef])
 
   // THE STALE FRAME. A row that is already mounted and changes height in a commit — the resting card
   // folding into its message the moment the worker picks up a Done, an answered question greying in
@@ -1755,7 +1771,7 @@ function VirtualizedThreadTranscript({
               </div>
             ) : row.kind === "fold" ? (
               <div className="flex flex-col px-6" style={{ paddingTop: row.gap }}>
-                <TranscriptFold label={row.label} open={row.open} onToggle={() => toggleFold(row.key)} />
+                <StretchFold rounds={row.rounds} calls={row.calls} onExpand={() => openFold(row.key)} />
               </div>
             ) : row.kind === "runtime-status" ? (
               <div className="px-6">
@@ -2342,28 +2358,49 @@ function prettyToolName(name: string): string {
 // `at` is the emitting assistant message's ISO timestamp — the moment the model issued this batch of
 // calls, and therefore the clock a pending FOREGROUND card times itself against. Optional: a pre-restart
 // server projects messages without it, and a card with no clock marks itself immediately.
-// The fold row (lib/stretchFolds): the work between the human's message and the sign-off, as one line in
-// the tool digest's own treatment — the same label class and chevron, so a folded stretch and a folded
-// tool run read as the same kind of thing. Its spacing is charged through messageGap as a meta label
-// (FOLD_PROBE), the class of row it draws as.
-function TranscriptFold({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
+// The fold (lib/stretchFolds): the work between the worker's first words and its sign-off, as ONE elision
+// hairline, which is what the queue card drew there until the one-thread pane replaced it (maintainer
+// 2026-11-12, choosing it back over a meta-label row: "I kind of like the old hairline approach"). Its
+// words are the card's: the rounds the worker went round (each begun by a wake) and the tool calls folded,
+// then the hint. It expands ONE WAY and unmounts, as the card's did, so it carries no disclosure state.
+function StretchFold({ rounds, calls, onExpand }: { rounds: number; calls: number; onExpand: () => void }) {
+  const roundsLabel = rounds > 0 ? `${rounds} more round${rounds === 1 ? "" : "s"}` : ""
+  const callsLabel = calls > 0 ? `${calls} tool call${calls === 1 ? "" : "s"}` : ""
   return (
-    <button
-      type="button"
-      data-transcript-fold
-      onClick={onToggle}
-      onMouseDown={(e) => e.preventDefault()}
-      aria-expanded={open}
-      aria-label={`${open ? "Hide" : "Show"} the work before the sign-off: ${label}`}
-      className={`group flex w-full min-w-0 items-baseline gap-1.5 rounded -my-0.5 py-0.5 text-left outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${TRANSCRIPT_META_LABEL_CLASS}`}
+    <WakeDivider
+      icon={FoldGlyph}
+      marker="stretch-fold"
+      onClick={onExpand}
+      ariaLabel={`Expand ${[roundsLabel, callsLabel].filter(Boolean).join(" and ") || "the work"} before the sign-off`}
     >
-      <span data-transcript-fold-label title={label} className="min-w-0 truncate text-muted">{label}</span>
-      <ChevronRight aria-hidden="true" size={13} className={transcriptMetaChevronClass(open)} />
-    </button>
+      {roundsLabel || callsLabel ? (
+        <>
+          <span className="shrink-0 tabular-nums">{roundsLabel || callsLabel}</span>
+          {roundsLabel && callsLabel && (
+            <>
+              {/* Wide only, as the card's was: on a phone's row the rounds are the count this line is for. */}
+              <span aria-hidden="true" className={`shrink-0 opacity-50 ${WAKE_DIVIDER_WIDE_ONLY}`}>·</span>
+              <span className={`shrink-0 tabular-nums ${WAKE_DIVIDER_WIDE_ONLY}`}>{callsLabel}</span>
+            </>
+          )}
+          <DividerHint />
+        </>
+      ) : (
+        <span className="shrink-0">Click to expand</span>
+      )}
+    </WakeDivider>
   )
 }
-// What the fold row is to messageGap: a bare meta label, like a reasoning row or a settled tool digest.
-const FOLD_PROBE: ChatMessage = { role: "assistant", kind: "reasoning", text: "", tools: [], parts: [] }
+// The chevron paints only x 7-17 of its 24-unit box (3px of dead space each side at 12px), where the
+// family's other glyphs fill theirs to within 1px, so on the divider's shared 4px gap its ink sat 7.6px
+// from the label against the shell wake's 5.9px. The trim brings it to the family's distance; px, since
+// the glyph's size is fixed at 12 (measured by geometry in sans, 2026-11-12).
+const FoldGlyph = forwardRef<SVGSVGElement, LucideProps>(({ className, ...props }, ref) => (
+  <ChevronsUpDown ref={ref} {...props} className={`${className ?? ""} -mr-[1.5px]`} />
+))
+// What the hairline is to messageGap: a Frizz wake, the other thing drawn as a hairline here, so it takes
+// the rhythm a wake's line takes on either side.
+const FOLD_PROBE: ChatMessage = { role: "user", wake: true, text: "", tools: [], parts: [] }
 
 function MinimalToolActivity({ tools, at }: { tools: CollapsedTool[]; at?: string }) {
   const [expanded, setExpanded] = useState(false)
