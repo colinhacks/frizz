@@ -4449,8 +4449,10 @@ export function FenceCard({ fenceKind, body, hints, pastRest }: { fenceKind: Fen
     // is untouched: it is the same record, without its button.
     const markDone = doneThread && !isMobile && !pastRest ? (
       <CardActions>
+        {/* On a pinned thread it is a split button whose caret chooses what Done does to the pin. */}
         <StateButton
           thread={doneThread}
+          pinChoice={`${CARD_ACTION_RADIUS} text-[11px] bg-fg text-bg`}
           className={`${CARD_ACTION_RADIUS} text-[11px] ${CARD_PRIMARY_BUTTON}`}
           iconClassName={ICON_LABEL_NUDGE}
           onArchived={queueDismiss?.dismiss}
