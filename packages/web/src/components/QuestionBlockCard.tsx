@@ -19,6 +19,7 @@ import { AlertTriangle, Check, CircleHelp, KeyRound, ListChecks } from "lucide-r
 import { SECRET_ANSWER_MASK } from "@frizz/shared"
 import { useInlineMarkdownHtml, useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
+import { armEnterAfterPick } from "../lib/pickEnter.ts"
 import { optionLetter, parseQuestionBlock, splitOptionId, type BlockAnswer, type ParsedQuestion, type QuestionKind } from "../lib/questionBlocks.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { SecretCaption } from "./SecretCaption.tsx"
@@ -114,6 +115,10 @@ export function QuestionBlockCard({
   // onClick) so Enter sends the staged answers immediately after picking an option, without the
   // free-text box having to hold focus. tabIndex=-1: reachable by script, skipped by Tab.
   const gridRef = useRef<HTMLDivElement>(null)
+  // The card's send as of its latest render, for the Enter a pick arms (lib/pickEnter): that Enter can come
+  // after this card has been replaced, and it must send what the pick staged, not what this click saw.
+  const submitRef = useRef(interactive?.onSubmit)
+  submitRef.current = interactive?.onSubmit
   // The question's own text names the group its options are (see the grid's `role`).
   const questionId = useId()
   useLayoutEffect(() => {
@@ -228,8 +233,17 @@ export function QuestionBlockCard({
               selected={isMulti ? chosenSet.includes(i) : chosen === i}
               settledPick={settled?.chosenIdxs.includes(i) ?? false}
               disabled={!interactive}
-              onClick={() => {
-                interactive?.onChip(i, opt)
+              onClick={(clicks) => {
+                if (!interactive) return
+                // THE SECOND CLICK OF A DOUBLE-CLICK IS THE SAME PICK, not a change of mind: re-clicking a
+                // picked option lets it go, so a double-click picked it and let it go again, and the Enter
+                // after it sent nothing. A deliberate second click, after the double-click interval, still
+                // lets it go.
+                const picked = isMulti ? chosenSet.includes(i) : chosen === i
+                if (!(clicks > 1 && picked)) interactive.onChip(i, opt)
+                // The next Enter sends, wherever the focus is by then (lib/pickEnter): parking it on the
+                // grid below holds only while this card stays mounted.
+                armEnterAfterPick(() => submitRef.current?.(), gridRef.current)
                 // Park keyboard focus on the options grid, so an Enter sends right after the click
                 // (the grid's own onKeyDown above). MULTI with the note box focused is the one
                 // exception: chips and a color note coexist there, so the caret stays put — and that
@@ -504,7 +518,8 @@ function Chip({
   multi?: boolean
   recommended?: boolean
   recTitle?: string
-  onClick: () => void
+  /** `clicks` is the click's `detail`: 2 for the second click of a double-click, 0 from the keyboard. */
+  onClick: (clicks: number) => void
 }) {
   // Inline-only: the label line is one line, so no `<p>`/list block chrome. Raw `label` used to leak
   // `**bold**`/backticks. The body below it is the opposite — FULL markdown, blocks and all.
@@ -533,7 +548,7 @@ function Chip({
         if (disabled) return
         if ((e.target as Element).closest("a, button, summary, img[data-local-path], .local-file-action, .local-file-code")) return
         if (window.getSelection()?.toString()) return
-        onClick()
+        onClick(e.detail)
       }}
       className={`relative flex items-baseline gap-2 rounded-md border px-3 py-1.5 text-[12px] leading-snug transition-colors ${
         selected
@@ -559,7 +574,7 @@ function Chip({
         // and not `role="radio"`: picking the chosen option again lets it go, which a radio cannot do,
         // and a radio group promises arrow keys where these are reached by Tab.
         aria-pressed={selected || settledPick}
-        onClick={onClick}
+        onClick={(e) => onClick(e.detail)}
         onMouseDown={(e) => e.preventDefault()}
         className="absolute inset-0 rounded-md outline-none"
       />
