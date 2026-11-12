@@ -19,7 +19,7 @@ import { frizzRoots } from "./frizz-paths.ts"
 import { findById as findProjectById } from "./project-registry.ts"
 import { resolveProject, permRequestDir, type Project } from "./project.ts"
 import { createStorage, isBrokerClaudeRow, isHeadlessRow, workerTaughtMcp, type Storage } from "./storage.ts"
-import { clearSecrets } from "./secret-files.ts"
+import { clearSecrets, rearmSecretsIn } from "./secret-files.ts"
 import type Database from "./sqlite.ts"
 import { getSettings, setSettings, resetSettings } from "./settings.ts"
 import { getDispatchPreferences, hasSavedDispatchPreferences, setDispatchPreference } from "./dispatch-preferences.ts"
@@ -1246,6 +1246,8 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
       return liveBrokerRecords(project.stateDir).some((r) => r.sessionId === sessionId) ? "alive" : "dead"
     },
     resume: (slug, message, deliveryId) => {
+      // An answer wake carrying a secret's path: its 15 minutes run from here (rearmSecretsIn).
+      rearmSecretsIn(message)
       const deliveryMessage = `${message}\n\n${wakeDeliveryToken(deliveryId)}`
       const row = storage.getSession(slug)
       // Codex wake: deliver over the app-server bridge (adopting a legacy TUI-era rollout first, then

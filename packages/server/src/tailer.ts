@@ -9,7 +9,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingStepItems, fenceWaitsOnHuman, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingStepItems, DONE_FENCE_CORRECTION_LEAD, fenceWaitsOnHuman, isParkCorrection, SIGNOFF_CORRECTION_LEAD, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -25,7 +25,7 @@ import { classifyLimitRecord } from "./backend/usage-limit.ts"
 import { codexLimitFault } from "./backend/codex-usage-limit.ts"
 import { claudeBrokerDiagnosticLogPath } from "./backend/claude-broker-diagnostics.ts"
 import { claudeBrokerRecordPath, readBrokerRecord } from "./backend/claude-broker-host.ts"
-import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, ledgerAwaitsTranscript, type DeliveryLedgerItem } from "./delivery-ledger.ts"
+import { parseDeliveryLedger, correlateDeliveryRecord, ageDeliveries, serializeDeliveryLedger, isPromptDeliveryAttachment, ledgerAwaitsTranscript, heldReleaseAt, type DeliveryLedgerItem } from "./delivery-ledger.ts"
 import { createCodexSubAgentTracker, type CodexSubAgentTracker } from "./codex-subagents.ts"
 import { defaultCodexHome, readCodexThreadNames, scanForeignRollouts } from "./backend/codex.ts"
 import {
@@ -764,6 +764,9 @@ export interface FenceView {
   // Set by the board alone, on the fence it synthesizes from a REGISTERED done (board.registeredDoneFence);
   // the tailer never sets it, because everything it parses came from a message.
   registered?: true
+  // An ```awaiting fence whose `steps:` is written empty: nothing on the to-do list is owed any more
+  // (shared splitAwaitingFrontmatter). The fold drops what is still unticked, as a done does.
+  clearsSteps?: true
 }
 
 // Per-session derived telemetry surfaced to the board overlay. Structurally a NormalizedTail (the
@@ -1213,6 +1216,30 @@ export function isClaudeAuthErrorText(text: string): boolean {
   return /\b401\b/.test(text) && /authenticat|credential|OAuth/i.test(text)
 }
 
+// A PLACEHOLDER NOBODY WROTE: Claude Code's `model: "<synthetic>"` assistant record that is NOT an API
+// error. The one it writes is "No response requested.", on a cold resume, just ahead of the message it
+// was resumed to deliver (17 on this Mac, Claude Code 2.1.270–2.1.318, and no other text). It is not the
+// model speaking, so it must not be the thread's last word: read as one, it cleared the rest's fence the
+// instant before the human's reply reached the fold, and that reply then settled nothing, so the steps the
+// rest handed over vanished from the to-do list, ticked or not (2026-11-11). Neither the fold nor the
+// transcript reads it. A synthetic API ERROR is a different record and keeps every reading it has.
+export function isSyntheticPlaceholder(rec: { type?: unknown; isApiErrorMessage?: boolean; message?: { model?: unknown } }): boolean {
+  return rec.type === "assistant" && rec.message?.model === "<synthetic>" && rec.isApiErrorMessage !== true
+}
+
+// WHEN THE HUMAN LAST TYPED, read through a held release (FoldState.restFromRecord): when the record that
+// moved the boundary is a message "Send to queue" held, the boundary is the instant they sent it, never
+// earlier than where it stood before that record. Here and not in the fold because the instant lives in
+// storage (SessionRow.held_releases), and the fold reads nothing but records. Every reader of
+// `restFromAt` takes it from here — the board's handoff hold, the question registry, the scheduler.
+function heldTypedAt(s: Pick<FoldState, "restFromAt" | "restFromRecord">, row: Pick<SessionRow, "held_releases"> | undefined): string | undefined {
+  if (!s.restFromAt || !s.restFromRecord || !row?.held_releases) return s.restFromAt
+  const heldAt = heldReleaseAt(row.held_releases, s.restFromRecord.uuid)
+  if (heldAt === undefined || heldAt >= Date.parse(s.restFromAt)) return s.restFromAt
+  const before = Date.parse(s.restFromRecord.before ?? "")
+  return Number.isFinite(before) && before > heldAt ? s.restFromRecord.before : new Date(heldAt).toISOString()
+}
+
 // A fresh, unread tail cursor for a session (exported for tick + tests).
 export function newTailState(
   slug: string,
@@ -1370,17 +1397,13 @@ export function hasQuestionBlock(text: string | undefined): boolean {
 
 // ---- signal-fence grammar (maintainer-settled) ----
 // Exactly two EXCUSAL fences: ```done and ```awaiting. The fence LANGUAGE is the state; the BODY is
-// the message. The opening line is the bare language word (trailing spaces/tabs tolerated, nothing
-// else after it); the body runs to a closing ``` line. If a text carries several signal fences the
-// LAST wins — and the last fence must be the FINAL NON-WHITESPACE CONTENT of the text (the prompt's
-// "at the very end" rule): a fence merely QUOTED mid-message (a worker explaining the protocol to the
-// human) must never excuse the thread from the queue. Malformed/unclosed fences never match.
-// CRLF-tolerant (normalized before matching).
-// ONE implementation so the grammar lives in a single place (mirrors QUESTION_BLOCK_RE's spirit). The
+// the message. WHICH fence a message signals with is @frizz/shared signalFenceOf, the one rule this fold
+// and the web's renderer both read: the last fence that is not quoted inside another code block, and only
+// when it closes the message (nothing after it but whitespace and ```question fences). A fence merely
+// QUOTED mid-message (a worker explaining the protocol to the human) never excuses the thread from the
+// queue. Malformed/unclosed fences never match. CRLF-tolerant (normalized before matching). The
 // ```question fence keeps its own separate machinery (hasQuestionBlock) — it is NOT a signal fence.
-// Any run of three or more backticks opens one, and only a run at least as long closes it, as in CommonMark:
-// a fence whose steps carry a code block in their bodies opens with four (2026-11-09).
-const SIGNAL_FENCE_RE = /^(`{3,})(done|awaiting)[ \t]*\n([\s\S]*?)\n\1`*[ \t]*$/gm
+
 // An awaiting-body hint line: `<kind>: <value>`. Kind is case-insensitive (lowercased on output); the
 // value must start with a non-space char (a bare `pr:` with nothing after is prose, not a hint).
 // THREE PLACES SPELL THE VOCABULARY and they must move together: this regex, FenceView["hints"]'s
@@ -1394,9 +1417,13 @@ const SIGNAL_FENCE_RE = /^(`{3,})(done|awaiting)[ \t]*\n([\s\S]*?)\n\1`*[ \t]*$/
 // which is the whole point of having a delimiter (2026-08-17). Hyphens are in the class because the
 // oldest retired kind is `pr-watch:`, and a regex that could not see it let one pass as prose.
 const AWAITING_HINT_RE = /^([a-z][a-z-]*):\s*(\S.*)?$/i
-const FENCE_BODY_MAX = 500 // defensive: never let a worker's fence body fatten the snapshot
-const HINT_MAX = 8 // defensive cap on parsed hint lines
-const HINT_VALUE_MAX = 200 // defensive cap on a single hint value
+// THE BODY CAP IS DEFENSIVE, NOT A FIT — the same rule as the steps' caps (shared AWAITING_STEP_VALUE_MAX).
+// Every thread's last fence rides the board, so a runaway body must not fatten it; that is the whole job.
+// It was 500 until 2026-11-11, and that cut real handoffs: the resting card draws THIS body and the
+// transcript hides the message's own copy because the card states it, so everything past character 500
+// was drawn nowhere while the thread rested — the email to paste, the last instruction, a link. 69 of
+// 9,905 resting fences on this Mac ran past 500 (the longest 1,570), 20 of them steps handoffs.
+export const FENCE_BODY_MAX = 8_000
 
 function capFenceBody(s: string): string {
   return s.length > FENCE_BODY_MAX ? `${s.slice(0, FENCE_BODY_MAX)}…` : s
@@ -1408,21 +1435,9 @@ function capFenceBody(s: string): string {
 // for `done`, the body is the message and the only hint is an optional leading `title:` (2026-10-13).
 export function parseSignalFence(text: string | undefined): FenceView | undefined {
   if (typeof text !== "string") return undefined
-  const norm = text.replace(/\r\n/g, "\n")
-  SIGNAL_FENCE_RE.lastIndex = 0
-  let kind: "done" | "awaiting" | undefined
-  let raw = ""
-  let end = 0
-  let m: RegExpExecArray | null
-  while ((m = SIGNAL_FENCE_RE.exec(norm)) !== null) {
-    kind = m[2] as "done" | "awaiting" // last-fence-wins: keep overwriting
-    raw = m[3]
-    end = m.index + m[0].length
-  }
-  if (!kind) return undefined
-  // End-anchor: the fence only signals when it closes the message (trailing whitespace tolerated).
-  // Prose after the last fence means it was quoted/explanatory, not a signal — no excusal.
-  if (norm.slice(end).trim() !== "") return undefined
+  const signal = signalFenceOf(text.replace(/\r\n/g, "\n"))
+  if (!signal) return undefined
+  const { kind, raw } = signal
   // done: an optional leading `title:` (the card's heading), then the ledger. Split by the same shared
   // function the client renders with, for the reason the awaiting branch below spells out.
   if (kind === "done") {
@@ -1435,8 +1450,43 @@ export function parseSignalFence(text: string | undefined): FenceView | undefine
   // YAML cutover moved one and not the other, and a correct fence promptly printed its own raw
   // frontmatter at the human in the in-chat card. One function, called twice, is the only thing that
   // actually prevents that. See `splitAwaitingFrontmatter` for the grammar and its failure modes.
-  const { body, hints } = splitAwaitingFrontmatter(raw)
-  return { kind, body: capFenceBody(body), hints }
+  const { body, hints, clearsSteps } = splitAwaitingFrontmatter(raw)
+  return { kind, body: capFenceBody(body), hints, ...(clearsSteps ? { clearsSteps } : {}) }
+}
+
+/** Does this message say NOTHING but its signal fence — no prose around it, no body or ledger inside it,
+ *  no `steps:`, no question fence? That is a worker resting with nothing new for the human (2026-11-11):
+ *  its sign-off before stays the handoff, and the board keeps drawing that one (sign-offs.ts). */
+export function signalFenceAlone(text: string | undefined): boolean {
+  const fence = parseSignalFence(text)
+  if (!fence || typeof text !== "string") return false
+  if (fence.body.trim() !== "" || (fence.kind === "awaiting" && fenceWaitsOnHuman(fence.hints))) return false
+  if (hasQuestionBlock(text)) return false
+  const norm = text.replace(/\r\n/g, "\n")
+  const signal = signalFenceOf(norm)
+  return signal !== undefined && norm.slice(0, signal.start).trim() === ""
+}
+
+/** Is there nothing in this message but question fences and, at most, an empty signal fence? A message
+ *  that only names questions, with no prose around them (scheduler SOURCE 18's re-listing). */
+export function questionFencesOnly(text: string | undefined): boolean {
+  if (typeof text !== "string" || !mayHoldQuestionFence(text)) return false
+  const blocks = questionFenceBlocks(text)
+  if (blocks.length === 0) return false
+  let rest = ""
+  let from = 0
+  for (const b of blocks) {
+    rest += text.slice(from, b.start)
+    from = b.end
+  }
+  rest = (rest + text.slice(from)).replace(/\r\n/g, "\n")
+  const fence = parseSignalFence(rest)
+  if (fence) {
+    if (fence.body.trim() !== "") return false
+    const signal = signalFenceOf(rest)
+    if (signal) rest = rest.slice(0, signal.start) + rest.slice(signal.end)
+  }
+  return !/[\p{L}\p{N}]/u.test(rest)
 }
 
 // A user record is a REAL user interaction (a typed prompt / answer / steer / dispatch) rather than a
@@ -1485,6 +1535,7 @@ function noteQueuedMessage(state: FoldState, rec: Record): void {
   if ((rec as { operation?: unknown }).operation !== "enqueue" || typeof rec.content !== "string" || typeof rec.timestamp !== "string") return
   if (!isHumanTypedMessage(rec.content)) return
   state.restFromAt = rec.timestamp
+  state.restFromRecord = undefined
   state.queuedHumanTexts = [...(state.queuedHumanTexts ?? []), rec.content].slice(-QUEUED_HUMAN_TEXTS_MAX)
 }
 
@@ -1500,15 +1551,36 @@ function wasQueued(queued: readonly string[], message: string): boolean {
   return false
 }
 
-function noteUserRecordForQuestions(state: FoldState, text: string, at: string): void {
+function noteUserRecordForQuestions(state: FoldState, text: string, at: string, uuid?: string): void {
   const queued = state.queuedHumanTexts ?? []
   // A message the queue already announced moved the boundary when it was typed; delivering it is not the
-  // human typing again. Anything else human-typed in this record is new, and the boundary is now.
-  if (humanTypedMessagesIn(text).some((message) => !wasQueued(queued, message))) state.restFromAt = at
+  // human typing again. Anything else human-typed in this record is new, and the boundary is now — or,
+  // for a message Frizz held and released, when it was sent (restFromRecord, heldTypedAt).
+  if (humanTypedMessagesIn(text).some((message) => !wasQueued(queued, message))) {
+    state.restFromRecord = uuid ? { uuid, ...(state.restFromAt ? { before: state.restFromAt } : {}) } : undefined
+    state.restFromAt = at
+  }
+  // A report of every step done answers the handoff without being typing (FoldState.stepsDoneAt).
+  if (splitWakeDeliveries(text).some(repliesStepsDone)) state.stepsDoneAt = at
   // The queue drains into the record that delivers it, so whatever it held is spent — kept past here, a
   // stale entry would swallow the human typing the same words again later.
   if (queued.length > 0) state.queuedHumanTexts = undefined
   if (carriesQuestionFenceCorrection(text)) state.questionCorrectedAt = at
+  if (carriesRepairCorrection(text)) state.repairAskedAt = at
+}
+
+// A correction that asks the worker to REPAIR a fence — a ```question fence that could not register, a park
+// naming something dead or nothing — rather than to write a new sign-off. The turn answering one is a fix-up
+// (SOURCE 14's own words: "a fence that registers needs nothing else"), so scheduler SOURCE 18 does not
+// hold it to naming every open question. The sign-off and done corrections are not repairs: each asks for
+// the whole handoff.
+function carriesRepairCorrection(text: string): boolean {
+  if (!text.includes("⚠️ Your ")) return false
+  const repair = (body: string) => {
+    const t = body.trimStart()
+    return isParkCorrection(t) && !t.startsWith(SIGNOFF_CORRECTION_LEAD) && !t.startsWith(DONE_FENCE_CORRECTION_LEAD)
+  }
+  return splitWakeDeliveries(text).some((delivery) => repair(delivery) || (parseMergedWake(delivery) ?? []).some((part) => repair(part.body)))
 }
 
 // The LEGACY question flag (a ```question fence on the final message — what queues a thread spawned
@@ -2630,7 +2702,7 @@ export function applyRecord(state: TailState, rec: Record): void {
   if (type === "system" && rec.subtype === "local_command" && state.lastKind === "user" && typeof rec.content === "string" && LOCAL_COMMAND_RECEIPT.test(rec.content.trim())) {
     state.localCommandDone = true
   }
-  if (typeof rec.timestamp === "string" && (type === "assistant" || (type === "user" && !metaUserRec) || type === "system")) {
+  if (typeof rec.timestamp === "string" && ((type === "assistant" && !isSyntheticPlaceholder(rec)) || (type === "user" && !metaUserRec) || type === "system")) {
     state.lastActivityAt = rec.timestamp
   }
   // The high-water mark takes EVERY timestamped record and only ever advances (see TailState). A plain
@@ -2645,7 +2717,7 @@ export function applyRecord(state: TailState, rec: Record): void {
       state.permissionMode = parsed.data
       state.permissionModeRevision = (state.permissionModeRevision ?? 0) + 1
     }
-  } else if (type === "assistant") {
+  } else if (type === "assistant" && !isSyntheticPlaceholder(rec)) {
     state.sawRecords = true
     state.lastKind = "assistant"
     // The model spoke, so whatever was interrupted is history — the stop_reason below is the turn signal
@@ -2739,10 +2811,12 @@ export function applyRecord(state: TailState, rec: Record): void {
       // Same lifecycle for the stop-hook sentinel: it only means "nothing actionable" while it
       // is the FINAL word, so a later assistant text that omits it re-opens the loop by itself.
       state.lastAssistantAllDone = saysAllDone(raw)
+      state.lastAssistantFenceAlone = signalFenceAlone(raw)
+      state.lastAssistantFencesOnly = questionFencesOnly(raw)
       // Recompute the done/awaiting signal fence from THIS text — an assistant text with no fence
       // clears it (the fence only signals while it is the final message). Same lifecycle as the
       // question flag: set per assistant text, cleared by any user record below.
-      state.lastFence = parseSignalFence(raw)
+      setSignalFence(state, raw)
       noteHandoff(state)
     }
     trackDispatches(state, rec) // register any background Agent dispatches + background shells
@@ -2761,7 +2835,11 @@ export function applyRecord(state: TailState, rec: Record): void {
     // reading it as "about to respond" left an abandoned thread spinning on the board until the next
     // reboot (maintainer 2026-08-23, on a nub thread interrupted mid-tool and never resumed: "looks
     // frozen" — 23 hours in the Active band with an idle worker behind it).
-    const userText = lastTextBlock(rec.message?.content) ?? ""
+    // THE WHOLE TEXT, WHATEVER SHAPE IT CAME IN. Claude writes a typed prompt's content as a bare string
+    // (2,754 of 2,834 human prompts over two days on this Mac, 2026-11-11), and this read only the block
+    // list, so every string prompt reached the three readers below as "": a sent "Done" never closed the
+    // steps it answered, and a string-shaped injected pulse with no `promptSource` read as the human.
+    const userText = userMessageText(rec.message?.content)
     state.interrupted = isInterruptMarker(userText) || undefined
     // …and the second one: a local command's output receipt, which follows a command the model never saw.
     state.localCommandDone = isLocalCommandReceipt(rec.message?.content) || undefined
@@ -2780,11 +2858,15 @@ export function applyRecord(state: TailState, rec: Record): void {
     // classifier, so the two projections cannot drift again — but the chat draws Frizz's own deliveries
     // too, so it is only the first gate. The question asks the narrower one below the row-order key.
     state.lastAssistantAllDone = false
+    state.lastAssistantFenceAlone = false
+    state.lastAssistantFencesOnly = false
     // Whatever kind of turn this is, the worker now holds its text: a wake's token in it is that wake arriving.
     noteWakeTokens(state, userMessageText(rec.message?.content))
     // A tool result answers a call made in the same message, so that fence was never the thread's last word.
     if (isRealUserMessage(rec.message?.content)) settleHumanSteps(state, userText)
+    else unstampHandoff(state)
     state.lastFence = undefined
+    state.strayFence = undefined
     const humanSpoke = isHumanSpeaking(rec, userText, systemUserRec, compactSummaryRec)
     // Any user record supersedes a usage-limit pause: the conversation has moved past the point where
     // it was cut off, whether by the human or by the "continue" the wake scheduler delivered. This is
@@ -2799,7 +2881,7 @@ export function applyRecord(state: TailState, rec: Record): void {
     // purpose: every "the agent spoke last" guard reads it to know a wake is still unanswered.
     if (humanSpoke && typeof rec.timestamp === "string") {
       state.lastUserAt = rec.timestamp
-      noteUserRecordForQuestions(state, userMessageText(rec.message?.content), rec.timestamp)
+      noteUserRecordForQuestions(state, userMessageText(rec.message?.content), rec.timestamp, typeof rec.uuid === "string" ? rec.uuid : undefined)
       settleLegacyQuestion(state)
       // SET ONCE. This is what names an external session whose harness never named it, so it has to be
       // the turn the conversation STARTED on, not the newest one.
@@ -2854,8 +2936,17 @@ function applyFinalText(state: FoldState, text: string): void {
   setAssistantPreview(state, text)
   state.lastAssistantHasQuestion = hasQuestionBlock(text)
   state.lastAssistantAllDone = saysAllDone(text)
-  state.lastFence = parseSignalFence(text)
+  state.lastAssistantFenceAlone = signalFenceAlone(text)
+  state.lastAssistantFencesOnly = questionFencesOnly(text)
+  setSignalFence(state, text)
   noteHandoff(state)
+}
+
+// The signal fence of the newest assistant text, and whether that text wrote one that does not close it.
+function setSignalFence(state: FoldState, text: string): void {
+  unstampHandoff(state)
+  state.lastFence = parseSignalFence(text)
+  state.strayFence = (!state.lastFence && signalFenceBlocks(text.replace(/\r\n/g, "\n")).length > 0) || undefined
 }
 
 // Stamp FoldState.handoffAt when the fence just folded names the human as its wait: `steps:` to perform
@@ -2865,13 +2956,39 @@ function applyFinalText(state: FoldState, text: string): void {
 // stamp is that message's own instant.
 function noteHandoff(state: FoldState): void {
   const fence = state.lastFence
-  if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints) && state.lastAssistantAt) state.handoffAt = state.lastAssistantAt
+  if (fence?.kind !== "awaiting" || !fenceWaitsOnHuman(fence.hints) || !state.lastAssistantAt) return
+  if (state.handoffAt !== state.lastAssistantAt) state.handoffBefore = state.handoffAt
+  state.handoffAt = state.lastAssistantAt
+}
+
+// …AND TAKE IT BACK when that fence turns out not to have been a rest: still the newest fence when a tool
+// result or more of the worker's text replaced it, so nothing answered it. A Claude turn recomputes the
+// fence on every text block, and a steps fence written before a tool call held the thread's next quiet
+// park in the queue over steps that never reached the to-do list: a card with nothing to tick (2026-11-11,
+// found by a harness, never yet on a real board).
+function unstampHandoff(state: FoldState): void {
+  const fence = state.lastFence
+  if (fence?.kind === "awaiting" && fenceWaitsOnHuman(fence.hints)) state.handoffAt = state.handoffBefore
 }
 
 // A REST ON `steps:` IS OVER, so what it handed the human joins the thread's list (human-todos.ts). Here
 // and not where the fence is parsed, because a later assistant message replaces a fence that was not the
 // thread's last word, and that fence never rested on anything.
 function settleHumanSteps(state: FoldState, replyText: string): void {
+  // …AND A REST ON ```done IS OVER: nothing is owed any more, so what the list still owes unticked is
+  // dropped, the way a newest `steps:` that leaves an item out drops it. The board hid those items while
+  // the done stood and showed them again the moment the human typed anything, through the next turn and
+  // every rest after it (2026-11-11). A ticked item stays as the record of what was done; that is the
+  // view's rule, and the fold does not know ticks. A registered `frizzctl done` is in no message, so the
+  // board does the same off its row's instant (humanTodoView `retiredAt`).
+  //
+  // …AND SO IS ONE WHOSE FENCE WROTE `steps:` EMPTY: the worker saying nothing on the list is owed any more.
+  if (state.lastFence?.kind === "done" || state.lastFence?.clearsSteps) {
+    state.humanSteps = unlistSteps(state.humanSteps)
+    // Nothing owed answers the handoff that listed them, after this rest as during it (board handoffStands).
+    if (state.lastFence.clearsSteps && state.lastAssistantAt) state.stepsDoneAt = state.lastAssistantAt
+    return
+  }
   const steps = state.lastFence?.kind === "awaiting" ? awaitingStepItems(state.lastFence.hints) : []
   const atMs = Date.parse(state.handoffAt ?? "")
   if (steps.length === 0 || !Number.isFinite(atMs)) return
@@ -2883,7 +3000,21 @@ function settleHumanSteps(state: FoldState, replyText: string): void {
 // and base list, so the board's memos see the same array on every read of a thread that has not moved.
 const humanStepsAtRest = new WeakMap<FenceView, { base: HumanStep[] | undefined; steps: HumanStep[] }>()
 
+// Every step taken off the list (`listed: false`): what is unticked goes, and a ticked one stays as the
+// record (human-todos.ts humanTodoView). The same array when nothing was listed.
+function unlistSteps(steps: HumanStep[] | undefined): HumanStep[] | undefined {
+  return steps?.some((step) => step.listed) ? steps.map((step) => (step.listed ? { ...step, listed: false } : step)) : steps
+}
+
+const unlistedAtRest = new WeakMap<HumanStep[], HumanStep[] | undefined>()
+
 function humanStepsOf(state: FoldState): HumanStep[] | undefined {
+  // A rest on an empty `steps:` has cleared the list already, before anything settles it.
+  if (state.turn === "idle" && state.lastFence?.clearsSteps && state.humanSteps) {
+    const base = state.humanSteps
+    if (!unlistedAtRest.has(base)) unlistedAtRest.set(base, unlistSteps(base))
+    return unlistedAtRest.get(base)
+  }
   const fence = state.turn === "idle" && state.lastFence?.kind === "awaiting" ? state.lastFence : undefined
   const steps = fence ? awaitingStepItems(fence.hints) : []
   const atMs = Date.parse(state.handoffAt ?? "")
@@ -2929,7 +3060,10 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.lastAssistant = ev.error.message
       state.lastAssistantLine = firstTextLine(ev.error.message)
       state.lastFence = undefined
+      state.strayFence = undefined
       state.lastAssistantAllDone = false
+      state.lastAssistantFenceAlone = false
+      state.lastAssistantFencesOnly = false
       state.lastAssistantHasQuestion = false
       if (typeof ev.at === "string") state.lastAssistantAt = ev.at
       break
@@ -3005,8 +3139,11 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.limitFault = undefined
       state.turn = "in-flight"
       state.lastAssistantAllDone = false
+      state.lastAssistantFenceAlone = false
+      state.lastAssistantFencesOnly = false
       settleHumanSteps(state, ev.text ?? "")
       state.lastFence = undefined
+      state.strayFence = undefined
       noteWakeTokens(state, ev.text)
       if (!ev.synthetic) {
         // …and the QUESTION is the human's to discharge, so it never clears unconditionally. Codex's
@@ -6656,7 +6793,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastAssistantFenceAlone: s.lastAssistantFenceAlone, lastAssistantFencesOnly: s.lastAssistantFencesOnly, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: heldTypedAt(s, row), handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, repairAskedAt: s.repairAskedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

@@ -125,7 +125,7 @@ test("the contract teaches the structured question fence, and none of the gramma
     assert.match(c, /open AND close the question with FOUR backticks, the same four on both lines/)
     // The four-backtick example carries a code block in its CONTEXT too — the place three backticks break.
     assert.match(prompt, /^````question\n[\s\S]*?\n---\n[\s\S]*?\n```\n[\s\S]*?\n```\n````$/m)
-    assert.match(c, /A QUESTION IS THE HANDBACK, AND THE ONLY FENCE ITS REST NEEDS/)
+    assert.match(c, /A QUESTION IS THE HANDBACK, AND THE ONLY FENCE ITS SIGN-OFF NEEDS/)
     assert.match(c, /the text after `=` is that option's `label:` EXACTLY as written/)
     assert.match(c, /in the same message as its parent `choice` or in a later one while the parent is still unanswered/)
     assert.match(c, /\*\*A VALUE ONLY THE HUMAN HOLDS IS `kind: secret`\*\*/)
@@ -149,7 +149,13 @@ test("the contract teaches the structured question fence, and none of the gramma
     // a shell finishing took a question out of the queue before the human had seen it).
     assert.match(c, /A QUESTION YOU ASKED STAYS YOUR ASK UNTIL THE HUMAN TYPES TO THIS THREAD/)
     assert.match(c, /A QUESTION STAYS ASKED ACROSS WAKES\. IT FADES ONLY WHEN THE HUMAN TYPES PAST IT/)
-    assert.match(c, /A rest after that which still needs the answer writes its REFERENCE — a ` ```question ` fence carrying its `id:` alone/)
+    assert.match(c, /Your next sign-off — after a wake that brought something new, or after the human typed — names it again with its REFERENCE, a ` ```question ` fence carrying its `id:` alone/)
+    // A sign-off is the whole handoff (2026-11-11): it names every open question, and a wake with nothing
+    // new gets the fence alone, which leaves the sign-off before it standing.
+    assert.match(c, /\*\*A SIGN-OFF IS THE WHOLE HANDOFF, AND IT REPLACES THE ONE BEFORE IT\.\*\*/)
+    assert.match(c, /\*\*WOKEN WITH NOTHING NEW, REST ON THE FENCE ALONE\.\*\*/)
+    assert.match(c, /\*\*EVERY NEW SIGN-OFF NAMES EVERY OPEN QUESTION\*\*/)
+    assert.match(c, /A message that only re-lists question ids, with nothing written around them, is refused/)
     assert.match(c, /A QUESTION YOU ASK IS THAT REST'S SIGN-OFF — REST NORMALLY/)
     // And every retired spelling stays gone: the command, the key, the marker and the per-rest rule.
     assert.doesNotMatch(prompt, /frizzctl (ask|secret)\b/, backend)

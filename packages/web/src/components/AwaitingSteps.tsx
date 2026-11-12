@@ -296,6 +296,7 @@ function useSendAlone(thread: TodoThread, onReplied?: () => void, onReplyFailed?
         report.onOptimistic()
         onReplied?.()
       },
+      onSuccess: report.onSuccess,
       onRollback: () => {
         report.onRollback()
         onReplyFailed?.()

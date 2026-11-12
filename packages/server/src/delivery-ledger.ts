@@ -158,6 +158,19 @@ export interface DeliveryLedgerItem {
   // the ledger's bubble keeps a HUMAN's words on screen through a failure, and a caller with no id of
   // its own keeps its own words, its call failing loudly instead (forgetDelivery on failure).
   silent?: true
+  // The to-do ticks this send's steps report carries (thread_human_todo items, each done or not). They are
+  // recorded as told to the worker once the send is DELIVERED: a held one at its release, not at the hold
+  // (router releaseHeldFollowUps). Recorded at the hold, a send the human then took back, or whose release
+  // failed, left the boxes reading done and heard while the worker had heard nothing, and the next report
+  // left them out (2026-11-11). Until then the board reads them as on their way (ticksOnTheirWay), and the
+  // Retry of a failed send reports them (router sendFollowUp).
+  todos?: { id: string; done: boolean }[]
+  // The registered questions this send settled or told the worker about (thread_question ids): the answers
+  // and dismissals the prompt box's Send composed into it. They are marked delivered as the send is made,
+  // so if the send then fails and the human dismisses its bubble, nothing would ever tell the worker, and
+  // the cards would read answered for an answer nobody received (2026-11-11). Dismissing the failed send
+  // unsettles them (router dismissFailedFollowUp).
+  questions?: string[]
 }
 
 // The form every text comparison in this module runs in.
@@ -313,7 +326,7 @@ export function appendDelivery(
 export function beginDelivery(
   storage: Storage,
   slug: string,
-  send: { id: string; text: string; supersedes?: string; now?: number; release?: boolean; silent?: boolean },
+  send: { id: string; text: string; supersedes?: string; now?: number; release?: boolean; silent?: boolean; questions?: readonly string[]; todos?: readonly { id: string; done: boolean }[] },
 ): "begin" | "duplicate" {
   const row = storage.getSession(slug)
   if (!row) return "begin" // nothing to record against; the caller's own guards decide the rest
@@ -339,7 +352,7 @@ export function beginDelivery(
   const kept = send.supersedes
     ? items.filter((existing) => !(existing.id === send.supersedes && (existing.state === "failed" || existing.state === "sending")))
     : items
-  kept.push({ id: send.id, text: send.text, state: "sending", at: now, updatedAt: now, ...(send.silent ? { silent: true as const } : {}) })
+  kept.push({ id: send.id, text: send.text, state: "sending", at: now, updatedAt: now, ...(send.silent ? { silent: true as const } : {}), ...(send.questions?.length ? { questions: [...send.questions] } : {}), ...(send.todos?.length ? { todos: send.todos.map(({ id, done }) => ({ id, done })) } : {}) })
   storage.setDeliveryLedger(slug, serializeDeliveryLedger(trimLedger(kept)))
   return "begin"
 }
@@ -454,15 +467,63 @@ export function dismissFailedDelivery(storage: Storage, slug: string, id: string
  * Idempotent on id — a replay of the same call finds its own entry and changes nothing. Returns false
  * only when there is no session row to hold it on, which the caller must treat as a failed send.
  */
-export function holdDelivery(storage: Storage, slug: string, send: { id: string; text: string; now?: number }): boolean {
+export function holdDelivery(storage: Storage, slug: string, send: { id: string; text: string; todos?: readonly { id: string; done: boolean }[]; questions?: readonly string[]; now?: number }): boolean {
   const row = storage.getSession(slug)
   if (!row) return false
   const items = parseDeliveryLedger(row.delivery_ledger)
   if (items.some((existing) => existing.id === send.id)) return true
   const now = new Date(send.now ?? Date.now()).toISOString()
-  items.push({ id: send.id, text: send.text, state: "held", at: now, updatedAt: now })
+  items.push({ id: send.id, text: send.text, state: "held", at: now, updatedAt: now, ...(send.todos?.length ? { todos: send.todos.map(({ id, done }) => ({ id, done })) } : {}), ...(send.questions?.length ? { questions: [...send.questions] } : {}) })
   storage.setDeliveryLedger(slug, serializeDeliveryLedger(trimLedger(items)))
   return true
+}
+
+/** THE TICKS A MESSAGE STILL ON ITS WAY CARRIES, by item: a held send, or one handed to a transport that
+ *  has not answered yet. Each is told once that message is delivered, so until then it is not staged:
+ *  nothing more is owed to the worker about it. Read as staged, a send held behind a running turn left
+ *  its boxes staged once the browser's own overlay lapsed, and the next send reported them a second time
+ *  (2026-11-11). A FAILED send's ticks are staged again: its words may never reach anybody, and the human
+ *  re-sending from the prompt box composes the report afresh. The newest message wins. */
+export function ticksOnTheirWay(json: string | null | undefined): Map<string, boolean> | undefined {
+  let ticks: Map<string, boolean> | undefined
+  for (const item of parseDeliveryLedger(json)) {
+    if (!item.todos?.length || (item.state !== "held" && item.state !== "sending")) continue
+    ticks ??= new Map()
+    for (const tick of item.todos) ticks.set(tick.id, tick.done)
+  }
+  return ticks
+}
+
+// THE INSTANT A HELD MESSAGE WAS SENT, kept past its delivery. A message "Send to queue" held is typed
+// mid-turn and released at the rest, so the record it lands as is stamped after whatever that rest handed
+// the human, and the fold read it as the human replying past steps and questions that did not exist when
+// they wrote it: the thread left the queue with the steps still owed (2026-11-11; reylo b6731fd4 released
+// one 89ms after the rest that asked its question). A message the RUNTIME queued has its typing instant on
+// record (the `queue-operation enqueue`); one Frizz held has only this.
+const HELD_RELEASES_MAX = 8
+
+export function noteHeldRelease(storage: Storage, slug: string, id: string, heldAtMs: number): void {
+  if (!Number.isFinite(heldAtMs)) return
+  const row = storage.getSession(slug)
+  if (!row) return
+  const kept = parseHeldReleases(row.held_releases).filter((release) => release.id !== id)
+  storage.setHeldReleases(slug, JSON.stringify([...kept, { id, heldAt: heldAtMs }].slice(-HELD_RELEASES_MAX)))
+}
+
+/** When the human sent the held message Frizz released as delivery `id`, in ms, if it was one. */
+export function heldReleaseAt(json: string | null | undefined, id: string): number | undefined {
+  return parseHeldReleases(json).find((release) => release.id === id)?.heldAt
+}
+
+function parseHeldReleases(json: string | null | undefined): { id: string; heldAt: number }[] {
+  if (!json) return []
+  try {
+    const parsed: unknown = JSON.parse(json)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((r): r is { id: string; heldAt: number } => typeof r?.id === "string" && typeof r?.heldAt === "number")
+  } catch {
+    return []
+  }
 }
 
 /**

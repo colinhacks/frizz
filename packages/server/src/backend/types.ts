@@ -123,11 +123,15 @@ export interface NormalizedTail {
   restFromAt?: string
   // When the worker last rested on steps or questions for the human — see FoldState.handoffAt.
   handoffAt?: string
+  // When the human last reported every step done — see FoldState.stepsDoneAt.
+  stepsDoneAt?: string
   // What the worker has handed the human to do across the thread — see FoldState.humanSteps. Includes the
   // fence the thread is resting on now, which the fold has not settled yet.
   humanSteps?: HumanStep[]
   // When Frizz last delivered a ```question fence correction — see FoldState.questionCorrectedAt.
   questionCorrectedAt?: string
+  /** When Frizz last delivered a correction asking for a fence REPAIR (tailer carriesRepairCorrection). */
+  repairAskedAt?: string
   lastUserText?: string // the newest drawn user turn's text, where the backend's fold keeps it (the normalized one)
   // The wakes that REACHED the worker: the delivery id of every wake token the transcript carries, newest
   // last. What the scheduler confirms a sent wake by, on every backend (FoldState.wakeTokens).
@@ -136,11 +140,18 @@ export interface NormalizedTail {
   // named it — see foreignThreadView. Optional everywhere: a transcript with no human turn has none.
   firstUserText?: string
   lastFence?: FenceView // parsed by the shared fence grammar from the final message
+  strayFence?: boolean // the final message wrote a signal fence that does not close it (see FoldState.strayFence)
   pendingQuestion: boolean
   // The final message carries the AWAITING sentinel — the worker's answer to a stop hook when
   // nothing in it is actionable. Optional (absent ⇒ false) because it is an additive observation, not
   // a new required fact about a session; see scheduler.ts SOURCE 5.
   lastAssistantAllDone?: boolean
+  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone): a rest with
+   *  nothing new, which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
+  lastAssistantFenceAlone?: boolean
+  /** The latest assistant text is question fences and nothing else, bar an empty signal fence (tailer
+   *  questionFencesOnly). Absent on a fold cached before 2026-11-11. */
+  lastAssistantFencesOnly?: boolean
   // Live sub-agents. Claude fills these from its Agent dispatches (the tailer's trackDispatches); codex
   // from its `spawn_agent` children (codex-subagents.ts). Both land in the same TailState maps.
   subAgents: SubAgentView[]
@@ -233,6 +244,12 @@ export interface FoldState {
   // the human wrote it (applyRecord, noteQueuedMessage). Absent (a tail cached before 2026-10-13) reads
   // as `lastUserAt`.
   restFromAt?: string
+  // The record that last moved `restFromAt`, when it was one Frizz handed the runtime under its own input id
+  // (the SDK echoes it as the record's uuid), with the boundary as it stood before that record. A message
+  // HELD by "Send to queue" is typed mid-turn and delivered at the rest, so its record lands after the very
+  // handoff it was typed before; the telemetry projection reads the boundary back to the instant the human
+  // wrote it (tailer heldTypedAt, SessionRow.held_releases).
+  restFromRecord?: { uuid: string; before?: string }
   // WHEN THE WORKER LAST HANDED THE HUMAN SOMETHING TO DO: an ```awaiting fence listing `steps:` or
   // `questions:` (shared fenceWaitsOnHuman). Unlike `lastFence` it is NOT cleared by a user record,
   // because what it records is an obligation on the reader, like a question: a later wake carrying no
@@ -244,6 +261,16 @@ export interface FoldState {
   // needed from you", and each one then held every CI and shell park after it in the queue until the
   // human typed: 204 parks in one 36h window. The worker's own next `status:` decides those now.
   handoffAt?: string
+  // `handoffAt` as it stood before the newest stamp, put back when the fence that stamped it is replaced
+  // before anything answered it: it was never a rest (tailer unstampHandoff).
+  handoffBefore?: string
+  // WHEN THE HUMAN LAST REPORTED EVERY STEP DONE: a "Done" from the to-do list's send, or typed — or the
+  // worker said nothing is owed any more, with an empty `steps:` (tailer settleHumanSteps). A steps
+  // report is not typing (shared isHumanTypedMessage), so it leaves `restFromAt` and every question
+  // standing beside the steps where they were; a report of everything done still answers the handoff, as
+  // settling a question does (board handoffStands). A partial one ("Done 1 of 2") answers nothing: the
+  // step it says is not done is still owed, and a quiet park after it stays in the queue.
+  stepsDoneAt?: string
   // THE HUMAN'S TO-DO LIST, as far as the transcript can say (human-todos.ts): every step of every rest
   // that is over. The ticks live in the thread_human_todo table. Absent on a tail cached before the list
   // existed, which reads as no history: only the fences after it count.
@@ -255,6 +282,8 @@ export interface FoldState {
   // inside a merged delivery). Every fault in a message older than this has been told to the worker, so
   // SOURCE 14 reports only the ones after it.
   questionCorrectedAt?: string
+  /** When Frizz last delivered a correction asking for a fence REPAIR (tailer carriesRepairCorrection). */
+  repairAskedAt?: string
   lastUserText?: string // exact text of that same turn when the backend records it — a wake's carries its delivery token
   // THE WAKES THE WORKER WAS HANDED: the delivery id out of each `<!-- frizz-wake:<id> -->` token in a
   // user turn or a mid-turn delivery, newest last, bounded (tailer.ts noteWakeTokens). Both folds fill
@@ -271,6 +300,9 @@ export interface FoldState {
   // and would drift off the topic the session started on.
   firstUserText?: string
   lastFence?: FenceView // done/awaiting excusal fence on the final message (cleared by any user turn)
+  // The final message WROTE a ```done or ```awaiting fence, but not as its end, so lastFence is empty: the
+  // sign-off nudge says so instead of "you rested without a fence". Same lifecycle as lastFence.
+  strayFence?: boolean
   lastAssistantHasQuestion: boolean // the final message carries an unanswered ```question fence
   // Every assistant message that carried a ```question fence, newest last, capped (QUESTION_SIGHTINGS_MAX
   // in tailer.ts). NOT cleared by a user turn, unlike the two above: a fence registers a ROW, and the row
@@ -289,6 +321,12 @@ export interface FoldState {
   // cleared on exactly the same lifecycle as the question flag above: set per assistant text, wiped by
   // any user record — so the next bump the operator sends re-opens the loop by itself.
   lastAssistantAllDone: boolean
+  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone): a rest with
+   *  nothing new, which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
+  lastAssistantFenceAlone?: boolean
+  /** The latest assistant text is question fences and nothing else, bar an empty signal fence (tailer
+   *  questionFencesOnly). Absent on a fold cached before 2026-11-11. */
+  lastAssistantFencesOnly?: boolean
   // Runtime provider-auth rejection (claude-auth plan, Slice A). Set when the backend records a
   // SYNTHETIC auth-error response (Claude: isApiErrorMessage + 401/login text) — never from user or
   // ordinary assistant content — and cleared by the next real assistant text (a genuine response

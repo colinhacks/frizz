@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { ANSWER_FOLLOW_UP_MARKER, BURIED_ANSWERS_HEADER, DISMISSED_ANSWER, SECRET_ANSWER_MASK, nameQuestionAnswer, questionAnswerMessage, questionFencesIn, secretAnswerText, withAnswersNote, type QuestionAnswer } from "@frizz/shared"
-import { answersForDisplay, answersNote, splitAnswerPicks, parseAnswersMessage, parseBuriedAnswersMessage, parseAnswersCard, pairAnswersMessage, pairAllAnswers, unrenderedAnswers, isAnswersMessage, type MsgLike } from "./answersMessage.ts"
+import { answersForDisplay, answersNote, splitAnswerPicks, parseAnswersMessage, parseBuriedAnswersMessage, parseAnswersCard, pairAnswersMessage, pairAllAnswers, unrenderedAnswers, isAnswersMessage, userSendShown, type MsgLike } from "./answersMessage.ts"
 import { composeAnswerWire } from "./answering.ts"
 
 test("parses the multi-block composed-answer format into numbered rows", () => {
@@ -639,4 +639,20 @@ test("the browser's own writer still writes rows with no id, and they still read
   const wire = composeAnswerWire({ answered: [{ isLive: false, question: "Which store?", answer: "`store`" }] })
   assert.equal(wire, `${BURIED_ANSWERS_HEADER}\n1. “Which store?” → \`store\``)
   assert.deepEqual(parseBuriedAnswersMessage(wire), [{ n: 1, answer: "`store`", question: "Which store?" }])
+})
+
+// The human's × rides their next send (router pendingDismissals), and the card hides a dismissed row, so
+// a send carrying nothing else would draw as an empty Answers card over their words.
+test("a send whose only rows are dismissals draws as the words the human typed", () => {
+  const dismissed = questionAnswerMessage([{ questionId: "q", question: "Which store?", chosen: ["SQLite"] }], []).replace(/1\. .*$/m, `1. “Which name?” → ${DISMISSED_ANSWER}`)
+  const wire = withAnswersNote(dismissed, "carry on with the tests")
+  assert.deepEqual(userSendShown(wire, parseAnswersCard(wire)), { text: "carry on with the tests", answers: null })
+  // …and as a card again when what they typed is itself an answers wire (fenced answers, composed in the browser).
+  const nested = withAnswersNote(dismissed, "Answers:\n1. B. Preload it")
+  assert.deepEqual(userSendShown(nested, parseAnswersCard(nested)).answers?.map((a) => a.answer), ["B. Preload it"])
+  // A send with a real answer in it draws as it always did.
+  const answered = withAnswersNote(questionAnswerMessage([{ questionId: "q", question: "Which store?", chosen: ["SQLite"] }], [{ question: "Which name?" }]), "and keep it small")
+  assert.equal(userSendShown(answered, parseAnswersCard(answered)).text, answered)
+  // A plain bubble is untouched.
+  assert.deepEqual(userSendShown("just words", null), { text: "just words", answers: null })
 })

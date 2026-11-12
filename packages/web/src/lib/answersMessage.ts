@@ -212,13 +212,27 @@ export function parseAnswersCard(text: string): PairedAnswer[] | null {
 // reads as that question coming back: an × from turns ago drew as a fourth answer under three fresh ones
 // (maintainer 2026-09-25). The parse keeps the row — the wire is the worker's and the pairing counts
 // on it — and only the card leaves it out. A card of nothing but dismissals never reaches here: the
-// server composes that as the cancellation wake, a different message.
+// server composes that as the cancellation wake, a different message, and the human's own send that
+// carries nothing else draws as the bubble they typed (userSendShown, below).
 // A SECRET's row draws the mask, not the delivery note the worker reads (where the value was put and on
 // what terms) — that note is the worker's, and on the human's card it read as noise.
 export function answersForDisplay(answers: readonly PairedAnswer[]): PairedAnswer[] {
   return answers
     .filter((a) => a.answer !== DISMISSED_ANSWER)
     .map((a) => (isSecretAnswerText(a.answer) ? { ...a, answer: SECRET_ANSWER_MASK } : a))
+}
+
+// WHAT A HUMAN SEND DRAWS AS: its answers card and the text under it. A send whose only rows are
+// DISMISSALS is the human's typed message with the questions they × -ed riding above it for the worker
+// (the server's pendingDismissals, 2026-11-11). Every one of those rows is hidden from the card
+// (answersForDisplay), so it would draw as an empty Answers card over the bubble: the human's own words
+// draw as what they typed instead, and as a card again when what they typed is itself an answers wire
+// (fenced answers, composed in the browser). A send with no words under its rows keeps them: there is
+// nothing else to draw.
+export function userSendShown(text: string, answers: PairedAnswer[] | null): { text: string; answers: PairedAnswer[] | null } {
+  if (!answers || answersForDisplay(answers).length > 0) return { text, answers }
+  const typed = answersNote(text)
+  return typed ? { text: typed, answers: parseAnswersCard(typed) } : { text, answers }
 }
 
 // One answer's PICKS and NOTE, as the card draws them: each `- [x] ` line the writer put first

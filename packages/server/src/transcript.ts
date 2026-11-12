@@ -45,7 +45,7 @@ import { CODEX_FIRST_FINAL_TITLE_TRANSPORT, CODEX_LEGACY_FIRST_FINAL_TITLE_TRANS
 import { projectAcpTranscript, readAcpTranscriptFile, type AcpUserRecordProjector } from "./backend/acp-transcript.ts"
 import { projectOpencodeTranscript, readOpencodeTranscriptFile, type OpencodeToolCardBuilder } from "./backend/opencode-transcript.ts"
 import { discoverTranscriptDir, discoverTranscriptId, DISCOVERY_GRACE_MS } from "./discover.ts"
-import { isClaudeAuthErrorText, isMonitorTimeoutEvent, parseSignalFence } from "./tailer.ts"
+import { isClaudeAuthErrorText, isMonitorTimeoutEvent, isSyntheticPlaceholder, parseSignalFence } from "./tailer.ts"
 import { faultSummary, log as frizzLog } from "./logging.ts"
 import { projectSignOffs } from "./sign-offs.ts"
 import { ENCRYPTED_PAYLOAD, redactCredentialStructure, redactToolPayload } from "./credential-redaction.ts"
@@ -1193,6 +1193,9 @@ export function createTranscriptFold(identityPrefix = "claude"): TranscriptFold 
     if (rec.type === "assistant") {
       const msg = rec.message
       if (!msg || !Array.isArray(msg.content)) return
+      // "No response requested." — Claude Code's placeholder on a cold resume, not the model speaking
+      // (isSyntheticPlaceholder). It drew as an assistant bubble just above the message it was resumed for.
+      if (isSyntheticPlaceholder(rec)) return
       // A synthetic provider AUTH-error record (isApiErrorMessage + the 401/login text) is app
       // state, not something the model said: its ONLY surface is the trusted recovery card driven by
       // ThreadView.providerFault. Rendering it as an assistant bubble was the exact dead-end the

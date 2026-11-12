@@ -13,7 +13,8 @@ import {
   AdoptThreadResult,
   DispatchInput,
   FollowUpInput,
-  questionAnswerMessage,
+  humanAnswersMessage,
+  type QuestionDismissal,
   nameQuestionAnswer,
   type NamedQuestionAnswer,
   withAnswersNote,
@@ -190,7 +191,7 @@ import {
   AcpAgentModelsInput,
 } from "@frizz/shared"
 import { type AppContext, type ThreadInbox, type ThreadPermission, type ThreadSpawner } from "./context.ts"
-import { secretFilePath, serveSecret } from "./secret-files.ts"
+import { rearmSecretsIn, secretFilePath, serveSecret } from "./secret-files.ts"
 import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command-watch.ts"
 import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
 import { hasLaunchPrefix } from "./backend/launch-prefix.ts"
@@ -204,7 +205,7 @@ import { repairThreadFile } from "./repair.ts"
 import { reopenArchivedThreadForFollowUp, resumeThread, wakeParkedThreadForFollowUp } from "./resume.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
 import { opencodeNativeAvailable } from "./backend/opencode-service.ts"
-import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, failHeldDeliveries, forgetDelivery, holdStrandedDeliveries, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
+import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, failHeldDeliveries, forgetDelivery, holdStrandedDeliveries, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, noteHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
 import {
   readEarlierThreadTranscriptPage,
@@ -1181,7 +1182,9 @@ export function createRouter(ctx: AppContext) {
   // THE FOLLOW-UP DELIVERY, shared by the operator's `followUp` and a worker's `steerThread` (one thread
   // messaging another): both are a message into a thread's next turn, and a second copy of this path
   // would be a second set of runtime branches to keep in step.
-  function deliverFollowUp(sent: z.infer<typeof FollowUpInput>, opts: { release?: boolean } = {}): Promise<void> {
+  function deliverFollowUp(sent: z.infer<typeof FollowUpInput>, opts: { release?: boolean; questions?: readonly string[]; todos?: readonly { id: string; done: boolean }[] } = {}): Promise<void> {
+    // A secret answer's 15 minutes run from here, when the worker is handed its path (rearmSecretsIn).
+    rearmSecretsIn(sent.message)
     // A character no provider can be handed (a control code, half of a surrogate pair) is taken out
     // HERE, before the ledger entry opens, and for every runtime. The Claude bridge removes it from the
     // worker's copy regardless; the ledger then has to hold the same words, because a delivery is
@@ -1620,13 +1623,13 @@ export function createRouter(ctx: AppContext) {
   // the text back to the prompt box as it always has.
   async function keepFailedFollowUp(
     input: z.infer<typeof FollowUpInput>,
-    opts: { release?: boolean; silent?: boolean },
+    opts: { release?: boolean; silent?: boolean; questions?: readonly string[]; todos?: readonly { id: string; done: boolean }[] },
     deliver: (open: () => boolean) => Promise<void>,
   ): Promise<void> {
     let opened = false
     const open = (): boolean => {
       if (!input.deliveryId) return true
-      if (beginDelivery(ctx.storage, input.slug, { id: input.deliveryId, text: input.message, supersedes: input.supersedes, release: opts.release, silent: opts.silent }) === "duplicate") return false
+      if (beginDelivery(ctx.storage, input.slug, { id: input.deliveryId, text: input.message, supersedes: input.supersedes, release: opts.release, silent: opts.silent, questions: opts.questions, todos: opts.todos }) === "duplicate") return false
       opened = true
       // The ledger is not JSONL bytes: push the frame now, so the server's own bubble (and the removal
       // of a superseded failed one) reaches every tab before the transport is even called.
@@ -1694,6 +1697,19 @@ export function createRouter(ctx: AppContext) {
     return settled
   }
 
+  /** The questions the human dismissed on this thread that no message has told the worker about yet, and
+   *  that no scheduler wake is already carrying. Named the way the wake names them: by the question's
+   *  text, and the worker's own id when a fence asked it. */
+  function pendingDismissals(slug: string): { id: string; dismissal: QuestionDismissal }[] {
+    const out: { id: string; dismissal: QuestionDismissal }[] = []
+    for (const q of ctx.storage.undeliveredSettlements()) {
+      if (q.thread_slug !== slug || q.state !== "dismissed" || q.delivery_id) continue
+      const spec = parseQuestionSpec(q.spec)
+      if (spec) out.push({ id: q.id, dismissal: { question: spec.question, ...(q.handle ? { handle: q.handle } : {}) } })
+    }
+    return out
+  }
+
   // THE PROMPT BOX'S ONE SEND (maintainer 2026-10-11). Three things the operator's follow-up can now be,
   // all of which end in the same deliverFollowUp:
   //
@@ -1711,21 +1727,35 @@ export function createRouter(ctx: AppContext) {
   async function sendFollowUp(input: z.infer<typeof FollowUpInput>): Promise<void> {
     const answers = input.answers ?? []
     let message = input.message
+    // The rows this send settles or tells, kept on its ledger entry (DeliveryLedgerItem.questions).
+    let questions: string[] = []
     const replay = input.deliveryId ? deliveryItem(ctx.storage, input.slug, input.deliveryId) : null
     if (replay) {
       message = replay.text
       // A held entry is already where a replayed "Send to queue" wanted it.
       if (replay.state === "held") return
-    } else if (answers.length > 0) {
-      // The refusals deliverFollowUp opens with, run BEFORE the rows are settled: a send it would refuse
-      // must not leave the questions answered with nothing on its way to the worker.
-      const row = currentOwnedSession(input.slug, input.sessionId)
-      if (hasPendingPermissionChange(row)) {
-        throw new Error("Wait for the current permission change to finish before sending a follow-up")
+    } else {
+      // THE HUMAN'S × RIDES THEIR NEXT SEND (2026-11-11). A dismissal wakes nobody by itself — the human
+      // is usually clicking several in a row — and is promised to "ride the next answer or the next
+      // steer". The scheduler's answer wake was the only thing that attached them, and the prompt box's
+      // Send settles its answers here instead, so on desktop no dismissal ever reached a worker: all three
+      // on this Mac sat undelivered while later answers on the same threads went through, and the workers
+      // kept treating the questions as open. A row a scheduler wake already carries (`delivery_id`) is that
+      // wake's to deliver.
+      const dismissals = answers.length > 0 || input.message.trim() ? pendingDismissals(input.slug) : []
+      if (answers.length > 0 || dismissals.length > 0) {
+        // The refusals deliverFollowUp opens with, run BEFORE the rows are settled: a send it would refuse
+        // must not leave the questions answered with nothing on its way to the worker.
+        const row = currentOwnedSession(input.slug, input.sessionId)
+        if (hasPendingPermissionChange(row)) {
+          throw new Error("Wait for the current permission change to finish before sending a follow-up")
+        }
       }
-      const settled = settleQuestionAnswers(input.slug, answers, Date.now(), { delivered: true })
-      if (settled.length > 0) {
-        message = withAnswersNote(questionAnswerMessage(settled), input.message)
+      const settled = answers.length > 0 ? settleQuestionAnswers(input.slug, answers, Date.now(), { delivered: true }) : []
+      if (settled.length > 0 || dismissals.length > 0) {
+        message = withAnswersNote(humanAnswersMessage(settled, dismissals.map((d) => d.dismissal)), input.message)
+        for (const d of dismissals) ctx.storage.markSettlementDelivered(d.id)
+        questions = [...settled.map((a) => a.questionId), ...dismissals.map((d) => d.id)]
         ctx.board.refresh()
       }
     }
@@ -1739,10 +1769,15 @@ export function createRouter(ctx: AppContext) {
       throw new Error("There is nothing to send")
     }
     const send: z.infer<typeof FollowUpInput> = { ...input, message, answers: undefined, todos: undefined, hold: undefined }
+    // THE RETRY OF A FAILED SEND REPORTS THE TICKS IT CARRIED. Its bubble's Retry re-sends the words alone,
+    // "Done 1 of 2:" and all, so without this the worker read the report while the boxes stayed staged,
+    // and the next send reported them again (2026-11-11). A re-send from the prompt box composes its own.
+    const retried = !replay && input.supersedes ? deliveryItem(ctx.storage, input.slug, input.supersedes) : null
+    const todos = input.todos?.length ? input.todos : retried?.todos
     // After the send is accepted, so a refused one leaves its ticks staged for the retry.
     const reportTodos = () => {
-      if (!input.todos?.length) return
-      ctx.storage.reportHumanTodos(input.slug, input.todos, Date.now())
+      if (!todos?.length) return
+      ctx.storage.reportHumanTodos(input.slug, todos, Date.now())
       ctx.board.refresh()
     }
     const row = ctx.storage.getSession(input.slug)
@@ -1758,8 +1793,8 @@ export function createRouter(ctx: AppContext) {
       const items = row ? parseDeliveryLedger(row.delivery_ledger) : []
       if (row && row.session_id === input.sessionId && (inFlight || heldSendMustWait(items))) {
         const id = input.deliveryId ?? randomUUID()
-        if (holdDelivery(ctx.storage, input.slug, { id, text: message })) {
-          reportTodos()
+        // Its ticks ride the held entry and are reported when it is released (DeliveryLedgerItem.todos).
+        if (holdDelivery(ctx.storage, input.slug, { id, text: message, todos, questions })) {
           watchHeld(input.slug)
           ctx.transcriptChange.emit([input.slug])
           ctx.board.refresh()
@@ -1769,7 +1804,7 @@ export function createRouter(ctx: AppContext) {
         }
       }
     }
-    await deliverFollowUp(send)
+    await deliverFollowUp(send, { questions, todos })
     reportTodos()
   }
 
@@ -1814,7 +1849,13 @@ export function createRouter(ctx: AppContext) {
     if (!item) return 0 // the turn ahead of it is not over yet
     releasingHeld.add(slug)
     try {
+      // Written before the send, so the record it lands as is read at the instant the human sent it.
+      noteHeldRelease(ctx.storage, slug, item.id, Date.parse(item.at))
       await deliverFollowUp({ slug, sessionId: row.session_id, message: item.text, deliveryId: item.id }, { release: true })
+      if (item.todos?.length) {
+        ctx.storage.reportHumanTodos(slug, item.todos, Date.now())
+        ctx.board.refresh()
+      }
       return 1
     } catch (error) {
       frizzLog.warn("server", `${slug}: releasing held follow-up ${item.id} failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -3199,8 +3240,13 @@ export function createRouter(ctx: AppContext) {
       input: DismissFailedFollowUpInput,
       output: DismissFailedFollowUpResult,
       handler: async ({ input }) => {
+        const questions = deliveryItem(ctx.storage, input.slug, input.deliveryId)?.questions ?? []
         const dismissed = dismissFailedDelivery(ctx.storage, input.slug, input.deliveryId)
         if (dismissed) ctx.transcriptChange.emit([input.slug])
+        // THE ANSWERS IT CARRIED NEVER ARRIVED (DeliveryLedgerItem.questions): their cards come back to be
+        // answered, and its dismissals ride the next send, rather than reading as told to a worker that
+        // heard nothing.
+        if (dismissed && questions.filter((id) => ctx.storage.unsettleUndelivered(input.slug, id)).length > 0) ctx.board.refresh()
         return { dismissed }
       },
     }),
@@ -4661,6 +4707,17 @@ export function createRouter(ctx: AppContext) {
         "answerQuestions",
         () => ({ project: thisProject, thread: input.slug, detail: { answers: input.answers.map((answer) => answerDigest(input.slug, answer)) } }),
         async () => {
+          // AN ANSWER ON AN ARCHIVED THREAD REOPENS IT, as a send from the prompt box does. The scheduler
+          // delivers nothing to an archived thread, so the answer used to be stored and sit there: the card
+          // greyed as sent and nothing told the human it would reach nobody until someone reopened the thread
+          // (2026-11-11; 54 open questions on archived threads on this Mac). Before the rows settle, so a
+          // thread that moved on under the call settles nothing.
+          const row = ctx.storage.getSession(input.slug)
+          const answersOpenRow = input.answers.some((answer) => {
+            const q = ctx.storage.getThreadQuestion(answer.questionId)
+            return q?.thread_slug === input.slug && q.state === "open"
+          })
+          if (row && answersOpenRow) reopenArchivedThreadForFollowUp(ctx, row)
           const answered = settleQuestionAnswers(input.slug, input.answers, Date.now()).map((answer) => answer.questionId)
           // ANSWERING IS NOT DELIVERING. The row is stored answered-but-undelivered and the scheduler
           // hands it over (evalQuestionAnswers), so an answer given while the worker's process is down
@@ -4699,8 +4756,9 @@ export function createRouter(ctx: AppContext) {
           if (ctx.storage.dismissThreadQuestion(id, now)) dismissed.push(id)
         }
         // NO WAKE. The human dismissing questions is almost always dismissing several in a row and is
-        // sitting right there, so a wake per x would be a turn per click. The worker is told at its next
-        // wake, in the same message as any answers (questionAnswerMessage).
+        // sitting right there, so a wake per x would be a turn per click. The worker is told in the next
+        // message that reaches it: the scheduler's answer wake (questionAnswerMessage), or the human's own
+        // next send from the prompt box (pendingDismissals in followUp).
         if (dismissed.length > 0) ctx.board.refresh()
         return { dismissed, open: openQuestionViews(input.slug) }
       },

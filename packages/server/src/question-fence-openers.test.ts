@@ -255,7 +255,7 @@ test("the fold-schema digest moves when the question reader or the scanner under
   try {
     const here = import.meta.dirname
     const copy = join(dir, "server", "src")
-    for (const name of ["transcript.ts", "tailer.ts", "backend/claude.ts", "backend/codex.ts", "backend/acp-transcript.ts", "../../shared/src/index.ts", "../../shared/src/question-fence.ts", "../../shared/src/code-fences.ts"]) {
+    for (const name of ["transcript.ts", "tailer.ts", "backend/claude.ts", "backend/codex.ts", "backend/acp-transcript.ts", "../../shared/src/index.ts", "../../shared/src/question-fence.ts", "../../shared/src/code-fences.ts", "../../shared/src/signal-fence.ts"]) {
       mkdirSync(dirname(join(copy, name)), { recursive: true })
       cpSync(join(here, name), join(copy, name))
     }
@@ -267,7 +267,7 @@ test("the fold-schema digest moves when the question reader or the scanner under
     const base = await digest()
     assert.equal(base, await digest(), "the same sources, the same digest")
     assert.match(base, /^[0-9a-f]{32}$/)
-    for (const name of ["../../shared/src/code-fences.ts", "../../shared/src/question-fence.ts"]) {
+    for (const name of ["../../shared/src/code-fences.ts", "../../shared/src/question-fence.ts", "../../shared/src/signal-fence.ts"]) {
       const path = join(copy, name)
       const source = readFileSync(path, "utf8")
       writeFileSync(path, `${source}\n// a reader change\n`)
@@ -277,6 +277,6 @@ test("the fold-schema digest moves when the question reader or the scanner under
     }
     // THE OTHER HALF, which this file cannot make true: a build that ships no sources has nothing to hash.
     // Its digest is one constant shared by every build, so there a reader change invalidates nothing.
-    assert.equal(await (async () => ((await import(`./tail-cache.ts?fold-schema-${n++}`)) as typeof import("./tail-cache.ts")).foldSchemaDigest(join(dir, "empty")))(), "frizz-tail-state-v3-unreadable")
+    assert.equal(await (async () => ((await import(`./tail-cache.ts?fold-schema-${n++}`)) as typeof import("./tail-cache.ts")).foldSchemaDigest(join(dir, "empty")))(), "frizz-tail-state-v4-unreadable")
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

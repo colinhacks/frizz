@@ -26,7 +26,7 @@ import { frizzDirExists } from "./frizz.ts"
 import { githubStatusKey, idlePrsOf, liveActivityOf, needsInputParkHolds, parseIssueRef, parsePrRef, readAwaitingPark, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, type GithubIssueStatusBook, type GithubStatusBook } from "./awaiting.ts"
 import { findByPathCached } from "./project-registry.ts"
 import { jsonEqual } from "./json-value.ts"
-import { parseDeliveryLedger } from "./delivery-ledger.ts"
+import { parseDeliveryLedger, ticksOnTheirWay } from "./delivery-ledger.ts"
 import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 import { effectivePermissionMode, fallbackTitle, resolveLegacyThreadFile } from "./dispatch.ts"
 import { ProducerStoppedError } from "./shutdown.ts"
@@ -1480,7 +1480,8 @@ function quietParkHolds(
 
 // Whether the newest handoff is still unreached: the human has not typed to the thread since it
 // (`restFromAt`), snoozed a rest at or after it (`bg_snooze_rested_at`, stamped by the resting card's
-// Snooze and the header's "Until activity") or settled a question since it (`questionSettledAt`).
+// Snooze and the header's "Until activity"), settled a question since it (`questionSettledAt`) or
+// reported every step done (`stepsDoneAt`, which is not typing either, for the same reason).
 //
 // The snooze counts because it is the human's own answer to the card. Without it, a snooze pressed on the
 // handoff lasted one rest (bgSnoozeArmed), and the next no-news park put the card straight back, on every
@@ -1497,7 +1498,9 @@ function quietParkHolds(
 function handoffStands(row: Pick<SessionRow, "bg_snooze_rested_at">, tele: SessionTelemetry | undefined, questionSettledAt?: number): boolean {
   const handoffMs = Date.parse(tele?.handoffAt ?? "")
   if (!Number.isFinite(handoffMs)) return false
-  const reached = [tele?.restFromAt ?? tele?.lastUserAt, row.bg_snooze_rested_at].map((at) => Date.parse(at ?? ""))
+  // A rest on an empty `steps:` says nothing on the list is owed any more: no steps to hold the thread for.
+  if (tele?.lastFence?.clearsSteps) return false
+  const reached = [tele?.restFromAt ?? tele?.lastUserAt, row.bg_snooze_rested_at, tele?.stepsDoneAt].map((at) => Date.parse(at ?? ""))
   return ![...reached, questionSettledAt ?? Number.NaN].some((ms) => ms >= handoffMs)
 }
 
@@ -1851,14 +1854,26 @@ export function resolveSessionTitle(
  *
  *  The comparison is `<=`, not `<`: the two instants come from different clocks (the row's is frizz's
  *  own `Date.now()`, the telemetry's is the transcript record's), and a same-millisecond tie is the
- *  worker signing off on the turn that user record started, which is the ordinary case. */
+ *  worker signing off on the turn that user record started, which is the ordinary case.
+ *
+ *  …AND THE WORKER'S OWN NEWER PARK (2026-11-11). A worker that runs `frizzctl done` and then, in the same
+ *  turn or on a wake that is not the human, rests on an ```awaiting fence has taken the completion back:
+ *  it is waiting on a shell, a sub-agent, or the human's steps. The row outranked that fence until the
+ *  human next spoke, so the board carded a parked thread as Done in the queue, hid its steps as finished,
+ *  and offered Mark as done on a thread mid-park (reylo, 2026-10-22: done at 17:13:16, a `status: working`
+ *  park at 17:16:51, carded Done until 17:19). `awaitingAt` is the instant of the thread's last word when
+ *  that word is an awaiting fence. A newer ```done fence needs nothing here: the web draws the message's
+ *  own card and not this one (registeredDone.ts). */
 export function registeredDoneFence(
   done: { body: string; doneAt: number } | undefined,
   lastUserAt: string | undefined,
+  awaitingAt?: string,
 ): FenceView | undefined {
   if (!done) return undefined
   const userAt = lastUserAt ? Date.parse(lastUserAt) : Number.NaN
   if (Number.isFinite(userAt) && userAt > done.doneAt) return undefined
+  const parkedAt = awaitingAt ? Date.parse(awaitingAt) : Number.NaN
+  if (Number.isFinite(parkedAt) && parkedAt > done.doneAt) return undefined
   // `registered` is the one thing the transcript needs that the fence it replaces never carried: a fenced
   // done is drawn from the message that holds it, and this one is in no message, so the client draws it
   // at the bottom of the thread itself (ChatView, showsRegisteredDoneCard). Every predicate ignores it.
@@ -2112,7 +2127,8 @@ function sessionThreadView(
     liveTool: undefined,
     lastFence: undefined, lastAssistantAllDone: false,
   } : rawTele
-  const done = supersededDone || providerError ? undefined : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt)
+  const done = supersededDone || providerError ? undefined
+    : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt, rawTele?.lastFence?.kind === "awaiting" ? rawTele.lastAssistantAt : undefined)
   const tele: SessionTelemetry | undefined = done && failedTele ? { ...failedTele, lastFence: done } : failedTele
   // A headless thread mid-turn with nobody driving it is a crash/stall, not a rest. For codex that is
   // an app-server that stopped advancing the rollout; for the broker it is a dead ownerless daemon (its
@@ -2205,7 +2221,11 @@ function sessionThreadView(
     pendingAsk: Boolean(tele?.pendingAsk),
     pendingQuestion: Boolean(tele?.pendingQuestion),
     standingQuestions: standingCount,
-    humanSteps: hasHumanSteps(tele),
+    // A HANDOFF THE QUIET PARK COULD NOT TAKE BACK is steps or questions still owed, though the last word
+    // is the park: the thread queues for what the human must DO, never as a report they only had to read.
+    // Read off the last fence alone, a pinned thread holding its steps behind a `status: watching` re-park
+    // came out a plain report, and the board and the Console drop those for a pinned row (2026-11-11).
+    humanSteps: hasHumanSteps(tele) || queuedBy.heldHandoff === true,
     crashed,
     limitPause: Boolean(limitPause),
     providerError: Boolean(tele?.providerError && !tele.providerError.retrying),
@@ -2221,9 +2241,15 @@ function sessionThreadView(
   const permissionPending = resolvePendingPermission(row)
   const title = resolveSessionTitle(row, tele)
   // Not on an archived thread, which owes nobody anything and whose transcript keeps the record. That is
-  // also what keeps ticks out of the archived-view memo's inputs. A worker's sign-off closes the list for
-  // as long as it stands.
-  const humanTodos = archived ? [] : humanTodoView(tele?.humanSteps, registries.humanTodos.get(row.slug), { finished: tele?.lastFence?.kind === "done" })
+  // also what keeps ticks out of the archived-view memo's inputs. A worker's sign-off closes the list
+  // while it stands, and retires what it found owed for good: a fenced done in the fold, a registered one
+  // here, off its row whether or not it still stands (the human typing again does not re-owe a step the
+  // worker gave up on when it signed off).
+  const humanTodos = archived ? [] : humanTodoView(tele?.humanSteps, registries.humanTodos.get(row.slug), {
+    finished: tele?.lastFence?.kind === "done",
+    retiredAt: registries.done.get(row.slug)?.doneAt,
+    onTheirWay: ticksOnTheirWay(row.delivery_ledger),
+  })
   return {
     id: row.slug,
     ...title,

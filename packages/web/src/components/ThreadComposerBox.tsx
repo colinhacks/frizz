@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { useSnapshot } from "valtio"
 import type { AccountBackend, ThreadSkill, ThreadView } from "@frizz/shared"
-import { awaitingSteps, hasStandingQuestion, questionAnswerMessage, withAnswersNote } from "@frizz/shared"
+import { hasStandingQuestion, questionAnswerMessage, withAnswersNote } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { restoreContextItems, showToast, store, takeContextItems } from "../store.ts"
 import { useThreadSnapshot } from "../hooks.ts"
@@ -25,7 +25,7 @@ import { RecurringPromptControl } from "./RecurringPromptControl.tsx"
 import type { PhoneBarApi } from "./Composer.tsx"
 import { RegisteredAnsweringContext } from "./RegisteredQuestionCards.tsx"
 import { SendScopeContext } from "../lib/sendScope.tsx"
-import { useStepsAnswer } from "../lib/stepsAnswer.ts"
+import { owesSteps, useStepsAnswer } from "../lib/stepsAnswer.ts"
 import { sendPlaceholder, setSendMode, useSendMode } from "../lib/sendMode.ts"
 import { QueueDismissContext } from "../lib/threadContexts.ts"
 import { QueuedRunContext } from "../lib/threadContexts.ts"
@@ -219,9 +219,9 @@ function LocalThreadComposerBox({
   // too — the Goal rides this rail and nowhere else on desktop chrome, and the phone bar has no rail.
   const phoneBar = phoneChrome ?? isMobile
   const turnRunning = thread?.runtime === "running" || thread?.runtime === "spawning"
-  // NOT WHILE THE THREAD WAITS ON STEPS (`steps:` in its last fence). The list above is ticked to say
-  // "I did this"; a check beside it would mean "archive the thread", and on a phone the two read as one.
-  const stepsOpen = thread?.lastFence?.kind === "awaiting" && awaitingSteps(thread.lastFence.hints).length > 0
+  // NOT WHILE THE THREAD OWES STEPS (owesSteps). The list above is ticked to say "I did this"; a check
+  // beside it would mean "archive the thread", and on a phone the two read as one.
+  const stepsOpen = owesSteps(thread)
   const canComplete = thread ? threadLifecycleAvailability(thread).archive && !turnRunning && !stepsOpen : false
   // THE GOAL rides the rail on every desktop surface that steers a Frizz-owned session — the same
   // threads the lifecycle verbs in the header serve. The phone reaches it from the header's ⋯ sheet.
@@ -274,7 +274,10 @@ function LocalThreadComposerBox({
         fenced?.onOptimistic()
         steps?.onOptimistic()
       },
-      onSuccess: () => answers?.onSuccess(),
+      onSuccess: () => {
+        answers?.onSuccess()
+        steps?.onSuccess()
+      },
       ...(answers ? { answers: answers.answers, displayText: shown } : {}),
       ...(steps ? { todos: steps.todos } : {}),
       // "Send to queue" is the ticked row AND there is something to queue behind. The forced send never

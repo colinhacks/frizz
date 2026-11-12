@@ -791,8 +791,13 @@ const AWAITING_SCALAR_KINDS: ReadonlySet<AwaitingHint["kind"]> = new Set(["for",
  *  ended mid-sentence on "open each token" with nothing to say it had been cut (maintainer: "Did your
  *  question get cut off or something?"). The contract demands every link, id and value written in, and
  *  Markdown link targets spend characters nobody reads, so 2,000 now — and a step past it ends on an
- *  ellipsis rather than mid-word in silence. */
-export const AWAITING_STEPS_MAX = 12
+ *  ellipsis rather than mid-word in silence.
+ *
+ *  THE COUNT CAP IS THE LIST'S OWN, 64 (human-todos.ts HUMAN_STEPS_MAX). It was 12 until 2026-11-11, and
+ *  the cut was silent: a rest that day wrote 14 steps and the human's checklist ended before "Send the
+ *  document", so a fully ticked list reported Done for a document nobody sent. Earlier rests had written
+ *  19 and 30. Nothing a list could hold should be cut before it reaches it. */
+export const AWAITING_STEPS_MAX = 64
 export const AWAITING_STEP_VALUE_MAX = 2_000
 /** A step's body is the detail its title cannot hold — what to paste, what the page shows, what to do when
  *  it fails — so it gets room for a code block or two. Defensive for the same reason as the title's cap:
@@ -879,7 +884,7 @@ const indentOf = (line: string) => line.length - line.trimStart().length
  *  item, the next key or the `---`. Inside a body a `---` is a rule, not the delimiter, and a code block
  *  is carried whole. Only an outer fence longer than the code fences inside it can hold one (the signal
  *  fence scanners take any run of three or more backticks). */
-export function splitAwaitingFrontmatter(raw: string): { body: string; hints: AwaitingHint[] } {
+export function splitAwaitingFrontmatter(raw: string): { body: string; hints: AwaitingHint[]; clearsSteps?: true } {
   const lines = raw.split("\n").map((l) => l.replace(/\r$/, ""))
   const rest: string[] = []
   const yamlLines: string[] = []
@@ -895,6 +900,9 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   let structural = true
   let inTitle = false
   let inSteps = false
+  // A `steps:` key with nothing on it or under it (`steps:` alone, or `steps: []`): see `clearsSteps`.
+  let stepsKey = false
+  let stepsWritten = false
   let delimiter = -1
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -923,8 +931,14 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
     }
     if (inTitle) titleLines.push(m && key === "title" ? (m[2] ?? "") : line)
     else if (inSteps) {
-      if (m && key === "steps") steps.push(...inlineSteps(m[2] ?? "").map((title) => ({ title: [title], body: undefined, dash: Number.POSITIVE_INFINITY, fence: undefined })))
-      else readStepLine(steps, line)
+      if (m && key === "steps") {
+        stepsKey = true
+        if (!/^\[\s*\]$/.test((m[2] ?? "").trim()) && (m[2] ?? "").trim()) stepsWritten = true
+        steps.push(...inlineSteps(m[2] ?? "").map((title) => ({ title: [title], body: undefined, dash: Number.POSITIVE_INFINITY, fence: undefined })))
+      } else {
+        if (line.trim()) stepsWritten = true
+        readStepLine(steps, line)
+      }
     }
     else (structural ? yamlLines : rest).push(line)
   }
@@ -947,7 +961,13 @@ export function splitAwaitingFrontmatter(raw: string): { body: string; hints: Aw
   // The cap counts named items alone (see AWAITING_HINT_MAX); every scalar survives it, in written order.
   let items = 0
   const capped = parsed.hints.filter((h) => h.kind !== "question" && (AWAITING_SCALAR_KINDS.has(h.kind) || items++ < AWAITING_HINT_MAX))
-  return { body: rest.join("\n").trim(), hints: [...capped, ...questionHints, ...stepHints] }
+  // AN EMPTY `steps:` SAYS NOTHING IS OWED (maintainer 2026-11-12). A rest with no `steps:` changes nothing
+  // on the human's to-do list, so a worker whose steps stopped mattering — the rest ended on a wake that
+  // showed them done, or the plan changed — had no way to take them off short of signing off `done`, and
+  // the list owed them for good (37 threads on 2026-11-11). Anything written on or under the key, even a
+  // malformed list, is not this: a slip must not clear the list.
+  const clearsSteps = stepsKey && !stepsWritten
+  return { body: rest.join("\n").trim(), hints: [...capped, ...questionHints, ...stepHints], ...(clearsSteps ? { clearsSteps: true as const } : {}) }
 }
 
 /** One line under `steps:`, onto the list of steps as written (splitAwaitingFrontmatter has the grammar). */
@@ -2019,8 +2039,9 @@ export function liveOpsLines(ops?: SignoffLiveOps, needsInput = false): string[]
  *  worker dispatched under the answer-required cut is taught `status:` — the 2026-10-05 spelling, which
  *  a worker that learned `needs_input:` can write just as well, since the fence reads both — and one
  *  dispatched before the cut is taught the grammar it can actually satisfy. */
-export function signoffNudgeMessage(ops?: SignoffLiveOps, needsInput = false): string {
-  const base = needsInput ? SIGNOFF_NUDGE_MESSAGE_NEEDS_INPUT : SIGNOFF_NUDGE_MESSAGE
+export function signoffNudgeMessage(ops?: SignoffLiveOps, needsInput = false, strayFence = false): string {
+  const plain = needsInput ? SIGNOFF_NUDGE_MESSAGE_NEEDS_INPUT : SIGNOFF_NUDGE_MESSAGE
+  const base = strayFence ? plain.replace(SIGNOFF_NUDGE_BARE_LINE, SIGNOFF_NUDGE_STRAY_LINE) : plain
   const lines = liveOpsLines(ops, needsInput)
   if (lines.length) {
     lines.push("", "An ```awaiting fence names only what you are ACTUALLY waiting on, one such list per kind, plus")
@@ -2081,11 +2102,23 @@ function signoffNudgeAwaitingLines(needsInput: boolean): string[] {
   ]
 }
 
+const SIGNOFF_NUDGE_BARE_LINE = "You rested without a fence, so this thread cannot be triaged."
+/** …for a rest whose message DID write a fence, just not as its end (@frizz/shared signalFenceOf). "You
+ *  rested without a fence" was false there, and the worker's fix is different: move the fence, or lengthen
+ *  it, rather than write one (2026-11-11: a handoff whose email-to-paste code block closed its fence early,
+ *  and a ```done with a closing question in prose under it). */
+const SIGNOFF_NUDGE_STRAY_LINE = [
+  "Your last message wrote a ```done or ```awaiting fence, but not as its END, so it signals nothing and this",
+  "thread cannot be triaged. Only whitespace and ```question fences may follow the signal fence. Prose after it",
+  "turns it into a plain code block, and so does a code block inside it whose own closing ``` line closes a",
+  "three-backtick fence early: open a fence that holds code blocks with four backticks.",
+].join("\n")
+
 function signoffNudgeText(needsInput: boolean): string {
   return [
   `${SIGNOFF_NUDGE_MARKER} Nothing about your task has changed, and no new work is being asked of you.`,
   "",
-  "You rested without a fence, so this thread cannot be triaged.",
+  SIGNOFF_NUDGE_BARE_LINE,
   "",
   "**IF THE TASK STILL HAS PARTS LEFT, THE FENCE IS NOT WHAT YOU OWE — THE WORK IS.** If ANY part of the",
   "original task is unfinished, unverified, or deferred, resume it NOW, in THIS turn, and sign off once it",
@@ -2133,10 +2166,10 @@ function signoffNudgeText(needsInput: boolean): string {
   "  a Markdown body indented under it after a blank line. Steps name the HUMAN as the wait,",
   "  so the fence needs no other name and no `for:`, and the thread goes into their queue. Their Done",
   "  comes back to you as their reply; anything else they need to say comes as a message of their own.",
-  "- A question you asked at an EARLIER rest, whose answer you still need: write a ```question fence",
-  "  carrying its `id:` alone. That draws its card in this message and keeps the thread in the human's",
-  "  queue. One you no longer need, withdraw with `frizzctl unask <id>`; one you leave unmentioned stays",
-  "  answerable where you asked it.",
+  "- A question you asked at an EARLIER rest and have not had answered: a sign-off names EVERY open",
+  "  question, so write a ```question fence carrying its `id:` alone under the paragraph it belongs to.",
+  "  That draws its card in this message and keeps the thread in the human's queue. One you no longer",
+  "  need, withdraw with `frizzctl unask <id>` first.",
   "",
   "**STILL OWED counts things you are not going to do yourself.** A decision you are RECOMMENDING, a",
   "draft you wrote but did not send, follow-up work you discovered — all of it dies with the card, even",
@@ -2207,10 +2240,40 @@ export const QUESTION_FENCE_CORRECTION_LEAD = "⚠️ Your ```question fence "
  *  open. `frizzctl done` refuses there and a fence cannot be refused, so this is the same gate applied
  *  after the fact (scheduler SOURCE 15). */
 export const DONE_FENCE_CORRECTION_LEAD = "⚠️ Your ```done fence "
+/** The seventh (2026-11-11): a sign-off that is not the whole handoff — it leaves out an open question, or
+ *  re-lists questions with nothing around them (scheduler SOURCE 18, server signoff-completeness.ts). */
+export const SIGNOFF_CORRECTION_LEAD = "⚠️ Your sign-off "
 /** Is this delivered wake one of frizz's fence corrections? */
 export function isParkCorrection(text: string): boolean {
   const t = text.trimStart()
-  return t.startsWith(PARK_CORRECTION_NAMES_LEAD) || t.startsWith(PARK_CORRECTION_RETIRED_LEAD) || t.startsWith(PARK_CORRECTION_QUESTION_LEAD) || t.startsWith(PARK_CORRECTION_NEEDS_INPUT_LEAD) || t.startsWith(QUESTION_FENCE_CORRECTION_LEAD) || t.startsWith(DONE_FENCE_CORRECTION_LEAD)
+  return t.startsWith(PARK_CORRECTION_NAMES_LEAD) || t.startsWith(PARK_CORRECTION_RETIRED_LEAD) || t.startsWith(PARK_CORRECTION_QUESTION_LEAD) || t.startsWith(PARK_CORRECTION_NEEDS_INPUT_LEAD) || t.startsWith(QUESTION_FENCE_CORRECTION_LEAD) || t.startsWith(DONE_FENCE_CORRECTION_LEAD) || t.startsWith(SIGNOFF_CORRECTION_LEAD)
+}
+
+/** SOURCE 18's message, one paragraph per fault the rest has, then the rule. */
+export function signOffCorrection(faults: { missing: readonly { id: string; question: string }[]; relisted: readonly string[] }): string {
+  const ids = (names: readonly string[]) => names.map((n) => `\`${n}\``).join(", ")
+  const parts: string[] = []
+  if (faults.missing.length > 0) {
+    const one = faults.missing.length === 1
+    parts.push(
+      `leaves out ${one ? "a question" : "questions"} still open on this thread. A new sign-off replaces the one before it, and the human reads only the newest, so it names every open question:`,
+      "",
+      ...faults.missing.map((q) => `- \`${q.id}\` — ${q.question}`),
+      "",
+      `Your next message is the sign-off that counts. Write it whole, everything the human needs since they last typed, with ${one ? "that question" : "each of them"} as a \`\`\`question fence carrying ${one ? "its" : "the"} \`id:\` alone, under the paragraph it belongs to. A question you no longer need, withdraw with \`frizzctl unask <id>\` first. If you had nothing new for the human, rest on your signal fence alone instead, and the sign-off before stands.`,
+    )
+  } else if (faults.relisted.length > 0) {
+    parts.push(
+      `only re-lists ${ids(faults.relisted)}, with nothing written around ${faults.relisted.length === 1 ? "it" : "them"}. Those cards are still on screen where you asked them, so this shows the human nothing new.`,
+      "",
+      "With nothing new to say, rest on your signal fence alone: the sign-off before stays the one the human reads. To replace it, write a whole new sign-off, each open question under the paragraph it belongs to.",
+    )
+  }
+  return [
+    `${SIGNOFF_CORRECTION_LEAD}${parts.join("\n")}`,
+    "",
+    "The rule: a sign-off is the whole handoff and replaces the one before it. Nothing new: the fence alone. Something new: all of it again, every open question named with `id:` alone under its paragraph. To change a question, withdraw it with `frizzctl unask <id>` and ask the new one.",
+  ].join("\n")
 }
 
 // ---- SIGNING OFF AS DONE OVER AN OPEN QUESTION: ONE GATE, TWO SIGN-OFFS ----------------------------
@@ -2261,8 +2324,8 @@ export function doneOverOpenQuestionsBody(questions: readonly DoneBlockingQuesti
     "",
     `- You withdrew ${one ? "it" : "every one"}: sign off done again, and it stands.`,
     one
-      ? "- You still need the answer: write no ```done fence. End on a ```question fence carrying its `id:` alone, which keeps the thread in the human's queue on it, and sign off done once it is answered."
-      : "- You still need an answer: write no ```done fence. End on a ```question fence for each one you still need, carrying its `id:` alone, which keeps the thread in the human's queue on them, and sign off done once they are answered.",
+      ? "- You still need the answer: write no ```done fence. Sign off with the whole handoff instead, the question named by a ```question fence carrying its `id:` alone under the paragraph it belongs to, which keeps the thread in the human's queue on it, and sign off done once it is answered."
+      : "- You still need an answer: write no ```done fence. Sign off with the whole handoff instead, each question you still need named by a ```question fence carrying its `id:` alone under the paragraph it belongs to, which keeps the thread in the human's queue on them, and sign off done once they are answered.",
   ].join("\n")
 }
 
@@ -3973,6 +4036,18 @@ export function questionAnswerMessage(answers: readonly NamedQuestionAnswer[], d
   // would tell that worker the human replied, when the whole point is that nobody is going to. Frizz is
   // speaking here rather than the human, so the chat draws it as a hairline — see questionsCancelledWake.
   if (answers.length === 0) return questionsCancelledWakeMessage(dismissed.length, dismissed)
+  return answerRowsMessage(answers, dismissed)
+}
+
+/** The rows of the human's OWN send from the prompt box: answers, and the questions they dismissed since
+ *  the worker last heard. Never the cancellation wake, even with no answers in it, because the human is
+ *  the one speaking here, and the dismissals ride their message as the contract promises ("they ride the
+ *  next answer or the next steer"). "" when there is nothing to say. */
+export function humanAnswersMessage(answers: readonly NamedQuestionAnswer[], dismissed: readonly QuestionDismissal[] = []): string {
+  return answers.length === 0 && dismissed.length === 0 ? "" : answerRowsMessage(answers, dismissed)
+}
+
+function answerRowsMessage(answers: readonly NamedQuestionAnswer[], dismissed: readonly QuestionDismissal[]): string {
   const rows: string[] = []
   const push = (a: NamedQuestionAnswer, followUp: boolean): void => {
     const said = answerPicksText(a.chosen, a.text)
@@ -4020,6 +4095,19 @@ export const STEPS_DONE = "Done"
 export function repliesStepsDone(text: string): boolean {
   const said = wordsUnderAnswers(text)
   return said === STEPS_DONE || said.startsWith(`${STEPS_DONE}\n\n`)
+}
+
+/** A STEPS REPORT, the reply the to-do list's send composes (web stepsAnswer withStepsReport): the bare
+ *  word when every step is done, or "Done 2 of 3:" over its checklist, with whatever the human typed under
+ *  it as `note`. Null for anything else. Read on the human's own words (wordsUnderAnswers). */
+export function stepsReportOf(said: string): { all: boolean; note: string } | null {
+  const text = said.trim()
+  if (text === STEPS_DONE || text.startsWith(`${STEPS_DONE}\n\n`)) return { all: true, note: text.slice(STEPS_DONE.length).trim() }
+  const [head, ...rows] = text.split("\n")
+  if (!new RegExp(`^${STEPS_DONE} \\d+ of \\d+:$`).test(head)) return null
+  let n = 0
+  while (n < rows.length && /^- \[( |x)\] /.test(rows[n])) n++
+  return n > 0 ? { all: false, note: rows.slice(n).join("\n").trim() } : null
 }
 
 /** What the human wrote themselves, under any answers that rode the same send. */
@@ -6762,6 +6850,15 @@ export function parseThreadMessage(text: string): (ThreadMessageSender & { body:
 // delivery token, and it used to count: answering one of two questions from the prompt box retired the
 // other, where the same answer sent from the card (the scheduler's delivery) did not. It is the human
 // typing only when they typed something BESIDE the answers, which is the note under ANSWERS_NOTE_HEADER.
+// Under every note header: a send carrying registered AND fenced answers nests them, and the first
+// note is then the second set of answers, not anything typed.
+//
+// A STEPS REPORT is the third (2026-11-11). Ticking boxes and pressing Send answers the to-do card the way
+// picking an option answers a question card, and the report counted as typing: a "Done 1 of 2" released
+// the hold on the step it said was NOT done, so the next quiet park took the thread out of the queue with
+// the list still owing it, and a tick sent with nothing typed retired the questions asked beside the
+// steps. It is typing when something is typed under it. A report of every step done still settles the
+// handoff it answers, as settling a question does (board handoffStands, FoldState.stepsDoneAt).
 /** What Retry and "Continue now" send (web lib/retrySession.ts and ChatView's LimitPauseCard post this constant). */
 export const RETRY_FOLLOW_UP = "Continue exactly where you left off."
 
@@ -6771,8 +6868,11 @@ export function isHumanTypedMessage(text: string): boolean {
   if (isInjectedNoise(text) || isInterruptMarker(text) || isWakeDelivery(text)) return false
   if (parseThreadMessage(text) || parseCrossSessionMessage(text) || parseAgentMessage(text)) return false
   const own = stripHumanGapNote(text).trim()
-  if (own.startsWith(`${BURIED_ANSWERS_HEADER}\n`)) return splitAnswersNote(own).note !== ""
-  return own !== RETRY_FOLLOW_UP
+  const answers = (words: string) => words.startsWith(`${BURIED_ANSWERS_HEADER}\n`)
+  // Answers with no note under them come back from wordsUnderAnswers as themselves: nothing typed.
+  const said = answers(own) ? wordsUnderAnswers(own) : own
+  const typed = answers(said) ? "" : stepsReportOf(said)?.note ?? said
+  return typed !== "" && typed !== RETRY_FOLLOW_UP
 }
 
 /** The human-typed messages a user RECORD carries. The runtime merges whatever was queued while the
@@ -7321,6 +7421,7 @@ export * from "./claim.ts"
 export * from "./claude-editions.ts"
 export * from "./code-fences.ts"
 export * from "./question-fence.ts"
+export * from "./signal-fence.ts"
 export * from "./delta.ts"
 export * from "./wire-patch.ts"
 export * from "./fence-head.ts"

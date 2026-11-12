@@ -11,7 +11,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { isSnoozed, wakeDeliveryToken, type GithubWatchStatus } from "@frizz/shared"
+import { boardQueuedThread, isSnoozed, wakeDeliveryToken, type GithubWatchStatus } from "@frizz/shared"
 import { GITHUB_STATUS_SETTING } from "./awaiting.ts"
 import { Bus } from "./bus.ts"
 import { createBoard } from "./board.ts"
@@ -27,6 +27,9 @@ const QUIET = "```awaiting\nprs: [acme/app#391]\nstatus: watching\nfor: 180d\n``
 // The same handoff as the contract now has it written: the merge is the human's act, so it is a step.
 const MERGE = "```awaiting\nprs: [acme/app#391]\nfor: 180d\ntitle: Ready, unmerged\nsteps:\n  - Merge [acme/app#391](https://github.com/acme/app/pull/391).\n---\nReady at 0251203e.\n```"
 const WAKE = `✅ CI PASSED on ${PR} — 93 checks green, 31 skipped.\n\n${wakeDeliveryToken("wake-ci")}`
+// Two steps, and the reply the to-do list's send composes for one of them ticked (web withStepsReport).
+const TWO_STEPS = "```awaiting\nprs: [acme/app#391]\nfor: 180d\ntitle: Ready, unmerged\nsteps:\n  - Merge [acme/app#391](https://github.com/acme/app/pull/391).\n  - Delete the old branch.\n---\nReady at 0251203e.\n```"
+const ONE_OF_TWO = "Done 1 of 2:\n- [x] Merge [acme/app#391](https://github.com/acme/app/pull/391).\n- [ ] Delete the old branch."
 const GREEN: GithubWatchStatus = {
   checks: "passing", running: 0, passed: 93, failed: 0, skipped: 31, gated: 0, gating: [], failing: [],
   merge: "mergeable", state: "open", polledAt: at(0),
@@ -50,7 +53,8 @@ function world(backend: "claude" | "codex") {
   const tele = (): SessionTelemetry => ({
     turn: "idle", permPrompt: false, subAgents: [], bgShells: [], retiredShells: [], retiredSubAgents: [], pendingQuestion: false,
     lastActivityAt: s.lastActivityAt, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine,
-    lastUserAt: s.lastUserAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, lastUserText: s.lastUserText, lastFence: s.lastFence,
+    lastUserAt: s.lastUserAt, restFromAt: s.restFromAt, handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, lastUserText: s.lastUserText, lastFence: s.lastFence,
+    humanSteps: s.humanSteps,
   } as SessionTelemetry)
   const tailer = {
     get: (x: string) => (x === slug ? tele() : undefined), foreignIds: () => [], subAgent: () => undefined,
@@ -79,8 +83,12 @@ function world(backend: "claude" | "codex") {
   const ask = (id: string, minute: number) => {
     storage.askThreadQuestion({ id, slug, spec: JSON.stringify({ question: "Fix it in a follow-up?", kind: "question", options: [{ label: "Yes" }, { label: "No" }] }), askedAtMs: Date.parse(at(minute)), handle: id })
   }
+  // Claude's record shapes for a fence written mid-turn: the text before a tool call, and the call's result.
+  const midTurn = (minute: number, text: string) => applyRecord(s, { type: "assistant", timestamp: at(minute), message: { role: "assistant", content: [{ type: "text", text }], stop_reason: "tool_use" } } as never)
+  const toolResult = (minute: number) => applyRecord(s, { type: "user", timestamp: at(minute), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }] } } as never)
   return {
-    say, user, snooze, ask,
+    say, user, snooze, ask, midTurn, toolResult,
+    pin: () => storage.setPinnedAt(slug, at(-1)),
     answer: (id: string, minute: number) => assert.ok(storage.answerThreadQuestion(id, JSON.stringify({ [id]: "Yes" }), Date.parse(at(minute)))),
     dismiss: (id: string, minute: number) => assert.ok(storage.dismissThreadQuestion(id, Date.parse(at(minute)))),
     withdraw: (id: string, minute: number) => assert.ok(storage.withdrawThreadQuestion(slug, id, Date.parse(at(minute)))),
@@ -102,6 +110,23 @@ for (const backend of ["claude", "codex"] as const) {
       assert.equal(v.needsYou, true, "the watcher's wake is not the human reaching the handoff")
       assert.equal(isSnoozed(v), false)
       assert.equal(v.heldHandoff, true, "the surfaces are told to keep the handoff's fence drawn")
+    } finally { w.close() }
+  })
+
+  // A pinned thread drops a plain REPORT from the queue (shared boardQueuedThread), and the held steps
+  // came out as one because the last fence is the quiet park. What the human must do still queues.
+  test(`${backend}: on a pinned thread, the steps a quiet park could not take back still queue`, () => {
+    const w = world(backend)
+    try {
+      w.pin()
+      w.user(0, "own acme/app#391 and park it for my evaluation when it is ready")
+      w.say(1, MERGE)
+      w.user(5, WAKE)
+      w.say(6, QUIET)
+      const v = w.view()
+      assert.equal(v.heldHandoff, true)
+      assert.equal(v.plainReport, undefined, "steps owed are not a report the human only had to read")
+      assert.equal(boardQueuedThread(v), true)
     } finally { w.close() }
   })
 
@@ -271,4 +296,92 @@ for (const backend of ["claude", "codex"] as const) {
       assert.equal(w.view().needsYou, true, "the other question still stands")
     } finally { w.close() }
   })
+
+  // A STEPS REPORT IS AN ANSWER, NOT TYPING (shared isHumanTypedMessage). Ticking boxes and pressing Send
+  // is to the to-do card what picking an option is to a question card.
+  test(`${backend}: a partial steps report leaves the step it calls not done holding the next quiet park`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, TWO_STEPS)
+      w.user(5, ONE_OF_TWO)
+      w.user(6, WAKE)
+      w.say(7, QUIET)
+      const v = w.view()
+      assert.equal(v.needsYou, true, "the report said the second step is not done")
+      assert.equal(v.heldHandoff, true)
+      assert.equal(isSnoozed(v), false)
+    } finally { w.close() }
+  })
+
+  test(`${backend}: a report of every step done reaches the handoff, so the next quiet park snoozes`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, TWO_STEPS)
+      w.user(5, "Done")
+      w.user(6, WAKE)
+      w.say(7, QUIET)
+      const v = w.view()
+      assert.equal(v.needsYou, false)
+      assert.equal(isSnoozed(v), true)
+    } finally { w.close() }
+  })
+
+  test(`${backend}: a steps report sent with nothing typed leaves a question asked beside the steps standing`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, TWO_STEPS)
+      w.ask("qst_beside", 1)
+      w.user(5, "Done")
+      w.say(7, QUIET)
+      const v = w.view()
+      assert.equal(v.needsYou, true, "the human answered the to-do card, not the question")
+      assert.deepEqual((v.questions ?? []).map((q) => [q.id, q.standing]), [["qst_beside", true]])
+    } finally { w.close() }
+  })
+
+  test(`${backend}: words typed under a report are typing, and reach the handoff as typing does`, () => {
+    const w = world(backend)
+    try {
+      w.user(0, `own ${PR}`)
+      w.say(1, TWO_STEPS)
+      w.user(5, `${ONE_OF_TWO}\n\nSkip the second one, the branch is protected.`)
+      w.say(7, QUIET)
+      assert.equal(w.view().needsYou, false)
+    } finally { w.close() }
+  })
 }
+
+// A Claude turn reads a fence off every text block, so a steps fence can be written and then followed by a
+// tool call or more text. It was never a rest, and must not hold the next quiet park over steps that never
+// reached the list. (A normalized backend fences only on its final message.)
+test("claude: a steps fence the worker went on past in the same turn holds nothing", () => {
+  for (const goOn of ["tool result", "more text"] as const) {
+    const w = world("claude")
+    try {
+      w.user(0, `own ${PR}`)
+      w.midTurn(1, TWO_STEPS)
+      if (goOn === "tool result") w.toolResult(2)
+      else w.midTurn(2, "Checking one more thing first.")
+      w.say(3, QUIET)
+      const v = w.view()
+      assert.equal(v.needsYou, false, goOn)
+      assert.equal(isSnoozed(v), true, goOn)
+    } finally { w.close() }
+  }
+})
+
+test("claude: an earlier handoff a mid-turn fence stamped over still holds, once the worker goes on past it", () => {
+  const w = world("claude")
+  try {
+    w.user(0, `own ${PR}`)
+    w.say(1, MERGE)
+    w.user(5, WAKE)
+    w.midTurn(6, TWO_STEPS)
+    w.toolResult(7)
+    w.say(8, QUIET)
+    assert.equal(w.view().needsYou, true, "the merge handed over at minute 1 is still unreached")
+  } finally { w.close() }
+})

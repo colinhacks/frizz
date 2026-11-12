@@ -10,7 +10,7 @@ const MERGE = "Merge the release PR."
 
 const tick = (text: string, done_at: number | null, reported_at: number | null = null): HumanTodoTick => ({ item_id: humanStepId(text), done_at, reported_at })
 const items = (...texts: string[]) => texts.map((text) => ({ text }))
-const shown = (steps: readonly HumanStep[], ticks: readonly HumanTodoTick[] = [], options?: { finished?: boolean }) =>
+const shown = (steps: readonly HumanStep[], ticks: readonly HumanTodoTick[] = [], options?: { finished?: boolean; onTheirWay?: ReadonlyMap<string, boolean> }) =>
   humanTodoView(steps, ticks, options).map((todo) => [todo.text, todo.done, todo.staged])
 
 test("the same words are the same item, however they are wrapped", () => {
@@ -37,6 +37,15 @@ test("a tick is staged until a send reports it, and unticking a reported one sta
   assert.deepEqual(shown(steps, [tick(SIGN_IN, 15, 16)]), [[SIGN_IN, true, false]])
   assert.deepEqual(shown(steps, [tick(SIGN_IN, null, 16)]), [[SIGN_IN, false, true]])
   assert.deepEqual(shown(steps, [tick(SIGN_IN, null)]), [[SIGN_IN, false, false]], "ticked and unticked before anyone heard: nothing to say")
+})
+
+test("a tick a message on its way carries, as it stands now, is not staged, and a tick changed since is", () => {
+  const steps = foldHumanSteps([], items(SIGN_IN, APPROVE), 10)
+  const ticks = [tick(SIGN_IN, 15), tick(APPROVE, null, 12)]
+  const riding = new Map([[humanStepId(SIGN_IN), true], [humanStepId(APPROVE), true]])
+  assert.deepEqual(shown(steps, ticks, { onTheirWay: riding }), [[SIGN_IN, true, false], [APPROVE, false, true]],
+    "the held send reports Sign in done; Approve was unticked after it went, which is still news")
+  assert.deepEqual(shown(steps, ticks), [[SIGN_IN, true, true], [APPROVE, false, true]], "with nothing on its way, both are staged")
 })
 
 test("every box one send reported carries that send's instant, and a report the worker has been re-listed past carries none", () => {

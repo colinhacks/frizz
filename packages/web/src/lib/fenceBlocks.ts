@@ -1,14 +1,14 @@
 // Parse an assistant message's markdown for ```done / ```awaiting SIGNAL fences so the renderer can
 // set each one off as a CARD in place of the raw block (mirrors questionBlocks.ts). Transcripts arrive
-// as raw markdown, so the client parses fences itself — the grammar is identical to the fence spec the
-// worker writes and the server's lastFence parser: an opening line exactly ```done or ```awaiting, the
-// body, then a closing ``` line. Pure string logic, no DOM — unit-testable.
+// as raw markdown, so the client parses fences itself — through the one rule the server's lastFence parser
+// reads too (@frizz/shared signal-fence.ts), so a message draws a card exactly when the server acts on its
+// fence. Pure string logic, no DOM — unit-testable.
 //
 // The signal fence LANGUAGE is the state: `done` = a presentation-only success card (thread lifecycle
 // actions live in a stable footer), `awaiting` = a compact parked human/timer handoff. Distinct
 // from ```question blocks (their own machinery in questionBlocks.ts) — those never match here.
 
-import { fenceWaitsOnHuman, insideFence, splitAwaitingFrontmatter, splitDoneFrontmatter, type AwaitingHint, type TranscriptMessage } from "@frizz/shared"
+import { fenceWaitsOnHuman, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, type AwaitingHint, type TranscriptMessage } from "@frizz/shared"
 import { awaitingProseBlock } from "./awaitingPresentation.ts"
 
 export type FenceKind = "done" | "awaiting"
@@ -16,15 +16,6 @@ export type FenceKind = "done" | "awaiting"
 export type FenceSegment =
   | { kind: "prose"; text: string }
   | { kind: "fence"; fenceKind: FenceKind; body: string; hints: AwaitingHint[] }
-
-// Opening fence begins a line: ```done or ```awaiting (NO info-string — the language alone is the
-// state), a newline, then the body non-greedily to the next line that is exactly ``` (optional trailing
-// spaces). The `m` flag anchors ^/$ to line boundaries; an unterminated opener never matches, so a
-// half-written fence degrades to ordinary prose (markdown renders it as a plain code block). ```question
-// can't match the (done|awaiting) alternation, so question blocks are left entirely to questionBlocks.ts.
-// Any run of three or more backticks opens one, and only a run at least as long closes it (the tailer's
-// SIGNAL_FENCE_RE, which this must match): a fence whose steps carry code blocks opens with four.
-const FENCE_BLOCK = /^(`{3,})(done|awaiting)[ \t]*\r?\n([\s\S]*?)\r?\n\1`*[ \t]*$/gm
 
 // Split the body of a fence into its prose (hint lines removed) and its parsed hints. A `done` fence
 // carries one hint at most — an optional leading `title:`, the card's heading (2026-10-13) — and the
@@ -53,43 +44,36 @@ export function parseFenceBody(raw: string, kind: FenceKind): { body: string; hi
 // Split an assistant message's markdown into prose runs and signal-fence blocks, in document order.
 // Prose runs that are whitespace-only are dropped (a fence never leads/trails with an empty prose slot).
 //
-// ONE SIGNAL PER MESSAGE: ONLY THE LAST FENCE IS A CARD, because the last is the only one the server acts
-// on (the tailer's parseSignalFence, last fence wins). The contract allows one, and a worker that wrote
-// two had both drawn: on 2026-11-11 a rest carrying a ```done ledger and then an ```awaiting with steps
-// drew a Done card back to back with an Awaiting human card, while the server had parked the thread on
-// the steps and ignored the done (maintainer: "It's also very weird that it would show up back-to-back
-// with a done card"). An earlier fence's body is still the worker's words, so it stays in the message as
-// prose: the ledger without the card's claim, the awaiting prose without its machinery.
+// ONLY THE FENCE THE MESSAGE SIGNALS WITH IS A CARD (@frizz/shared signalFenceOf), the one the server's
+// fold acts on: the last fence not quoted inside a code block, and only when it closes the message. A
+// card is a claim — the thread is finished, or parked on this — and drawing one the server never read put
+// live tickable steps and a Mark as done on rests the board held as bare (2026-11-11). A message whose
+// last fence does not close it draws its fences as the code blocks they are, which is what the worker is
+// told it wrote.
+//
+// An earlier fence in a message that does signal is still the worker's words, so it stays as prose: the
+// ledger without the card's claim, the awaiting prose without its machinery. On 2026-11-11 a rest carrying
+// a ```done ledger and then an ```awaiting with steps drew a Done card back to back with an Awaiting human
+// card, while the server had parked the thread on the steps and ignored the done (maintainer: "It's also
+// very weird that it would show up back-to-back with a done card").
 export function splitFenceBlocks(text: string): FenceSegment[] {
-  // A fence nested inside another code fence is being QUOTED (a worker showing the human what a ```done
-  // block looks like), so it stays in the prose run and renders as the code block it is — see the same
-  // guard in questionBlocks.ts.
-  const quoted = insideFence(text)
-  const fences: RegExpExecArray[] = []
-  FENCE_BLOCK.lastIndex = 0
-  for (let m = FENCE_BLOCK.exec(text); m !== null; m = FENCE_BLOCK.exec(text)) {
-    if (quoted(m.index)) {
-      FENCE_BLOCK.lastIndex = m.index + 1
-      continue
-    }
-    fences.push(m)
-  }
+  const signal = signalFenceOf(text)
+  if (!signal) return text.trim() ? [{ kind: "prose", text }] : []
   const segments: FenceSegment[] = []
   let prose = ""
   let lastIndex = 0
-  for (const [i, m] of fences.entries()) {
-    prose += text.slice(lastIndex, m.index)
-    lastIndex = m.index + m[0].length
-    const fenceKind = m[2] as FenceKind
-    const { body, hints } = parseFenceBody(m[3], fenceKind)
-    if (i < fences.length - 1) {
-      const words = fenceKind === "awaiting" ? awaitingProseBlock(body) ?? "" : body
+  for (const fence of signalFenceBlocks(text).filter((f) => f.start <= signal.start)) {
+    prose += text.slice(lastIndex, fence.start)
+    lastIndex = fence.end
+    const { body, hints } = parseFenceBody(fence.raw, fence.kind)
+    if (fence.start !== signal.start) {
+      const words = fence.kind === "awaiting" ? awaitingProseBlock(body) ?? "" : body
       if (words.trim()) prose += `\n\n${words}\n\n`
       continue
     }
     if (prose.trim()) segments.push({ kind: "prose", text: prose })
     prose = ""
-    segments.push({ kind: "fence", fenceKind, body, hints })
+    segments.push({ kind: "fence", fenceKind: fence.kind, body, hints })
   }
   prose += text.slice(lastIndex)
   if (prose.trim()) segments.push({ kind: "prose", text: prose })

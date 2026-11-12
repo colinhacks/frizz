@@ -36,6 +36,10 @@ const POLL_MS = 100
 
 interface Served {
   timer: NodeJS.Timeout
+  /** When an unread value is dropped. Moved by rearmSecretsIn when the message naming it reaches the worker. */
+  expiresAt: number
+  now: () => number
+  ttlMs: number
 }
 
 /** Every pipe this process is serving, by path. The value lives only in the timer's closure. */
@@ -72,7 +76,7 @@ export function serveSecret(
   opts: { now?: () => number; ttlMs?: number; platform?: NodeJS.Platform } = {},
 ): string {
   const now = opts.now ?? Date.now
-  const expiresAt = now() + (opts.ttlMs ?? SECRET_TTL_MS)
+  const ttlMs = opts.ttlMs ?? SECRET_TTL_MS
   const root = secretsRoot(stateDir)
   const dir = join(root, slug)
   const path = secretFilePath(stateDir, slug, questionId)
@@ -88,10 +92,11 @@ export function serveSecret(
   if ((opts.platform ?? process.platform) === "win32") {
     writeFileSync(path, value, { mode: 0o600 })
     const timer = setInterval(() => {
-      if (now() >= expiresAt || !existsSync(path)) stop(path)
+      if (now() >= entry.expiresAt || !existsSync(path)) stop(path)
     }, 1_000)
     timer.unref()
-    served.set(path, { timer })
+    const entry: Served = { timer, expiresAt: now() + ttlMs, now, ttlMs }
+    served.set(path, entry)
     return path
   }
 
@@ -99,7 +104,7 @@ export function serveSecret(
   const bytes = Buffer.from(value, "utf8")
   const timer = setInterval(() => {
     // The worker removing the path is how it says it is finished with an unread value.
-    if (now() >= expiresAt || !existsSync(path)) return stop(path)
+    if (now() >= entry.expiresAt || !existsSync(path)) return stop(path)
     let fd: number
     try {
       fd = openSync(path, constants.O_WRONLY | constants.O_NONBLOCK)
@@ -117,8 +122,25 @@ export function serveSecret(
     if (delivered) stop(path)
   }, POLL_MS)
   timer.unref()
-  served.set(path, { timer })
+  const entry: Served = { timer, expiresAt: now() + ttlMs, now, ttlMs }
+  served.set(path, entry)
   return path
+}
+
+/** THE CLOCK STARTS WHEN THE WORKER IS HANDED THE PATH. A value is served the moment the human answers,
+ *  and the message naming its path can wait before it reaches the worker: a send held by "Send to queue"
+ *  until the turn ends, every mid-turn send to a backend with no steer, an answer wake the scheduler holds
+ *  in its quiet window. Its 15 minutes ran meanwhile — 6m46s of one on 2026-11-08 — and the worker, told
+ *  it had 15, could be handed a path already gone (2026-11-11). Every delivery restarts the clock of each
+ *  pipe this process still serves whose path the message carries. Returns how many it restarted. */
+export function rearmSecretsIn(text: string): number {
+  let rearmed = 0
+  for (const [path, entry] of served) {
+    if (!text.includes(path)) continue
+    entry.expiresAt = entry.now() + entry.ttlMs
+    rearmed++
+  }
+  return rearmed
 }
 
 /** Remove everything under the secrets dir — at a server start, where no pipe can have a writer behind

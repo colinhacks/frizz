@@ -29,7 +29,7 @@ import { useRegisteredDoneBody } from "../lib/registeredDoneBody.ts"
 import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
 import { providerNameFor } from "./providerMark.ts"
-import { answersNote, isAnswersMessage, parseAnswersCard, type PairedAnswer } from "../lib/answersMessage.ts"
+import { answersNote, isAnswersMessage, parseAnswersCard, userSendShown, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
 import { fenceStandsFor, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
 import { previousUserBoundary } from "../lib/transcriptPagination.ts"
@@ -56,6 +56,8 @@ import { useFailedDeliveryActions } from "../lib/failedDelivery.ts"
 import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPending, useThreadCanSteer } from "../lib/deliverQueuedNow.ts"
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
+import { foldSummary, stretchFoldRanges } from "../lib/stretchFolds.ts"
+import { latestSignOffs } from "../lib/signOffs.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
 import type { StepsReply } from "../lib/stepsAnswer.ts"
@@ -518,6 +520,14 @@ const ANCHOR_RESTORE_MS = 250
 // from its estimate, and markdown, code and images keep settling for several frames after mount.
 const OPEN_AT_MESSAGE_HOLD_MS = 900
 
+// Where the queue's window lands its sign-off. Opened at the top, the human's message and the sign-off under
+// it read as a pair whenever the sign-off starts in the upper 60% of the pane: there is room to start reading
+// it without scrolling. Past that the human's message is long, and the sign-off lands a quarter of the pane
+// (at most 160px) below the top instead, with the last lines of that message still showing over it.
+const SIGN_OFF_FITS = 0.6
+const SIGN_OFF_LEAD = 0.25
+const SIGN_OFF_LEAD_MAX_PX = 160
+
 // Opt-in drift diagnostic: `localStorage["frizz.debugScroll"] = "1"`, then reload.
 //
 // The mid-scroll drift this file works to prevent does NOT reproduce headlessly — a scripted wheel has
@@ -609,6 +619,9 @@ type VirtualThreadRow =
   | { key: "transport-fallback"; kind: "transport-fallback" }
   | { key: string; kind: "earlier-history" }
   | ({ kind: "message"; restGap: string | null } & VirtualTranscriptMessageRow)
+  // THE WORK BETWEEN THE HUMAN'S MESSAGE AND THE SIGN-OFF, as one disclosure row — see lib/stretchFolds.
+  // Open, it stays above the rows it folded, which follow it as ordinary message rows.
+  | { key: string; kind: "fold"; label: string; open: boolean; gap: number }
   | { key: "runtime-status"; kind: "runtime-status" }
   | { key: string; kind: "queued"; message: ChatMessage; messageIndex: number; gap: number }
   | { key: "queued-send-now"; kind: "queued-send-now" }
@@ -985,6 +998,10 @@ function VirtualizedThreadTranscript({
     }
     return byRow
   }, [messageRows, settledPlacement.anchored])
+  // The work between each human message and the sign-off that answers it, folded (lib/stretchFolds). A
+  // fold the reader opened stays open, by its key, for as long as this transcript is mounted.
+  const folds = useMemo(() => stretchFoldRanges(messages, { running }), [messages, running])
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => new Set())
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
     if (transportFallback) next.push({ key: "transport-fallback", kind: "transport-fallback" })
@@ -993,14 +1010,44 @@ function VirtualizedThreadTranscript({
     }
     const before = questionGroups.byRow.get(-1)
     if (before) next.push({ key: "questions:head", kind: "questions", questions: before, send: questionGroups.sendRows.has(-1) })
-    messageRows.forEach((row, i) => {
-      next.push({ ...row, kind: "message" as const })
+    const pushMessage = (i: number, gap: number) => {
+      const row = messageRows[i]
+      next.push({ ...row, gap, kind: "message" as const })
       // Answered before anything still open at the same slot was, so drawn above it.
       const settledGroup = settledByRow.get(i)
       if (settledGroup) next.push({ key: `settled-questions:${row.key}`, kind: "settled-questions", questions: settledGroup })
       const group = questionGroups.byRow.get(i)
       if (group) next.push({ key: `questions:${row.key}`, kind: "questions", questions: group, send: questionGroups.sendRows.has(i) })
-    })
+    }
+    // A row a fold never hides: one an open question's stack (or its rest's Send) hangs off, or a message
+    // with a live card placed inside it. A worker held to the whole-handoff rule names every open question
+    // in its sign-off, so this only catches one that did not.
+    const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex)
+    let range = 0
+    let afterFold = false
+    for (let i = 0; i < messageRows.length;) {
+      const at = messageRows[i].messageIndex
+      while (range < folds.length && folds[range].to < at) range++
+      const fold = folds[range]
+      let end = i
+      if (fold && at >= fold.from) {
+        while (end < messageRows.length && messageRows[end].messageIndex <= fold.to && !keeps(end)) end++
+      }
+      // One row standing in for one row hides nothing.
+      if (end - i < 2) {
+        pushMessage(i, afterFold ? messageGap(FOLD_PROBE, messageRows[i].message) : messageRows[i].gap)
+        afterFold = false
+        i++
+        continue
+      }
+      const key = `fold:${messageRows[i].key}`
+      const open = openFolds.has(key)
+      const to = end < messageRows.length && messageRows[end].messageIndex <= fold.to ? messageRows[end].messageIndex - 1 : fold.to
+      next.push({ key, kind: "fold", label: foldSummary(messages, { from: at, to }), open, gap: i === 0 ? 0 : messageGap(messageRows[i - 1].message, FOLD_PROBE) })
+      if (open) for (let j = i; j < end; j++) pushMessage(j, j === i ? messageGap(FOLD_PROBE, messageRows[j].message) : messageRows[j].gap)
+      afterFold = !open
+      i = end
+    }
     // THE ASK GOES AT THE TAIL. It was row 0 until 2026-08-02, which put an answerable card ABOVE the
     // operator's own first message — a transcript scrolled to its end (this list anchors there) left it
     // 5,000px up and unmounted by the virtualizer, so a thread blocked on a question rendered as nothing
@@ -1020,7 +1067,7 @@ function VirtualizedThreadTranscript({
     })
     if (previousQueued) next.push({ key: "queued-send-now", kind: "queued-send-now" })
     return next
-  }, [beforeCursor, earlierError, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, questionGroups, settledByRow, transportFallback, windowStart])
+  }, [beforeCursor, earlierError, folds, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, openFolds, placement, questionGroups, settledByRow, transportFallback, windowStart])
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
@@ -1039,6 +1086,7 @@ function VirtualizedThreadTranscript({
       if (row.kind === "runtime-status") return 54
       if (row.kind === "questions") return 220
       if (row.kind === "settled-questions") return 140
+      if (row.kind === "fold") return 20 + row.gap
       return row.kind === "message" ? 108 + row.gap : 82 + row.gap
     },
     overscan: 8,
@@ -1182,9 +1230,21 @@ function VirtualizedThreadTranscript({
     // event rows); if it draws no row of its own — a fence-only rest the resting card states — the last
     // assistant row before it stands in, and with none the tail is still the answer. The fullscreen
     // hand-off above outranks this: it is the reader's own place, carried over.
-    const lastMessageRow = !anchor && openAtLastMessage && lastAgentIdx >= 0
-      ? rows.reduce((found, row, index) => (row.kind === "message" && row.messageIndex <= lastAgentIdx && row.message.role === "assistant" && row.message.kind !== "event" ? index : found), -1)
+    //
+    // THE SIGN-OFF OUTRANKS BOTH (2026-11-11). The work before it and after it is folded (lib/stretchFolds),
+    // so what a reader comes back to is the human's message and the sign-off that answers it. The phone lands
+    // the sign-off's top at the top of the pane; the queue's window keeps the human's message above it when
+    // the two fit (see the hold below). The sign-off's own row, or none: a sign-off that draws no row of its
+    // own (the resting card states it) leaves each surface its older landing.
+    const signOffAt = latestSignOffs(messages, lastHumanTurnIndex(messages))[0] ?? -1
+    const signOffRow = !anchor && signOffAt >= 0 && (openAtTop || openAtLastMessage)
+      ? rows.findIndex((row) => row.kind === "message" && row.messageIndex === signOffAt)
       : -1
+    const lastMessageRow = signOffRow >= 0 && !openAtTop
+      ? signOffRow
+      : !anchor && openAtLastMessage && lastAgentIdx >= 0
+        ? rows.reduce((found, row, index) => (row.kind === "message" && row.messageIndex <= lastAgentIdx && row.message.role === "assistant" && row.message.kind !== "event" ? index : found), -1)
+        : -1
     let frame = requestAnimationFrame(() => {
       if (!anchor && (openAtTop || lastMessageRow >= 0)) {
         // The fullscreen hand-off's two steps and its hold, aimed at a row's top instead of a remembered
@@ -1193,6 +1253,7 @@ function VirtualizedThreadTranscript({
         // above this row has ever been measured on a cold open; a touch on the scroller ends it at once.
         // The queue's window aims at the top of the list instead of a row: its opening steer, read down.
         const rowKey = openAtTop ? null : rows[lastMessageRow].key
+        const signOffKey = openAtTop && signOffRow >= 0 ? rows[signOffRow].key : null
         if (openAtTop) transcriptRef.current?.scrollTo({ top: 0 })
         else virtualizer.scrollToIndex(lastMessageRow, { align: "start", behavior: "instant" })
         followingTailRef.current = false
@@ -1218,7 +1279,18 @@ function VirtualizedThreadTranscript({
             return
           }
           if (rowKey === null) {
-            scroller.scrollTop = 0
+            // The queue's window reads from the human's message down, unless that pushes the sign-off past
+            // the upper part of the pane: then the sign-off lands a little below the top, with the end of
+            // the human's message still in view over it.
+            const target = signOffKey ? scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(signOffKey)}"]`) : null
+            if (!target && signOffRow >= 0) {
+              virtualizer.scrollToIndex(signOffRow, { align: "start", behavior: "instant" })
+            } else if (!target) {
+              scroller.scrollTop = 0
+            } else {
+              const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+              scroller.scrollTop = top <= scroller.clientHeight * SIGN_OFF_FITS ? 0 : top - Math.min(scroller.clientHeight * SIGN_OFF_LEAD, SIGN_OFF_LEAD_MAX_PX)
+            }
           } else {
             const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(rowKey)}"]`)
             if (row) scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
@@ -1414,6 +1486,38 @@ function VirtualizedThreadTranscript({
     // pass — always reads the position from before the pin moved.
     readerAnchorRef.current = captureReaderAnchor() ?? readerAnchorRef.current
   }, [captureReaderAnchor, transcriptRef])
+
+  // OPENING A FOLD KEEPS ITS ROW WHERE IT WAS CLICKED. The rows it folded mount below it, and a reader at the
+  // tail is otherwise tail-follow's: the growth read as content arriving under them, the bottom stayed put,
+  // and the row they clicked went up past the top of the pane with everything it opened (measured on a
+  // stack, 2026-11-11: from 84px to -597px). So the click claims the scroller the way a pin move does and
+  // holds the row at its height while the new rows measure; tail-follow reconciles once the hold ends, from
+  // wherever that leaves the reader.
+  const toggleFold = useCallback((key: string) => {
+    const scroller = transcriptRef.current
+    const row = scroller?.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(key)}"]`)
+    if (scroller && row) {
+      const anchor = { rowKey: key, viewportTop: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top }
+      followingTailRef.current = false
+      const until = performance.now() + ANCHOR_RESTORE_MS
+      anchorRestoreUntilRef.current = until
+      const hold = () => {
+        if (performance.now() >= until || performance.now() < readerScrollUntilRef.current) {
+          if (anchorRestoreUntilRef.current === until) anchorRestoreUntilRef.current = 0
+          syncTailFollow()
+          return
+        }
+        alignToAnchor(anchor)
+        requestAnimationFrame(hold)
+      }
+      requestAnimationFrame(hold)
+    }
+    setOpenFolds((open) => {
+      const next = new Set(open)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }, [alignToAnchor, syncTailFollow, transcriptRef])
 
   // THE STALE FRAME. A row that is already mounted and changes height in a commit — the resting card
   // folding into its message the moment the worker picks up a Done, an answered question greying in
@@ -1648,6 +1752,10 @@ function VirtualizedThreadTranscript({
                 {row.restGap
                   ? <RestGapLine rest={row.message} at={row.restGap} />
                   : <ThreadMessage m={row.message} index={row.messageIndex} showSendButton />}
+              </div>
+            ) : row.kind === "fold" ? (
+              <div className="flex flex-col px-6" style={{ paddingTop: row.gap }}>
+                <TranscriptFold label={row.label} open={row.open} onToggle={() => toggleFold(row.key)} />
               </div>
             ) : row.kind === "runtime-status" ? (
               <div className="px-6">
@@ -2234,6 +2342,29 @@ function prettyToolName(name: string): string {
 // `at` is the emitting assistant message's ISO timestamp — the moment the model issued this batch of
 // calls, and therefore the clock a pending FOREGROUND card times itself against. Optional: a pre-restart
 // server projects messages without it, and a card with no clock marks itself immediately.
+// The fold row (lib/stretchFolds): the work between the human's message and the sign-off, as one line in
+// the tool digest's own treatment — the same label class and chevron, so a folded stretch and a folded
+// tool run read as the same kind of thing. Its spacing is charged through messageGap as a meta label
+// (FOLD_PROBE), the class of row it draws as.
+function TranscriptFold({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      data-transcript-fold
+      onClick={onToggle}
+      onMouseDown={(e) => e.preventDefault()}
+      aria-expanded={open}
+      aria-label={`${open ? "Hide" : "Show"} the work before the sign-off: ${label}`}
+      className={`group flex w-full min-w-0 items-baseline gap-1.5 rounded -my-0.5 py-0.5 text-left outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${TRANSCRIPT_META_LABEL_CLASS}`}
+    >
+      <span data-transcript-fold-label title={label} className="min-w-0 truncate text-muted">{label}</span>
+      <ChevronRight aria-hidden="true" size={13} className={transcriptMetaChevronClass(open)} />
+    </button>
+  )
+}
+// What the fold row is to messageGap: a bare meta label, like a reasoning row or a settled tool digest.
+const FOLD_PROBE: ChatMessage = { role: "assistant", kind: "reasoning", text: "", tools: [], parts: [] }
+
 function MinimalToolActivity({ tools, at }: { tools: CollapsedTool[]; at?: string }) {
   const [expanded, setExpanded] = useState(false)
   const cardsId = useId()
@@ -3668,12 +3799,15 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
     // CR/CRLF → LF: a terminal-injected follow-up round-trips carriage-return-separated, and the pre-wrap
     // bubble honors \n but not a lone \r → the breaks collapse into a run-on. Normalize for BOTH render
     // paths (the server does this too, but this is the definitive per-surface guarantee for user text).
-    const text = messagePresentationText(m).replace(/\r\n?/g, "\n")
+    let text = messagePresentationText(m).replace(/\r\n?/g, "\n")
     // OUR OWN composed multi-block answer — either wire form ("Answers:\n1. …\n2. …" for the live ask,
     // "Answers to earlier questions:\n1. “Q” → A" for a buried one, both from useLiveAnswering.sendAnswers)
     // renders as a structured answers card echoing the question component — not a flat run-on bubble.
     // Non-matching text (and a parse hiccup → null) falls back to the plain bubble; text is never lost.
-    const answers = paired !== undefined ? paired : parseAnswersCard(text)
+    let answers = paired !== undefined ? paired : parseAnswersCard(text)
+    // A send whose only rows are dismissals draws as the words the human typed (userSendShown). A failed
+    // send keeps its whole wire, which is what a retry sends again.
+    if (m.deliveryState !== "failed") ({ text, answers } = userSendShown(text, answers))
     // …unless it FAILED: the answers card has no failure row, and a failed send must always show its
     // Retry / Edit / Dismiss (lib/failedDelivery.ts). The plain bubble carries the same words.
     if (answers && m.deliveryState !== "failed") {
@@ -4315,8 +4449,10 @@ export function FenceCard({ fenceKind, body, hints, pastRest }: { fenceKind: Fen
     // is untouched: it is the same record, without its button.
     const markDone = doneThread && !isMobile && !pastRest ? (
       <CardActions>
+        {/* On a pinned thread it is a split button whose caret chooses what Done does to the pin. */}
         <StateButton
           thread={doneThread}
+          pinChoice={`${CARD_ACTION_RADIUS} text-[11px] bg-fg text-bg`}
           className={`${CARD_ACTION_RADIUS} text-[11px] ${CARD_PRIMARY_BUTTON}`}
           iconClassName={ICON_LABEL_NUDGE}
           onArchived={queueDismiss?.dismiss}
