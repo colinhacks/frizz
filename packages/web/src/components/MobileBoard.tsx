@@ -28,7 +28,7 @@ import { ThreadActionsSheet } from "./lazySurfaces.tsx"
 import { showsUpdateBadge } from "./RestartFrizzButton.tsx"
 import { trackBottomFloat } from "../lib/queueDockInset.ts"
 import { useSupervisorStatus } from "../api/supervisorStatus.ts"
-import { showCompletionToast } from "../lib/completionPins.ts"
+import { settleCompletion } from "../lib/completionPins.ts"
 import { captureReaderPin, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
 import { Z_CHROME } from "../lib/layers.ts"
 
@@ -328,7 +328,7 @@ function MobileThreadRow({
                 : "Still running — open the thread to finish it")
               return
             }
-            showCompletionToast("Marked as done", t) // a pinned row stays pinned, with "Unpin" on offer
+            settleCompletion("Marked as done", t) // keeps or lifts a pin as this browser chose (lib/completionPins.ts)
           } catch (error) {
             clearArchived(t.id)
             showToast(error instanceof Error ? error.message.slice(0, 100) : "Could not mark as done")

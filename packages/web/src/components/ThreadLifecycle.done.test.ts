@@ -4,7 +4,8 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ThreadView } from "@frizz/shared"
-import { ThreadLifecycleActions } from "./ThreadLifecycle.tsx"
+import { StateButton, ThreadLifecycleActions } from "./ThreadLifecycle.tsx"
+import { prefs } from "../lib/prefs.ts"
 import { ThreadHeaderFacts } from "./ThreadHeaderFacts.tsx"
 import { TooltipProvider } from "./Tooltip.tsx"
 
@@ -65,6 +66,25 @@ test("an open thread keeps the verbs — bare icons, named for the screen reader
   assert.doesNotMatch(html, DONE_READOUT)
   // The names live in aria-label and the hover tooltip, not on the surface: the cluster draws no words.
   assert.doesNotMatch(html.replace(/<[^>]*>/g, ""), /Mark as done|Snooze/, "the verbs are icons, not labelled buttons")
+})
+
+// What Done does to a pin is a per-browser choice: the header check names it, and the done card's copy
+// is a split button whose caret holds the choice — but only on a pinned thread, the one it can change.
+test("the header check names the pin choice; the done card splits only on a pinned thread", () => {
+  const pinned = { state: "open", pinnedAt: "2026-10-01T09:00:00.000Z" } as Partial<ThreadView>
+  const card = (extra: Partial<ThreadView>) =>
+    renderToStaticMarkup(createElement(TooltipProvider, null, createElement(StateButton, { thread: { ...base, id: "t", ...extra } as ThreadView, pinChoice: "bg-fg" })))
+  assert.match(actions(pinned), MARK_AS_DONE, "the default keeps the pin, so the check reads plain")
+  assert.match(card(pinned), /data-done-split-menu/, "a pinned thread's card offers the caret")
+  assert.doesNotMatch(card({ state: "open" }), /data-done-split/, "an unpinned thread has nothing to choose")
+  prefs.doneUnpins = true
+  try {
+    assert.match(actions(pinned), /aria-label="Mark as done &amp; unpin"/)
+    assert.match(card(pinned), />Mark as done &amp; unpin<\/button>/, "the label names the ticked row")
+    assert.match(actions({ state: "open" }), MARK_AS_DONE, "an unpinned thread's check is unchanged")
+  } finally {
+    prefs.doneUnpins = false
+  }
 })
 
 // The readout asserts a completion frizz itself recorded. A foreign/legacy thread has no such record,
