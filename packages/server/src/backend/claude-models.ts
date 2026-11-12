@@ -19,6 +19,15 @@ import { inheritWorkerEnvironment } from "./worker-env.ts"
 // moved an alias, and the pins bump weekly. The probe is a control request the CLI answers locally —
 // no API call, no session file — and it is memoised per executable for the server's life, because the
 // pin cannot change without a restart.
+//
+// The rows are not the last word, though: the probe also ASKS the runtime what each alias runs —
+// `setModel(alias)`, then the model `getContextUsage({ detail: "summary" })` names, both answered
+// locally — and that answer outranks every row. The rows come partly from the account's model list,
+// which Claude Code caches in `~/.claude.json` and refreshes from api.anthropic.com; when that refresh
+// cannot succeed the rows freeze while the alias moves on. Measured 2026-11-12 on Claude Code 2.1.322
+// behind a token-broker proxy (`ANTHROPIC_BASE_URL` plus a placeholder `CLAUDE_CODE_OAUTH_TOKEN`; the
+// refresh skips the base URL and got 401s): the only Fable row was a 2026-10-05 `claude-fable-5-1[1m]`,
+// there was no `fable` row, and `--model fable` started on `claude-fable-5-2`.
 
 /** The aliases Frizz offers, in capability order — the same order CLAUDE_THREAD_PROFILES keeps. */
 export const CLAUDE_MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"] as const satisfies readonly ClaudeModelFamily[]
@@ -30,10 +39,16 @@ export type ClaudeModelAlias = (typeof CLAUDE_MODEL_ALIASES)[number]
 export const CLAUDE_MODELS_FALLBACK: ClaudeModel[] = CLAUDE_MODEL_ALIASES.map((alias) => ({ alias, label: claudeFamilyLabel(alias) }))
 
 /** Map the runtime's `supportedModels()` rows onto Frizz's aliases. PURE and total: a row of any shape is
- *  tolerated, an alias no row resolves keeps its bare family label, and the order is Frizz's own. Exported
- *  for a fixture unit test over the real 2.1.281 answer. */
-export function resolveClaudeModels(rows: readonly unknown[]): ClaudeModel[] {
+ *  tolerated, an alias no row resolves keeps its bare family label, and the order is Frizz's own. `runs`
+ *  is what the runtime said each alias runs, and it outranks every row; an answer naming another family,
+ *  or nothing parseable, is ignored. Exported for a fixture unit test over the real 2.1.281 answer. */
+export function resolveClaudeModels(rows: readonly unknown[], runs: Partial<Record<ClaudeModelAlias, string>> = {}): ClaudeModel[] {
   const byAlias = new Map<ClaudeModelAlias, ClaudeModel>()
+  for (const alias of CLAUDE_MODEL_ALIASES) {
+    const id = runs[alias]
+    const parsed = id === undefined ? undefined : parseClaudeWireId(id)
+    if (parsed?.alias === alias) byAlias.set(alias, editionOf(parsed))
+  }
   const records = rows.filter((raw): raw is Record<string, unknown> => !!raw && typeof raw === "object")
   // Frizz dispatches on the alias, so a row NAMED for the alias is the one that says what a worker will
   // run, and those go first. A family's rows can disagree: Claude Code 2.1.319 listed a
@@ -48,11 +63,15 @@ export function resolveClaudeModels(rows: readonly unknown[]): ClaudeModel[] {
       if (typeof candidate !== "string") continue
       const parsed = parseClaudeWireId(candidate)
       if (!parsed || byAlias.has(parsed.alias)) continue
-      byAlias.set(parsed.alias, { alias: parsed.alias, label: `${claudeFamilyLabel(parsed.alias)} ${parsed.edition}`, resolvedModel: parsed.resolvedModel, edition: parsed.edition })
+      byAlias.set(parsed.alias, editionOf(parsed))
       break
     }
   }
   return CLAUDE_MODEL_ALIASES.map((alias) => byAlias.get(alias) ?? { alias, label: claudeFamilyLabel(alias) })
+}
+
+function editionOf(parsed: NonNullable<ReturnType<typeof parseClaudeWireId>>): ClaudeModel {
+  return { alias: parsed.alias, label: `${claudeFamilyLabel(parsed.alias)} ${parsed.edition}`, resolvedModel: parsed.resolvedModel, edition: parsed.edition }
 }
 
 // `opus` and `opus[1m]` are both the alias: the suffix is a context window, not a model.
@@ -65,6 +84,9 @@ function isNamedForAlias(row: Record<string, unknown>): boolean {
 // backoff: the runtime may simply not be ready yet (first boot, a Defender scan on Windows), and the
 // fallback labels are the honest answer meanwhile.
 const PROBE_TIMEOUT_MS = 15_000
+// How long the probe waits for the runtime to say what each alias runs, once the rows are in. Eight local
+// round trips took about 0.4s on Claude Code 2.1.322.
+const ASK_BUDGET_MS = 5_000
 const FAILURE_BACKOFF_MS = 30_000
 const resolved = new Map<string, ClaudeModel[]>()
 const inFlight = new Map<string, Promise<ClaudeModel[]>>()
@@ -120,8 +142,8 @@ export async function readClaudeModels(options: ReadClaudeModelsOptions = {}): P
   return probe
 }
 
-// Spawn the runtime through the SDK with a prompt that never arrives, ask it for its models, close it.
-// Exported for the live test against the provisioned pin.
+// Spawn the runtime through the SDK with a prompt that never arrives, ask it for its models and what
+// each alias runs, close it. Exported for the live test against the provisioned pin.
 export async function probeClaudeModels(executable: string, cwd: string): Promise<ClaudeModel[]> {
   async function* never(): AsyncGenerator<never> {
     await new Promise<never>(() => {})
@@ -136,15 +158,35 @@ export async function probeClaudeModels(executable: string, cwd: string): Promis
       maxTurns: 0,
     },
   })
+  const read = async (): Promise<ClaudeModel[]> => {
+    const rows = await q.supportedModels()
+    const runs: Partial<Record<ClaudeModelAlias, string>> = {}
+    const ask = async (): Promise<void> => {
+      for (const alias of CLAUDE_MODEL_ALIASES) {
+        try {
+          await q.setModel(alias)
+          runs[alias] = (await q.getContextUsage({ detail: "summary" })).model
+        } catch {
+          // A runtime that predates the request, or an alias this account cannot select: its rows decide.
+        }
+      }
+    }
+    // The rows are already in hand, so a runtime that never answers these requests must not cost them:
+    // the Claude Code float accepts a newer build only if this probe returns (verifyClaudeBuild). Today's
+    // CLI answers a request it does not know with an error, which the catch above takes in milliseconds.
+    let budget: NodeJS.Timeout | undefined
+    await Promise.race([ask(), new Promise<void>((resolve) => (budget = setTimeout(resolve, ASK_BUDGET_MS)))])
+    clearTimeout(budget)
+    return resolveClaudeModels(rows, { ...runs })
+  }
   let timer: NodeJS.Timeout | undefined
   try {
-    const rows = await Promise.race([
-      q.supportedModels(),
+    return await Promise.race([
+      read(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`the runtime did not list its models within ${PROBE_TIMEOUT_MS}ms`)), PROBE_TIMEOUT_MS)
       }),
     ])
-    return resolveClaudeModels(rows)
   } finally {
     if (timer) clearTimeout(timer)
     q.close()
