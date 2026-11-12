@@ -648,9 +648,9 @@ test("bridge is the sole codex transport (always enabled) and negotiates exact i
   // be retyped by hand, so a bump that moves the version and forgets the source tag or the commit
   // fails here instead of shipping a revision that names a build nobody audited.
   assert.deepEqual(CODEX_APP_SERVER_PROTOCOL_REVISION, {
-    packageVersion: "0.167.1",
-    sourceTag: "rust-v0.167.1",
-    sourceCommit: "0a94398fa60c4fac0e7659e4213a0a36e613dd46",
+    packageVersion: "0.167.2",
+    sourceTag: "rust-v0.167.2",
+    sourceCommit: "ce21072c90d32c40af7a55b60b2fb35c84a43a6a",
   })
   assert.notEqual(h.calls[0]!.env, process.env, "the child receives a point-in-time environment snapshot")
   // Looked up the way the OS does, because the snapshot is a PLAIN object: `process.env` is a
