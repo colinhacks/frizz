@@ -100,7 +100,14 @@ export function humanTodoView(
     const reportedAt = stale ? null : tick?.reported_at ?? null
     const done = tick ? doneAt !== null : step.closedAt !== undefined
     if (!done && (!step.listed || options.finished)) continue
-    todos.push({ id: step.id, text: step.text, ...(step.body ? { body: step.body } : {}), done, staged: tick ? done !== (reportedAt !== null) : false })
+    todos.push({
+      id: step.id,
+      text: step.text,
+      ...(step.body ? { body: step.body } : {}),
+      done,
+      staged: tick ? done !== (reportedAt !== null) : false,
+      ...(reportedAt !== null ? { reportedAt } : {}),
+    })
   }
   return todos
 }

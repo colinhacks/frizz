@@ -92,13 +92,40 @@ test("an awaiting fence with no hints → empty hints, whole body prose", () => 
   assert.deepEqual(segs, [{ kind: "fence", fenceKind: "awaiting", body: "Just waiting a bit.", hints: [] }])
 })
 
-test("multiple fences in order", () => {
+// ONE SIGNAL PER MESSAGE: the last fence is the card, as it is the server's signal (parseSignalFence, last
+// fence wins), and an earlier one's words stay as prose — never its machinery.
+test("several fences: only the last is a card, and an earlier one's words stay as prose", () => {
   const text = "```awaiting\nhold\ntimers: [10m]\n```\nlater\n```done\nfinished\n```"
   assert.deepEqual(splitFenceBlocks(text), [
-    { kind: "fence", fenceKind: "awaiting", body: "hold", hints: [{ kind: "timer", value: "10m" }] },
-    { kind: "prose", text: "\nlater\n" },
+    { kind: "prose", text: "\n\nhold\n\n\nlater\n" },
     { kind: "fence", fenceKind: "done", body: "finished", hints: [] },
   ])
+})
+
+// The 2026-11-11 rest that drew a Done card back to back with an Awaiting human card: a ```done ledger and
+// then an ```awaiting with steps. The server parked the thread on the steps, so only they are a card.
+test("a done ledger followed by an awaiting fence draws one card, the awaiting one", () => {
+  const text = [
+    "**Fixed**: the drift check passes.",
+    "",
+    "```done",
+    "title: Drift check recognises a deploy's own tokens",
+    "---",
+    "- **Drift lets through** a deploy's own tokens.",
+    "```",
+    "",
+    "```awaiting",
+    "title: Claim colinhacks.frizz.sh from the R menu",
+    "steps:",
+    "  - Restart Frizz with custom names on",
+    "```",
+  ].join("\n")
+  const segs = splitFenceBlocks(text)
+  assert.deepEqual(segs.map((s) => (s.kind === "fence" ? s.fenceKind : "prose")), ["prose", "awaiting"])
+  const prose = segs[0].kind === "prose" ? segs[0].text : ""
+  assert.match(prose, /\*\*Fixed\*\*: the drift check passes\.\s+- \*\*Drift lets through\*\* a deploy's own tokens\./, "the ledger stays, as the message's own prose")
+  assert.doesNotMatch(prose, /```|title:/, "and none of the fence's syntax does")
+  assert.equal(hasFence(text), true)
 })
 
 test("a ```question fence is NOT a signal fence — left in prose", () => {

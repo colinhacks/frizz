@@ -37,6 +37,13 @@ export function restingOnSteps(thread: Omit<StepsThread, "id"> | undefined, step
   return live.length === steps.length && live.every((step, i) => step === steps[i])
 }
 
+/** Are these the same step? A step is its own text, compared as the server keys it (human-todos.ts
+ *  humanStepId): trimmed, every run of whitespace one space, so a re-wrapped copy is the same item. */
+export function sameStep(a: string, b: string): boolean {
+  const key = (text: string) => text.trim().replace(/\s+/g, " ")
+  return key(a) === key(b)
+}
+
 // ---- the ticks in flight --------------------------------------------------------------------------
 // What this tab has done that the board has not shown yet. An entry goes the moment the board agrees,
 // because from then on the board may know better: a worker that re-lists a step reopens its box. The
@@ -46,6 +53,12 @@ interface PendingTick {
   done: boolean
   /** Set by a send: the worker has heard this, whatever the board still says. */
   staged?: boolean
+  /** Set by a send, the same instant on every box it reported (HumanTodo.reportedAt), so the card it
+   *  answered keeps every row it sent from the first frame, before the board stamps the server's own. */
+  reportedAt?: number
+  /** The board's own report instant when the send went: the board agrees once it has moved off it. An
+   *  open box reported open already agrees on everything else. */
+  reportedWas?: number | null
 }
 
 const pending = proxy<Record<string, PendingTick>>({})
@@ -89,14 +102,16 @@ export function useHumanTodos(thread: TodoThread | undefined): HumanTodo[] {
     for (const todo of board ?? []) {
       const key = tickKey(slug, todo.id)
       const tick = pending[key]
-      if (tick && tick.done === todo.done && (tick.staged === undefined || tick.staged === todo.staged)) forgetTick(key)
+      if (!tick || tick.done !== todo.done || (tick.staged !== undefined && tick.staged !== todo.staged)) continue
+      if (tick.reportedAt === undefined || (todo.reportedAt ?? null) !== tick.reportedWas) forgetTick(key)
     }
   }, [slug, board])
   if (!thread) return []
   return (thread.humanTodos ?? []).map((todo) => {
     const tick = ticks[tickKey(thread.id, todo.id)]
     if (!tick) return todo
-    return { ...todo, done: tick.done, staged: tick.staged ?? (tick.done === todo.done ? todo.staged : !todo.staged) }
+    const staged = tick.staged ?? (tick.done === todo.done ? todo.staged : !todo.staged)
+    return { ...todo, done: tick.done, staged, ...(tick.reportedAt !== undefined ? { reportedAt: tick.reportedAt } : {}) }
   })
 }
 
@@ -143,23 +158,40 @@ export function repliedSteps(text: string): StepsReply | null {
 // list: a card is the record of one rest, and the list has moved on since.
 
 /** The agent messages whose rest the human answered with a report (repliedSteps), by index: the first
- *  such reply before the worker's next word. Only a message carrying an ```awaiting fence can be one. */
-export function stepsDoneReplies(messages: readonly Pick<ChatMessage, "role" | "kind" | "text">[]): ReadonlyMap<number, StepsReply> {
+ *  such reply to it. Only a message carrying an ```awaiting fence can be one.
+ *
+ *  A REPLY ANSWERS THE WORKER'S NEWEST WORD AS OF THE MOMENT IT WAS SENT, not the message drawn above it
+ *  (2026-11-11, maintainer: "I checked all three boxes … all I did was show a message containing the word
+ *  'done'"). A send that lands while the worker is busy waits in its queue and is drawn where the worker
+ *  took it in, after whatever the worker did first. On a nub thread a shell finished 14ms before the human
+ *  sent, the worker woke and made a tool call, and the "Done" was drawn under that call; reading the call
+ *  as the worker's next word left the card unpaired and its three ticked boxes empty. So the walk back
+ *  from a reply passes over what said nothing to the human (a tool call alone, an event line) and what was
+ *  written after the reply was sent. The worker's prose before the send still ends its rest: a "Done"
+ *  typed under "Still waiting on the DNS record." answers that, not the steps above it. */
+export function stepsDoneReplies(messages: readonly Pick<ChatMessage, "role" | "kind" | "text" | "at">[]): ReadonlyMap<number, StepsReply> {
   const replies = new Map<number, StepsReply>()
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i]
-    if (m.role !== "assistant" || m.kind === "event" || !m.text.includes("```awaiting")) continue
-    for (let j = i + 1; j < messages.length; j++) {
-      const reply = messages[j]
-      if (reply.role === "assistant" && reply.kind !== "event") break
-      const said = reply.role === "user" ? repliedSteps(reply.text) : null
-      if (said) {
-        replies.set(i, said)
-        break
-      }
+  for (let j = 0; j < messages.length; j++) {
+    const reply = messages[j]
+    const said = reply.role === "user" ? repliedSteps(reply.text) : null
+    if (!said) continue
+    const sentAt = instant(reply.at)
+    for (let i = j - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role !== "assistant" || m.kind === "event" || !m.text.trim()) continue
+      if (instant(m.at) > sentAt && sentAt !== Number.NEGATIVE_INFINITY) continue
+      if (m.text.includes("```awaiting") && !replies.has(i)) replies.set(i, said)
+      break
     }
   }
   return replies
+}
+
+/** An ISO instant in ms, or -Infinity when there is none: a message with no time counts as written
+ *  before anything that has one, which is what the order of the list already says. */
+const instant = (at: string | undefined): number => {
+  const ms = at ? Date.parse(at) : Number.NaN
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY
 }
 
 /** A staged report, as a send needs it. */
@@ -185,10 +217,14 @@ export function useStepsAnswer(thread: TodoThread | undefined): { staged: boolea
     return {
       todos: report.map(({ id, done }) => ({ id, done })),
       compose: (note) => withStepsReport(report, note),
-      onOptimistic: () => report.forEach((todo, i) => {
-        pending[keys[i]] = { done: todo.done, staged: false }
-        settleLater(keys[i])
-      }),
+      onOptimistic: () => {
+        const reportedAt = Date.now()
+        report.forEach((todo, i) => {
+          const reportedWas = thread.humanTodos?.find((listed) => listed.id === todo.id)?.reportedAt ?? null
+          pending[keys[i]] = { done: todo.done, staged: false, reportedAt, reportedWas }
+          settleLater(keys[i])
+        })
+      },
       onRollback: () => keys.forEach(forgetTick),
     }
   }

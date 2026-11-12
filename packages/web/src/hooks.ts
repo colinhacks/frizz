@@ -180,6 +180,12 @@ export function useThreadSnapshot(slug: string | null | undefined): ThreadView |
   return useSyncExternalStore(onStoreChange, () => threadSnapshotBySlug(slug))
 }
 
+/** One thread's to-do list for the human, read alone: a card listing steps re-renders when the list moves,
+ *  not on every delta to a running thread. */
+export function useThreadHumanTodos(slug: string | null | undefined): ThreadView["humanTodos"] {
+  return useSyncExternalStore(onStoreChange, () => threadSnapshotBySlug(slug)?.humanTodos)
+}
+
 // True once the /ws multiplex is the transcript source (server pushes into the cache). Components read
 // this to skip pull-based refetch paths that the push now covers.
 export function useSocketTranscripts(): boolean {

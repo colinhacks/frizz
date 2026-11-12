@@ -9,6 +9,7 @@
 // from ```question blocks (their own machinery in questionBlocks.ts) — those never match here.
 
 import { fenceWaitsOnHuman, insideFence, splitAwaitingFrontmatter, splitDoneFrontmatter, type AwaitingHint, type TranscriptMessage } from "@frizz/shared"
+import { awaitingProseBlock } from "./awaitingPresentation.ts"
 
 export type FenceKind = "done" | "awaiting"
 
@@ -51,28 +52,47 @@ export function parseFenceBody(raw: string, kind: FenceKind): { body: string; hi
 
 // Split an assistant message's markdown into prose runs and signal-fence blocks, in document order.
 // Prose runs that are whitespace-only are dropped (a fence never leads/trails with an empty prose slot).
+//
+// ONE SIGNAL PER MESSAGE: ONLY THE LAST FENCE IS A CARD, because the last is the only one the server acts
+// on (the tailer's parseSignalFence, last fence wins). The contract allows one, and a worker that wrote
+// two had both drawn: on 2026-11-11 a rest carrying a ```done ledger and then an ```awaiting with steps
+// drew a Done card back to back with an Awaiting human card, while the server had parked the thread on
+// the steps and ignored the done (maintainer: "It's also very weird that it would show up back-to-back
+// with a done card"). An earlier fence's body is still the worker's words, so it stays in the message as
+// prose: the ledger without the card's claim, the awaiting prose without its machinery.
 export function splitFenceBlocks(text: string): FenceSegment[] {
-  const segments: FenceSegment[] = []
   // A fence nested inside another code fence is being QUOTED (a worker showing the human what a ```done
   // block looks like), so it stays in the prose run and renders as the code block it is — see the same
   // guard in questionBlocks.ts.
   const quoted = insideFence(text)
-  let lastIndex = 0
+  const fences: RegExpExecArray[] = []
   FENCE_BLOCK.lastIndex = 0
   for (let m = FENCE_BLOCK.exec(text); m !== null; m = FENCE_BLOCK.exec(text)) {
     if (quoted(m.index)) {
       FENCE_BLOCK.lastIndex = m.index + 1
       continue
     }
-    const prose = text.slice(lastIndex, m.index)
-    if (prose.trim()) segments.push({ kind: "prose", text: prose })
+    fences.push(m)
+  }
+  const segments: FenceSegment[] = []
+  let prose = ""
+  let lastIndex = 0
+  for (const [i, m] of fences.entries()) {
+    prose += text.slice(lastIndex, m.index)
+    lastIndex = m.index + m[0].length
     const fenceKind = m[2] as FenceKind
     const { body, hints } = parseFenceBody(m[3], fenceKind)
+    if (i < fences.length - 1) {
+      const words = fenceKind === "awaiting" ? awaitingProseBlock(body) ?? "" : body
+      if (words.trim()) prose += `\n\n${words}\n\n`
+      continue
+    }
+    if (prose.trim()) segments.push({ kind: "prose", text: prose })
+    prose = ""
     segments.push({ kind: "fence", fenceKind, body, hints })
-    lastIndex = m.index + m[0].length
   }
-  const rest = text.slice(lastIndex)
-  if (rest.trim()) segments.push({ kind: "prose", text: rest })
+  prose += text.slice(lastIndex)
+  if (prose.trim()) segments.push({ kind: "prose", text: prose })
   return segments
 }
 

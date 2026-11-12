@@ -39,6 +39,14 @@ test("a tick is staged until a send reports it, and unticking a reported one sta
   assert.deepEqual(shown(steps, [tick(SIGN_IN, null)]), [[SIGN_IN, false, false]], "ticked and unticked before anyone heard: nothing to say")
 })
 
+test("every box one send reported carries that send's instant, and a report the worker has been re-listed past carries none", () => {
+  const steps = foldHumanSteps(foldHumanSteps([], items(SIGN_IN, APPROVE), 10), items(MERGE, APPROVE), 20)
+  const view = humanTodoView(steps, [tick(SIGN_IN, 15, 30), tick(APPROVE, 25, 30), tick(MERGE, 26)])
+  assert.deepEqual(view.map((todo) => [todo.text, todo.reportedAt]), [[SIGN_IN, 30], [APPROVE, 30], [MERGE, undefined]], "the send at 30 carried the box from the earlier rest along with this one's")
+  const relisted = foldHumanSteps(steps, items(SIGN_IN), 40)
+  assert.equal(humanTodoView(relisted, [tick(SIGN_IN, 15, 30)])[0].reportedAt, undefined, "listed again after the report: that report no longer stands")
+})
+
 test("listing a step the worker heard was done reopens it, and a tick it never heard survives the re-post", () => {
   const relisted = foldHumanSteps(foldHumanSteps([], items(SIGN_IN), 10), items(SIGN_IN), 30)
   assert.deepEqual(shown(relisted, [tick(SIGN_IN, 15, 20)]), [[SIGN_IN, false, false]], "the sign-in did not take")

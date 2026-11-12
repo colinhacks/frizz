@@ -85,3 +85,35 @@ test("a reply after the worker spoke again answers that later rest, never the ea
   ].map((m) => ({ kind: undefined, ...m })) as Parameters<typeof stepsDoneReplies>[0]
   assert.deepEqual([...stepsDoneReplies(messages)], [])
 })
+
+test("a reply the worker took in mid-turn answers the rest it was sent to, below whatever the worker did first", () => {
+  // The nub thread of 2026-11-11, as its transcript projects: a shell finished 14ms before the human sent
+  // "Done", the worker woke and made a tool call, and the reply was drawn where the worker took it in.
+  const at = (time: string) => `2026-11-12T${time}Z`
+  const messages = [
+    { role: "assistant", text: `Building it.\n\n${STEPS}`, at: at("06:45:16.545") }, // 0 — the first rest
+    { role: "assistant", text: `Partway there.\n\n${STEPS}`, at: at("06:57:11.070") }, // 1 — the rest the human answered
+    { role: "assistant", kind: "event", text: "Agent rested", at: at("06:57:11.070") },
+    { role: "assistant", kind: "event", text: "Background task «Starting the second sign-in» finished", at: at("06:58:11.560") },
+    { role: "assistant", text: "", at: at("06:58:15.513") }, // a tool call, made before the worker took the reply in
+    { role: "user", text: "Done", at: at("06:58:11.574") },
+    { role: "assistant", text: "Checked the route; merging now.", at: at("06:58:51.950") },
+  ].map((m) => ({ kind: undefined, ...m })) as Parameters<typeof stepsDoneReplies>[0]
+  assert.deepEqual([...stepsDoneReplies(messages)], [[1, "all"]])
+})
+
+test("what the worker said after the reply was sent never takes it, and what it said before still does", () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 10, 12, 7, 0, s)).toISOString()
+  const afterSend = [
+    { role: "assistant", text: `Built.\n\n${STEPS}`, at: at(0) },
+    { role: "assistant", text: "The build finished; checking the record.", at: at(20) },
+    { role: "user", text: "Done", at: at(10) },
+  ].map((m) => ({ kind: undefined, ...m })) as Parameters<typeof stepsDoneReplies>[0]
+  assert.deepEqual([...stepsDoneReplies(afterSend)], [[0, "all"]], "written after the send: the human never saw it")
+  const beforeSend = [
+    { role: "assistant", text: `Built.\n\n${STEPS}`, at: at(0) },
+    { role: "assistant", text: "Still waiting on the DNS record.", at: at(5) },
+    { role: "user", text: "Done", at: at(10) },
+  ].map((m) => ({ kind: undefined, ...m })) as Parameters<typeof stepsDoneReplies>[0]
+  assert.deepEqual([...stepsDoneReplies(beforeSend)], [], "written before it: the reply answers that, not the steps")
+})

@@ -1350,7 +1350,8 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
   const stated = fence ?? (thread?.lastFence?.kind === "awaiting" ? thread.lastFence : undefined)
   const hints = stated?.hints ?? NO_HINTS
   // `steps:` — the fence is waiting on the HUMAN to perform these (2026-10-03). Drawn under the prose on
-  // every surface; the verbs that answer them only while the thread rests on them (restingOnSteps).
+  // every surface; the whole list and its verbs while the thread rests on them (restingOnSteps), and after
+  // that each step's box for as long as the list still owes it (StepsList).
   const steps = awaitingSteps(hints)
   const title = awaitingFenceTitle(hints)
   const stepsLive = thread !== undefined && restingOnSteps(thread, steps)

@@ -8,14 +8,17 @@
 //
 // Three shapes of it live here: the resting card's (LiveSteps), the flat one every other surface lists
 // (HumanTodoList: the panel over the prompt box, the full-screen rail, the phone's ⋯ sheet), and the
-// settled card's record of one past rest, whose boxes are not controls (StepsList).
-import { useContext, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react"
+// settled card's record of one past rest (StepsList), whose boxes are controls only for what the list
+// still owes.
+import { useContext, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react"
 import { Check } from "lucide-react"
 import type { AwaitingStep, HumanTodo } from "@frizz/shared"
+import { useThreadHumanTodos } from "../hooks.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { useEagerFollowUp } from "../lib/eagerComposerSubmission.ts"
 import { SendScopeContext, usePromptBoxSends } from "../lib/sendScope.tsx"
-import { tickHumanTodo, useHumanTodos, useStepsAnswer, type StepsReply } from "../lib/stepsAnswer.ts"
+import { sameStep, tickHumanTodo, useHumanTodos, useStepsAnswer, type StepsReply } from "../lib/stepsAnswer.ts"
+import { ThreadSlugContext } from "../lib/threadContexts.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { CARD_PRIMARY_ACTION, CardActions, WRAP_ANYWHERE } from "./TranscriptCard.tsx"
@@ -28,15 +31,55 @@ type TodoThread = { readonly id: string; readonly humanTodos?: readonly HumanTod
 // (`--md-step`), so the two read as one handoff in two pieces.
 const LIST_FRAME = `md-body ${WRAP_ANYWHERE} mt-[var(--md-step)] first:mt-0`
 
-/** The record of one past rest: the steps as that rest listed them, ticked as its reply said. */
+/** What the list still asks of the human: open, or ticked and not yet sent. */
+const owed = (todo: HumanTodo) => !todo.done || todo.staged
+
+/** The record of one past rest: the steps as that rest listed them, ticked as its reply said.
+ *
+ *  A STEP THE LIST STILL OWES STAYS A BOX TO TICK (2026-11-11, maintainer: "this 'Awaiting Human to Do'
+ *  list is showing up but isn't clickable, and I don't know why"). The card is a record because its rest is
+ *  over, but the list is the whole session's, and a rest ends on far more than the human's reply: a watch
+ *  firing, a timer, a message in words, a send that set the worker running again. Each of those left the
+ *  steps unticked on the list and drew them here as boxes that did nothing, beside a count over the prompt
+ *  box saying they were owed. So a step the list still owes is that list's item, ticked as on every other
+ *  surface. What was sent as done stays the record, ticked and inert, as does a step the list no longer
+ *  holds (the worker dropped it, or signed off).
+ *
+ *  AND THE CARD KEEPS EVERY ROW ITS REPLY SENT (2026-11-11, maintainer: "It seemed to remove the first
+ *  item of three from the rendered to-do list, despite the fact that all of them were checked"). The
+ *  resting card draws the whole list, so a box ticked at an earlier rest and not yet sent rides on it
+ *  beside this rest's own steps, and the human ticks and sends them together. Drawing only the fence's
+ *  own steps once the rest was over took that row away the moment Send was pressed. So the card the
+ *  reply answered (`done`) also draws, first, as the list orders them, every other box that one send
+ *  reported, which the list stamps with the same instant. */
 export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; done?: StepsReply | null }) {
-  return (
-    <div data-awaiting-steps className={LIST_FRAME}>
-      <ul className="frizz-todos">
-        {steps.map((step, i) => <RecordRow key={i} step={step} done={done === "all" || done?.has(step.text) === true} />)}
-      </ul>
-    </div>
+  // From the surface, not a prop: a settled card is drawn inside a memoized message, and the list moves
+  // without the message changing. Null in a tree that is no thread's own (a sub-agent's transcript).
+  const slug = useContext(ThreadSlugContext)
+  const listed = useThreadHumanTodos(slug)
+  const thread = useMemo(() => (slug && listed ? { id: slug, humanTodos: listed } : undefined), [slug, listed])
+  const todos = useHumanTodos(thread)
+  const own = steps.map((step) => ({ step, todo: todos.find((todo) => sameStep(todo.text, step.text)) }))
+  const rows = done ? [...sentAlongside(todos, own.map(({ todo }) => todo)), ...own] : own
+  const list = (onTicked?: (event: MouseEvent<HTMLButtonElement>) => void) => (
+    <ul className="frizz-todos">
+      {rows.map(({ step, todo }, i) => thread && todo && owed(todo)
+        ? <TodoRow key={i} slug={thread.id} todo={todo} onTicked={onTicked} />
+        : <RecordRow key={i} step={step} done={todo?.done === true || done === "all" || done?.has(step.text) === true} />)}
+    </ul>
   )
+  if (!thread || !rows.some(({ todo }) => todo && owed(todo))) return <div data-awaiting-steps className={LIST_FRAME}>{list()}</div>
+  return <TickFrame thread={thread}>{list}</TickFrame>
+}
+
+/** The boxes the send that reported this rest's own steps also reported: the newest report among them
+ *  names the send. */
+function sentAlongside(todos: readonly HumanTodo[], own: readonly (HumanTodo | undefined)[]): { step: AwaitingStep; todo: HumanTodo }[] {
+  const sent = Math.max(...own.map((todo) => todo?.reportedAt ?? Number.NEGATIVE_INFINITY))
+  if (!Number.isFinite(sent)) return []
+  return todos
+    .filter((todo) => todo.reportedAt === sent && !own.some((mine) => mine?.id === todo.id))
+    .map((todo) => ({ step: { text: todo.text, ...(todo.body ? { body: todo.body } : {}) }, todo }))
 }
 
 // A STEP'S BODY (2026-11-09, maintainer: "a full Markdown body that renders underneath each item"), in the
@@ -123,14 +166,50 @@ export function LiveSteps({ thread, onReplied, onReplyFailed }: {
   onReplyFailed?: () => void
 }) {
   const todos = useHumanTodos(thread)
+  const [showEarlier, setShowEarlier] = useState(false)
+  const earlier = todos.filter((todo) => !owed(todo))
+  const current = todos.filter(owed)
+  // The server hands the steps over with the fence, so this is only a server older than the list.
+  if (todos.length === 0) return null
+  return (
+    <TickFrame thread={thread} onReplied={onReplied} onReplyFailed={onReplyFailed}>
+      {(onTicked) => (
+        <>
+          {earlier.length > 0 && (
+            <button
+              type="button"
+              data-todos-earlier
+              aria-expanded={showEarlier}
+              onClick={() => setShowEarlier((shown) => !shown)}
+              onMouseDown={(event) => event.preventDefault()}
+              className="mb-2 block rounded text-[12px] leading-[18px] text-muted-70 outline-none hover:text-fg/85 focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+            >
+              {showEarlier ? "Hide completed" : `Show ${earlier.length} completed`}
+            </button>
+          )}
+          <ul className="frizz-todos">
+            {showEarlier && earlier.map((todo) => <TodoRow key={todo.id} slug={thread.id} todo={todo} onTicked={onTicked} />)}
+            {current.map((todo) => <TodoRow key={todo.id} slug={thread.id} todo={todo} onTicked={onTicked} />)}
+          </ul>
+        </>
+      )}
+    </TickFrame>
+  )
+}
+
+/** A list whose boxes answer: Enter on a ticked box sends, and with no prompt box in reach the list draws
+ *  its own Send. The resting card's and a settled card's, which differ only in which rows they hold. */
+function TickFrame({ thread, onReplied, onReplyFailed, children }: {
+  thread: TodoThread
+  onReplied?: () => void
+  onReplyFailed?: () => void
+  children: (onTicked: (event: MouseEvent<HTMLButtonElement>) => void) => ReactNode
+}) {
   const { staged } = useStepsAnswer(thread)
   const sendScope = useContext(SendScopeContext)
   const promptBoxSends = usePromptBoxSends()
   const sendAlone = useSendAlone(thread, onReplied, onReplyFailed)
   const frame = useRef<HTMLDivElement>(null)
-  const [showEarlier, setShowEarlier] = useState(false)
-  const earlier = todos.filter((todo) => todo.done && !todo.staged)
-  const current = todos.filter((todo) => !todo.done || todo.staged)
 
   // ENTER ON A TICKED BOX IS THE SURFACE'S SEND, as on a ticked option. Enter on an open box keeps the
   // button's own activation and ticks it, and a link keeps its own Enter.
@@ -158,27 +237,10 @@ export function LiveSteps({ thread, onReplied, onReplyFailed }: {
     const active = document.activeElement
     if (active !== event.currentTarget && !isTextEntry(active)) frame.current?.focus()
   }
-  // The server hands the steps over with the fence, so this is only a server older than the list.
-  if (todos.length === 0) return null
   return (
     <>
       <div ref={frame} data-awaiting-steps tabIndex={-1} onKeyDown={onKeyDown} className={`${LIST_FRAME} outline-none`}>
-        {earlier.length > 0 && (
-          <button
-            type="button"
-            data-todos-earlier
-            aria-expanded={showEarlier}
-            onClick={() => setShowEarlier((shown) => !shown)}
-            onMouseDown={(event) => event.preventDefault()}
-            className="mb-2 block rounded text-[12px] leading-[18px] text-muted-70 outline-none hover:text-fg/85 focus-visible:ring-1 focus-visible:ring-focus-ink-60"
-          >
-            {showEarlier ? "Hide completed" : `Show ${earlier.length} completed`}
-          </button>
-        )}
-        <ul className="frizz-todos">
-          {showEarlier && earlier.map((todo) => <TodoRow key={todo.id} slug={thread.id} todo={todo} onTicked={onTicked} />)}
-          {current.map((todo) => <TodoRow key={todo.id} slug={thread.id} todo={todo} onTicked={onTicked} />)}
-        </ul>
+        {children(onTicked)}
       </div>
       {!promptBoxSends && <SendBar staged={staged} send={sendAlone} />}
     </>
