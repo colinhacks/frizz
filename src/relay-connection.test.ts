@@ -386,3 +386,28 @@ test("one connection can only open so much, and past that each new one is refuse
     server.close();
   }
 });
+
+test("the relay closing a current board for a reason is said once, and an ordinary drop says nothing more", async () => {
+  // Until 2026-11-12 a board whose name moved to another key, or whose identity was in use elsewhere, only
+  // logged "the relay connection closed" and kept retrying (security review 2, findings 4 and 18).
+  const identity = await generateClaimIdentity();
+  const h = harness();
+  const conn = await h.start(identity);
+  try {
+    h.sockets[0]!.fire("open");
+    h.sockets[0]!.fire("close", { code: 4003, reason: "this name now belongs to another key" });
+    assert.deepEqual(h.status.filter((s) => s.startsWith("displaced")), ["displaced:the Frizz relay closed this board's connection because its name now belongs to another key"]);
+    h.timers[h.timers.length - 1]!();
+    const second = await h.socketAt(1);
+    second.fire("open");
+    second.fire("close", { code: 1000, reason: "replaced by a newer connection" });
+    assert.equal(h.status.filter((s) => s.startsWith("displaced")).length, 2);
+    assert.match(h.status.filter((s) => s.startsWith("displaced"))[1]!, /another connection signed with this machine's identity took the name over/);
+    h.timers[h.timers.length - 1]!();
+    const third = await h.socketAt(2);
+    third.fire("open");
+    third.fire("close", { code: 1006 });
+    third.fire("error");
+    assert.equal(h.status.filter((s) => s.startsWith("displaced")).length, 2, "the control: a plain drop is not news");
+  } finally { conn.stop(); }
+});

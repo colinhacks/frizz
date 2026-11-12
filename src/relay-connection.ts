@@ -35,7 +35,11 @@ export interface RelayConnectionOptions {
   publicOrigin: string;
   /** Injected so a test can drive this without a real relay. */
   socketFactory?: (url: string) => RelaySocket;
-  onStatus?: (status: "connected" | "disconnected" | "retrying", detail?: string) => void;
+  /**
+   * `displaced` is the relay closing this board's socket for a reason the operator should hear about once:
+   * the name now belongs to another key, or another connection with this key took it over.
+   */
+  onStatus?: (status: "connected" | "disconnected" | "retrying" | "displaced", detail?: string) => void;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -49,7 +53,7 @@ export interface RelaySocket {
   close(): void;
   addEventListener(type: "open", listener: () => void): void;
   addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
-  addEventListener(type: "close", listener: () => void): void;
+  addEventListener(type: "close", listener: (event?: { code?: number; reason?: unknown }) => void): void;
   addEventListener(type: "error", listener: (event: unknown) => void): void;
 }
 
@@ -295,8 +299,17 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
       }
     });
 
-    const dropped = () => {
+    const dropped = (event?: { code?: number; reason?: unknown }) => {
       if (socket !== next) return; // a socket we already replaced
+      // The relay names why it closed a board that is still current (packages/relay/src/worker.ts), and
+      // both reasons are news: nothing else tells the operator their board stopped serving its name.
+      const displaced =
+        event?.code === 4003
+          ? "the Frizz relay closed this board's connection because its name now belongs to another key"
+          : String(event?.reason ?? "") === "replaced by a newer connection"
+            ? "another connection signed with this machine's identity took the name over. If no other Frizz runs with this identity, its key may have been copied"
+            : null;
+      if (displaced) options.onStatus?.("displaced", displaced);
       if (settled !== undefined) { clearTimer(settled); settled = undefined; }
       clearKeepalive();
       socket = null;
@@ -308,8 +321,8 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
       options.onStatus?.("disconnected");
       scheduleRetry("the relay connection closed");
     };
-    next.addEventListener("close", dropped);
-    next.addEventListener("error", dropped);
+    next.addEventListener("close", (event) => dropped(event));
+    next.addEventListener("error", () => dropped());
   };
 
   void open();

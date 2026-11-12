@@ -22,6 +22,11 @@ interface DurableObjectNamespace {
 
 interface DurableObjectState {
   readonly id: DurableObjectId
+  /** The object's own storage. A call holds the input gate, so no other event interleaves with it. */
+  readonly storage: {
+    get<T = unknown>(key: string): Promise<T | undefined>
+    put(key: string, value: unknown): Promise<void>
+  }
   /**
    * The HIBERNATION API. A socket accepted this way survives the request that opened it and survives
    * the object being evicted; one accepted with `WebSocket.accept()` does neither, and production

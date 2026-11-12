@@ -25,6 +25,11 @@ zone_name = "frizz.sh"
 [vars]
 FRIZZ_ZONE = "frizz.sh"
 
+# Every request here carries a session cookie, and a connect URL carries a board's handshake. Off in the
+# file, as the registrar's is, so an upload never turns request logging on; workers-drift alarms if it is.
+[observability]
+enabled = false
+
 # One Durable Object per claimed name: the only place in Workers where a visitor's request and that
 # board's live socket can reliably meet. SQLite-backed, which is what makes it available without a
 # paid plan.

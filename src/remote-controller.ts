@@ -121,7 +121,10 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
           options.say(message);
         }, undefined, forgetSessions);
       }
-      transport = await startRelay(next, await options.host.relayListener(), home, (message) => options.log.info("relay", message));
+      transport = await startRelay(next, await options.host.relayListener(), home, (message) => options.log.info("relay", message), (message) => {
+        options.log.warn("relay", message);
+        options.say(message);
+      });
       keepLease(next);
       options.log.info("relay", `serving ${next.hostname} through the Frizz relay, ${next.relayAccess ?? "full"} access`);
       return;

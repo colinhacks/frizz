@@ -541,6 +541,8 @@ export async function startRelay(
   port: number,
   home = homedir(),
   onStatus?: (message: string) => void,
+  /** For what the operator must hear, not only the log: the relay closed this board for a reason. */
+  onWarning?: (message: string) => void,
 ): Promise<CloudTransport> {
   const identity = await loadOrCreateClaimIdentity(home);
   const origin = `https://${config.hostname}`;
@@ -551,11 +553,12 @@ export async function startRelay(
     relayOrigin: origin,
     boardOrigin: `http://127.0.0.1:${port}`,
     publicOrigin: origin,
-    ...(onStatus
+    ...(onStatus || onWarning
       ? {
           onStatus: (status, detail) => {
-            if (status === "connected") onStatus(`connected to the Frizz relay for ${config.hostname}`);
-            else if (status === "retrying") onStatus(`relay: ${detail ?? "reconnecting"}`);
+            if (status === "connected") onStatus?.(`connected to the Frizz relay for ${config.hostname}`);
+            else if (status === "retrying") onStatus?.(`relay: ${detail ?? "reconnecting"}`);
+            else if (status === "displaced") (onWarning ?? onStatus)?.(`${config.hostname}: ${detail}`);
           },
         }
       : {}),

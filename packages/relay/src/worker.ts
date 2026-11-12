@@ -6,6 +6,7 @@ import {
   type RelayHandshake,
 } from "@frizz/shared"
 import { BoardSocket } from "./board-socket.ts"
+import { headersForBoard, headersForVisitor, ISSUED_HEADER, keyTagOf, OWNER_HEADER } from "./visitor-headers.ts"
 
 /**
  * The relay: one wildcard hostname in front of every board.
@@ -41,6 +42,48 @@ export interface RelayEnv {
 
 /** How long a handshake may sit before the relay stops believing it. Matches the claim protocol. */
 const HANDSHAKE_MAX_AGE_MS = 5 * 60_000
+
+/**
+ * The largest request body a visitor may send a board through the relay. A little over the largest body a
+ * board accepts at all (an attachment, ATTACHMENT_MAX_BASE64_CHARS plus its envelope), so it refuses
+ * nothing a board would take. Without it a stranger who knew the name had the Durable Object read a body of
+ * any size into memory, and the board decode it in one frame, before the board was asked about a session:
+ * 96 MB held the object for 43 seconds on local workerd (security review 2, finding 10).
+ */
+export const RELAY_MAX_VISITOR_BODY = 26 * 1024 * 1024
+
+/** The answer for a body past RELAY_MAX_VISITOR_BODY. */
+const tooLarge = () =>
+  new Response("That request is larger than a Frizz board accepts.", {
+    status: 413,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+  })
+
+/** The request body, or null once it passes `limit` bytes; the rest is never read. */
+async function readAtMost(request: Request, limit: number): Promise<Uint8Array | null> {
+  if (Number(request.headers.get("content-length") ?? "0") > limit) return null
+  if (!request.body) return new Uint8Array(0)
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const next = await reader.read()
+    if (next.done) break
+    size += next.value.byteLength
+    if (size > limit) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(next.value)
+  }
+  const joined = new Uint8Array(size)
+  let at = 0
+  for (const chunk of chunks) {
+    joined.set(chunk, at)
+    at += chunk.byteLength
+  }
+  return joined
+}
 
 /** The label to the left of the zone, or null when the host is not one of ours. */
 export function boardNameFor(hostname: string, zone: string): string | null {
@@ -136,7 +179,12 @@ interface SocketRole {
   role: "board" | "visitor"
   /** The nested-session id, for a visitor. */
   id?: string
+  /** The key a board proved itself with, so a woken object still knows whose board it holds. */
+  pubkey?: string
 }
+
+/** Where the Durable Object keeps the newest handshake it accepted from a key (`Board.fetch`). */
+const handshakeKey = (pubkey: string) => `handshake-issued:${pubkey}`
 
 export class Board {
   private readonly relay = new BoardSocket({
@@ -151,6 +199,14 @@ export class Board {
    */
   private readonly adapters = new WeakMap<WorkerWebSocket, { send: (data: string) => void; close: (code?: number, reason?: string) => void }>()
   private restored = false
+  /**
+   * The board socket attached now, and the key it proved itself with. A name can change keys while its
+   * board stays connected (a lapse and a new claim, or an account taking its name back), and the relay
+   * checks the key only when a board dials in, so every visitor request compares this with the owner the
+   * Worker just read, and a board whose key no longer owns the name is closed before it is asked anything.
+   * Until 2026-11-12 the old board kept answering, and was handed the next visitor's session cookie.
+   */
+  private board: { ws: WorkerWebSocket; pubkey: string | null } | null = null
 
   private readonly state: DurableObjectState
 
@@ -195,8 +251,10 @@ export class Board {
     this.restored = true
     for (const ws of this.state.getWebSockets()) {
       const role = this.roleOf(ws)
-      if (role?.role === "board") this.relay.attach(this.adapterFor(ws))
-      else {
+      if (role?.role === "board") {
+        this.relay.attach(this.adapterFor(ws))
+        this.board = { ws, pubkey: role.pubkey ?? null }
+      } else {
         try {
           ws.close(1012, "the relay restarted")
         } catch {
@@ -218,7 +276,10 @@ export class Board {
   webSocketClose(ws: WorkerWebSocket): void {
     this.restore()
     const role = this.roleOf(ws)
-    if (role?.role === "board") this.relay.detach(this.adapterFor(ws))
+    if (role?.role === "board") {
+      this.relay.detach(this.adapterFor(ws))
+      if (this.board?.ws === ws) this.board = null
+    }
     else if (role?.role === "visitor" && role.id) this.relay.closeWebSocket(role.id)
   }
 
@@ -226,12 +287,43 @@ export class Board {
     this.webSocketClose(ws)
   }
 
+  /**
+   * Close the attached board if its key is not the name's owner now. A board attached before 2026-11-12
+   * carries no key and is closed too, once: it reconnects within a second and proves itself again.
+   */
+  private dropBoardUnlessOwner(owner: string | null): void {
+    const board = this.board
+    if (!board || (owner !== null && board.pubkey === owner)) return
+    this.board = null
+    this.relay.detach(this.adapterFor(board.ws))
+    try {
+      board.ws.close(4003, "this name now belongs to another key")
+    } catch {
+      // Already gone.
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     this.restore()
     const url = new URL(request.url)
+    // Set by the Worker on every request it forwards, after reading the registry: never a visitor's.
+    const owner = request.headers.get(OWNER_HEADER)
 
-    // The board dialling in.
+    // The board dialling in. The Worker has checked its handshake against the owner already.
     if (url.pathname === "/_relay/connect" && request.headers.get("upgrade") === "websocket") {
+      if (!owner) return new Response("handshake rejected", { status: 401 })
+      // A HANDSHAKE IS SPENT ON USE (2026-11-12). It rides in the connect URL and is good for five minutes, so
+      // anyone who saw one URL (a TLS-inspecting proxy, a log of request URLs) could connect as the board as
+      // often as they liked, each time replacing it, and answer its visitors: one captured URL answered 74 of
+      // a signed-in phone's 75 requests on local workerd (security review 2, finding 4). Each connect signs a
+      // fresh one (connectRelay), so only a strictly newer one than the last accepted from that key is taken.
+      // Storage calls hold the object's input gate, so two connects with one handshake cannot both pass.
+      const issuedAt = Number(request.headers.get(ISSUED_HEADER))
+      if (!Number.isFinite(issuedAt)) return new Response("handshake rejected", { status: 401 })
+      const last = (await this.state.storage.get<number>(handshakeKey(owner))) ?? 0
+      if (issuedAt <= last) return new Response("handshake already used", { status: 401 })
+      await this.state.storage.put(handshakeKey(owner), issuedAt)
+
       const pair = new WebSocketPair()
       const server = pair[1]!
       // HIBERNATION, not `accept()`. A socket accepted the ordinary way is bound to the request that
@@ -239,10 +331,14 @@ export class Board {
       // lost" and the board reconnected about twice a second, forever. `wrangler dev` does not
       // reproduce it, which is why the whole local suite stayed green through it.
       this.state.acceptWebSocket(server, ["board"])
-      server.serializeAttachment({ role: "board" } satisfies SocketRole)
+      server.serializeAttachment({ role: "board", pubkey: owner } satisfies SocketRole)
       this.relay.attach(this.adapterFor(server))
+      this.board = { ws: server, pubkey: owner }
       return new Response(null, { status: 101, webSocket: pair[0]! })
     }
+
+    this.dropBoardUnlessOwner(owner)
+    const keyTag = keyTagOf(this.board?.pubkey ?? "")
 
     // A visitor's WebSocket — a terminal. The board opens its own end locally and the two are linked
     // frame by frame. Without this a relayed board renders and streams but cannot be worked in, which
@@ -252,7 +348,7 @@ export class Board {
       const pair = new WebSocketPair()
       const visitor = pair[1]!
       this.state.acceptWebSocket(visitor, ["visitor"])
-      const id = await this.relay.openWebSocket({ url: url.toString(), headers: [...request.headers] }, this.adapterFor(visitor))
+      const id = await this.relay.openWebSocket({ url: url.toString(), headers: headersForBoard([...request.headers], keyTag) }, this.adapterFor(visitor))
       if (!id) {
         // Refuse the upgrade outright rather than accepting a socket that will never carry anything.
         // A terminal pane that opens and stays silent is far harder to diagnose than one that fails.
@@ -277,7 +373,8 @@ export class Board {
       })
     }
 
-    const body = request.body ? new Uint8Array(await request.arrayBuffer()) : undefined
+    const body = await readAtMost(request, RELAY_MAX_VISITOR_BODY)
+    if (body === null) return tooLarge()
     // A stream, so an SSE response reaches the visitor as it is produced rather than when it ends —
     // which for the board's event feed is never.
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
@@ -293,8 +390,8 @@ export class Board {
         {
           method: request.method,
           url: url.toString(),
-          headers: [...request.headers],
-          ...(body && body.byteLength > 0 ? { body } : {}),
+          headers: headersForBoard([...request.headers], keyTag),
+          ...(body.byteLength > 0 ? { body } : {}),
         },
         {
           push: (chunk) => {
@@ -313,7 +410,7 @@ export class Board {
       // stream open, and the request loading, forever.
       if (NULL_BODY_STATUSES.has(response.status) || (response.end && response.body === null)) {
         void writer.close().catch(() => {})
-        return new Response(null, visitorResponseInit(response.status, response.headers))
+        return new Response(null, visitorResponseInit(response.status, headersForVisitor(response.headers, keyTag)))
       }
       // An inline body is the whole response, so write it and close. Otherwise the writer stays open
       // for chunks still to come — for the board's event feed, that is the normal case and it never
@@ -321,7 +418,7 @@ export class Board {
       if (response.body !== null) {
         void writer.write(response.body).then(() => writer.close().catch(() => {}))
       }
-      return new Response(readable, visitorResponseInit(response.status, response.headers))
+      return new Response(readable, visitorResponseInit(response.status, headersForVisitor(response.headers, keyTag)))
     } catch (error) {
       void writer.close().catch(() => {})
       return new Response(`The board did not answer: ${error instanceof Error ? error.message : error}`, {
@@ -345,6 +442,14 @@ export default {
       })
     }
 
+    // NO SERVICE WORKER, EVER. Frizz registers none, and one registered by whoever served a name before
+    // would sit between the next holder's page and its board, and see its sign-in link first. A browser asks
+    // for a worker's script with this header, so refusing it here keeps any board from installing one.
+    if (request.headers.has("service-worker")) {
+      return new Response("Frizz boards do not register service workers.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } })
+    }
+    if (Number(request.headers.get("content-length") ?? "0") > RELAY_MAX_VISITOR_BODY) return tooLarge()
+
     const owner = await ownerPubkeyFor(env, name)
     if (!owner) {
       return new Response("No Frizz board has claimed this name.", {
@@ -352,6 +457,11 @@ export default {
         headers: { "content-type": "text/plain; charset=utf-8" },
       })
     }
+    // The owner rides to the Durable Object on every request, so it can drop a board whose key it no longer
+    // is (Board.board). Set here, after anything a visitor sent under these names is gone.
+    const forwarded = new Headers(request.headers)
+    forwarded.delete(ISSUED_HEADER)
+    forwarded.set(OWNER_HEADER, owner)
 
     // A board dialling in proves itself BEFORE reaching the Durable Object, so an unproven socket
     // never occupies a name's object at all.
@@ -369,8 +479,9 @@ export default {
       if ((handshake as RelayHandshake).name !== name) {
         return new Response("handshake is for a different name", { status: 401 })
       }
+      forwarded.set(ISSUED_HEADER, String((handshake as RelayHandshake).issuedAt))
     }
 
-    return env.BOARD.get(env.BOARD.idFromName(name)).fetch(request)
+    return env.BOARD.get(env.BOARD.idFromName(name)).fetch(new Request(request, { headers: forwarded }))
   },
 }
