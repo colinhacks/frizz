@@ -128,6 +128,8 @@ export interface NormalizedTail {
   humanSteps?: HumanStep[]
   // When Frizz last delivered a ```question fence correction — see FoldState.questionCorrectedAt.
   questionCorrectedAt?: string
+  /** When Frizz last delivered a correction asking for a fence REPAIR (tailer carriesRepairCorrection). */
+  repairAskedAt?: string
   lastUserText?: string // the newest drawn user turn's text, where the backend's fold keeps it (the normalized one)
   // The wakes that REACHED the worker: the delivery id of every wake token the transcript carries, newest
   // last. What the scheduler confirms a sent wake by, on every backend (FoldState.wakeTokens).
@@ -141,6 +143,12 @@ export interface NormalizedTail {
   // nothing in it is actionable. Optional (absent ⇒ false) because it is an additive observation, not
   // a new required fact about a session; see scheduler.ts SOURCE 5.
   lastAssistantAllDone?: boolean
+  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone): a rest with
+   *  nothing new, which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
+  lastAssistantFenceAlone?: boolean
+  /** The latest assistant text is question fences and nothing else, bar an empty signal fence (tailer
+   *  questionFencesOnly). Absent on a fold cached before 2026-11-11. */
+  lastAssistantFencesOnly?: boolean
   // Live sub-agents. Claude fills these from its Agent dispatches (the tailer's trackDispatches); codex
   // from its `spawn_agent` children (codex-subagents.ts). Both land in the same TailState maps.
   subAgents: SubAgentView[]
@@ -255,6 +263,8 @@ export interface FoldState {
   // inside a merged delivery). Every fault in a message older than this has been told to the worker, so
   // SOURCE 14 reports only the ones after it.
   questionCorrectedAt?: string
+  /** When Frizz last delivered a correction asking for a fence REPAIR (tailer carriesRepairCorrection). */
+  repairAskedAt?: string
   lastUserText?: string // exact text of that same turn when the backend records it — a wake's carries its delivery token
   // THE WAKES THE WORKER WAS HANDED: the delivery id out of each `<!-- frizz-wake:<id> -->` token in a
   // user turn or a mid-turn delivery, newest last, bounded (tailer.ts noteWakeTokens). Both folds fill
@@ -289,6 +299,12 @@ export interface FoldState {
   // cleared on exactly the same lifecycle as the question flag above: set per assistant text, wiped by
   // any user record — so the next bump the operator sends re-opens the loop by itself.
   lastAssistantAllDone: boolean
+  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone): a rest with
+   *  nothing new, which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
+  lastAssistantFenceAlone?: boolean
+  /** The latest assistant text is question fences and nothing else, bar an empty signal fence (tailer
+   *  questionFencesOnly). Absent on a fold cached before 2026-11-11. */
+  lastAssistantFencesOnly?: boolean
   // Runtime provider-auth rejection (claude-auth plan, Slice A). Set when the backend records a
   // SYNTHETIC auth-error response (Claude: isApiErrorMessage + 401/login text) — never from user or
   // ordinary assistant content — and cleared by the next real assistant text (a genuine response

@@ -1231,8 +1231,9 @@ async function activity() {
     `\n\n${questions.length} question${questions.length === 1 ? "" : "s"} still owed an answer:\n\n` +
     questions.map((q) => `  question: ${questionId(q)}\n    ${String(q?.spec?.question ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join("\n") +
     "\n\nEach one blocks `done` until it is answered or withdrawn — `frizzctl unask <id>` the ones since " +
-    "decided. Its card stays where you asked it, and a later rest owes it nothing; a rest that still needs " +
-    "the answer writes a ```question fence carrying its `id:` alone, which draws the card there."
+    "decided. Its card stays where you asked it: a rest on the fence alone leaves it there, and a NEW " +
+    "sign-off names every open question with a ```question fence carrying its `id:` alone, under the " +
+    "paragraph it belongs to, which draws the card there."
   )
   if (!items.length) {
     if (questions.length > 0) {
