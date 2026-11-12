@@ -1,6 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { homedir } from "node:os"
+import { query } from "@frizz/claude-agent-sdk-runtime"
+import { parseClaudeWireId } from "@frizz/shared"
+import { resolveClaudeLaunchModel } from "./claude-context-window.ts"
 import { CLAUDE_MODELS_FALLBACK, probeClaudeModels, resolveClaudeModels } from "./claude-models.ts"
 import { CLAUDE_CODE_VERSION, provisionedBinary, runtimesRoot } from "../runtimes.ts"
 
@@ -63,6 +66,31 @@ test("a family is labelled by the row named for its alias, because the alias is 
   assert.deepEqual(fable(REAL_2_1_321_FABLE), { alias: "fable", label: "Fable 5.2", resolvedModel: "claude-fable-5-2", edition: "5.2" })
 })
 
+// The REAL answer of `supportedModels()` on Claude Code 2.1.322 (2026-11-12) on a machine whose account
+// model list had not refreshed since 2026-10-05: a token-broker proxy gave Claude Code a placeholder
+// token, and the refresh, which skips `ANTHROPIC_BASE_URL`, got 401s. Fable is a frozen account row, with
+// no `fable` row beside it, while `--model fable` on the same binary started on `claude-fable-5-2`.
+const REAL_2_1_322_FROZEN_ACCOUNT = [
+  { value: "default", resolvedModel: "claude-sonnet-5-5", displayName: "Default (recommended)" },
+  { value: "sonnet", resolvedModel: "claude-sonnet-5-5", displayName: "Sonnet" },
+  { value: "claude-fable-5-1[1m]", resolvedModel: "claude-fable-5-1", displayName: "Fable" },
+  { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" },
+  { value: "haiku", resolvedModel: "claude-haiku-5-5", displayName: "Haiku" },
+]
+const RUNS_2_1_322 = { fable: "claude-fable-5-2", opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" }
+
+test("what the runtime says an alias runs outranks every row", () => {
+  const fable = (runs?: Parameters<typeof resolveClaudeModels>[1]) => resolveClaudeModels(REAL_2_1_322_FROZEN_ACCOUNT, runs).find((m) => m.alias === "fable")
+  assert.equal(fable()?.label, "Fable 5.1")
+  assert.deepEqual(fable(RUNS_2_1_322), { alias: "fable", label: "Fable 5.2", resolvedModel: "claude-fable-5-2", edition: "5.2" })
+  assert.equal(resolveClaudeModels(REAL_2_1_319_FABLE, { fable: "claude-fable-5-1" }).find((m) => m.alias === "fable")?.label, "Fable 5.1")
+})
+
+test("an answer naming another family, or nothing parseable, leaves the alias to its rows", () => {
+  const models = resolveClaudeModels(REAL_2_1_322_FROZEN_ACCOUNT, { fable: "claude-opus-5-5", opus: "", sonnet: "default" })
+  assert.deepEqual(models.map((m) => m.label), ["Fable 5.1", "Opus 5.5", "Sonnet 5.5", "Haiku 5.5"])
+})
+
 test("the 1M suffix on an alias row still names the alias", () => {
   const rows = [
     { value: "claude-opus-5-5", resolvedModel: "claude-opus-5-5" },
@@ -81,5 +109,19 @@ test("the pinned Claude Code resolves every alias to an edition", { skip: !provi
   for (const model of models) {
     assert.match(model.label, /^(Fable|Opus|Sonnet|Haiku) \d+(\.\d+)*$/, `${model.alias} resolved to "${model.label}"`)
     assert.ok(model.resolvedModel?.startsWith(`claude-${model.alias}-`), `${model.alias} → ${model.resolvedModel}`)
+  }
+  // The probe switches one runtime between aliases; a worker is LAUNCHED on one, with the model pair the
+  // spawn carries. Each has to land on the edition the picker names.
+  for (const model of models) {
+    const launch = resolveClaudeLaunchModel(model.alias)!
+    const q = query({
+      prompt: (async function* () { await new Promise<never>(() => {}) })(),
+      options: { cwd: homedir(), pathToClaudeCodeExecutable: bin, persistSession: false, maxTurns: 0, ...launch },
+    })
+    try {
+      assert.equal(parseClaudeWireId((await q.getContextUsage({ detail: "summary" })).model)?.resolvedModel, model.resolvedModel, `a worker launched on ${launch.model}`)
+    } finally {
+      q.close()
+    }
   }
 })

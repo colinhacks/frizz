@@ -288,9 +288,9 @@ try {
   // side is the launcher's own establishCloudConfig with the authorizer the R pane uses, reading a real
   // sealed credential from a throwaway home; the registrar side is the real githubVerifier, asking the
   // fake GitHub what the token is and what scopes it holds. The throwaway home has no keychain, so the
-  // seal's key is a file there and nothing asks the real keychain. Custom names are withdrawn for now
-  // (CUSTOM_NAMES_OFFERED in src/cloud.ts); the override turns the kept path back on for this process.
-  process.env.FRIZZ_CUSTOM_NAMES = "1";
+  // seal's key is a file there and nothing asks the real keychain. An operator's FRIZZ_CUSTOM_NAMES=0
+  // would withdraw custom names (CUSTOM_NAMES_OFFERED in src/cloud.ts), so it is cleared here.
+  delete process.env.FRIZZ_CUSTOM_NAMES;
   github.listen(0, "127.0.0.1");
   await once(github, "listening");
   const githubOrigin = `http://127.0.0.1:${github.address().port}`;

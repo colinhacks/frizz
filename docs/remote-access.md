@@ -2,7 +2,7 @@
 
 Frizz runs on localhost and has no login of its own. To reach a board from a phone or another machine, something in front of it carries the traffic, and Frizz gates the first visit with a single-use sign-in link.
 
-Press **R** in the terminal running Frizz. A walkthrough offers four ways to reach the board, checks what each needs, prints the commands, and remembers your choice — a plain `npx frizz` serves it from then on. **Off** in the same place goes back to localhost only.
+Press **R** in the terminal running Frizz. A walkthrough offers the ways to reach the board, checks what each needs, prints the commands, and remembers your choice — a plain `npx frizz` serves it from then on. **Off** in the same place goes back to localhost only.
 
 ```
   Reach this board from other devices
@@ -13,6 +13,7 @@ Press **R** in the terminal running Frizz. A walkthrough offers four ways to rea
 
   ❯ ✓ Off                 localhost only
       frizz.sh subdomain  a random address and a one-time QR code; no account
+      Custom subdomain    your GitHub username; needs Frizz's GitHub sign-in
       Cloudflare Tunnel   a domain on Cloudflare; cloudflared on this machine
       Tailscale           only devices on your tailnet
       Something else      any proxy or tunnel you run — tell Frizz its address
@@ -87,6 +88,20 @@ Your board stays on localhost and opens one outbound connection to a relay Frizz
 | **Ownership** | This machine's key proves ownership, with no account. Copy the key file to another machine to move the subdomain. |
 | **Key file** | The file is `identity.key`, in `~/Library/Application Support/Frizz` on macOS and `~/.local/state/frizz` on Linux. An older install keeps it in `~/.frizz`. |
 | **Renewal** | A running board renews it. A subdomain nobody runs for **30 days** is released, and someone else can claim it. |
+
+### Your GitHub username
+
+**Custom subdomain** claims `<username>.frizz.sh` for the GitHub account Frizz is signed in to (**Settings → GitHub** in the board). It takes only that account's own username, and the menu names it before anything is claimed.
+
+```
+  Claim colinhacks.frizz.sh?
+
+  It is your GitHub username, and tied to colinhacks, the account Frizz is signed in to …
+```
+
+- **What the registrar keeps.** It asks GitHub which account the sign-in belongs to, keeps the account's id, and drops the token. Renewals are signed by this machine's key and never go back to GitHub.
+- **Another machine.** A machine signed in to the same GitHub account can claim the name, and it moves there. The machine that held it stops serving it and says so in its terminal. If that wasn't you, revoke Frizz at [github.com/settings/apps/authorizations](https://github.com/settings/apps/authorizations), then press **R** and claim the name again.
+- **Lapse.** Like a random subdomain, a name nobody runs for 30 days is released.
 
 ### Terms
 

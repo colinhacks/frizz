@@ -27,9 +27,9 @@ import { connectRelay } from "./relay-connection.ts";
  * Three ways to have a hostname, told apart by the shape of the answer:
  *
  *   (empty)            -> CLAIM a private unguessable name on frizz.sh — no account, no sign-in
- *   colin              -> CLAIM `colin.frizz.sh` from the registrar, bound to your GitHub account
- *                         through Frizz's own GitHub sign-in (github-claim-identity.ts). PAUSED
- *                         while CUSTOM_NAMES_OFFERED is false: the answer is refused up front.
+ *   colinhacks         -> CLAIM `colinhacks.frizz.sh`, your own GitHub username, bound to that account
+ *                         through Frizz's own GitHub sign-in (github-claim-identity.ts). Refused up front
+ *                         while custom names are withdrawn (customNamesOffered).
  *   board.example.com  -> a tunnel you made yourself, which Frizz only runs
  *
  * The claimed path exists because creating a tunnel and its DNS record needs a zone-scoped Cloudflare
@@ -103,26 +103,28 @@ export function describeCloudConfig(config: CloudConfig): string {
 export const REGISTRAR_IS_LIVE = true;
 
 /**
- * Are CUSTOM names (`colin.frizz.sh`, bound to a GitHub account) offered?
+ * Are CUSTOM names (`colinhacks.frizz.sh`, bound to a GitHub account) offered?
  *
- * No, as of 2026-10-08. A claim proves its GitHub account through Frizz's own GitHub sign-in
- * (github-claim-identity.ts, since 2026-11-07), and the maintainer runs a name on his own board before a
- * release turns this on for everyone. While this is false the R pane does not list "Custom subdomain",
- * the prompt does not mention it, and a word answer refuses before GitHub or the registrar hears
- * anything. Private names, and every bring-your-own setup, are unaffected.
+ * Yes, since 2026-11-12. A claim proves its GitHub account through Frizz's own GitHub sign-in
+ * (github-claim-identity.ts), and the name is that account's own username. They were withdrawn from
+ * 2026-10-08 until the registrar and relay were hardened and deployed (plans/frizz-sh-claim-review-2026-11-11.md),
+ * and the maintainer ran `colinhacks.frizz.sh` on his own board in between.
  *
- * Flipping it to `true` brings the whole path back — nothing behind it was removed. A name already
- * claimed keeps renewing either way: a renewal is signed by the keypair and never touches GitHub
- * (resolveRunToken).
+ * Setting it back to `false` withdraws them again without removing anything: the R pane stops listing
+ * "Custom subdomain", the prompt stops mentioning it, and a word answer refuses before GitHub or the
+ * registrar hears anything. A name already claimed keeps renewing either way, because a renewal is
+ * signed by the keypair and never touches GitHub (resolveRunToken). Private names, and every
+ * bring-your-own setup, are unaffected.
  *
- * `FRIZZ_CUSTOM_NAMES=1` turns the offer on for one process, which is how the tests and
- * scripts/verify-claim-e2e.mjs keep driving the path while it is withdrawn. Read through
- * customNamesOffered, never directly.
+ * `FRIZZ_CUSTOM_NAMES=0` withdraws them for one process and `FRIZZ_CUSTOM_NAMES=1` offers them, which is
+ * how custom-names-paused.test.ts keeps the withdrawn path tested. Read through customNamesOffered,
+ * never directly.
  */
-export const CUSTOM_NAMES_OFFERED = false;
+export const CUSTOM_NAMES_OFFERED = true;
 
-/** CUSTOM_NAMES_OFFERED, or the `FRIZZ_CUSTOM_NAMES=1` override. */
+/** CUSTOM_NAMES_OFFERED, unless `FRIZZ_CUSTOM_NAMES` is exactly `0` or `1`. */
 export function customNamesOffered(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.FRIZZ_CUSTOM_NAMES === "0") return false;
   return CUSTOM_NAMES_OFFERED || env.FRIZZ_CUSTOM_NAMES === "1";
 }
 
@@ -177,7 +179,7 @@ export function zoneClaimLabel(hostname: string): string | null {
  * somebody else holds, or a registrar that cannot be reached on a first claim — because starting a
  * tunnel that nothing can reach is the failure this exists to end.
  *
- * While custom names are withdrawn (CUSTOM_NAMES_OFFERED), a saved custom label that still needs this
+ * While custom names are withdrawn (customNamesOffered), a saved custom label that still needs this
  * move refuses with a message saying so, rather than claiming again at launch. A relay
  * claim on a custom name is untouched: it returns above, and the caller renews it by keypair alone.
  */

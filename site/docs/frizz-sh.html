@@ -90,6 +90,14 @@ Scan to sign in on a phone. Single use, expires in 5 minutes. Press L later for 
           </tbody>
         </table>
 
+        <h2>Your GitHub username</h2>
+        <p>Choose <strong>Custom subdomain</strong> instead to claim <code>&lt;username&gt;.frizz.sh</code> for the GitHub account Frizz is signed in to (<strong>Settings → GitHub</strong> in the board). It takes only that account&#8217;s own username, and the menu names it before anything is claimed.</p>
+        <ul>
+          <li><strong>What the registrar keeps.</strong> It asks GitHub which account the sign-in belongs to, keeps the account&#8217;s id, and drops the token. Renewals are signed by your machine&#8217;s key and never go back to GitHub.</li>
+          <li><strong>Another machine.</strong> A machine signed in to the same GitHub account can claim the name, and it moves there. The machine that held it stops serving it and says so in its terminal. If that wasn&#8217;t you, revoke Frizz at <a href="https://github.com/settings/apps/authorizations">github.com/settings/apps/authorizations</a>, then press <kbd>R</kbd> and claim the name again.</li>
+          <li><strong>Lapse.</strong> Like a random subdomain, a name nobody runs for 30 days is released.</li>
+        </ul>
+
         <h2>Terms</h2>
         <ul>
           <li><strong>One per machine.</strong> Each machine key holds one subdomain.</li>

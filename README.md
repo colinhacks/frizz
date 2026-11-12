@@ -238,7 +238,7 @@ as a QR, or run --link from another shell.
 <details>
 <summary><b>Can I reach it from anywhere, not just my LAN?</b></summary>
 
-> Same answer: press **R** and pick a frizz.sh subdomain (random address, no account), a Cloudflare Tunnel, or Tailscale. (Custom frizz.sh subdomains are paused for now; a board that already holds one keeps it.) Each is reachable from anywhere the transport is — a frizz.sh subdomain and a Cloudflare Tunnel from the open internet, Tailscale from your own devices.
+> Same answer: press **R** and pick a frizz.sh subdomain (a random address with no account, or your GitHub username through Frizz's GitHub sign-in), a Cloudflare Tunnel, or Tailscale. Each is reachable from anywhere the transport is — a frizz.sh subdomain and a Cloudflare Tunnel from the open internet, Tailscale from your own devices.
 >
 > Frizz has no accounts, so the single-use sign-in link **is** the door: a phone that scans it gets a session; nobody else gets in. A session has full control of the board, apart from minting sign-in links and signing other devices out. On a frizz.sh subdomain you can limit it to reading the board and picking listed options on question cards ([what a remote session can do](docs/remote-access.md#what-a-remote-session-can-do)). Sessions are per device and can be listed and revoked with `npx frizz --sessions` and `npx frizz --sign-out`. Every project added or removed, thread started, message sent and question answered is recorded in `logs/audit.jsonl` under Frizz's data folder, with the session id of the device that did it and whether it came through that public address.
 

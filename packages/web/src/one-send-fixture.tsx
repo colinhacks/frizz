@@ -19,10 +19,14 @@ import "./styles.css"
 //                  ```question fences, answered through the fence controller, and one more question is a
 //                  registered row of the `ask` tool's — so all three kinds of staged answer ride one send.
 //                  Without it, both asks are ```question fences the server registered as rows.
+//   ?transcriptDelay=MS  the transcript answers MS late, as a slow server's does: the board's questions
+//                  draw at the bottom of the transcript until it lands, then move into the message that
+//                  asked them, which replaces their cards (questionPickEnter.e2e.test.ts).
 
 const SLUG = "one-send"
 const params = new URLSearchParams(location.search)
 const legacy = params.get("legacy") === "1"
+const transcriptDelay = Number(params.get("transcriptDelay") ?? 0)
 document.documentElement.dataset.font = "sans"
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
 
@@ -126,6 +130,7 @@ const originalFetch = window.fetch
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === "string" ? input : ((input as Request).url ?? input.toString()), location.origin)
   if (url.pathname === "/_frizz/rpc/threadTranscript" || url.pathname === "/_frizz/rpc/threadTranscriptEarlier") {
+    if (transcriptDelay > 0) await new Promise((resolve) => setTimeout(resolve, transcriptDelay))
     return json({ messages, transcriptKey: `${SLUG}-${legacy ? "legacy" : "fence"}`, hasEarlier: false, historyLoaded: true })
   }
   if (url.pathname === "/_frizz/rpc/threadSettledQuestions") return json({ questions: [] })
