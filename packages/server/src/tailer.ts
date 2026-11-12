@@ -9,7 +9,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingStepItems, DONE_FENCE_CORRECTION_LEAD, fenceWaitsOnHuman, isParkCorrection, SIGNOFF_CORRECTION_LEAD, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingStatus, awaitingStepItems, BURIED_ANSWERS_HEADER, DONE_FENCE_CORRECTION_LEAD, fenceWaitsOnHuman, isParkCorrection, SIGNOFF_CORRECTION_LEAD, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -1467,6 +1467,55 @@ export function signalFenceAlone(text: string | undefined): boolean {
   return signal !== undefined && norm.slice(0, signal.start).trim() === ""
 }
 
+/** The signal fence a message ends on, whitespace folded: what a later rest repeating it word for word
+ *  is held against (restatesSignOff). Undefined when the message signals with no fence. */
+export function signalFenceText(text: string | undefined): string | undefined {
+  if (typeof text !== "string") return undefined
+  const norm = text.replace(/\r\n/g, "\n")
+  const signal = signalFenceOf(norm)
+  return signal ? norm.slice(signal.start, signal.end).replace(/\s+/g, " ").trim() : undefined
+}
+
+/** Is this message the signal fence of the sign-off before it again, word for word, and nothing else?
+ *  `standing` is that sign-off's fence (signalFenceText). A worker woken by a wake that changes nothing
+ *  often rests by pasting its last fence back, steps and all (pullfrog-app, 2026-11-12: the same
+ *  to-do fence after a message from another thread). That is the fence alone in all but form: it says
+ *  nothing the sign-off before did not, so that sign-off stands (sign-offs.ts). Only a VERBATIM copy:
+ *  a fence that rewords its title or prose is something new. */
+export function restatesSignOff(text: string | undefined, standing: string | undefined): boolean {
+  if (standing === undefined || typeof text !== "string" || hasQuestionBlock(text)) return false
+  const norm = text.replace(/\r\n/g, "\n")
+  const signal = signalFenceOf(norm)
+  if (!signal || norm.slice(0, signal.start).trim() !== "") return false
+  return signalFenceText(norm) === standing
+}
+
+/** Does this message sign off for the human — a question, a done, or an awaiting fence that is not a
+ *  quiet park? The tailer's own reading of a rest, as sign-offs.ts readRestMessage reads it, minus the
+ *  bare rest, which a reminder decides later. */
+function signsOffWithFence(text: string): boolean {
+  if (hasQuestionBlock(text)) return true
+  const fence = parseSignalFence(text)
+  if (!fence) return false
+  if (fence.kind === "done") return true
+  const status = awaitingStatus(fence.hints)
+  return status !== "working" && status !== "watching"
+}
+
+/** Fold one assistant text into the two readings a rest takes from it: whether it says nothing new (the
+ *  fence alone, or the standing sign-off's fence again), and, when it is a new sign-off, its fence as the
+ *  one a later rest would have to repeat. */
+function noteAssistantSignOff(state: FoldState, text: string): void {
+  state.lastAssistantFenceAlone = signalFenceAlone(text) || restatesSignOff(text, state.signOffFence)
+  if (!state.lastAssistantFenceAlone && signsOffWithFence(text)) state.signOffFence = signalFenceText(text)
+}
+
+/** The human came in — typed, or answered a question — so the next sign-off answers them, and a fence it
+ *  repeats from before is a reply rather than a restatement. Frizz's own deliveries leave it standing. */
+function noteHumanTurnForSignOff(state: FoldState, text: string): void {
+  if (humanTypedMessagesIn(text).length > 0 || text.trimStart().startsWith(BURIED_ANSWERS_HEADER)) state.signOffFence = undefined
+}
+
 /** Is there nothing in this message but question fences and, at most, an empty signal fence? A message
  *  that only names questions, with no prose around them (scheduler SOURCE 18's re-listing). */
 export function questionFencesOnly(text: string | undefined): boolean {
@@ -2811,7 +2860,7 @@ export function applyRecord(state: TailState, rec: Record): void {
       // Same lifecycle for the stop-hook sentinel: it only means "nothing actionable" while it
       // is the FINAL word, so a later assistant text that omits it re-opens the loop by itself.
       state.lastAssistantAllDone = saysAllDone(raw)
-      state.lastAssistantFenceAlone = signalFenceAlone(raw)
+      noteAssistantSignOff(state, raw)
       state.lastAssistantFencesOnly = questionFencesOnly(raw)
       // Recompute the done/awaiting signal fence from THIS text — an assistant text with no fence
       // clears it (the fence only signals while it is the final message). Same lifecycle as the
@@ -2863,8 +2912,10 @@ export function applyRecord(state: TailState, rec: Record): void {
     // Whatever kind of turn this is, the worker now holds its text: a wake's token in it is that wake arriving.
     noteWakeTokens(state, userMessageText(rec.message?.content))
     // A tool result answers a call made in the same message, so that fence was never the thread's last word.
-    if (isRealUserMessage(rec.message?.content)) settleHumanSteps(state, userText)
-    else unstampHandoff(state)
+    if (isRealUserMessage(rec.message?.content)) {
+      settleHumanSteps(state, userText)
+      noteHumanTurnForSignOff(state, userText)
+    } else unstampHandoff(state)
     state.lastFence = undefined
     state.strayFence = undefined
     const humanSpoke = isHumanSpeaking(rec, userText, systemUserRec, compactSummaryRec)
@@ -2936,7 +2987,7 @@ function applyFinalText(state: FoldState, text: string): void {
   setAssistantPreview(state, text)
   state.lastAssistantHasQuestion = hasQuestionBlock(text)
   state.lastAssistantAllDone = saysAllDone(text)
-  state.lastAssistantFenceAlone = signalFenceAlone(text)
+  noteAssistantSignOff(state, text)
   state.lastAssistantFencesOnly = questionFencesOnly(text)
   setSignalFence(state, text)
   noteHandoff(state)
@@ -3142,6 +3193,7 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
       state.lastAssistantFenceAlone = false
       state.lastAssistantFencesOnly = false
       settleHumanSteps(state, ev.text ?? "")
+      if (!ev.synthetic) noteHumanTurnForSignOff(state, ev.text ?? "")
       state.lastFence = undefined
       state.strayFence = undefined
       noteWakeTokens(state, ev.text)

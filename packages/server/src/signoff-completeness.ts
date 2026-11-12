@@ -4,7 +4,8 @@
 // the newest sign-off behind one row (web lib/stretchFolds). So the newest sign-off has to stand alone: it
 // replaces the one before it, and every question still open on the thread is named in it, under the
 // paragraph it belongs to. A worker woken with nothing new writes no new sign-off at all: it rests on its
-// signal fence alone, and the sign-off before stays the one the human reads (sign-offs.ts).
+// signal fence alone, or on that sign-off's own fence again word for word (tailer restatesSignOff), and the
+// sign-off before stays the one the human reads (sign-offs.ts).
 //
 // Until then a worker re-listed every open question at every rest, because the maintainer's own
 // instructions asked it to (2026-11-05), and each re-listing drew its card again (maintainer 2026-11-11:

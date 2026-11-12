@@ -15,6 +15,7 @@ import { placeQuestions, questionHomes, registeredStandingAt, type QuestionPlace
 import { sameEntries, sameItems, shareLists, shareMap, useSameWhileEqual, useShared } from "../lib/sameWhileEqual.ts"
 import { useTranscriptHeldForBoard } from "../lib/restAhead.ts"
 import { queuedRunOf, type QueuedRun } from "../lib/restReply.ts"
+import { restatedByRestingCard } from "../lib/restatedFences.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { ComposerSendContext, SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
@@ -158,6 +159,9 @@ export interface ThreadTranscript {
   heldIdx: number
   /** The resting card at the tail states the last message's wait, so that message's fence draws nothing. */
   restingShown: boolean
+  /** The earlier messages, since the human last came in, whose ```awaiting card the resting card restates
+   *  (lib/restatedFences): their fences draw nothing either, as the last message's does. */
+  restated: ReadonlySet<number>
   /** The two reasons the awaiting fence in the message at `index` draws nothing: the worker has spoken
    *  since (stale), or the resting card states it (stated). Message takes them as separate props, and so
    *  do the emptiness predicates — a settled fence that handed the human steps keeps its card, a stated
@@ -292,6 +296,8 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   // could not take it back (lib/fenceBlocks heldHandoffIndex); every other fence before the cut settles.
   const heldIdx = useMemo(() => (thread?.heldHandoff ? heldHandoffIndex(messages, awaitingCut) : -1), [thread?.heldHandoff, messages, awaitingCut])
   const restingShown = showsRestingCard(thread)
+  const restingFence = restingShown && thread?.lastFence?.kind === "awaiting" ? thread.lastFence : undefined
+  const restated = useMemo(() => restatedByRestingCard(messages, awaitingCut, restingFence), [messages, awaitingCut, restingFence])
   const fencesLive = questionFencesLive(thread?.spawnedAt)
   const closedSpecs = useClosedQuestionSpecs(thread)
   // Two values go to EVERY message whole; the rest are maps a message reads its own entry of.
@@ -319,7 +325,8 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       awaitingCut,
       heldIdx,
       restingShown,
-      hidesAwaiting: (index) => [awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, index === lastAgentIdx && restingShown] as const,
+      restated,
+      hidesAwaiting: (index) => [awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, (index === lastAgentIdx && restingShown) || restated.has(index)] as const,
       stepsDone,
       openQuestions,
       fencesLive,
@@ -333,7 +340,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       answeringForMessage,
       opsThread,
     }),
-    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, homes, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
+    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, restated, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, homes, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
   )
 
   // The surface is the zone and its prompt box the intake (lib/fileDrop). Files given while no box is

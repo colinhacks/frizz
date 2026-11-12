@@ -36,23 +36,24 @@ test("a fence that is not a live wait is skipped before it ever reaches a card",
 // prose, above the resting card, on every rested awaiting thread (maintainer 2026-08-28, with a
 // screenshot). So the owning surfaces pass `restingCardShown` and the block never reaches the card.
 test("a fence the resting card states never reaches the card either", () => {
-  // The flag is set for the LAST agent message only — the one whose fence the resting card is about — so
-  // the memo boundary holds for every other row. ONE place answers it for every surface: the thread
+  // The flag is set for the LAST agent message — the one whose fence the resting card is about — and for an
+  // earlier one since the human came in whose fence the resting card restates (lib/restatedFences,
+  // 2026-11-12: a pasted-back fence drew its to-do card twice). ONE place answers it for every surface: the thread
   // surface's `hidesAwaiting` (ThreadSurface.tsx), which ThreadMessage hands to Message. Each surface used
   // to pass it at each of its own Message sites, four in two files.
   const chat = source
   const shell = readFileSync(new URL("./ThreadSurface.tsx", import.meta.url), "utf8")
   // One message before the cut keeps its fence: the handoff the board holds the thread in the queue for.
-  assert.match(shell, /hidesAwaiting: \(index\) => \[awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, index === lastAgentIdx && restingShown\] as const/)
+  assert.match(shell, /hidesAwaiting: \(index\) => \[awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, \(index === lastAgentIdx && restingShown\) \|\| restated\.has\(index\)\] as const/)
   assert.match(chat, /const \[staleAwaiting, restingCardShown\] = t\.hidesAwaiting\(index\)/, "ThreadMessage takes both reasons from the surface")
   assert.equal(chat.match(/restingCardShown=\{/g)?.length, 1, "ThreadMessage is the only site that passes it")
   // …and the emptiness walk agrees, or a fence-only last message keeps its spacer and its rest divider.
   const helper = source.match(/export function rendersNothingIn[\s\S]*?\n}/)?.[0]
   assert.ok(helper, "rendersNothingIn must exist")
   assert.match(helper, /restingCardShown = false/, "it takes the resting-card reason")
-  assert.match(helper, /entry\.messageIndex === awaitingCut\) stated\.add\(entry\.message\)/, "…and marks the last message as stated")
+  assert.match(helper, /entry\.messageIndex === awaitingCut \|\| restated\.has\(entry\.messageIndex\)\) stated\.add\(entry\.message\)/, "…and marks the last message, and the ones it restates, as stated")
   assert.match(helper, /messageRendersNothing\(message, stale\.has\(message\), stated\.has\(message\)\)/, "…as its own reason, not one more stale member")
-  assert.equal(chat.match(/rendersNothingIn\([a-zA-Z]+, awaitingCut, restingShown, heldIdx\)/g)?.length, 2, "every rendersNothingIn call passes it, and the held handoff")
+  assert.equal(chat.match(/rendersNothingIn\([a-zA-Z]+, awaitingCut, restingShown, heldIdx, restated\)/g)?.length, 2, "every rendersNothingIn call passes it, the held handoff and the restated fences")
 })
 
 // THE TAIL MOUNTS WITH THE TRANSCRIPT, NOT BEFORE IT. The board lands first, so the queue card (the

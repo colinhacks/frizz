@@ -146,8 +146,9 @@ export interface NormalizedTail {
   // nothing in it is actionable. Optional (absent ⇒ false) because it is an additive observation, not
   // a new required fact about a session; see scheduler.ts SOURCE 5.
   lastAssistantAllDone?: boolean
-  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone): a rest with
-   *  nothing new, which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
+  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone), or the
+   *  standing sign-off's fence again word for word (tailer restatesSignOff): a rest with nothing new,
+   *  which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
   lastAssistantFenceAlone?: boolean
   /** The latest assistant text is question fences and nothing else, bar an empty signal fence (tailer
    *  questionFencesOnly). Absent on a fold cached before 2026-11-11. */
@@ -321,12 +322,16 @@ export interface FoldState {
   // cleared on exactly the same lifecycle as the question flag above: set per assistant text, wiped by
   // any user record — so the next bump the operator sends re-opens the loop by itself.
   lastAssistantAllDone: boolean
-  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone): a rest with
-   *  nothing new, which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
+  /** The latest assistant text is its signal fence and nothing else (tailer signalFenceAlone), or the
+   *  standing sign-off's fence again word for word (tailer restatesSignOff): a rest with nothing new,
+   *  which leaves the sign-off before it standing. Absent on a fold cached before 2026-11-11. */
   lastAssistantFenceAlone?: boolean
   /** The latest assistant text is question fences and nothing else, bar an empty signal fence (tailer
    *  questionFencesOnly). Absent on a fold cached before 2026-11-11. */
   lastAssistantFencesOnly?: boolean
+  /** The signal fence of the newest sign-off since the human last came in, whitespace folded (tailer
+   *  signalFenceText): what a later rest repeats to say nothing new. Absent before 2026-11-12. */
+  signOffFence?: string
   // Runtime provider-auth rejection (claude-auth plan, Slice A). Set when the backend records a
   // SYNTHETIC auth-error response (Claude: isApiErrorMessage + 401/login text) — never from user or
   // ordinary assistant content — and cleared by the next real assistant text (a genuine response

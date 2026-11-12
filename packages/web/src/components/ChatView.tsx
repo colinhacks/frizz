@@ -900,7 +900,7 @@ function VirtualizedThreadTranscript({
   // `messages` here is the presentation list, which shares its indices with
   // the list the model was built over.
   const transcript = useThreadTranscript()
-  const { thread, running, lastAgentIdx, awaitingCut, restingShown, heldIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
+  const { thread, running, lastAgentIdx, awaitingCut, restingShown, restated, heldIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
   // A marker in a message above the window has no message to render in, so its card goes back to its
   // anchor group.
   const placement = useMemo(() => placedFrom(transcript.placement, windowStart), [transcript.placement, windowStart])
@@ -917,12 +917,12 @@ function VirtualizedThreadTranscript({
   // draws — with the resting card as the third reason a fence draws nothing (rendersNothingIn).
   const activityMessages = useMemo(() => {
     const entries = running ? historicalToolActivityMessages(coalescedActivityMessages) : coalescedActivityMessages
-    return withoutRedundantRestDividers(entries, rendersNothingIn(entries, awaitingCut, restingShown, heldIdx))
-  }, [coalescedActivityMessages, running, awaitingCut, restingShown, heldIdx])
+    return withoutRedundantRestDividers(entries, rendersNothingIn(entries, awaitingCut, restingShown, heldIdx, restated))
+  }, [coalescedActivityMessages, running, awaitingCut, restingShown, heldIdx, restated])
   const messageRows = useMemo(() => {
     const rows = buildVirtualTranscriptMessageRows(
       activityMessages.map((entry) => entry.message),
-      rendersNothingIn(activityMessages, awaitingCut, restingShown, heldIdx),
+      rendersNothingIn(activityMessages, awaitingCut, restingShown, heldIdx, restated),
       messageGap,
     )
     // A rest the human came back to after a long wait draws as the instant they came back (restGapOf).
@@ -932,7 +932,7 @@ function VirtualizedThreadTranscript({
       messageIndex: activityMessages[row.messageIndex].messageIndex,
       restGap: restGapOf(row.message, rows[i + 1]?.message),
     }))
-  }, [activityMessages, awaitingCut, restingShown, heldIdx])
+  }, [activityMessages, awaitingCut, restingShown, heldIdx, restated])
   // The slot at the end, off the surface's one model (useRuntimeTail). Its ROW exists
   // whenever the slot draws anything — a rung, or the policy-denial card a rest with no rung still owes.
   const runtimeTail = useRuntimeTail(transcript, coalescedActivityMessages, activityMessages, steerSince)
@@ -2061,19 +2061,22 @@ function laterInstant(a: string | undefined, b: string | undefined): string | un
 // `stale`, because the two differ on one shape: a settled steps fence keeps its card, a stated one does not.
 //
 // `awaitingCut` is the index a fence goes stale BELOW — past every message while the thread is running,
-// else the last assistant message (ChatView's `awaitingCut`).
+// else the last assistant message (ChatView's `awaitingCut`). `restated` names the earlier messages whose
+// fence the resting card restates (lib/restatedFences), which it states as surely as the last one's.
 export function rendersNothingIn<T extends { message: ChatMessage; messageIndex: number }>(
   entries: readonly T[],
   awaitingCut: number,
   restingCardShown = false,
   heldIdx = -1,
+  restated: ReadonlySet<number> = NONE_RESTATED,
 ): (message: ChatMessage) => boolean {
   const stale = new WeakSet<ChatMessage>()
   const stated = new WeakSet<ChatMessage>()
   if (awaitingCut >= 0) for (const entry of entries) if (entry.messageIndex < awaitingCut && entry.messageIndex !== heldIdx) stale.add(entry.message)
-  if (awaitingCut >= 0 && restingCardShown) for (const entry of entries) if (entry.messageIndex === awaitingCut) stated.add(entry.message)
+  if (awaitingCut >= 0 && restingCardShown) for (const entry of entries) if (entry.messageIndex === awaitingCut || restated.has(entry.messageIndex)) stated.add(entry.message)
   return (message) => messageRendersNothing(message, stale.has(message), stated.has(message))
 }
+const NONE_RESTATED: ReadonlySet<number> = new Set()
 // Does this text draw NOTHING? Ordinarily that is "is it blank", but an ```awaiting fence that is not a
 // LIVE wait draws nothing either (see renderText) — and neither does a live one whose thread is at rest
 // on it, because the resting card below states it; callers pass that case as `restingCardShown` —

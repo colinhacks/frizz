@@ -2,7 +2,7 @@
 // Claude projection so the `rest` dividers, wake flags and coalesced tool calls are the ones a page carries.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { SIGNOFF_NUDGE_MESSAGE, wakeDeliveryToken, type TranscriptMessage } from "@frizz/shared"
+import { BURIED_ANSWERS_HEADER, SIGNOFF_NUDGE_MESSAGE, wakeDeliveryToken, type TranscriptMessage } from "@frizz/shared"
 import { parseTranscript } from "./transcript.ts"
 import { projectSignOffs, readRestMessage, signOffIndices } from "./sign-offs.ts"
 
@@ -115,6 +115,24 @@ test("a rest on the fence alone leaves the sign-off before it standing", () => {
   // It still answers a reminder as a sign-off, so the bare write-up it answered stays marked.
   const writeUp = "Everything is fixed: the cache keys on the normalized id now, and `npm test` is green."
   assert.deepEqual(marked(project(human("Fix the cache."), rest(writeUp), wake(SIGNOFF_NUDGE_MESSAGE), rest(bareNeeds))), [writeUp])
+})
+
+test("a rest on the sign-off's own fence again, word for word, leaves that sign-off standing", () => {
+  const steps = fence("awaiting", "title: Add Lubos's company in Justworks\nsteps:\n  - In Justworks, add Lubos Venntures Limited as an international contractor.\n\n    The values it asks for are in the offer letter.\n---\nJustworks emails Lubos for his payment details.")
+  const writeUp = "Justworks stays. The one thing left is getting the two contractors set up."
+  // pullfrog-app 2026-11-12: a message from another thread woke it, it looked, and it pasted the fence back.
+  const pasted = project(human("Stay on Justworks?"), narrate("Reading the offer letter."), rest(`${writeUp}\n\n${steps}`), wake("Done, from the Tommy contract thread."), narrate("Checking the notes."), rest(steps))
+  assert.deepEqual(marked(pasted), [writeUp])
+  // Pasted twice, still the same: each copy holds against the sign-off it repeats.
+  assert.deepEqual(marked(project(human("Stay on Justworks?"), rest(`${writeUp}\n\n${steps}`), wake("✅"), rest(steps), wake("✅"), rest(`\n${steps}\n`))), [writeUp])
+  // A reworded fence is something new, though its steps are the same.
+  const reworded = steps.replace("Add Lubos's company in Justworks", "Lubos is next")
+  assert.equal(marked(project(human("Stay on Justworks?"), rest(`${writeUp}\n\n${steps}`), wake("✅"), rest(reworded))).length, 2)
+  // And so is the same fence with words around it.
+  assert.equal(marked(project(human("Stay on Justworks?"), rest(`${writeUp}\n\n${steps}`), wake("✅"), rest(`Still waiting on this.\n\n${steps}`))).length, 2)
+  // Once the human comes in — typing, or answering a question — the fence again is a reply to them.
+  assert.equal(marked(project(human("Stay on Justworks?"), rest(`${writeUp}\n\n${steps}`), human("Which screen is it on?"), rest(steps))).length, 2)
+  assert.equal(marked(project(human("Stay on Justworks?"), rest(`${writeUp}\n\n${steps}`), wake(`${BURIED_ANSWERS_HEADER}\n1. \`keep-justworks\` → Stay on Justworks`), rest(steps))).length, 2)
 })
 
 test("projectSignOffs copies what it marks and clears a stale mark", () => {

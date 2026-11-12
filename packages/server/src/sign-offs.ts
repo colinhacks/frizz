@@ -29,8 +29,18 @@
 // before. Measured before the rule: of every rest since 2026-11-04 on a needs_input or done fence with
 // nothing around it, none had a write-up earlier in its turn (3 rests), so nothing a worker wrote is left
 // unmarked by it.
-import { awaitingStatus, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, type TranscriptMessage } from "@frizz/shared"
-import { hasQuestionBlock, parseSignalFence, signalFenceAlone } from "./tailer.ts"
+//
+// …AND SO DOES A REST ON THE SAME FENCE AGAIN, WORD FOR WORD (2026-11-12). A worker woken by something that
+// changes nothing often pastes its last fence back, steps and all, rather than resting on an empty one: on
+// a pullfrog-app thread a message from another thread brought back the identical to-do fence its write-up
+// had ended on. Read as a new sign-off, that bare fence took the write-up's place and the write-up survived
+// only as the stretch's first words, so a worker that had narrated anything first would have had its whole
+// handoff folded away. The copy says nothing the sign-off before did not, so that one stands (tailer
+// restatesSignOff), until the human comes in: a fence repeated after they typed or answered is a reply.
+// Of the to-do fences that followed another in one stretch over the 12 days before, 39 of 231 were
+// verbatim; 118 kept the steps and reworded the rest, which is something new and stays a sign-off.
+import { awaitingStatus, BURIED_ANSWERS_HEADER, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, type TranscriptMessage } from "@frizz/shared"
+import { hasQuestionBlock, parseSignalFence, restatesSignOff, signalFenceAlone, signalFenceText } from "./tailer.ts"
 
 /** What one rest said about the human: written for them, a quiet park, or no fence at all. */
 export type RestReading = "signOff" | "quiet" | "bare"
@@ -40,7 +50,7 @@ export type RestReading = "signOff" | "quiet" | "bare"
 // transcript with 954 rests (measured 2026-11-06). The Claude projection hands back its retained fold's
 // own message objects on every read, so a reading keyed on the object is paid once; the text rides along
 // because the newest message can still grow in place.
-const readings = new WeakMap<object, { text: string; reading: RestReading | undefined }>()
+const readings = new WeakMap<object, { text: string; reading: RestReading | undefined; fence?: { text: string | undefined } }>()
 function readingOf(m: TranscriptMessage | undefined): RestReading | undefined {
   if (!m) return undefined
   const hit = readings.get(m)
@@ -48,6 +58,20 @@ function readingOf(m: TranscriptMessage | undefined): RestReading | undefined {
   const reading = readRestMessage(m)
   readings.set(m, { text: m.text, reading })
   return reading
+}
+// The signal fence a sign-off ends on (tailer signalFenceText), on the same terms: read once per message.
+function fenceOf(m: TranscriptMessage): string | undefined {
+  readingOf(m)
+  const hit = readings.get(m)!
+  hit.fence ??= { text: signalFenceText(m.text) }
+  return hit.fence.text
+}
+
+// The human came in: typed a message, or answered a question, which Frizz delivers as a wake (the same
+// test as web lib/messagePresentation isHumanTurn). A fence repeated after this is a reply to them.
+function humanCameIn(m: TranscriptMessage): boolean {
+  if (m.role !== "user" || m.kind || m.queued || m.peerFrom || m.agentInstruction || m.sessionPeer) return false
+  return !m.wake || m.text.trimStart().startsWith(BURIED_ANSWERS_HEADER)
 }
 
 /** What the message a turn ended on says, read off its own text. Undefined when it is not prose. */
@@ -99,16 +123,21 @@ interface Rest {
 export function readRests(messages: readonly TranscriptMessage[]): Rest[] {
   const rests: Rest[] = []
   let turnStart = 0
+  // The fence of the newest sign-off since the human last came in: what a rest repeating it leaves standing.
+  let standing: string | undefined
   for (let r = 0; r < messages.length; r++) {
     if (messages[r].boundary !== "rest") continue
+    for (let i = turnStart; i < r; i++) if (humanCameIn(messages[i])) standing = undefined
     const at = restedOnIndex(messages, turnStart, r)
     // A registration signs the turn off whatever prose follows it: workers append a pointer after
     // `frizzctl done` ("the write-up is above"), and that afterword is what the turn ends on.
     let registered = -1
     for (let i = turnStart; i < r; i++) if (messages[i].role === "assistant" && carriesDoneRegistration(messages[i])) registered = i
     const reading = registered >= 0 ? "signOff" : readingOf(messages[at]) ?? "bare"
-    // The fence alone, with nothing new: the sign-off before stands (see the header).
-    const stands = registered < 0 && reading === "signOff" && at >= 0 && signalFenceAlone(messages[at].text)
+    // The fence alone, or the standing sign-off's fence again, with nothing new: the sign-off before stands
+    // (see the header).
+    const stands = registered < 0 && reading === "signOff" && at >= 0 && (signalFenceAlone(messages[at].text) || restatesSignOff(messages[at].text, standing))
+    if (reading === "signOff" && !stands) standing = at >= 0 ? fenceOf(messages[at]) : undefined
     rests.push({ at: stands ? -1 : at >= 0 ? at : registered, reading, nudged: nudgedAfter(messages, r) })
     turnStart = r + 1
   }

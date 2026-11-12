@@ -10,9 +10,18 @@
 //   • fold-long-ask  — the same rest under a human message too long for the sign-off to show beside it, so
 //                      the queue's window lands the sign-off a little below the top instead of opening there.
 //   • fold-history   — two stretches: an older one, answered, folds the same way above the newest.
+//   • fold-restated  — a write-up ending on a to-do fence, then a wake the worker answers by pasting that
+//                      fence back word for word (pullfrog-app, 2026-11-12). Expect: the write-up kept
+//                      whole, one hairline, and ONE to-do card, the live one at the tail.
+//   • fold-restated-quiet — the same with tool calls and no words before the write-up, the reported
+//                      thread's own shape, where the card was drawn twice.
 //
 // Every wake is the text Frizz really delivers, built by the server's own builders, so each draws the
 // hairline a real one does. A made-up wake falls back to FrizzWake's bell card, which no real wake draws.
+//
+// Each row is a broker row (`claude_runtime='broker'`), so the board reads the tailer's turn state and the
+// thread is AT REST, with the resting card at its tail, as a real one is (seed-resting-thread.mjs). Without
+// it a row reads as exited and no resting card draws.
 //
 // Follows the frizz-stack recipe: a session row + a JSONL the REAL tailer reads, so the question fence is
 // registered by the server's own registrar. Nothing writes board state directly.
@@ -112,8 +121,8 @@ function write(slug, sessionId, title, records) {
   const rested = records.at(-1).timestamp
   execFileSync("sqlite3", [
     sandbox.db,
-    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, title_auto, backend, model, effort, permission_mode, state, unread, exited, archived, rested_at)
-     VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${spawned}', '${title.replaceAll("'", "''")}', 0, 'claude', 'opus', 'high', 'default', 'open', 0, 0, 0, '${rested}')`,
+    `INSERT OR REPLACE INTO session (${sessionCols}slug, session_id, thread_name, spawned_at, title, title_auto, backend, claude_runtime, model, effort, permission_mode, state, unread, exited, archived, rested_at)
+     VALUES (${sessionVals}'${slug}', '${sessionId}', 'frizz-${slug}', '${spawned}', '${title.replaceAll("'", "''")}', 0, 'claude', 'broker', 'opus', 'high', 'default', 'open', 0, 0, 0, '${rested}')`,
   ])
   console.log(`seeded ${slug} (${sessionId})`)
 }
@@ -155,5 +164,53 @@ const stretch = (s, ask) => [
     ...doWork(s, WORK.slice(0, 3)),
     ...restOn(s, "**Found it** — geometry columns arrive as WKB buffers and fall through to the hex branch in `src/run/values.ts`. The fix is a WKB decoder in that branch; nothing else reads the hex.\n\n" + fence("awaiting", "status: needs_input\nfor: 1h"), 2),
     ...stretch(s, "Good, fix it."),
+  ])
+}
+
+{
+  const s = "f01dc0de-0000-4000-8000-000000000004"
+  clock = 0
+  const steps = fence("awaiting", [
+    "title: Add Lubos's company as a Justworks international contractor",
+    "steps:",
+    "  - In [Justworks](https://secure.justworks.com/), add Lubos Venntures Limited as an international contractor.",
+    "",
+    "    | Field | Value |",
+    "    |---|---|",
+    "    | Contractor | Lubos Venntures Limited |",
+    "    | Pay | $7,083.33 a month |",
+    "---",
+    "Justworks emails Lubos to enter his own payment details.",
+  ].join("\n"))
+  const quiet = (sid, calls, step) => {
+    const id = `m${ids++}`
+    return [
+      { type: "assistant", timestamp: at(step), sessionId: sid, message: { id, model: "claude-opus-5", role: "assistant", stop_reason: "tool_use", content: calls.map((c, i) => ({ type: "tool_use", id: `${id}-t${i}`, ...c })) } },
+      ...calls.map((_, i) => ({ type: "user", timestamp: at(0.1), sessionId: sid, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `${id}-t${i}`, content: "ok" }] } })),
+    ]
+  }
+  const writeUp = (sid) => restOn(sid, `Justworks stays. The one thing left is getting the two contractors set up in Justworks.\n\n- **Lubos** is next: add his company as an international contractor (step below).\n- **Notes:** \`payroll/notes.md\` records the decision.\n\n${steps}`, 2)
+  const pasteBack = (sid) => [
+    ...wake(sid, shellDoneMessage({ taskId: "b2c4e6g8i", label: "Re-checking the contractor notes", status: "completed" }), 1),
+    ...narrate(sid, "Checking the notes once more.", [bash("rg -n Mercury people", "Checking the notes for Mercury")], 1),
+    ...restOn(sid, steps, 1),
+  ]
+  {
+    const q = "f01dc0de-0000-4000-8000-000000000005"
+    write("fold-restated-quiet", q, "Stay on Justworks, tool calls only before the write-up", [
+      ...human(q, "Stay on Justworks, and pay the two contractors through it.", 1),
+      ...quiet(q, [read("people/lubos/offer.md"), edit("payroll/notes.md")], 2),
+      ...writeUp(q),
+      ...pasteBack(q),
+    ])
+  }
+  write("fold-restated", s, "Stay on Justworks; pay the contractors through it", [
+    ...human(s, "Stay on Justworks, and pay the two contractors through it.", 1),
+    ...narrate(s, "Reading the offer letter for the contractor details.", [read("people/lubos/offer.md")], 2),
+    ...narrate(s, "Updating the payroll notes.", [edit("payroll/notes.md")], 2),
+    ...restOn(s, `Justworks stays. The one thing left is getting the two contractors set up in Justworks.\n\n- **Lubos** is next: add his company as an international contractor (step below).\n- **Notes:** \`payroll/notes.md\` records the decision.\n\n${steps}`, 2),
+    ...wake(s, shellDoneMessage({ taskId: "b2c4e6g8i", label: "Re-checking the contractor notes", status: "completed" }), 1),
+    ...narrate(s, "Checking the notes once more.", [bash("rg -n Mercury people", "Checking the notes for Mercury")], 1),
+    ...restOn(s, steps, 1),
   ])
 }

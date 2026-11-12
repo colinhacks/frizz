@@ -101,6 +101,33 @@ test("woken with nothing new, a rest on the fence alone draws no correction and 
   } finally { w.close() }
 })
 
+// A worker that pastes its sign-off's fence back after a wake says nothing new either (tailer
+// restatesSignOff), so it is not held to naming the question again; a reworded fence is a new sign-off.
+test("woken with nothing new, the sign-off's own fence again word for word draws no correction", async () => {
+  const steps = fence("awaiting", "title: Approve the migration\nsteps:\n  - Approve the migration in the dashboard.\n---\nIt moves 312 rows.")
+  const asked = async () => {
+    const w = world()
+    w.user(0, "move the settings into a real store")
+    w.say(1, `The store is the one call left, and the migration needs your approval.\n\n${choice("store")}\n\n${steps}`)
+    await w.tick(2)
+    w.user(3, wake(shellDoneMessage({ taskId: "bzvt", label: "the dry run", status: "completed" })))
+    return w
+  }
+  const pasted = await asked()
+  try {
+    pasted.narrate(4, "Checking the dry run.")
+    pasted.say(5, steps)
+    await pasted.tick(6)
+    assert.deepEqual(pasted.deliveries(), [], pasted.sent.join("\n---\n"))
+  } finally { pasted.close() }
+  const reworded = await asked()
+  try {
+    reworded.say(4, steps.replace("It moves 312 rows.", "The dry run moved 312 rows cleanly."))
+    await reworded.tick(5)
+    assert.deepEqual(reworded.deliveries(), [SIGNOFF(4)])
+  } finally { reworded.close() }
+})
+
 test("a message that only re-lists an open question draws ONE correction naming it", async () => {
   const w = await askedThenWoken()
   try {
