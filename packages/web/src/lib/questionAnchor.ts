@@ -50,6 +50,9 @@ export interface AnchorMessage extends HumanTurnLike {
   /** The message's markdown, read for an ```awaiting fence's `questions:` claim and a ```question fence's
    *  id, and on a user turn for whether the human wrote it (lib/messagePresentation isHumanTurn). */
   text?: string
+  /** The server's reading that a rest signed off on this message (server sign-offs.ts): the newest one
+   *  naming a question holds its live card (lib/questionShadow placeQuestions). */
+  signOff?: boolean
   /** The ids of this message's question fences the server REFUSED (lib/questionFaults): they name no
    *  question, so they neither claim a card nor place one. */
   refusedFences?: ReadonlySet<string>
