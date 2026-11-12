@@ -2761,7 +2761,11 @@ export function applyRecord(state: TailState, rec: Record): void {
     // reading it as "about to respond" left an abandoned thread spinning on the board until the next
     // reboot (maintainer 2026-08-23, on a nub thread interrupted mid-tool and never resumed: "looks
     // frozen" — 23 hours in the Active band with an idle worker behind it).
-    const userText = lastTextBlock(rec.message?.content) ?? ""
+    // THE WHOLE TEXT, WHATEVER SHAPE IT CAME IN. Claude writes a typed prompt's content as a bare string
+    // (2,754 of 2,834 human prompts over two days on this Mac, 2026-11-11), and this read only the block
+    // list, so every string prompt reached the three readers below as "": a sent "Done" never closed the
+    // steps it answered, and a string-shaped injected pulse with no `promptSource` read as the human.
+    const userText = userMessageText(rec.message?.content)
     state.interrupted = isInterruptMarker(userText) || undefined
     // …and the second one: a local command's output receipt, which follows a command the model never saw.
     state.localCommandDone = isLocalCommandReceipt(rec.message?.content) || undefined
