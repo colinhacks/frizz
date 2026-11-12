@@ -791,8 +791,13 @@ const AWAITING_SCALAR_KINDS: ReadonlySet<AwaitingHint["kind"]> = new Set(["for",
  *  ended mid-sentence on "open each token" with nothing to say it had been cut (maintainer: "Did your
  *  question get cut off or something?"). The contract demands every link, id and value written in, and
  *  Markdown link targets spend characters nobody reads, so 2,000 now — and a step past it ends on an
- *  ellipsis rather than mid-word in silence. */
-export const AWAITING_STEPS_MAX = 12
+ *  ellipsis rather than mid-word in silence.
+ *
+ *  THE COUNT CAP IS THE LIST'S OWN, 64 (human-todos.ts HUMAN_STEPS_MAX). It was 12 until 2026-11-11, and
+ *  the cut was silent: a rest that day wrote 14 steps and the human's checklist ended before "Send the
+ *  document", so a fully ticked list reported Done for a document nobody sent. Earlier rests had written
+ *  19 and 30. Nothing a list could hold should be cut before it reaches it. */
+export const AWAITING_STEPS_MAX = 64
 export const AWAITING_STEP_VALUE_MAX = 2_000
 /** A step's body is the detail its title cannot hold — what to paste, what the page shows, what to do when
  *  it fails — so it gets room for a code block or two. Defensive for the same reason as the title's cap:

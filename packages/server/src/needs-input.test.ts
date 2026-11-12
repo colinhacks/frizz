@@ -236,7 +236,7 @@ test("a step on the key line is one step; a flow list YAML can read is a list, a
 })
 
 test("steps have caps of their own, after the hints' cap, so a long list never crowds out a lookup", () => {
-  const many = Array.from({ length: 14 }, (_, i) => `  - step ${i + 1}`)
+  const many = Array.from({ length: AWAITING_STEPS_MAX + 2 }, (_, i) => `  - step ${i + 1}`)
   const shells = Array.from({ length: 6 }, (_, i) => `id${i}`).join(", ")
   const { hints } = splitAwaitingFrontmatter([`shells: [${shells}]`, "needs_input: true", "for: 1h", "steps:", ...many, `  - ${"x".repeat(900)}`].join("\n"))
   assert.equal(hints.filter((h) => h.kind === "shell").length, 6)
@@ -247,6 +247,15 @@ test("steps have caps of their own, after the hints' cap, so a long list never c
   assert.deepEqual(steps.slice(0, 2), ["step 1", "step 2"])
   const long = awaitingSteps(splitAwaitingFrontmatter(`steps:\n  - ${"y".repeat(AWAITING_STEP_VALUE_MAX + 400)}`).hints)[0]
   assert.equal(long, `${"y".repeat(AWAITING_STEP_VALUE_MAX)}…`, "a runaway step is cut where the cut shows")
+})
+
+// A real rest on 2026-11-11 wrote 14 steps and the cap of 12 cut the last two, "Paste the message" and
+// "Send the document", with nothing on the card to say so. Real rests had written 19 and 30.
+test("a long real-world list survives whole", () => {
+  const thirty = Array.from({ length: 30 }, (_, i) => `  - step ${i + 1}`)
+  const steps = awaitingSteps(splitAwaitingFrontmatter(["steps:", ...thirty].join("\n")).hints)
+  assert.equal(steps.length, 30)
+  assert.equal(steps.at(-1), "step 30")
 })
 
 test("a real step that names its ids and its link is never cut", () => {
