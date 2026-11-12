@@ -31,7 +31,8 @@ echo "holding a credential of ${#T} characters; verbs: audit plan drift deploy r
 run() { CLOUDFLARE_FRIZZ_MINTER="$T" CLOUDFLARE_FRIZZ_MINTER_KIND="$KIND" CLOUDFLARE_FRIZZ_MINTER_EXPIRES="$EXPIRES" CLOUDFLARE_FRIZZ_MINTER_SCOPES="$SCOPES" env -u NODE_COMPAT nub "$SCRIPT" "$@"; }
 
 while true; do
-  IFS= read -r verb < "$DIR/verbs" || continue
+  # `printf audit` sends no newline, and `read` fails on a line without one while still setting it.
+  IFS= read -r verb < "$DIR/verbs" || [ -n "${verb:-}" ] || continue
   case "$verb" in
     audit) run --audit "--out=$DIR/snapshot" > "$DIR/audit.txt" 2>&1 ;;
     plan) run --dry-run > "$DIR/plan.txt" 2>&1 ;;

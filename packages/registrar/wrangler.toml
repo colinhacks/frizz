@@ -48,3 +48,11 @@ enabled = false
 [[kv_namespaces]]
 binding = "CLAIMS"
 id = "aa4a9c11473d4511a556e3e3a6857058"
+
+# The registry itself (src/claim-db.ts): every claim, the lock that serializes them, the hourly budgets.
+# KV above stays a mirror the relay reads. Created by `scripts/cloudflare-tokens.mjs --registrar-db` in a
+# deploy sitting on 2026-11-12; workers-drift pins this id.
+[[d1_databases]]
+binding = "CLAIMS_DB"
+database_name = "frizz-registrar-claims"
+database_id = "8d67ee04-82f2-416f-855b-6081964df5e6"

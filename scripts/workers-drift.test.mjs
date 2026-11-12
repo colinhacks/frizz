@@ -303,7 +303,7 @@ function account(overrides = {}) {
     ],
     [`${z}/rulesets`]: [{ kind: "managed", name: "Cloudflare Managed Free Ruleset", phase: "http_request_firewall_managed" }],
     ...script("frizz-relay", [{ type: "durable_object_namespace", name: "BOARD", class_name: "Board", namespace_id: "f56284c028544a1582161e1e2b6f3c52" }, kv, zone], []),
-    ...script("frizz-registrar", [kv, zone], ["17 4 * * *"]),
+    ...script("frizz-registrar", [{ type: "d1", name: "CLAIMS_DB", id: "8d67ee04-82f2-416f-855b-6081964df5e6" }, kv, zone], ["17 4 * * *"]),
     ...overrides,
   }
   return async (path) => {

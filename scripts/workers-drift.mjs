@@ -112,7 +112,7 @@ export const BASELINE = {
       crons: [],
     },
     "frizz-registrar": {
-      bindings: ["kv_namespace CLAIMS aa4a9c11473d4511a556e3e3a6857058", "plain_text FRIZZ_ZONE frizz.sh"],
+      bindings: ["d1 CLAIMS_DB 8d67ee04-82f2-416f-855b-6081964df5e6", "kv_namespace CLAIMS aa4a9c11473d4511a556e3e3a6857058", "plain_text FRIZZ_ZONE frizz.sh"],
       crons: ["17 4 * * *"],
     },
   },
