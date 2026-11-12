@@ -252,13 +252,22 @@ try {
   // 6. THE AUTH-FREE PATH, over the same wire, with the GitHub gate UP: an anonymous name claims
   // with no token while a vanity name is still refused for lacking one.
   gate = async () => null; // every token is refused, so only the waiver can let a claim through
-  const { generateAnonymousClaimName } = await import("@frizz/shared");
+  const { exportClaimPublicKey, pickAnonymousClaimName } = await import("@frizz/shared");
   const anonHome = mkdtempSync(join(tmpdir(), "frizz-claim-e2e-anon-"));
   try {
     const anonIdentity = await loadOrCreateClaimIdentity(anonHome);
-    const anonName = generateAnonymousClaimName();
+    const anonName = await pickAnonymousClaimName(await exportClaimPublicKey(anonIdentity.publicKey));
     const anon = await claimName({ name: anonName, port: 9393, identity: anonIdentity, origin, now: () => clock });
     check("an anonymous name claims through the gate with no GitHub", anon.hostname === `${anonName}.frizz.sh`, anon.hostname);
+
+    // A name in the random shape that is not one of the key's own is a word someone chose: refused.
+    let chosen = null;
+    try {
+      await claimName({ name: "colinhacksfrizzboard", port: 9393, identity: anonIdentity, origin, now: () => clock });
+    } catch (error) {
+      chosen = error;
+    }
+    check("a chosen name in the random shape is refused, telling an old launcher to update", chosen instanceof ClaimError && chosen.code === "bad-version", chosen?.code);
 
     let gated = null;
     try {

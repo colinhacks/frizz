@@ -17,10 +17,12 @@ const RELAY: CloudConfig = { hostname: "ada.invalid", claim: "ada", serve: "rela
 const STOP_HERE = "stopped where the relay would start";
 
 let registrar: Server;
+/** What the fake registrar says: a renewal, or a name it had to create again. */
+let answerRenewed = true;
 before(async () => {
   registrar = createServer((_req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ hostname: RELAY.hostname, leaseExpiresAt: 0, renewed: true }));
+    res.end(JSON.stringify({ hostname: RELAY.hostname, leaseExpiresAt: 0, renewed: answerRenewed }));
   }).listen(0, "127.0.0.1");
   await once(registrar, "listening");
   process.env.FRIZZ_REGISTRAR = `http://127.0.0.1:${(registrar.address() as { port: number }).port}`;
@@ -39,6 +41,7 @@ function controller({ stopAtRelay = true } = {}) {
         if (stopAtRelay) throw new Error(STOP_HERE);
         return 1;
       },
+      forgetSessionsFor: (hostname) => { calls.push(`forget ${hostname}`); return 0; },
     },
     port: 9393,
     log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -173,4 +176,22 @@ test("a refused renewal tells the operator, because the name lapses if it goes o
   const { said } = await serving(t, 409);
   await until(() => said.length > 0);
   assert.match(said[0]!, /could not renew colin\.invalid.*already taken/);
+});
+
+test("a saved name the registrar had to create again signs out what was signed in under it, and a renewal does not", async () => {
+  // Someone else may have served the name while it was gone, and collected the cookies phones sent it.
+  using renewed = controller();
+  writeCloudConfig(RELAY, renewed.home);
+  await assert.rejects(renewed.remote.serveSaved(), new RegExp(STOP_HERE));
+  assert.equal(renewed.calls.some((call) => call.startsWith("forget")), false);
+
+  answerRenewed = false;
+  try {
+    using recreated = controller();
+    writeCloudConfig(RELAY, recreated.home);
+    await assert.rejects(recreated.remote.serveSaved(), new RegExp(STOP_HERE));
+    assert.deepEqual(recreated.calls, ["access read-and-answer", `forget ${RELAY.hostname}`, "relay listener"], "before the relay can carry a session")
+  } finally {
+    answerRenewed = true;
+  }
 });

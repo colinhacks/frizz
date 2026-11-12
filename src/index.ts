@@ -501,7 +501,13 @@ async function runSupervisor(
         current: () => remote?.current() ?? null,
         apply: (next, applyOptions) => remote!.apply(next, applyOptions),
         setRelayAccess: (access) => remote!.setRelayAccess(access),
-        claim: (name, progress) => establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), { say: progress, promptHint: false }),
+        claim: (name, progress) =>
+          establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), {
+            say: progress,
+            promptHint: false,
+            // A name claimed afresh signs out what was signed in under it before (cloud.ts, onFreshClaim).
+            onFreshClaim: (hostname) => void supervisor.forgetSessionsFor(hostname),
+          }),
         githubLogin: frizzGithubLogin,
         issueLink: () => supervisor.issueAccessLink(),
         devices: { list: () => supervisor.signedInDeviceList(), signOut: (id) => supervisor.signOutDevice(id), signOutAll: () => supervisor.signOutAllDevices() },

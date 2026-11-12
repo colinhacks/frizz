@@ -521,3 +521,49 @@ test("a state folder with no sign-in state takes over the one a device signed in
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("a session verifies only on the host it was issued under, and again when the board comes back to it", () => {
+  const store = new AccessStore()
+  store.setHost("ada.frizz.sh")
+  const redeemed = store.redeem(store.issue().code, "iPhone")
+  assert.ok(redeemed.ok)
+  assert.equal(store.sessions.get(redeemed.id)?.host, "ada.frizz.sh")
+  assert.equal(store.verifySession(redeemed.session), true)
+  // The name this board left can be claimed by another board, which collects the cookie phones send it.
+  store.setHost("colin.frizz.sh")
+  assert.equal(store.verifySession(redeemed.session), false, "a cookie from the old name opens nothing on the new one")
+  store.setHost(undefined)
+  assert.equal(store.verifySession(redeemed.session), false, "nor with no public host at all")
+  store.setHost("ada.frizz.sh")
+  assert.equal(store.verifySession(redeemed.session), true, "back on its own name, the device is signed in again")
+})
+
+test("a session from before host binding is bound to the first host declared, and to no other", () => {
+  const store = new AccessStore()
+  const legacy = store.redeem(store.issue().code, "iPhone")
+  assert.ok(legacy.ok)
+  assert.equal(store.sessions.get(legacy.id)?.host, undefined, "issued with no host, as before 2026-11-12")
+  store.setHost("ada.frizz.sh")
+  assert.equal(store.sessions.get(legacy.id)?.host, "ada.frizz.sh")
+  assert.equal(store.verifySession(legacy.session), true)
+  store.setHost("colin.frizz.sh")
+  assert.equal(store.sessions.get(legacy.id)?.host, "ada.frizz.sh", "binding happens once")
+  assert.equal(store.verifySession(legacy.session), false)
+})
+
+test("a name claimed afresh signs out the devices signed in under it, and only those", () => {
+  const signedOut: Array<string | undefined> = []
+  const store = new AccessStore({ onSignedOut: (id) => signedOut.push(id) })
+  store.setHost("ada.frizz.sh")
+  const first = store.redeem(store.issue().code, "iPhone")
+  const second = store.redeem(store.issue().code, "iPad")
+  store.setHost("colin.frizz.sh")
+  const elsewhere = store.redeem(store.issue().code, "Android")
+  assert.ok(first.ok && second.ok && elsewhere.ok)
+  assert.equal(store.revokeSessionsFor("ada.frizz.sh"), 2)
+  assert.deepEqual(signedOut.sort(), [first.id, second.id].sort(), "each one reported, so its sockets close")
+  assert.equal(store.verifySession(elsewhere.session), true, "a device on another name is untouched")
+  store.setHost("ada.frizz.sh")
+  assert.equal(store.verifySession(first.session), false)
+  assert.equal(store.revokeSessionsFor("ada.frizz.sh"), 0, "nothing left to sign out")
+})

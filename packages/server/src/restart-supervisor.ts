@@ -301,6 +301,11 @@ async function readCappedBody(req: IncomingMessage, limit: number): Promise<Buff
  * to spend the board's memory from outside it. A malformed body is `null` rather than a throw: the
  * caller answers 400 with something an operator can act on.
  */
+/** The host a public origin names (its port included, as a request's Host header carries it), or none. */
+function hostOf(origin: string | undefined): string | undefined {
+  return origin ? new URL(origin).host : undefined
+}
+
 async function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = []
   let size = 0
@@ -376,7 +381,16 @@ export class RestartSupervisorProxy {
         })
       },
     })
+    this.access.setHost(hostOf(this.publicOrigin))
     this.policy = this.buildPolicy()
+  }
+
+  /**
+   * Sign out every device whose session was issued under `hostname`: what a board does when it claims that
+   * name afresh, since someone else may have served it in between (AccessStore.revokeSessionsFor).
+   */
+  forgetSessionsFor(hostname: string): number {
+    return this.access.revokeSessionsFor(hostname)
   }
 
   /** How many devices hold a live session. */
@@ -402,11 +416,13 @@ export class RestartSupervisorProxy {
   /**
    * Change the public origin on a running board — what the R pane does when the operator picks or
    * clears a remote setup. What was open under the old origin is closed, so "Off" leaves nothing behind;
-   * the next request is judged by the new one. Sessions survive the change.
+   * the next request is judged by the new one. A session verifies only under the host it was issued on
+   * (AccessStore.setHost), so coming back to a name brings its devices back, and a new name starts with none.
    */
   setPublicOrigin(origin: string | undefined): void {
     if (origin !== this.publicOrigin) this.dropSessionHolds()
     this.publicOrigin = origin
+    this.access.setHost(hostOf(origin))
     this.policy = this.buildPolicy()
   }
 

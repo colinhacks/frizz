@@ -246,6 +246,8 @@ export interface DevSupervisor {
   signOutDevice(id: string): boolean
   /** Sign every device out. See RestartSupervisorProxy.signOutAllDevices. */
   signOutAllDevices(): number
+  /** Sign out the devices a name signed in, once it is claimed afresh. See RestartSupervisorProxy.forgetSessionsFor. */
+  forgetSessionsFor(hostname: string): number
   /** The port the relay agent dials, on which every request is public. See RestartSupervisorProxy.relayListener. */
   relayListener(): Promise<number>
   readonly firstBoot: Promise<DevBoot>
@@ -751,6 +753,10 @@ class Supervisor implements DevSupervisor {
 
   signOutAllDevices(): number {
     return this.publicProxy.signOutAllDevices()
+  }
+
+  forgetSessionsFor(hostname: string): number {
+    return this.publicProxy.forgetSessionsFor(hostname)
   }
 
   relayListener(): Promise<number> {

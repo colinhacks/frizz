@@ -46,7 +46,8 @@ import { frizzPaths } from "@frizz/server/frizz-paths";
 import {
   claimIdentityFromPrivateKey,
   exportClaimPrivateKey,
-  generateAnonymousClaimName,
+  exportClaimPublicKey,
+  pickAnonymousClaimName,
   generateClaimIdentity,
   isAnonymousClaimName,
 } from "@frizz/shared";
@@ -250,7 +251,8 @@ async function probeIdentity(path) {
     // Absent or unreadable: mint below.
   }
   const identity = await generateClaimIdentity();
-  const name = generateAnonymousClaimName();
+  // One of the key's own random names: the registrar takes no other (deriveAnonymousClaimName).
+  const name = await pickAnonymousClaimName(await exportClaimPublicKey(identity.publicKey));
   mkdirSync(dirname(path), { recursive: true });
   const pkcs8 = Buffer.from(await exportClaimPrivateKey(identity.privateKey)).toString("base64");
   writeFileSync(path, `${JSON.stringify({ name, pkcs8 })}\n`, { mode: 0o600 });

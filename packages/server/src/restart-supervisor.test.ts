@@ -1016,6 +1016,35 @@ test("setPublicOrigin flips the gate on a running board, and clearing it flips i
   }
 })
 
+test("a cookie collected under a name the board left opens nothing on its new name, and a fresh claim ends it", async () => {
+  // The board moves from ada to colin. Whoever claims ada next collects the cookies phones bookmarked
+  // there still send, and replays one to the board on colin. Before 2026-11-12 it signed them in.
+  const current = await child("only")
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  try {
+    await proxy.listen()
+    const ada = { host: "ada.frizz.sh", origin: "https://ada.frizz.sh" }
+    const colin = { host: "colin.frizz.sh", origin: "https://colin.frizz.sh" }
+    proxy.setPublicOrigin("https://ada.frizz.sh")
+    const exchange = await proxied(port, `/?frizz_code=${proxy.issueAccessCode()!.code}`, ada)
+    const session = String(exchange.headers?.["set-cookie"]).split(";")[0]!
+    assert.equal((await proxied(port, "/", { ...ada, cookie: session })).status, 200)
+
+    proxy.setPublicOrigin("https://colin.frizz.sh")
+    assert.equal((await proxied(port, "/", { ...colin, cookie: session })).status, 401, "replayed on the new name, it is refused")
+
+    // Back on ada by a renewal, the phone's own cookie works again; claimed afresh, it is signed out.
+    proxy.setPublicOrigin("https://ada.frizz.sh")
+    assert.equal((await proxied(port, "/", { ...ada, cookie: session })).status, 200)
+    assert.equal(proxy.forgetSessionsFor("ada.frizz.sh"), 1)
+    assert.equal((await proxied(port, "/", { ...ada, cookie: session })).status, 401)
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close()
+  }
+})
+
 test("sign out this device: a tunnelled session ends ITSELF, persisted, and can reach no other device", async () => {
   // The phone's Settings row. It is the one session-ending verb the tunnel may reach, and only because
   // it can end nothing but the credential on the request making it. What must hold: the caller's own id

@@ -33,6 +33,8 @@ export interface RemoteHost {
   setRelayAccess(access: RelayAccess | undefined): void;
   /** The port the relay agent dials instead of the board's own: everything on it is public. */
   relayListener(): Promise<number>;
+  /** Sign out the devices a name signed in, when the board claims it afresh (cloud.ts, onFreshClaim). */
+  forgetSessionsFor?(hostname: string): number;
 }
 
 export interface RemoteLog {
@@ -85,6 +87,10 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
   let config: CloudConfig | null = null;
   let transport: CloudTransport | null = null;
   let leaseRenewal: ReturnType<typeof setInterval> | null = null;
+  const forgetSessions = (hostname: string) => {
+    const count = options.host.forgetSessionsFor?.(hostname) ?? 0;
+    if (count) options.log.info("cloud", `${hostname} was claimed afresh, so the ${count} device(s) signed in under it before were signed out`);
+  };
 
   const stopTransport = () => {
     if (leaseRenewal) clearInterval(leaseRenewal);
@@ -95,7 +101,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
 
   const keepLease = (next: CloudConfig) => {
     leaseRenewal = setInterval(() => {
-      resolveRunToken(next, options.port, home).catch((error: unknown) => {
+      resolveRunToken(next, options.port, home, undefined, undefined, forgetSessions).catch((error: unknown) => {
         const message = `could not renew ${next.hostname}, which lapses 30 days after its last renewal: ${error instanceof Error ? error.message : error}`;
         options.log.warn("cloud", message);
         options.say(message);
@@ -113,7 +119,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
         await resolveRunToken(next, options.port, home, (message) => {
           options.log.warn("relay", message);
           options.say(message);
-        });
+        }, undefined, forgetSessions);
       }
       transport = await startRelay(next, await options.host.relayListener(), home, (message) => options.log.info("relay", message));
       keepLease(next);
@@ -129,7 +135,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
         : await resolveRunToken(next, options.port, home, (message) => {
             options.log.warn("tunnel", message);
             options.say(message);
-          })
+          }, undefined, forgetSessions)
       : null;
     transport = startTunnel(
       next,
@@ -161,7 +167,7 @@ export function createRemoteController(options: RemoteControllerOptions): Remote
       const reconciled = await reconcileCloudConfig(saved, options.port, home, (message) => {
         options.log.warn("cloud", message);
         options.say(message);
-      });
+      }, undefined, undefined, forgetSessions);
       const justClaimed = reconciled !== saved;
       if (justClaimed) writeCloudConfig(reconciled, home);
       options.host.setRelayAccess(reconciled.relayAccess);

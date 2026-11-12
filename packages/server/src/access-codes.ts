@@ -106,6 +106,12 @@ export interface SessionRecord {
   /** When the session stops verifying on its own. Absent on records written before 2026-10-08. */
   expiresAt?: number
   revokedAt?: number
+  /**
+   * The public host the session was issued under, and the only one it verifies on (AccessStore.setHost).
+   * Absent on records written before 2026-11-12, which are bound to the board's host the first time it
+   * declares one.
+   */
+  host?: string
 }
 
 /**
@@ -229,6 +235,8 @@ export class AccessStore {
   /** Signing key for sessions. Persisted by the caller; a fresh one signs every device out. */
   private signingKey: Buffer
   private readonly rotateSigningKey: () => Buffer
+  /** The public host requests arrive as, or undefined while the board serves loopback only. */
+  private host: string | undefined
 
   constructor(options: AccessStoreOptions = {}) {
     this.signingKey = options.signingKey ?? randomBytes(32)
@@ -284,7 +292,7 @@ export class AccessStore {
     this.options.onConsumed?.(code)
     const minted = this.mintSession(now)
     const expiresAt = now + this.options.sessionTtlMs
-    this.sessions.record({ id: minted.id, label: device ?? "unknown device", createdAt: now, expiresAt })
+    this.sessions.record({ id: minted.id, label: device ?? "unknown device", createdAt: now, expiresAt, ...(this.host ? { host: this.host } : {}) })
     return { ok: true, session: minted.session, expiresAt, id: minted.id }
   }
 
@@ -301,6 +309,41 @@ export class AccessStore {
     this.codes.clear()
     const count = this.sessions.revokeAll()
     this.options.onSignedOut?.()
+    return count
+  }
+
+  /**
+   * Declare the public host the board is reached as, or none. A session verifies only on the host it was
+   * issued under.
+   *
+   * WHY (2026-11-12). A browser keeps a cookie per host, so a phone never sends one board-name's cookie to
+   * another name, and binding costs it nothing. What it stops is the cookie arriving from someone else: a
+   * name this board left can be claimed by another board (a custom name whose lease lapsed, or one taken
+   * back through GitHub), and every phone still bookmarked on it hands that board its session. Before
+   * this, the cookie then signed the collector in here, on the board's new name, because a session named
+   * no host at all.
+   *
+   * Records from before host binding are bound here, to the first host declared after the upgrade, which
+   * is the one their phones are bookmarked on.
+   */
+  setHost(host: string | undefined): void {
+    this.host = host
+    if (!host) return
+    for (const record of liveSessions(this.sessions, this.options.now())) {
+      if (record.host === undefined) this.sessions.record({ ...record, host })
+    }
+  }
+
+  /**
+   * Sign out every device whose session was issued under `host`. A board calls it when it claims that name
+   * afresh, rather than renewing it: someone else may have served the name in between, and collected the
+   * cookies phones sent it. Returns how many devices that was.
+   */
+  revokeSessionsFor(host: string): number {
+    let count = 0
+    for (const record of liveSessions(this.sessions, this.options.now())) {
+      if (record.host === host && this.revokeSession(record.id)) count++
+    }
     return count
   }
 
@@ -356,6 +399,9 @@ export class AccessStore {
     const id = AccessStore.idOf(payload)
     const record = id ? this.sessions.get(id) : undefined
     if (!record || record.revokedAt !== undefined) return false
+    // Only on the host it was issued under (setHost says why). Unbound on both sides is a store that has
+    // never been told a host: a test, or a board between public setups, where no public request arrives.
+    if (record.host !== this.host) return false
     return expiresAt <= (record.expiresAt ?? record.createdAt + this.options.sessionTtlMs)
   }
 

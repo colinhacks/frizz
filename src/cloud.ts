@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
-import { claimNameIsValid, generateAnonymousClaimName, isAnonymousClaimName, normalizeClaimName, type RelayAccess } from "@frizz/shared";
+import { claimNameIsValid, exportClaimPublicKey, isAnonymousClaimName, normalizeClaimName, pickAnonymousClaimName, type RelayAccess } from "@frizz/shared";
 import { loadOrCreateClaimIdentity } from "./identity.ts";
 import { frizzGithubSignIn, type GithubAuthorizer } from "./github-claim-identity.ts";
 import { ClaimError, claimName } from "./registrar-client.ts";
@@ -188,6 +188,7 @@ export async function reconcileCloudConfig(
   onNotice?: (message: string) => void,
   origin?: string,
   github: GithubAuthorizer = frizzGithubSignIn(),
+  onFreshClaim?: (hostname: string) => void,
 ): Promise<CloudConfig> {
   if (isRelayConfig(config)) return config;
   const label = config.claim ?? zoneClaimLabel(config.hostname);
@@ -202,7 +203,7 @@ export async function reconcileCloudConfig(
       ? `${config.hostname} is served by the Frizz relay now; moving this board off its tunnel`
       : `${config.hostname} is inside ${CLAIM_ZONE}, where names are claimed, not tunnelled; claiming ${label}`,
   );
-  return establishCloudConfig(label, port, home, origin, github);
+  return establishCloudConfig(label, port, home, origin, github, onFreshClaim ? { onFreshClaim } : {});
 }
 
 /**
@@ -350,6 +351,12 @@ export interface EstablishOptions {
    * hostname. True for the prompt; the R pane lists its tunnel setups as rows of their own.
    */
   promptHint?: boolean;
+  /**
+   * Called with the hostname when the registrar created the name rather than renewing it, so the board
+   * signs out the devices its sessions under that name belong to: someone else may have served it in
+   * between and collected their cookies (AccessStore.revokeSessionsFor).
+   */
+  onFreshClaim?: (hostname: string) => void;
 }
 
 export async function establishCloudConfig(
@@ -358,7 +365,7 @@ export async function establishCloudConfig(
   home = homedir(),
   origin?: string,
   github: GithubAuthorizer = frizzGithubSignIn(),
-  { say = console.log, promptHint = true }: EstablishOptions = {},
+  { say = console.log, promptHint = true, onFreshClaim }: EstablishOptions = {},
 ): Promise<CloudConfig> {
   if (answer.includes(".")) {
     // A hostname: the operator owns the tunnel, so ASK which one. Deriving it from the hostname's
@@ -391,8 +398,9 @@ export async function establishCloudConfig(
     // Surface the specific reason — reserved, too short, bad character — rather than a generic refusal.
     normalizeClaimName(answer);
   }
-  const name = answer === "" ? generateAnonymousClaimName() : normalizeClaimName(answer);
   const identity = await loadOrCreateClaimIdentity(home);
+  // A fresh random name is one of this key's own: the registrar takes no other (deriveAnonymousClaimName).
+  const name = answer === "" ? await pickAnonymousClaimName(await exportClaimPublicKey(identity.publicKey)) : normalizeClaimName(answer);
   const claimWith = (github?: string) =>
     claimName({ name, port, identity, ...(github ? { github } : {}), ...(origin ? { origin } : {}) });
   let result;
@@ -436,6 +444,7 @@ export async function establishCloudConfig(
     }
     throw error;
   }
+  if (!result.renewed) onFreshClaim?.(result.hostname);
   if (result.token) {
     writeTunnelToken(result.token, home);
     return { hostname: result.hostname, claim: name, serve: "tunnel" };
@@ -457,12 +466,15 @@ export async function resolveRunToken(
   home = homedir(),
   onWarning?: (message: string) => void,
   origin?: string,
+  onFreshClaim?: (hostname: string) => void,
 ): Promise<string | null> {
   if (!isClaimedConfig(config)) return null;
   const cached = readTunnelToken(home);
   try {
     const identity = await loadOrCreateClaimIdentity(home);
     const result = await claimName({ name: config.claim!, port, identity, ...(origin ? { origin } : {}) });
+    // A renewal that found the name gone, swept after a lapse, claims it again: see EstablishOptions.
+    if (!result.renewed) onFreshClaim?.(result.hostname);
     // A relay-served name renews its lease here and returns no token — there is no tunnel to run.
     if (!result.token) return null;
     writeTunnelToken(result.token, home);
