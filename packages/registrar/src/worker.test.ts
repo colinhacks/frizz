@@ -1,22 +1,44 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { generateAnonymousClaimName, generateClaimIdentity, signClaim } from "@frizz/shared"
-import worker, { budgetAddress, githubVerifier, kvAnonymousBudget, kvClaimStore, type KvNamespace, type RegistrarEnv } from "./worker.ts"
+import { deriveAnonymousClaimName, exportClaimPublicKey, generateClaimIdentity, signClaim } from "@frizz/shared"
+import worker, { budgetAddress, claimBudgets, githubVerifier, kvClaimStore, type KvNamespace, type RegistrarEnv } from "./worker.ts"
+import { handleClaim } from "./claim-handler.ts"
+import { importFromKv, withClaimLock, RegistrarBusy, type D1Database } from "./claim-db.ts"
+import { fakeD1 } from "./fake-d1.ts"
 
-function fakeKv(seed: Record<string, string> = {}): KvNamespace & { rows: Map<string, string>; ttls: Map<string, number | undefined> } {
+/** One of this key's own random names, the only kind a NEW random claim may take (2026-11-12). */
+async function ownRandom(identity: CryptoKeyPair, index = 0) {
+  return deriveAnonymousClaimName(await exportClaimPublicKey(identity.publicKey), index)
+}
+
+/** A budget row's count in the fake D1, or 0. */
+function budgetUsed(db: ReturnType<typeof fakeD1>, key: string): number {
+  return Number((db.sqlite.prepare("SELECT used FROM budgets WHERE key = ?").get(key) as { used?: number } | undefined)?.used ?? 0)
+}
+
+function seedBudget(db: ReturnType<typeof fakeD1>, key: string, used: number) {
+  db.sqlite.exec("CREATE TABLE IF NOT EXISTS budgets (key TEXT PRIMARY KEY, used INTEGER NOT NULL, expires_at INTEGER NOT NULL)")
+  db.sqlite.prepare("INSERT INTO budgets (key, used, expires_at) VALUES (?, ?, ?)").run(key, used, Date.now() + 7_200_000)
+}
+
+function fakeKv(seed: Record<string, string> = {}, latencyMs = 0): KvNamespace & { rows: Map<string, string>; ttls: Map<string, number | undefined> } {
   const rows = new Map(Object.entries(seed))
   const ttls = new Map<string, number | undefined>()
+  const tick = () => (latencyMs ? new Promise<void>((resolve) => setTimeout(resolve, latencyMs)) : Promise.resolve())
   return {
     rows,
     ttls,
     async get(key) {
+      await tick()
       return rows.get(key) ?? null
     },
     async put(key, value, options) {
+      await tick()
       rows.set(key, value)
       ttls.set(key, options?.expirationTtl)
     },
     async delete(key) {
+      await tick()
       rows.delete(key)
     },
     async list({ prefix = "" } = {}) {
@@ -28,8 +50,9 @@ function fakeKv(seed: Record<string, string> = {}): KvNamespace & { rows: Map<st
   }
 }
 
-function env(kv: KvNamespace): RegistrarEnv {
+function env(kv: KvNamespace, db: D1Database = fakeD1()): RegistrarEnv {
   return {
+    CLAIMS_DB: db,
     // Deliberately unusable: every test here must be rejected BEFORE anything reaches Cloudflare, so
     // a test that starts making real requests fails loudly rather than quietly calling out.
     CF_API_TOKEN: "not-a-real-token",
@@ -134,39 +157,47 @@ test("an anonymous claim goes through the worker with no GitHub anywhere near it
   // The gate is ON in this env (REQUIRE_GITHUB is unset) and relay mode records the name in KV alone,
   // so a 200 here proves the whole auth-free path: shape recognised, gate waived, nothing provisioned.
   const kv = fakeKv()
+  const db = fakeD1()
   const identity = await generateClaimIdentity()
-  const name = generateAnonymousClaimName()
+  const name = await ownRandom(identity)
   const response = await worker.fetch(
     new Request("https://r.frizz.sh/claim", {
       method: "POST",
       headers: { "cf-connecting-ip": "203.0.113.7" },
       body: JSON.stringify(await signClaim({ name, port: 9393, issuedAt: Date.now() }, identity)),
     }),
-    env(kv)
+    env(kv, db)
   )
   assert.equal(response.status, 200)
   const body = (await response.json()) as { hostname: string }
   assert.equal(body.hostname, `${name}.frizz.sh`)
-  assert.ok(kv.rows.has(`claim:${name}`), "the claim row was written")
-  assert.equal(kv.rows.get("anonrl:203.0.113.7:" + Math.floor(Date.now() / 3_600_000)), "1", "the budget was spent")
+  assert.ok(kv.rows.has(`claim:${name}`), "the claim row was copied to KV, where the relay reads it")
+  assert.ok(db.sqlite.prepare("SELECT 1 FROM claims WHERE name = ?").get(name), "and written to D1, which is the registry")
+  const hour = Math.floor(Date.now() / 3_600_000)
+  assert.equal(budgetUsed(db, `anonrl:203.0.113.7:${hour}`), 1, "the network's budget was spent")
+  assert.equal(budgetUsed(db, `new-names:${hour}`), 1, "and so was one of the hour's new names")
 })
 
-test("the anonymous budget allows ten an hour and then refuses, on a row that expires itself", async () => {
-  const kv = fakeKv()
-  const budget = kvAnonymousBudget(kv, "203.0.113.7", () => 1_800_000_000_000)
+test("the anonymous budget allows ten an hour and then refuses, and a new hour starts again", async () => {
+  const db = fakeD1()
+  const { ensureSchema } = await import("./claim-db.ts")
+  await ensureSchema(db)
+  const budget = claimBudgets(db, "203.0.113.7", {}, () => 1_800_000_000_000).anonymousBudget
   for (let i = 0; i < 10; i++) assert.equal(await budget(), true, `claim ${i + 1} fits the budget`)
   assert.equal(await budget(), false, "the eleventh does not")
-  const key = `anonrl:203.0.113.7:${Math.floor(1_800_000_000_000 / 3_600_000)}`
-  assert.equal(kv.rows.get(key), "10")
-  assert.equal(kv.ttls.get(key), 7_200, "the counter cleans itself up")
-  // A new hour is a new bucket: the budget refreshes without anything sweeping the old row.
-  const later = kvAnonymousBudget(kv, "203.0.113.7", () => 1_800_000_000_000 + 3_600_000)
+  assert.equal(budgetUsed(db, `anonrl:203.0.113.7:${Math.floor(1_800_000_000_000 / 3_600_000)}`), 10)
+  const later = claimBudgets(db, "203.0.113.7", {}, () => 1_800_000_000_000 + 3_600_000).anonymousBudget
   assert.equal(await later(), true)
+  // The new-names ceiling takes its size from the env, so raising it needs no deploy.
+  const small = claimBudgets(db, "x", { NEW_NAMES_PER_HOUR: "2" }, () => 1_800_000_000_000).newNameBudget
+  assert.deepEqual([await small(), await small(), await small()], [true, true, false])
 })
 
 test("custom claims from one address spend a GitHub-lookup budget, and past it GitHub is not asked", async () => {
   const hour = Math.floor(Date.now() / 3_600_000)
-  const kv = fakeKv({ [`ghrl:198.51.100.9:${hour}`]: "10" })
+  const kv = fakeKv()
+  const db = fakeD1()
+  seedBudget(db, `ghrl:198.51.100.9:${hour}`, 10)
   const identity = await generateClaimIdentity()
   const realFetch = globalThis.fetch
   let asked = 0
@@ -179,7 +210,7 @@ test("custom claims from one address spend a GitHub-lookup budget, and past it G
           headers: { "cf-connecting-ip": address },
           body: JSON.stringify(await signClaim({ name: "colin", port: 9393, issuedAt: Date.now(), github: "ghu_madeup" }, identity)),
         }),
-        env(kv)
+        env(kv, db)
       )
     const over = await claim("198.51.100.9")
     assert.equal(over.status, 429)
@@ -188,7 +219,7 @@ test("custom claims from one address spend a GitHub-lookup budget, and past it G
     // Another address has its own budget, and spends it.
     assert.equal((await claim("203.0.113.7")).status, 400)
     assert.equal(asked, 1)
-    assert.equal(kv.rows.get(`ghrl:203.0.113.7:${hour}`), "1")
+    assert.equal(budgetUsed(db, `ghrl:203.0.113.7:${hour}`), 1)
   } finally {
     globalThis.fetch = realFetch
   }
@@ -235,17 +266,19 @@ test("a body far bigger than a claim is refused unread", async () => {
 
 test("an over-budget anonymous claim is a 429 through the worker, naming the wait", async () => {
   const hour = Math.floor(Date.now() / 3_600_000)
-  const kv = fakeKv({ [`anonrl:198.51.100.9:${hour}`]: "10" })
+  const kv = fakeKv()
+  const db = fakeD1()
+  seedBudget(db, `anonrl:198.51.100.9:${hour}`, 10)
   const identity = await generateClaimIdentity()
   const response = await worker.fetch(
     new Request("https://r.frizz.sh/claim", {
       method: "POST",
       headers: { "cf-connecting-ip": "198.51.100.9" },
       body: JSON.stringify(
-        await signClaim({ name: generateAnonymousClaimName(), port: 9393, issuedAt: Date.now() }, identity)
+        await signClaim({ name: await ownRandom(identity), port: 9393, issuedAt: Date.now() }, identity)
       ),
     }),
-    env(kv)
+    env(kv, db)
   )
   assert.equal(response.status, 429)
   const body = (await response.json()) as { error: string }
@@ -323,6 +356,7 @@ test("a token GitHub refuses is rejected, not refused as foreign", async () => {
 test("through the worker, a foreign token is refused with advice to update, and the App's token claims", async () => {
   // The worker's own wiring: claimDeps hands the real verifier the global fetch, faked here as GitHub.
   const kv = fakeKv()
+  const db = fakeD1()
   const identity = await generateClaimIdentity()
   const realFetch = globalThis.fetch
   let clientId = "178c6fc778ccc68e1d6a"
@@ -338,7 +372,7 @@ test("through the worker, a foreign token is refused with advice to update, and 
           method: "POST",
           body: JSON.stringify(await signClaim({ name: "ada", port: 9393, issuedAt: Date.now(), github: token }, identity)),
         }),
-        env(kv)
+        env(kv, db)
       )
     const refused = await claim("gho_ghcli")
     assert.equal(refused.status, 400)
@@ -352,11 +386,150 @@ test("through the worker, a foreign token is refused with advice to update, and 
     const accepted = await claim("ghu_agentconsole")
     assert.equal(accepted.status, 200)
     assert.equal(JSON.parse(kv.rows.get("claim:ada")!).githubId, 4242)
-    assert.equal(kv.rows.get("gh:4242"), "ada", "the one-name-per-account index is kept")
-    const stored = JSON.stringify([...kv.rows.entries()])
+    assert.equal((db.sqlite.prepare("SELECT name FROM accounts WHERE github_id = 4242").get() as { name?: string } | undefined)?.name, "ada", "the one-name-per-account index is kept")
+    const stored = JSON.stringify([...kv.rows.entries()]) + JSON.stringify(db.sqlite.prepare("SELECT * FROM accounts, claims").all())
     assert.equal(stored.includes("ghu_") || stored.includes("gho_"), false, "no token is stored")
     assert.deepEqual(shown, ["Bearer gho_ghcli", "Bearer ghu_agentconsole"])
   } finally {
     globalThis.fetch = realFetch
   }
+})
+
+test("without its database the registrar takes no claims, rather than racing in KV", async () => {
+  const kv = fakeKv()
+  const identity = await generateClaimIdentity()
+  const { CLAIMS_DB: _, ...withoutDb } = env(kv)
+  const response = await worker.fetch(
+    new Request("https://r.frizz.sh/claim", { method: "POST", body: JSON.stringify(await signClaim({ name: await ownRandom(identity), port: 9393, issuedAt: Date.now() }, identity)) }),
+    withoutDb
+  )
+  assert.equal(response.status, 503)
+  assert.equal(((await response.json()) as { error: string }).error, "registrar-busy")
+  assert.equal(kv.rows.size, 0)
+})
+
+/** Two custom names claimed at once by ONE key, each with a different account's token, as GitHub answers them. */
+async function racePair(store: "kv" | "d1") {
+  const identity = await generateClaimIdentity()
+  const year = new Date(Date.now() - 365 * 86_400_000).toISOString()
+  const accounts: Record<string, { id: number; login: string }> = { ghu_ada: { id: 1, login: "ada" }, ghu_bob: { id: 2, login: "bob" } }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const token = new Headers(init?.headers).get("authorization")!.slice("Bearer ".length)
+    // GitHub takes a moment, which is the window two claims race in.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    return new Response(JSON.stringify({ ...accounts[token], created_at: year }), { headers: { "x-oauth-client-id": "Iv23licDruV3JtQIF3fI" } })
+  }) as typeof fetch
+  try {
+    const kv = fakeKv({}, 3)
+    const db = fakeD1({ latencyMs: 3 })
+    const bodies = await Promise.all(
+      [["ada", "ghu_ada"], ["bob", "ghu_bob"]].map(async ([name, github]) => signClaim({ name: name!, port: 9393, issuedAt: Date.now(), github: github! }, identity))
+    )
+    if (store === "kv") {
+      // The registry as it was before 2026-11-12: KV alone, no lock. The negative control.
+      const { githubVerifier: verifier } = await import("./worker.ts")
+      const deps = { store: kvClaimStore(kv), zone: "frizz.sh", now: () => Date.now(), github: verifier() }
+      return await Promise.all(bodies.map((body) => handleClaim(body, deps).then((outcome) => outcome.status)))
+    }
+    return await Promise.all(
+      bodies.map((body) => worker.fetch(new Request("https://r.frizz.sh/claim", { method: "POST", body: JSON.stringify(body) }), env(kv, db)).then((r) => r.status))
+    )
+  } finally {
+    globalThis.fetch = realFetch
+  }
+}
+
+test("one key claiming two custom names at once gets one, where KV alone gave it both", async () => {
+  // plans/frizz-sh-claim-review-2026-11-07.md M1: both claims read the key's index as empty, and both won.
+  assert.deepEqual((await racePair("kv")).sort(), [200, 200], "the harness can show the race: without the lock both win")
+  assert.deepEqual((await racePair("d1")).sort(), [200, 409], "behind the lock the second sees the first")
+})
+
+test("twenty claims at once from one network spend its budget of ten exactly", async () => {
+  const kv = fakeKv({}, 2)
+  const db = fakeD1({ latencyMs: 2 })
+  const identities = await Promise.all(Array.from({ length: 20 }, () => generateClaimIdentity()))
+  const statuses = await Promise.all(
+    identities.map(async (identity) =>
+      worker
+        .fetch(
+          new Request("https://r.frizz.sh/claim", {
+            method: "POST",
+            headers: { "cf-connecting-ip": "198.51.100.20" },
+            body: JSON.stringify(await signClaim({ name: await ownRandom(identity), port: 9393, issuedAt: Date.now() }, identity)),
+          }),
+          env(kv, db)
+        )
+        .then((r) => r.status)
+    )
+  )
+  assert.equal(statuses.filter((s) => s === 200).length, 10)
+  assert.equal(statuses.filter((s) => s === 429).length, 10)
+  assert.equal([...kv.rows.keys()].filter((k) => k.startsWith("claim:")).length, 10)
+})
+
+test("the lock lets one holder in at a time, frees itself after its lease, and frees only its own hold", async () => {
+  const db = fakeD1()
+  let clock = 1_000
+  const now = () => clock
+  const sleep = async (ms: number) => void (clock += ms)
+  let inside = 0
+  let most = 0
+  await Promise.all(
+    Array.from({ length: 5 }, (_, i) =>
+      withClaimLock(db, async () => {
+        inside++
+        most = Math.max(most, inside)
+        await new Promise((resolve) => setTimeout(resolve, 2))
+        inside--
+        return i
+      }, { now: Date.now })
+    )
+  )
+  assert.equal(most, 1, "never two holders at once")
+
+  // A holder that died mid-claim (its finally never ran) is waited out, then replaced.
+  db.sqlite.prepare("UPDATE lock SET holder = 'dead', expires_at = ? WHERE id = 1").run(clock + 30_000)
+  assert.equal(await withClaimLock(db, async () => "next", { now, sleep, waitMs: 60_000 }), "next")
+  assert.ok(clock >= 31_000, "it waited for the lease")
+  // A holder that never frees in time leaves the claim answered "busy".
+  db.sqlite.prepare("UPDATE lock SET holder = 'slow', expires_at = ? WHERE id = 1").run(clock + 30_000)
+  await assert.rejects(withClaimLock(db, async () => "never", { now, sleep, waitMs: 5_000 }), RegistrarBusy)
+  assert.equal((db.sqlite.prepare("SELECT holder FROM lock").get() as { holder: string }).holder, "slow", "and does not free a hold that is not its own")
+})
+
+test("the registry KV held is copied into D1 once, and the relay's rows stay where it reads them", async () => {
+  const owner = await generateClaimIdentity()
+  const pubkey = await exportClaimPublicKey(owner.publicKey)
+  const row = JSON.stringify({ pubkey, tunnelId: "", port: 9393, claimedAt: 1, renewedAt: Date.now(), githubId: 7 })
+  const kv = fakeKv({ "claim:colin": row, [`owner:${pubkey}`]: "colin", "gh:7": "colin", "retired:abcdefghijklmnopqrst": "someone" })
+  const db = fakeD1()
+  // A renewal by the name's key through the worker: the import runs first, and the renewal finds the row.
+  const renewed = await worker.fetch(
+    new Request("https://r.frizz.sh/claim", { method: "POST", body: JSON.stringify(await signClaim({ name: "colin", port: 9494, issuedAt: Date.now() }, owner)) }),
+    env(kv, db)
+  )
+  assert.equal(renewed.status, 200)
+  assert.equal(((await renewed.json()) as { renewed: boolean }).renewed, true)
+  assert.equal((db.sqlite.prepare("SELECT name FROM accounts WHERE github_id = 7").get() as { name: string }).name, "colin")
+  assert.equal((db.sqlite.prepare("SELECT pubkey FROM retired WHERE name = 'abcdefghijklmnopqrst'").get() as { pubkey: string }).pubkey, "someone")
+  assert.equal(JSON.parse(kv.rows.get("claim:colin")!).port, 9494, "the relay's copy follows the renewal")
+  // Once imported, never again: a KV row added later is not the registry.
+  kv.rows.set("claim:late", row)
+  assert.equal(await importFromKv(db, kv), 0)
+  assert.equal(db.sqlite.prepare("SELECT 1 FROM claims WHERE name = 'late'").get(), undefined)
+})
+
+test("a claim keeps running when its caller hangs up, so it is never left half-written", async () => {
+  const kv = fakeKv()
+  const identity = await generateClaimIdentity()
+  const kept: Promise<unknown>[] = []
+  const response = await worker.fetch(
+    new Request("https://r.frizz.sh/claim", { method: "POST", body: JSON.stringify(await signClaim({ name: await ownRandom(identity), port: 9393, issuedAt: Date.now() }, identity)) }),
+    env(kv),
+    { waitUntil: (promise) => void kept.push(promise) }
+  )
+  assert.equal(response.status, 200)
+  assert.equal(kept.length, 1, "the claim was handed to waitUntil")
 })

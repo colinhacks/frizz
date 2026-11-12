@@ -2,6 +2,7 @@ import {
   CLAIM_LEASE_MS,
   claimLeaseExpired,
   isAnonymousClaimName,
+  isKeysOwnAnonymousName,
   tunnelNameForClaim,
   verifyClaim,
   type ClaimRejection,
@@ -33,6 +34,8 @@ export interface ClaimStore {
   remove(name: string): Promise<void>
   /** Every claimed name. Used by the sweeper; the claim path never needs it. */
   list(): Promise<string[]>
+  /** How many names are claimed, where the store can say so without listing them all. */
+  count?(): Promise<number>
   /** The name this key already holds, if any. One key, one name. */
   readOwner(pubkey: string): Promise<string | null>
   writeOwner(pubkey: string, name: string): Promise<void>
@@ -116,6 +119,13 @@ export interface ClaimDeps {
    * of a CUSTOM name, before GitHub is asked. Absent means unlimited, which is only ever right in tests.
    */
   githubBudget?: () => Promise<boolean>
+  /**
+   * May one more NEW name be handed out this hour, by anyone? Consulted for every name a claim creates,
+   * random or custom, after its own budget and identity are settled; never for a renewal. The per-network
+   * budget above does nothing against many networks at once, and this is the ceiling over all of them.
+   * Absent means unlimited, which is only ever right in tests.
+   */
+  newNameBudget?: () => Promise<boolean>
 }
 
 export type ClaimFailure =
@@ -132,6 +142,8 @@ export type ClaimFailure =
   | "one-name-per-account"
   | "namespace-full"
   | "too-many-claims"
+  | "too-many-names"
+  | "registrar-busy"
 
 export type ClaimOutcome =
   /** `token` is present only in tunnel mode; a relay board proves itself with its keypair instead. */
@@ -163,6 +175,8 @@ const MESSAGES: Record<ClaimFailure, string> = {
     "that GitHub account already holds another name, which stays its own until 30 days after it was last served",
   "namespace-full": "frizz.sh has no free names left — this is our limit to raise, not yours",
   "too-many-claims": "too many new names from this network just now — try again in an hour",
+  "too-many-names": "frizz.sh has handed out all the new names it gives in an hour — try again later",
+  "registrar-busy": "the registrar is busy with other claims — try again in a minute",
 }
 
 const reject = (error: ClaimFailure, status: 400 | 409 | 429 | 502 | 503 = 400): ClaimOutcome => ({
@@ -184,6 +198,7 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
 
   const { name, port, pubkey } = verdict.payload
   const hostname = `${name}.${deps.zone}`
+  const anonymous = isAnonymousClaimName(name)
   const existing = await deps.store.read(name)
 
   // A RANDOM NAME IS NEVER REUSED (maintainer, 2026-11-07: "there's plenty to go around"). Phones and
@@ -191,22 +206,41 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   // whoever held it next would collect them. So once released, a random name belongs to the key that
   // held it, for good: that key may have it back, and every other key is told it is taken. 100 bits of
   // name means no one ever needs a used one.
-  if (isAnonymousClaimName(name)) {
+  if (anonymous) {
     const holder = existing?.pubkey ?? (await deps.store.readRetired(name))
     if (holder && holder !== pubkey) return reject("name-taken", 409)
+    // A NEW RANDOM NAME IS ONE OF THE KEY'S OWN (2026-11-12). This shape skips GitHub, so a name chosen
+    // by the claimant — `githubsupportfrizz22` — would be a vanity name with no account behind it. Every
+    // launcher since derives its random names from its key (deriveAnonymousClaimName). One that does not
+    // is older than that, and is told to update. A name this key already holds, or held, is its own.
+    if (!holder && !(await isKeysOwnAnonymousName(pubkey, name))) return reject("bad-version")
   }
+
+  // Released only once every check below has passed, so a claim refused for its budget, its account or
+  // its key never costs the name's last holder anything.
+  let releasing: ClaimRecord | undefined
+  // Settled while deciding whether this claim may take the name from another key, and then not asked again.
+  let proved: GithubIdentity | undefined
 
   if (existing && existing.pubkey !== pubkey) {
     // A lapsed lease returns the name to the pool on demand, so a name frees up the moment someone
     // else wants it rather than when a cron happens to run. That is NOT a substitute for the sweeper
     // below: this branch only fires when somebody asks for this exact name, so a name nobody wants
     // would hold its DNS record and tunnel forever, against caps of 200 and 1,000.
-    if (!claimLeaseExpired(existing.renewedAt, now)) return reject("name-taken", 409)
-    // If the old tunnel will not die, do NOT proceed: creating its replacement would fail on the
-    // duplicate name anyway, and we would have dropped the registry row on the way there.
-    if (!(await releaseQuietly(deps, name, hostname, existing.tunnelId, existing.pubkey, existing.githubId))) {
-      return reject("provisioning-failed", 502)
+    if (!claimLeaseExpired(existing.renewedAt, now)) {
+      // A CUSTOM NAME FOLLOWS ITS ACCOUNT (2026-11-12). Whoever held a leaked sign-in token for its eight
+      // hours could bind the account's username to a key of their own and renew it forever, and the
+      // account would be refused its own name. The account proving itself again takes the name back,
+      // onto the key that proves it: a stolen token can do the same only while it lasts, the owner's
+      // next claim wins after that, and the board that lost the name drops the sessions issued under
+      // it (cloud.ts, freshClaim), so cookies collected while a stranger served it open nothing.
+      if (anonymous || existing.githubId === undefined || !deps.github) return reject("name-taken", 409)
+      const account = await proveAccount(verdict.payload.github, name, deps, now)
+      if (!("who" in account)) return account.outcome
+      if (account.who.id !== existing.githubId) return reject("name-taken", 409)
+      proved = account.who
     }
+    releasing = existing
   } else if (existing) {
     const renewed = await renew(existing, { name, hostname, port, pubkey }, deps, now)
     // The name a board serves is its key's one name, so coming back to a name it stepped off points
@@ -222,22 +256,16 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   // claim kinds pay it differently: an ANONYMOUS name (the 20-character shape, worthless to squat)
   // pays a per-network creation budget, and a vanity name pays a GitHub identity.
   let githubId: number | undefined
-  if (isAnonymousClaimName(name)) {
+  if (anonymous) {
     if (deps.anonymousBudget && !(await deps.anonymousBudget())) {
       return reject("too-many-claims", 429)
     }
   } else if (deps.github) {
-    if (!verdict.payload.github) return reject("github-required")
-    if (deps.githubBudget && !(await deps.githubBudget())) return reject("too-many-claims", 429)
-    const who = await deps.github(verdict.payload.github)
-    if (who === "foreign") return reject("github-token-foreign")
-    if (!who) return reject("github-rejected")
-    // A CUSTOM NAME IS THE ACCOUNT'S OWN USERNAME (maintainer, 2026-11-07). Otherwise any account old
-    // enough could take someone else's login first, and a visitor would read it as theirs. GitHub logins
-    // are case-insensitive and claim names lowercase. A name claimed before this rule renews by its key.
-    if (name !== who.login.toLowerCase()) return reject("not-your-github-username")
-    if (deps.minAccountAgeMs && now - who.createdAt < deps.minAccountAgeMs) {
-      return reject("github-too-new")
+    let who = proved
+    if (!who) {
+      const account = await proveAccount(verdict.payload.github, name, deps, now)
+      if (!("who" in account)) return account.outcome
+      who = account.who
     }
     const heldByAccount = await deps.store.readGithubOwner(who.id)
     if (heldByAccount && heldByAccount !== name) {
@@ -248,14 +276,6 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
       await deps.store.removeGithubOwner(who.id)
     }
     githubId = who.id
-  }
-
-  // CAPACITY, checked only for a NEW name — a renewal consumes nothing and must never be refused for
-  // being late to a full namespace. Counting here rather than letting Cloudflare refuse means the
-  // answer says what is actually wrong instead of "provisioning failed".
-  if (deps.maxNames !== undefined) {
-    const taken = (await deps.store.list()).length
-    if (taken >= deps.maxNames) return reject("namespace-full", 503)
   }
 
   // ONE LIVE CUSTOM NAME PER KEY: a key holding a live custom name cannot claim a second one. It is a
@@ -273,18 +293,63 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
   // that stranger their session cookies, which the board would still honour on its new name. Coming
   // back to it within the lease is a renewal, matched by key before this check.
   const held = await deps.store.readOwner(pubkey)
+  let staleOwner = false
   if (held && held !== name) {
     const other = await deps.store.read(held)
     if (other && other.pubkey === pubkey && !claimLeaseExpired(other.renewedAt, now)) {
       // Stepping off the old name is create() pointing the key's index at the new one.
-      if (!isAnonymousClaimName(held) && !isAnonymousClaimName(name)) return reject("one-name-per-key", 409)
+      if (!isAnonymousClaimName(held) && !anonymous) return reject("one-name-per-key", 409)
     } else {
       // The index outlived the name it pointed at, so it is stale rather than binding.
-      await deps.store.removeOwner(pubkey)
+      staleOwner = true
     }
   }
 
+  // CAPACITY, checked only for a NEW name — a renewal consumes nothing and must never be refused for
+  // being late to a full namespace. Counting here rather than letting Cloudflare refuse means the
+  // answer says what is actually wrong instead of "provisioning failed". A name being taken back or
+  // reclaimed after a lapse frees its own place first, so it is not counted against itself.
+  if (deps.maxNames !== undefined && !releasing) {
+    const taken = deps.store.count ? await deps.store.count() : (await deps.store.list()).length
+    if (taken >= deps.maxNames) return reject("namespace-full", 503)
+  }
+
+  // Last of the gates, so a claim refused for anything else spends none of the hour's names.
+  if (deps.newNameBudget && !(await deps.newNameBudget())) return reject("too-many-names", 503)
+
+  if (releasing) {
+    // If the old tunnel will not die, do NOT proceed: creating its replacement would fail on the
+    // duplicate name anyway, and we would have dropped the registry row on the way there.
+    if (!(await releaseQuietly(deps, name, hostname, releasing.tunnelId, releasing.pubkey, releasing.githubId))) {
+      return reject("provisioning-failed", 502)
+    }
+  }
+  if (staleOwner) await deps.store.removeOwner(pubkey)
+
   return create({ name, hostname, port, pubkey, githubId }, deps, now)
+}
+
+/**
+ * Prove a GitHub account owns `name`: its own username, through Frizz's own sign-in, old enough to count.
+ * Spends one lookup of the network's GitHub budget. Returns the account, or the refusal to send back.
+ */
+async function proveAccount(
+  token: string | undefined,
+  name: string,
+  deps: ClaimDeps,
+  now: number
+): Promise<{ who: GithubIdentity } | { outcome: ClaimOutcome }> {
+  if (!token) return { outcome: reject("github-required") }
+  if (deps.githubBudget && !(await deps.githubBudget())) return { outcome: reject("too-many-claims", 429) }
+  const who = await deps.github!(token)
+  if (who === "foreign") return { outcome: reject("github-token-foreign") }
+  if (!who) return { outcome: reject("github-rejected") }
+  // A CUSTOM NAME IS THE ACCOUNT'S OWN USERNAME (maintainer, 2026-11-07). Otherwise any account old
+  // enough could take someone else's login first, and a visitor would read it as theirs. GitHub logins
+  // are case-insensitive and claim names lowercase. A name claimed before this rule renews by its key.
+  if (name !== who.login.toLowerCase()) return { outcome: reject("not-your-github-username") }
+  if (deps.minAccountAgeMs && now - who.createdAt < deps.minAccountAgeMs) return { outcome: reject("github-too-new") }
+  return { who }
 }
 
 interface ClaimTarget {

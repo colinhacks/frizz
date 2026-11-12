@@ -6,8 +6,11 @@ import {
   CLAIM_PROTOCOL_VERSION,
   claimLeaseExpired,
   claimNameIsValid,
-  generateAnonymousClaimName,
+  ANONYMOUS_NAMES_PER_KEY,
+  deriveAnonymousClaimName,
   isAnonymousClaimName,
+  isKeysOwnAnonymousName,
+  pickAnonymousClaimName,
   claimSigningInput,
   exportClaimPrivateKey,
   exportClaimPublicKey,
@@ -228,16 +231,33 @@ test("a genuinely malformed name is still bad-name, not reserved", async () => {
   }
 })
 
-test("an anonymous name is 20 characters of [a-z2-7], valid to claim, and never repeats", () => {
+test("a key's random names are 20 characters of [a-z2-7], valid to claim, its own, and never repeat", async () => {
   const seen = new Set<string>()
-  for (let i = 0; i < 200; i++) {
-    const name = generateAnonymousClaimName()
-    assert.match(name, /^[a-z2-7]{20}$/)
-    assert.ok(isAnonymousClaimName(name))
-    assert.ok(claimNameIsValid(name), "the shape must pass ordinary name validation")
-    seen.add(name)
+  for (let k = 0; k < 4; k++) {
+    const pubkey = await exportClaimPublicKey((await generateClaimIdentity()).publicKey)
+    for (let index = 0; index < ANONYMOUS_NAMES_PER_KEY; index++) {
+      const name = await deriveAnonymousClaimName(pubkey, index)
+      assert.match(name, /^[a-z2-7]{20}$/)
+      assert.ok(isAnonymousClaimName(name))
+      assert.ok(claimNameIsValid(name), "the shape must pass ordinary name validation")
+      assert.equal(await deriveAnonymousClaimName(pubkey, index), name, "the same key and index give the same name")
+      seen.add(name)
+    }
   }
-  assert.equal(seen.size, 200, "100 bits of entropy cannot collide in 200 draws")
+  assert.equal(seen.size, 4 * ANONYMOUS_NAMES_PER_KEY, "100 bits cannot collide across keys or indexes")
+})
+
+test("a new random name must be one of the claiming key's own, so nobody can choose one", async () => {
+  const pubkey = await exportClaimPublicKey((await generateClaimIdentity()).publicKey)
+  const other = await exportClaimPublicKey((await generateClaimIdentity()).publicKey)
+  const picked = await pickAnonymousClaimName(pubkey)
+  assert.ok(await isKeysOwnAnonymousName(pubkey, picked))
+  assert.ok(await isKeysOwnAnonymousName(pubkey, await deriveAnonymousClaimName(pubkey, ANONYMOUS_NAMES_PER_KEY - 1)))
+  // One past the last index, another key's name, and a word in the random shape are not this key's.
+  assert.equal(await isKeysOwnAnonymousName(pubkey, await deriveAnonymousClaimName(pubkey, ANONYMOUS_NAMES_PER_KEY)), false)
+  assert.equal(await isKeysOwnAnonymousName(pubkey, await deriveAnonymousClaimName(other, 0)), false)
+  assert.equal(await isKeysOwnAnonymousName(pubkey, "colinhacksfrizzboard"), false)
+  assert.equal(await isKeysOwnAnonymousName(pubkey, "colin"), false)
 })
 
 test("the anonymous shape excludes near misses", () => {
@@ -255,7 +275,7 @@ test("the anonymous shape excludes near misses", () => {
 
 test("an anonymous name signs and verifies like any other claim", async () => {
   const identity = await generateClaimIdentity()
-  const name = generateAnonymousClaimName()
+  const name = await pickAnonymousClaimName(await exportClaimPublicKey(identity.publicKey))
   const request = await signClaim({ name, port: 9393, issuedAt: 1_800_000_000_000 }, identity)
   const verdict = await verifyClaim(request, 1_800_000_000_000)
   assert.ok(verdict.ok)

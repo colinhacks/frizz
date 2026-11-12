@@ -101,13 +101,43 @@ export function isAnonymousClaimName(name: string): boolean {
   return ANONYMOUS_CLAIM_PATTERN.test(name)
 }
 
-/** Mint a fresh anonymous name. 20 characters of [a-z2-7] — 100 bits, so collisions never happen. */
-export function generateAnonymousClaimName(): string {
-  const bytes = new Uint8Array(ANONYMOUS_CLAIM_NAME_LENGTH)
-  crypto.getRandomValues(bytes)
+/**
+ * How many random names one key may take. A launcher asked for a fresh name picks one of them at random,
+ * and a name it comes back to is its own: renewed while its lease runs, and handed back after.
+ */
+export const ANONYMOUS_NAMES_PER_KEY = 64
+
+/**
+ * A key's `index`th random name: 20 characters of [a-z2-7], 100 bits of a SHA-256 over the key.
+ *
+ * DERIVED, NOT CHOSEN (2026-11-12). The registrar waives GitHub for this shape, so when a launcher drew it
+ * from `crypto.getRandomValues` anyone could send a name of their choosing in it — `colinhacksfrizzboard`,
+ * `githubsupportfrizz22` — and have it with no account. A NEW random name is now taken only if it is one of
+ * the claiming key's own ANONYMOUS_NAMES_PER_KEY, which nobody can steer: grinding keys buys a few
+ * characters of prefix, never a word. Names claimed before keep renewing by their key.
+ */
+export async function deriveAnonymousClaimName(pubkey: string, index: number): Promise<string> {
+  const input = new TextEncoder().encode(`frizz-random-name:v1:${pubkey}:${index}`)
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input))
   let name = ""
-  for (const byte of bytes) name += ANONYMOUS_CLAIM_ALPHABET[byte & 31]
+  // Five bits from each of the first 20 bytes: the alphabet has exactly 32 letters, so no letter is favoured.
+  for (let i = 0; i < ANONYMOUS_CLAIM_NAME_LENGTH; i++) name += ANONYMOUS_CLAIM_ALPHABET[digest[i]! & 31]
   return name
+}
+
+/** A fresh random name for this key: one of its own, picked at random. */
+export async function pickAnonymousClaimName(pubkey: string): Promise<string> {
+  const [byte = 0] = crypto.getRandomValues(new Uint8Array(1))
+  return deriveAnonymousClaimName(pubkey, byte % ANONYMOUS_NAMES_PER_KEY)
+}
+
+/** Is `name` one of this key's own random names? What the registrar asks of a new random claim. */
+export async function isKeysOwnAnonymousName(pubkey: string, name: string): Promise<boolean> {
+  if (!isAnonymousClaimName(name)) return false
+  for (let index = 0; index < ANONYMOUS_NAMES_PER_KEY; index++) {
+    if ((await deriveAnonymousClaimName(pubkey, index)) === name) return true
+  }
+  return false
 }
 
 export interface ClaimPayload {

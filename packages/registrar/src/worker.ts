@@ -6,6 +6,7 @@ import {
   type GithubIdentity,
 } from "./claim-handler.ts"
 import { createCloudflareApi } from "./cloudflare.ts"
+import { d1ClaimStore, d1HourlyBudget, dropSpentBudgets, importFromKv, RegistrarBusy, withClaimLock, type D1Database } from "./claim-db.ts"
 import { FRIZZ_GITHUB_APP_CLIENT_ID } from "@frizz/shared"
 
 /**
@@ -57,7 +58,8 @@ export function githubVerifier(
   // Wrapped, not passed bare: workerd throws "Illegal invocation" for a `fetch` called off its global.
   fetchImpl: typeof fetch = (input, init) => fetch(input, init),
   apiOrigin = "https://api.github.com",
-  appClientId: string = FRIZZ_GITHUB_APP_CLIENT_ID
+  appClientId: string = FRIZZ_GITHUB_APP_CLIENT_ID,
+  timeoutMs = GITHUB_TIMEOUT_MS
 ): (token: string) => Promise<GithubIdentity | null | "foreign"> {
   return async (token) => {
     // Anything else cannot be a GitHub token, and must never reach a request header.
@@ -72,6 +74,9 @@ export function githubVerifier(
         },
         // A redirect is never followed: it would carry the token's request somewhere else.
         redirect: "manual",
+        // Every claim waits on this one behind the registry's lock (claim-db.ts), so a GitHub that hangs
+        // must not hold the rest up past the lock's lease.
+        signal: AbortSignal.timeout(timeoutMs),
       })
       if (!response.ok) return null
       if (response.headers.get("x-oauth-client-id") !== appClientId) return "foreign"
@@ -86,6 +91,9 @@ export function githubVerifier(
     }
   }
 }
+
+/** How long GitHub has to answer `/user` before the claim is told GitHub did not recognise it. */
+const GITHUB_TIMEOUT_MS = 10_000
 
 /** A real token is far shorter (a `ghu_` token is 40 characters). Keeps an absurd value out of a header. */
 const MAX_GITHUB_TOKEN_LENGTH = 512
@@ -151,7 +159,12 @@ export interface RegistrarEnv {
   MAX_NAMES?: string
   /** "tunnel" restores per-name Cloudflare tunnels. Anything else, including absent, means relay. */
   CLOUD_MODE?: string
+  /** Overrides NEW_NAMES_PER_HOUR, the ceiling on new names across every network, so raising it needs no deploy. */
+  NEW_NAMES_PER_HOUR?: string
+  /** The copy of each `claim:<name>` row the relay reads, and the store before 2026-11-12. */
   CLAIMS: KvNamespace
+  /** The registry itself (claim-db.ts). Absent, the registrar takes no claims rather than racing in KV. */
+  CLAIMS_DB?: D1Database
 }
 
 /** A GitHub account younger than this cannot claim, which blunts throwaway-account squatting. */
@@ -177,33 +190,22 @@ const ANONYMOUS_CLAIMS_PER_HOUR = 10
 const GITHUB_LOOKUPS_PER_HOUR = 10
 
 /**
- * A per-address creation budget on one KV counter per hour bucket.
+ * New names of any kind, across every network, per hour.
  *
- * KV is eventually consistent, so two racing claims can both read the same count and one slips past —
- * this is a blunt guard against a runaway loop, not an exact quota, and an exact one would need
- * storage this Worker deliberately does not have. The row expires on its own; nothing sweeps it.
+ * The per-network budgets above cost a single address something, and nothing at all to someone with many:
+ * a cloud account hands out IPv6 /64s by the thousand. This is the ceiling over all of them, so a flood of
+ * names stops at a number we chose rather than at the namespace's end. Ordinary signups never come near
+ * it, and a renewal never counts, so a board already serving keeps its name whatever the hour looks like.
  */
-function kvHourlyBudget(kv: KvNamespace, key: string, perHour: number, now: () => number): () => Promise<boolean> {
-  return async () => {
-    const bucket = Math.floor(now() / 3_600_000)
-    const row = `${key}:${bucket}`
-    const used = Number((await kv.get(row)) ?? "0")
-    if (used >= perHour) return false
-    // TTL of two hours, not one: the row only has to outlive its own bucket, and cutting it close
-    // would let a claim land in a bucket whose counter had already expired mid-hour.
-    await kv.put(row, String(used + 1), { expirationTtl: 7_200 })
-    return true
+const NEW_NAMES_PER_HOUR = 300
+
+/** The three hourly budgets a claim can spend, counted exactly in D1 (claim-db.ts). */
+export function claimBudgets(db: D1Database, address: string, env: Pick<RegistrarEnv, "NEW_NAMES_PER_HOUR"> = {}, now: () => number = Date.now) {
+  return {
+    anonymousBudget: d1HourlyBudget(db, `anonrl:${address}`, ANONYMOUS_CLAIMS_PER_HOUR, now),
+    githubBudget: d1HourlyBudget(db, `ghrl:${address}`, GITHUB_LOOKUPS_PER_HOUR, now),
+    newNameBudget: d1HourlyBudget(db, "new-names", env.NEW_NAMES_PER_HOUR ? Number(env.NEW_NAMES_PER_HOUR) : NEW_NAMES_PER_HOUR, now),
   }
-}
-
-/** New anonymous names from one address (ANONYMOUS_CLAIMS_PER_HOUR). */
-export function kvAnonymousBudget(kv: KvNamespace, address: string, now: () => number = Date.now): () => Promise<boolean> {
-  return kvHourlyBudget(kv, `anonrl:${address}`, ANONYMOUS_CLAIMS_PER_HOUR, now)
-}
-
-/** GitHub lookups from one address (GITHUB_LOOKUPS_PER_HOUR). */
-export function kvGithubBudget(kv: KvNamespace, address: string, now: () => number = Date.now): () => Promise<boolean> {
-  return kvHourlyBudget(kv, `ghrl:${address}`, GITHUB_LOOKUPS_PER_HOUR, now)
 }
 
 /**
@@ -223,7 +225,11 @@ const MAX_NAMES = 180
  */
 const MAX_NAMES_RELAY = 100_000
 
-/** KV holds one small JSON row per name: who owns it, which tunnel serves it, and its lease. */
+/**
+ * The registry as KV held it until 2026-11-12: one small JSON row per name, plus its indexes. Still how
+ * GET /claim/<name> reads a name, since `claim:` rows are what the relay serves from, and what tests drive
+ * the handler with. Claims themselves go through d1ClaimStore.
+ */
 export function kvClaimStore(kv: KvNamespace): ClaimStore {
   return {
     async read(name) {
@@ -290,7 +296,11 @@ const json = (status: number, body: unknown): Response =>
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   })
 
-function claimDeps(env: RegistrarEnv, budgets: { anonymousBudget?: () => Promise<boolean>; githubBudget?: () => Promise<boolean> } = {}) {
+function claimDeps(
+  env: RegistrarEnv,
+  db: D1Database,
+  budgets: { anonymousBudget?: () => Promise<boolean>; githubBudget?: () => Promise<boolean>; newNameBudget?: () => Promise<boolean> } = {}
+) {
   return {
     ...budgets,
     // RELAY by default: a claim records the name and nothing else, because the relay serves every
@@ -305,7 +315,7 @@ function claimDeps(env: RegistrarEnv, budgets: { anonymousBudget?: () => Promise
           }),
         }
       : {}),
-    store: kvClaimStore(env.CLAIMS),
+    store: d1ClaimStore(db, env.CLAIMS),
     zone: env.FRIZZ_ZONE,
     now: () => Date.now(),
     // ON unless explicitly disabled. A gate that defaults off is a gate that ships off by accident.
@@ -314,6 +324,19 @@ function claimDeps(env: RegistrarEnv, budgets: { anonymousBudget?: () => Promise
       ? {}
       : { github: githubVerifier(), minAccountAgeMs: MIN_GITHUB_ACCOUNT_AGE_MS }),
   }
+}
+
+/** Everything a claim or a sweep does, one at a time, after the one-time copy out of KV. */
+async function underLock<T>(env: RegistrarEnv & { CLAIMS_DB: D1Database }, work: () => Promise<T>): Promise<T> {
+  return withClaimLock(env.CLAIMS_DB, async () => {
+    await importFromKv(env.CLAIMS_DB, env.CLAIMS)
+    return work()
+  })
+}
+
+/** What a Worker's second argument provides, structurally: keep a promise running after the response. */
+interface ExecutionContextLike {
+  waitUntil(promise: Promise<unknown>): void
 }
 
 export default {
@@ -325,12 +348,15 @@ export default {
    * The claim path releases a lapsed name on demand, but only when somebody asks for that exact name.
    */
   async scheduled(_event: unknown, env: RegistrarEnv): Promise<void> {
-    const deps = claimDeps(env)
-    // Counted BEFORE the sweep. KV's list is eventually consistent, so reading it straight after a
-    // batch of deletes still reports the rows just removed — the first live run logged "1/180 in use"
-    // having just emptied the namespace. Subtracting what was released is both accurate and cheap.
-    const before = (await deps.store.list()).length
-    const result = await sweepExpiredClaims(deps)
+    if (!env.CLAIMS_DB) throw new Error("the registrar has no CLAIMS_DB binding, so it cannot sweep")
+    const db = env.CLAIMS_DB
+    const { before, result, deps } = await underLock({ ...env, CLAIMS_DB: db }, async () => {
+      const deps = claimDeps(env, db)
+      const before = await deps.store.count()
+      const result = await sweepExpiredClaims(deps)
+      await dropSpentBudgets(db, Date.now())
+      return { before, result, deps }
+    })
     // The only regular look at how full the namespace is. Nothing else would notice it filling until
     // a claim failed, which is exactly the surprise the ceiling should never be.
     const taken = before - result.released.length
@@ -347,7 +373,7 @@ export default {
     )
   },
 
-  async fetch(request: Request, env: RegistrarEnv): Promise<Response> {
+  async fetch(request: Request, env: RegistrarEnv, ctx?: ExecutionContextLike): Promise<Response> {
     const url = new URL(request.url)
     // Who owns a name, for workers-drift, which holds nothing that can read KV. Public on purpose: a
     // public key and a date give a visitor nothing to use, and asking takes knowing the name already.
@@ -373,15 +399,22 @@ export default {
       body = JSON.parse(text)
     } catch {}
 
+    // Without the database there is no lock, and claims racing in KV is what the database is for: refuse.
+    if (!env.CLAIMS_DB) return json(503, { error: "registrar-busy", message: "the registrar is not taking claims right now — try again later" })
+    const db = env.CLAIMS_DB
+
     // The budget key is the connecting address, which Cloudflare stamps on every request it fronts.
     // Absent (a direct hit on the Worker in a test) the budget still exists under one shared key,
     // because an absent header must never mean an absent limit.
     const address = budgetAddress(request.headers.get("cf-connecting-ip") ?? "unknown")
-    const outcome = await handleClaim(
-      body,
-      claimDeps(env, { anonymousBudget: kvAnonymousBudget(env.CLAIMS, address), githubBudget: kvGithubBudget(env.CLAIMS, address) })
-    )
-
+    const work = underLock({ ...env, CLAIMS_DB: db }, () => handleClaim(body, claimDeps(env, db, claimBudgets(db, address, env)))).catch((error: unknown) => {
+      if (error instanceof RegistrarBusy) return { status: 503 as const, body: { error: "registrar-busy", message: "the registrar is busy with other claims — try again in a minute" } }
+      throw error
+    })
+    // A claimant that hangs up mid-claim must not stop it half-written, or leave the lock held until its
+    // lease runs out: the claim runs to its end whether or not anyone is still waiting for the answer.
+    ctx?.waitUntil(work.catch(() => {}))
+    const outcome = await work
     return json(outcome.status, outcome.body)
   },
 }
