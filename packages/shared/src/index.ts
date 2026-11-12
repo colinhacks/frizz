@@ -4180,6 +4180,9 @@ export const HumanTodo = z.object({
   done: z.boolean(),
   /** The tick differs from what the worker was last told, so the next send reports it. */
   staged: z.boolean(),
+  /** When a send last told the worker about this box, in ms. Every box one send reported shares the
+   *  instant, so a settled card can draw what its reply covered, not only the steps its own fence listed. */
+  reportedAt: z.number().optional(),
 }).strict()
 export type HumanTodo = z.infer<typeof HumanTodo>
 

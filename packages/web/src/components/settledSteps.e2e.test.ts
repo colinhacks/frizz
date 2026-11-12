@@ -182,3 +182,93 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
     await browser.close()
   }
 })
+
+// A BOX CARRIED ONTO A LATER REST STAYS ON ITS CARD WHEN THE REPLY GOES (2026-11-11, maintainer: "I checked
+// all three boxes … It seemed to remove the first item of three from the rendered to-do list, despite the
+// fact that all of them were checked"). The resting card draws the whole list, so a box ticked at the first
+// rest and never sent rides on the second rest's card. Once sent, that card is the record of what its reply
+// said: all three rows, ticked, on the frame the send draws, and after the worker took the reply in
+// mid-turn, under a tool call it made first. The first rest's own card keeps only its own steps.
+test("a box carried onto a later rest's card stays on it, ticked, once the reply is sent", {
+  skip: !baseUrl,
+  timeout: 120_000,
+}, async () => {
+  const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+  const browser = await launchHeadless()
+  const errors: string[] = []
+  type Commit = { rows: number[]; ticked: boolean; ghost: boolean }
+  try {
+    const page = await browser.newPage()
+    page.on("console", (m) => { if (m.type() === "error" && !m.text().includes("404")) errors.push(m.text()) })
+    page.on("pageerror", (e) => errors.push(String(e)))
+    await page.setViewport({ width: 900, height: 1000 })
+    const cards = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((el) => ({
+      steps: [...el.querySelectorAll("[data-awaiting-steps] .frizz-todo-text")].map((li) => (li as HTMLElement).innerText.trim()),
+      ticks: [...el.querySelectorAll("[data-awaiting-steps] [role=checkbox]")].map((box) => box.getAttribute("aria-checked") === "true"),
+      controls: el.querySelectorAll("[data-awaiting-steps] button[role=checkbox]").length,
+    })), CARD)
+    const read = async (at: string) => {
+      await page.goto(`${baseUrl}/settled-steps-fixture.html?at=${at}`, { waitUntil: "networkidle0" })
+      await page.waitForSelector(`${CARD} [data-awaiting-steps] li`)
+      return cards()
+    }
+    const FIRST = "Authorize the first Cloudflare sign-in."
+    const SECOND = ["Authorize the second Cloudflare sign-in.", "Verify the Gmail address within 50 minutes."]
+    // The first rest's card, settled: its first box is the list's (ticked, unsent), its second was dropped.
+    const firstCard = (controls: number) => ({ steps: [FIRST, "Verify the Gmail address once the email arrives."], ticks: [true, false], controls })
+
+    const rest = await read("carried-rest")
+    assert.deepEqual(rest, [firstCard(1), { steps: [FIRST, ...SECOND], ticks: [true, false, false], controls: 3 }], "the resting card carries the unsent box beside its own two")
+
+    // Tick the two open boxes on the resting card and send; watch every commit from the Send on.
+    const open = await page.$$(`${CARD} [data-awaiting-steps] button[role=checkbox][aria-checked=false]`)
+    assert.equal(open.length, 2)
+    for (const box of open) await box.click()
+    await page.waitForFunction((sel) => {
+      const last = [...document.querySelectorAll(sel)].pop()
+      return [...(last?.querySelectorAll("[data-awaiting-steps] [role=checkbox]") ?? [])].every((box) => box.getAttribute("aria-checked") === "true")
+    }, {}, CARD)
+    await page.evaluate((sel) => {
+      const w = window as unknown as { __commits: Commit[]; __sent: string[] }
+      w.__commits = []
+      w.__sent = []
+      const inner = window.fetch
+      window.fetch = async (input, init) => {
+        if (String(input instanceof Request ? input.url : input).includes("/_frizz/rpc/followUp")) w.__sent.push(String(JSON.parse(String(init?.body ?? "{}")).message))
+        return inner(input, init)
+      }
+      new MutationObserver(() => {
+        const all = [...document.querySelectorAll(sel)]
+        const boxes = [...(all.at(-1)?.querySelectorAll("[data-awaiting-steps] [role=checkbox]") ?? [])]
+        w.__commits.push({
+          rows: all.map((el) => el.querySelectorAll("[data-awaiting-steps] li").length),
+          ticked: boxes.length > 0 && boxes.every((box) => box.getAttribute("aria-checked") === "true"),
+          ghost: [...document.querySelectorAll(".bg-user-bubble.opacity-50")].some((el) => el.textContent?.includes("Done")),
+        })
+      }).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
+    }, CARD)
+    await page.click("[data-send-split] [data-send]")
+    await page.waitForFunction(() => (window as unknown as { __sent: string[] }).__sent.length > 0, { timeout: 10_000 })
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { __sent: string[] }).__sent), ["Done"], "one reply, the word")
+    await page.waitForFunction(() => document.querySelector(".bg-user-bubble.opacity-50"), { timeout: 10_000 })
+    const commits = await page.evaluate(() => (window as unknown as { __commits: Commit[] }).__commits)
+    assert.ok(commits.some((c) => c.ghost), "the reply's ghost bubble is drawn")
+    assert.deepEqual(commits.filter((c) => c.rows.join() !== "2,3").map((c) => c.rows.join()), [], "both cards keep every row in every commit: the carried box never leaves")
+    assert.deepEqual(commits.filter((c) => c.ghost && !c.ticked), [], "every commit that draws the reply draws all three of its boxes ticked")
+    assert.deepEqual((await cards()).at(-1), { steps: [FIRST, ...SECOND], ticks: [true, true, true], controls: 0 }, "the record of the send, from its first frame")
+
+    // The worker took the reply in mid-turn, under a tool call it made first, and the board has stamped
+    // all three with the send's instant: the same three rows, ticked, and the first card unchanged.
+    const carried = await read("carried")
+    assert.deepEqual(carried, [firstCard(0), { steps: [FIRST, ...SECOND], ticks: [true, true, true], controls: 0 }], "the reply drawn under a tool call still answers the card above it")
+    assert.ok(await page.evaluate(() => {
+      const reply = document.querySelector("[data-transcript-source-id='u2']")
+      const call = document.querySelector("[data-transcript-source-id='a3']")
+      return !!reply && !!call && (call.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    }), "the reply really is drawn under the worker's tool call")
+
+    assert.deepEqual(errors, [], "no console or page errors")
+  } finally {
+    await browser.close()
+  }
+})

@@ -43,7 +43,15 @@ const owed = (todo: HumanTodo) => !todo.done || todo.staged
  *  steps unticked on the list and drew them here as boxes that did nothing, beside a count over the prompt
  *  box saying they were owed. So a step the list still owes is that list's item, ticked as on every other
  *  surface. What was sent as done stays the record, ticked and inert, as does a step the list no longer
- *  holds (the worker dropped it, or signed off). */
+ *  holds (the worker dropped it, or signed off).
+ *
+ *  AND THE CARD KEEPS EVERY ROW ITS REPLY SENT (2026-11-11, maintainer: "It seemed to remove the first
+ *  item of three from the rendered to-do list, despite the fact that all of them were checked"). The
+ *  resting card draws the whole list, so a box ticked at an earlier rest and not yet sent rides on it
+ *  beside this rest's own steps, and the human ticks and sends them together. Drawing only the fence's
+ *  own steps once the rest was over took that row away the moment Send was pressed. So the card the
+ *  reply answered (`done`) also draws, first, as the list orders them, every other box that one send
+ *  reported, which the list stamps with the same instant. */
 export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; done?: StepsReply | null }) {
   // From the surface, not a prop: a settled card is drawn inside a memoized message, and the list moves
   // without the message changing. Null in a tree that is no thread's own (a sub-agent's transcript).
@@ -51,7 +59,8 @@ export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; don
   const listed = useThreadHumanTodos(slug)
   const thread = useMemo(() => (slug && listed ? { id: slug, humanTodos: listed } : undefined), [slug, listed])
   const todos = useHumanTodos(thread)
-  const rows = steps.map((step) => ({ step, todo: todos.find((todo) => sameStep(todo.text, step.text)) }))
+  const own = steps.map((step) => ({ step, todo: todos.find((todo) => sameStep(todo.text, step.text)) }))
+  const rows = done ? [...sentAlongside(todos, own.map(({ todo }) => todo)), ...own] : own
   const list = (onTicked?: (event: MouseEvent<HTMLButtonElement>) => void) => (
     <ul className="frizz-todos">
       {rows.map(({ step, todo }, i) => thread && todo && owed(todo)
@@ -61,6 +70,16 @@ export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; don
   )
   if (!thread || !rows.some(({ todo }) => todo && owed(todo))) return <div data-awaiting-steps className={LIST_FRAME}>{list()}</div>
   return <TickFrame thread={thread}>{list}</TickFrame>
+}
+
+/** The boxes the send that reported this rest's own steps also reported: the newest report among them
+ *  names the send. */
+function sentAlongside(todos: readonly HumanTodo[], own: readonly (HumanTodo | undefined)[]): { step: AwaitingStep; todo: HumanTodo }[] {
+  const sent = Math.max(...own.map((todo) => todo?.reportedAt ?? Number.NEGATIVE_INFINITY))
+  if (!Number.isFinite(sent)) return []
+  return todos
+    .filter((todo) => todo.reportedAt === sent && !own.some((mine) => mine?.id === todo.id))
+    .map((todo) => ({ step: { text: todo.text, ...(todo.body ? { body: todo.body } : {}) }, todo }))
 }
 
 // A STEP'S BODY (2026-11-09, maintainer: "a full Markdown body that renders underneath each item"), in the
