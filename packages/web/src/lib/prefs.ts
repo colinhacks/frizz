@@ -36,6 +36,11 @@ export interface Prefs {
   // the plug — until its state changes, when the entry is dropped (components/McpPlug.tsx). Per browser,
   // like the rest of this file: it decides what this window draws, not what the agent mounts.
   mcpIgnored: Record<string, string>
+  // What Mark as done does to a PINNED thread: keep the pin (the default, maintainer 2026-10-26: "I often
+  // have a lot of things pinned intentionally, and I mark them as done. I want them to stay visible") or
+  // take it off the pinned list too. Ticked in the done card's split button (ThreadLifecycle
+  // DonePinChoice), and read by every completion in this browser (lib/completionPins.ts).
+  doneUnpins: boolean
 }
 
 function stringRecord(v: unknown): Record<string, string> {
@@ -61,6 +66,7 @@ export function parseStoredPrefs(raw: string | null): Prefs {
     dictation: true,
     wrapCode: true,
     mcpIgnored: {},
+    doneUnpins: false,
   }
   try {
     if (!raw) return fallback
@@ -75,6 +81,7 @@ export function parseStoredPrefs(raw: string | null): Prefs {
       dictation: typeof stored.dictation === "boolean" ? stored.dictation : fallback.dictation,
       wrapCode: typeof stored.wrapCode === "boolean" ? stored.wrapCode : fallback.wrapCode,
       mcpIgnored: stringRecord(stored.mcpIgnored),
+      doneUnpins: typeof stored.doneUnpins === "boolean" ? stored.doneUnpins : fallback.doneUnpins,
     }
   } catch {
     return fallback

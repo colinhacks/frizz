@@ -56,3 +56,10 @@ test("a blob from before the Density switch was retired drops its keys and keeps
   assert.ok(!("diffsRedefaulted" in prefs))
   assert.ok(!("compactDiffs" in parseStoredPrefs(null)))
 })
+
+test("Mark as done keeps a pin by default and only a stored boolean makes it unpin", () => {
+  assert.equal(parseStoredPrefs(null).doneUnpins, false)
+  assert.equal(parseStoredPrefs(JSON.stringify({ queueOrder: "lifo" })).doneUnpins, false)
+  assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: true })).doneUnpins, true)
+  assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: "yes" })).doneUnpins, false)
+})
