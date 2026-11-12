@@ -42,12 +42,34 @@ protocol in [`@frizz/shared/relay-protocol.ts`](../shared/src/relay-protocol.ts)
 A frame body caps at 512 KiB. A Cloudflare WebSocket message caps at 1 MiB and base64 costs a third on
 top, so anything larger takes the streaming path rather than being dropped.
 
+A visitor's request body caps at 26 MB, a little over the largest a board accepts (an attachment), and is refused with a 413 before the Durable Object reads it. Without the cap anyone who knew a name could have the object, and then the board, hold a body of any size.
+
 ## How a board proves itself
 
 The same Ed25519 identity that claimed the name, signing a handshake that rides in the connect URL —
 before the upgrade, so an unproven socket never occupies the name's Durable Object at all. The relay
 verifies it against the public key the registrar recorded, holds no secret of its own, and stops
 believing a handshake older than five minutes.
+
+- **A handshake is spent on use.** The Durable Object keeps the newest one it accepted from each key and takes only a strictly newer one. Until 2026-11-12 one connect URL, seen by a TLS-inspecting proxy or a log of request URLs, could reconnect as the board for five minutes, replacing it each time and reading its visitors' cookies. The board signs a fresh handshake for every connect.
+- **The key is checked on every request, not only on connect.** The Worker reads the owner for every visitor request and hands it to the Durable Object, which closes the attached board (code 4003) when its key is no longer the owner. The board tells its operator, and so it does when another connection with its own key replaces it.
+
+## When a name changes hands
+
+A phone keeps everything it holds for `ada.frizz.sh` whoever's board serves it: cached files, validators, cookies. A name can move to another key (a custom name taken back by its account, or claimed again after a lapse), so whatever one holder's board gave a browser must not work for it under the next. The second security review ran the attack in a headless browser: a holder served `/assets/index-<hash>.js` with its own script and a year's `immutable`, the name moved, and the next board's page ran the cached copy beside a live session. The file name and its ETag are public, so a revalidation alone would have been answered 304. The relay sees every answer, so it applies these rules for every board ([`visitor-headers.ts`](src/visitor-headers.ts)):
+
+| What a board sends | What the visitor gets |
+|---|---|
+| Any `Cache-Control` but `no-store` | `no-cache`: stored, revalidated before every use |
+| `ETag: "abc"` | `ETag: "<key tag>.abc"`, tagged by the serving board's key |
+| `Last-Modified`, `Expires` | dropped |
+| `Set-Cookie` with `Domain` | the same cookie without it |
+| `Clear-Site-Data: "cookies"` or `"*"` | dropped, since it clears every board's sessions |
+| `Service-Worker-Allowed` | dropped |
+
+On the way in, an `If-None-Match` reaches the board only for its own key's tags, and date conditionals never do. A copy cached from another key is therefore answered in full and replaced. A request for a service worker script is refused outright. The cost is one 304 per asset on a reload, through the relay.
+
+Two of these exist because `frizz.sh` is not on the Public Suffix List, so every board is one site to a browser. A `Domain=frizz.sh` cookie rode to every board, and six large ones locked a visitor out of all of them with 431s.
 
 ## Deploying
 
@@ -80,7 +102,7 @@ Two things that will waste your time otherwise:
 ## Verifying
 
 ```sh
-nub --test packages/relay/src/board-socket.test.ts packages/relay/src/worker.test.ts
+nub --test packages/relay/src/          # the Durable Object's state machine, the Worker, the header rules
 nub scripts/verify-relay-e2e.mjs        # the frames, on real workerd
 nub scripts/verify-relay-gate.mjs       # a relayed terminal against the REAL access gate
 nub scripts/verify-relay-live.mjs       # the DEPLOYED relay, from outside — after every deploy
@@ -90,6 +112,8 @@ The unit tests drive the Durable Object's state machine against fakes, which pro
 nothing about the seam between them — and there are three seams here that all have to hold at once. So
 the e2e harness runs the real Worker under `wrangler dev`, a real board on loopback, and a real agent
 connecting them, including a terminal typed through both runtimes.
+
+Run it after any change to `worker.ts`, however small. workerd reads every export of the Worker's main module as an entry point and refuses to start when one is a constant. An exported body cap did exactly that on 2026-11-12, with every unit test green, and this harness failed at once. A unit test now fails on such an export too.
 
 The two harnesses answer different questions, and the second exists because the first cannot.
 A board in `verify-relay-e2e.mjs` is a toy that accepts every upgrade, so a relay forwarding NO visitor
