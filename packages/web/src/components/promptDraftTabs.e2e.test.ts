@@ -10,7 +10,8 @@ import { createRpcClient } from "../../../../scripts/lib/rpc-client.mjs"
 // type into the prompt box when it's in the queue does not transfer over if I open that same queue card
 // in full-screen view"). The queue card that quote names was replaced by the one-thread pane on
 // 2026-11-09: a queued thread now opens in the pane's column, and the door's PLAIN click folds that pane
-// in place (lib/threadPane foldPane) instead of navigating, so the same composer goes full screen.
+// in place (lib/threadPane foldPane) instead of opening a page, so the same composer goes full screen; the
+// address follows it to the thread's own path since 2026-11-11.
 //
 // A real adhoc-stack, no provider required: the session row is the simulated worker, and nothing is
 // ever sent. Start the stack in a separate terminal:
@@ -54,7 +55,7 @@ test("a draft typed in the board pane is in the thread's /full prompt box in ano
     const pane = "[data-pane-thread]"
     const paneBox = `${pane} [data-thread-composer-box='chatComposer'] textarea`
     const door = `${pane} [data-expand-thread='${slug}']`
-    const fullBox = "main[data-standalone-thread] [data-thread-composer-box='chatComposer'] textarea"
+    const fullBox = "[data-standalone-thread] [data-thread-composer-box='chatComposer'] textarea"
     type Tab = Awaited<ReturnType<typeof open>>
     // Polled on a timer, not on animation frames (puppeteer's default): one of the two tabs is always
     // in the background here, and a hidden tab is not promised a frame.
@@ -90,13 +91,16 @@ test("a draft typed in the board pane is in the thread's /full prompt box in ano
     await holds(board, paneBox, "")
     await holds(full, fullBox, "")
 
-    // 3. THIS TAB — the door's plain click. In the pane it is no navigation: the pane folds to full
-    // screen in place, the same thread in the same composer, and the draft is still in it (and still in
-    // the /full tab, which follows it).
+    // 3. THIS TAB — the door's plain click. In the pane it is no new page: the pane folds to full screen in
+    // place, the same thread in the same composer, and the draft is still in it (and still in the /full
+    // tab, which follows it). The address moves to the thread's own path, the door's own href, which is a
+    // route of the same board (lib/threadPane.ts), so nothing remounts.
     await board.keyboard.type("carried through the door")
+    await board.$eval(paneBox, (el) => { (el as HTMLTextAreaElement & { __kept?: boolean }).__kept = true })
     await board.$eval(door, (el) => (el as HTMLAnchorElement).click())
     await board.waitForSelector("[data-pane-layout='folded']")
-    assert.equal(new URL(board.url()).pathname, `/project/${project.slug}`, "the plain click folded the pane, it did not navigate")
+    await board.waitForFunction((href) => location.pathname === href, {}, href)
+    assert.equal(await board.$eval(paneBox, (el) => (el as HTMLTextAreaElement & { __kept?: boolean }).__kept === true), true, "the same prompt box, not a remounted one")
     assert.equal(await board.$eval(paneBox, (el) => (el as HTMLTextAreaElement).value), "carried through the door")
     await holds(full, fullBox, "carried through the door")
 

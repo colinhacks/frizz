@@ -1,7 +1,8 @@
 import { subscribe } from "valtio"
 import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, paneEnabled } from "../store.ts"
-import { innerPath, outerPath, projectHref } from "./base-path.ts"
-import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
+import { basePath, innerPath, outerPath, projectHref } from "./base-path.ts"
+import { parseStandaloneThreadPath, threadPageIsStandalone } from "./standaloneThreadRoute.ts"
+import { ARTIFACTS_PARAM, artifactsParam, paneProto, type PaneArtifacts } from "./threadPane.ts"
 
 // URL ⇄ state sync, SPA-style. A board's URL is its VIEW in the path — `/` (the board) or
 // `/status/<status>` (URL-only lists) — and the thread open on it in the QUERY: `?thread=<slug>`
@@ -15,8 +16,14 @@ import { parseStandaloneThreadPath } from "./standaloneThreadRoute.ts"
 // A query composes with the path the way a drawer composes with the board: the drawer sits OVER a view,
 // so a status list keeps its own path under it.
 //
+// THE PANE'S LAYOUT IS IN THE ADDRESS TOO (maintainer 2026-11-11), so this module writes a third shape and
+// reads it back: on a desktop board the thread's own path, `…/thread/<slug>`, is that thread in the pane
+// with the sidebar put away, the full-screen view; and `artifacts=shown|hidden` is the reader's choice about
+// the artifact rail (lib/threadPane.ts). The full-screen PAGE (StandaloneThreadPage) is a phone's alone now.
+//
 // History contract (standard SPA): opening a thread PUSHES an entry so the browser Back button unwinds
-// it; other transitions REPLACE so transient state never buries the back stack.
+// it; other transitions REPLACE so transient state never buries the back stack. Putting the sidebar or the
+// rail away keeps the thread, so it replaces.
 //
 // (The focus machine this used to route through was deleted — the router writes store.view directly.)
 
@@ -37,11 +44,29 @@ export function threadParam(search: string): string | null {
  * address bar.
  */
 export function withThreadParam(search: string, slug: string | null): string {
+  return withPaneParams(search, slug, null)
+}
+
+/**
+ * `search` naming `slug` beside the sidebar (null: no thread parameter) and the artifact rail's choice
+ * (null or "default": no parameter), every other parameter kept. Spelled by hand, as withThreadParam is.
+ */
+function withPaneParams(search: string, slug: string | null, artifacts: PaneArtifacts | null): string {
   const params = new URLSearchParams(search)
   params.delete(THREAD_PARAM)
+  if (artifacts !== null) params.delete(ARTIFACTS_PARAM)
   const rest = params.toString()
-  const parts = [...(slug ? [`${THREAD_PARAM}=${encodeURIComponent(slug)}`] : []), ...(rest ? [rest] : [])]
+  const parts = [
+    ...(slug ? [`${THREAD_PARAM}=${encodeURIComponent(slug)}`] : []),
+    ...(artifacts && artifacts !== "default" ? [`${ARTIFACTS_PARAM}=${artifacts}`] : []),
+    ...(rest ? [rest] : []),
+  ]
   return parts.length ? `?${parts.join("&")}` : ""
+}
+
+/** The thread an address names, by its path (full screen) or its query (beside the sidebar), or null. */
+function addressedThread(pathname: string, search: string): string | null {
+  return parseStandaloneThreadPath(innerPath(pathname)) ?? threadParam(search)
 }
 
 /** The board view the store is showing, as an inner path. */
@@ -94,13 +119,33 @@ export function boardThreadHref(slug: string, project?: string): string {
   return `${board}${withThreadParam("", slug)}`
 }
 
+/**
+ * The address of `slug` full screen in THIS page's pane: the thread's own path under this board's base,
+ * `/project/<slug>` once the board names it on the unprefixed launching project (as queueDestination), and
+ * `/console/thread/<key>` on the Console.
+ */
+function paneThreadPath(slug: string): string {
+  const inner = `/thread/${encodeURIComponent(slug)}`
+  const boardSlug = store.board?.projectSlug
+  if (basePath() === "" && boardSlug) return `${projectHref(boardSlug)}${inner}`
+  return outerPath(inner)
+}
+
 /** URL → store: `path` is the INNER path (the board's view), `search` the query (the open thread). */
 export function applyPath(path: string, search = ""): void {
   const status = path.match(/^\/status\/([^/]+)$/)
   const statusName = status ? decodeSegment(status[1]) : null
   // Everything but a status list is the queue.
   store.view = statusName === null ? "todos" : `status:${statusName}`
-  const slug = threadParam(search)
+  // A thread's own path is that thread full screen; the query names one beside the sidebar.
+  const fullScreen = parseStandaloneThreadPath(path)
+  const slug = fullScreen ?? threadParam(search)
+  // The address says how the pane lays its thread out, whenever it names one (lib/threadPane.ts). With no
+  // thread there is nothing to lay out, and the choices ride along to the next thread opened.
+  if (slug !== null) {
+    paneProto.folded = fullScreen !== null
+    paneProto.artifacts = artifactsParam(search)
+  }
   if (slug === null) {
     // No thread named: Back past the last thread layer unwinds the stack (animated).
     store.routeThreadSlug = null
@@ -225,23 +270,33 @@ export function startRouter(navigate: (path: string, options: { replace: boolean
   // Boot: adopt whatever the address bar says (deep link / reload restores the state).
   primeRoute()
 
-  return subscribe(store, () => {
-    // The fullscreen page is NOT the board's URL to write. Its route lives outside RootLayout, but
-    // valtio delivers this notification a microtask late: StandaloneRoute clears the drawer stack on
-    // its first render (it moved there from the fullscreen door's click handler for the view
-    // transition — see ExpandThreadLink), so by the time this runs the address bar already says
-    // `/thread/<slug>` and the board shell is on its way out — and without this guard the
-    // "unwind" below navigated straight back to the board (caught live, 2026-08-28: a plain click
-    // on the door left the URL exactly where it was).
-    if (parseStandaloneThreadPath(innerPath()) !== null) return
+  const sync = () => {
+    // A phone's full-screen page is NOT the board's URL to write. Valtio delivers this notification a
+    // microtask late: StandaloneRoute clears the drawer stack on its first render (it moved there from
+    // the fullscreen door's click handler for the view transition — see ExpandThreadLink), so by the time
+    // this runs the address bar already says `/thread/<slug>` and the board shell is on its way out — and
+    // without this guard the "unwind" below navigated straight back to the board (caught live,
+    // 2026-08-28: a plain click on the door left the URL exactly where it was). A desktop's thread path
+    // is this board's own, and is written below.
+    if (threadPageIsStandalone()) return
     const thread = currentThread()
-    const pathname = queueDestination(currentViewPath())
-    const search = withThreadParam(currentSearch(), thread)
+    // The pane's layout is written only where there is a pane: a drawer's address is its query alone.
+    const pane = thread !== null && paneEnabled()
+    const fullScreen = pane && paneProto.folded
+    const pathname = fullScreen ? paneThreadPath(thread) : queueDestination(currentViewPath())
+    const search = withPaneParams(currentSearch(), fullScreen ? null : thread, pane ? paneProto.artifacts : "default")
     if (pathname === location.pathname && search === currentSearch()) return
     // OPENING a thread pushes history — a URL naming a thread the address bar does not already name.
     // Unwinding, non-thread transitions and a rewrite that keeps the thread (the unprefixed `/?thread=x`
-    // taking its `/project/<slug>` prefix once the board names it) replace.
-    const opening = thread !== null && thread !== threadParam(currentSearch())
+    // taking its `/project/<slug>` prefix once the board names it, the sidebar or the rail put away or
+    // brought back) replace.
+    const opening = thread !== null && thread !== addressedThread(location.pathname, currentSearch())
     navigate(`${pathname}${search}`, { replace: !opening })
-  })
+  }
+  const stopStore = subscribe(store, sync)
+  const stopPane = subscribe(paneProto, sync)
+  return () => {
+    stopStore()
+    stopPane()
+  }
 }

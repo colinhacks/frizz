@@ -17,11 +17,12 @@ import { useOptimisticallySteered } from "../lib/steering.ts"
 import { keyProject } from "../lib/threadKey.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import {
-  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, publishPaneQueue, reinstate, setPaneFolded,
-  setPaneRailHidden, stepPane, takeComposerFocus, usePaneWide,
+  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, paneRailWanted, publishPaneQueue, reinstate,
+  setPaneFolded, setPaneRailShown, stepPane, takeComposerFocus, usePaneSplit, usePaneWide,
 } from "../lib/threadPane.ts"
 import { store } from "../store.ts"
 import { ErrorBoundary } from "./ErrorBoundary.tsx"
+import { MissingThread } from "./MissingThread.tsx"
 import { SidePane, ThreadView } from "./lazySurfaces.tsx"
 import { ThreadPageZone } from "./ThreadPageZone.tsx"
 import { LastActive } from "./LastActive.tsx"
@@ -76,10 +77,12 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   const queue = usePaneQueue()
   publishPaneQueue(queue.map((t) => t.id))
   const slug = snap.paneSlug
-  // With nothing selected there is nothing to be full screen about.
-  const folded = proto.folded && slug !== null
+  // With nothing selected there is nothing to be full screen about. A thread whose address is still settling
+  // counts as selected: a cold link to a full-screen thread drew the sidebar for the frames before the board
+  // arrived, then took it away.
+  const folded = proto.folded && (slug !== null || snap.routeThreadSlug !== null)
   const threeColumns = wide && !folded
-  const railShown = threeColumns && !proto.railHidden
+  const railShown = threeColumns && paneRailWanted(proto.artifacts, wide)
   // A file wants more room than the rail's 340, so while one is open the thread and the file take the page
   // (PaneThread) and the sidebar gives up what they need of it: the file gets the thread's 720 before the
   // sidebar stands above its minimum.
@@ -174,7 +177,8 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
 
 function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wide: boolean }) {
   const snap = useSnapshot(store)
-  const { railHidden } = useSnapshot(paneProto)
+  const { artifacts } = useSnapshot(paneProto)
+  const split = usePaneSplit()
   const board = useBoard()
   const thread = useThreadSnapshot(slug)
   // The row the snapshot already read, not a walk of the tracked board, which would make every board
@@ -183,11 +187,12 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
   const queryClient = useQueryClient()
   const threeColumns = wide && !folded
   // The rail has room beside the thread full screen (from the split width up, as on /full) and in the three
-  // columns, and stands there unless the human put it away.
+  // columns, and stands there when the reader wants it (lib/threadPane.ts paneRailWanted).
   const railRoom = folded || threeColumns
-  const railBeside = railRoom && !railHidden
+  const railWanted = paneRailWanted(artifacts, wide)
+  const railBeside = railRoom && railWanted
   // A file is asked for, so it opens beside the thread with the rail put away too, over nothing.
-  const sidePane = railRoom && (!railHidden || snap.filePanels.length > 0)
+  const sidePane = railRoom && (railWanted || snap.filePanels.length > 0)
   const fileOpen = folded && snap.filePanels.some((panel) => !panel.closing)
   // In the three columns a file takes room from the thread rather than sliding the row: the sidebar stays,
   // so there is no slack beside the pair to slide into. Held through the layer's slide-out (`closing`
@@ -203,6 +208,17 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
     if (!thread || !atRest) return
     rpc.threadSeen({ slug }).catch(() => {})
   }, [atRest, slug, thread?.lastActivityAt])
+
+  // FULL SCREEN, THE TAB IS THE THREAD'S, as the full-screen page's was (StandaloneThreadPage): a thread's
+  // own path is what a new tab opens, and several such tabs on one project tell themselves apart by it.
+  const title = thread ? displayTitle(thread) : null
+  const projectLabel = board?.projectLabel ?? board?.projectName
+  useEffect(() => {
+    if (!folded || title === null) return
+    const before = document.title
+    document.title = projectLabel ? `${title} · ${projectLabel} — Frizz` : `${title} · Frizz`
+    return () => { document.title = before }
+  }, [folded, title, projectLabel])
 
   // The next thread's transcript is fetched ahead, so moving on draws it rather than a spinner.
   const next = nextQueuedAfter(slug)
@@ -279,6 +295,10 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
         >
           <div
             data-pane-thread
+            // Full screen, this is the full-screen thread column the phone's page draws (StandaloneThreadPage),
+            // and what reads that column reads this one: Escape in its prompt box leaves full screen rather
+            // than blurring the box (Composer).
+            data-standalone-thread={folded ? "" : undefined}
             className="flex h-full w-full min-w-0 flex-col overflow-hidden border-x border-border bg-panel [view-transition-name:thread-chat]"
           >
             {route.kind === "found" ? (
@@ -288,20 +308,26 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
                 <ThreadView slug={slug} showReturnToQueue={folded} pane={pane} />
               </ErrorBoundary>
             ) : route.kind === "missing" ? (
-              <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted" role="status">Thread “{slug}” was not found in this project.</div>
+              // A project's thread page asks the server which project has the thread and goes there, as the
+              // old full-screen page did: a link from before the singleton names a slug with no project.
+              // The Console's slug is a key, which names its project already.
+              isConsolePath()
+                ? <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted" role="status">Thread “{slug}” was not found in this project.</div>
+                : <MissingThread slug={slug} />
             ) : (
               <div className="flex flex-1 items-center justify-center"><span className="block h-5 w-5 animate-spin rounded-full border-2 border-muted/50 border-t-transparent" /></div>
             )}
           </div>
           <PaneEdgeToggle side="left" hidden={folded} onToggle={() => setPaneFolded(!folded)} />
-          {/* Only where the rail has room, and not while a file stands over it: the file has its own ×. */}
-          {railRoom && snap.splitFileViewer && snap.filePanels.length === 0 && (
-            <PaneEdgeToggle side="right" hidden={railHidden} onToggle={() => setPaneRailHidden(!railHidden)} />
+          {/* Wherever the rail could stand, and not while a file stands over it: the file has its own ×. Beside
+              the sidebar on a window too narrow for both, it shows the rail in the sidebar's place. */}
+          {split && snap.filePanels.length === 0 && (
+            <PaneEdgeToggle side="right" hidden={!railBeside} onToggle={() => setPaneRailShown(!railBeside)} />
           )}
         </div>
         {sidePane && thread && (
           <ErrorBoundary label="this thread's side pane" resetKeys={[slug]}>
-            <SidePane slug={slug} thread={thread} rail={!railHidden} centredRail />
+            <SidePane slug={slug} thread={thread} rail={railWanted} centredRail />
           </ErrorBoundary>
         )}
       </ThreadPageZone>

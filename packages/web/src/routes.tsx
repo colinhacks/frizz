@@ -9,8 +9,9 @@ import { ProjectRail, RAIL_INSET_CLASS } from "./components/ProjectRail.tsx"
 import { StandaloneThreadPage } from "./components/lazySurfaces.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { PageHosts } from "./components/PageHosts.tsx"
-import { applyPath, registerNavigate, threadParam, withThreadParam } from "./lib/router.ts"
-import { CONSOLE_PATH, innerPath } from "./lib/base-path.ts"
+import { applyPath, registerNavigate, threadParam } from "./lib/router.ts"
+import { CONSOLE_PATH, innerPath, isConsolePath } from "./lib/base-path.ts"
+import { parseStandaloneThreadPath } from "./lib/standaloneThreadRoute.ts"
 import { bindConsole, feedIsBoundTo, feedIsConsole, leaveConsole, rebindProject } from "./api/socket.ts"
 import { noteStandaloneThreadRender, primeFullscreenReturn, resetProjectState, store } from "./store.ts"
 import { useProjectRailVisible } from "./lib/projectRail.ts"
@@ -61,7 +62,10 @@ function RootLayout() {
   // leaving the grid does not rebuild it — and the page takes no inset for it. (`/?thread=<slug>` is the
   // launching project's board, not the grid: RootRoute.)
   const onGrid = pathname === "/" && threadParam(search) === null
-  const railVisible = railOn && !onGrid
+  // A phone's thread page has no rail either, as it had none when it was a route of its own (BoardRoute).
+  const isMobile = useIsMobile()
+  const onThreadPage = isMobile && !isConsolePath(pathname) && parseStandaloneThreadPath(innerPath(pathname)) !== null
+  const railVisible = railOn && !onGrid && !onThreadPage
   return (
     <TooltipProvider>
       {/* Outside the <Outlet/> on purpose: this is the element that must survive the navigation.
@@ -69,7 +73,7 @@ function RootLayout() {
           you are in, so it is off unless asked for. Hidden, the way back is the status bar's home
           crumb (StatusRow's home button), which costs a click exactly when you meant to switch. */}
       {railOn ? (
-        <div className={onGrid ? "hidden" : "contents"}>
+        <div className={onGrid || onThreadPage ? "hidden" : "contents"}>
           <ProjectRail />
         </div>
       ) : null}
@@ -78,7 +82,7 @@ function RootLayout() {
       </div>
       {/* HOSTED BY THE LAYOUT, not by the board: the toaster lived inside <App/>, so `showToast` from
           anywhere else raised a toast with nowhere to render — silently, since the store field is set
-          either way. The full-screen page, outside this layout, mounts the same set (PageHosts). */}
+          either way. A phone's full-screen thread page is inside it since 2026-11-11 (ThreadPageRoute). */}
       <PageHosts />
     </TooltipProvider>
   )
@@ -141,13 +145,27 @@ function useProjectBinding(slug: string | undefined): boolean {
 }
 
 /**
- * A board, for the project the URL names.
+ * A board, for the project the URL names — or, at a thread's own path on a phone, that thread's
+ * full-screen page.
+ *
+ * A THREAD'S PATH IS THE BOARD ON A DESKTOP: its pane, full screen, the sidebar put away
+ * (lib/threadPane.ts). It is a route of this board rather than a page of its own so that putting the
+ * sidebar away or bringing it back moves the address without remounting anything: every route here
+ * renders this one component, which react-router reconciles in place across them, so the transcript keeps
+ * its scroll and the prompt box its draft. A phone has no pane, so there the path stays the full-screen
+ * page it has been since 2026-11-07.
  *
  * `slug` is undefined on the unprefixed routes, which remain a supported state: the launching project
- * is still served at `/status/<name>` (and its threads' full-screen pages at `/thread/<slug>`) with no
- * `/project/<slug>` in front of it, and `apiBase()` answers `/_frizz` for exactly that case.
+ * is still served at `/status/<name>` (and its threads at `/thread/<slug>`) with no `/project/<slug>` in
+ * front of it, and `apiBase()` answers `/_frizz` for exactly that case.
  */
 function BoardRoute() {
+  const { thread } = useParams()
+  const isMobile = useIsMobile()
+  return thread !== undefined && isMobile ? <ThreadPageRoute /> : <BoardShell />
+}
+
+function BoardShell() {
   const { slug } = useParams()
   const thread = threadParam(useLocation().search) ?? undefined
   const ready = useProjectBinding(slug)
@@ -155,7 +173,7 @@ function BoardRoute() {
   // Returning from full screen plays the fullscreen door's view transition in REVERSE (react-router re-arms
   // it for the POP; the collapse icon opts in). The reverse morph needs the thread's board surface
   // mounted and named in THIS first commit — the one the transition's new-state snapshot reads — so
-  // the priming is render-phase, the mirror of StandaloneRoute's render-phase drawer clear. A no-op
+  // the priming is render-phase, the mirror of ThreadPageRoute's render-phase drawer clear. A no-op
   // unless the previous render really was a full-screen page (see primeFullscreenReturn).
   useState(() => primeFullscreenReturn(thread))
   // Nothing renders against another project's state — see useProjectBinding.
@@ -291,8 +309,8 @@ function useRouteToStore() {
 }
 
 // Hands react-router's navigate to lib/router's module-level `spaNavigate`, for the leaves that must
-// change the URL without router context (see registerNavigate). Both shells call it: each is the root
-// of its own tree, and the fullscreen page has no RootLayout above it.
+// change the URL without router context (see registerNavigate). The layout calls it, and every page is
+// under the layout since the full-screen thread page moved inside it (2026-11-11).
 function useRegisterNavigate(): void {
   const navigate = useNavigate()
   useEffect(() => {
@@ -301,10 +319,13 @@ function useRegisterNavigate(): void {
   }, [navigate])
 }
 
-/** The focused single-thread page. Deliberately OUTSIDE the layout: it has no rail, and should not. */
-function StandaloneRoute() {
+/**
+ * A phone's full-screen page for a thread. Inside the layout since 2026-11-11, when a desktop's thread
+ * path became the board's (BoardRoute): the layout registers the navigator and mounts the page hosts, and
+ * draws no project rail here (RootLayout `onThreadPage`).
+ */
+function ThreadPageRoute() {
   const { thread, slug } = useParams()
-  useRegisterNavigate()
   const ready = useProjectBinding(slug)
   // Any drawer stack left by the page we came from is cleared HERE, on this route's first render —
   // deliberately NOT in the fullscreen door's click handler, and deliberately not in an effect. The
@@ -321,19 +342,14 @@ function StandaloneRoute() {
   // The same gate as BoardRoute's: reached from another project, this page must not read that
   // project's board for its first commit.
   if (!ready) return null
-  return (
-    <>
-      <StandaloneThreadPage slug={thread!} />
-      {/* Its own, since it is outside the layout — and the SAME set the layout mounts. Skipping the
-          rail does not mean skipping the toast, the image viewer or a reference's card. */}
-      <PageHosts />
-    </>
-  )
+  return <StandaloneThreadPage slug={thread!} />
 }
 
+// One element on every route, so a move between them is not a remount (BoardRoute).
 const boardChildren = [
   { index: true, element: <BoardRoute /> },
   { path: "status/:status", element: <BoardRoute /> },
+  { path: "thread/:thread", element: <BoardRoute /> },
 ]
 
 /**
@@ -349,17 +365,6 @@ function DropFullSuffix() {
 }
 
 /**
- * `/console/thread/<key>`, the Console's drawer address until 2026-11-07, put on the current one,
- * `/console?thread=<key>`. A thread's full-screen page is its own project's (standaloneThreadHref), so
- * on the Console a thread path has nothing else it could mean.
- */
-function ConsoleThreadRedirect() {
-  const { thread } = useParams()
-  const { search, hash } = useLocation()
-  return <Navigate to={{ pathname: CONSOLE_PATH, search: withThreadParam(search, thread ?? null), hash }} replace />
-}
-
-/**
  * A render error no surface caught. The router catches it at the route, and without this it draws its
  * own page for developers (components/ErrorBoundary.tsx has the history). "Try again" revalidates,
  * which is what makes the router render the route's element again.
@@ -372,12 +377,10 @@ function RouteError() {
 const errorElement = <RouteError />
 
 export const router = createBrowserRouter([
-  // THE THREAD'S OWN PATH IS ITS FULL-SCREEN PAGE (lib/standaloneThreadRoute.ts); a drawer is the
-  // board's URL with `?thread=<slug>` (lib/router.ts). These pages sit OUTSIDE the layout — they have
-  // no rail, and should not. react-router ranks by specificity, so the `/full` aliases beat the page's
-  // own routes regardless of order.
-  { path: "/thread/:thread", element: <StandaloneRoute />, errorElement },
-  { path: `${PROJECT_PATH}/thread/:thread`, element: <StandaloneRoute />, errorElement },
+  // THE THREAD'S OWN PATH IS IT FULL SCREEN: on a desktop the board with its pane full screen, on a phone
+  // the full-screen page (BoardRoute); a thread beside the sidebar, or in a drawer, is the board's URL with
+  // `?thread=<slug>` (lib/router.ts). react-router ranks by specificity, so the `/full` aliases beat the
+  // thread's own routes regardless of order.
   { path: "/thread/:thread/full", element: <DropFullSuffix />, errorElement },
   { path: `${PROJECT_PATH}/thread/:thread/full`, element: <DropFullSuffix />, errorElement },
   {
@@ -389,13 +392,16 @@ export const router = createBrowserRouter([
       // board through a status path or `/?thread=<slug>` — see base-path.ts on why an empty base is
       // supported.
       { path: "/status/:status", element: <BoardRoute /> },
+      { path: "/thread/:thread", element: <BoardRoute /> },
       { path: PROJECT_PATH, children: boardChildren },
-      // The Console's own base (lib/base-path.ts): its threads are named by key, `/console?thread=<key>`.
+      // The Console's own base (lib/base-path.ts): its threads are named by key, `/console?thread=<key>`
+      // beside the sidebar and `/console/thread/<key>` full screen. The path was a drawer until 2026-11-07,
+      // then forwarded to the query until 2026-11-11.
       {
         path: CONSOLE_PATH,
         children: [
           { index: true, element: <ConsoleRoute /> },
-          { path: "thread/:thread", element: <ConsoleThreadRedirect /> },
+          { path: "thread/:thread", element: <ConsoleRoute /> },
           { path: "status/:status", element: <ConsoleRoute /> },
         ],
       },

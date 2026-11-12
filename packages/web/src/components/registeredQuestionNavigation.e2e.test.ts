@@ -101,7 +101,7 @@ test("registered picks survive the pane folding, the full-screen page, project s
     // The full-screen PAGE is a document of its own (the door's ⌘-click, a new tab), with a fresh
     // answering provider; Escape there leaves it for the board in place, which mounts another.
     await page.goto(`${baseUrl}/project/${a.slug}/thread/${slug}`, { waitUntil: "networkidle2" })
-    await page.waitForSelector(`main[data-standalone-thread] ${tree}`, { timeout: 30_000 })
+    await page.waitForSelector(`[data-standalone-thread] ${tree}`, { timeout: 30_000 })
     await check()
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname))

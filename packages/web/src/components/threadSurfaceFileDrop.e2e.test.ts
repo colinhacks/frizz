@@ -22,8 +22,9 @@ import test from "node:test"
 //   FRIZZ_THREAD_SURFACE_FILE_DROP_E2E_URL=http://127.0.0.1:<port> nub run test <this file>
 // The test dispatches its own two threads: one that comes to rest, for the pane and the full-screen page,
 // and one that keeps working, for the drawers. On a desktop board every thread opens in the pane, so a
-// drawer is found where one still opens: over a status list (`/status/<status>?thread=<slug>`) and over
-// the full-screen page (a thread link followed from it). The second thread works for about two minutes;
+// drawer is found where one still opens: over a status list (`/status/<status>?thread=<slug>`). A desktop's
+// full-screen view is the pane with its sidebar put away since 2026-11-11, where a thread link followed from
+// it opens its thread in the pane; the drawer that link opened over the full-screen page is a phone's now. The second thread works for about two minutes;
 // kill the stack's workers with the stack. The drags are Chrome's own drag pipeline (CDP
 // Input.dispatchDragEvent with a real file path, the way a Finder drag arrives), so the browser decides
 // which element is under the pointer. A thread's surfaces share one draft, so the file dropped in the
@@ -85,7 +86,7 @@ test("a file dropped anywhere on a thread's pane, drawer or full-screen page att
 
     const pane = `[data-pane-thread] [data-thread-surface="${slug}"]`
     const drawer = `.frizz-sheet-panel [data-thread-surface="${working}"]`
-    const full = `main[data-standalone-thread] [data-thread-surface="${slug}"]`
+    const full = `[data-standalone-thread] [data-thread-surface="${slug}"]`
     const files = (paths: string[]) => ({ items: [], files: paths, dragOperationsMask: 1 })
     const hinted = (surface: string) => page.$eval(`${surface} [data-composer-box]`, (box) => ({
       hint: box.textContent?.includes("Drop file to attach") ?? false,
@@ -197,7 +198,7 @@ test("a file dropped anywhere on a thread's pane, drawer or full-screen page att
 
     // 4. …AND ANYWHERE ELSE ON THAT PAGE. It is this one thread's page, and at this width its column is
     // half of it: the gutter beside the column and the rail on the other side are still "anywhere".
-    const column = await page.$eval("main[data-standalone-thread]", (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right } })
+    const column = await page.$eval("[data-standalone-thread]", (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right } })
     assert.ok(column.left > 80, "there is a gutter beside the column at this width")
     await dropAt({ x: Math.round(column.left / 2), y: 450 }, full, onFullGutter)
     await waitForChips(full, 7)
@@ -212,32 +213,32 @@ test("a file dropped anywhere on a thread's pane, drawer or full-screen page att
     await page.$eval("[data-thread-page-zone]", (zone) => zone.dispatchEvent(new DragEvent("dragleave", { bubbles: true, relatedTarget: null })))
     await page.waitForFunction((sel) => !document.querySelector(sel)?.textContent?.includes("Drop file to attach"), { timeout: 5000 }, `${full} [data-composer-box]`)
 
-    // 5. A DRAWER OVER THAT PAGE, opened by a thread link the way a worker's `[…](/thread/<slug>)` is: the
-    // page is one thread's zone, and the drawer above it another's. The hint has to say which SURFACE is
-    // under the pointer, and the file goes to the drawer's thread alone (StandaloneThreadPage keeps the
-    // drawer stack outside its ThreadPageZone).
+    // 5. A THREAD LINK FOLLOWED FROM FULL SCREEN, the way a worker's `[…](/thread/<slug>)` is. On a desktop
+    // the thread's path is the pane (lib/threadPane.ts), so the link opens its thread there, still full
+    // screen, rather than in a drawer over the page as the full-screen page did until 2026-11-11 (a phone's
+    // page still does, and a phone has no file drag). The zone follows the thread: a drop goes to the
+    // linked thread's box, and the first thread's draft is as it was when Back returns to it.
     await page.evaluate((href) => {
       const a = document.createElement("a")
       a.href = href
       a.textContent = "the working thread"
       a.setAttribute("data-e2e-thread-link", "")
-      document.querySelector("main[data-standalone-thread] [data-thread-header]")!.append(a)
+      document.querySelector("[data-standalone-thread] [data-thread-header]")!.append(a)
     }, `/project/${projectSlug}/thread/${working}`)
     await page.click("[data-e2e-thread-link]")
-    await page.waitForSelector(`${drawer} [data-composer-box]`, { timeout: 30_000 })
-    await page.waitForSelector(`${drawer}[data-drawer-scroll-ready="true"], ${drawer} [data-drawer-scroll-ready="true"]`)
-    assert.ok(await page.$("main[data-standalone-thread]"), "the drawer opened over the full-screen page, which stays under it")
-    await waitForChips(drawer, 2)
-    const overFull = await point(`${drawer} [data-drawer-transcript-scroll]`, (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 3 }))
-    await page.mouse.dragEnter(overFull, files([onDrawerOverFull]))
-    await page.mouse.dragOver(overFull, files([onDrawerOverFull]))
-    await page.waitForFunction((sel) => document.querySelector(sel)?.textContent?.includes("Drop file to attach"), { timeout: 5000 }, `${drawer} [data-composer-box]`)
-    assert.deepEqual(await hinted(full), { hint: false, dashed: false }, "the page under the drawer does not claim the file")
-    await dropAt(overFull, drawer, onDrawerOverFull)
-    await waitForChips(drawer, 3)
+    const linked = `[data-standalone-thread] [data-thread-surface="${working}"]`
+    await page.waitForSelector(`${linked} [data-composer-box]`, { timeout: 30_000 })
+    assert.equal(new URL(page.url()).pathname, `/project/${projectSlug}/thread/${working}`, "the linked thread, full screen, at its own path")
+    assert.equal(await page.$(".frizz-sheet-panel"), null, "in the pane, not a drawer")
+    await waitForChips(linked, 2)
+    await dropAt(await point(`${linked} [data-drawer-transcript-scroll]`, (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 3 })), linked, onDrawerOverFull)
+    await waitForChips(linked, 3)
     await new Promise((r) => setTimeout(r, 400))
-    assert.deepEqual(await chips(drawer), ["on-drawer.txt", "on-drawer-box.txt", "on-drawer-over-full.txt"])
-    assert.equal((await chips(full)).length, 8, "…and nothing went to the page's thread under it")
+    assert.deepEqual(await chips(linked), ["on-drawer.txt", "on-drawer-box.txt", "on-drawer-over-full.txt"])
+    await page.goBack()
+    await page.waitForSelector(`${full} [data-composer-box]`, { timeout: 30_000 })
+    await waitForChips(full, 8)
+    assert.equal((await chips(full)).length, 8, "…and nothing went to the first thread")
 
     assert.deepEqual(errors, [], "no console/page errors during the flow")
   } finally {

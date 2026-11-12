@@ -1,6 +1,6 @@
 import type { MouseEvent } from "react"
 import { Minimize2 } from "lucide-react"
-import { queueDestination, spaNavigate } from "../lib/router.ts"
+import { boardThreadHref, queueDestination, spaNavigate } from "../lib/router.ts"
 import { paneEnabled } from "../store.ts"
 import { setPaneFolded } from "../lib/threadPane.ts"
 import { fullscreenOriginFor } from "../lib/fullscreenHandoff.ts"
@@ -49,7 +49,8 @@ export function exitFullscreen(slug: string): void {
 // registered navigator. `data-standalone-return` is kept from the arrow — it names the FUNCTION, which
 // has not changed.
 export function CollapseThreadLink({ slug, label = "Exit fullscreen" }: { slug: string; label?: string }) {
-  const href = exitFullscreenHref(slug)
+  // In the pane the way out is the same thread beside the sidebar, which is where a plain click goes too.
+  const href = paneEnabled() ? boardThreadHref(slug) : exitFullscreenHref(slug)
   function onClick(event: MouseEvent<HTMLAnchorElement>) {
     if (!isPlainLeftClick(event)) return
     event.preventDefault()

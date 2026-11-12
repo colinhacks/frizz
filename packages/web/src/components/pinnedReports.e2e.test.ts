@@ -194,7 +194,7 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
 
     // 8. ITS FULL PAGE reads it as well, and draws the thread in full.
     await page.goto(`${boardUrl}/thread/${done}`, { waitUntil: "networkidle2" })
-    await page.waitForSelector(`main[data-standalone-thread] [data-thread-surface="${done}"]`, { timeout: 20_000 })
+    await page.waitForSelector(`[data-standalone-thread] [data-thread-surface="${done}"]`, { timeout: 20_000 })
     await until("the full page recorded the read", async () => {
       const t = await thread(done)
       return Boolean(t?.seenAt && t.lastAssistantAt && t.seenAt > t.lastAssistantAt)

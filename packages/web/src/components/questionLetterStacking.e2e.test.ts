@@ -121,7 +121,7 @@ test("a question's free-text letter sits over its box and under the thread's sti
     const surfaces = {
       pane: { url: `${boardUrl}?thread=${queued}`, selector: `[data-pane-thread] [data-thread-surface="${queued}"]` },
       drawer: { url: `${boardUrl}/status/active?thread=${snoozed}`, selector: `.frizz-sheet-panel [data-thread-surface="${snoozed}"]` },
-      full: { url: `${boardUrl}/thread/${queued}`, selector: `main[data-standalone-thread] [data-thread-surface="${queued}"]` },
+      full: { url: `${boardUrl}/thread/${queued}`, selector: `[data-standalone-thread] [data-thread-surface="${queued}"]` },
     }
     for (const [name, { url, selector }] of Object.entries(surfaces)) {
       await page.goto(url, { waitUntil: "networkidle2" })

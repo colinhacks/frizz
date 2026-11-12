@@ -24,7 +24,7 @@ test("every top-level route names an errorElement, so the router's own error pag
   const routes = read("../routes.tsx")
   const table = routes.slice(routes.indexOf("export const router = createBrowserRouter(["))
   const topLevel = table.split("\n").filter((line) => /^  \{ path: /.test(line))
-  assert.ok(topLevel.length >= 4, "the thread's own pages are top-level routes")
+  assert.ok(topLevel.length >= 2, "the `/full` aliases of a thread's own path are top-level routes")
   for (const line of topLevel) assert.match(line, /, errorElement \},$/, line.trim())
   assert.match(table, /\n    element: <RootLayout \/>,\n    errorElement,\n/, "and the layout route, which holds every other page")
   // Nothing at the top level is left out: each top-level entry is one of the lines above, or the layout.

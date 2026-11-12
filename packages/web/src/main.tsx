@@ -29,17 +29,19 @@ import { stepOffStaleLayerEntries } from "./lib/backDismiss.ts"
 import { innerPath } from "./lib/base-path.ts"
 import { projectScopedQueryKeyHash } from "./lib/queryKeyScope.ts"
 import { boundTranscriptCache } from "./lib/transcriptCacheBound.ts"
-import { parseStandaloneThreadPath } from "./lib/standaloneThreadRoute.ts"
+import { parseStandaloneThreadPath, threadPageIsStandalone } from "./lib/standaloneThreadRoute.ts"
 
 const settingsFixture = typeof window !== "undefined" && window.location.pathname.endsWith("/settings-formatting-fixture.html")
 // innerPath, not location.pathname: under a project prefix the deep link is `/project/nub/thread/x/full`.
 const standaloneThreadSlug = typeof window !== "undefined" ? parseStandaloneThreadPath(innerPath()) : null
+// A desktop's thread path is the board, full screen (routes.tsx BoardRoute); only a phone's is the page.
+const standalonePage = typeof window !== "undefined" && threadPageIsStandalone()
 
 // A reload with a phone sheet up restores the sheet's same-URL history entry with no sheet to own it.
 // Step off it before anything pushes, so the page sits on the router's own entry (see lib/backDismiss).
 if (!settingsFixture) stepOffStaleLayerEntries()
 
-if (!settingsFixture && !standaloneThreadSlug) {
+if (!settingsFixture && !standalonePage) {
   // Adopt a cold/deep URL before React takes its first store snapshot — still SYNCHRONOUS, and still
   // before the first render, which is the whole point: it is what makes a deep-linked drawer painted
   // open on the first frame instead of animating in afterwards. The router resolves the same path a

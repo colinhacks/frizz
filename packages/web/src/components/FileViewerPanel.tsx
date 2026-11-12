@@ -114,7 +114,9 @@ export function FileViewerPanel({ slug, path, active }: { slug: string; path: st
   useEffect(() => {
     // Covered readers stay mounted, but only the visible one owns the selection shortcut.
     if (!active) return
-    const composerTextarea = () => document.querySelector<HTMLTextAreaElement>("main[data-standalone-thread] textarea")
+    // The thread a file opens beside: the pane's, at any width, or a phone's full-screen page. Only the
+    // full-screen page's was read until 2026-11-11, so in the pane the reference went in with no caret.
+    const composerTextarea = () => document.querySelector<HTMLTextAreaElement>("[data-pane-thread] textarea, main[data-standalone-thread] textarea")
     // The caret the reference belongs at, in PROSE coordinates (the textarea's value IS the draft's
     // prose — attachments live on trailing lines the composer peels off). A never-touched textarea
     // reports 0/0; that means "no caret yet", and the reference belongs at the END of what was

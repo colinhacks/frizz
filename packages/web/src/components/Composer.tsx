@@ -667,7 +667,8 @@ export function Composer({
         dictation.cancel()
         return
       }
-      // On the /full page the key is not ours: Escape there always leaves fullscreen (DrawerStack's
+      // Full screen (the full-screen page, or the pane with its sidebar put away) the key is not ours:
+      // Escape there always leaves fullscreen (DrawerStack's
       // `onEscapeAtRest`), and a blur first would make the reader press it twice with nothing visible
       // happening the first time. The draft is persisted, so the drawer or card it lands in shows it.
       // A drawer opened OVER /full is portaled outside this column and still climbs out below.

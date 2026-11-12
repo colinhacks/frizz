@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react"
 import { flushSync } from "react-dom"
-import { proxy, subscribe } from "valtio"
+import { proxy } from "valtio"
 import { closeDrawersById, showInPane, store } from "../store.ts"
-import { prefersReducedMotion } from "./sheet.ts"
+import { prefersReducedMotion, SPLIT_MIN_PX } from "./sheet.ts"
 
 // THE ONE-THREAD PANE (maintainer 2026-11-06: "we may just be optimized for only showing one card on the
 // screen at a time"; tried on its own branch and landed 2026-11-09). The board's right-hand column shows
@@ -10,33 +10,38 @@ import { prefersReducedMotion } from "./sheet.ts"
 // queue. With nothing picked the column offers the first item. A send stays on the thread; ⇧⌘⏎ sends
 // and moves on.
 
-// The key still says prototype, which is what the pane was when it was first stored: renaming it would
-// put away nothing but the human's choices.
-const KEY = "frizz.threadPanePrototype.v1"
+// WHAT THE PANE SHOWS BESIDE ITS THREAD IS IN THE ADDRESS (maintainer 2026-11-11: "There needs to be a change
+// in the URL based on whether you are showing/hiding artifacts or showing/hiding the sidebar"). lib/router.ts
+// writes both and reads them back, so a reload, Back, a copied link and a second tab all open the thread
+// the way it was being read:
+//   · the sidebar put away is the thread's own path, `…/thread/<slug>`, its full-screen page since
+//     2026-11-07, so every link to that page opens this view; beside the sidebar it is `?thread=<slug>`.
+//   · the artifact rail is `artifacts=shown` or `artifacts=hidden` when the reader chose against what the
+//     window does by itself, and absent otherwise (paneRailWanted).
+// Both were remembered in localStorage until then (`frizz.threadPanePrototype.v1`), which is gone: the URL
+// is what is remembered now, and in the page the choice rides along from one thread to the next.
 
-function load(): { folded: boolean; railHidden: boolean } {
-  const fallback = { folded: false, railHidden: false }
-  try {
-    const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<typeof fallback>
-    // Field by field, so a key an earlier build stored (the slim rail's `foldStyle`, the trial's
-    // `afterSend`) is dropped.
-    return {
-      folded: stored.folded ?? fallback.folded,
-      railHidden: stored.railHidden ?? fallback.railHidden,
-    }
-  } catch {
-    return fallback
-  }
+/** The artifact rail: what the window does by itself, or what the reader chose. */
+export type PaneArtifacts = "default" | "shown" | "hidden"
+
+export const paneProto = proxy({ folded: false, artifacts: "default" as PaneArtifacts })
+
+/** The query parameter that says the reader chose to show or hide the artifact rail. */
+export const ARTIFACTS_PARAM = "artifacts"
+
+/** The rail choice a URL's query records. */
+export function artifactsParam(search: string): PaneArtifacts {
+  const value = new URLSearchParams(search).get(ARTIFACTS_PARAM)
+  return value === "shown" || value === "hidden" ? value : "default"
 }
 
-export const paneProto = proxy(load())
-subscribe(paneProto, () => {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(paneProto))
-  } catch {
-    // A browser refusing storage only loses the choice across a reload.
-  }
-})
+// THE RAIL STANDS BY ITSELF ONLY WHERE IT FITS BESIDE THE SIDEBAR (maintainer 2026-11-11: "the artifact
+// sidebar should be visible on the screens that can support it by default. On the others, it should not
+// be"). That is the three columns' width, PANE_WIDE_MIN_PX; narrower, it stands only when asked for.
+/** Does the reader want the rail, on a window that is (or is not) wide enough for the three columns? */
+export function paneRailWanted(artifacts: PaneArtifacts, wide: boolean): boolean {
+  return artifacts === "shown" || (artifacts === "default" && wide)
+}
 
 // The queue in the order the pane walks it, published by the mounted pane (usePaneQueue), so a click
 // handler anywhere can ask for the next one without re-deriving the order.
@@ -172,8 +177,9 @@ export function usePaneWide(): boolean {
 
 // ── full screen ───────────────────────────────────────────────────────────────────────────────────
 // FOCUS MODE, AT EVERY WIDTH (maintainer 2026-11-09: "open up a specific thread in a view that drops the
-// sidebar … This is the whole idea"). The same page with the sidebar put away: no navigation and no
-// remount, so the transcript keeps its place and the prompt box its draft. The thread column morphs
+// sidebar … This is the whole idea"). The same page with the sidebar put away: no remount, so the transcript
+// keeps its place and the prompt box its draft. The address moves to the thread's own path (lib/router.ts),
+// a route that renders this same board, so the page under it does not change. The thread column morphs
 // through the view transition /full's door already uses (styles.css `thread-chat`), and it is a transition
 // rather than animated widths because the column's width is a percentage of the page around it
 // (StandaloneThreadPage LAYOUT_VARS).
@@ -181,18 +187,53 @@ export function setPaneFolded(next: boolean): void {
   if (paneProto.folded === next) return
   morph(() => {
     paneProto.folded = next
+    // The sidebar back on a window with no room for it and the rail together takes the rail's place: the
+    // reverse of showing the rail there, which put the sidebar away (setPaneRailShown).
+    if (!next && !isPaneWide() && paneProto.artifacts === "shown") paneProto.artifacts = "default"
   })
 }
 
-// THE RAIL PUT AWAY (maintainer 2026-11-09, of the collapse controls on the lines between the columns: a
-// dot that opens into a knob, "K5, let's lock it in"). The columns that are left re-centre as a pair, and
-// the thread's ops strip comes back above its transcript, as it does wherever no rail stands beside it.
-// Remembered, like full screen: a reader who put it away wants it away on the next thread too.
-export function setPaneRailHidden(next: boolean): void {
-  if (paneProto.railHidden === next) return
+// THE ARTIFACT RAIL, SHOWN OR PUT AWAY (maintainer 2026-11-09, of the collapse controls on the lines between
+// the columns: a dot that opens into a knob, "K5, let's lock it in"). The columns that are left re-centre as
+// a pair, and the thread's ops strip comes back above its transcript, as it does wherever no rail stands
+// beside it. A choice that matches what this window does by itself is no choice, and leaves the address
+// clean (paneRailWanted). Asked for on a window too narrow for the sidebar and the rail together, the rail
+// takes the sidebar's room (maintainer 2026-11-11: "it should also hide the regular sidebar if the screen is
+// not big enough to include both").
+export function setPaneRailShown(next: boolean): void {
+  const wide = isPaneWide()
+  const artifacts: PaneArtifacts = next === wide ? "default" : next ? "shown" : "hidden"
+  const folded = next && !wide ? true : paneProto.folded
+  if (paneProto.artifacts === artifacts && paneProto.folded === folded) return
   morph(() => {
-    paneProto.railHidden = next
+    paneProto.artifacts = artifacts
+    paneProto.folded = folded
   })
+}
+
+// THE RAIL HAS ROOM BESIDE A THREAD FROM THE SPLIT WIDTH UP (lib/sheet.ts SPLIT_MIN_PX), as on /full: with the
+// sidebar beside them only at the three columns' width, full screen from here. Narrower, nothing stands
+// beside the thread, so there is nothing to show or hide.
+const SPLIT_QUERY = `(min-width: ${SPLIT_MIN_PX}px)`
+let splitMedia: MediaQueryList | null = null
+const splitListeners = new Set<() => void>()
+function subscribeSplit(callback: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {}
+  if (!splitMedia) {
+    splitMedia = window.matchMedia(SPLIT_QUERY)
+    splitMedia.addEventListener("change", () => splitListeners.forEach((l) => l()))
+  }
+  splitListeners.add(callback)
+  return () => splitListeners.delete(callback)
+}
+function isPaneSplit(): boolean {
+  if (splitMedia) return splitMedia.matches
+  return typeof window !== "undefined" && !!window.matchMedia?.(SPLIT_QUERY).matches
+}
+
+/** Is the window wide enough for the rail beside a thread at all? Live, as usePaneWide is. */
+export function usePaneSplit(): boolean {
+  return useSyncExternalStore(subscribeSplit, isPaneSplit, () => false)
 }
 
 function morph(update: () => void): void {

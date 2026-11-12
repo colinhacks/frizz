@@ -269,12 +269,13 @@ export function pushDrawer(kind: "thread" | "doc", slug: string, opts?: { routed
 }
 
 // THE ONE-THREAD PANE: on a desktop board a thread opens in the right-hand column, never in a
-// sheet over it. The phone keeps its own shell and its sheets; the /full page has no pane to show one in,
-// so a link there still opens a drawer.
+// sheet over it. The phone keeps its own shell and its sheets. A desktop's thread path is this same board
+// with the pane full screen (lib/threadPane.ts), so the pane is there too; a phone's is the full-screen page,
+// which has no pane to show one in, so a link there still opens a drawer.
 export function paneEnabled(): boolean {
   if (typeof location === "undefined" || typeof window === "undefined") return false
   // A status list has no pane to show a thread in, so a thread there opens in a drawer.
-  return !isMobileViewport() && store.view === "todos" && parseStandaloneThreadPath(innerPath()) === null
+  return !isMobileViewport() && store.view === "todos"
 }
 
 export function showInPane(slug: string): void {
@@ -363,6 +364,12 @@ export function resolveRoutedThread(): void {
   // nothing. The full-screen page already knows how to recover: <MissingThread> asks `threadLocate` which project
   // owns the slug and relocates there. Hand it over rather than growing a second copy of that.
   if (route.kind === "missing") {
+    // Already at that page's address, the pane draws it (ThreadPane's MissingThread): sent there again,
+    // the page would load itself forever.
+    if (paneEnabled() && !isConsolePath() && parseStandaloneThreadPath(innerPath()) === slug) {
+      showInPane(slug)
+      return
+    }
     if (typeof location !== "undefined") location.replace(standaloneThreadHref(slug))
     return
   }

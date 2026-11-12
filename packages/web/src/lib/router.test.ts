@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import type { BoardSnapshot, ThreadView } from "@frizz/shared"
 import { markDrawerClosing, openThread, pushDrawer, resolveRoutedThread, store } from "../store.ts"
 import { appPushedCurrentEntry, boardThreadHref, primeRoute, queueDestination, startRouter, threadParam, withThreadParam } from "./router.ts"
+import { paneProto, setPaneFolded, setPaneRailShown } from "./threadPane.ts"
 
 // A stubbed address bar for a URL the router wrote: its path and its query, as the browser splits them.
 function at(url: string): Location {
@@ -16,6 +17,8 @@ function resetStore(): void {
   store.view = "todos"
   store.routeThreadSlug = null
   store.board = null
+  paneProto.folded = false
+  paneProto.artifacts = "default"
 }
 
 // A board carrying exactly the fields the routing decision reads.
@@ -26,7 +29,7 @@ function boardWith(threads: Array<{ id: string; needsYou?: boolean }>): void {
 // A stubbed page for the router to run in. With `phone` the viewport is a phone's, where a thread is a
 // drawer: with an address bar to read, a desktop board shows threads in its one-thread pane instead
 // (store.ts paneEnabled).
-function mountPage({ phone = false }: { phone?: boolean } = {}): () => void {
+function mountPage({ phone = false, width }: { phone?: boolean; width?: number } = {}): () => void {
   const globals = globalThis as typeof globalThis & { window?: Window; document?: Document; CSS?: typeof CSS }
   const previous = { window: globals.window, document: globals.document, CSS: globals.CSS }
   globals.CSS = { escape: (value: string) => value } as typeof CSS
@@ -39,6 +42,10 @@ function mountPage({ phone = false }: { phone?: boolean } = {}): () => void {
     clearTimeout: () => {},
     setTimeout: () => 0,
     ...(phone ? { matchMedia: () => ({ matches: true, addEventListener: () => {} }) } : null),
+    // A desktop window this wide: a `min-width` query matches up to it, and nothing else does.
+    ...(width !== undefined
+      ? { matchMedia: (query: string) => ({ matches: Number(/min-width:\s*(\d+)px/.exec(query)?.[1] ?? Infinity) <= width, addEventListener: () => {} }) }
+      : null),
   } as unknown as typeof window
   return () => Object.assign(globals, previous)
 }
@@ -249,16 +256,17 @@ test("a routed slug this board does not have hands off to the full-screen page's
   }
 })
 
-// The fullscreen door clears the drawer stack and navigates to `/thread/<slug>` in one tick;
+// On a phone the fullscreen door clears the drawer stack and navigates to `/thread/<slug>` in one tick;
 // valtio delivers the store notification a microtask later, when the address bar already names the
 // fullscreen page. The board's store→URL sync must leave that URL alone — it pulled the page straight
-// back to the board before the guard (live, 2026-08-28).
-test("the store→URL sync never writes over the fullscreen page", async () => {
+// back to the board before the guard (live, 2026-08-28). A desktop's thread path is the board's own.
+test("the store→URL sync never writes over a phone's fullscreen page", async () => {
   resetStore()
   const globals = globalThis as typeof globalThis & { location?: Location }
   const previous = globals.location
   const navigated: string[] = []
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const restore = mountPage({ phone: true })
   try {
     globals.location = { pathname: "/thread/focus", search: "" } as unknown as Location
     const stop = startRouter((path) => navigated.push(path))
@@ -277,6 +285,150 @@ test("the store→URL sync never writes over the fullscreen page", async () => {
     stopBoard()
     assert.deepEqual(navigated, ["/?thread=focus"])
   } finally {
+    restore()
+    globals.location = previous
+    resetStore()
+  }
+})
+
+// THE PANE'S LAYOUT IS IN THE ADDRESS (maintainer 2026-11-11). On a desktop the thread's own path is that
+// thread full screen in the pane — every full-screen link from before keeps opening the view people read
+// threads in — and `artifacts=` records a choice about the rail that differs from the window's own.
+test("a desktop reads a thread's own path as the pane full screen, and the query's rail choice", () => {
+  resetStore()
+  const globals = globalThis as typeof globalThis & { location?: Location }
+  const previous = globals.location
+  globals.location = at("/project/demo/thread/focus/full?artifacts=hidden")
+  const restore = mountPage({ width: 1440 })
+  try {
+    primeRoute("/project/demo/thread/focus/full", "?artifacts=hidden")
+    assert.equal(store.routeThreadSlug, "focus", "parked for the board, as a query's thread is")
+    assert.equal(paneProto.folded, true, "the sidebar put away")
+    assert.equal(paneProto.artifacts, "hidden")
+    boardWith([{ id: "focus" }])
+    resolveRoutedThread()
+    assert.equal(store.paneSlug, "focus", "in the pane, not a drawer")
+    assert.equal(store.drawers.length, 0)
+
+    primeRoute("/project/demo", "?thread=focus")
+    assert.equal(paneProto.folded, false, "the query is the thread beside the sidebar")
+    assert.equal(paneProto.artifacts, "default", "and no parameter is the window's own choice")
+
+    // With no thread named there is nothing to lay out, so the choices wait for the next thread.
+    paneProto.folded = true
+    primeRoute("/project/demo", "")
+    assert.equal(paneProto.folded, true)
+  } finally {
+    restore()
+    globals.location = previous
+    resetStore()
+  }
+})
+
+test("putting the sidebar or the rail away moves the address and replaces the entry", async () => {
+  resetStore()
+  const globals = globalThis as typeof globalThis & { location?: Location }
+  const previous = globals.location
+  const writes: Array<{ path: string; replace: boolean }> = []
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  globals.location = at("/project/demo?thread=focus")
+  const restore = mountPage({ width: 1440 })
+  const stop = startRouter((path, { replace }) => {
+    writes.push({ path, replace })
+    globals.location = at(path)
+  })
+  try {
+    store.paneSlug = "focus"
+    await settle()
+    assert.deepEqual(writes, [], "the address already says it")
+
+    setPaneFolded(true)
+    await settle()
+    setPaneRailShown(false)
+    await settle()
+    setPaneFolded(false)
+    await settle()
+    setPaneRailShown(true)
+    await settle()
+    assert.deepEqual(writes, [
+      { path: "/project/demo/thread/focus", replace: true },
+      { path: "/project/demo/thread/focus?artifacts=hidden", replace: true },
+      { path: "/project/demo?thread=focus&artifacts=hidden", replace: true },
+      { path: "/project/demo?thread=focus", replace: true },
+    ])
+
+    // Another thread full screen is a thread opening: pushed, at its own path.
+    writes.length = 0
+    setPaneFolded(true)
+    await settle()
+    store.paneSlug = "other"
+    await settle()
+    assert.deepEqual(writes, [
+      { path: "/project/demo/thread/focus", replace: true },
+      { path: "/project/demo/thread/other", replace: false },
+    ])
+  } finally {
+    stop()
+    restore()
+    globals.location = previous
+    resetStore()
+  }
+})
+
+// "the artifact sidebar should be visible on the screens that can support it by default. On the others, it
+// should not be. When somebody clicks the button to show the artifact sidebar, it should also hide the
+// regular sidebar if the screen is not big enough to include both" (maintainer 2026-11-11).
+test("on a window too narrow for both, showing the rail puts the sidebar away and bringing it back puts the rail away", async () => {
+  resetStore()
+  const globals = globalThis as typeof globalThis & { location?: Location }
+  const previous = globals.location
+  const writes: string[] = []
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  globals.location = at("/project/demo?thread=focus")
+  const restore = mountPage({ width: 1280 })
+  const stop = startRouter((path) => {
+    writes.push(path)
+    globals.location = at(path)
+  })
+  try {
+    store.paneSlug = "focus"
+    setPaneRailShown(true)
+    await settle()
+    assert.deepEqual({ folded: paneProto.folded, artifacts: paneProto.artifacts }, { folded: true, artifacts: "shown" })
+    setPaneFolded(false)
+    await settle()
+    assert.deepEqual({ folded: paneProto.folded, artifacts: paneProto.artifacts }, { folded: false, artifacts: "default" })
+    assert.deepEqual(writes, ["/project/demo/thread/focus?artifacts=shown", "/project/demo?thread=focus"])
+
+    // Full screen, the rail put away again is this window's own choice, and leaves the sidebar where it is.
+    setPaneFolded(true)
+    setPaneRailShown(true)
+    setPaneRailShown(false)
+    await settle()
+    assert.deepEqual({ folded: paneProto.folded, artifacts: paneProto.artifacts }, { folded: true, artifacts: "default" })
+  } finally {
+    stop()
+    restore()
+    globals.location = previous
+    resetStore()
+  }
+})
+
+test("a thread this board does not have, at its own path, stays there for the pane to go looking", () => {
+  resetStore()
+  const globals = globalThis as typeof globalThis & { location?: Location }
+  const previous = globals.location
+  const replaced: string[] = []
+  globals.location = { pathname: "/project/demo/thread/lives-elsewhere", search: "", replace: (url: string) => replaced.push(url) } as unknown as Location
+  const restore = mountPage({ width: 1440 })
+  try {
+    boardWith([{ id: "present" }])
+    primeRoute()
+    resolveRoutedThread()
+    assert.deepEqual(replaced, [], "sent to its own address again, the page would reload forever")
+    assert.equal(store.paneSlug, "lives-elsewhere", "the pane draws MissingThread, which asks threadLocate")
+  } finally {
+    restore()
     globals.location = previous
     resetStore()
   }

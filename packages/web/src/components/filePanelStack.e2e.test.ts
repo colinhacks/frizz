@@ -10,6 +10,15 @@ import { join } from "node:path"
 const baseUrl = process.env.FRIZZ_FILE_STACK_E2E_URL
 const shots = process.env.FRIZZ_FILE_STACK_SHOTS
 
+// A QUEUED THREAD OPENS FROM THE HUMAN'S LAST MESSAGE, in the pane full screen as beside the sidebar (ChatView
+// `queueWindow`), which is what a desktop's thread path draws since 2026-11-11: the seeded file links sit in
+// the message before it, one click away.
+async function revealEarlier(page: import("puppeteer").Page, link: string): Promise<void> {
+  await page.waitForFunction((link) => !!document.querySelector(link) || !!document.querySelector("[data-standalone-thread] [data-load-earlier]"), { timeout: 30_000 }, link)
+  if (!(await page.$(link))) await page.click("[data-standalone-thread] [data-load-earlier]")
+  await page.waitForSelector(link)
+}
+
 test("full-screen file links push readers and Escape restores the reader underneath", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
@@ -35,13 +44,13 @@ test("full-screen file links push readers and Escape restores the reader underne
     for (const width of [1440, 1200]) {
       await page.setViewport({ width, height: 900 })
       await page.goto(`${baseUrl}/thread/file-panel-stack`, { waitUntil: "networkidle2" })
-      const firstLink = 'main[data-standalone-thread] [data-local-path$="/first.md"]'
-      await page.waitForSelector(firstLink)
+      const firstLink = '[data-standalone-thread] [data-local-path$="/first.md"]'
+      await revealEarlier(page, firstLink)
       await page.click(firstLink)
       await waitCount(1)
       await page.waitForSelector(`${top} .md-body [data-local-path]`)
       const original = await page.$(slot)
-      const threadWidth = await page.$eval("main[data-standalone-thread]", (el) => el.getBoundingClientRect().width)
+      const threadWidth = await page.$eval("[data-standalone-thread]", (el) => el.getBoundingClientRect().width)
       // Mark the original DOM node and scroll to its final link. Returning must preserve both.
       const scroll = await page.$eval(`${top} .overflow-y-auto`, (el) => { el.scrollTop = el.scrollHeight; return el.scrollTop })
       assert.ok(scroll > 0)
@@ -59,7 +68,7 @@ test("full-screen file links push readers and Escape restores the reader underne
       assert.equal(await page.evaluate(() => (window as any).fileSlides.length), 1, "the nested reader actually slides, not just swaps content")
       await page.waitForSelector(`${top} [data-local-path$="/first.md"]`)
       assert.equal(await page.$eval(slot, (el) => (el as HTMLElement).inert), true)
-      assert.equal(await page.$eval("main[data-standalone-thread]", (el) => el.getBoundingClientRect().width), threadWidth)
+      assert.equal(await page.$eval("[data-standalone-thread]", (el) => el.getBoundingClientRect().width), threadWidth)
       await page.click(`${top} [data-local-path$="/first.md"]`)
       await waitCount(3)
       assert.equal(await page.$eval(`${top} .overflow-y-auto`, (el) => el.scrollTop), 0, "revisits start a fresh reader")
@@ -97,8 +106,10 @@ test("full-screen file links push readers and Escape restores the reader underne
       assert.equal(await original!.evaluate((el) => el.isConnected && (el as HTMLElement).dataset.originalReader === "true"), true)
       assert.equal(await page.$eval(`${top} .overflow-y-auto`, (el) => el.scrollTop), scroll)
       assert.equal(await page.$eval(top, (el) => (el as HTMLElement).inert), false)
-      // Shrinking uses the existing Markdown drawers without destroying the hidden split stack.
-      await page.setViewport({ width: 390, height: 844 })
+      // Shrinking below the split uses the existing Markdown drawers without destroying the hidden split
+      // stack. Not to a phone's width: there a desktop's thread path is the phone's page, another surface
+      // (routes.tsx BoardRoute), as the board beside the sidebar always was.
+      await page.setViewport({ width: 1000, height: 844 })
       await page.click(firstLink)
       await page.waitForSelector(".frizz-sheet-panel .md-body [data-local-path]")
       await page.waitForFunction(() => [...document.querySelectorAll(".frizz-sheet-panel")].every((el) => el.classList.contains("translate-x-0") && el.getAnimations().length === 0))
@@ -113,10 +124,13 @@ test("full-screen file links push readers and Escape restores the reader underne
       await page.setViewport({ width, height: 900 })
       await page.keyboard.press("Escape")
       await waitCount(0)
-      assert.equal(await page.$eval("[data-side-pane] > div", (el) => el.inert), false)
+      // The rail stands by itself only where the sidebar could stand beside it too (lib/threadPane.ts
+      // paneRailWanted, 1360px); narrower, the last file closing leaves the thread on its own.
+      if (width >= 1360) assert.equal(await page.$eval("[data-side-pane] > div", (el) => el.inert), false)
+      else assert.equal(await page.$("[data-side-pane]"), null)
     }
     await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }])
-    await page.click('main[data-standalone-thread] [data-local-path$="/first.md"]')
+    await page.click('[data-standalone-thread] [data-local-path$="/first.md"]')
     await waitCount(1)
     await page.click(`${top} [data-local-path$="/second.md"]`)
     await waitCount(2)
@@ -165,7 +179,7 @@ test("full-screen file links open what Frizz can show and hand the rest to the s
       const path = "/src/api/rpc.ts"; const { rpc } = await import(path)
       await rpc.settingsSet({ ...(await rpc.settingsGet()), localFileOpener: "copy" })
     })
-    const link = (name: string) => `main[data-standalone-thread] [data-local-path$="/${name}"]`
+    const link = (name: string) => `[data-standalone-thread] [data-local-path$="/${name}"]`
     const state = () => page.evaluate(async () => {
       const path = "/src/store.ts"; const { store } = await import(path)
       return { panels: store.filePanels.length as number, lightbox: store.lightbox?.images.map((i: { path: string }) => i.path) ?? null, toast: store.toast?.text ?? null }

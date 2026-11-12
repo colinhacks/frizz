@@ -34,7 +34,7 @@ test("the full-screen page lists the thread's ops in its rail, and over the prom
     await page.goto(`${baseUrl}/thread/full-rail-ops`, { waitUntil: "networkidle2" })
     await page.waitForFunction(() => document.querySelectorAll("[data-focus-rail] [data-wait-row]").length === 6)
     assert.deepEqual(await railKinds(), ["agent", "agent", "link", "link", "shell", "shell"])
-    assert.equal(await stripIn("main[data-standalone-thread]"), null, "the prompt box must not repeat the rail's rows")
+    assert.equal(await stripIn("[data-standalone-thread]"), null, "the prompt box must not repeat the rail's rows")
 
     // THE TWO ROWS THE RAIL USED TO DROP (until 2026-10-05), so on full screen they were shown nowhere: a
     // sub-agent quiet past its window, and a shell the OS reports gone. Each says what it is by its MARK
@@ -61,8 +61,8 @@ test("the full-screen page lists the thread's ops in its rail, and over the prom
     // the drawer's and the queue card's, since 2026-10-09 — is the only place these rows are, one hover
     // away. A live resize, not a fresh load — the page has to follow the window as it changes.
     await page.setViewport({ width: 1000, height: 900 })
-    await page.waitForSelector("main[data-standalone-thread] [data-queue-ops-summary] button")
-    const counts = await page.$$eval("main[data-standalone-thread] [data-ops-count]", (els) => els.map((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim()))
+    await page.waitForSelector("[data-standalone-thread] [data-queue-ops-summary] button")
+    const counts = await page.$$eval("[data-standalone-thread] [data-ops-count]", (els) => els.map((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim()))
     assert.deepEqual(counts, ["2 agents", "2 shells", "1 file", "1 link"])
     // Each count opens a panel of its own rows (2026-10-11), so between them the four panels hold all
     // six, and each row is in exactly the panel its count names.
@@ -73,7 +73,7 @@ test("the full-screen page lists the thread's ops in its rail, and over the prom
       link: ["Open dev server"],
     }
     for (const [kind, rows] of Object.entries(narrowRows)) {
-      await page.hover(`main[data-standalone-thread] [data-ops-count="${kind}"]`)
+      await page.hover(`[data-standalone-thread] [data-ops-count="${kind}"]`)
       await page.waitForSelector(`[data-queue-ops-panel="${kind}"]`)
       await page.waitForFunction(() => document.querySelectorAll("[data-queue-ops-panel]").length === 1)
       const panel = await page.$eval(`[data-queue-ops-panel="${kind}"]`, (el) => (el as HTMLElement).innerText)
@@ -87,7 +87,7 @@ test("the full-screen page lists the thread's ops in its rail, and over the prom
 
     // 3. Back to wide: the line yields to the rail again.
     await page.setViewport({ width: 1440, height: 900 })
-    await page.waitForFunction(() => !document.querySelector("main[data-standalone-thread] [data-queue-ops-summary]"))
+    await page.waitForFunction(() => !document.querySelector("[data-standalone-thread] [data-queue-ops-summary]"))
 
     // 4. …and with it the strip's ×, which the rail carries under the strip's own gate (it had none until
     // 2026-10-05, so full screen wide offered no way to stop or clear a row). A stale row's × CLEARS — nothing

@@ -9,6 +9,15 @@ import test from "node:test"
 // FRIZZ_FULL_ESCAPE_E2E_URL=http://127.0.0.1:<port> nub --test <this file>
 const baseUrl = process.env.FRIZZ_FULL_ESCAPE_E2E_URL
 
+// A QUEUED THREAD OPENS FROM THE HUMAN'S LAST MESSAGE, in the pane full screen as beside the sidebar (ChatView
+// `queueWindow`), which is what a desktop's thread path draws since 2026-11-11: the seeded file links sit in
+// the message before it, one click away.
+async function revealEarlier(page: import("puppeteer").Page, link: string): Promise<void> {
+  await page.waitForFunction((link) => !!document.querySelector(link) || !!document.querySelector("[data-standalone-thread] [data-load-earlier]"), { timeout: 30_000 }, link)
+  if (!(await page.$(link))) await page.click("[data-standalone-thread] [data-load-earlier]")
+  await page.waitForSelector(link)
+}
+
 test("Escape on /full unwinds the layers above the page, then exits fullscreen", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
@@ -26,10 +35,10 @@ test("Escape on /full unwinds the layers above the page, then exits fullscreen",
     await page.setViewport({ width: 1440, height: 900 })
     const full = `${baseUrl}/thread/file-panel-stack`
     const onFull = () => page.evaluate(() => /\/thread\/[^/]+$/.test(location.pathname))
-    const leftFull = () => page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname) && !document.querySelector("main[data-standalone-thread]"))
+    const leftFull = () => page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname) && !document.querySelector("[data-standalone-thread]"))
     const open = async () => {
       await page.goto(full, { waitUntil: "networkidle2" })
-      await page.waitForSelector('main[data-standalone-thread] [data-local-path$="/first.md"]')
+      await revealEarlier(page, '[data-standalone-thread] [data-local-path$="/first.md"]')
     }
     // A settle window long enough for a navigation's view transition to have started, so an assertion
     // that the page STAYED is not just one that ran too early.
@@ -37,7 +46,7 @@ test("Escape on /full unwinds the layers above the page, then exits fullscreen",
 
     // 1. A file in the viewer is the top layer: the first Escape closes it, the second leaves.
     await open()
-    await page.click('main[data-standalone-thread] [data-local-path$="/first.md"]')
+    await page.click('[data-standalone-thread] [data-local-path$="/first.md"]')
     await page.waitForFunction(() => document.querySelectorAll("[data-file-viewer-slot]").length === 1)
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => document.querySelectorAll("[data-file-viewer-slot]").length === 0)
@@ -67,7 +76,7 @@ test("Escape on /full unwinds the layers above the page, then exits fullscreen",
 
     // 3. A focused composer does not cost an extra press: one Escape leaves, and the draft survives.
     await open()
-    const composer = "main[data-standalone-thread] textarea[data-claims-escape]"
+    const composer = "[data-standalone-thread] textarea[data-claims-escape]"
     await page.click(composer)
     await page.keyboard.type("a draft that must survive")
     await page.keyboard.press("Escape")

@@ -60,7 +60,7 @@ function prepare() {
       api,
       projectSlug,
       shells: [
-        { name: "the full-screen thread page", url: `${board}/thread/${slug}`, root: "main[data-standalone-thread]" },
+        { name: "the full-screen thread page", url: `${board}/thread/${slug}`, root: "[data-standalone-thread]" },
         { name: "the board", url: board, root: "[data-pane-layout]" },
       ],
     }
@@ -271,8 +271,8 @@ test("Escape does nothing while the restart overlay blocks, on the full-screen p
     // block it used to take it: the tab went to the board behind the scrim.
     {
       const { page, errors, supervisor } = await open(full.name)
-      const onFull = () => page.evaluate(() => /\/thread\/[^/]+$/.test(location.pathname) && document.querySelector("main[data-standalone-thread]") !== null)
-      const leftFull = (when: string) => page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname) && !document.querySelector("main[data-standalone-thread]"), { timeout: 10_000 })
+      const onFull = () => page.evaluate(() => /\/thread\/[^/]+$/.test(location.pathname) && document.querySelector("[data-standalone-thread]") !== null)
+      const leftFull = (when: string) => page.waitForFunction(() => !/\/thread\/[^/]+$/.test(location.pathname) && !document.querySelector("[data-standalone-thread]"), { timeout: 10_000 })
         .catch((error) => { throw new Error(`${full.name}: Escape did not exit fullscreen ${when}`, { cause: error }) })
       const load = async () => {
         await page.goto(full.url, { waitUntil: "domcontentloaded" })

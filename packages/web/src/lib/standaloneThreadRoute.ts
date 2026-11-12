@@ -1,4 +1,5 @@
-import { isConsolePath, outerPath, projectHref } from "./base-path.ts"
+import { innerPath, isConsolePath, outerPath, projectHref } from "./base-path.ts"
+import { isMobileViewport } from "./mobile.ts"
 import { splitThreadKey } from "./threadKey.ts"
 
 /**
@@ -38,6 +39,19 @@ export function parseStandaloneThreadPath(path: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Does this page's thread path draw the full-screen PAGE (StandaloneThreadPage), rather than the board?
+ *
+ * Only on a phone. On a desktop a thread's own path is the board with its pane put to full screen, the
+ * sidebar away (lib/threadPane.ts, routes.tsx BoardRoute): two full-screen views of one thread, one at the
+ * address and one not, is how the full-screen links stopped opening the view people read threads in
+ * (maintainer 2026-11-11: "did we break all the links from before for the full-page thread view?"). The
+ * Console has no page of its own for a thread: its thread path is its board, phone or not.
+ */
+export function threadPageIsStandalone(pathname?: string): boolean {
+  return parseStandaloneThreadPath(innerPath(pathname)) !== null && !isConsolePath(pathname) && isMobileViewport()
 }
 
 /**
