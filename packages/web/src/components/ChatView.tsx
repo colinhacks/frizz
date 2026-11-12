@@ -29,7 +29,7 @@ import { useRegisteredDoneBody } from "../lib/registeredDoneBody.ts"
 import { RestedCard, showsRestedCard } from "./RestedCard.tsx"
 import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx"
 import { providerNameFor } from "./providerMark.ts"
-import { answersNote, isAnswersMessage, parseAnswersCard, type PairedAnswer } from "../lib/answersMessage.ts"
+import { answersNote, isAnswersMessage, parseAnswersCard, userSendShown, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
 import { fenceStandsFor, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
 import { previousUserBoundary } from "../lib/transcriptPagination.ts"
@@ -3668,12 +3668,15 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
     // CR/CRLF → LF: a terminal-injected follow-up round-trips carriage-return-separated, and the pre-wrap
     // bubble honors \n but not a lone \r → the breaks collapse into a run-on. Normalize for BOTH render
     // paths (the server does this too, but this is the definitive per-surface guarantee for user text).
-    const text = messagePresentationText(m).replace(/\r\n?/g, "\n")
+    let text = messagePresentationText(m).replace(/\r\n?/g, "\n")
     // OUR OWN composed multi-block answer — either wire form ("Answers:\n1. …\n2. …" for the live ask,
     // "Answers to earlier questions:\n1. “Q” → A" for a buried one, both from useLiveAnswering.sendAnswers)
     // renders as a structured answers card echoing the question component — not a flat run-on bubble.
     // Non-matching text (and a parse hiccup → null) falls back to the plain bubble; text is never lost.
-    const answers = paired !== undefined ? paired : parseAnswersCard(text)
+    let answers = paired !== undefined ? paired : parseAnswersCard(text)
+    // A send whose only rows are dismissals draws as the words the human typed (userSendShown). A failed
+    // send keeps its whole wire, which is what a retry sends again.
+    if (m.deliveryState !== "failed") ({ text, answers } = userSendShown(text, answers))
     // …unless it FAILED: the answers card has no failure row, and a failed send must always show its
     // Retry / Edit / Dismiss (lib/failedDelivery.ts). The plain bubble carries the same words.
     if (answers && m.deliveryState !== "failed") {

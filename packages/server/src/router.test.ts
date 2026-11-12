@@ -2746,3 +2746,56 @@ test("a stale tab's answers settle nothing", async () => {
   assert.equal(h.storage.getThreadQuestion("qst_store")?.state, "open")
   h.storage.close()
 })
+
+// ── The human's × reaches the worker on their next send ──────────────────────────────────────────
+// A dismissal wakes nobody, and is promised to "ride the next answer or the next steer". Only the
+// scheduler's answer wake attached them, and the prompt box's Send settles its answers itself, so until
+// 2026-11-11 no dismissal sent from a desktop board ever reached its worker: all three on the
+// maintainer's Mac sat undelivered while later answers on the same threads went through.
+const DISMISSED = "(dismissed — decide it yourself; do not re-ask)"
+
+test("a dismissed question rides the next answers the human sends, and is delivered once", async () => {
+  const { h, slug, sid, sent, ledger, setTurn } = holdHarness()
+  setTurn("idle")
+  ask(h, slug, "qst_store", "Which store?")
+  ask(h, slug, "qst_name", "Which name?")
+  await h.router.dismissQuestions.handler({ input: { slug, ids: ["qst_name"] } })
+  assert.equal(sent.length, 0, "a dismissal wakes nobody by itself")
+  await h.router.followUp.handler({
+    input: { slug, sessionId: sid, deliveryId: "d-1", message: "", answers: [{ questionId: "qst_store", question: "Which store?", chosen: ["SQLite"] }] },
+  })
+  const wire = `Answers to earlier questions:\n1. “Which store?” → SQLite\n2. “Which name?” → ${DISMISSED}`
+  assert.equal(sent[0].text.startsWith(wire), true, sent[0].text)
+  assert.equal(ledger()[0].text, wire)
+  assert.deepEqual(h.storage.undeliveredSettlements(), [], "nothing is left for the scheduler to send again")
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, deliveryId: "d-2", message: "and one more thing" } })
+  assert.equal(sent[1].text.includes("Which name?"), false, "told once, not on every later send")
+  h.storage.close()
+})
+
+test("a dismissed question rides a plain typed steer, under the human's own words", async () => {
+  const { h, slug, sid, sent, setTurn } = holdHarness()
+  setTurn("idle")
+  h.storage.askThreadQuestion({ id: "qst_fence", slug, handle: "store", askedAtMs: Date.now(), spec: JSON.stringify({ handle: "store", question: "Which store?", kind: "question", options: [{ label: "SQLite" }, { label: "JSON file" }] }) })
+  await h.router.dismissQuestions.handler({ input: { slug, ids: ["qst_fence"] } })
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, deliveryId: "d-steer", message: "carry on with the tests" } })
+  assert.equal(
+    sent[0].text.startsWith(`Answers to earlier questions:\n1. \`store\` “Which store?” → ${DISMISSED}\n\nSent with these answers:\ncarry on with the tests`),
+    true,
+    sent[0].text,
+  )
+  assert.equal(h.storage.getThreadQuestion("qst_fence")?.delivered, 1)
+  h.storage.close()
+})
+
+test("a dismissal a scheduler wake is already carrying is left to that wake", async () => {
+  const { h, slug, sid, sent, setTurn } = holdHarness()
+  setTurn("idle")
+  ask(h, slug, "qst_name", "Which name?")
+  await h.router.dismissQuestions.handler({ input: { slug, ids: ["qst_name"] } })
+  h.storage.assignSettlementDelivery("qst_name", "wake-1")
+  await h.router.followUp.handler({ input: { slug, sessionId: sid, deliveryId: "d-steer", message: "carry on" } })
+  assert.equal(sent[0].text.startsWith("carry on"), true, sent[0].text)
+  assert.equal(h.storage.getThreadQuestion("qst_name")?.delivered, 0, "still that wake's to deliver")
+  h.storage.close()
+})

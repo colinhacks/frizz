@@ -13,7 +13,8 @@ import {
   AdoptThreadResult,
   DispatchInput,
   FollowUpInput,
-  questionAnswerMessage,
+  humanAnswersMessage,
+  type QuestionDismissal,
   nameQuestionAnswer,
   type NamedQuestionAnswer,
   withAnswersNote,
@@ -1694,6 +1695,19 @@ export function createRouter(ctx: AppContext) {
     return settled
   }
 
+  /** The questions the human dismissed on this thread that no message has told the worker about yet, and
+   *  that no scheduler wake is already carrying. Named the way the wake names them: by the question's
+   *  text, and the worker's own id when a fence asked it. */
+  function pendingDismissals(slug: string): { id: string; dismissal: QuestionDismissal }[] {
+    const out: { id: string; dismissal: QuestionDismissal }[] = []
+    for (const q of ctx.storage.undeliveredSettlements()) {
+      if (q.thread_slug !== slug || q.state !== "dismissed" || q.delivery_id) continue
+      const spec = parseQuestionSpec(q.spec)
+      if (spec) out.push({ id: q.id, dismissal: { question: spec.question, ...(q.handle ? { handle: q.handle } : {}) } })
+    }
+    return out
+  }
+
   // THE PROMPT BOX'S ONE SEND (maintainer 2026-10-11). Three things the operator's follow-up can now be,
   // all of which end in the same deliverFollowUp:
   //
@@ -1716,16 +1730,27 @@ export function createRouter(ctx: AppContext) {
       message = replay.text
       // A held entry is already where a replayed "Send to queue" wanted it.
       if (replay.state === "held") return
-    } else if (answers.length > 0) {
-      // The refusals deliverFollowUp opens with, run BEFORE the rows are settled: a send it would refuse
-      // must not leave the questions answered with nothing on its way to the worker.
-      const row = currentOwnedSession(input.slug, input.sessionId)
-      if (hasPendingPermissionChange(row)) {
-        throw new Error("Wait for the current permission change to finish before sending a follow-up")
+    } else {
+      // THE HUMAN'S × RIDES THEIR NEXT SEND (2026-11-11). A dismissal wakes nobody by itself — the human
+      // is usually clicking several in a row — and is promised to "ride the next answer or the next
+      // steer". The scheduler's answer wake was the only thing that attached them, and the prompt box's
+      // Send settles its answers here instead, so on desktop no dismissal ever reached a worker: all three
+      // on this Mac sat undelivered while later answers on the same threads went through, and the workers
+      // kept treating the questions as open. A row a scheduler wake already carries (`delivery_id`) is that
+      // wake's to deliver.
+      const dismissals = answers.length > 0 || input.message.trim() ? pendingDismissals(input.slug) : []
+      if (answers.length > 0 || dismissals.length > 0) {
+        // The refusals deliverFollowUp opens with, run BEFORE the rows are settled: a send it would refuse
+        // must not leave the questions answered with nothing on its way to the worker.
+        const row = currentOwnedSession(input.slug, input.sessionId)
+        if (hasPendingPermissionChange(row)) {
+          throw new Error("Wait for the current permission change to finish before sending a follow-up")
+        }
       }
-      const settled = settleQuestionAnswers(input.slug, answers, Date.now(), { delivered: true })
-      if (settled.length > 0) {
-        message = withAnswersNote(questionAnswerMessage(settled), input.message)
+      const settled = answers.length > 0 ? settleQuestionAnswers(input.slug, answers, Date.now(), { delivered: true }) : []
+      if (settled.length > 0 || dismissals.length > 0) {
+        message = withAnswersNote(humanAnswersMessage(settled, dismissals.map((d) => d.dismissal)), input.message)
+        for (const d of dismissals) ctx.storage.markSettlementDelivered(d.id)
         ctx.board.refresh()
       }
     }
@@ -4699,8 +4724,9 @@ export function createRouter(ctx: AppContext) {
           if (ctx.storage.dismissThreadQuestion(id, now)) dismissed.push(id)
         }
         // NO WAKE. The human dismissing questions is almost always dismissing several in a row and is
-        // sitting right there, so a wake per x would be a turn per click. The worker is told at its next
-        // wake, in the same message as any answers (questionAnswerMessage).
+        // sitting right there, so a wake per x would be a turn per click. The worker is told in the next
+        // message that reaches it: the scheduler's answer wake (questionAnswerMessage), or the human's own
+        // next send from the prompt box (pendingDismissals in followUp).
         if (dismissed.length > 0) ctx.board.refresh()
         return { dismissed, open: openQuestionViews(input.slug) }
       },

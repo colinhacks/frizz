@@ -3978,6 +3978,18 @@ export function questionAnswerMessage(answers: readonly NamedQuestionAnswer[], d
   // would tell that worker the human replied, when the whole point is that nobody is going to. Frizz is
   // speaking here rather than the human, so the chat draws it as a hairline — see questionsCancelledWake.
   if (answers.length === 0) return questionsCancelledWakeMessage(dismissed.length, dismissed)
+  return answerRowsMessage(answers, dismissed)
+}
+
+/** The rows of the human's OWN send from the prompt box: answers, and the questions they dismissed since
+ *  the worker last heard. Never the cancellation wake, even with no answers in it, because the human is
+ *  the one speaking here, and the dismissals ride their message as the contract promises ("they ride the
+ *  next answer or the next steer"). "" when there is nothing to say. */
+export function humanAnswersMessage(answers: readonly NamedQuestionAnswer[], dismissed: readonly QuestionDismissal[] = []): string {
+  return answers.length === 0 && dismissed.length === 0 ? "" : answerRowsMessage(answers, dismissed)
+}
+
+function answerRowsMessage(answers: readonly NamedQuestionAnswer[], dismissed: readonly QuestionDismissal[]): string {
   const rows: string[] = []
   const push = (a: NamedQuestionAnswer, followUp: boolean): void => {
     const said = answerPicksText(a.chosen, a.text)
