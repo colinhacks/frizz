@@ -4,12 +4,15 @@
 // message. So many rounds that weren't collapsed").
 //
 //   • fold-reylo     — the human's ask, a long run of narration between tool calls with a quiet park and a
-//                      sub-agent's return in the middle, a sign-off that asks a question, then a CI wake and a
-//                      review wake the worker parked quietly on. Expect: the ask, one fold row, the sign-off
-//                      with its live card, one fold row.
+//                      background run's return in the middle, a sign-off that asks a question, then a CI wake
+//                      and a review wake the worker parked quietly on. Expect: the ask, the worker's first
+//                      words, one hairline, the sign-off with its live card, one hairline.
 //   • fold-long-ask  — the same rest under a human message too long for the sign-off to show beside it, so
 //                      the queue's window lands the sign-off a little below the top instead of opening there.
 //   • fold-history   — two stretches: an older one, answered, folds the same way above the newest.
+//
+// Every wake is the text Frizz really delivers, built by the server's own builders, so each draws the
+// hairline a real one does. A made-up wake falls back to FrizzWake's bell card, which no real wake draws.
 //
 // Follows the frizz-stack recipe: a session row + a JSONL the REAL tailer reads, so the question fence is
 // registered by the server's own registrar. Nothing writes board state directly.
@@ -18,7 +21,7 @@
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import { wakeDeliveryToken } from "../packages/shared/src/index.ts"
+import { formatGithubWakeSteer, prWatchWakeMessage, shellDoneMessage, wakeDeliveryToken } from "../packages/shared/src/index.ts"
 import { resolveSandboxDb, sessionProjectColumns } from "./lib/sandbox-db.mjs"
 
 const [home, projectDir] = process.argv.slice(2)
@@ -62,7 +65,7 @@ const WORK = [
   ["Patching the converter to decode WKB into GeoJSON.", [edit("src/run/values.ts")]],
 ]
 const MORE = [
-  ["The sub-agent confirms the notebook renderer already reads GeoJSON, so nothing changes there.", [read("src/notebook/cells.tsx")]],
+  ["The notebook build passed, so the renderer already reads GeoJSON and nothing changes there.", [read("src/notebook/cells.tsx")]],
   ["Running the whole suite.", [bash("nub run test", "Running the full test suite")]],
   ["Two snapshot tests pinned the hex; updating them.", [edit("src/run/__snapshots__/values.snap"), bash("nub run test", "Re-running the full test suite")]],
   ["Checking the API response by hand against a real run.", [bash("curl -s localhost:3000/api/run/42 | jq '.rows[0]'", "Fetching one run's first row")]],
@@ -96,9 +99,9 @@ const SIGN_OFF = [
 const QUIET = fence("awaiting", "status: watching\nfor: 1d")
 
 const quietRounds = (s) => [
-  ...wake(s, "✅ CI PASSED on fix/geometry-values — 212 checks green.", 18),
+  ...wake(s, prWatchWakeMessage({ target: "acme/geo#42", checks: { verdict: "passing", passed: 212, failed: 0, failing: [] } }), 18),
   ...restOn(s, QUIET, 1),
-  ...wake(s, "💬 New review comment from mona: \"Can the decoder live next to the other value converters?\"", 25),
+  ...wake(s, formatGithubWakeSteer({ ref: "acme/geo#42", omitted: 0, items: [{ label: "review comment", actor: "mona", bot: false, at: at(0), url: "https://github.com/acme/geo/pull/42#discussion_r1" }] }), 25),
   ...narrate(s, "Moving the decoder beside the other converters.", [edit("src/run/converters/geometry.ts"), bash("git commit -am 'move the decoder' && git push", "Pushing the move")], 2),
   ...restOn(s, QUIET, 2),
 ]
@@ -119,7 +122,7 @@ const stretch = (s, ask) => [
   ...human(s, ask, 1),
   ...doWork(s, WORK),
   ...restOn(s, fence("awaiting", "status: working\nfor: 1h"), 1),
-  ...wake(s, "Sub-agent \"check the notebook renderer\" finished: the renderer reads GeoJSON for map cells already.", 6),
+  ...wake(s, shellDoneMessage({ taskId: "b7k2m9q4x", label: "Building the notebook against GeoJSON cells", status: "completed" }), 6),
   ...doWork(s, MORE),
   ...restOn(s, SIGN_OFF, 2),
   ...quietRounds(s),
