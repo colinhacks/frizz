@@ -38,3 +38,19 @@ test("a plain-string reply in words leaves the steps owed", () => {
   const state = fold(assistant("2026-11-09T10:00:00.000Z", fence(SIGN_IN, APPROVE)), humanString("2026-11-09T10:05:00.000Z", "Which account should approve it?"))
   assert.deepEqual(owed(state), [SIGN_IN, APPROVE])
 })
+
+// Claude Code writes "No response requested." as a `<synthetic>` assistant record on a cold resume, just
+// ahead of the message it delivers. Read as the model's last word, it cleared the rest's fence the instant
+// before the reply reached the fold, and the reply settled nothing: the steps vanished from the list.
+const placeholder = (ts: string) => ({ type: "assistant", isApiErrorMessage: false, timestamp: ts, message: { role: "assistant", model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text: "No response requested." }] } })
+
+test("a cold resume's placeholder record leaves the rest's steps for the reply to settle", () => {
+  const rest = assistant("2026-11-09T10:00:00.000Z", fence(SIGN_IN, APPROVE))
+  const asked = fold(rest, placeholder("2026-11-09T11:00:00.000Z") as Rec, humanString("2026-11-09T11:00:01.000Z", "Can you explain step 2 first?"))
+  assert.deepEqual(owed(asked), [SIGN_IN, APPROVE], "a reply in words lists the steps, the same as with no placeholder")
+  const done = fold(rest, placeholder("2026-11-09T11:00:00.000Z") as Rec, humanString("2026-11-09T11:00:01.000Z", "Done"))
+  assert.deepEqual(owed(done), [], "and a Done closes them")
+  const resting = fold(rest, placeholder("2026-11-09T11:00:00.000Z") as Rec)
+  assert.equal(resting.lastFence?.kind, "awaiting", "the rest is still the thread's last word")
+  assert.equal(resting.lastAssistantAt, "2026-11-09T10:00:00.000Z", "and its rest time is the worker's own")
+})

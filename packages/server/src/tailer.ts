@@ -1213,6 +1213,17 @@ export function isClaudeAuthErrorText(text: string): boolean {
   return /\b401\b/.test(text) && /authenticat|credential|OAuth/i.test(text)
 }
 
+// A PLACEHOLDER NOBODY WROTE: Claude Code's `model: "<synthetic>"` assistant record that is NOT an API
+// error. The one it writes is "No response requested.", on a cold resume, just ahead of the message it
+// was resumed to deliver (17 on this Mac, Claude Code 2.1.270–2.1.318, and no other text). It is not the
+// model speaking, so it must not be the thread's last word: read as one, it cleared the rest's fence the
+// instant before the human's reply reached the fold, and that reply then settled nothing, so the steps the
+// rest handed over vanished from the to-do list, ticked or not (2026-11-11). Neither the fold nor the
+// transcript reads it. A synthetic API ERROR is a different record and keeps every reading it has.
+export function isSyntheticPlaceholder(rec: { type?: unknown; isApiErrorMessage?: boolean; message?: { model?: unknown } }): boolean {
+  return rec.type === "assistant" && rec.message?.model === "<synthetic>" && rec.isApiErrorMessage !== true
+}
+
 // A fresh, unread tail cursor for a session (exported for tick + tests).
 export function newTailState(
   slug: string,
@@ -2634,7 +2645,7 @@ export function applyRecord(state: TailState, rec: Record): void {
   if (type === "system" && rec.subtype === "local_command" && state.lastKind === "user" && typeof rec.content === "string" && LOCAL_COMMAND_RECEIPT.test(rec.content.trim())) {
     state.localCommandDone = true
   }
-  if (typeof rec.timestamp === "string" && (type === "assistant" || (type === "user" && !metaUserRec) || type === "system")) {
+  if (typeof rec.timestamp === "string" && ((type === "assistant" && !isSyntheticPlaceholder(rec)) || (type === "user" && !metaUserRec) || type === "system")) {
     state.lastActivityAt = rec.timestamp
   }
   // The high-water mark takes EVERY timestamped record and only ever advances (see TailState). A plain
@@ -2649,7 +2660,7 @@ export function applyRecord(state: TailState, rec: Record): void {
       state.permissionMode = parsed.data
       state.permissionModeRevision = (state.permissionModeRevision ?? 0) + 1
     }
-  } else if (type === "assistant") {
+  } else if (type === "assistant" && !isSyntheticPlaceholder(rec)) {
     state.sawRecords = true
     state.lastKind = "assistant"
     // The model spoke, so whatever was interrupted is history — the stop_reason below is the turn signal

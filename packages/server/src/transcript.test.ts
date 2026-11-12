@@ -2580,6 +2580,19 @@ test("a synthetic provider AUTH-error record renders NO assistant bubble (the re
   assert.equal(projectClaudeTranscript(overloaded).some((m) => /529 Overloaded/.test(m.text)), true)
 })
 
+// Claude Code writes "No response requested." as a `<synthetic>` assistant record on a cold resume, just
+// ahead of the message it was resumed to deliver. Nobody wrote it, so it draws nothing.
+test("Claude Code's cold-resume placeholder draws no assistant bubble", () => {
+  const raw = [
+    JSON.stringify({ type: "assistant", timestamp: "2026-11-11T00:00:00.000Z", message: { id: "msg_1", role: "assistant", model: "claude-opus-5-5", stop_reason: "end_turn", content: [{ type: "text", text: "Handed over." }] } }),
+    JSON.stringify({ type: "assistant", isApiErrorMessage: false, timestamp: "2026-11-11T01:00:00.000Z", message: { id: "msg_2", role: "assistant", model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text: "No response requested." }] } }),
+    JSON.stringify({ type: "user", timestamp: "2026-11-11T01:00:01.000Z", message: { role: "user", content: "Done" } }),
+  ].join("\n")
+  const messages = projectClaudeTranscript(raw)
+  assert.equal(messages.some((m) => /No response requested/.test(m.text)), false)
+  assert.deepEqual(messages.filter((m) => m.role === "assistant" && !m.kind).map((m) => m.text), ["Handed over."])
+})
+
 // ---- a queued message must NEVER disappear from the transcript ----
 // Measured against the real corpus: Claude Code emits `queue-operation remove` at the moment it
 // DEQUEUES a message, and the `queued_command` attachment that carries the delivered copy lands 1 to 19
