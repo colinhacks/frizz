@@ -26,7 +26,7 @@ mkdir -p "$DIR"
 mkfifo "$DIR/verbs" "$DIR/replies" || exit 2
 if [ "$PIPE" = "-" ]; then IFS= read -r T; else T=$(cat "$PIPE"); fi
 [ -n "$T" ] || { echo "no credential arrived"; exit 2; }
-echo "holding a credential of ${#T} characters; verbs: audit plan drift deploy revoke exit"
+echo "holding a credential of ${#T} characters; verbs: audit plan drift deploy registrar-db revoke exit"
 
 run() { CLOUDFLARE_FRIZZ_MINTER="$T" CLOUDFLARE_FRIZZ_MINTER_KIND="$KIND" CLOUDFLARE_FRIZZ_MINTER_EXPIRES="$EXPIRES" CLOUDFLARE_FRIZZ_MINTER_SCOPES="$SCOPES" env -u NODE_COMPAT nub "$SCRIPT" "$@"; }
 
@@ -37,6 +37,7 @@ while true; do
     plan) run --dry-run > "$DIR/plan.txt" 2>&1 ;;
     drift) run --only=drift > "$DIR/drift.txt" 2>&1 ;;
     deploy) run --only=deploy > "$DIR/deploy.txt" 2>&1 ;;
+    registrar-db) run --registrar-db > "$DIR/registrar-db.txt" 2>&1 ;;
     revoke) run --revoke-deploy > "$DIR/revoke.txt" 2>&1 ;;
     exit)
       unset T

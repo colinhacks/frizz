@@ -48,6 +48,7 @@
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=drift          once, then yearly
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --only=deploy         then dispatch within the hour
 //   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --revoke-deploy       right after the deploy
+//   CLOUDFLARE_FRIZZ_MINTER="$T" env -u NODE_COMPAT nub scripts/cloudflare-tokens.mjs --registrar-db        names the registrar's D1 database, creating it once
 //
 // Add `--dry-run` to a mint to see the plan and mint nothing.
 //
@@ -206,6 +207,19 @@ export const OAUTH_SCOPES = {
 /** What this script itself does with its credential: list and mint the account's tokens, find the zone. */
 export const MINTER_SCOPES = ["account-api-tokens.write", "account-settings.read", "zone.read"]
 
+/**
+ * The registrar's own database (packages/registrar/src/claim-db.ts), which `--registrar-db` creates once and
+ * names. Its id goes in packages/registrar/wrangler.toml and in BASELINE in scripts/workers-drift.mjs.
+ */
+export const REGISTRAR_DATABASE = "frizz-registrar-claims"
+
+/**
+ * Scopes a sitting asks for beyond the tokens it mints. A deploy sitting creates the registrar's database
+ * when it does not exist yet (`--registrar-db`), which takes `d1.write`; whatever can deploy the registrar
+ * can rewrite that database through it anyway, so the sign-in holds nothing new.
+ */
+const JOB_EXTRA_SCOPES = { deploy: ["d1.write"] }
+
 /** Each sitting a sign-in can be for, by the tokens it mints. Every sitting starts with the audit snapshot. */
 export const JOBS = {
   deploy: () => [SNAPSHOT_TOKEN, TOKENS.find((t) => t.key === "deploy")],
@@ -217,7 +231,7 @@ export const JOBS = {
 export function scopesForJob(job) {
   const specs = JOBS[job]?.()
   if (!specs) throw new Error(`no such sitting: ${job} (one of ${Object.keys(JOBS).join(", ")})`)
-  const scopes = new Set(MINTER_SCOPES)
+  const scopes = new Set([...MINTER_SCOPES, ...(JOB_EXTRA_SCOPES[job] ?? [])])
   for (const spec of specs) {
     for (const raw of [...spec.account, ...spec.zone]) {
       const scope = OAUTH_SCOPES[raw.replace(/\?$/, "")]
@@ -634,6 +648,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         for (const { name, count } of saved) console.log(`  ${name}${count === null ? "" : `: ${count}`}`)
         for (const { name, why } of refused) console.log(`  COULD NOT READ ${name}: ${why}`)
       }
+      process.exit(0)
+    }
+
+    if (flag("--registrar-db")) {
+      // Found by name first, so running it again names the same database rather than making a second.
+      const found = (await cf("GET", `/accounts/${ACCOUNT_ID}/d1/database?name=${REGISTRAR_DATABASE}`)).find((db) => db.name === REGISTRAR_DATABASE)
+      const db = found ?? (await cf("POST", `/accounts/${ACCOUNT_ID}/d1/database`, { name: REGISTRAR_DATABASE }))
+      console.log(`${found ? "found" : "created"} D1 database ${REGISTRAR_DATABASE}: ${db.uuid}`)
       process.exit(0)
     }
 

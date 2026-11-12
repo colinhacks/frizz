@@ -339,6 +339,7 @@ test("anything that re-points a board's name or copies its traffic without an up
   await flagged({ [`${relay}/settings`]: { bindings: [], logpush: true } }, "Logpush is on")
   await flagged({ [`${relay}/settings`]: { bindings: [], observability: { enabled: true } } }, "observability is on")
   await flagged({ [`${relay}/settings`]: { bindings: [{ type: "service", name: "EVIL" }] } }, "frizz-relay bindings: unexpected service EVIL")
+  await flagged({ [`${relay}/settings`]: { bindings: [{ type: "d1", name: "CLAIMS_DB", id: "another-database" }] } }, "frizz-relay bindings: unexpected d1 CLAIMS_DB another-database")
   await flagged({ [`${relay}/secrets`]: [{ name: "STOLEN" }] }, "frizz-relay secrets: unexpected STOLEN")
   await flagged({ [`${relay}/schedules`]: { schedules: [{ cron: "* * * * *" }] } }, "frizz-relay crons: unexpected * * * * *")
   await flagged({ [`${relay}/subdomain`]: { enabled: true } }, "it also answers on workers.dev")

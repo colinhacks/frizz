@@ -146,10 +146,12 @@ test("every group a token names has its OAuth scope known, and only an optional 
   }
 })
 
-test("a deploy sitting asks to write Workers scripts and to read, and for nothing a deploy does not mint", () => {
+test("a deploy sitting asks to write Workers scripts, the registrar's database and to read, and nothing else", () => {
   const deploy = scopesForJob("deploy")
   for (const scope of [...MINTER_SCOPES, "workers-scripts.write", "dns.read"]) assert.ok(deploy.includes(scope), scope)
-  assert.equal(deploy.filter((scope) => /\.(write|edit|admin)$/.test(scope)).sort().join(" "), "account-api-tokens.write workers-scripts.write")
+  assert.equal(deploy.filter((scope) => /\.(write|edit|admin)$/.test(scope)).sort().join(" "), "account-api-tokens.write d1.write workers-scripts.write")
+  assert.ok(deploy.includes("d1.write"), "a deploy sitting can create the registrar's database")
+  assert.equal(scopesForJob("audit").includes("d1.write"), false)
   assert.equal(scopesForJob("audit").includes("workers-scripts.write"), false)
   assert.equal(scopesForJob("drift").includes("workers-scripts.write"), false)
   assert.deepEqual(Object.keys(JOBS).sort(), ["audit", "deploy", "drift"])

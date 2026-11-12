@@ -305,8 +305,9 @@ export function auditLogProblems(events, { mintedTokens = [] } = {}) {
   return problems
 }
 
-// A Durable Object binding is named by its class, because its namespace id belongs to Cloudflare.
-const bindingKey = (b) => [b.type, b.name, b.class_name ?? b.namespace_id ?? b.text].filter(Boolean).join(" ")
+// A Durable Object binding is named by its class, because its namespace id belongs to Cloudflare. A D1
+// binding by its database's id, so a Worker bound to another database fails the check.
+const bindingKey = (b) => [b.type, b.name, b.class_name ?? b.namespace_id ?? b.id ?? b.database_id ?? b.text].filter(Boolean).join(" ")
 
 /**
  * Every way the account differs from `baseline`, as sentences; an empty list means it matches. A read
