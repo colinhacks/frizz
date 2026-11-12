@@ -3771,7 +3771,8 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
         // is the only place they were ever written down. So it keeps the card, stated with no thread: no
         // live rows, and no Done (nobody is waiting on these steps any more, and a later fence restating
         // the same steps must not grow a second verb). A refused fence still goes — its re-fence restates it.
-        // When the human's reply was the box's, the box stays, ticked and inert (`stepsDone`).
+        // When the human's reply was the box's, the box stays, ticked and inert (`stepsDone`). A step the
+        // thread's to-do list still owes stays a box to tick, read off the list itself (AwaitingSteps StepsList).
         if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && settledFenceDraws(fseg.hints)) {
           push(<AwaitingBackgroundCard key={`${keyBase}-f${fi}`} fence={{ body: fseg.body, hints: fseg.hints }} stepsDone={stepsDone} />)
           continue

@@ -46,7 +46,7 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
             kind: (el.querySelector("[data-card-kind]") as HTMLElement | null)?.innerText.trim(),
             title: (el.querySelector("[data-card-title]") as HTMLElement | null)?.innerText.trim(),
             steps: [...el.querySelectorAll("[data-awaiting-steps] .frizz-todo-text")].map((li) => (li as HTMLElement).innerText.trim()),
-            // A box per step, ticked as far as anyone has said. Only a card the thread rests on has controls.
+            // A box per step, ticked as far as anyone has said. Only a step the list still owes is a control.
             ticks: [...el.querySelectorAll("[data-awaiting-steps] [role=checkbox]")].map((box) => box.getAttribute("aria-checked") === "true"),
             controls: el.querySelectorAll("[data-awaiting-steps] button[role=checkbox]").length,
             // The card's own Send, drawn only where no prompt box sends the list for it.
@@ -137,12 +137,36 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
     assert.equal(running.shellProse, false)
     assert.equal(running.stepsProse, 1)
 
-    // ANSWERED IN WORDS instead: the steps stay, and no box claims they were done.
+    // ANSWERED IN WORDS instead: the steps stay, no box claims they were done — and both are still owed
+    // on the list, so the boxes still tick it, though the thread rests on them no longer (2026-11-11,
+    // maintainer: "this 'Awaiting Human to Do' list is showing up but isn't clickable").
     const asked = await read("asked")
-    assert.deepEqual(asked.cards, [record([false, false])], "a reply in words ticks nothing")
+    assert.deepEqual(asked.cards, [{ ...stepsCard, ticks: [false, false], controls: 2, send: false }], "a reply in words ticks nothing, and leaves the steps to tick")
+    // The fixture answers RPCs in the page, so the save is read off its fetch rather than the network.
+    await page.evaluate(() => {
+      const w = window as unknown as { __saved: { id: string; done: boolean }[] }
+      w.__saved = []
+      const inner = window.fetch
+      window.fetch = async (input, init) => {
+        if (String(input instanceof Request ? input.url : input).includes("/_frizz/rpc/setHumanTodo")) {
+          const { id, done } = JSON.parse(String(init?.body ?? "{}"))
+          w.__saved.push({ id, done })
+        }
+        return inner(input, init)
+      }
+    })
+    await page.click("[data-awaiting-steps] button[role=checkbox]")
+    await page.waitForFunction(() => document.querySelector("[data-awaiting-steps] button[role=checkbox]")?.getAttribute("aria-checked") === "true")
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { __saved: unknown[] }).__saved), [{ id: "step-0", done: true }], "the tick is the list's, saved at once")
+    assert.equal(await page.$$eval("[data-awaiting-steps] [data-human-todo][data-staged=true]", (rows) => rows.length), 1, "and staged for the prompt box's next send")
 
-    // PART OF THE LIST reported: the record says which part.
-    assert.deepEqual((await read("partial")).cards, [record([true, false])], "the record of a partial report")
+    // ON A PHONE, with no prompt box to send the list, the settled card draws its own Send, as the resting one does.
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
+    assert.deepEqual((await read("asked&drawer=1")).cards, [{ ...stepsCard, ticks: [false, false], controls: 2, send: true }])
+    await page.setViewport({ width: 900, height: 1000 })
+
+    // PART OF THE LIST reported: the record says which part, and the part still owed is still a box.
+    assert.deepEqual((await read("partial")).cards, [{ ...stepsCard, ticks: [true, false], controls: 1, send: false }], "the reported step is the record, the owed one a box")
 
     // THE THREAD MOVED ON to a later rest: still there, still ticked, beside the new resting card.
     const moved = await read("moved")

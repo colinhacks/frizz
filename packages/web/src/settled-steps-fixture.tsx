@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
-import type { AwaitingHint, BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
+import type { AwaitingHint, BoardSnapshot, HumanTodo, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { ThreadView } from "./components/ChatView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import { store } from "./store.ts"
@@ -16,8 +16,10 @@ import "./styles.css"
 //                the prompt box under it sends (or, `&drawer=1` at a phone width, the card's own Send)
 //   ?at=running  the human sent the ticked box and the worker is mid-turn (the default)
 //   ?at=moved    the worker finished and rested again on a later fence of its own
-//   ?at=asked    the human replied in words instead of ticking a box, and the worker is mid-turn
-//   ?at=partial  the human reported one step of the two done, and the worker is mid-turn
+//   ?at=asked    the human replied in words instead of ticking a box, and the worker is mid-turn: both
+//                steps are still owed on the list, so the settled card's boxes still tick it
+//   ?at=partial  the human reported one step of the two done, and the worker is mid-turn: the second
+//                is still owed
 //
 // The transcript also carries an EARLIER settled fence with no steps — a plain shell wait — which must
 // keep drawing nothing in every state: that is the negative control for the exception.
@@ -61,6 +63,14 @@ const messages: TranscriptMessage[] = [
   ...(AT === "moved" ? [say("a3", LATER_FENCE, 1)] : []),
 ]
 
+// THE LIST AS THE SERVER HOLDS IT in each state (human-todos.ts): both steps owed at rest and after a
+// reply in words, both reported done after "Done", and the second still owed after "Done 1 of 2".
+function todosAt(): HumanTodo[] {
+  const todos = fixtureTodos(STEPS_HINTS.filter((h) => h.kind === "step").map((h) => h.value))
+  const reported = AT === "running" || AT === "moved" ? 2 : AT === "partial" ? 1 : 0
+  return todos.map((todo, i) => (i < reported ? { ...todo, done: true } : todo))
+}
+
 const thread = {
   id: SLUG,
   title: "Cut the acme 4.2.0 release",
@@ -89,7 +99,8 @@ const thread = {
   bgShells: [],
   watches: [],
   questions: [],
-  ...(AT === "rest" ? { lastFence: { kind: "awaiting", body: STEPS_PROSE, hints: STEPS_HINTS }, humanTodos: fixtureTodos(STEPS_HINTS.filter((h) => h.kind === "step").map((h) => h.value)) } : {}),
+  ...(AT === "rest" ? { lastFence: { kind: "awaiting", body: STEPS_PROSE, hints: STEPS_HINTS } } : {}),
+  humanTodos: todosAt(),
   ...(AT === "moved" ? { lastFence: { kind: "awaiting", body: "Published acme 4.2.0. Watching the follow-up PR for review.", hints: [{ kind: "pr", value: "acme/app#391" }] }, waitStatus: "watching" } : {}),
   lastActivityAt: ago(1),
   spawnedAt: ago(41),

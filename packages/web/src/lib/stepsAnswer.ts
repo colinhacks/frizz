@@ -37,6 +37,13 @@ export function restingOnSteps(thread: Omit<StepsThread, "id"> | undefined, step
   return live.length === steps.length && live.every((step, i) => step === steps[i])
 }
 
+/** Are these the same step? A step is its own text, compared as the server keys it (human-todos.ts
+ *  humanStepId): trimmed, every run of whitespace one space, so a re-wrapped copy is the same item. */
+export function sameStep(a: string, b: string): boolean {
+  const key = (text: string) => text.trim().replace(/\s+/g, " ")
+  return key(a) === key(b)
+}
+
 // ---- the ticks in flight --------------------------------------------------------------------------
 // What this tab has done that the board has not shown yet. An entry goes the moment the board agrees,
 // because from then on the board may know better: a worker that re-lists a step reopens its box. The
