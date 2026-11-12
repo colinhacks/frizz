@@ -98,7 +98,7 @@ test("signed out of GitHub, the custom row says where to sign in, asks nothing a
   const claims: string[] = [];
   const { pane, out, applied } = build({ claim: async (name) => { claims.push(name); return { hostname: `${name}.frizz.sh`, claim: name, serve: "relay" }; } });
   pane.open();
-  assert.match(prose(lastScreen(out.text())), /Custom subdomain your GitHub username\.frizz\.sh; needs Frizz's GitHub sign-in/);
+  assert.match(prose(lastScreen(out.text())), /Custom subdomain your GitHub username; needs Frizz's GitHub sign-in/);
   pane.key("3"); // the cursor starts on the current setup (Off), so pick the custom name explicitly
   pane.key("\r");
   await settle();
