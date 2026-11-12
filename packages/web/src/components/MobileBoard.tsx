@@ -9,7 +9,6 @@ import { prefs } from "../lib/prefs.ts"
 import {
   displayTitle,
   lastActiveLabelAt,
-  needsAction,
   restIsWorking,
   sectionThreads,
   sessionIndicatorKind,
@@ -27,12 +26,13 @@ import { StatusListView } from "./StatusListView.tsx"
 import { ThreadActionsSheet } from "./lazySurfaces.tsx"
 import { showsUpdateBadge } from "./RestartFrizzButton.tsx"
 import { trackBottomFloat } from "../lib/queueDockInset.ts"
+import { phoneBands } from "../lib/mobileTriage.ts"
 import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { showCompletionToast } from "../lib/completionPins.ts"
 import { captureReaderPin, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
 import { Z_CHROME } from "../lib/layers.ts"
 
-// THE PHONE'S BOARD — a header, three text tabs, ONE list, and a "New thread" button.
+// THE PHONE'S BOARD — a header, four text tabs, ONE list, and a "New thread" button.
 //
 // It is not a narrower desktop board. The desktop's three standing surfaces (project rail, thread rail,
 // workpane) and its stack of right-hand drawers assume a viewport that can hold more than one thing at
@@ -46,10 +46,6 @@ import { Z_CHROME } from "../lib/layers.ts"
 //
 // WHAT IS DIFFERENT, and each of these is the maintainer's call from the mockup review (2026-08-17):
 //
-//   · RESTED AND ACTIVE ARE ONE BAND, called QUEUE. "Something is active until it's marked done." On a
-//     screen showing eight rows, splitting them costs a tab switch to see work you already own — and
-//     `sectionThreads` already returns the two together, so the merge is the absence of a split rather
-//     than a new rule.
 //   · NOTHING IN THE CHROME ANIMATES. The header and tabs are permanent, and permanent motion in the
 //     corner of the eye is noise.
 //   · NO COMPOSER ON THIS SCREEN. Starting a thread is the "New thread" button; the reply box belongs to
@@ -58,7 +54,7 @@ import { Z_CHROME } from "../lib/layers.ts"
 // AND FROM THE SECOND-DRAFT REVIEW (2026-09-30, scratch/mobile-simplify/v2.html § 1):
 //
 //   · THE BANDS ARE UNDERLINE TABS UNDER THE HEADER, not an iOS tab bar at the bottom: the bottom edge
-//     belongs to the thumb's primary verb. Still three bands, still tabs — the 2026-08-17 call stands.
+//     belongs to the thumb's primary verb.
 //   · THE ⋯ SHEET IS GONE. Its readings (connection, quota) open Settings now, behind a gear.
 //     Settings also holds "Update Frizz" (2026-10-08, maintainer on #52, which proposed a ⋯ sheet
 //     again to carry it); the gear wears a dot when a new release line is out, by the desktop's rule.
@@ -70,8 +66,14 @@ import { Z_CHROME } from "../lib/layers.ts"
 // travelling checkbox frames, inner symbols and muted "?". This replaces the 2026-08-17 review's static
 // play mark and accent ask; sharing the renderer keeps both surfaces' state and motion consistent. The
 // rows still move; the chrome above still does not.
+//
+// CHANGED 2026-11-11 (maintainer: "Why do we combine the queue tab and the running tab on the mobile
+// view? It's very weird."): QUEUE AND RUNNING ARE TWO TABS, the rail's two bands. The 2026-08-17 review
+// had merged them into one Queue ("Something is active until it's marked done"), from before the desktop
+// named the lower band Running and folded it shut by default; the merge left spinning threads interleaved
+// with the handoffs waiting to be read. The tabs run in the rail's top-to-bottom order.
 
-type Tab = "queue" | "snoozed" | "done"
+type Tab = "queue" | "running" | "snoozed" | "done"
 
 /** Desktop's exact mark, with a spoken state instead of a hover-only tooltip on touch screens. */
 export function MobileThreadMark({ t }: { t: ThreadView }) {
@@ -256,10 +258,10 @@ function useLongPress(onLongPress: () => void) {
  * 64pt of a 358pt measure. The hairline is INSET to the text column (16 + 18 + 12 = 46) so the glyph
  * column reads as a gutter rather than as the first cell of a table.
  *
- * THE RIGHT-HAND READING depends on the tab. In Queue and Done it is the rest age; in Snoozed it is when
- * the thread wakes (`wakes 3h`), because for a parked thread that is the fact that matters — and a park
- * with no clock behind it (a PR watch, the resting card's event-snooze) shows nothing rather than a
- * time nobody promised.
+ * THE RIGHT-HAND READING depends on the tab. In Queue, Running and Done it is the rest age, and nothing
+ * on a row still going (most of Running); in Snoozed it is when the thread wakes (`wakes 3h`), because
+ * for a parked thread that is the fact that matters — and a park with no clock behind it (a PR watch,
+ * the resting card's event-snooze) shows nothing rather than a time nobody promised.
  */
 function MobileThreadRow({
   t,
@@ -409,8 +411,12 @@ function BandTab({
       role="tab"
       aria-selected={active}
       data-mobile-tab={band}
-      onClick={onClick}
-      className={`-mb-px flex h-[44px] items-center border-b-2 ${active ? "border-fg text-fg" : "border-transparent text-muted"}`}
+      onClick={(e) => {
+        // A tab half off the end of a scrolled strip comes fully into view when picked.
+        e.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" })
+        onClick()
+      }}
+      className={`flex h-[44px] shrink-0 items-center whitespace-nowrap border-b-2 ${active ? "border-fg text-fg" : "border-transparent text-muted"}`}
     >
       <span className="flex items-baseline gap-1.5">
         <span className="grid text-[14.5px] leading-[20px]">
@@ -473,20 +479,11 @@ export function MobileBoard() {
   const queueOrder = useSnapshot(prefs).queueOrder
   const sections = useMemo(() => sectionThreads(all, queueOrder), [all, queueOrder])
 
-  // THE QUEUE IS `sections.active` UNSPLIT — the desktop calls `partitionActive` on it to draw its
-  // Rested/Active rule; the phone does not, which is the whole of the merge.
-  //
-  // Ordered asks first. The rail orders the cue by rest time, which is right for a column you scan
-  // beside a workpane; on the one screen a phone has, "what needs me" earns the top. Both groups keep
-  // their queue order within themselves, so nothing else about the ordering changes.
-  const queue = useMemo(() => {
-    const asks = sections.active.filter(needsAction)
-    const rest = sections.active.filter((t) => !needsAction(t))
-    // PINNED leads even the asks: the phone has no pinned band, so the human's shelf folds into the
-    // top of the one list rather than vanishing (a pinned thread is diverted OUT of `active` — and out
-    // of `snoozed`/`inactive` — by sectionThreads, so without this it would render nowhere).
-    return [...sections.pinned, ...asks, ...rest]
-  }, [sections.pinned, sections.active])
+  // QUEUE AND RUNNING are the rail's two bands, split the rail's way (lib/mobileTriage phoneBands, which
+  // the Done button's triage loop walks too). The Queue is ordered asks first: the rail orders the cue by
+  // rest time, which is right for a column you scan beside a workpane; on the one screen a phone has,
+  // "what needs me" earns the top. Both groups keep their queue order within themselves.
+  const { queue, running } = useMemo(() => phoneBands(sections), [sections])
   // Counted with `boardAskThread` — the queue rows `needsAction` calls asks — which is also what the server
   // counts for the projects list's accent number, so the list and this header cannot disagree.
   const askCount = useMemo(() => all.filter(boardAskThread).length, [all])
@@ -495,7 +492,7 @@ export function MobileBoard() {
   const working = useMemo(() => all.filter(activeBandThread).length, [all])
   const tabCounts = queueTabCounts(askCount, queue.length)
 
-  const rows = tab === "queue" ? queue : tab === "snoozed" ? sections.snoozed : sections.inactive
+  const rows = tab === "queue" ? queue : tab === "running" ? running : tab === "snoozed" ? sections.snoozed : sections.inactive
   const statusView = snap.view.startsWith("status:") ? snap.view.slice(7) : null
 
   // A ROW ARRIVING, MOVING OR CHANGING HEIGHT ABOVE THE READER NEVER MOVES THEM (lib/readerPin). A thread
@@ -560,21 +557,38 @@ export function MobileBoard() {
             ) : null}
           </button>
         </div>
-        <div role="tablist" aria-label="Bands" className="flex gap-[22px] border-b border-border/70 px-[18px]">
-          <BandTab band="queue" label="Queue" active={tab === "queue"} onClick={() => setTab("queue")}>
-            {tabCounts.asks !== undefined ? (
-              <span aria-label={`${tabCounts.asks} need you`} className="text-[12.5px] font-bold tabular-nums text-accent">{tabCounts.asks}</span>
-            ) : null}
-            {tabCounts.listed !== undefined ? (
-              <span aria-label={tabCounts.asks !== undefined ? `of ${tabCounts.listed}` : `${tabCounts.listed} threads`} className={TAB_COUNT}>
-                {tabCounts.asks !== undefined ? `· ${tabCounts.listed}` : tabCounts.listed}
-              </span>
-            ) : null}
-          </BandTab>
-          <BandTab band="snoozed" label="Snoozed" active={tab === "snoozed"} onClick={() => setTab("snoozed")}>
-            {sections.snoozed.length > 0 ? <span className={TAB_COUNT}>{sections.snoozed.length}</span> : null}
-          </BandTab>
-          <BandTab band="done" label="Done" active={tab === "done"} onClick={() => setTab("done")} />
+        {/* Four tabs with two-digit counts outrun a 375pt strip, so the strip SCROLLS SIDEWAYS rather than
+            squeezing a label onto two lines (measured 2026-11-11: Done ended 3px from a 375 screen's edge
+            on "Queue 12 · 33", and at 320 the Queue count wrapped under its label). The hairline is the
+            wrapper's border, and the strip hangs 1px over it so the open tab's bar covers the hairline as
+            it always has; a negative margin on the tabs themselves would hang that bar outside the
+            scroller, which clips it. The 18px after the last tab is a 1px flex item 17px past it (the
+            `after:`), not padding: Chrome leaves a scroller's end padding out of what it scrolls to. The
+            scroll padding keeps a tab picked off the end of the strip clear of the screen's edge. */}
+        <div className="border-b border-border/70">
+          <div
+            role="tablist"
+            aria-label="Bands"
+            className="scrollbar-none -mb-px flex scroll-px-[18px] gap-[22px] overflow-x-auto pl-[18px] after:-ml-[5px] after:w-px after:shrink-0 after:content-['']"
+          >
+            <BandTab band="queue" label="Queue" active={tab === "queue"} onClick={() => setTab("queue")}>
+              {tabCounts.asks !== undefined ? (
+                <span aria-label={`${tabCounts.asks} need you`} className="text-[12.5px] font-bold tabular-nums text-accent">{tabCounts.asks}</span>
+              ) : null}
+              {tabCounts.listed !== undefined ? (
+                <span aria-label={tabCounts.asks !== undefined ? `of ${tabCounts.listed}` : `${tabCounts.listed} threads`} className={TAB_COUNT}>
+                  {tabCounts.asks !== undefined ? `· ${tabCounts.listed}` : tabCounts.listed}
+                </span>
+              ) : null}
+            </BandTab>
+            <BandTab band="running" label="Running" active={tab === "running"} onClick={() => setTab("running")}>
+              {running.length > 0 ? <span className={TAB_COUNT}>{running.length}</span> : null}
+            </BandTab>
+            <BandTab band="snoozed" label="Snoozed" active={tab === "snoozed"} onClick={() => setTab("snoozed")}>
+              {sections.snoozed.length > 0 ? <span className={TAB_COUNT}>{sections.snoozed.length}</span> : null}
+            </BandTab>
+            <BandTab band="done" label="Done" active={tab === "done"} onClick={() => setTab("done")} />
+          </div>
         </div>
       </div>
 
@@ -594,7 +608,9 @@ export function MobileBoard() {
                 ? "Loading…"
                 : tab === "queue"
                   ? "Nothing in the queue. Tap New thread to start one."
-                  : tab === "snoozed"
+                  : tab === "running"
+                    ? "Nothing running."
+                    : tab === "snoozed"
                     ? "Nothing snoozed."
                     : "Nothing finished yet."
             }
