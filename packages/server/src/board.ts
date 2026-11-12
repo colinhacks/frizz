@@ -2234,9 +2234,14 @@ function sessionThreadView(
   const permissionPending = resolvePendingPermission(row)
   const title = resolveSessionTitle(row, tele)
   // Not on an archived thread, which owes nobody anything and whose transcript keeps the record. That is
-  // also what keeps ticks out of the archived-view memo's inputs. A worker's sign-off closes the list for
-  // as long as it stands.
-  const humanTodos = archived ? [] : humanTodoView(tele?.humanSteps, registries.humanTodos.get(row.slug), { finished: tele?.lastFence?.kind === "done" })
+  // also what keeps ticks out of the archived-view memo's inputs. A worker's sign-off closes the list
+  // while it stands, and retires what it found owed for good: a fenced done in the fold, a registered one
+  // here, off its row whether or not it still stands (the human typing again does not re-owe a step the
+  // worker gave up on when it signed off).
+  const humanTodos = archived ? [] : humanTodoView(tele?.humanSteps, registries.humanTodos.get(row.slug), {
+    finished: tele?.lastFence?.kind === "done",
+    retiredAt: registries.done.get(row.slug)?.doneAt,
+  })
   return {
     id: row.slug,
     ...title,

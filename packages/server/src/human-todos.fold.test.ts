@@ -54,3 +54,39 @@ test("a cold resume's placeholder record leaves the rest's steps for the reply t
   assert.equal(resting.lastFence?.kind, "awaiting", "the rest is still the thread's last word")
   assert.equal(resting.lastAssistantAt, "2026-11-09T10:00:00.000Z", "and its rest time is the worker's own")
 })
+
+// A done sign-off retires what the list still owes unticked, and not only while it stands: the view hid
+// those items behind the live done fence and showed them again the moment the human typed anything.
+const doneFence = "Shipped.\n\n```done\n- **Tagged** the release; npm skipped as asked.\n```"
+
+test("a done rest retires the steps the list still owes, past the human's next message", () => {
+  const state = fold(
+    assistant("2026-11-09T10:00:00.000Z", fence(SIGN_IN, APPROVE)),
+    humanString("2026-11-09T10:05:00.000Z", "skip npm, just tag it"),
+    assistant("2026-11-09T10:10:00.000Z", doneFence),
+    humanString("2026-11-10T09:00:00.000Z", "New task: bump the docs"),
+  )
+  assert.deepEqual(owed(state), [])
+  // …and a later fence that lists one again owes it again: the worker needs it after all.
+  const relisted = fold(
+    assistant("2026-11-09T10:00:00.000Z", fence(SIGN_IN, APPROVE)),
+    humanString("2026-11-09T10:05:00.000Z", "skip npm, just tag it"),
+    assistant("2026-11-09T10:10:00.000Z", doneFence),
+    humanString("2026-11-10T09:00:00.000Z", "Actually publish it"),
+    assistant("2026-11-10T09:05:00.000Z", fence(APPROVE)),
+    humanString("2026-11-10T09:10:00.000Z", "Which account?"),
+  )
+  assert.deepEqual(owed(relisted), [APPROVE])
+})
+
+test("humanTodoView: a registered done retires what no fence has listed since", () => {
+  const steps: HumanStep[] = [
+    { id: "a", text: SIGN_IN, listedAt: 1_000, listed: true },
+    { id: "b", text: APPROVE, listedAt: 5_000, listed: true },
+  ]
+  const shown = (retiredAt?: number, ticks: { item_id: string; done_at: number | null; reported_at: number | null }[] = []) =>
+    humanTodoView(steps, ticks, { retiredAt }).map((todo) => `${todo.text}${todo.done ? " ✓" : ""}`)
+  assert.deepEqual(shown(undefined), [SIGN_IN, APPROVE])
+  assert.deepEqual(shown(3_000), [APPROVE], "listed before the done: given up on; listed after it: owed")
+  assert.deepEqual(shown(3_000, [{ item_id: "a", done_at: 2_000, reported_at: null }]), [`${SIGN_IN} ✓`, APPROVE], "a ticked one stays as the record")
+})

@@ -82,11 +82,14 @@ export function closeHumanSteps(list: readonly HumanStep[], steps: readonly stri
 }
 
 /** The list as the human sees it. `finished` is a thread its worker signed off: nothing is owed any more,
- *  so what was never ticked goes and what was done stays. */
+ *  so what was never ticked goes and what was done stays. `retiredAt` is the instant of a registered
+ *  `frizzctl done`, in ms: an item no fence has listed since is just as finished, for good, and is not
+ *  owed again because the human later typed to the thread. (A fenced done retires its items in the fold,
+ *  tailer settleHumanSteps.) */
 export function humanTodoView(
   steps: readonly HumanStep[] | undefined,
   ticks: readonly HumanTodoTick[] | undefined,
-  options: { finished?: boolean } = {},
+  options: { finished?: boolean; retiredAt?: number } = {},
 ): HumanTodo[] {
   if (!steps?.length) return []
   const byId = new Map(ticks?.map((tick) => [tick.item_id, tick]))
@@ -99,7 +102,7 @@ export function humanTodoView(
     const doneAt = stale && tick.done_at !== null && tick.done_at <= (tick.reported_at as number) ? null : tick?.done_at ?? null
     const reportedAt = stale ? null : tick?.reported_at ?? null
     const done = tick ? doneAt !== null : step.closedAt !== undefined
-    if (!done && (!step.listed || options.finished)) continue
+    if (!done && (!step.listed || options.finished || (options.retiredAt !== undefined && step.listedAt <= options.retiredAt))) continue
     todos.push({
       id: step.id,
       text: step.text,

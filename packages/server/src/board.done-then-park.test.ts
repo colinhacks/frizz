@@ -41,6 +41,9 @@ async function withBoard(run: (board: BoardSnapshot) => void) {
   thread("done-after-park", [prompt(1), reply(4, STEPS)], 5)
   // Done at 5s, then plain prose: nothing took it back.
   thread("prose-after-done", [prompt(1), reply(8, "Signed off.")], 5)
+  // Steps handed over at 2s, answered in words at 3s, done at 5s, and the human types again at 8s: the
+  // completion no longer stands, but the step it gave up on is not owed again.
+  thread("typed-after-done", [prompt(1), reply(2, STEPS), prompt(3), reply(4, "Skipping the sign-in as asked."), prompt(8)], 5)
   const tailer = createTailer({ project, storage, bus: new Bus(), onChange: () => {}, sessionLogDir: logDir, now: () => T0 + 120_000, brokerDaemonAlive: () => false, shellAlive: () => true })
   for (let i = 0; i < 200 && !storage.allSessions().every((row) => tailer.get(row.slug)); i++) tailer.tick()
   const board = createBoard(project, storage, new Bus(), tailer, "done-then-park", {
@@ -67,6 +70,9 @@ test("an awaiting fence written after `frizzctl done` takes the completion back"
     assert.equal(view("done-after-park")?.lastFence?.kind, "done", "a park older than the completion does not")
     assert.equal(view("done-after-park")?.lastFence?.registered, true)
     assert.equal(view("prose-after-done")?.lastFence?.registered, true, "prose after the completion leaves it standing")
+    const typed = view("typed-after-done")
+    assert.equal(typed?.lastFence?.registered, undefined, "the human's new message spends the completion")
+    assert.deepEqual(typed?.humanTodos ?? [], [], "and the step it gave up on stays given up on")
   })
 })
 

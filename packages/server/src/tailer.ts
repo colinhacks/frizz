@@ -2891,6 +2891,16 @@ function noteHandoff(state: FoldState): void {
 // and not where the fence is parsed, because a later assistant message replaces a fence that was not the
 // thread's last word, and that fence never rested on anything.
 function settleHumanSteps(state: FoldState, replyText: string): void {
+  // …AND A REST ON ```done IS OVER: nothing is owed any more, so what the list still owes unticked is
+  // dropped, the way a newest `steps:` that leaves an item out drops it. The board hid those items while
+  // the done stood and showed them again the moment the human typed anything, through the next turn and
+  // every rest after it (2026-11-11). A ticked item stays as the record of what was done; that is the
+  // view's rule, and the fold does not know ticks. A registered `frizzctl done` is in no message, so the
+  // board does the same off its row's instant (humanTodoView `retiredAt`).
+  if (state.lastFence?.kind === "done") {
+    if (state.humanSteps?.some((step) => step.listed)) state.humanSteps = state.humanSteps.map((step) => (step.listed ? { ...step, listed: false } : step))
+    return
+  }
   const steps = state.lastFence?.kind === "awaiting" ? awaitingStepItems(state.lastFence.hints) : []
   const atMs = Date.parse(state.handoffAt ?? "")
   if (steps.length === 0 || !Number.isFinite(atMs)) return
