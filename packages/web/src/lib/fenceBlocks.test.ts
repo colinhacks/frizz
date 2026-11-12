@@ -16,13 +16,35 @@ test("empty / whitespace-only text → no segments", () => {
   assert.deepEqual(splitFenceBlocks("   \n  "), [])
 })
 
-test("a done fence with surrounding prose", () => {
-  const text = "Shipped the fix.\n\n```done\nMerged PR and cleaned up the branch.\n```\n\nAnything else?"
+test("a done fence with prose above it", () => {
+  const text = "Shipped the fix.\n\n```done\nMerged PR and cleaned up the branch.\n```\n"
   assert.deepEqual(splitFenceBlocks(text), [
     { kind: "prose", text: "Shipped the fix.\n\n" },
     { kind: "fence", fenceKind: "done", body: "Merged PR and cleaned up the branch.", hints: [] },
-    { kind: "prose", text: "\n\nAnything else?" },
   ])
+})
+
+// A CARD ONLY WHERE THE SERVER ACTS (@frizz/shared signalFenceOf). Prose after the last fence means the
+// server read the rest as bare and told the worker so; a card there was a live Done or tickable steps for
+// a rest nothing had registered (2026-11-11).
+test("a fence with prose after it is the code block it is, not a card", () => {
+  const text = "Shipped the fix.\n\n```done\nMerged PR and cleaned up the branch.\n```\n\nAnything else?"
+  assert.deepEqual(splitFenceBlocks(text), [{ kind: "prose", text }])
+  assert.equal(hasFence(text), false)
+})
+
+test("```question fences after the signal fence leave it the signal", () => {
+  const text = "Over to you.\n\n```awaiting\nsteps:\n  - Approve the sign-in\n```\n\n```question\nid: settings-store\n```\n"
+  const segs = splitFenceBlocks(text)
+  assert.deepEqual(segs.map((s) => (s.kind === "fence" ? s.fenceKind : "prose")), ["prose", "awaiting", "prose"])
+  assert.match(segs[2].kind === "prose" ? segs[2].text : "", /```question\nid: settings-store/, "the reference stays where the question machinery reads it")
+})
+
+// The 2026-11-11 pullfrog handoff: an email to paste in a three-backtick block inside a three-backtick
+// fence. Its own closing line closed the fence early, so the server read no fence and nudged the worker.
+test("a fence a code block inside it closed early draws no card", () => {
+  const text = "Send it.\n\n```awaiting\nsteps:\n  - Paste the email below\n---\nThe email:\n\n```\nHi Ana,\n```\n\nThanks.\n```"
+  assert.equal(hasFence(text), false)
 })
 
 // THE YAML KEYS, and this parser IS the server's — one `splitAwaitingFrontmatter` in @frizz/shared, called

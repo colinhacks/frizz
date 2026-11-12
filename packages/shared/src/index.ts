@@ -2024,8 +2024,9 @@ export function liveOpsLines(ops?: SignoffLiveOps, needsInput = false): string[]
  *  worker dispatched under the answer-required cut is taught `status:` — the 2026-10-05 spelling, which
  *  a worker that learned `needs_input:` can write just as well, since the fence reads both — and one
  *  dispatched before the cut is taught the grammar it can actually satisfy. */
-export function signoffNudgeMessage(ops?: SignoffLiveOps, needsInput = false): string {
-  const base = needsInput ? SIGNOFF_NUDGE_MESSAGE_NEEDS_INPUT : SIGNOFF_NUDGE_MESSAGE
+export function signoffNudgeMessage(ops?: SignoffLiveOps, needsInput = false, strayFence = false): string {
+  const plain = needsInput ? SIGNOFF_NUDGE_MESSAGE_NEEDS_INPUT : SIGNOFF_NUDGE_MESSAGE
+  const base = strayFence ? plain.replace(SIGNOFF_NUDGE_BARE_LINE, SIGNOFF_NUDGE_STRAY_LINE) : plain
   const lines = liveOpsLines(ops, needsInput)
   if (lines.length) {
     lines.push("", "An ```awaiting fence names only what you are ACTUALLY waiting on, one such list per kind, plus")
@@ -2086,11 +2087,23 @@ function signoffNudgeAwaitingLines(needsInput: boolean): string[] {
   ]
 }
 
+const SIGNOFF_NUDGE_BARE_LINE = "You rested without a fence, so this thread cannot be triaged."
+/** …for a rest whose message DID write a fence, just not as its end (@frizz/shared signalFenceOf). "You
+ *  rested without a fence" was false there, and the worker's fix is different: move the fence, or lengthen
+ *  it, rather than write one (2026-11-11: a handoff whose email-to-paste code block closed its fence early,
+ *  and a ```done with a closing question in prose under it). */
+const SIGNOFF_NUDGE_STRAY_LINE = [
+  "Your last message wrote a ```done or ```awaiting fence, but not as its END, so it signals nothing and this",
+  "thread cannot be triaged. Only whitespace and ```question fences may follow the signal fence. Prose after it",
+  "turns it into a plain code block, and so does a code block inside it whose own closing ``` line closes a",
+  "three-backtick fence early: open a fence that holds code blocks with four backticks.",
+].join("\n")
+
 function signoffNudgeText(needsInput: boolean): string {
   return [
   `${SIGNOFF_NUDGE_MARKER} Nothing about your task has changed, and no new work is being asked of you.`,
   "",
-  "You rested without a fence, so this thread cannot be triaged.",
+  SIGNOFF_NUDGE_BARE_LINE,
   "",
   "**IF THE TASK STILL HAS PARTS LEFT, THE FENCE IS NOT WHAT YOU OWE — THE WORK IS.** If ANY part of the",
   "original task is unfinished, unverified, or deferred, resume it NOW, in THIS turn, and sign off once it",
@@ -7338,6 +7351,7 @@ export * from "./claim.ts"
 export * from "./claude-editions.ts"
 export * from "./code-fences.ts"
 export * from "./question-fence.ts"
+export * from "./signal-fence.ts"
 export * from "./delta.ts"
 export * from "./wire-patch.ts"
 export * from "./fence-head.ts"

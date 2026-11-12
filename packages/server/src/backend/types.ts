@@ -136,6 +136,7 @@ export interface NormalizedTail {
   // named it — see foreignThreadView. Optional everywhere: a transcript with no human turn has none.
   firstUserText?: string
   lastFence?: FenceView // parsed by the shared fence grammar from the final message
+  strayFence?: boolean // the final message wrote a signal fence that does not close it (see FoldState.strayFence)
   pendingQuestion: boolean
   // The final message carries the AWAITING sentinel — the worker's answer to a stop hook when
   // nothing in it is actionable. Optional (absent ⇒ false) because it is an additive observation, not
@@ -271,6 +272,9 @@ export interface FoldState {
   // and would drift off the topic the session started on.
   firstUserText?: string
   lastFence?: FenceView // done/awaiting excusal fence on the final message (cleared by any user turn)
+  // The final message WROTE a ```done or ```awaiting fence, but not as its end, so lastFence is empty: the
+  // sign-off nudge says so instead of "you rested without a fence". Same lifecycle as lastFence.
+  strayFence?: boolean
   lastAssistantHasQuestion: boolean // the final message carries an unanswered ```question fence
   // Every assistant message that carried a ```question fence, newest last, capped (QUESTION_SIGHTINGS_MAX
   // in tailer.ts). NOT cleared by a user turn, unlike the two above: a fence registers a ROW, and the row

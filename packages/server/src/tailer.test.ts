@@ -3436,6 +3436,29 @@ test("parseSignalFence: tolerates CRLF line endings", () => {
   assert.deepEqual(parseSignalFence("```done\r\nWindows body\r\n```"), { kind: "done", body: "Windows body", hints: [] })
 })
 
+// ONE RULE WITH THE WEB (@frizz/shared signalFenceOf, 2026-11-11): a fence quoted inside another code block
+// is not a fence, and ```question fences may follow the one the message signals with.
+test("parseSignalFence: question references after the fence leave it the signal; a quoted fence is none", () => {
+  const park = "Over to you.\n\n```awaiting\nsteps:\n  - Approve the sign-in\n```\n\n```question\nid: settings-store\n```\n"
+  assert.equal(parseSignalFence(park)?.kind, "awaiting")
+  const t4 = "`".repeat(4)
+  assert.equal(parseSignalFence(`Here is the grammar:\n\n${t4}\n\`\`\`done\n- Landed.\n\`\`\`\n${t4}`), undefined)
+})
+
+test("the fold marks a fence that does not close the message, and clears it with the next turn", () => {
+  const state = newTailState("t", "sid", "/nowhere.jsonl")
+  const say = (ts: string, text: string) => applyRecord(state, { type: "assistant", timestamp: ts, message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text }] } } as Parameters<typeof applyRecord>[1])
+  const fence = () => state.lastFence
+  say("2026-11-11T00:00:00.000Z", "```done\n- Shipped.\n```\n\nAnything else?")
+  assert.equal(fence(), undefined)
+  assert.equal(state.strayFence, true)
+  say("2026-11-11T00:01:00.000Z", "```done\n- Shipped.\n```")
+  assert.equal(fence()?.kind, "done")
+  assert.equal(state.strayFence, undefined)
+  say("2026-11-11T00:02:00.000Z", "Plain words.")
+  assert.equal(state.strayFence, undefined, "a message with no fence at all is a bare rest, not a stray fence")
+})
+
 test("parseSignalFence: the body is capped, defensively, with a trailing ellipsis", () => {
   const f = parseSignalFence("```done\n" + "x".repeat(FENCE_BODY_MAX + 400) + "\n```")
   assert.equal(f?.body.length, FENCE_BODY_MAX + 1) // the cap + the ellipsis char

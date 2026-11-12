@@ -2419,7 +2419,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         sessionId: row.session_id,
         fenceId,
         hintKey: SIGNOFF_HINT_KEY,
-        message: withClock(signoffNudgeMessage(ops, needsInput), spokeAt),
+        message: withClock(signoffNudgeMessage(ops, needsInput, tele.strayFence === true), spokeAt),
         reason: "rested without signing off",
       }, nowMs).delivery
       log(`waker: queued ${row.slug} — ${item.reason}`)

@@ -93,10 +93,11 @@ export interface TailStateCache {
 // The question-fence parser and the code-fence scanner under it are listed since 2026-10-13: they decide
 // which messages a cached `questionSightings` holds (tailer noteQuestionFences), and they are their own
 // files, which `index.ts` only re-exports — a parser fix there changed no byte this digest read. The ACP
-// fold is listed for the same reason the other two backends are.
+// fold is listed for the same reason the other two backends are. The signal-fence reader is its own
+// file for the same reason since 2026-11-11 (`lastFence`, `strayFence`).
 const FOLD_SOURCES = [
   "transcript.ts", "tailer.ts", "human-todos.ts", "backend/claude.ts", "backend/codex.ts", "backend/acp-transcript.ts",
-  "../../shared/src/index.ts", "../../shared/src/question-fence.ts", "../../shared/src/code-fences.ts",
+  "../../shared/src/index.ts", "../../shared/src/question-fence.ts", "../../shared/src/code-fences.ts", "../../shared/src/signal-fence.ts",
 ]
 
 let foldSchemaMemo: string | null = null
@@ -110,11 +111,14 @@ let foldSchemaMemo: string | null = null
  * the constant there and the bump below is the only thing that re-derives a cached tail after an
  * upgrade. v2 (2026-10-28): FoldState.handoffAt, without which a thread already parked on a handoff the
  * human never saw stays in Snoozed (board handoffStands). v3 (2026-11-06): handoffAt narrowed to steps
- * and questions, without which a cached plain report goes on holding its thread in the queue.
+ * and questions, without which a cached plain report goes on holding its thread in the queue. v4
+ * (2026-11-11): the shared signal-fence rule, a done retiring the steps it found owed, and a cold
+ * resume's placeholder record skipped, without which a cached tail keeps a rest read as bare and old
+ * steps owed again the moment the human types.
  */
 export function foldSchemaDigest(dir = import.meta.dirname): string {
   if (foldSchemaMemo) return foldSchemaMemo
-  const hash = createHash("sha256").update("frizz-tail-state-v3\0")
+  const hash = createHash("sha256").update("frizz-tail-state-v4\0")
   let read = 0
   for (const name of FOLD_SOURCES) {
     try {
@@ -125,7 +129,7 @@ export function foldSchemaDigest(dir = import.meta.dirname): string {
       hash.update(name).update("\0missing\0")
     }
   }
-  foldSchemaMemo = read === 0 ? "frizz-tail-state-v3-unreadable" : hash.digest("hex").slice(0, 32)
+  foldSchemaMemo = read === 0 ? "frizz-tail-state-v4-unreadable" : hash.digest("hex").slice(0, 32)
   return foldSchemaMemo
 }
 

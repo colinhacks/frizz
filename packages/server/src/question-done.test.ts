@@ -537,10 +537,12 @@ const QUESTION_FENCE_CORRECTION = (id: string) => [
 ].join("\n")
 
 test("a question fence correction on a rest that did not close on a done fence reads as it always has", async () => {
-  for (const [name, message] of [
-    ["the fence alone", `One call.\n\n${broken("scope")}`],
-    ["beside a park", `One call.\n\n${broken("scope")}\n\n${fence("awaiting", "status: working\nshells: [bzvt]\nfor: 1h")}`],
-    ["a done fence that does not close the message", `One call.\n\n${done}\n\n${broken("scope")}`],
+  for (const [name, message, hint] of [
+    ["the fence alone", `One call.\n\n${broken("scope")}`, false],
+    ["beside a park", `One call.\n\n${broken("scope")}\n\n${fence("awaiting", "status: working\nshells: [bzvt]\nfor: 1h")}`, false],
+    ["a done fence that prose follows", `One call.\n\n${done}\n\nThat is all.\n\n${broken("scope")}`, false],
+    // Only question fences under it: the done fence still closes the message, so the hint rides along.
+    ["a done fence with the question under it", `One call.\n\n${done}\n\n${broken("scope")}`, true],
   ] as const) {
     const w = world()
     try {
@@ -548,7 +550,8 @@ test("a question fence correction on a rest that did not close on a done fence r
       w.user(0, "publish the packages")
       w.say(1, message)
       await w.tick(2)
-      assert.equal(w.sent[0].split("\n\n⏱")[0], QUESTION_FENCE_CORRECTION("scope"), name)
+      const expected = hint ? `${QUESTION_FENCE_CORRECTION("scope")}\n\n${QUESTION_FENCE_UNDER_DONE_HINT}` : QUESTION_FENCE_CORRECTION("scope")
+      assert.equal(w.sent[0].split("\n\n⏱")[0], expected, name)
     } finally { w.close() }
   }
 })
@@ -651,16 +654,27 @@ test("a done fence written before registration began is not corrected after the 
   } finally { w.close() }
 })
 
-test("a done fence that does not close the message is not a sign-off, so there is nothing to correct", async () => {
+// ```question fences may follow the signal fence (shared signal-fence.ts): a worker that writes its question
+// under its done fence still signed off as done, and over a question that registered. Until 2026-11-11 the
+// question made Frizz read no fence at all, so nothing corrected the done the page drew above a live card.
+test("a done fence with a question under it is still the sign-off, and is corrected for the question it stands over", async () => {
   const w = world()
   try {
     w.user(0, "move the settings into a real store")
-    // The question fence is the last thing in the message: Frizz reads no done fence here at all.
     w.say(1, `All in, bar one call.\n\n${done}\n\n${choice("store")}`)
     await w.tick(2)
-    assert.equal(w.view().lastFence, undefined)
-    assert.deepEqual(w.deliveries(), [])
+    assert.equal(w.view().lastFence?.kind, "done")
+    assert.deepEqual(w.deliveries(), [DONE_OVER(1)])
   } finally { w.close() }
+  // Prose under the done fence still means it was not the sign-off.
+  const prose = world()
+  try {
+    prose.user(0, "move the settings into a real store")
+    prose.say(1, `All in, bar one call.\n\n${done}\n\n${choice("store")}\n\nOne more thing to say.`)
+    await prose.tick(2)
+    assert.equal(prose.view().lastFence, undefined)
+    assert.deepEqual(prose.deliveries().filter((id) => id.startsWith("park:done")), [])
+  } finally { prose.close() }
 })
 
 // The fault can end without the worker: the human closes a question from its card, and a press of the ×

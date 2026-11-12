@@ -774,3 +774,21 @@ test("an armed Goal does not silence the reminder — the reminder is what lands
     assert.match(reminder, /```awaiting/)
   } finally { h.close() }
 })
+
+// A REST WHOSE MESSAGE WROTE A FENCE, JUST NOT AS ITS END (2026-11-11). "You rested without a fence" was
+// false there, and the fix the worker needs is different: move the fence, or lengthen it.
+test("a fence that does not close the message is named as that, not as no fence at all", async () => {
+  const stray = nudger({ strayFence: true })
+  const bare = nudger({})
+  try {
+    await stray.s.tick()
+    await bare.s.tick()
+    assert.match(stray.delivered[0], /wrote a ```done or ```awaiting fence, but not as its END/)
+    assert.match(stray.delivered[0], /open a fence that holds code blocks with four backticks/)
+    assert.doesNotMatch(stray.delivered[0], /You rested without a fence/)
+    assert.match(bare.delivered[0], /You rested without a fence/)
+  } finally {
+    stray.close()
+    bare.close()
+  }
+})
