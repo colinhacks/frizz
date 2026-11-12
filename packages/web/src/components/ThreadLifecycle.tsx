@@ -236,7 +236,7 @@ export function StateButton({
             aria-label={label}
             title={label}
             onMouseDown={(event) => event.preventDefault()}
-            className={`flex items-center gap-1 rounded-l-[inherit] py-1 pl-2.5 pr-2 font-medium outline-none transition-colors hover:bg-bg/10 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-45`}
+            className={`flex items-center gap-1 rounded-l-[inherit] py-1 pl-2.5 pr-[7px] font-medium outline-none transition-colors hover:bg-bg/10 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-45`}
           >
             <Check size={iconSize} className={iconClassName} />
             {label}
@@ -306,9 +306,11 @@ const PIN_CHOICES: readonly { unpins: boolean; name: string; says: string }[] = 
 // it — it marks nothing done — because the choice is remembered for every later Done in this browser
 // (prefs.doneUnpins), as Send's ticked row is for every later send.
 //
-// Its ink gaps are Send's, read from pixels in sans at 11px (2026-11-12): last letter → seam 8px,
-// seam → chevron 7px, chevron → right edge 8px. The label half keeps the plain button's left inset, so
-// a pinned and an unpinned card start their check at the same x. Re-measure if the size or glyph moves.
+// Its ink gaps are Send's, read side by side from pixels in sans at a real 2x (2026-11-12): last
+// letter → seam 7.5px, seam → chevron 7px, chevron → right edge 8px, each equal to Send's by the same
+// reading (SendSplitButton documents 8.0 / 7.1 / 8.1 by its own). The label half keeps the plain
+// button's left inset, so a pinned and an unpinned card start their check at the same x. Re-measure if
+// the size or glyph moves.
 function DonePinChoice({ className, pending, children }: { className: string; pending: boolean; children: ReactNode }) {
   const { doneUnpins } = useSnapshot(prefs)
   return (
@@ -323,7 +325,7 @@ function DonePinChoice({ className, pending, children }: { className: string; pe
             disabled={pending}
             aria-label="Choose what Mark as done does to the pin"
             onMouseDown={(event) => event.preventDefault()}
-            className="flex items-center rounded-r-[inherit] pl-1 pr-[5px] outline-none transition-colors hover:bg-bg/10 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-45"
+            className="flex items-center rounded-r-[inherit] pl-[5px] pr-[6px] outline-none transition-colors hover:bg-bg/10 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-45"
           >
             <ChevronDown size={12} strokeWidth={2.5} />
           </button>
