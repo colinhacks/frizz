@@ -1851,14 +1851,26 @@ export function resolveSessionTitle(
  *
  *  The comparison is `<=`, not `<`: the two instants come from different clocks (the row's is frizz's
  *  own `Date.now()`, the telemetry's is the transcript record's), and a same-millisecond tie is the
- *  worker signing off on the turn that user record started, which is the ordinary case. */
+ *  worker signing off on the turn that user record started, which is the ordinary case.
+ *
+ *  …AND THE WORKER'S OWN NEWER PARK (2026-11-11). A worker that runs `frizzctl done` and then, in the same
+ *  turn or on a wake that is not the human, rests on an ```awaiting fence has taken the completion back:
+ *  it is waiting on a shell, a sub-agent, or the human's steps. The row outranked that fence until the
+ *  human next spoke, so the board carded a parked thread as Done in the queue, hid its steps as finished,
+ *  and offered Mark as done on a thread mid-park (reylo, 2026-10-22: done at 17:13:16, a `status: working`
+ *  park at 17:16:51, carded Done until 17:19). `awaitingAt` is the instant of the thread's last word when
+ *  that word is an awaiting fence. A newer ```done fence needs nothing here: the web draws the message's
+ *  own card and not this one (registeredDone.ts). */
 export function registeredDoneFence(
   done: { body: string; doneAt: number } | undefined,
   lastUserAt: string | undefined,
+  awaitingAt?: string,
 ): FenceView | undefined {
   if (!done) return undefined
   const userAt = lastUserAt ? Date.parse(lastUserAt) : Number.NaN
   if (Number.isFinite(userAt) && userAt > done.doneAt) return undefined
+  const parkedAt = awaitingAt ? Date.parse(awaitingAt) : Number.NaN
+  if (Number.isFinite(parkedAt) && parkedAt > done.doneAt) return undefined
   // `registered` is the one thing the transcript needs that the fence it replaces never carried: a fenced
   // done is drawn from the message that holds it, and this one is in no message, so the client draws it
   // at the bottom of the thread itself (ChatView, showsRegisteredDoneCard). Every predicate ignores it.
@@ -2112,7 +2124,8 @@ function sessionThreadView(
     liveTool: undefined,
     lastFence: undefined, lastAssistantAllDone: false,
   } : rawTele
-  const done = supersededDone || providerError ? undefined : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt)
+  const done = supersededDone || providerError ? undefined
+    : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt, rawTele?.lastFence?.kind === "awaiting" ? rawTele.lastAssistantAt : undefined)
   const tele: SessionTelemetry | undefined = done && failedTele ? { ...failedTele, lastFence: done } : failedTele
   // A headless thread mid-turn with nobody driving it is a crash/stall, not a rest. For codex that is
   // an app-server that stopped advancing the rollout; for the broker it is a dead ownerless daemon (its
