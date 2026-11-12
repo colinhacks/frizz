@@ -162,12 +162,14 @@ export async function probeRelay(origin, { board, check, depart }) {
   // not answer: Response with null body status (101, 204, 205, or 304) cannot have a body."
   const fresh = await visit("cacheable page", "/cached");
   const tag = fresh.res?.headers.get("etag") ?? "";
-  check("a cacheable page arrives with its etag", fresh.res?.status === 200 && tag.replace(/^W\//, "") === '"v1"', `${told(fresh)} etag=${tag}`);
-  const revalidated = await visit("revalidation", "/cached", { headers: { "if-none-match": '"v1"' } });
-  check("a revalidation the board answers 304 reaches the visitor AS 304", revalidated.res?.status === 304, told(revalidated));
+  // The relay tags a validator with the serving board's key (packages/relay/src/visitor-headers.ts).
+  check("a cacheable page arrives with its etag, tagged by the board's key", fresh.res?.status === 200 && /^"[A-Za-z0-9_-]{16}\.v1"$/.test(tag.replace(/^W\//, "")), `${told(fresh)} etag=${tag}`);
+  check("and is revalidated before every use", fresh.res?.headers.get("cache-control") === "no-cache", `cache-control=${fresh.res?.headers.get("cache-control")}`);
   // What a browser really sends: the tag it was handed, which the edge may have weakened.
   const browserLike = await visit("revalidation with the served tag", "/cached", { headers: { "if-none-match": tag } });
-  check("and so does one that sends back the tag the visitor was actually served", browserLike.res?.status === 304, `${told(browserLike)} if-none-match=${tag}`);
+  check("a revalidation with the served tag reaches the visitor AS 304", browserLike.res?.status === 304, `${told(browserLike)} if-none-match=${tag}`);
+  const untagged = await visit("revalidation with an untagged validator", "/cached", { headers: { "if-none-match": '"v1"' } });
+  check("a validator the relay did not hand out is answered in full", untagged.res?.status === 200, told(untagged));
   const empty = await visit("204", "/empty", { method: "POST" });
   check("a 204 from the board reaches the visitor as 204", empty.res?.status === 204, told(empty));
 

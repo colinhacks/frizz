@@ -50,7 +50,7 @@ const HANDSHAKE_MAX_AGE_MS = 5 * 60_000
  * any size into memory, and the board decode it in one frame, before the board was asked about a session:
  * 96 MB held the object for 43 seconds on local workerd (security review 2, finding 10).
  */
-export const RELAY_MAX_VISITOR_BODY = 26 * 1024 * 1024
+const RELAY_MAX_VISITOR_BODY = 26 * 1024 * 1024
 
 /** The answer for a body past RELAY_MAX_VISITOR_BODY. */
 const tooLarge = () =>

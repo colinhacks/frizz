@@ -238,9 +238,18 @@ export async function handleClaim(body: unknown, deps: ClaimDeps): Promise<Claim
       // A CUSTOM NAME FOLLOWS ITS ACCOUNT (2026-11-12). Whoever held a leaked sign-in token for its eight
       // hours could bind the account's username to a key of their own and renew it forever, and the
       // account would be refused its own name. The account proving itself again takes the name back,
-      // onto the key that proves it: a stolen token can do the same only while it lasts, the owner's
-      // next claim wins after that, and the board that lost the name drops the sessions issued under
-      // it (cloud.ts, freshClaim), so cookies collected while a stranger served it open nothing.
+      // onto the key that proves it. A stolen token can do the same while it lasts, and a stolen refresh
+      // token for as long as the owner leaves Frizz authorised on GitHub, so the board that loses a name
+      // says what to do (cloud.ts, resolveRunToken). What a stranger's interim hold collects opens
+      // nothing afterwards: the board that takes the name back is answered `renewed: false` and signs
+      // out every session issued under it (cloud.ts, onFreshClaim), the relay closes the stranger's
+      // socket on the next request (relay Board.dropBoardUnlessOwner), and nothing the stranger's board
+      // served is used from a browser's cache without the new board's say (relay visitor-headers.ts).
+      //
+      // WHY NOT A DELAY with a second proof and a cancel, which the second security review weighed: both
+      // sides of a take-back hold a token for the SAME account, so a cancel tells the owner from the
+      // thief no better than the take-back does. Revoking Frizz on GitHub is what ends a stolen token,
+      // and after that only the owner can prove anything; a delay would only make the owner wait.
       if (anonymous || existing.githubId === undefined || !deps.github) return reject("name-taken", 409)
       const account = await proveAccount(verdict.payload.github, name, deps, now)
       if (!("who" in account)) return account.outcome

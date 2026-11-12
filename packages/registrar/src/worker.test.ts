@@ -671,3 +671,12 @@ test("the daily sweep releases the longest-lapsed names in one read, and counts 
   assert.equal(db.sqlite.prepare("SELECT value FROM meta WHERE key = 'claim-count'").get()!.value, "51", "the count was put right")
   assert.match(logs.join("\n"), /swept 100 expired name\(s\), 50 left for the next run; 51\/1000000 names in use/)
 })
+
+test("the Worker's module exports nothing workerd cannot run as an entry point", async () => {
+  // workerd reads every export of the main module as a handler or an entrypoint class, and refuses to start
+  // the Worker when one is anything else (the relay's twin of this test says how that was found).
+  const exported = await import("./worker.ts")
+  for (const [name, value] of Object.entries(exported)) {
+    assert.ok(typeof value === "function" || (name === "default" && typeof value === "object" && value !== null), `${name} is a ${typeof value}`)
+  }
+})

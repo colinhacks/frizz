@@ -236,10 +236,15 @@ try {
   // empty stream, so a revalidated page came back as a 504 that read "The board did not answer" — on
   // a phone, every time the back button reused a cached page (2026-09-30).
   const fresh = await fetch(at("ada", "/cached"));
-  check("a cacheable page arrives with its etag", fresh.status === 200 && fresh.headers.get("etag") === '"v1"', `HTTP ${fresh.status}`);
+  // The relay tags a validator with the serving board's key (packages/relay/src/visitor-headers.ts), so a
+  // copy cached while someone else held the name is never revalidated against this board.
+  const tag = fresh.headers.get("etag") ?? "";
+  check("a cacheable page arrives with its etag, tagged by the board's key", fresh.status === 200 && /^"[A-Za-z0-9_-]{16}\.v1"$/.test(tag), `HTTP ${fresh.status} etag=${tag}`);
   await fresh.arrayBuffer();
-  const revalidated = await fetch(at("ada", "/cached"), { headers: { "if-none-match": '"v1"' } });
+  const revalidated = await fetch(at("ada", "/cached"), { headers: { "if-none-match": tag } });
   check("a revalidation the board answers 304 reaches the visitor AS 304", revalidated.status === 304, `HTTP ${revalidated.status} ${revalidated.status === 304 ? "" : await revalidated.text()}`);
+  const untagged = await fetch(at("ada", "/cached"), { headers: { "if-none-match": '"v1"' } });
+  check("a validator the relay did not hand out is answered in full", untagged.status === 200 && (await untagged.text()) === "CACHED", `HTTP ${untagged.status}`);
   const empty = await fetch(at("ada", "/empty"), { method: "POST" });
   check("a 204 from the board reaches the visitor as 204", empty.status === 204, `HTTP ${empty.status} ${empty.status === 204 ? "" : await empty.text()}`);
 

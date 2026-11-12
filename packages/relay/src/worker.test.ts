@@ -91,3 +91,13 @@ test("a body the board already encoded is passed through, never encoded a second
   const identity = visitorResponseInit(200, [["content-encoding", "identity"]])
   assert.equal(identity.encodeBody, undefined)
 })
+
+test("the Worker's module exports nothing workerd cannot run as an entry point", async () => {
+  // workerd reads every export of the main module as a handler or an entrypoint class, and refuses to start
+  // the Worker when one is anything else: an exported size constant took the whole relay down in `wrangler
+  // dev` on 2026-11-12 ("Incorrect type for map entry ... not of type 'function or ExportedHandler'").
+  const exported = await import("./worker.ts")
+  for (const [name, value] of Object.entries(exported)) {
+    assert.ok(typeof value === "function" || (name === "default" && typeof value === "object" && value !== null), `${name} is a ${typeof value}`)
+  }
+})
