@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { clampToSlots, dropIndex, edgeScrollVelocity, heldStep, moveItem, nearestSlot, RAIL_STEP_PX, shiftFor } from "./railReorder.ts"
+import { cellShift, clampToSlots, dropIndex, edgeScrollVelocity, heldStep, moveItem, nearestCell, nearestSlot, RAIL_STEP_PX, rowNeighbour, shiftFor } from "./railReorder.ts"
 
 test("moveItem moves in both directions, and `to` is read against the post-removal list", () => {
   const list = ["a", "b", "c", "d"]
@@ -85,4 +85,42 @@ test("the held row stays inside the band, and its neighbours shift by its height
   assert.equal(heldStep(ROWS, 0), 40)
   assert.equal(heldStep(ROWS, 2), 20)
   assert.equal(heldStep([{ top: 0, height: 20 }, { top: 24, height: 30 }], 1), 34, "a gap between rows is part of the step")
+})
+
+// THE HOME GRID'S TILES WRAP: three across, 112px tiles 8px apart, rows 124px apart — so the next slot
+// after the end of a row is the start of the row below.
+const CELLS = Array.from({ length: 7 }, (_, i) => ({ left: (i % 3) * 120, top: Math.floor(i / 3) * 124, width: 112, height: 100 }))
+
+test("nearestCell follows the held tile in both directions, across rows", () => {
+  assert.equal(nearestCell(CELLS, 0, 0, 0), 0, "a tile held still stays where it is")
+  assert.equal(nearestCell(CELLS, 0, 55, 0), 0, "under half a cell sideways is still home")
+  assert.equal(nearestCell(CELLS, 0, 65, 0), 1)
+  assert.equal(nearestCell(CELLS, 0, 0, 124), 3, "straight down is the cell below, not the next one along")
+  assert.equal(nearestCell(CELLS, 4, -120, -124), 0)
+  assert.equal(nearestCell(CELLS, 0, 2000, 2000), 6, "out past the short last row lands last, not at the end of the row above")
+  assert.equal(nearestCell(CELLS, 0, 2000, 0), 2, "past a row's end lands at that row's end")
+  assert.equal(nearestCell(CELLS, 6, 0, -2000), 0, "above the grid lands in the first row")
+})
+
+test("cellShift slides the tiles between the two cells one place, wrapping at a row's end", () => {
+  // Dragging 1 to 4: 2 moves left, 3 moves up to the end of the row above, 4 moves left.
+  assert.deepEqual(cellShift(CELLS, 2, 1, 4), { x: -120, y: 0 })
+  assert.deepEqual(cellShift(CELLS, 3, 1, 4), { x: 240, y: -124 })
+  assert.deepEqual(cellShift(CELLS, 4, 1, 4), { x: -120, y: 0 })
+  assert.deepEqual(cellShift(CELLS, 0, 1, 4), { x: 0, y: 0 }, "a tile outside the span does not move")
+  assert.deepEqual(cellShift(CELLS, 5, 1, 4), { x: 0, y: 0 })
+  assert.deepEqual(cellShift(CELLS, 1, 1, 4), { x: 0, y: 0 }, "the held tile is placed by its own delta")
+  // Dragging 4 back to 1: 1 and 3 move along one, and 2 wraps down to the start of the next row.
+  assert.deepEqual(cellShift(CELLS, 1, 4, 1), { x: 120, y: 0 })
+  assert.deepEqual(cellShift(CELLS, 2, 4, 1), { x: -240, y: 124 })
+  assert.deepEqual(cellShift(CELLS, 3, 4, 1), { x: 120, y: 0 })
+  for (const i of [0, 1, 2, 3]) assert.deepEqual(cellShift(CELLS, i, 2, 2), { x: 0, y: 0 }, "a drag that has not changed cells moves nothing")
+})
+
+test("rowNeighbour is the cell straight above or below, and the edge rows stay put", () => {
+  assert.equal(rowNeighbour(CELLS, 4, -1), 1)
+  assert.equal(rowNeighbour(CELLS, 4, 1), 6, "a short row below gives its nearest cell")
+  assert.equal(rowNeighbour(CELLS, 1, -1), 1, "nothing above the top row")
+  assert.equal(rowNeighbour(CELLS, 6, 1), 6, "nothing below the bottom row")
+  assert.equal(rowNeighbour(CELLS, 6, -1), 3)
 })

@@ -17,7 +17,7 @@
 // activation exists to avoid. (The server does open them all in the background about a second after
 // boot — server/tenant-prime.ts — but on its own clock, never on a request's.)
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as KeyboardEvent_, type MouseEvent as MouseEvent_, type PointerEvent as PointerEvent_, type ReactNode, type RefObject } from "react"
 import { Ellipsis, ImagePlus, Loader2, Pencil, Plus, RotateCcw, Settings as SettingsIcon, Trash2 } from "lucide-react"
 import { Link, useNavigate } from "react-router"
 import { useSnapshot } from "valtio"
@@ -25,6 +25,7 @@ import { slugify, type ProjectCard, type ProjectRailCounts } from "@frizz/shared
 import { rpc } from "../api/rpc.ts"
 import { CONSOLE_PATH, projectHref } from "../lib/base-path.ts"
 import { useIsMobile } from "../lib/mobile.ts"
+import { cellShift, edgeScrollVelocity, moveItem, nearestCell, rowNeighbour, type CellSlot } from "../lib/railReorder.ts"
 import { showToast, store } from "../store.ts"
 import { AddProjectDialog } from "./AddProjectDialog.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
@@ -124,20 +125,56 @@ function TileBadge({ queued, running }: { queued: number; running: number }) {
  * absolute box is clipped only by an overflow on its containing block's side of the tree, and the cover's
  * containing block is the cell.
  */
-function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: ProjectRailCounts | undefined; home: string | undefined }) {
+function ProjectTile({
+  project,
+  counts,
+  home,
+  index,
+  reorder,
+}: {
+  project: ProjectCard
+  counts: ProjectRailCounts | undefined
+  home: string | undefined
+  index: number
+  reorder: TileReorder
+}) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const icon = useProjectIconChange(project)
   const queued = counts?.queued ?? 0
   const running = counts?.running ?? 0
+  const { drag } = reorder
+  const held = drag?.fromIndex === index
+  // The held tile follows the pointer; the tiles between its old cell and its new one slide one place to
+  // open the gap (lib/railReorder.ts cellShift). They animate only while a drag is in flight: at the drop
+  // each tile's offset and its move to the new cell land in one render, and a transition left on would
+  // play the offset back out from a cell away.
+  const offset = drag ? (held ? { x: drag.deltaX, y: drag.deltaY } : cellShift(drag.cells, index, drag.fromIndex, drag.toIndex)) : null
   return (
-    <div data-home-tile={project.slug} className="group/tile relative flex flex-col items-center pb-1 pt-1.5" style={{ width: TILE_PX }}>
+    <div
+      data-home-tile={project.slug}
+      data-home-tile-held={held || undefined}
+      // `select-none`: a press that turns into a drag would otherwise select the names it crosses.
+      className={`group/tile relative flex select-none flex-col items-center pb-1 pt-1.5 ${held ? "z-10 cursor-grabbing [&_*]:cursor-grabbing" : ""}`}
+      style={{
+        width: TILE_PX,
+        transform: offset && (offset.x || offset.y) ? `translate(${offset.x}px, ${offset.y}px)` : undefined,
+        transition: drag && !held ? "transform 160ms ease" : undefined,
+      }}
+      onPointerDown={(event) => reorder.onPointerDown(event, index)}
+      onKeyDown={(event) => reorder.onKeyDown(event, index)}
+      onClickCapture={reorder.onClickCapture}
+      // A link and an image are natively draggable, and the browser's drag would take the pointer away.
+      onDragStart={(event) => event.preventDefault()}
+    >
       {/* THE SQUARE CARRIES THE RAIL'S TOOLTIP (projectSquareLabel): the project's name and what it has in
           play, open the moment the pointer is on it, as on the rail. So the square is a link of its OWN,
           lifted above the name's cover (TileName), because a tooltip opens on the element under the
           pointer and the cover would otherwise be that element. Kept out of the tab order and from
           assistive tech: the name is the tile's one link, and the badge says its count in words. */}
-      <Tooltip side="top" label={projectSquareLabel(project, queued, running)}>
+      {/* Shut while any tile is held: the pointer is inside the tile it is moving, and a delay-0 tooltip
+          would open on the grab and ride along with it (the rail's reason, Tooltip.tsx `disabled`). */}
+      <Tooltip side="top" label={projectSquareLabel(project, queued, running)} disabled={drag !== null}>
         <Link
           to={projectHref(project.slug)}
           tabIndex={-1}
@@ -147,7 +184,7 @@ function ProjectTile({ project, counts, home }: { project: ProjectCard; counts: 
         >
           {/* The lift is the hover, not a fill: a fill behind the square would show around the badge's
               cut-out in a colour the ring is not. */}
-          <span className="relative block transition-transform duration-150 ease-out group-hover/tile:-translate-y-[3px]">
+          <span className={`relative block transition-transform duration-150 ease-out group-hover/tile:-translate-y-[3px] ${held ? "scale-[1.06]" : ""}`}>
             <span
               className={`block rounded-[30%] shadow-[0_6px_18px_-6px] shadow-shadow-ink/70 group-has-[a:focus-visible]/tile:ring-2 group-has-[a:focus-visible]/tile:ring-focus-ink-60 group-has-[a:focus-visible]/tile:ring-offset-2 group-has-[a:focus-visible]/tile:ring-offset-bg ${
                 project.stale ? "opacity-60 grayscale" : ""
@@ -240,6 +277,7 @@ function TileName({ project, title, menu }: { project: ProjectCard; title: strin
       <Link
         to={projectHref(project.slug)}
         title={title}
+        data-home-tile-name
         className="min-w-0 truncate text-fg/90 outline-none after:absolute after:inset-0 after:rounded-2xl after:content-[''] group-hover/tile:text-fg"
       >
         {project.name}
@@ -684,6 +722,186 @@ function MobileProjectList({ projects, home }: { projects: readonly ProjectCard[
   )
 }
 
+/**
+ * A press on a tile becomes a drag only past this, so a click still opens the project. The rail's 4px.
+ */
+const TILE_DRAG_THRESHOLD_PX = 4
+
+/** When the last tile drag ended: the click the browser fires on the release must not open a project. */
+let tileDragEndedAt = 0
+
+/** A drag in flight. `toIndex` is derived from the deltas on every move — see lib/railReorder.ts. */
+interface TileDrag {
+  fromIndex: number
+  toIndex: number
+  /** The held tile's offset from its own cell, page scroll included. */
+  deltaX: number
+  deltaY: number
+  /** Every project tile's box when the drag began, in page coordinates. */
+  cells: readonly CellSlot[]
+  /** The projects as the drag found them. The indices are positions in this list, whatever arrives meanwhile. */
+  list: readonly ProjectCard[]
+}
+
+interface TileReorder {
+  /** The order to draw: a held tile's list, then a dropped order the server has not confirmed, then the server's. */
+  projects: readonly ProjectCard[] | undefined
+  drag: TileDrag | null
+  onPointerDown: (event: PointerEvent_<HTMLDivElement>, index: number) => void
+  onKeyDown: (event: KeyboardEvent_<HTMLDivElement>, index: number) => void
+  onClickCapture: (event: MouseEvent_<HTMLDivElement>) => void
+}
+
+/** Whether an event on a tile came from the tile itself: not its ⋯ trigger, and not a dialog or menu it portals out. */
+function fromTileBody(event: { currentTarget: HTMLElement; target: EventTarget }): boolean {
+  const target = event.target as Element
+  return event.currentTarget.contains(target) && target.closest("button") === null
+}
+
+/**
+ * REORDER THE HOME SCREEN BY DRAGGING A TILE — the project rail's drag (ProjectRail.tsx), on a grid.
+ *
+ * The grid took over from the rail on `/` on 2026-11-03 (the rail is hidden here, and off unless asked
+ * for), and came without the drag, so the order every project is drawn in could only be changed from a
+ * rail most people never turn on. It writes the same order: `projectsReorder`, the whole list of ids, which
+ * the rail, the grid and the Console's folder all draw from.
+ *
+ * The rail's mechanics, in two dimensions: a press becomes a drag past TILE_DRAG_THRESHOLD_PX, the held tile
+ * follows the pointer while the tiles it passes slide aside, the page scrolls near the window's top and
+ * bottom edges, and the drop holds the new order on screen until the refetch that confirms it lands.
+ * Alt+arrows on a focused tile move it one place (←/→) or one row (↑/↓).
+ */
+function useTileReorder(data: readonly ProjectCard[] | undefined, gridRef: RefObject<HTMLDivElement | null>): TileReorder {
+  const queryClient = useQueryClient()
+  const [drag, setDrag] = useState<TileDrag | null>(null)
+  const [optimistic, setOptimistic] = useState<readonly ProjectCard[] | null>(null)
+  const write = useMutation({
+    mutationFn: (ids: string[]) => rpc.projectsReorder({ ids }),
+    // Cleared once the refetch has landed, not on success: clearing first draws the old order for the
+    // frame in between, a visible snap-back on every drop (the rail's reason).
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["projectsList"] })
+      setOptimistic(null)
+    },
+    onError: (error) => {
+      setOptimistic(null)
+      showToast(`Could not save the new order: ${error instanceof Error ? error.message : String(error)}`, { duration: 7000 })
+    },
+  })
+  const projects = drag?.list ?? optimistic ?? data
+
+  /** Every project tile's box, in page coordinates, in the order they are drawn. */
+  const measure = (): CellSlot[] =>
+    [...(gridRef.current?.querySelectorAll<HTMLElement>("[data-home-tile]") ?? [])].map((tile) => {
+      const box = tile.getBoundingClientRect()
+      return { left: box.left + window.scrollX, top: box.top + window.scrollY, width: box.width, height: box.height }
+    })
+
+  const commit = (list: readonly ProjectCard[], from: number, to: number) => {
+    const next = moveItem(list, from, to)
+    setOptimistic(next)
+    write.mutate(next.map((project) => project.id))
+  }
+
+  const onPointerDown = (event: PointerEvent_<HTMLDivElement>, index: number) => {
+    // Left button only, never a modified click (⌘-click opens a new tab), and never on the ⋯ trigger.
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    if (!fromTileBody(event) || !projects) return
+    const tile = event.currentTarget
+    const list = projects
+    const start = { x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY }
+    let pointer = { x: event.clientX, y: event.clientY }
+    let cells: CellSlot[] | null = null
+    let latest: TileDrag | null = null
+    let frame = 0
+
+    const viewport = () => ({ top: 0, bottom: window.innerHeight })
+    const apply = () => {
+      if (!cells) return
+      // Near the window's top or bottom edge the page scrolls, and the scroll is folded into the delta so
+      // the tile stays under the pointer: forty projects in a narrow window run past the fold.
+      const velocity = edgeScrollVelocity(pointer.y, viewport())
+      if (velocity) window.scrollBy(0, velocity)
+      const deltaX = pointer.x - start.x + window.scrollX - start.scrollX
+      const deltaY = pointer.y - start.y + window.scrollY - start.scrollY
+      latest = { fromIndex: index, toIndex: nearestCell(cells, index, deltaX, deltaY), deltaX, deltaY, cells, list }
+      setDrag(latest)
+    }
+    // One update per frame, and a loop that keeps scrolling while the pointer is held still at an edge.
+    const tick = () => {
+      apply()
+      frame = edgeScrollVelocity(pointer.y, viewport()) ? requestAnimationFrame(tick) : 0
+    }
+    const schedule = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(tick)
+    }
+
+    const onMove = (moveEvent: PointerEvent) => {
+      if (!cells) {
+        if (Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y) < TILE_DRAG_THRESHOLD_PX) return
+        cells = measure()
+        if (cells.length !== list.length) { cells = null; finish(); return }
+        tile.setPointerCapture(moveEvent.pointerId)
+      }
+      moveEvent.preventDefault()
+      pointer = { x: moveEvent.clientX, y: moveEvent.clientY }
+      schedule()
+    }
+    // A wheel mid-drag moves the page under a held tile; redraw it where the pointer is.
+    const onScroll = () => { if (cells) schedule() }
+    const finish = () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+      window.removeEventListener("scroll", onScroll)
+    }
+    const onUp = () => {
+      finish()
+      setDrag(null)
+      if (!cells || !latest) return
+      tileDragEndedAt = Date.now()
+      if (latest.fromIndex !== latest.toIndex) commit(list, latest.fromIndex, latest.toIndex)
+    }
+
+    window.addEventListener("pointermove", onMove, { passive: false })
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    window.addEventListener("scroll", onScroll, { passive: true })
+  }
+
+  const onKeyDown = (event: KeyboardEvent_<HTMLDivElement>, index: number) => {
+    if (!event.altKey || !projects || !fromTileBody(event)) return
+    const to =
+      event.key === "ArrowLeft" ? index - 1
+      : event.key === "ArrowRight" ? index + 1
+      : event.key === "ArrowUp" ? rowNeighbour(measure(), index, -1)
+      : event.key === "ArrowDown" ? rowNeighbour(measure(), index, 1)
+      : null
+    if (to === null) return
+    // Taken even at the ends, where nothing moves: Alt+← is the browser's Back on Windows and Linux.
+    event.preventDefault()
+    if (to < 0 || to >= projects.length || to === index) return
+    commit(projects, index, to)
+    // Focus follows the tile, not the cell, so a second press moves the same project again.
+    requestAnimationFrame(() => {
+      gridRef.current?.querySelectorAll<HTMLElement>("[data-home-tile-name]")[to]?.focus()
+    })
+  }
+
+  const onClickCapture = (event: MouseEvent_<HTMLDivElement>) => {
+    // A drag ends over a tile, and the browser clicks it on the release: without this every drop also
+    // opened a project.
+    if (Date.now() - tileDragEndedAt < 250) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+  }
+
+  return { projects, drag, onPointerDown, onKeyDown, onClickCapture }
+}
+
 export function ProjectGrid() {
   // The typed-path dialog is the FALLBACK, not the front door: it opens only when the machine has no
   // picker, or the picker failed to open and said why.
@@ -738,6 +956,9 @@ export function ProjectGrid() {
   const home = data?.[0]?.path.match(/^(\/(?:Users|home)\/[^/]+)\//u)?.[1]
   const empty = data !== undefined && data.length === 0
   const isMobile = useIsMobile()
+  const gridRef = useRef<HTMLDivElement>(null)
+  const reorder = useTileReorder(data, gridRef)
+  const projects = reorder.projects ?? []
   const fallbackDialog = fallback ? (
     <AddProjectDialog reason={fallback.reason} proposed={proposed} onClose={() => setFallback(null)} />
   ) : null
@@ -804,14 +1025,15 @@ export function ProjectGrid() {
                 eight empty cells, as they did under a centred pill. A last row that is not full starts at
                 the left, as a home screen's does. */}
             <div
+              ref={gridRef}
               data-home-grid
               className="grid w-full max-w-[952px] justify-center gap-x-2 gap-y-6"
               style={{ gridTemplateColumns: `repeat(auto-fit, ${TILE_PX}px)` }}
             >
               <AddTile pending={pick.isPending} onClick={() => pick.mutate()} />
-              {data.length > 1 ? <AllProjectsTile projects={data} counts={counts.data} /> : null}
-              {data.map((project) => (
-                <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} />
+              {projects.length > 1 ? <AllProjectsTile projects={projects} counts={counts.data} /> : null}
+              {projects.map((project, index) => (
+                <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} index={index} reorder={reorder} />
               ))}
             </div>
           </>

@@ -106,6 +106,94 @@ export function heldStep(slots: readonly RowSlot[], fromIndex: number): number {
   return held.height + gap
 }
 
+/** A tile's box when a drag began, in any one coordinate system. */
+export interface CellSlot {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * Which cell a dragged TILE is over, in the home grid — rows of fixed-width tiles that wrap, so a move
+ * is two-dimensional and the next slot can be on the row below.
+ *
+ * `nearestSlot` in two dimensions, against where every tile sat when the drag began: the ROW whose
+ * centre is nearest the held tile's centre, then the cell in that row nearest it across. Row first, not
+ * the nearest centre outright, because a last row is usually short: held out past its last tile, the
+ * nearest centre is the end of the full row above, and a home screen drops it at the end of the list.
+ */
+export function nearestCell(cells: readonly CellSlot[], fromIndex: number, deltaX: number, deltaY: number): number {
+  const held = cells[fromIndex]
+  if (!held) return fromIndex
+  const x = held.left + held.width / 2 + deltaX
+  const y = held.top + held.height / 2 + deltaY
+  let rowTop = held.top
+  let rowDistance = Number.POSITIVE_INFINITY
+  for (const cell of cells) {
+    const distance = Math.abs(cell.top + cell.height / 2 - y)
+    if (distance < rowDistance) {
+      rowTop = cell.top
+      rowDistance = distance
+    }
+  }
+  let best = fromIndex
+  let bestDistance = Number.POSITIVE_INFINITY
+  cells.forEach((cell, index) => {
+    if (Math.abs(cell.top - rowTop) > 1) return
+    const distance = Math.abs(cell.left + cell.width / 2 - x)
+    if (distance < bestDistance) {
+      best = index
+      bestDistance = distance
+    }
+  })
+  return best
+}
+
+/**
+ * How far tile `index` slides to make room while the held tile is over `toIndex`, in px.
+ *
+ * `shiftFor` on a grid: every tile between the two cells moves one place towards the gap, and on a grid
+ * one place can be the last cell of the row above or the first of the row below — so the offset is
+ * the distance to the neighbouring cell's own box rather than a constant step.
+ */
+export function cellShift(cells: readonly CellSlot[], index: number, fromIndex: number, toIndex: number): { x: number; y: number } {
+  let target = index
+  if (index !== fromIndex) {
+    if (toIndex > fromIndex && index > fromIndex && index <= toIndex) target = index - 1
+    if (toIndex < fromIndex && index >= toIndex && index < fromIndex) target = index + 1
+  }
+  const from = cells[index]
+  const to = cells[target]
+  if (!from || !to || target === index) return { x: 0, y: 0 }
+  return { x: to.left - from.left, y: to.top - from.top }
+}
+
+/**
+ * The cell one row up (`-1`) or down (`1`) from `index`, nearest it across — the grid's Alt+↑/↓. A row
+ * that does not reach under the tile gives its nearest cell, and a tile already on the top or bottom row
+ * stays where it is.
+ */
+export function rowNeighbour(cells: readonly CellSlot[], index: number, direction: -1 | 1): number {
+  const here = cells[index]
+  if (!here) return index
+  const tops = [...new Set(cells.map((cell) => Math.round(cell.top)))].sort((a, b) => a - b)
+  const rowTop = tops[tops.indexOf(Math.round(here.top)) + direction]
+  if (rowTop === undefined) return index
+  const centre = here.left + here.width / 2
+  let best = index
+  let bestDistance = Number.POSITIVE_INFINITY
+  cells.forEach((cell, i) => {
+    if (Math.round(cell.top) !== rowTop) return
+    const distance = Math.abs(cell.left + cell.width / 2 - centre)
+    if (distance < bestDistance) {
+      best = i
+      bestDistance = distance
+    }
+  })
+  return best
+}
+
 /**
  * How fast to scroll the band when the pointer nears its edge, in px per frame.
  *

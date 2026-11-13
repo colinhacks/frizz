@@ -319,8 +319,12 @@ export function RailLink({
         }`}
         style={{
           transform: offset ? `translateY(${offset}px)` : undefined,
-          // The held square must track the pointer exactly; its neighbours are the ones that animate.
-          transition: held ? "none" : "transform 160ms ease",
+          // The held square must track the pointer exactly; its neighbours are the ones that animate, and
+          // only while a drag is in flight. At the drop a passed square's offset and its move to the new
+          // slot land in one render, so a transition left on played the 48px back out: each one jumped a
+          // slot past its new place and slid in over 160ms, the first one over the home button (measured
+          // frame by frame, 2026-11-12). The pinned band's drag (Sidebar.tsx) has the same rule.
+          transition: drag && !held ? "transform 160ms ease" : "none",
         }}
       >
         {/* 28 of the square's 40px — 70%. Discord runs 40 of 48 (83%) and 24 of 40 read as a stub
