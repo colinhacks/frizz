@@ -43,6 +43,8 @@ import type {
   ThreadSkillsInput,
   ThreadSkillsResult,
   McpStatusInput,
+  McpReloadInput,
+  McpReloadResult,
   McpStatusResult,
   McpSignInInput,
   McpSignInResult,
@@ -255,6 +257,7 @@ export interface Api {
   // Any failure (no live session, a legacy row) means "no suggestions", never a surfaced error.
   threadSkills(input: ThreadSkillsInput): Promise<ThreadSkillsResult>
   mcpStatus(input: McpStatusInput): Promise<McpStatusResult>
+  mcpReload(input: McpReloadInput): Promise<McpReloadResult>
   mcpSignIn(input: McpSignInInput): Promise<McpSignInResult>
   mcpSignInPoll(input: McpSignInAttemptInput): Promise<McpSignInPollResult>
   mcpSignInFinish(input: McpSignInFinishInput): Promise<McpSignInPollResult>
@@ -515,6 +518,7 @@ export const PROCEDURES = {
   threadProfileOptions: "query",
   threadSkills: "query",
   mcpStatus: "query",
+  mcpReload: "mutation",
   mcpSignIn: "mutation",
   mcpSignInPoll: "query",
   mcpSignInFinish: "mutation",

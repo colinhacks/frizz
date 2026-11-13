@@ -782,6 +782,36 @@ const TITLE = {
   },
 }
 
+const MCP = {
+  name: "mcp",
+  description:
+    "RELOAD THE PROJECT'S MCP SERVERS INTO THIS THREAD, after you have changed its MCP configuration. A running " +
+    "thread reads that configuration once, when its session starts, and nothing watches the files: this is how " +
+    "an edit reaches the thread you are in without restarting it. New servers connect, changed ones restart, " +
+    "removed ones disconnect, and an untouched one keeps running. You can call a new server's tools in this same " +
+    "turn.\n\n" +
+    "WHERE THE CONFIGURATION LIVES. Claude Code: the project's `.mcp.json` (`claude mcp add --scope project` " +
+    "writes it too), and a server there loads only once a settings file approves it — its name in " +
+    "`enabledMcpjsonServers` in `.claude/settings.local.json`, or `enableAllProjectMcpServers: true`. A server in " +
+    "your user scope that runs a command is never loaded into a Frizz thread; put it in `.mcp.json`. Codex: " +
+    "`[mcp_servers.<name>]` tables in the project's `.codex/config.toml`, which Codex reads only for a project " +
+    "it trusts (`trust_level = \"trusted\"` under `[projects.\"<path>\"]` in `~/.codex/config.toml`); a table in " +
+    "`~/.codex/config.toml` itself reaches every project's Codex threads.\n\n" +
+    "IT IS THE PROJECT'S, NOT THE THREAD'S. The reload brings every running thread of this project level with " +
+    "the configuration, not only yours. A file that does not parse refuses the whole reload rather than " +
+    "unmounting what it declares.\n\n" +
+    "It prints what changed in this thread: added, changed, removed, servers that failed to connect, and any " +
+    "`.mcp.json` server left out because nothing approves it.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["reload"], description: "`reload`: re-read the project's MCP configuration into this thread." },
+    },
+    required: ["action"],
+    additionalProperties: false,
+  },
+}
+
 // The registry: `frizzctl` lists these and routes a command by name (and the legacy MCP front-end
 // answers `tools/list` and `tools/call` from the same list). Adding a worker-facing capability = one
 // entry here + one handler in `HANDLERS` + its spelling in `CLI` — never a second surface.
@@ -1011,7 +1041,7 @@ const THREADS = {
 // WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER, WATCH_COMMAND, MONITOR and THREADS after it: the tool list is
 // read by position in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
 // breaks nothing.
-const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD]
+const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD, MCP]
 
 /** @type {Record<string, (args: Record<string, unknown>) => Promise<string>>} */
 const HANDLERS = {
@@ -1031,6 +1061,7 @@ const HANDLERS = {
   [ACTIVITY.name]: activity,
   [LINK.name]: link,
   [UNLINK.name]: unlink,
+  [MCP.name]: mcp,
   [STEER.name]: steer,
   [WATCH_COMMAND.name]: watchCommand,
   [MONITOR.name]: monitor,
@@ -1205,6 +1236,57 @@ async function unlink(args) {
   if (!id) throw new Error("`id` is required — take it from `frizzctl link` or `frizzctl activity`")
   const result = (await callRpc("dropOwnLink", { slug: threadSlug(), id }))?.result
   return result?.dropped ? `Removed registration ${id}. No file was deleted and no server was stopped.` : `No registration ${id} on this thread.`
+}
+
+/** The `mcp` handler: `frizzctl mcp reload`.
+ * @param {Record<string, unknown>} args @returns {Promise<string>} */
+async function mcp(args) {
+  const action = typeof args.action === "string" ? args.action.trim().toLowerCase() : ""
+  if (action !== "reload") throw new Error("the one action is `reload`: `frizzctl mcp reload`")
+  const result = (await callRpc("mcpReload", { slug: threadSlug() }))?.result
+  return mcpReloadReport(result)
+}
+
+/** What a reload changed, as the worker reads it. Exported for its test.
+ * @param {any} result @returns {string} */
+function mcpReloadReport(result) {
+  if (!result) throw new Error("Frizz did not answer the reload")
+  if (!result.supported) return `${result.agent} has no MCP reload, so nothing was reloaded.`
+  const lines = []
+  const change = result.thread
+  const list = (/** @type {string[]} */ names) => names.map((name) => `\`${name}\``).join(", ")
+  if (change) {
+    const moved = change.added.length + change.changed.length + change.removed.length
+    if (moved === 0 && Object.keys(change.errors).length === 0) {
+      lines.push(`Nothing changed: this thread already has the project's MCP servers as they read now (${change.unchanged} unchanged).`)
+    } else {
+      lines.push("Reloaded this thread's MCP servers from the project's configuration.")
+      if (change.added.length) lines.push(`Added: ${list(change.added)}`)
+      if (change.changed.length) lines.push(`Changed, so restarted: ${list(change.changed)}`)
+      if (change.removed.length) lines.push(`Removed: ${list(change.removed)}`)
+      if (change.unchanged) lines.push(`Unchanged: ${change.unchanged}`)
+    }
+    for (const [name, error] of Object.entries(change.errors)) lines.push(`Failed to connect: \`${name}\`: ${error}`)
+    if (change.unapproved.length) {
+      lines.push(
+        `Not loaded, because nothing approves it: ${list(change.unapproved)}. A \`.mcp.json\` server loads once its name is in ` +
+        "`enabledMcpjsonServers` in `.claude/settings.local.json` (or `enableAllProjectMcpServers` is true); add it there and reload again.",
+      )
+    }
+  }
+  if (result.note) lines.push(result.note)
+  const signIn = (result.servers ?? []).filter((/** @type {any} */ server) => server.state === "needs-auth").map((/** @type {any} */ server) => server.name)
+  if (signIn.length) lines.push(`Needs a sign-in: ${list(signIn)}. The human signs in from the plug menu beside the prompt box.`)
+  if (result.backend === "codex") lines.push("Codex reloads every thread of this project at once.")
+  const others = result.others
+  if (others && others.reloaded + others.stale + others.failed > 0) {
+    const parts = []
+    if (others.reloaded) parts.push(`reloaded ${others.reloaded} other running ${others.reloaded === 1 ? "thread" : "threads"} of this project`)
+    if (others.stale) parts.push(`${others.stale} more ${others.stale === 1 ? "runs a session" : "run sessions"} too old to reload, and ${others.stale === 1 ? "gets" : "get"} the change when ${others.stale === 1 ? "it next starts" : "they next start"}`)
+    if (others.failed) parts.push(`${others.failed} could not be reloaded`)
+    lines.push(`Also ${parts.join("; ")}.`)
+  }
+  return lines.join("\n")
 }
 
 /** The `title` handler: register this thread's considered name.
@@ -2644,6 +2726,12 @@ const CLI = {
     positional: ["id"],
     examples: ["frizzctl unlink lnk_ab12cd34"],
   },
+  mcp: {
+    group: "This thread",
+    summary: "Reload the project's MCP servers into this thread after editing their config",
+    positional: ["action"],
+    examples: ["frizzctl mcp reload"],
+  },
   threads: {
     group: "Other threads",
     summary: "List a project's threads: each one's slug, title and where it sits on the board",
@@ -2679,4 +2767,4 @@ const CLI = {
   },
 }
 
-export { TOOLS, HANDLERS, CLI, Refused, ServerRefusal, doneOpenQuestionsRefusal }
+export { TOOLS, HANDLERS, CLI, Refused, ServerRefusal, doneOpenQuestionsRefusal, mcpReloadReport }

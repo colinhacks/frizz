@@ -10,8 +10,8 @@ import { homedir } from "node:os"
 import { adoptOrForkBroker, brokerLivenessSnapshot, killBroker, lastKnownBrokerDaemon, liveBrokerRecord, liveBrokerRecords, claudeBrokerRecordPath, resolveClaudeExecutableAbsolute, takeBrokerRetirement, type BrokerRetirementMark, type BrokerRetirementReason } from "./claude-broker-host.ts"
 import { connectClaudeBroker, type ClaudeBrokerClient } from "./claude-broker-client.ts"
 import { describeClaudeBrokerExit, readClaudeBrokerExit, type ClaudeBrokerExitRecord } from "./claude-broker-diagnostics.ts"
-import type { ClaudeDiagnostic, ClaudeMcpServerReading, ClaudePermissionDecision, ClaudePermissionRequest, ClaudeQueryEvent, ClaudeSkillInfo } from "./claude-agent-sdk-protocol.ts"
-import { CLAUDE_AGENT_SDK_MAX_INPUT_BYTES, CLAUDE_BROKER_CAPABILITY_CANCEL_INPUT, CLAUDE_BROKER_CAPABILITY_INPUT_ACK, CLAUDE_BROKER_CAPABILITY_LIST_SKILLS, CLAUDE_BROKER_CAPABILITY_MCP, CLAUDE_BROKER_CAPABILITY_RENAME, CLAUDE_BROKER_CAPABILITY_STOP_TASK, CLAUDE_BROKER_CAPABILITY_SUBAGENT_STEER, deliverableInputText, validateInputMessage } from "./claude-agent-sdk-protocol.ts"
+import type { ClaudeDiagnostic, ClaudeMcpReload, ClaudeMcpServerReading, ClaudePermissionDecision, ClaudePermissionRequest, ClaudeQueryEvent, ClaudeSkillInfo } from "./claude-agent-sdk-protocol.ts"
+import { CLAUDE_AGENT_SDK_MAX_INPUT_BYTES, CLAUDE_BROKER_CAPABILITY_CANCEL_INPUT, CLAUDE_BROKER_CAPABILITY_INPUT_ACK, CLAUDE_BROKER_CAPABILITY_LIST_SKILLS, CLAUDE_BROKER_CAPABILITY_MCP, CLAUDE_BROKER_CAPABILITY_MCP_RELOAD, CLAUDE_BROKER_CAPABILITY_RENAME, CLAUDE_BROKER_CAPABILITY_STOP_TASK, CLAUDE_BROKER_CAPABILITY_SUBAGENT_STEER, deliverableInputText, validateInputMessage } from "./claude-agent-sdk-protocol.ts"
 import type { BrokerRecord, ClaudeBrokerConfig } from "./claude-agent-broker.ts"
 import type { InteractionSessionScope, InteractionStore } from "../interaction-store.ts"
 import {
@@ -170,6 +170,13 @@ interface ActiveSession {
   acksInput: boolean
 }
 
+/** What one live session made of an MCP reload (reloadMcpServersEverywhere). */
+export type ClaudeMcpReloadOutcome = { threadSlug: string } & (
+  | { outcome: "reloaded"; reload: ClaudeMcpReload }
+  | { outcome: "stale" }
+  | { outcome: "failed"; error: string }
+)
+
 export interface ClaudeAgentBrokerBridge {
   spawnDispatch(input: ClaudeSpawnDispatchInput): Promise<{ binding: ClaudeBrokerBinding }>
   /** Deliver a follow-up turn. If the daemon is live we reattach its socket (context intact); if it
@@ -229,6 +236,14 @@ export interface ClaudeAgentBrokerBridge {
    * Best effort: a session that refuses or predates `mcp-v1` is skipped. Resolves with how many did it.
    */
   reconnectMcpServerEverywhere(name: string): Promise<number>
+  /**
+   * Re-read the project's MCP configuration into EVERY live session this bridge holds (one bridge per
+   * project): the configuration is the project's, so one reload brings every running thread level with
+   * it, the way Codex's `config/mcpServer/reload` reaches every thread its app-server has loaded. A
+   * session whose daemon predates `mcp-reload-v1` is reported `stale` — it gets the change when its
+   * session next starts.
+   */
+  reloadMcpServersEverywhere(): Promise<ClaudeMcpReloadOutcome[]>
   /**
    * Re-title the LIVE session through the provider — the replacement for typing `/rename` at an
    * interactive `claude` prompt.
@@ -995,6 +1010,21 @@ export function createClaudeAgentBrokerBridge(deps: ClaudeBrokerBridgeDeps): Cla
         && liveBrokerRecord(claudeBrokerRecordPath(deps.stateDir, session.sessionId))?.capabilities?.includes(CLAUDE_BROKER_CAPABILITY_MCP))
       const results = await Promise.allSettled(held.map((session) => session.client.reconnectMcpServer(name)))
       return results.filter((result) => result.status === "fulfilled").length
+    },
+
+    async reloadMcpServersEverywhere() {
+      const outcomes: ClaudeMcpReloadOutcome[] = []
+      await Promise.all([...sessions.entries()].map(async ([threadSlug, session]) => {
+        if (!holdsLiveDaemon(session)) return
+        const record = liveBrokerRecord(claudeBrokerRecordPath(deps.stateDir, session.sessionId))
+        if (!record?.capabilities?.includes(CLAUDE_BROKER_CAPABILITY_MCP_RELOAD)) { outcomes.push({ threadSlug, outcome: "stale" }); return }
+        try {
+          outcomes.push({ threadSlug, outcome: "reloaded", reload: await session.client.reloadMcpServers() })
+        } catch (error) {
+          outcomes.push({ threadSlug, outcome: "failed", error: error instanceof Error ? error.message : String(error) })
+        }
+      }))
+      return outcomes
     },
 
     async warmUp() {

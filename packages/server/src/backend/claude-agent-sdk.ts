@@ -47,6 +47,7 @@ import {
   type ClaudeInterruptReceipt,
   type ClaudeMcpAuthStart,
   type ClaudeMcpServerReading,
+  type ClaudeMcpSetResult,
   type ClaudeModelCapability,
   type ClaudeOnElicitation,
   type ClaudePermissionMode,
@@ -217,6 +218,15 @@ export interface ClaudeQueryHandle extends AsyncIterable<ClaudeQueryEvent> {
   mcpServerStatus(): Promise<ClaudeMcpServerReading[]>
   /** Drop and re-open one MCP server's connection — how a sign-in saved by another session reaches this one. */
   reconnectMcpServer(name: string): Promise<void>
+  /**
+   * Make `servers` the session's managed MCP servers, live (`setMcpServers()`): a new name is connected,
+   * a changed definition replaced, and a server an earlier call named but this one leaves out is
+   * disconnected. Measured against claude 2.1.323 (probe in the 2026-11-12 MCP reload thread):
+   *  - a server the session was LAUNCHED with, re-sent unchanged, keeps its process and connection;
+   *  - one never named here stays whatever the call says, which is what keeps the frizz mount up;
+   *  - a server added mid-turn is callable in that same turn, announced as a deferred tool.
+   */
+  setMcpServers(servers: WorkerMcpServers): Promise<ClaudeMcpSetResult>
   /** Start an MCP server's OAuth sign-in inside this session. The CLI listens for the browser's return
    *  trip on `localhost` and reconnects the server itself once it lands. */
   mcpAuthenticate(name: string): Promise<ClaudeMcpAuthStart>
@@ -777,6 +787,25 @@ class RealClaudeQueryHandle implements ClaudeQueryHandle {
   async reconnectMcpServer(name: string): Promise<void> {
     this.assertOpen()
     await this.awaitOpenControl(this.sdkQuery.reconnectMcpServer(exactText(name, "reconnectMcpServer.name", 256)))
+  }
+
+  // Not gated on ready(), like mcpServerStatus: a reload reaches a thread at rest as well as mid-turn. The
+  // servers ride the control channel on the CLI's stdin, never its argv, so the credentials in them stay
+  // out of `ps` exactly as the launch file keeps them (writeMcpConfigFile).
+  async setMcpServers(servers: WorkerMcpServers): Promise<ClaudeMcpSetResult> {
+    this.assertOpen()
+    const result = objectValue(await this.awaitOpenControl(this.sdkQuery.setMcpServers(servers as never)), "setMcpServers")
+    const errors: Record<string, string> = {}
+    const rawErrors = result.errors && typeof result.errors === "object" && !Array.isArray(result.errors) ? result.errors as Record<string, unknown> : {}
+    for (const [name, message] of Object.entries(rawErrors).slice(0, 256)) {
+      const key = safeText(name, "setMcpServers.errors.name", 256)
+      if (key) errors[key] = safeText(typeof message === "string" ? message : String(message), "setMcpServers.errors.message", 2000)
+    }
+    return {
+      added: boundedStringArray(Array.isArray(result.added) ? result.added : [], "setMcpServers.added", 256, 256),
+      removed: boundedStringArray(Array.isArray(result.removed) ? result.removed : [], "setMcpServers.removed", 256, 256),
+      errors,
+    }
   }
 
   // `mcpAuthenticate` is present at runtime in @anthropic-ai/claude-agent-sdk 0.3.303 (the

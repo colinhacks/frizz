@@ -96,6 +96,8 @@ import {
   ThreadSkillsResult,
   McpStatusInput,
   McpStatusResult,
+  McpReloadInput,
+  McpReloadResult,
   McpSignInInput,
   McpSignInResult,
   McpSignInAttemptInput,
@@ -3641,6 +3643,18 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         if (!ctx.mcp) throw new Error("MCP status is not available on this server")
         return await ctx.mcp.status(input)
+      },
+    }),
+
+    // Re-read the project's MCP configuration into its running threads: the plug menu's Reload, and
+    // `frizzctl mcp reload` from an agent that just edited `.mcp.json` (it passes its own slug, as every
+    // worker call does). mcp-status.ts `reload` has the rule; the result says what changed.
+    mcpReload: mutation({
+      input: McpReloadInput,
+      output: McpReloadResult,
+      handler: async ({ input }) => {
+        if (!ctx.mcp) throw new Error("MCP reload is not available on this server")
+        return await ctx.mcp.reload(input)
       },
     }),
 

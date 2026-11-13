@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { expandMcpEnvRefs, normalizeMcpServer, projectMcpServers, workerMcpServers } from "./project-mcp-servers.ts"
+import { expandMcpEnvRefs, normalizeMcpServer, projectMcpServerPlan, projectMcpServers, workerMcpServers } from "./project-mcp-servers.ts"
 
 // A fixture is a fake cwd plus a fake Claude config dir. `claudeConfigDir` is always passed explicitly,
 // so no test ever reads the operator's REAL `~/.claude.json`. Under an override dir, `.claude.json` and
@@ -39,6 +39,19 @@ test("a declared server mounts only once the project approved it, through any of
   assert.deepEqual(Object.keys(f.read()), ["a"])
   f.write(join(f.cwd, ".claude", "settings.json"), { enableAllProjectMcpServers: true })
   assert.deepEqual(Object.keys(f.read()).sort(), ["a", "b"])
+})
+
+test("the plan names the declared servers nothing approves, and not the ones a layer turned off", () => {
+  const f = fixture()
+  f.write(join(f.cwd, ".mcp.json"), { mcpServers: { a: { command: "a" }, b: { command: "b" }, c: { command: "c" } } })
+  const plan = () => projectMcpServerPlan(f.cwd, { claudeConfigDir: f.configDir, env: {} })
+  assert.deepEqual(plan(), { servers: {}, unapproved: ["a", "b", "c"], invalid: [] })
+  // `c` is switched off on purpose, which is not the same as "nobody approved it".
+  f.write(join(f.cwd, ".claude", "settings.local.json"), { enabledMcpjsonServers: ["a"], disabledMcpjsonServers: ["c"] })
+  assert.deepEqual(plan(), { servers: { a: { command: "a" } }, unapproved: ["b"], invalid: [] })
+  // A file caught half-written is NAMED, not read as empty: a reload must refuse rather than unmount `a`.
+  f.write(join(f.cwd, ".mcp.json"), '{ "mcpServers": { "a": ')
+  assert.deepEqual(plan(), { servers: {}, unapproved: [], invalid: [join(f.cwd, ".mcp.json")] })
 })
 
 test("the cwd's own record in .claude.json and the user settings file approve too", () => {

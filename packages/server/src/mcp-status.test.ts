@@ -143,3 +143,68 @@ test("a prompt box on Codex does not fetch a runtime still waiting for its first
   assert.equal((await mcp.status({ backend: "codex" })).note, undefined)
   assert.equal(listed, 1)
 })
+
+test("a Claude reload reaches every running thread of the project, and reports the asking thread's own change", async () => {
+  const change = { added: ["docs"], removed: [], changed: [], unchanged: 1, errors: {}, unapproved: ["unsure"] }
+  let reloads = 0
+  const bridge = {
+    reloadMcpServersEverywhere: async () => {
+      reloads += 1
+      return [
+        { threadSlug: "claude-thread", outcome: "reloaded" as const, reload: change },
+        { threadSlug: "other-a", outcome: "reloaded" as const, reload: change },
+        { threadSlug: "other-b", outcome: "stale" as const },
+      ]
+    },
+    mcpServerStatus: async () => [{ name: "frizz", status: "connected" as const }, { name: "docs", status: "connected" as const, tools: 3 }],
+  }
+  const mcp = createMcpService(deps({ claudeBroker: bridge as unknown as ClaudeAgentBrokerBridge }))
+  assert.deepEqual(await mcp.reload({ slug: "claude-thread" }), {
+    backend: "claude",
+    agent: "Claude Code",
+    supported: true,
+    thread: change,
+    others: { reloaded: 1, stale: 1, failed: 0 },
+    servers: [{ name: "docs", state: "connected", tools: 3 }],
+  })
+  // The new-thread box has no thread of its own: the reload still reaches the running ones.
+  const fromBox = await mcp.reload({ backend: "claude" })
+  assert.equal(fromBox.thread, undefined)
+  assert.deepEqual(fromBox.others, { reloaded: 2, stale: 1, failed: 0 })
+  assert.equal(reloads, 2)
+})
+
+test("a Claude reload says why the asking thread got nothing, and fails loudly when its own session failed", async () => {
+  const outcomes: unknown[] = []
+  const bridge = { reloadMcpServersEverywhere: async () => outcomes, mcpServerStatus: async () => { throw new Error("not running") } }
+  const mcp = createMcpService(deps({ claudeBroker: bridge as unknown as ClaudeAgentBrokerBridge }))
+  assert.match((await mcp.reload({ slug: "claude-thread" })).note ?? "", /isn’t running/)
+  outcomes.push({ threadSlug: "claude-thread", outcome: "stale" })
+  assert.match((await mcp.reload({ slug: "claude-thread" })).note ?? "", /predates MCP reload/)
+  outcomes.splice(0, 1, { threadSlug: "claude-thread", outcome: "failed", error: "Nothing was reloaded: /p/.mcp.json is not valid JSON. Fix it and reload again." })
+  await assert.rejects(mcp.reload({ slug: "claude-thread" }), /not valid JSON/)
+})
+
+test("a Codex reload re-reads the app-server's config and names what it added and dropped", async () => {
+  let reloaded = false
+  const codex = {
+    listMcpServers: async () => reloaded
+      ? [{ name: "frizz", status: "connected" }, { name: "linear", status: "connected", tools: 4 }, { name: "docs", status: "failed", error: "spawn docs ENOENT" }]
+      : [{ name: "frizz", status: "connected" }, { name: "linear", status: "connected", tools: 4 }, { name: "old", status: "connected" }],
+    reloadMcpServers: async () => { reloaded = true },
+  }
+  const mcp = createMcpService(deps({ codexAppServer: codex as unknown as CodexAppServerBridge }))
+  try {
+    const result = await mcp.reload({ backend: "codex" })
+    assert.equal(result.thread, undefined, "the box has no thread of its own")
+    reloaded = false
+    const fromThread = await createMcpService(deps({
+      codexAppServer: codex as unknown as CodexAppServerBridge,
+      getSession: () => ({ backend: "codex", session_id: "c1" }),
+    })).reload({ slug: "codex-thread" })
+    assert.deepEqual(fromThread.thread, { added: ["docs"], removed: ["old"], changed: [], unchanged: 1, errors: { docs: "spawn docs ENOENT" }, unapproved: [] })
+    assert.deepEqual(fromThread.servers.map((row) => `${row.name}:${row.state}`), ["linear:connected", "docs:failed"])
+  } finally {
+    resetDeferredRuntimes()
+  }
+})

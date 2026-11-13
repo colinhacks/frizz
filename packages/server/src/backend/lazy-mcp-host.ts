@@ -98,6 +98,9 @@ export interface LazyMcpHost {
   readonly port: number
   /** Register `servers` and return the remote mounts that replace them in the worker's config. */
   mount: (servers: Record<string, StdioMcpServer>, context: LazyMcpMountContext) => Record<string, RemoteMcpServer>
+  /** Close the slots behind mounts this host handed out (a URL it did not mint is ignored): an MCP reload
+   *  that dropped or replaced a server stops its real process, which would otherwise outlive the reload. */
+  release: (mounts: RemoteMcpServer[]) => Promise<void>
   /** How many real processes are running — what the tests and the verification read. */
   running: () => string[]
   close: () => Promise<void>
@@ -453,6 +456,19 @@ export function startLazyMcpHost(options: LazyMcpHostOptions): Promise<LazyMcpHo
             out[name] = { type: "http", url: `http://127.0.0.1:${port}/mcp/${slot}`, headers: { Authorization: `Bearer ${token}` } }
           }
           return out
+        },
+        async release(mounts) {
+          const prefix = `http://127.0.0.1:${port}/mcp/`
+          const closing: Promise<void>[] = []
+          for (const mount of mounts) {
+            if (!mount.url.startsWith(prefix)) continue
+            const slot = mount.url.slice(prefix.length)
+            const server = servers.get(slot)
+            if (!server) continue
+            servers.delete(slot)
+            closing.push(server.close())
+          }
+          await Promise.all(closing)
         },
         running: () => [...servers.values()].filter((server) => server.isRunning).map((server) => server.name),
         async close() {

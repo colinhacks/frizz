@@ -141,6 +141,7 @@ export const REMOTE_ACCESS = {
 
   // MCP, provider and GitHub sign-ins.
   mcpStatus: "full",
+  mcpReload: "full",
   mcpSignIn: "full",
   mcpSignInPoll: "full",
   mcpSignInFinish: "full",

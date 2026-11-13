@@ -8,6 +8,7 @@ import type {
   ClaudeDiagnostic,
   ClaudeInputMessage,
   ClaudeInterruptOptions,
+  ClaudeMcpReload,
   ClaudeMcpServerReading,
   ClaudePermissionDecision,
   ClaudePermissionRequest,
@@ -75,6 +76,8 @@ export interface ClaudeBrokerClient {
   mcpServerStatus(): Promise<ClaudeMcpServerReading[]>
   /** Ask the session to reconnect one MCP server (after a sign-in saved its token elsewhere). */
   reconnectMcpServer(name: string): Promise<void>
+  /** Re-read the project's MCP configuration into the live session, and say what changed. */
+  reloadMcpServers(): Promise<ClaudeMcpReload>
   setPermissionMode(mode: string): void
   connected(): boolean
   /**
@@ -98,6 +101,29 @@ interface Options {
   cancelTimeoutMs?: number
   /** How long a `renameSession` waits for the provider's answer before rejecting. Default 30s. */
   renameTimeoutMs?: number
+  /** How long a `reloadMcpServers` waits for the session's answer before rejecting. Default 90s. */
+  mcpReloadTimeoutMs?: number
+}
+
+const names = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").slice(0, 256) : [])
+
+/** The daemon's `mcp-reload-result`, as far as it is well formed: a missing list is an empty one. */
+function mcpReloadOf(value: unknown): ClaudeMcpReload {
+  const raw = value && typeof value === "object" ? value as Record<string, unknown> : {}
+  const errors: Record<string, string> = {}
+  if (raw.errors && typeof raw.errors === "object" && !Array.isArray(raw.errors)) {
+    for (const [name, message] of Object.entries(raw.errors as Record<string, unknown>).slice(0, 256)) {
+      if (typeof message === "string") errors[name] = message
+    }
+  }
+  return {
+    added: names(raw.added),
+    removed: names(raw.removed),
+    changed: names(raw.changed),
+    unchanged: typeof raw.unchanged === "number" && Number.isInteger(raw.unchanged) && raw.unchanged >= 0 ? raw.unchanged : 0,
+    errors,
+    unapproved: names(raw.unapproved),
+  }
 }
 
 // Derived from the shared enum rather than re-spelled, so the router's strict zod and this guard can
@@ -114,6 +140,7 @@ export function connectClaudeBroker(
   // A re-title is a provider round trip, so it is genuinely slower than the bookkeeping answers
   // cancel/stop give. Still bounded: a wedged daemon must not hang a click.
   const renameTimeoutMs = options.renameTimeoutMs ?? 30_000
+  const mcpReloadTimeoutMs = options.mcpReloadTimeoutMs ?? 90_000
   let sock: net.Socket | null = null
   let closed = false
   let buf = ""
@@ -126,7 +153,7 @@ export function connectClaudeBroker(
   const pendingStops = new Map<string, { settle: () => void; fail: (error: Error) => void; timer: NodeJS.Timeout }>()
   const pendingRenames = new Map<string, { settle: (t: string | undefined) => void; fail: (error: Error) => void; timer: NodeJS.Timeout }>()
   const pendingSkills = new Map<string, { settle: (s: ClaudeSkillInfo[]) => void; fail: (error: Error) => void; timer: NodeJS.Timeout }>()
-  // The MCP round trips (`mcp-status`, `mcp-reconnect`), keyed by request id; `settle` reads its own frame.
+  // The MCP round trips (`mcp-status`, `mcp-reconnect`, `mcp-reload`), keyed by request id; `settle` reads its own frame.
   const pendingMcp = new Map<string, { settle: (frame: Record<string, unknown>) => void; fail: (error: Error) => void; timer: NodeJS.Timeout }>()
   // In-flight deliverInput calls, keyed by the requestId the daemon echoes on `input-result`.
   const pendingInputs = new Map<string, { settle: () => void; fail: (error: Error) => void; timer: NodeJS.Timeout; written: boolean }>()
@@ -208,7 +235,8 @@ export function connectClaudeBroker(
           break
         }
         case "mcp-status-result":
-        case "mcp-reconnect-result": {
+        case "mcp-reconnect-result":
+        case "mcp-reload-result": {
           const entry = pendingMcp.get(frame.requestId as string)
           if (!entry) break
           pendingMcp.delete(frame.requestId as string)
@@ -258,7 +286,7 @@ export function connectClaudeBroker(
   }
   connect()
 
-  const mcpRequest = (t: "mcp-status" | "mcp-reconnect", fields: Record<string, unknown>, timeoutMs: number) =>
+  const mcpRequest = (t: "mcp-status" | "mcp-reconnect" | "mcp-reload", fields: Record<string, unknown>, timeoutMs: number) =>
     new Promise<Record<string, unknown>>((resolve, reject) => {
       if (closed) { reject(new Error("the broker connection is closed")); return }
       const requestId = `${t}-${++cancelSeq}`
@@ -349,6 +377,9 @@ export function connectClaudeBroker(
     mcpServerStatus: () => mcpRequest("mcp-status", {}, cancelTimeoutMs).then((frame) => (Array.isArray(frame.servers) ? frame.servers : [])
       .filter((s: unknown): s is ClaudeMcpServerReading => typeof (s as ClaudeMcpServerReading)?.name === "string" && typeof (s as ClaudeMcpServerReading)?.status === "string")),
     reconnectMcpServer: (name: string) => mcpRequest("mcp-reconnect", { name }, renameTimeoutMs).then(() => undefined),
+    // The longest deadline of the MCP verbs: a reload waits on every new server's handshake, and a stdio
+    // server the lazy host has never seen starts its real command to answer it (`npx` resolving a package).
+    reloadMcpServers: () => mcpRequest("mcp-reload", {}, mcpReloadTimeoutMs).then((frame) => mcpReloadOf(frame.reload)),
     // The longer deadline: a re-title is a provider round trip, not local bookkeeping.
     renameSession: (description: string) => new Promise<string | undefined>((resolve, reject) => {
       if (closed) { reject(new Error("the broker connection is closed")); return }

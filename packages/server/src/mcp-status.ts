@@ -20,7 +20,7 @@
 // attempt's own redirect named, so the paste box can never be pointed at anything else.
 import { isRuntimeDeferred } from "./runtime-deferral.ts"
 import { randomUUID } from "node:crypto"
-import type { Backend, McpServerReading, McpSignInPollResult, McpSignInResult, McpSignInState, McpStatusResult, McpTarget } from "@frizz/shared"
+import type { Backend, McpReloadChange, McpReloadResult, McpServerReading, McpSignInPollResult, McpSignInResult, McpSignInState, McpStatusResult, McpTarget } from "@frizz/shared"
 import { acpAgentIdFromModel } from "@frizz/shared"
 import type { ClaudeAgentBrokerBridge } from "./backend/claude-agent-broker-bridge.ts"
 import type { ClaudeMcpServerReading } from "./backend/claude-agent-sdk-protocol.ts"
@@ -67,6 +67,8 @@ export interface McpServiceDeps {
 
 export interface McpService {
   status(target: McpTarget): Promise<McpStatusResult>
+  /** Re-read the project's MCP configuration into its running threads (see McpReloadResult). */
+  reload(target: McpTarget): Promise<McpReloadResult>
   signIn(target: McpTarget, server: string): Promise<McpSignInResult>
   poll(attemptId: string): McpSignInPollResult
   finish(attemptId: string, callbackUrl: string): Promise<McpSignInPollResult>
@@ -203,23 +205,77 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   const view = (attempt: Attempt): McpSignInPollResult => ({ state: attempt.state, ...(attempt.error ? { error: attempt.error } : {}) })
 
+  const statusOf = async (target: McpTarget): Promise<McpStatusResult> => {
+    const resolved = resolve(target)
+    if (resolved.backend === "acp" || resolved.backend === "opencode") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
+    if (resolved.backend === "codex") {
+      if (!deps.codexAppServer) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_UNAVAILABLE }
+      // Every prompt box on Codex asks this on load, and answering would fetch a runtime still waiting
+      // for its first thread: 378 MB for having picked it in the menu, signed in or not.
+      if (isRuntimeDeferred("codex")) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_NOT_DOWNLOADED }
+      const rows = withoutFrizz(await deps.codexAppServer.listMcpServers())
+      return { backend: "codex", agent: resolved.agent, supported: true, servers: rows.map(toReading) }
+    }
+    try {
+      return { backend: "claude", agent: resolved.agent, supported: true, servers: (await claudeServers(resolved)).map(toReading) }
+    } catch (error) {
+      if (error instanceof McpUnavailable) return { backend: "claude", agent: resolved.agent, supported: true, servers: [], note: error.message }
+      throw error
+    }
+  }
+
   return {
-    async status(target) {
+    status: statusOf,
+
+    // RELOAD. The configuration is the PROJECT's, so the reload is too: every running thread of the
+    // project is brought level with it, whichever box asked. Claude: each live broker session re-reads
+    // `.mcp.json` and swaps its servers in place (the daemon's reloadMcp). Codex: the app-server re-reads
+    // its config layers for every thread it has loaded (`config/mcpServer/reload`), so the change is
+    // read off its server list before and after.
+    async reload(target) {
       const resolved = resolve(target)
       if (resolved.backend === "acp" || resolved.backend === "opencode") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
       if (resolved.backend === "codex") {
         if (!deps.codexAppServer) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_UNAVAILABLE }
-        // Every prompt box on Codex asks this on load, and answering would fetch a runtime still waiting
-        // for its first thread: 378 MB for having picked it in the menu, signed in or not.
+        // Nothing has run Codex yet, so there is no thread to reload and nothing to read the list from.
         if (isRuntimeDeferred("codex")) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_NOT_DOWNLOADED }
-        const rows = withoutFrizz(await deps.codexAppServer.listMcpServers())
-        return { backend: "codex", agent: resolved.agent, supported: true, servers: rows.map(toReading) }
+        const before = withoutFrizz(await deps.codexAppServer.listMcpServers())
+        await deps.codexAppServer.reloadMcpServers()
+        const after = withoutFrizz(await deps.codexAppServer.listMcpServers())
+        const had = new Set(before.map((row) => row.name))
+        const has = new Set(after.map((row) => row.name))
+        const change: McpReloadChange = {
+          added: after.filter((row) => !had.has(row.name)).map((row) => row.name),
+          removed: before.filter((row) => !has.has(row.name)).map((row) => row.name),
+          // The list carries no definitions, so a server that kept its name reads as unchanged here.
+          changed: [],
+          unchanged: after.filter((row) => had.has(row.name)).length,
+          errors: Object.fromEntries(after.filter((row) => row.status === "failed").map((row) => [row.name, (row.error ?? "Failed to start").slice(0, 2000)])),
+          unapproved: [],
+        }
+        return { backend: "codex", agent: resolved.agent, supported: true, ...("slug" in target ? { thread: change } : {}), servers: after.map(toReading) }
       }
-      try {
-        return { backend: "claude", agent: resolved.agent, supported: true, servers: (await claudeServers(resolved)).map(toReading) }
-      } catch (error) {
-        if (error instanceof McpUnavailable) return { backend: "claude", agent: resolved.agent, supported: true, servers: [], note: error.message }
-        throw error
+      const outcomes = deps.claudeBroker ? await deps.claudeBroker.reloadMcpServersEverywhere() : []
+      const mine = resolved.thread ? outcomes.find((outcome) => outcome.threadSlug === resolved.thread!.slug) : undefined
+      // The thread that asked is the one whose failure is an error: it is the session someone is waiting on.
+      if (mine?.outcome === "failed") throw new Error(mine.error)
+      const others = outcomes.filter((outcome) => outcome !== mine)
+      let note: string | undefined
+      if (resolved.thread && !mine) note = "This thread’s Claude session isn’t running. Its next turn starts with the project’s MCP servers as they read then."
+      else if (mine?.outcome === "stale") note = "This thread’s Claude session predates MCP reload. It gets the project’s MCP servers as they read now when its session next starts."
+      const status = await statusOf(target)
+      return {
+        backend: "claude",
+        agent: resolved.agent,
+        supported: true,
+        ...(mine?.outcome === "reloaded" ? { thread: mine.reload } : {}),
+        ...(note ?? status.note ? { note: note ?? status.note } : {}),
+        others: {
+          reloaded: others.filter((outcome) => outcome.outcome === "reloaded").length,
+          stale: others.filter((outcome) => outcome.outcome === "stale").length,
+          failed: others.filter((outcome) => outcome.outcome === "failed").length,
+        },
+        servers: status.servers,
       }
     },
 

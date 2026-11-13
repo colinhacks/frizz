@@ -576,3 +576,40 @@ test("FRIZZ_PLUGIN_SYNC_OFF=1 leaves the session on the plugin it started with",
     c.client.close()
   } finally { await b.close(); plugin.remove() }
 })
+
+// An MCP reload re-reads the project's `.mcp.json` into the live session. The first one names the servers
+// the session was LAUNCHED with, unchanged, before the new set: a launch server leaves only once a call has
+// named it (measured on claude 2.1.323), so without it a server deleted from the file would stay mounted.
+test("an MCP reload adopts the launch set once, then sends the project's servers as they read now", { timeout: 20_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cbroker-mcp-"))
+  const writeMcp = (servers: Record<string, unknown> | string) => writeFileSync(join(dir, ".mcp.json"), typeof servers === "string" ? servers : JSON.stringify({ mcpServers: servers }))
+  mkdirSync(join(dir, ".claude"), { recursive: true })
+  writeFileSync(join(dir, ".claude", "settings.local.json"), JSON.stringify({ enabledMcpjsonServers: ["a", "b"] }))
+  writeMcp({ a: { command: "a-mcp" } })
+  const exe = join(dir, "fake-claude--basic.mjs")
+  copyFileSync(fakeCli, exe); chmodSync(exe, 0o700)
+  const socketPath = shortSocket()
+  const broker = runClaudeBroker({ socketPath, cwd: dir, sessionId: randomUUID(), executablePath: exe, permissionMode: "default", env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", CLAUDE_CONFIG_DIR: join(dir, "claude-config") } })
+  const sets = () => captureRows(dir).filter((row) => row.kind === "mcp-set-servers").map((row) => (row as { servers?: unknown }).servers)
+  try {
+    const c = clientWith(socketPath)
+    await c.waitEvent((e) => e.kind === "init")
+
+    writeMcp({ b: { command: "b-mcp" }, c: { command: "c-mcp" } })
+    assert.deepEqual(await c.client.reloadMcpServers(), { added: ["b"], removed: ["a"], changed: [], unchanged: 0, errors: {}, unapproved: ["c"] })
+    assert.deepEqual(sets(), [{ a: { command: "a-mcp" } }, { b: { command: "b-mcp" } }], "the launch set is adopted first, then replaced")
+
+    // Nothing changed: one call, the same set, no second adoption.
+    assert.deepEqual(await c.client.reloadMcpServers(), { added: [], removed: [], changed: [], unchanged: 1, errors: {}, unapproved: ["c"] })
+    assert.equal(sets().length, 3)
+
+    // A file caught half-written refuses the reload instead of unmounting everything it declared.
+    writeMcp('{ "mcpServers": { "b": ')
+    await assert.rejects(c.client.reloadMcpServers(), /not valid JSON/)
+    assert.equal(sets().length, 3, "nothing was sent")
+    c.client.close()
+  } finally {
+    await broker.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

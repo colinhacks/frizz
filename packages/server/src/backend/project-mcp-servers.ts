@@ -69,13 +69,22 @@ export interface ProjectMcpServersOptions {
 
 type JsonObject = Record<string, unknown>
 
-function readJsonObject(path: string): JsonObject | undefined {
+/** The object in the JSON file at `path`, or `undefined` for a missing or malformed one. `invalid`, when
+ *  given, collects the paths that EXIST but do not hold a JSON object: a dispatch fails open past them,
+ *  but a reload must not, or an edit caught half-written would unmount every server it declares. */
+function readJsonObject(path: string, invalid?: string[]): JsonObject | undefined {
+  let text: string
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"))
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as JsonObject) : undefined
+    text = readFileSync(path, "utf8")
   } catch {
     return undefined
   }
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as JsonObject
+  } catch {}
+  invalid?.push(path)
+  return undefined
 }
 
 function objectField(source: JsonObject | undefined, key: string): JsonObject | undefined {
@@ -194,30 +203,39 @@ function userScopeRemoteServers(account: JsonObject | undefined, cwd: string, en
 
 /** Everything a worker in `cwd` mounts besides the frizz server. See the header for the rule. */
 export function projectMcpServers(cwd: string, options: ProjectMcpServersOptions = {}): WorkerMcpServers {
+  return projectMcpServerPlan(cwd, options).servers
+}
+
+/** `projectMcpServers`, plus what an MCP reload needs to report: the `.mcp.json` servers left out because
+ *  nothing approves them (a server added to the file and never approved is otherwise a silent no-op), and
+ *  the config files that exist but do not parse. */
+export function projectMcpServerPlan(cwd: string, options: ProjectMcpServersOptions = {}): { servers: WorkerMcpServers; unapproved: string[]; invalid: string[] } {
   const env = options.env ?? process.env
   const home = options.home ?? homedir()
   const configOverride = options.claudeConfigDir ?? (env.CLAUDE_CONFIG_DIR?.trim() ? env.CLAUDE_CONFIG_DIR.trim() : undefined)
   const accountFile = configOverride ? join(configOverride, ".claude.json") : join(home, ".claude.json")
   const userSettingsFile = join(configOverride ?? join(home, ".claude"), "settings.json")
-  const account = readJsonObject(accountFile)
+  const invalid: string[] = []
+  const account = readJsonObject(accountFile, invalid)
 
-  const out: WorkerMcpServers = userScopeRemoteServers(account, cwd, env)
+  const servers: WorkerMcpServers = userScopeRemoteServers(account, cwd, env)
+  const unapproved: string[] = []
 
-  const declared = objectField(readJsonObject(join(cwd, ".mcp.json")), "mcpServers")
-  if (!declared) return out
+  const declared = objectField(readJsonObject(join(cwd, ".mcp.json"), invalid), "mcpServers")
+  if (!declared) return { servers, unapproved, invalid }
   const approval = collectApproval([
-    readJsonObject(join(cwd, ".claude", "settings.json")),
-    readJsonObject(join(cwd, ".claude", "settings.local.json")),
-    readJsonObject(userSettingsFile),
+    readJsonObject(join(cwd, ".claude", "settings.json"), invalid),
+    readJsonObject(join(cwd, ".claude", "settings.local.json"), invalid),
+    readJsonObject(userSettingsFile, invalid),
     objectField(objectField(account, "projects"), cwd),
   ])
   for (const [name, raw] of Object.entries(declared)) {
     if (approval.disabled.has(name)) continue
-    if (!approval.all && !approval.enabled.has(name)) continue
+    if (!approval.all && !approval.enabled.has(name)) { unapproved.push(name); continue }
     const server = normalizeMcpServer(raw, env)
-    if (server) out[name] = server
+    if (server) servers[name] = server
   }
-  return out
+  return { servers, unapproved, invalid }
 }
 
 /** The complete mount for one worker: the project's servers with the frizz server layered over them, so

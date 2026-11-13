@@ -173,6 +173,33 @@ export const CLAUDE_BROKER_CAPABILITY_INPUT_ACK = "input-ack-v1"
 // back to what the thread's next session would see.
 export const CLAUDE_BROKER_CAPABILITY_MCP = "mcp-v1"
 
+// Re-reading the project's MCP configuration into the live session (`mcp-reload`, the SDK's
+// `setMcpServers()`): `frizzctl mcp reload` and the plug menu's Reload. Its own flag because a daemon
+// that answers `mcp-status` may still predate it, and that thread then gets the change only when its
+// session next restarts.
+export const CLAUDE_BROKER_CAPABILITY_MCP_RELOAD = "mcp-reload-v1"
+
+// What `setMcpServers()` answered, bounded for the wire. `added` and `removed` are the CLI's own lists,
+// which count a server the call ADOPTED (one the session was launched with, named for the first time)
+// as added, so the daemon reports its own diff instead (ClaudeMcpReload).
+export interface ClaudeMcpSetResult {
+  added: string[]
+  removed: string[]
+  errors: Record<string, string>
+}
+
+// What one session's reload changed, against what that session held before it. `unapproved` names the
+// `.mcp.json` servers left out because nothing approves them: without it, a server added to the file and
+// never approved reads as a reload that did nothing.
+export interface ClaudeMcpReload {
+  added: string[]
+  removed: string[]
+  changed: string[]
+  unchanged: number
+  errors: Record<string, string>
+  unapproved: string[]
+}
+
 // One MCP server as a Claude session reports it, bounded for the wire. `status` is the SDK's own
 // vocabulary. `remote` says whether it is a URL server (the only kind that can need a sign-in).
 export interface ClaudeMcpServerReading {

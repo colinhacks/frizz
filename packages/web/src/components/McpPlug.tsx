@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Loader2, Plug } from "lucide-react"
 import { useSnapshot } from "valtio"
-import type { McpServerReading, McpSignInState, McpTarget } from "@frizz/shared"
+import type { McpReloadResult, McpServerReading, McpSignInState, McpTarget } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { prefs } from "../lib/prefs.ts"
@@ -149,12 +149,72 @@ function McpMenu({ target, status, isIgnored }: {
     )
   }
 
+  const queryClient = useQueryClient()
+  const [reloading, setReloading] = useState(false)
+  const [reloaded, setReloaded] = useState<{ text: string; failed: boolean } | null>(null)
+  // RELOAD re-reads the PROJECT's MCP configuration into every running thread of the project — the same
+  // call an agent makes with `frizzctl mcp reload` after editing `.mcp.json`. Nothing watches the files, so
+  // this is how an edit made outside a thread reaches the threads already running.
+  const reload = async () => {
+    setReloading(true)
+    setReloaded(null)
+    try {
+      setReloaded({ text: reloadSummary(await rpc.mcpReload(target)), failed: false })
+    } catch (failure) {
+      setReloaded({ text: `Couldn’t reload. ${failure instanceof Error ? failure.message : String(failure)}`, failed: true })
+    } finally {
+      setReloading(false)
+      // Every box reading this project's servers may have just changed.
+      void queryClient.invalidateQueries({ queryKey: ["mcpStatus"] })
+    }
+  }
+
   return (
     <div>
-      <div className="border-b border-border px-[13px] pb-[8px] pt-[9px] text-[12px] font-medium text-fg">MCP servers</div>
+      {/* The title and the button on one baseline. The ghost button's label sits 7px inside its box (6px
+          padding, 1px border): -10px against the header's 13px puts that label's right edge 10px from the
+          menu's, where every row's right-hand text ends (.mcp-row's padding). -3px top and bottom keep the
+          20px button inside the title's line, so the header is as tall as it was without it. */}
+      <div className="flex items-baseline justify-between border-b border-border px-[13px] pb-[8px] pt-[9px] text-[12px] font-medium text-fg">
+        <span>MCP servers</span>
+        {data?.supported && (
+          <button
+            type="button"
+            data-mcp-reload
+            className="mcp-btn mcp-btn-ghost -my-[3px] -mr-[10px]"
+            onClick={() => void reload()}
+            disabled={reloading}
+            title="Re-read the project’s MCP configuration into its running threads"
+          >
+            {reloading ? "Reloading…" : "Reload"}
+          </button>
+        )}
+      </div>
+      {reloaded && <div data-mcp-reload-note className={`mcp-reload-note ${reloaded.failed ? "mcp-reload-note-failed" : ""}`}>{reloaded.text}</div>}
       {body}
     </div>
   )
+}
+
+/** One line saying what a reload did, for the note under the menu's header. */
+export function reloadSummary(result: McpReloadResult): string {
+  if (!result.supported) return `${result.agent} has no MCP reload.`
+  const parts: string[] = []
+  const change = result.thread
+  if (change) {
+    if (change.added.length) parts.push(`Added ${change.added.join(", ")}`)
+    if (change.changed.length) parts.push(`Restarted ${change.changed.join(", ")}`)
+    if (change.removed.length) parts.push(`Removed ${change.removed.join(", ")}`)
+    const failed = Object.keys(change.errors)
+    if (failed.length) parts.push(`${failed.join(", ")} failed to connect`)
+    if (change.unapproved.length) parts.push(`${change.unapproved.join(", ")} isn’t approved in .claude settings`)
+  }
+  let text = parts.length ? `${parts.join(". ")}.` : change ? "Nothing changed." : ""
+  if (result.note) text = text ? `${text} ${result.note}` : result.note
+  const others = result.others?.reloaded ?? 0
+  if (others) text = `${text ? `${text} ` : ""}Reloaded ${others} ${change ? "other " : ""}running ${others === 1 ? "thread" : "threads"}.`
+  if (!text) text = result.backend === "codex" ? "Reloaded every Codex thread of this project." : "No running threads to reload. New threads read the project’s MCP servers when they start."
+  return text
 }
 
 function MenuNote({ children }: { children: React.ReactNode }) {

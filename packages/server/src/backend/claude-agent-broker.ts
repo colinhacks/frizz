@@ -34,7 +34,8 @@ import { fileURLToPath } from "node:url"
 import { createClaudeQueryFactory, sanitizeProviderChildEnvironment } from "./claude-agent-sdk.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
 import { leaseRuntime } from "../runtime-lease.ts"
-import { projectMcpServers, workerMcpServers, type StdioMcpServer, type WorkerMcpServers } from "./project-mcp-servers.ts"
+import { projectMcpServerPlan, workerMcpServers, type RemoteMcpServer, type StdioMcpServer, type WorkerMcpServer, type WorkerMcpServers } from "./project-mcp-servers.ts"
+import { planMcpReload, type McpSurface } from "./mcp-reload-plan.ts"
 import { lazyMcpEnabled, startLazyMcpHost, type LazyMcpHost } from "./lazy-mcp-host.ts"
 import { frizzRoots } from "../frizz-paths.ts"
 import { BROKER_DISALLOWED_TOOLS, claudeCompactionWindowOf } from "./types.ts"
@@ -43,7 +44,7 @@ import { selfProcessStart } from "./daemon-identity.ts"
 import { createClaudeBrokerDiagnosticWriter, createClaudeBrokerExitWriter, type ClaudeBrokerExitReason } from "./claude-broker-diagnostics.ts"
 import { claudeClosureFingerprint, claudePluginSyncEnabled, createClaudePluginSync } from "./claude-plugin-sync.ts"
 import { recordObservedClaudeQuota } from "./claude-quota-observed.ts"
-import { CLAUDE_BROKER_CAPABILITY_CANCEL_INPUT, CLAUDE_BROKER_CAPABILITY_INPUT_ACK, CLAUDE_BROKER_CAPABILITY_LIST_SKILLS, CLAUDE_BROKER_CAPABILITY_MCP, CLAUDE_BROKER_CAPABILITY_RELOAD_PLUGINS, CLAUDE_BROKER_CAPABILITY_RENAME, CLAUDE_BROKER_CAPABILITY_STOP_TASK, CLAUDE_BROKER_CAPABILITY_SUBAGENT_STEER, CLAUDE_INPUT_DROP_DIAGNOSTIC_PREFIX } from "./claude-agent-sdk-protocol.ts"
+import { CLAUDE_BROKER_CAPABILITY_CANCEL_INPUT, CLAUDE_BROKER_CAPABILITY_INPUT_ACK, CLAUDE_BROKER_CAPABILITY_LIST_SKILLS, CLAUDE_BROKER_CAPABILITY_MCP, CLAUDE_BROKER_CAPABILITY_MCP_RELOAD, CLAUDE_BROKER_CAPABILITY_RELOAD_PLUGINS, CLAUDE_BROKER_CAPABILITY_RENAME, CLAUDE_BROKER_CAPABILITY_STOP_TASK, CLAUDE_BROKER_CAPABILITY_SUBAGENT_STEER, CLAUDE_INPUT_DROP_DIAGNOSTIC_PREFIX, type ClaudeMcpReload } from "./claude-agent-sdk-protocol.ts"
 import type {
   ClaudeDiagnostic,
   ClaudeInputMessage,
@@ -117,7 +118,7 @@ export interface BrokerRecord {
 // of a VALUE from here — rather than an `import type` — initializes this module inside the server
 // process, where the entry-point check is satisfied by the bundle's own path and the guard fires. That
 // took down the whole control plane on the artifact while dev source (separate files) stayed green.
-const BROKER_CAPABILITIES = [CLAUDE_BROKER_CAPABILITY_SUBAGENT_STEER, CLAUDE_BROKER_CAPABILITY_CANCEL_INPUT, CLAUDE_BROKER_CAPABILITY_STOP_TASK, CLAUDE_BROKER_CAPABILITY_RELOAD_PLUGINS, CLAUDE_BROKER_CAPABILITY_RENAME, CLAUDE_BROKER_CAPABILITY_LIST_SKILLS, CLAUDE_BROKER_CAPABILITY_INPUT_ACK, CLAUDE_BROKER_CAPABILITY_MCP]
+const BROKER_CAPABILITIES = [CLAUDE_BROKER_CAPABILITY_SUBAGENT_STEER, CLAUDE_BROKER_CAPABILITY_CANCEL_INPUT, CLAUDE_BROKER_CAPABILITY_STOP_TASK, CLAUDE_BROKER_CAPABILITY_RELOAD_PLUGINS, CLAUDE_BROKER_CAPABILITY_RENAME, CLAUDE_BROKER_CAPABILITY_LIST_SKILLS, CLAUDE_BROKER_CAPABILITY_INPUT_ACK, CLAUDE_BROKER_CAPABILITY_MCP, CLAUDE_BROKER_CAPABILITY_MCP_RELOAD]
 
 const IDLE_EXIT_MS = 6 * 60 * 60 * 1000
 // How long a permission request waits in this process before frizz is shown it — long enough for the
@@ -138,14 +139,20 @@ export interface RunClaudeBrokerOptions {
   lazyMcpHost?: LazyMcpHost
 }
 
-/** The project's stdio servers, handed to the lazy host and replaced by its remote mounts. A name the
- *  frizz mount takes is left alone: workerMcpServers drops it anyway, and a slot nobody can reach is noise. */
-function mountLazily(project: WorkerMcpServers, frizz: WorkerMcpServers | undefined, host: LazyMcpHost | undefined, context: Parameters<LazyMcpHost["mount"]>[1]): WorkerMcpServers {
+/** `servers` without the names the frizz mount takes: workerMcpServers would drop them anyway, and a slot
+ *  nobody can reach is noise — as is naming one in a reload, which would let it shadow the frizz mount. */
+function withoutFrizzNames(servers: WorkerMcpServers, frizz: WorkerMcpServers | undefined): WorkerMcpServers {
+  if (!frizz) return servers
+  return Object.fromEntries(Object.entries(servers).filter(([name]) => !(name in frizz)))
+}
+
+const isStdio = (server: WorkerMcpServer): server is StdioMcpServer => server.type === undefined || server.type === "stdio"
+
+/** The project's servers as the CLI is handed them: each stdio one replaced by the lazy host's remote mount. */
+function mountLazily(project: WorkerMcpServers, host: LazyMcpHost | undefined, context: Parameters<LazyMcpHost["mount"]>[1]): WorkerMcpServers {
   if (!host) return project
   const stdio: Record<string, StdioMcpServer> = {}
-  for (const [name, server] of Object.entries(project)) {
-    if ((server.type === undefined || server.type === "stdio") && !(frizz && name in frizz)) stdio[name] = server as StdioMcpServer
-  }
+  for (const [name, server] of Object.entries(project)) if (isStdio(server)) stdio[name] = server
   return { ...project, ...host.mount(stdio, context) }
 }
 
@@ -225,6 +232,21 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
         log: (message) => writeDiagnostic?.({ kind: "stderr", message: `[plugin-sync] ${message}`, truncated: false }),
       })
     : undefined
+  // The thread's MCP surface: what the project declared when this session started, and what the CLI was
+  // handed for each server. Kept because an MCP reload (`mcp-reload`, below) diffs against it.
+  const lazyMcpContext: Parameters<LazyMcpHost["mount"]>[1] = {
+    cwd: config.cwd,
+    // What the CLI itself would have spawned the server with: the env the factory hands it, after
+    // the same sanitizing (no inherited NODE_OPTIONS, no nub shim on PATH).
+    env: sanitizeProviderChildEnvironment(env) as Record<string, string>,
+    log: (message) => writeDiagnostic?.({ kind: "stderr", message: `[lazy-mcp] ${message}`, truncated: false }),
+  }
+  const launchDefinitions = withoutFrizzNames(projectMcpServerPlan(config.cwd, { env }).servers, config.mcpServers)
+  let mcpSurface: McpSurface & { adopted: boolean } = {
+    definitions: launchDefinitions,
+    mounts: mountLazily(launchDefinitions, options.lazyMcpHost, lazyMcpContext),
+    adopted: false,
+  }
   const handle = factory.start({
     cwd: config.cwd,
     session: config.resume ? { kind: "resume", sessionId: config.sessionId } : { kind: "new", sessionId: config.sessionId },
@@ -239,19 +261,11 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
     // The WHOLE MCP surface of this thread, and STRICT so the CLI discovers nothing else: the project's
     // approved `.mcp.json` (and the operator's remote user-scope servers) under the frizz mount, which
     // wins a name collision. Read at every fork, not once per project, so a `.mcp.json` edit reaches the
-    // next dispatch the way it reaches the next plain `claude`. project-mcp-servers.ts has the reasons.
-    // Stdio servers are not started here: the lazy host stands in for each one and starts the real
-    // command on the first tool call (lazy-mcp-host.ts has the measurement that motivated it).
-    mcpServers: workerMcpServers(
-      mountLazily(projectMcpServers(config.cwd, { env }), config.mcpServers, options.lazyMcpHost, {
-        cwd: config.cwd,
-        // What the CLI itself would have spawned the server with: the env the factory hands it, after
-        // the same sanitizing (no inherited NODE_OPTIONS, no nub shim on PATH).
-        env: sanitizeProviderChildEnvironment(env) as Record<string, string>,
-        log: (message) => writeDiagnostic?.({ kind: "stderr", message: `[lazy-mcp] ${message}`, truncated: false }),
-      }),
-      config.mcpServers,
-    ),
+    // next dispatch the way it reaches the next plain `claude` — and an MCP reload brings it into this one.
+    // project-mcp-servers.ts has the reasons. Stdio servers are not started here: the lazy host stands in
+    // for each one and starts the real command on the first tool call (lazy-mcp-host.ts has the
+    // measurement that motivated it).
+    mcpServers: workerMcpServers(mcpSurface.mounts, config.mcpServers),
     strictMcpConfig: true,
     allowedTools: config.allowedTools,
     // Claude Code's own schedulers are taken away (BROKER_DISALLOWED_TOOLS has the reason). AskUserQuestion
@@ -409,6 +423,56 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
   // standalone daemon exits straight past it, but the embedded form (every broker in the tests) has no
   // exit: each such timer held the test process open, so claude-agent-broker.test.ts passed every test
   // and then never exited (measured 2026-10-01: twelve live `armIdle` timers once the last test ended).
+  // RE-READ THE PROJECT'S MCP CONFIGURATION INTO THIS LIVE SESSION — `frizzctl mcp reload` and the plug
+  // menu's Reload, by way of the bridge. Nothing watches the files: the agent (or the operator) edits
+  // `.mcp.json` and asks. Safe mid-turn — the SDK connects a new server while a tool call runs, and the
+  // model can call it before the turn ends — so it is not held for a turn boundary the way a plugin reload
+  // is. One at a time: two overlapping reloads would each diff against a surface the other is replacing.
+  let mcpReloading: Promise<unknown> = Promise.resolve()
+  const reloadMcp = (): Promise<ClaudeMcpReload> => {
+    const run = mcpReloading.catch(() => {}).then(async (): Promise<ClaudeMcpReload> => {
+      const read = projectMcpServerPlan(config.cwd, { env })
+      // A dispatch reads a malformed file as empty; a reload that did would unmount every server it
+      // declares, in every running thread of the project, because an edit was caught half-written.
+      if (read.invalid.length > 0) {
+        throw new Error(`Nothing was reloaded: ${read.invalid.join(", ")} ${read.invalid.length === 1 ? "is" : "are"} not valid JSON. Fix it and reload again.`)
+      }
+      const host = options.lazyMcpHost
+      const plan = planMcpReload(
+        mcpSurface,
+        withoutFrizzNames(read.servers, config.mcpServers),
+        host ? (name, server) => host.mount({ [name]: server as StdioMcpServer }, lazyMcpContext)[name]! : undefined,
+      )
+      let result
+      try {
+        // A server this session was LAUNCHED with is let go only once a call has named it (measured on
+        // claude 2.1.323), so the first reload names the launch set as it stands — re-sent unchanged,
+        // nothing restarts — before sending the set that replaces it. Without it, a server deleted from
+        // `.mcp.json` would stay mounted until the session ended. The frizz mount is never named, which
+        // is what keeps it up whatever a reload sends.
+        if (!mcpSurface.adopted) {
+          if (Object.keys(mcpSurface.mounts).length > 0) await handle.setMcpServers(mcpSurface.mounts)
+          mcpSurface = { ...mcpSurface, adopted: true }
+        }
+        result = await handle.setMcpServers(plan.mounts)
+      } catch (error) {
+        await host?.release(plan.minted).catch(() => {})
+        throw error
+      }
+      mcpSurface = { definitions: withoutFrizzNames(read.servers, config.mcpServers), mounts: plan.mounts, adopted: true }
+      // The CLI has let go of what the new set no longer sends; stop the real processes behind them.
+      await host?.release(plan.stale.filter((mount): mount is RemoteMcpServer => !isStdio(mount))).catch(() => {})
+      writeDiagnostic?.({
+        kind: "stderr",
+        message: `[mcp-reload] added=${plan.added.join(",") || "-"} removed=${plan.removed.join(",") || "-"} changed=${plan.changed.join(",") || "-"} unchanged=${plan.unchanged} errors=${Object.keys(result.errors).join(",") || "-"}`,
+        truncated: false,
+      })
+      return { added: plan.added, removed: plan.removed, changed: plan.changed, unchanged: plan.unchanged, errors: result.errors, unapproved: read.unapproved }
+    })
+    mcpReloading = run
+    return run
+  }
+
   const armIdle = () => { if (client || closed) return; clearTimeout(idleTimer); idleTimer = setTimeout(() => shutdown(0, "idle-timeout"), IDLE_EXIT_MS) }
 
   const server = net.createServer((sock) => {
@@ -570,6 +634,15 @@ export function runClaudeBroker(config: ClaudeBrokerConfig, options: RunClaudeBr
           void handle.reconnectMcpServer(name).then(
             () => write(sock, { t: "mcp-reconnect-result", requestId }),
             (error: unknown) => write(sock, { t: "mcp-reconnect-result", requestId, error: error instanceof Error ? error.message : String(error) }),
+          )
+        }
+        else if (msg.t === "mcp-reload") {
+          // The project's MCP configuration re-read into this session (reloadMcp above). Answered on
+          // `sock` like the others: the agent that asked is blocked on what changed.
+          const requestId = msg.requestId as string
+          void reloadMcp().then(
+            (reload) => write(sock, { t: "mcp-reload-result", requestId, reload }),
+            (error: unknown) => write(sock, { t: "mcp-reload-result", requestId, error: error instanceof Error ? error.message : String(error) }),
           )
         }
         else if (msg.t === "set-mode") void handle.setPermissionMode(msg.mode as never).catch(() => {})

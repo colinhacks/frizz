@@ -308,6 +308,11 @@ test("the MCP menu's reads reach the CLI without a turn, and only what it can re
     })
     await harness.handle.reconnectMcpServer("notion")
     await assert.rejects(harness.handle.reconnectMcpServer("nope"), /Server not found: nope/)
+    // A reload's set rides the control channel, and the answer comes back bounded and typed.
+    const servers = { docs: { command: "docs-mcp", env: { TOKEN: "t" } }, broken: { type: "http" as const, url: "http://127.0.0.1:9/mcp" } }
+    assert.deepEqual(await harness.handle.setMcpServers(servers), { added: ["docs", "broken"], removed: [], errors: { broken: "connect ECONNREFUSED 127.0.0.1:9" } })
+    const sets = await waitForCapture(harness.capturePath, (rows) => rows.some((row) => row.kind === "mcp-set-servers"))
+    assert.deepEqual(sets.find((row) => row.kind === "mcp-set-servers")?.servers, servers)
     const records = await waitForCapture(harness.capturePath, (rows) => rows.filter((row) => row.kind === "mcp-reconnect").length === 2)
     assert.deepEqual(records.filter((row) => row.kind === "mcp-authenticate").map((row) => row.serverName), ["notion"])
   } finally {

@@ -848,6 +848,25 @@ links under ⋯ on a phone. Reuse the label to update its destination;
 read registrations with \`frizzctl activity\` and remove one with \`frizzctl unlink <id>\`. Register existing files, using an
 absolute path outside the project root. A saved reference is not a running process or a completion gate.`
 
+// How an agent brings an MCP server into the thread it is in. Only Claude Code and Codex have one; an ACP
+// agent's MCP servers are its own business, and the plug menu reads them as unsupported.
+const MCP_RELOAD: Partial<Record<BackendKind, string>> = {
+  claude: `## Adding an MCP server to this thread
+
+This thread read the project's MCP configuration when its session started, and nothing watches the
+files. To add, change or remove a server, edit the project's \`.mcp.json\` (a server there loads once its
+name is in \`enabledMcpjsonServers\` in \`.claude/settings.local.json\`), then run \`frizzctl mcp reload\`.
+It connects the change in this thread and in every other running thread of the project, with no restart,
+and you can call the new server's tools in the same turn. \`frizzctl mcp --help\` has the details.`,
+  codex: `## Adding an MCP server to this thread
+
+This thread read the project's MCP configuration when its session started, and nothing watches the
+files. To add, change or remove a server, edit an \`[mcp_servers.<name>]\` table in the project's
+\`.codex/config.toml\` (Codex reads it only for a project it trusts), then run \`frizzctl mcp reload\`. It
+connects the change in every running Codex thread of the project, with no restart, and you can call the
+new server's tools in the same turn. \`frizzctl mcp --help\` has the details.`,
+}
+
 const QUALITY_BAR = `## Quality bar
 
 - Verify behavior end-to-end before calling anything done. A green suite over a stubbed implementation
@@ -2073,6 +2092,7 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
     VISUAL_EVIDENCE,
     MARKDOWN_COMPONENTS,
     REGISTERED_LINKS,
+    MCP_RELOAD[kind] ?? null,
     QUALITY_BAR,
     TOKEN_ECONOMY,
     QUESTIONS,

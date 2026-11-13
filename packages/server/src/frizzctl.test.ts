@@ -35,6 +35,7 @@ function plausible(procedure: string, body: any): unknown {
     case "dropOwnLink": return { dropped: true }
     case "listThreads": return { project: { slug: "frizz", id: "proj-1", name: "frizz" }, threads: [], counts: { rested: 0, active: 0, snoozed: 0, done: 0 } }
     case "setOwnThreadTitle": return { accepted: true, title: body.title }
+    case "mcpReload": return { backend: "claude", agent: "Claude Code", supported: true, thread: { added: [], removed: [], changed: [], unchanged: 0, errors: {}, unapproved: [] }, others: { reloaded: 0, stale: 0, failed: 0 }, servers: [] }
     case "ask": return { registered: body.questions.map((q: any, i: number) => ({ id: `qst_${i}`, spec: q, ...(q.secret ? { secretPath: "/tmp/a dir/secret" } : {}) })) }
     case "unask": return { withdrawn: true }
     case "markOwnDone": return { done: true }
@@ -982,6 +983,45 @@ test("every frizzctl example the worker contract writes out runs as written, and
         assert.equal(body.body, "- **Fixed the lookup** in `src/resolver.ts`; `npm test` green.")
       }
     }
+  } finally {
+    fake.close()
+  }
+})
+
+test("`mcp reload` reloads as the calling thread and prints what changed, what failed and what nothing approves", async () => {
+  const fake = await fakeFrizz((procedure) => procedure === "mcpReload"
+    ? {
+        result: {
+          backend: "claude",
+          agent: "Claude Code",
+          supported: true,
+          thread: { added: ["docs"], removed: ["old"], changed: ["browser"], unchanged: 2, errors: { broken: "connect ECONNREFUSED" }, unapproved: ["unsure"] },
+          others: { reloaded: 2, stale: 1, failed: 0 },
+          servers: [{ name: "notion", state: "needs-auth", remote: true }],
+        },
+      }
+    : undefined)
+  try {
+    const ran = await run(["mcp", "reload"], { env: worker(fake) })
+    assert.equal(ran.code, 0, ran.stderr)
+    assert.deepEqual(fake.seen.map((s) => [s.url.split("/rpc/")[1], s.body]), [["mcpReload", { slug: "the-caller" }]])
+    assert.equal(ran.stdout, [
+      "Reloaded this thread's MCP servers from the project's configuration.",
+      "Added: `docs`",
+      "Changed, so restarted: `browser`",
+      "Removed: `old`",
+      "Unchanged: 2",
+      "Failed to connect: `broken`: connect ECONNREFUSED",
+      "Not loaded, because nothing approves it: `unsure`. A `.mcp.json` server loads once its name is in `enabledMcpjsonServers` in `.claude/settings.local.json` (or `enableAllProjectMcpServers` is true); add it there and reload again.",
+      "Needs a sign-in: `notion`. The human signs in from the plug menu beside the prompt box.",
+      "Also reloaded 2 other running threads of this project; 1 more runs a session too old to reload, and gets the change when it next starts.",
+      "",
+    ].join("\n"))
+    const unchanged = await run(["mcp", "reload"], { env: worker(fake) })
+    assert.equal(unchanged.code, 0)
+    const bad = await run(["mcp", "restart"], { env: worker(fake) })
+    assert.equal(bad.code, 1)
+    assert.match(bad.stderr, /the one action is `reload`/)
   } finally {
     fake.close()
   }

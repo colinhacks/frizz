@@ -2712,6 +2712,15 @@ html[data-vt-door="expand"]::view-transition-old(thread-chat) {
 .mcp-btn-primary:hover { background: color-mix(in oklab, var(--color-fg) 88%, var(--color-bg)); }
 .mcp-btn-ghost { border-color: transparent; color: var(--color-muted); padding: 1px 6px; }
 .mcp-btn-ghost:hover { color: var(--color-fg); background: var(--color-panel-2); }
+/* What the header's Reload did: one line under the header, at the header's inset. */
+.mcp-reload-note {
+  padding: 7px 13px 7px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+.mcp-reload-note-failed { color: var(--gh-fg-danger); }
 /* The sign-in card, and an error, span the row under the name column (mark 14px + its 6px margin). */
 .mcp-signin {
   grid-column: 1 / 3;

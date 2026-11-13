@@ -6272,6 +6272,41 @@ export const McpStatusResult = z.object({
 }).strict()
 export type McpStatusResult = z.infer<typeof McpStatusResult>
 
+// RELOAD: re-read the PROJECT's MCP configuration into the threads already running — `frizzctl mcp reload`
+// (an agent that just edited `.mcp.json` or `.codex/config.toml`) and the plug menu's Reload. Nothing
+// watches the files; this is the one way a running thread picks up an edit. The configuration is the
+// project's, so a reload reaches every running thread of the project, not only the one that asked.
+const McpServerName = z.string().min(1).max(256)
+export const McpReloadChange = z.object({
+  added: z.array(McpServerName).max(256),
+  removed: z.array(McpServerName).max(256),
+  /** Kept its name, changed its definition: restarted with the new one. */
+  changed: z.array(McpServerName).max(256),
+  unchanged: z.number().int().nonnegative(),
+  /** Servers that failed to connect, with the agent's reason. */
+  errors: z.record(McpServerName, z.string().max(2000)),
+  /** Declared in `.mcp.json` but approved nowhere, so left out (Claude only). */
+  unapproved: z.array(McpServerName).max(256),
+}).strict()
+export type McpReloadChange = z.infer<typeof McpReloadChange>
+export const McpReloadInput = McpTarget
+export type McpReloadInput = McpTarget
+export const McpReloadResult = z.object({
+  backend: Backend,
+  agent: z.string().max(200),
+  supported: z.boolean(),
+  /** What the reload did to the asking thread's session. Absent for the new-thread box, and for a thread
+   *  whose session is not running or predates reload — `note` then says why. */
+  thread: McpReloadChange.optional(),
+  note: z.string().max(500).optional(),
+  /** The project's other running Claude threads: reloaded, or too old to be (they pick the change up when
+   *  their session next starts). Codex reloads every thread of its app-server at once and counts none. */
+  others: z.object({ reloaded: z.number().int().nonnegative(), stale: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }).strict().optional(),
+  /** The servers as they read after the reload, the same reading `mcpStatus` gives. */
+  servers: z.array(McpServerReading).max(256),
+}).strict()
+export type McpReloadResult = z.infer<typeof McpReloadResult>
+
 // A sign-in is an ATTEMPT the server tracks: it opens the provider's page (`authUrl`) in the browser, the
 // agent's CLI catches the return trip on `localhost`, and the menu polls the attempt until it settles.
 // From another device that return trip cannot reach this machine, so the human pastes the address the

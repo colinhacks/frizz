@@ -284,3 +284,22 @@ test("closing the host stops every real server it started", async () => {
   assert.throws(() => process.kill(pid, 0), "the real server process is gone")
   rmSync(fx.dir, { recursive: true, force: true })
 })
+
+test("releasing a mount stops its real server and retires its slot; a URL the host did not mint is ignored", async () => {
+  const fx = fixture()
+  const { host, remote } = await mount(fx)
+  try {
+    await rpc(remote, "initialize", INIT)
+    const pid = Number((await rpc(remote, "tools/call", { name: "pid", arguments: {} })).result.content[0].text)
+    process.kill(pid, 0) // alive
+    await host.release([{ type: "http", url: "https://mcp.example.com/mcp" }, remote])
+    assert.deepEqual(host.running(), [])
+    assert.throws(() => process.kill(pid, 0), "the real server process is gone")
+    const after = await fetch(remote.url, { method: "POST", headers: { ...remote.headers, "content-type": "application/json" }, body: "{}" })
+    await after.arrayBuffer()
+    assert.equal(after.status, 404, "a released slot answers nothing")
+  } finally {
+    await host.close()
+    rmSync(fx.dir, { recursive: true, force: true })
+  }
+})

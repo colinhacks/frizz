@@ -257,6 +257,18 @@ function handleHostControl(message) {
     respond(message.request_id, { authUrl: "https://mcp.notion.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A61234%2Fcallback", requiresUserAction: true, callbackPort: 61234 })
     return
   }
+  // An MCP reload's set, answered the way real claude 2.1.323 answered the live probe: every name it
+  // adopted or connected in `added`, a server that would not connect named in `errors`.
+  if (request.subtype === "mcp_set_servers") {
+    record({ kind: "mcp-set-servers", servers: request.servers })
+    const names = Object.keys(request.servers ?? {})
+    respond(message.request_id, {
+      added: names,
+      removed: [],
+      errors: names.includes("broken") ? { broken: "connect ECONNREFUSED 127.0.0.1:9" } : {},
+    })
+    return
+  }
   if (request.subtype === "mcp_reconnect") {
     record({ kind: "mcp-reconnect", serverName: request.serverName })
     if (request.serverName !== "notion") return respondError(message.request_id, `Server not found: ${String(request.serverName)}`)
