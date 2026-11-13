@@ -180,10 +180,26 @@ export function MonitorSheet({
       // A check's heading names WHICH run the output is, and how it ended: it is the last of many, and
       // the next one replaces it.
       outputHeading={check ? "Last check" : undefined}
+      // WHAT IT DOES, in a sentence, since a command alone does not say what Frizz does with it.
+      intro={!data || unavailable
+        ? undefined
+        : check
+          ? data.state === "running"
+            ? `Frizz runs this every ${check.every} until it exits 0, then wakes the worker. It gives up ${untilLabel(check.expiresAt)}.`
+            : `Frizz ran this every ${check.every} until it exited 0, then woke the worker.`
+          : "Frizz keeps this script running, and every line it prints wakes the worker."}
       outputNote={lastRun ? `${checkRunClause(lastRun)} · ${formatAgo(lastRun.at)}` : undefined}
       stop={!unavailable && data?.stoppable ? { label: "Stop monitor", stopping, onStop: stop } : undefined}
     />
   )
+}
+
+/** "at 8:00 PM" today, "on Fri at 8:00 PM" past that — when a check gives up, in the reader's locale. */
+function untilLabel(iso: string): string {
+  const at = new Date(iso)
+  if (!Number.isFinite(at.getTime())) return "when its time runs out"
+  const time = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+  return at.toDateString() === new Date().toDateString() ? `at ${time}` : `on ${at.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} at ${time}`
 }
 
 /** "exited 1", "timed out", … — how one check ended, as the awaiting card's tooltip says it. */
@@ -214,6 +230,7 @@ function OutputSheet({
   emptyText,
   outputHeading = "Output",
   outputNote,
+  intro,
   stop,
   footer,
 }: {
@@ -238,6 +255,8 @@ function OutputSheet({
   outputHeading?: string
   /** A reading beside that heading — a check's "exited 1 · 3m ago". */
   outputNote?: string
+  /** One sentence over the command saying what Frizz does with it (a monitor's drawer). */
+  intro?: string
   stop?: { label: string; stopping: boolean; onStop: () => void }
   footer?: string
 }) {
@@ -290,6 +309,7 @@ function OutputSheet({
               // state the real situation in the output pane — the <pre> itself lays out a full 512 KB in <35ms,
               // so nothing here is slow to render; the wait is always for the data, and we say so.
               <div className="flex flex-col gap-5">
+                {intro && <p {...attr("intro")} className="text-[12.5px] leading-relaxed text-muted-70">{intro}</p>}
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <h2 className="petite-caps text-[10px] text-muted-65">Command</h2>
