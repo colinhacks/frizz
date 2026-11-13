@@ -1312,6 +1312,29 @@ function AwaitingSnooze({ thread, onSnooze, onSnoozeFailed }: {
   )
 }
 
+/** One line beside the readout, under the same constraint as BG_SNOOZE_EXPLAINER. It says who parked the
+ *  thread, so nobody looks for a park of their own to undo, and that it comes back by itself; the rows
+ *  above say when, for each thing it waits on. Measured at a 360px viewport (sans, 2026-11-13): 173.6px
+ *  of text in a 196.6px slot. "…until its wait ends" was 196.9px there and wrapped its last word. */
+export const WORKER_PARK_EXPLAINER = "The agent parked it until it wakes"
+
+/** What a `watching` rest says where the Snooze would be: the park it is already in. A STATEMENT, not a
+ *  control, as a done thread's header says "Done" where its verbs were (ThreadLifecycle DoneReadout):
+ *  same hourglass and label as the button, in the muted ink of text rather than its filled chrome, with
+ *  the button's own vertical padding so the band keeps its height. No horizontal padding, so the glyph
+ *  lines up with the card's content edge rather than floating inside a fill that is not there. */
+function AwaitingParkedReadout() {
+  return (
+    <>
+      <span className="flex shrink-0 items-center gap-1 py-1 text-[11px] font-medium text-muted">
+        <Hourglass size={12} className={ICON_LABEL_NUDGE} />
+        Snoozed
+      </span>
+      <span className={CARD_ACTION_EXPLAINER}>{WORKER_PARK_EXPLAINER}</span>
+    </>
+  )
+}
+
 export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed, onReplied, onReplyFailed, stepsDone }: {
   // `id` joins the Pick because the rows OPEN things now: a shell's output drawer and a sub-agent's
   // transcript are both addressed by the parent thread's slug. `lastFence` joined on 2026-08-24: the
@@ -1403,11 +1426,16 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
   // reply. The header's wall-clock snooze (the alarm clock) still parks it for anyone who means "not now".
   //
   // NOT ON A `watching` REST EITHER (2026-10-05): its worker already parked it in Snoozed until the watch
-  // wakes it, which is the very park this button would make.
+  // wakes it, which is the very park this button would make. The slot STATES that park instead
+  // (AwaitingParkedReadout), because an empty one read as a missing control: nothing else in the thread
+  // view says the thread is snoozed, since the header's clock lights only for a park the human made
+  // (maintainer 2026-11-13, on a thread parked on two timers: "Why does this not have a snooze button?").
   //
   // AND ONLY ON THE CARD THAT STATES THE REST (`fence` absent). A fence handed in is an earlier one: a held
   // handoff drawn above the resting card would otherwise grow a second Snooze for the same rest.
-  const snoozable = thread !== undefined && fence === undefined && steps.length === 0 && thread.waitStatus !== "watching" && showsRestingCard(thread) && threadLifecycleAvailability(thread).snooze
+  const restVerbs = thread !== undefined && fence === undefined && steps.length === 0 && showsRestingCard(thread) && threadLifecycleAvailability(thread).snooze
+  const parkedByWorker = restVerbs && thread.waitStatus === "watching"
+  const snoozable = restVerbs && !parkedByWorker
   return (
     // The SAME shell as every transcript card (TranscriptCard). This card stacks directly under an
     // awaiting fence card on a queue card, and it used to be a visibly different object there —
@@ -1515,11 +1543,16 @@ export function AwaitingBackgroundCard({ thread, fence, onSnooze, onSnoozeFailed
           the control reads as chrome under the content rather than as one more row of it. This card
           introduced the band on 2026-08-31; every card with a verb wears it since 2026-09-30. It draws
           on EVERY surface the card is live on; a thread with no snooze verb draws the card without it.
+          A `watching` rest draws the band around a readout of the park it is already in instead.
           A STEPS card ends on its checklist instead, and draws its own Send where no prompt box sends it
           (AwaitingSteps). */}
       {snoozable ? (
         <CardActions data-awaiting-snooze>
           <AwaitingSnooze thread={thread} onSnooze={onSnooze} onSnoozeFailed={onSnoozeFailed} />
+        </CardActions>
+      ) : parkedByWorker ? (
+        <CardActions data-awaiting-parked>
+          <AwaitingParkedReadout />
         </CardActions>
       ) : null}
     </TranscriptCard>

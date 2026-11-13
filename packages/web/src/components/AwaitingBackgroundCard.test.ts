@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { AgentRow, AwaitingBackgroundCard, AwaitingWaitTable, BgShellRow, ChildThreadRow, awaitingBackgroundKind, awaitingBackgroundSubject, hasAwaitingWaitRows, restingOnSteps, showsRestingCard } from "./AwaitingBackgroundCard.tsx"
+import { AgentRow, AwaitingBackgroundCard, AwaitingWaitTable, BgShellRow, ChildThreadRow, WORKER_PARK_EXPLAINER, awaitingBackgroundKind, awaitingBackgroundSubject, hasAwaitingWaitRows, restingOnSteps, showsRestingCard } from "./AwaitingBackgroundCard.tsx"
 import { CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE } from "../lib/childOps.ts"
 import { commandWatchName } from "./AwaitingBackgroundCard.tsx"
 import type { ThreadView } from "@frizz/shared"
@@ -477,12 +477,19 @@ test("the snooze renders in the shared footer band, flush with the card's bottom
   )
   assert.doesNotMatch(past, /data-card-actions/)
   // A `watching` rest is already parked in Snoozed by its worker (2026-10-05): the button would make the
-  // park it is in, so the card draws without it — and still states the wait. A `working` rest keeps it:
-  // that row is in the Running band, and the click is what moves it to Snoozed.
+  // park it is in, so the band STATES that park instead of offering it (2026-11-13: an empty band read as
+  // a missing button). A `working` rest keeps the button: that row is in the Running band, and the click
+  // is what moves it to Snoozed.
   const watching = render({ ...t, waitStatus: "watching" } as typeof t)
   assert.doesNotMatch(watching, /data-awaiting-snooze/)
-  assert.match(watching, /data-awaiting-background/, "the card itself still renders")
+  assert.doesNotMatch(watching, /<button[^>]*>[^]*Snooze<\/button>/, "no verb for a park it is already in")
+  assert.match(watching, /data-awaiting-parked="true" data-card-actions="true"/, "the readout rides the same footer band")
+  assert.match(text({ ...t, waitStatus: "watching" } as typeof t), new RegExp(`Snoozed${WORKER_PARK_EXPLAINER}`))
   assert.match(render({ ...t, waitStatus: "working" } as typeof t), /data-awaiting-snooze="true"/)
+  assert.doesNotMatch(render({ ...t, waitStatus: "working" } as typeof t), /data-awaiting-parked/)
+  // The readout follows the verb's own gates: none on an archived thread, none on an earlier fence handed in.
+  assert.doesNotMatch(renderToStaticMarkup(createElement(AwaitingBackgroundCard, { thread: { ...t, waitStatus: "watching", state: "archived" } as typeof t })), /data-card-actions/)
+  assert.doesNotMatch(renderToStaticMarkup(createElement(AwaitingBackgroundCard, { thread: { ...t, waitStatus: "watching" } as typeof t, fence: { body: "", hints: [] } })), /data-awaiting-parked/)
 })
 
 // THE TABLE AS A PIECE (2026-08-28). The awaiting FENCE card draws it whenever the thread is NOT at rest

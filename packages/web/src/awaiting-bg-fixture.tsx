@@ -66,7 +66,10 @@ const LONG_STEPS = [
 ]
 const wantSteps = stepsMode !== null
 // Shells are the DEFAULT shape; ?agents=1 swaps them for sub-agents, and ?watch=1 for a lone watcher.
-const wantShells = wantAll || (!wantSteps && !wantAgents && watchMode !== "1" && watchMode !== "one")
+// ?watching=1 — A WORKER'S OWN PARK (2026-11-13): a quiet `status: watching` fence on two timers, so the
+// thread already sits in Snoozed and the card's footer states that park instead of offering a Snooze.
+const wantWatching = params.get("watching") === "1"
+const wantShells = wantAll || (!wantSteps && !wantAgents && !wantWatching && watchMode !== "1" && watchMode !== "one")
 const shellOnly = wantShells && !wantAgents
 // ?title=<text> — the WORKER'S OWN HEADING (2026-08-26), which replaces the derived "Awaiting" /
 // "Background shells running". Bare `?title` seeds a heading that WRAPS at this card's narrowest (368px
@@ -94,8 +97,9 @@ const thread = {
   status: "active",
   mechanism: null,
   humanBlocked: false,
-  needsYou: true,
+  needsYou: !wantWatching,
   awaitingBackground: true,
+  ...(wantWatching ? { waitStatus: "watching" } : {}),
   ready: false,
   dependsOn: [],
   externalDeps: [],
@@ -134,6 +138,18 @@ const thread = {
   // card's whole rule is that a shell is listed when the worker NAMED it: the CI poller is declared and
   // gets a row, the dev server beside it never does.
   watches: [
+    ...(wantWatching
+      ? [
+          {
+            id: "timer:demo:tmr_5f8c6757c9da", kind: "timer", target: "tmr_5f8c6757c9da", state: "armed", createdAt: ago(4),
+            timer: { fireAt: new Date(Date.now() + 371 * 60_000).toISOString(), prompt: "Check whether the $10,000 SAFE wire has arrived. Read the checklist in this thread's scratch directory first." },
+          },
+          {
+            id: "timer:demo:tmr_b17b6c892304", kind: "timer", target: "tmr_b17b6c892304", state: "armed", createdAt: ago(4),
+            timer: { fireAt: new Date(Date.now() + 4301 * 60_000).toISOString(), prompt: "Check whether the $10,000 SAFE wire has arrived. Read the checklist in this thread's scratch directory first." },
+          },
+        ]
+      : []),
     ...(wantShells
       ? [{ id: "shell:demo:bzvtnt3ig", kind: "shell", target: "bzvtnt3ig", state: "armed", createdAt: ago(4) }]
       : []),
@@ -187,7 +203,13 @@ const thread = {
   ],
   // The standing fence. Only seeded with ?title or ?steps, because a fence body renders as the card's
   // opening prose and the default fixture is deliberately the no-prose shape.
-  ...(wantSteps ? {
+  ...(wantWatching ? {
+    lastFence: {
+      kind: "awaiting",
+      body: "",
+      hints: [{ kind: "timer", value: "tmr_5f8c6757c9da" }, { kind: "timer", value: "tmr_b17b6c892304" }, { kind: "status", value: "watching" }, { kind: "for", value: "1d" }],
+    },
+  } : wantSteps ? {
     lastFence: {
       kind: "awaiting",
       body: tail,
