@@ -284,10 +284,16 @@ export function failedCheckNames(rollup: RollupEntry[], runs: WorkflowRun[] = []
     seen.add(name)
     names.push(name)
   }
+  // The workflows a red job above already names. A run concludes red only once its last job has finished,
+  // so a reading taken after that listed one failure twice, the job and then its own workflow ("test,
+  // ci"), and a red report minted when CI settles is always taken after that (2026-11-12, against a real
+  // run on colinhacks/ci-testing#2). A run red with no red job of its own, a startup failure, still counts.
+  const named = new Set<string>()
   for (const c of Array.isArray(rollup) ? rollup : []) {
     if (!c || typeof c !== "object") continue
     if (!rollupEntryFailed(typeof c.conclusion === "string" ? c.conclusion : undefined, typeof c.state === "string" ? c.state : undefined)) continue
     push(c.name ?? c.context ?? c.workflowName)
+    if (c.workflowName?.trim()) named.add(c.workflowName.trim())
   }
   for (const run of Array.isArray(runs) ? runs : []) {
     if (!run || typeof run !== "object") continue
@@ -296,7 +302,9 @@ export function failedCheckNames(rollup: RollupEntry[], runs: WorkflowRun[] = []
     const conclusion = runConclusion(run)
     if (conclusion === "ACTION_REQUIRED") continue
     if (!rollupEntryFailed(conclusion, undefined)) continue
-    push(run.workflowName ?? run.name)
+    const name = (run.workflowName ?? run.name)?.trim()
+    if (name && named.has(name)) continue
+    push(name)
   }
   return { names: names.slice(0, cap), omitted: Math.max(0, names.length - cap) }
 }
