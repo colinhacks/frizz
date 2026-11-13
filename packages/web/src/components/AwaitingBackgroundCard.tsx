@@ -41,7 +41,7 @@ import { useNowMs } from "../lib/liveClock.ts"
 import { compactAge } from "../lib/activityTime.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { restingOnSteps, type StepsReply } from "../lib/stepsAnswer.ts"
-import { openThread, pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, showToast } from "../store.ts"
+import { openThread, pushBackgroundShellDrawer, pushMonitorDrawer, pushSubAgentDrawer, pushTimerDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { threadLifecycleAvailability } from "../lib/threadLifecycle.ts"
 import { SHELL_WATCHED_NOTE } from "../lib/threadOps.ts"
@@ -824,31 +824,36 @@ export function BgShellRow({ shell, slug, now, testId, onDismiss, watched }: {
 // background shells … I don't understand why timer isn't represented in the same way"). Until then a
 // timer park's one rendering was the fence card's machinery footer — "a timer   for 2h".
 //
-// The row's NAME is the timer's own prompt — the text the worker armed it with — because that is the
-// honest answer to "what happens when this fires"; the `tmr_…` id names nothing to a human and stays in
-// data attributes. NON-INTERACTIVE by ChildOpRow's settled policy: there is nothing to open — no output
-// drawer, no transcript, no external page — so it renders without a chevron, hover, or focus stop
-// rather than as a disabled control.
-export function TimerRow({ watch, now }: { watch: ThreadWatchView; now: number }) {
-  const prompt = watch.timer?.prompt
+// The row's NAME is the worker's description of the timer (`frizzctl timer set --description`, 2026-11-12),
+// else the first line of its prompt — the text the worker armed it with, written to its future self, and
+// all a row could show before descriptions. The `tmr_…` id names nothing to a human and stays in data
+// attributes. THE ROW OPENS THE TIMER'S DRAWER (TimerSheet: when it fires and its whole prompt), as a
+// shell's opens its output; until 2026-11-12 it opened nothing and the prompt lived in a tooltip.
+export function TimerRow({ watch, slug, now }: { watch: ThreadWatchView; slug: string; now: number }) {
+  const name = timerWatchLabel(watch)
   return (
     <WaitRow
       testKind="timer"
       testId={watch.target}
       mark={<Clock size={12} className={`${ON_CAP} text-muted-60`} />}
-      name={prompt || watch.target}
+      name={name}
       oneLine
       title={timerWatchTitle(watch)}
       status={timerWatchStatus(watch, now)}
+      onOpen={() => pushTimerDrawer(slug, watch.target, { label: name })}
     />
   )
 }
 
-/** A timer row's tooltip — the whole prompt, since the row shows only its first line. Shared with the
- *  timers' panel over the prompt box (QueueOpsSummary). */
+/** A timer row's name: its description, else its prompt's first line, else its id. */
+export function timerWatchLabel(watch: ThreadWatchView): string {
+  return watch.timer?.description || watch.timer?.prompt?.split("\n")[0]?.trim() || watch.target
+}
+
+/** A timer row's tooltip — what a click opens, and when it fires. Shared with the timers' panel over the
+ *  prompt box (QueueOpsSummary). */
 export function timerWatchTitle(watch: ThreadWatchView): string {
-  const prompt = watch.timer?.prompt
-  return [prompt, watch.timer?.fireAt ? `One-off timer, set for ${watch.timer.fireAt}` : watch.target].filter(Boolean).join("\n\n")
+  return [`Read this timer's prompt — ${timerWatchLabel(watch)}`, watch.timer?.fireAt ? `One-off timer, set for ${watch.timer.fireAt}` : null].filter(Boolean).join("\n\n")
 }
 
 /** A timer row's status, counting down. Shared with the timers' panel over the prompt box. */
@@ -874,8 +879,9 @@ export function timerWatchStatus(watch: ThreadWatchView, now: number): string {
 // `cmw_…` id names nothing to a human and stays in data attributes. Its long paths are cut
 // (commandWatchName) and the full command opens the tooltip, followed by what the last check printed,
 // which is the one place the human can read WHY it has not passed. The status is the cadence, the
-// reading that does not go stale between board deltas. NON-INTERACTIVE, as a timer row is: a check's
-// output has no drawer to open.
+// reading that does not go stale between board deltas. It opens the monitor's drawer, as a persistent
+// monitor's row does (2026-11-12; until then a check had no drawer), and since then its NAME is the
+// worker's description when it gave one — required of every `frizzctl monitor add` from that day.
 /** A COMMAND WATCH'S ROW NAME — its command, with every long absolute path cut to its last segment.
  *
  *  A worker writes interpreter and script paths out in full, because the server runs the command from
@@ -895,14 +901,13 @@ export function commandWatchName(command: string): string {
 // readings: its NAME is the worker's description when it gave one (the script is the tooltip's first
 // line), its STATUS is how many events it has printed (it has no cadence), and its MARK is a broadcast
 // glyph rather than the re-run arrows, since nothing about it repeats.
-/** A command watch row's name: a monitor's description, else the command with its paths cut. */
+/** A command watch row's name: its description, else the command with its paths cut. */
 export function commandWatchLabel(watch: ThreadWatchView): string {
-  return watch.command?.monitor?.description || commandWatchName(watch.command?.command ?? watch.target)
+  return watch.command?.description || watch.command?.monitor?.description || commandWatchName(watch.command?.command ?? watch.target)
 }
 
-// A MONITOR'S ROW OPENS its drawer (MonitorSheet: the script and everything it printed), as a shell's
-// opens its output — a monitor is a shell the server runs. A command watch's has nothing behind it yet:
-// its last check is in the tooltip, and it keeps the non-interactive row.
+// EVERY MONITOR'S ROW OPENS its drawer (MonitorSheet), as a shell's opens its output: a persistent one's
+// script and everything it printed, a check's command and what its last check printed.
 export function CommandWatchRow({ watch, slug, now }: { watch: ThreadWatchView; slug: string; now: number }) {
   const monitor = watch.command?.monitor
   const Mark = monitor ? Radio : RefreshCw
@@ -916,7 +921,7 @@ export function CommandWatchRow({ watch, slug, now }: { watch: ThreadWatchView; 
       oneLine
       title={commandWatchTitle(watch, now)}
       status={commandWatchStatus(watch)}
-      onOpen={monitor ? () => pushMonitorDrawer(slug, watch.target, { label: name }) : undefined}
+      onOpen={() => pushMonitorDrawer(slug, watch.target, { label: name })}
     />
   )
 }
@@ -1118,7 +1123,7 @@ function awaitingWaitGroups(thread: Pick<ThreadView, "id" | "subAgents" | "bgShe
     // Waiting on the world, as a PR is, so it reads after them — and ahead of the timers, which wait on
     // nothing but the clock.
     { head: "Monitors", rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} slug={thread.id} now={now} />) },
-    { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} now={now} />) },
+    { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} slug={thread.id} now={now} />) },
   ].filter((g) => g.rows.length > 0)
 }
 

@@ -257,7 +257,10 @@ const TIMER = {
     "done yet\" is strictly worse than being woken when it is.\n\n" +
     "The text arrives VERBATIM as an ordinary user turn, so write it as an instruction to your future " +
     "self — self-contained and actionable, because you may receive it with none of the context you have " +
-    "now. Give exactly one of `--in`, `--in-seconds` or `--at`. You can only ever set a timer on your OWN thread.",
+    "now. Give exactly one of `--in`, `--in-seconds` or `--at`. You can only ever set a timer on your OWN thread.\n\n" +
+    "NAME IT FOR THE HUMAN with `--description`: a few words, sentence case, saying what it is for (\"Re-check " +
+    "the staging deploy\"). The human reads the description, never the prompt, on the timer's row and as its " +
+    "drawer's title.",
   inputSchema: {
     type: "object",
     properties: {
@@ -272,6 +275,13 @@ const TIMER = {
       prompt: {
         type: "string",
         description: "Required for `set`. The text delivered to you when it fires, verbatim, as a user turn.",
+      },
+      description: {
+        type: "string",
+        description:
+          "Required for `set`. What the timer is for, in a few words, sentence case (\"Re-check the staging " +
+          "deploy\", \"Revisit the flaky test decision\"): the name the human sees on its row and its drawer. " +
+          "Never the prompt itself. One line, at most 120 characters.",
       },
       in: {
         type: "string",
@@ -833,7 +843,7 @@ const UNLINK = {
 const WATCH_COMMAND_RETIRED =
   "NOT registered — `frizzctl watch-command` is retired (2026-11-06), and nothing was armed or dropped. It is " +
   "`frizzctl monitor` now, with the same arguments:\n\n" +
-  "  frizzctl monitor add \"<check that exits 0 once it holds>\" --every 5m --for 6h\n" +
+  "  frizzctl monitor add \"<check that exits 0 once it holds>\" --description \"<what it waits for>\" --every 5m --for 6h\n" +
   "  frizzctl monitor add \"<script>\" --persistent --description \"<what it watches>\" --for 1d\n" +
   "  frizzctl monitor list\n" +
   "  frizzctl monitor drop <id>\n\n" +
@@ -869,8 +879,8 @@ const MONITOR = {
     "settles it.\n\n" +
     "WITH `--persistent`, A SCRIPT THAT WAKES YOU ON EVERY LINE. Give it a script that keeps running and " +
     "prints a line each time something happens — a log tail filtered to the lines you would act on, a poll " +
-    "loop that prints each new row a query returns, a listener on a socket — with a `--description` and no " +
-    "`--every`. Register once, woken many times. Claude Code's own Monitor tool lives in your session, pins " +
+    "loop that prints each new row a query returns, a listener on a socket — with no `--every`. Register " +
+    "once, woken many times. Claude Code's own Monitor tool lives in your session, pins " +
     "your process tree while it runs, and dies with it; this does none of that. A pull request or an issue " +
     "needs neither shape: `watch-pr` and `watch-issue` already wake you on each comment, review and check.\n\n" +
     "ITS STDOUT IS THE EVENT STREAM. Lines printed within 200ms of each other are one event; blank lines are " +
@@ -888,6 +898,9 @@ const MONITOR = {
     "It ends when the script exits (you are woken once with the exit code and its last output), when " +
     "`--for` runs out, or when you drop it. A poll loop that should stop on a known end — a CI run " +
     "finishing — exits itself.\n\n" +
+    "BOTH TAKE A `--description`: what you are waiting for or watching, in a few words, sentence case " +
+    "(\"frizz 0.13.12 on npm\", \"Errors in app.log\"). It is the name the human sees on the monitor's row and " +
+    "as its drawer's title — the command is shown under it, never instead of it.\n\n" +
     "BOTH RUN ON THE SERVER, NOT IN YOUR SHELL: `/bin/sh -c` in the project root, with the server's " +
     "environment and PATH, stdin closed. Nothing your session exported, no aliases, no functions; use " +
     "absolute paths.\n\n" +
@@ -934,14 +947,15 @@ const MONITOR = {
         type: "boolean",
         description:
           "Run the command as a script that keeps running, and wake on every line it prints, instead of " +
-          "re-running it until it exits 0. Takes `--description` in place of `--every`.",
+          "re-running it until it exits 0. Takes no `--every`.",
       },
       description: {
         type: "string",
         description:
-          "Required with `--persistent`, and refused without it. What it watches, in a few words, sentence " +
-          "case (\"Errors in deploy.log\", \"Failed jobs in jobs.ndjson\"): the name the human sees on its row " +
-          "and its drawer, and the label on every wake. Never the script itself.",
+          "Required for `add`, with or without `--persistent`. What it waits for or watches, in a few words, " +
+          "sentence case (\"frizz 0.13.12 on npm\", \"Errors in deploy.log\"): the name the human sees on its " +
+          "row and its drawer, and the label on a persistent monitor's every wake. Never the command itself. " +
+          "One line, at most 120 characters.",
       },
       id: {
         type: "string",
@@ -1871,14 +1885,15 @@ async function goal(args) {
   )
 }
 
-/** How a timer reads back to the worker: its id, when it fires, and enough of its text to tell two apart.
- * @param {{ id: string, fireAt: string, prompt: string }} t */
+/** How a timer reads back to the worker: its id, when it fires, and enough of its text to tell two apart —
+ *  its description when it has one, else the start of its prompt.
+ * @param {{ id: string, fireAt: string, prompt: string, description?: string }} t */
 function timerLine(t) {
-  const words = t.prompt.replace(/\s+/g, " ").trim()
+  const words = (t.description || t.prompt).replace(/\s+/g, " ").trim()
   return `  ${t.id} — ${t.fireAt} — ${words.length > 72 ? `${words.slice(0, 72)}…` : words}`
 }
 
-/** @param {{ timers?: { id: string, fireAt: string, prompt: string }[] }|null} payload */
+/** @param {{ timers?: { id: string, fireAt: string, prompt: string, description?: string }[] }|null} payload */
 function armedList(payload) {
   const timers = payload?.timers ?? []
   if (!timers.length) return "No timers are armed on this thread."
@@ -1910,6 +1925,11 @@ async function timer(args) {
 
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : ""
   if (!prompt) throw new Error("`prompt` is required to set a timer — it is the text you will be sent when it fires")
+  // REQUIRED HERE, OPTIONAL ON THE WIRE (2026-11-12): the prompt is written to your future self, so a row
+  // named by it read as an instruction, not a name. A worker whose tool predates this still sets timers.
+  const description = typeof args.description === "string" ? args.description.replace(/\s+/g, " ").trim() : ""
+  if (!description) throw new Error("`description` is required to set a timer — what it is for in a few words (\"Re-check the staging deploy\"), the name the human sees on its row")
+  if (description.length > 120) throw new Error(`\`description\` is ${description.length} characters — keep it to a few words, at most 120`)
 
   // Exactly one of the two ways to name the instant. Accepting both would mean silently preferring one,
   // and a worker that gave two different times meant something by each of them.
@@ -1944,7 +1964,7 @@ async function timer(args) {
   // ONE representation crosses the wire — the exact UTC instant — so the stored row, the trailer on the
   // delivered message and this reply all name the same string.
   const fireAt = new Date(fireMs).toISOString()
-  const result = (await callRpc("setOwnThreadTimer", { slug, prompt, fireAt }))?.result
+  const result = (await callRpc("setOwnThreadTimer", { slug, prompt, description, fireAt }))?.result
   const id = result?.id ?? "(unknown)"
   return (
     `Timer ${id} set for ${fireAt} (${Math.round((fireMs - nowMs) / 1000)}s from now). It fires ONCE and ` +
@@ -2322,7 +2342,8 @@ function armedCommandWatchList(result) {
     const last = !w.lastRun
       ? "no check finished yet"
       : `last check ${commandRunClause(w.lastRun)}`
-    return `  ${w.id}  every ${w.every}, until ${w.expiresAt} — ${w.runs} check${w.runs === 1 ? "" : "s"}, ${last}\n    $ ${w.command}`
+    const label = w.description ? ` "${w.description}"` : ""
+    return `  ${w.id}${label}  every ${w.every}, until ${w.expiresAt} — ${w.runs} check${w.runs === 1 ? "" : "s"}, ${last}\n    $ ${w.command}`
   })
   return `Monitors on this thread now:\n${lines.join("\n")}`
 }
@@ -2378,25 +2399,28 @@ async function monitor(args) {
     throw new Error(`\`command\` is required — ${persistent ? "a script that keeps running and prints a line per event" : "a shell command that exits 0 once the condition holds"}`)
   }
   const every = typeof args.every === "string" ? args.every.trim() : ""
-  const description = typeof args.description === "string" ? args.description.trim() : ""
+  const description = typeof args.description === "string" ? args.description.replace(/\s+/g, " ").trim() : ""
   // THE FLAG CHANGES WHAT THE COMMAND HAS TO BE, so neither shape quietly accepts the other's argument: a
   // cadence on a script would read as if Frizz re-ran it, and a name on a check would go nowhere.
   if (persistent && every) {
     throw new Error("`every` does not go with `persistent`: a persistent monitor is one script that keeps running, not a check Frizz re-runs. Drop `every`, or drop `persistent` for a check that exits 0 once the condition holds")
-  }
-  if (!persistent && description) {
-    throw new Error("`description` goes with `persistent`: a check is named by its command. Drop `description`, or add `persistent` for a script that keeps running")
   }
   if (!persistent && !every) {
     throw new Error("`every` is required — how often to check, a DURATION like `5m` (min 1m, max 24h). A script that keeps running and wakes you on every line takes `persistent` instead")
   }
   const forValue = typeof args.for === "string" ? args.for.trim() : ""
   if (!forValue) throw new Error("`for` is required — how long to keep it going, a DURATION like `6h` or `3d` (max 7d)")
-  if (persistent) {
-    if (!description) throw new Error("`description` is required with `persistent` — what it watches in a few words (\"Errors in deploy.log\"), the name the human sees on its row")
-    return addPersistentWatch(slug, command, forValue, description)
+  // REQUIRED FOR BOTH SHAPES (2026-11-12). A check was named by its command until then, and a command is
+  // not a name a human reads: `/opt/homebrew/bin/npm view frizz@0.15.54 version` says what runs, not
+  // what is being waited for. Optional on the wire, so a worker whose tool predates this still registers.
+  if (!description) {
+    throw new Error(persistent
+      ? "`description` is required — what it watches in a few words (\"Errors in deploy.log\"), the name the human sees on its row"
+      : "`description` is required — what you are waiting for in a few words (\"frizz 0.13.12 on npm\"), the name the human sees on its row")
   }
-  const result = (await callRpc("addOwnCommandWatch", { slug, command, every, for: forValue }))?.result
+  if (description.length > 120) throw new Error(`\`description\` is ${description.length} characters — keep it to a few words, at most 120`)
+  if (persistent) return addPersistentWatch(slug, command, forValue, description)
+  const result = (await callRpc("addOwnCommandWatch", { slug, command, description, every, for: forValue }))?.result
   // A REFUSAL is the gate doing its job, not a fault: exit 2, with the reason and the background-shell
   // fallback in the server's own words.
   if (result?.refused) {
@@ -2567,7 +2591,7 @@ const CLI = {
     alias: { remove: "drop", rm: "drop", cancel: "drop" },
     then: { add: ["command"], drop: ["id"] },
     examples: [
-      'frizzctl monitor add "npm view frizz@0.13.12 version" --every 5m --for 6h',
+      'frizzctl monitor add "npm view frizz@0.13.12 version" --description "frizz 0.13.12 on npm" --every 5m --for 6h',
       'frizzctl monitor add "tail -n0 -F /var/log/app.log | grep --line-buffered -E \'ERROR|FATAL\'" --persistent --description "Errors in app.log" --for 1d',
       "frizzctl monitor list",
       "frizzctl monitor drop cmw_ab12cd34ef56",
@@ -2586,7 +2610,7 @@ const CLI = {
     alias: { drop: "cancel", remove: "cancel", rm: "cancel" },
     then: { cancel: ["id"] },
     examples: [
-      'frizzctl timer set --in 10m --prompt "Re-check the deploy and report its status"',
+      'frizzctl timer set --in 10m --description "Re-check the deploy" --prompt "Re-check the deploy and report its status"',
       "frizzctl timer list",
       "frizzctl timer cancel tmr_a1b2c3d4e5f6",
     ],

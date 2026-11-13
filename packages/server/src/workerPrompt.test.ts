@@ -254,7 +254,7 @@ test("only a bypass Claude contract teaches monitors, and it routes outside-cond
   const claude = buildWorkerPrompt("claude", { commandWatches: true })
   assert.match(claude, /`monitors:` — monitors you REGISTERED with `frizzctl monitor add`/)
   assert.match(claude, /`monitors:` with nothing but those, where it runs to a week/)
-  assert.match(claude, /`frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h`/)
+  assert.match(claude, /`frizzctl monitor add "<check that exits 0 once it holds>" --description "<what>" --every 5m --for 6h`/)
   assert.match(claude, /Not a polling loop in a background shell/)
   assert.match(claude, /can never be hibernated/)
   assert.match(claude, /Only when Frizz REFUSES it[\s\S]{0,140}does the loop go in a background shell/)

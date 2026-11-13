@@ -1645,6 +1645,9 @@ export const TIMER_MAX_DELAY_SECONDS = 30 * 24 * 60 * 60
 export const TIMER_MAX_ARMED = 64
 
 export const TimerPromptText = z.string().trim().min(1).max(TIMER_PROMPT_MAX)
+/** A timer's name for the human (2026-11-12) — one line, the same ceiling a monitor's description has. */
+export const TIMER_DESCRIPTION_MAX = 120
+export const TimerDescriptionText = z.string().trim().min(1).max(TIMER_DESCRIPTION_MAX)
 
 /** What frizz delivers when a one-off timer fires: the worker's own words VERBATIM, then a one-line
  *  trailer naming the INSTANT — with several timers armed at once, the instant is the only thing that
@@ -2739,14 +2742,22 @@ export const ThreadWatchView = z.object({
   /** `timer` rows only: the armed timer's own registration, which is everything the row renders — the
    *  worker's prompt is the row's NAME (a `tmr_…` id names nothing to a human) and the fire instant is
    *  its status. Unlike `github` there is no polled half to be absent: a timer that exists is fully
-   *  known, so a timer row always carries this. */
-  timer: z.object({ fireAt: z.string(), prompt: z.string() }).strict().optional(),
+   *  known, so a timer row always carries this.
+   *
+   *  `description` (2026-11-12) is the worker's few words for the HUMAN — the row's name and its drawer's
+   *  title. The prompt is written to the worker's future self ("Re-run the release preflight against
+   *  <sha> and …"), and its first line was all a row could show. Absent on a timer set before it. */
+  timer: z.object({ fireAt: z.string(), prompt: z.string(), description: z.string().optional() }).strict().optional(),
   /** `command` rows only: the armed command watch's registration and its last check — what the worker's
    *  own read-back carries (CommandWatchView), minus the id and state the row already has. The command is
    *  the row's NAME and the cadence its status. Until 2026-10-13 a command watch had no row at all, so a
    *  thread parked on nothing else drew a card that said only "Waiting for an external update." */
   command: z.object({
     command: z.string(),
+    /** What it watches, in the worker's words: the row's name and its drawer's title, for a check as for a
+     *  monitor (2026-11-12; a check refused one until then and was named by its command). Absent on a row
+     *  registered without one. A monitor's also rides `monitor.description` below, for older clients. */
+    description: z.string().optional(),
     /** The cadence in the house duration grammar (`2m`, `1h 30m`). */
     every: z.string(),
     expiresAt: z.string(),
@@ -2979,6 +2990,9 @@ export const COMMAND_WATCH_COMMAND_MAX = 4000
 export const COMMAND_WATCH_OUTPUT_MAX_BYTES = 4096
 /** One run's limit. Killed with its whole process group past this, and counted as a failed check. */
 export const COMMAND_WATCH_RUN_TIMEOUT_MS = 2 * 60_000
+/** The longest description a monitor accepts, a check's or a persistent one's. It is one line: the board
+ *  row's name, its drawer's title and every wake's label. */
+export const MONITOR_DESCRIPTION_MAX = 120
 
 export const CommandWatchState = z.enum(["armed", "dropped", "passed", "expired", "cancelled"])
 export type CommandWatchState = z.infer<typeof CommandWatchState>
@@ -2987,6 +3001,8 @@ export type CommandWatchState = z.infer<typeof CommandWatchState>
 export const CommandWatchView = z.object({
   id: z.string(),
   command: z.string(),
+  /** What it watches, in the worker's words — present when it gave one (required from 2026-11-12). */
+  description: z.string().optional(),
   /** The cadence in the house duration grammar (`5m`, `1h 30m`). */
   every: z.string(),
   state: CommandWatchState,
@@ -3006,6 +3022,10 @@ export const AddOwnCommandWatchInput = z.object({
   slug: ThreadSlug,
   /** Run with `/bin/sh -c` in the project root, with the server's environment. Exit status 0 is "passed". */
   command: z.string().trim().min(1).max(COMMAND_WATCH_COMMAND_MAX),
+  /** What it waits for, in the worker's words ("frizz 0.15.54 on npm") — the name on its row and drawer.
+   *  REQUIRED BY THE TOOL, OPTIONAL ON THE WIRE (2026-11-12): `frizzctl monitor` refuses an `add` without
+   *  one, while a worker whose tool predates the field still registers, named by its command. */
+  description: z.string().trim().min(1).max(MONITOR_DESCRIPTION_MAX).optional(),
   /** How often to check, as a DURATION (`5m`; parseAwaitingDurationRaw). Clamped to [1m, 24h] and reported. */
   every: z.string().trim().min(1).max(16),
   /** How long to keep checking, as a DURATION. Clamped to COMMAND_WATCH_FOR_MAX_MS and reported. */
@@ -3232,8 +3252,6 @@ export const MONITOR_FLOOD_WINDOW_MS = 10 * 60_000
  *  server's PATH, or a script that prints its first event at once is reported in `frizzctl monitor add --persistent`'s
  *  own reply, while the worker is still there to read it, instead of as a wake after it rested. */
 export const MONITOR_REGISTRATION_WINDOW_MS = 2_000
-/** The longest description accepted. It is one line: the board row's name and every wake's label. */
-export const MONITOR_DESCRIPTION_MAX = 120
 /** How many monitors the whole SERVER runs at once, across every project. Each is a live process for as
  *  long as it is armed; a registration past this is refused rather than queued, so no worker rests on a
  *  monitor that is not running. */
@@ -4181,6 +4199,8 @@ export type OwnPrWatchesResult = z.infer<typeof OwnPrWatchesResult>
 export const ThreadTimerView = z.object({
   id: z.string(),
   prompt: z.string(),
+  /** What it is for, in the worker's words — present when it gave one (required from 2026-11-12). */
+  description: z.string().optional(),
   /** The exact UTC instant it fires — the same string the delivered trailer names. */
   fireAt: z.string(),
   state: z.enum(["armed", "fired", "cancelled"]),
@@ -5905,6 +5925,9 @@ export type OwnThreadRecurringPromptResult = z.infer<typeof OwnThreadRecurringPr
 export const SetOwnThreadTimerInput = z.object({
   slug: ThreadSlug,
   prompt: TimerPromptText,
+  /** What it is for, in a few words, for the human: the row's name and its drawer's title. REQUIRED BY
+   *  THE TOOL, OPTIONAL ON THE WIRE (2026-11-12), as AddOwnCommandWatchInput's is. */
+  description: TimerDescriptionText.optional(),
   fireAt: SnoozeUntil,
 }).strict()
 export type SetOwnThreadTimerInput = z.infer<typeof SetOwnThreadTimerInput>

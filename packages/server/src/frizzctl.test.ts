@@ -172,7 +172,7 @@ test("a misspelled command or flag fails with the fix in the message, and reache
 
     const flag = await run(["timer", "set", "--in-secs", "5"], { env: worker(fake) })
     assert.equal(flag.code, 1)
-    assert.match(flag.stderr, /`frizzctl timer` has no --in-secs\. It takes: --action, --prompt, --in, --in-seconds, --at, --id\./)
+    assert.match(flag.stderr, /`frizzctl timer` has no --in-secs\. It takes: --action, --prompt, --description, --in, --in-seconds, --at, --id\./)
     assert.match(flag.stderr, /frizzctl timer --help/)
 
     const extra = await run(["title", "Fix", "queue", "focus"], { env: worker(fake) })
@@ -197,15 +197,15 @@ test("flags, bare arguments, inline JSON, `--input <file>` and `--input -` all s
   const fake = await fakeFrizz()
   try {
     const cwd = mkdtempSync(join(tmpdir(), "frizzctl-cwd-"))
-    writeFileSync(join(cwd, "timer.json"), JSON.stringify({ action: "set", prompt: "re-check the deploy", in_seconds: 600 }))
+    writeFileSync(join(cwd, "timer.json"), JSON.stringify({ action: "set", prompt: "re-check the deploy", description: "Deploy check", in_seconds: 600 }))
     const ways: Array<{ argv: string[]; stdin?: string }> = [
-      { argv: ["timer", "set", "--prompt", "re-check the deploy", "--in-seconds", "600"] },
-      { argv: ["timer", "--action=set", "--prompt=re-check the deploy", "--in_seconds=600"] },
-      { argv: ["timer", '{"action":"set","prompt":"re-check the deploy","in_seconds":600}'] },
+      { argv: ["timer", "set", "--prompt", "re-check the deploy", "--description", "Deploy check", "--in-seconds", "600"] },
+      { argv: ["timer", "--action=set", "--prompt=re-check the deploy", "--description=Deploy check", "--in_seconds=600"] },
+      { argv: ["timer", '{"action":"set","prompt":"re-check the deploy","description":"Deploy check","in_seconds":600}'] },
       { argv: ["timer", "--input", "timer.json"] },
-      { argv: ["timer", "--input", "-"], stdin: '{"action":"set","prompt":"re-check the deploy","in_seconds":600}' },
+      { argv: ["timer", "--input", "-"], stdin: '{"action":"set","prompt":"re-check the deploy","description":"Deploy check","in_seconds":600}' },
       // A flag wins over the JSON it rides beside.
-      { argv: ["timer", "--input", "-", "--in-seconds", "600"], stdin: '{"action":"set","prompt":"re-check the deploy","in_seconds":5}' },
+      { argv: ["timer", "--input", "-", "--in-seconds", "600"], stdin: '{"action":"set","prompt":"re-check the deploy","description":"Deploy check","in_seconds":5}' },
     ]
     for (const way of ways) {
       fake.seen.length = 0
@@ -215,6 +215,7 @@ test("flags, bare arguments, inline JSON, `--input <file>` and `--input -` all s
       assert.equal(fake.seen[0].url, "/_frizz/proj-1/rpc/setOwnThreadTimer")
       assert.equal(fake.seen[0].body.slug, "the-caller")
       assert.equal(fake.seen[0].body.prompt, "re-check the deploy")
+      assert.equal(fake.seen[0].body.description, "Deploy check")
     }
 
     // A switch: alone, negated, and spelled out.
@@ -561,7 +562,7 @@ test("a request Frizz never answers says so, and says whether the command can be
     assert.equal(steer.code, 1)
     assert.equal(steer.stderr, "frizzctl steer failed: Frizz did not answer within 300ms (`steerThread`). Whether the message was delivered is not known, and sending it again can deliver it twice.\n")
 
-    const timer = await run(["timer", "set", "--in", "10m", "--prompt", "look again"], { env })
+    const timer = await run(["timer", "set", "--in", "10m", "--prompt", "look again", "--description", "Look again"], { env })
     assert.match(timer.stderr, /Whether the timer was set is not known: run `frizzctl timer list`, and set it again only if it is not listed\./)
 
     const spawn = await run(["spawn-thread", "--model", "opus", "--effort", "high", "--prompt", "do it"], { env })
@@ -604,14 +605,20 @@ test("`timer set --in` takes a duration with its unit, and `watch-pr add` asks f
   const fake = await fakeFrizz()
   try {
     const before = Date.now()
-    const set = await run(["timer", "set", "--in", "10m", "--prompt", "Re-check the deploy"], { env: worker(fake) })
+    const set = await run(["timer", "set", "--in", "10m", "--prompt", "Re-check the deploy and report", "--description", "Re-check the deploy"], { env: worker(fake) })
     assert.equal(set.code, 0, set.stderr)
     const sent = fake.seen.find((s) => s.url.endsWith("setOwnThreadTimer"))!.body
     const delay = Date.parse(sent.fireAt) - before
     assert.ok(delay >= 600_000 && delay < 660_000, `fires ten minutes out, not ${delay}ms`)
-    assert.equal(sent.prompt, "Re-check the deploy")
+    assert.equal(sent.prompt, "Re-check the deploy and report")
+    assert.equal(sent.description, "Re-check the deploy")
 
-    const bare = await run(["timer", "set", "--in", "600", "--prompt", "x"], { env: worker(fake) })
+    // The human's name for it is required: the prompt is written to the worker's future self.
+    const unnamed = await run(["timer", "set", "--in", "10m", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(unnamed.code, 1)
+    assert.match(unnamed.stderr, /`description` is required to set a timer/)
+
+    const bare = await run(["timer", "set", "--in", "600", "--prompt", "x", "--description", "x"], { env: worker(fake) })
     assert.equal(bare.code, 1)
     assert.match(bare.stderr, /`--in 600` is not a duration — give a number with its unit, like `90s`, `10m`, `2h` or `3d`/)
 
@@ -693,33 +700,40 @@ test("`monitor add --every` registers for the calling thread, reads a refusal as
     return { result: {
       id: "cmw_abc", alreadyArmed: false, passed: false, every: "5m", expiresAt: "2026-10-11T20:00:00.000Z",
       firstRun: { at: "2026-10-11T14:00:00.000Z", outcome: "exit", exitCode: 1, output: "npm error 404 No match found for version 0.13.12" },
-      watches: [{ id: "cmw_abc", command: body.command, every: "5m", state: "armed", createdAt: "2026-10-11T14:00:00.000Z", expiresAt: "2026-10-11T20:00:00.000Z", runs: 1, lastRun: { at: "2026-10-11T14:00:00.000Z", outcome: "exit", exitCode: 1, output: "" } }],
+      watches: [{ id: "cmw_abc", command: body.command, description: body.description, every: "5m", state: "armed", createdAt: "2026-10-11T14:00:00.000Z", expiresAt: "2026-10-11T20:00:00.000Z", runs: 1, lastRun: { at: "2026-10-11T14:00:00.000Z", outcome: "exit", exitCode: 1, output: "" } }],
     } }
   })
   try {
-    const armed = await run(["monitor", "add", "npm view frizz@0.13.12 version", "--every", "5m", "--for", "6h"], { env: worker(fake) })
+    const armed = await run(["monitor", "add", "npm view frizz@0.13.12 version", "--description", "frizz 0.13.12 on npm", "--every", "5m", "--for", "6h"], { env: worker(fake) })
     assert.equal(armed.code, 0, armed.stderr)
-    assert.deepEqual(fake.seen.at(-1)?.body, { slug: "the-caller", command: "npm view frizz@0.13.12 version", every: "5m", for: "6h" })
+    assert.deepEqual(fake.seen.at(-1)?.body, { slug: "the-caller", command: "npm view frizz@0.13.12 version", description: "frizz 0.13.12 on npm", every: "5m", for: "6h" })
     assert.match(armed.stdout, /^Monitoring as cmw_abc: Frizz runs it every 5m until it exits 0/)
     assert.match(armed.stdout, /Its first check exited 1\./)
     assert.match(armed.stdout, /`monitors: \[cmw_abc\]`, `status: watching`/)
-    assert.match(armed.stdout, /cmw_abc {2}every 5m, until 2026-10-11T20:00:00.000Z — 1 check, last check exited 1\n {4}\$ npm view frizz@0\.13\.12 version/)
+    assert.match(armed.stdout, /cmw_abc "frizz 0\.13\.12 on npm" {2}every 5m, until 2026-10-11T20:00:00.000Z — 1 check, last check exited 1\n {4}\$ npm view frizz@0\.13\.12 version/)
 
     mode = "refused"
-    const refused = await run(["monitor", "add", "true", "--every", "5m", "--for", "1h"], { env: worker(fake) })
+    const refused = await run(["monitor", "add", "true", "--description", "x", "--every", "5m", "--for", "1h"], { env: worker(fake) })
     assert.equal(refused.code, 2)
     assert.match(refused.stdout, /^NOT registered\. Frizz will not run a monitor for this thread/)
     assert.match(refused.stdout, /background shell instead/)
 
     mode = "passed"
-    const passed = await run(["monitor", "add", "true", "--every", "5m", "--for", "1h"], { env: worker(fake) })
+    const passed = await run(["monitor", "add", "true", "--description", "x", "--every", "5m", "--for", "1h"], { env: worker(fake) })
     assert.equal(passed.code, 0)
     assert.match(passed.stdout, /^NOTHING WAS ARMED: your command exited 0 on its first check/)
     assert.match(passed.stdout, /0\.13\.12/)
 
-    const missing = await run(["monitor", "add", "true", "--for", "1h"], { env: worker(fake) })
+    const missing = await run(["monitor", "add", "true", "--description", "x", "--for", "1h"], { env: worker(fake) })
     assert.equal(missing.code, 1)
     assert.match(missing.stderr, /`every` is required/)
+
+    // A check is named for the human too, since 2026-11-12: its command is not a name anyone reads.
+    const seenBefore = fake.seen.length
+    const unnamed = await run(["monitor", "add", "true", "--every", "5m", "--for", "1h"], { env: worker(fake) })
+    assert.equal(unnamed.code, 1)
+    assert.match(unnamed.stderr, /`description` is required — what you are waiting for/)
+    assert.equal(fake.seen.length, seenBefore, "and the server is not asked")
 
     fake.seen.length = 0
     const dropped = await run(["unwatch", "cmw_abc"], { env: worker(fake) })
@@ -783,13 +797,10 @@ test("`monitor add --persistent` starts for the calling thread, hands back its f
     // A persistent watch is named by its description on every surface, so one without a name is refused.
     const unnamed = await add("true", "--persistent", "--for", "1h")
     assert.equal(unnamed.code, 1)
-    assert.match(unnamed.stderr, /`description` is required with `persistent`/)
+    assert.match(unnamed.stderr, /`description` is required — what it watches/)
     const cadence = await add("true", "--persistent", "--every", "5m", "--description", "x", "--for", "1h")
     assert.equal(cadence.code, 1)
     assert.match(cadence.stderr, /`every` does not go with `persistent`/)
-    const named = await add("true", "--every", "5m", "--description", "x", "--for", "1h")
-    assert.equal(named.code, 1)
-    assert.match(named.stderr, /`description` goes with `persistent`/)
     assert.equal(fake.seen.length, posted, "none of those reached the server")
 
     fake.seen.length = 0
@@ -810,7 +821,7 @@ test("`watch-command` is retired: it refuses with the command to run, and calls 
       const refused = await run(argv, { env: worker(fake) })
       assert.equal(refused.code, 2, argv.join(" "))
       assert.match(refused.stdout, /`frizzctl watch-command` is retired/)
-      assert.match(refused.stdout, /frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h/)
+      assert.match(refused.stdout, /frizzctl monitor add "<check that exits 0 once it holds>" --description "<what it waits for>" --every 5m --for 6h/)
       assert.match(refused.stdout, /frizzctl monitor add "<script>" --persistent --description/)
       assert.match(refused.stdout, /`monitors: \[cmw_…\]`/)
     }

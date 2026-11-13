@@ -484,6 +484,15 @@ export function useMonitorOutput(slug: string, id: string) {
   })
 }
 
+/** A timer's drawer: the row itself, re-read every 5s while armed so the drawer sees it fire. */
+export function useThreadTimer(slug: string, id: string) {
+  return useQuery({
+    queryKey: ["threadTimer", slug, id],
+    queryFn: () => rpc.threadTimer({ slug, id }),
+    refetchInterval: (query) => (query.state.data?.state === "armed" ? 5000 : false),
+  })
+}
+
 // The ops strip's LIVE OUTPUT COUNTER: lines produced, per shell row on screen, refreshed while any of
 // them is still running. One batched request per poll for the whole strip.
 //

@@ -44,7 +44,7 @@ const NO_COMMAND_WATCHES = { "COMMANDS_KEY": "", "COMMANDS_FOR": "", "COMMANDS_C
 // 2026-11-06 is the default. The background shell a WITHOUT thread gets costs what the server-run check
 // was built to save (command-watch.ts header), and the prose says so rather than hiding it.
 const COMMAND_WATCH_WAITS = {
-  "WAIT_ANY_CONDITION": `\`frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h\`, then rest on
+  "WAIT_ANY_CONDITION": `\`frizzctl monitor add "<check that exits 0 once it holds>" --description "<what>" --every 5m --for 6h\`, then rest on
   its id (\`monitors: [cmw_…]\`) with \`status: watching\`. Not a polling loop in a background shell
   and not a sub-agent that owns the wait: either keeps your process tree alive (~250 MB) for the whole
   wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
@@ -1583,10 +1583,11 @@ them when the human asks for a loop:
   \`frizzctl goal stop\` when the work it drives is finished — one left armed on a finished thread wakes it
   forever, and the human can also switch it off from the thread's Goal control. Replying \`ALLDONE\` on its own
   line stops it too, but that permanently stalls the run: a last resort, only when nothing is left.
-- \`frizzctl timer\` is your own alarm clock: \`frizzctl timer set\` with \`--prompt\` plus \`--in-seconds\` or an
-  ISO \`--at\`, delivered exactly once, mid-turn, and then gone. You may hold MANY at once; \`frizzctl timer list\`
-  shows them and \`frizzctl timer cancel <id>\` withdraws one. Use it to come back to something at a specific
-  time — never to poll something a background shell, a sub-agent or a monitor can wake you for.`,
+- \`frizzctl timer\` is your own alarm clock: \`frizzctl timer set\` with \`--prompt\`, a \`--description\`
+  naming it for the human, and \`--in-seconds\` or an ISO \`--at\`, delivered exactly once, mid-turn, and
+  then gone. You may hold MANY at once; \`frizzctl timer list\` shows them and \`frizzctl timer cancel <id>\`
+  withdraws one. Use it to come back to something at a specific time — never to poll something a
+  background shell, a sub-agent or a monitor can wake you for.`,
   // § Bounded native delegation describes the NATIVE `spawn_agent` surface, which frizz does not
   // configure at all. The only `-c` override frizz puts on a codex app-server is
   // `default_tools_approval_mode` (backend/codex-mcp.ts `codexAppServerArgv`, the single argv builder

@@ -191,14 +191,15 @@ function stripFenceSyntax(body: string): string {
  *  same things read identically. Null when the fence names nothing — a park the server refuses anyway,
  *  so the popover says what it knows and invents no wait.
  *
- *  `watches` is the thread's registered rows, read for one thing: a persistent command watch's description
- *  (`frizzctl monitor add --persistent`). A lone one is NAMED by the worker's own words the way a PR
+ *  `watches` is the thread's registered rows, read for one thing: a monitor's description (`frizzctl
+ *  monitor add`, a check's since 2026-11-12 and a persistent one's since 2026-11-03). A lone one is NAMED by the worker's own words the way a PR
  *  is named by its ref: it is the one thing on the row the reader would recognise. Any other mix is counted,
  *  because "the monitor “X” and a monitor" says less than "2 monitors". */
 export function awaitingWaitClause(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[] = []): string | null {
   const count = (kind: AwaitingHint["kind"]) => hints.filter((h) => h.kind === kind && h.value.trim()).length
   const commands = count("command")
-  const named = commands === 1 ? fenceMonitors(hints, watches)[0]?.command?.monitor?.description : undefined
+  const lone = commands === 1 ? fenceMonitors(hints, watches)[0] : undefined
+  const named = lone ? monitorDescription(lone) : undefined
   const parts = [
     // Steps first: the reader is the one being waited on, which outranks anything frizz is watching.
     plural(count("step"), "step from you", "steps from you"),
@@ -216,7 +217,7 @@ export function awaitingWaitClause(hints: readonly AwaitingHint[], watches: read
 /** The armed PERSISTENT command watches a fence's `commands:` entries name, in fence order, deduped. An id
  *  that names a check, or nothing the board knows, is not one. */
 function fenceMonitors(hints: readonly AwaitingHint[], watches: readonly ThreadWatchView[]): ThreadWatchView[] {
-  const byId = new Map(watches.filter((w) => w.kind === "command" && w.state === "armed" && w.command?.monitor).map((w) => [w.target, w]))
+  const byId = new Map(watches.filter((w) => w.kind === "command" && w.state === "armed" && monitorDescription(w)).map((w) => [w.target, w]))
   const seen = new Set<string>()
   return hints.flatMap((h) => {
     const id = h.value.trim()
@@ -254,6 +255,11 @@ export function hintGloss(hints: readonly AwaitingHint[], watches: readonly Thre
   if (pr) return `PR ${pr.value}`
   const issue = hints.find((h) => h.kind === "issue")
   if (issue) return `Issue ${issue.value}`
-  const monitor = fenceMonitors(hints, watches).find((w) => w.command?.monitor?.description)
-  return monitor ? `Monitor: ${monitor.command!.monitor!.description}` : null
+  const monitor = fenceMonitors(hints, watches)[0]
+  return monitor ? `Monitor: ${monitorDescription(monitor)}` : null
+}
+
+/** A monitor's description, a check's or a persistent one's — undefined for a row registered without. */
+function monitorDescription(watch: ThreadWatchView): string | undefined {
+  return watch.command?.description || watch.command?.monitor?.description || undefined
 }

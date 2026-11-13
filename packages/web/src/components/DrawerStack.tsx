@@ -6,7 +6,7 @@ import { displayTitle } from "../groups.ts"
 import { closeDrawerAnimated, closeSettingsAnimated } from "../lib/overlays.ts"
 import { dismissOpenSelect } from "../lib/selectOverlay.ts"
 import { ThreadSheet } from "./ThreadSheet.tsx"
-import { BackgroundShellSheet, MarkdownDrawer, MonitorSheet, SubAgentSheet, ThreadDrawer } from "./lazySurfaces.tsx"
+import { BackgroundShellSheet, MarkdownDrawer, MonitorSheet, SubAgentSheet, ThreadDrawer, TimerSheet } from "./lazySurfaces.tsx"
 import { ErrorBoundary, DrawerErrorSheet } from "./ErrorBoundary.tsx"
 import { ProjectScope } from "../lib/projectScope.tsx"
 import { keyProject } from "../lib/threadKey.ts"
@@ -115,6 +115,16 @@ export function DrawerStack({ onEscapeAtRest }: { onEscapeAtRest?: () => void } 
             slug={d.slug}
             monitorId={d.subId ?? ""}
             label={d.label ?? "Monitor"}
+            depth={i}
+            widthDepth={widthDepth}
+          />
+        ) : d.kind === "timer" ? (
+          <TimerSheet
+            key={d.id}
+            id={d.id}
+            slug={d.slug}
+            timerId={d.subId ?? ""}
+            label={d.label ?? "Timer"}
             depth={i}
             widthDepth={widthDepth}
           />

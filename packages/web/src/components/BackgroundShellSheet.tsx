@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Copy, Radio, TerminalSquare } from "lucide-react"
+import { Copy, Radio, RefreshCw, TerminalSquare } from "lucide-react"
 import { showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { useBackgroundShellOutput, useMonitorOutput } from "../hooks.ts"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
-import { elapsedSince } from "../lib/durationLabels.ts"
+import { elapsedSince, formatAgo } from "../lib/durationLabels.ts"
 import { Sheet } from "./ui/Sheet.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { BLOCK_RADIUS } from "./TranscriptCard.tsx"
@@ -101,6 +101,11 @@ export function BackgroundShellSheet({
  *
  * Its stop is the HUMAN's, and unlike the worker's own drop it wakes the worker with why: the monitor
  * ended under a thread that may be resting on it.
+ *
+ * A CHECK (`frizzctl monitor add --every`) opens it too, since 2026-11-12 — its row opened nothing until
+ * then, and the one place to read why it had not passed was a tooltip. The server keeps no log of a check,
+ * only what its LAST run printed, so that is the output, under a heading that says so. It has no stop:
+ * nothing would tell its worker it was stopped.
  */
 export function MonitorSheet({
   id,
@@ -122,14 +127,19 @@ export function MonitorSheet({
   const [stopping, setStopping] = useState(false)
   const qc = useQueryClient()
 
+  const check = data?.check ?? null
   const events = data ? `${data.events} event${data.events === 1 ? "" : "s"}` : ""
+  const runs = check ? `${check.runs} check${check.runs === 1 ? "" : "s"}` : ""
   const age = elapsedSince(data?.startedAt ?? undefined)
-  const stateLabel = data?.state === "running"
-    ? [`running${age ? ` ${age}` : ""}`, events].join(" · ")
-    : data?.state === "ended"
-      ? [data.ended ?? "ended", events].join(" · ")
-      : data?.state === "gone" ? "unavailable" : ""
+  const stateLabel = check
+    ? data?.state === "running" ? [`every ${check.every}`, runs].join(" · ") : [data?.ended ?? "ended", runs].join(" · ")
+    : data?.state === "running"
+      ? [`running${age ? ` ${age}` : ""}`, events].join(" · ")
+      : data?.state === "ended"
+        ? [data.ended ?? "ended", events].join(" · ")
+        : data?.state === "gone" ? "unavailable" : ""
   const unavailable = query.isError || data?.state === "gone"
+  const lastRun = check?.lastRun ?? null
 
   function stop() {
     if (stopping) return
@@ -152,20 +162,36 @@ export function MonitorSheet({
       widthDepth={widthDepth}
       kind="monitor"
       title={data?.description || label}
-      icon={<Radio aria-hidden size={14} className="shrink-0 text-muted-60" />}
+      icon={check
+        ? <RefreshCw aria-hidden size={14} className="shrink-0 text-muted-60" />
+        : <Radio aria-hidden size={14} className="shrink-0 text-muted-60" />}
       stateLabel={stateLabel}
       command={data?.command}
       output={data?.output ?? ""}
       truncated={data?.truncated === true}
-      running={data?.state === "running"}
+      running={!check && data?.state === "running"}
       loading={query.isLoading}
       unavailable={unavailable}
       unavailableText="This monitor is no longer available."
       noCommandText="Script unavailable for this monitor."
-      emptyText={data?.state === "ended" ? "It printed nothing." : "Nothing printed yet."}
+      emptyText={check
+        ? lastRun ? "It printed nothing." : "No check has finished yet."
+        : data?.state === "ended" ? "It printed nothing." : "Nothing printed yet."}
+      // A check's heading names WHICH run the output is, and how it ended: it is the last of many, and
+      // the next one replaces it.
+      outputHeading={check ? "Last check" : undefined}
+      outputNote={lastRun ? `${checkRunClause(lastRun)} · ${formatAgo(lastRun.at)}` : undefined}
       stop={!unavailable && data?.stoppable ? { label: "Stop monitor", stopping, onStop: stop } : undefined}
     />
   )
+}
+
+/** "exited 1", "timed out", … — how one check ended, as the awaiting card's tooltip says it. */
+function checkRunClause(run: { outcome: "exit" | "timeout" | "signal" | "error"; exitCode: number | null }): string {
+  if (run.outcome === "exit") return run.exitCode === 0 ? "passed" : `exited ${run.exitCode}`
+  if (run.outcome === "timeout") return "timed out"
+  if (run.outcome === "signal") return "killed by a signal"
+  return "could not start"
 }
 
 /** The sheet both drawers draw: a header with the state and the stop, the command, and the output. */
@@ -186,6 +212,8 @@ function OutputSheet({
   unavailableText,
   noCommandText,
   emptyText,
+  outputHeading = "Output",
+  outputNote,
   stop,
   footer,
 }: {
@@ -206,6 +234,10 @@ function OutputSheet({
   unavailableText: string
   noCommandText: string
   emptyText: string
+  /** The output section's heading, "Output" unless the drawer says which output it is ("Last check"). */
+  outputHeading?: string
+  /** A reading beside that heading — a check's "exited 1 · 3m ago". */
+  outputNote?: string
   stop?: { label: string; stopping: boolean; onStop: () => void }
   footer?: string
 }) {
@@ -278,8 +310,9 @@ function OutputSheet({
                 </section>
                 <section>
                   <div className="mb-2 flex items-center gap-2">
-                    <h2 className="petite-caps text-[10px] text-muted-65">Output</h2>
+                    <h2 className="petite-caps text-[10px] text-muted-65">{outputHeading}</h2>
                     {running && <LiveDot aria-hidden hue="shell" data-running-indicator={kind === "monitor" ? "monitor-drawer" : "shell-drawer"} />}
+                    {outputNote && <span {...attr("output-note")} className="text-[10.5px] text-muted-60">{outputNote}</span>}
                     {truncated && <span className="text-[10.5px] text-muted-50">Showing latest 512 KB</span>}
                   </div>
                   {output ? (

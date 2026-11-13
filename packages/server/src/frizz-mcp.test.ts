@@ -93,7 +93,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     assert.deepEqual(list.result.tools[2].inputSchema.required, ["action"])
     assert.deepEqual(
       Object.keys(list.result.tools[2].inputSchema.properties).sort(),
-      ["action", "at", "id", "in", "in_seconds", "prompt"],
+      ["action", "at", "description", "id", "in", "in_seconds", "prompt"],
     )
     // `watch_pr` — same shape as its siblings: `action` alone is required, and NO thread parameter a
     // model could aim elsewhere.
@@ -780,13 +780,15 @@ test("`timer` resolves in_seconds/at into one exact instant and POSTs the callin
     const before = Date.now()
     rpc.send({
       jsonrpc: "2.0", id: 2, method: "tools/call",
-      params: { name: "timer", arguments: { action: "set", prompt: "re-check the deploy", in_seconds: 600 } },
+      params: { name: "timer", arguments: { action: "set", prompt: "re-check the deploy", description: "  Re-check\n the deploy ", in_seconds: 600 } },
     })
     const set = await rpc.next(2)
     assert.equal(set.result.isError, undefined)
     assert.equal(seen.at(-1)!.url, "/_frizz/rpc/setOwnThreadTimer")
     assert.equal(seen.at(-1)!.body.slug, "owning-thread")
     assert.equal(seen.at(-1)!.body.prompt, "re-check the deploy")
+    // The human's name for it rides along, squeezed onto one line.
+    assert.equal(seen.at(-1)!.body.description, "Re-check the deploy")
     const fired = Date.parse(seen.at(-1)!.body.fireAt)
     // The window carries a tolerance because the MCP server is a SEPARATE PROCESS, and two processes'
     // `Date.now()` are not mutually ordered. Measured on Windows Server 2022 / node 26.7.0: the server
@@ -806,7 +808,7 @@ test("`timer` resolves in_seconds/at into one exact instant and POSTs the callin
     // An absolute instant is normalized to the same UTC form, so a worker cannot arm a row the trailer
     // and the scheduler would print differently.
     const at = new Date(Date.now() + 3_600_000).toISOString().replace(/\.\d{3}Z$/, "Z")
-    rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "timer", arguments: { action: "set", prompt: "x", at } } })
+    rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "timer", arguments: { action: "set", prompt: "x", description: "x", at } } })
     await rpc.next(3)
     assert.equal(seen.at(-1)!.body.fireAt, new Date(Date.parse(at)).toISOString())
 
@@ -885,19 +887,23 @@ test("`timer` refuses a bad delay, a missing/doubled instant and a missing id wi
       assert.match(reply.result.content[0].text, pattern)
     }
 
-    await refused(2, { action: "set", prompt: "x", in_seconds: 3 }, /must be between 10 and 2592000/)
-    await refused(3, { action: "set", prompt: "x", in_seconds: 99_999_999 }, /must be between 10 and 2592000/)
-    await refused(4, { action: "set", prompt: "x" }, /give `--in` \(a duration from now, like `10m`\), `--in-seconds`/)
-    await refused(5, { action: "set", prompt: "x", in_seconds: 60, at: "2026-08-04T15:00:00Z" }, /not several/)
-    await refused(11, { action: "set", prompt: "x", in: "10m", in_seconds: 600 }, /not several/)
-    await refused(12, { action: "set", prompt: "x", in: "5s" }, /`--in` must be between 10s and 30d/)
-    await refused(13, { action: "set", prompt: "x", in: "31d" }, /`--in` must be between 10s and 30d/)
+    await refused(2, { action: "set", prompt: "x", description: "x", in_seconds: 3 }, /must be between 10 and 2592000/)
+    await refused(3, { action: "set", prompt: "x", description: "x", in_seconds: 99_999_999 }, /must be between 10 and 2592000/)
+    await refused(4, { action: "set", prompt: "x", description: "x" }, /give `--in` \(a duration from now, like `10m`\), `--in-seconds`/)
+    await refused(5, { action: "set", prompt: "x", description: "x", in_seconds: 60, at: "2026-08-04T15:00:00Z" }, /not several/)
+    await refused(11, { action: "set", prompt: "x", description: "x", in: "10m", in_seconds: 600 }, /not several/)
+    await refused(12, { action: "set", prompt: "x", description: "x", in: "5s" }, /`--in` must be between 10s and 30d/)
+    await refused(13, { action: "set", prompt: "x", description: "x", in: "31d" }, /`--in` must be between 10s and 30d/)
     // A bare number is `--in-seconds`' to take: `--in 600` could as well be minutes.
-    await refused(14, { action: "set", prompt: "x", in: "600" }, /`--in 600` is not a duration — give a number with its unit/)
-    await refused(15, { action: "set", prompt: "x", in: "ten minutes" }, /is not a duration/)
-    await refused(6, { action: "set", in_seconds: 60 }, /`prompt` is required/)
-    await refused(7, { action: "set", prompt: "x", at: "2020-01-01T00:00:00Z" }, /at least 10s in the future/)
-    await refused(8, { action: "set", prompt: "x", at: "next tuesday" }, /must be an ISO-8601 instant/)
+    await refused(14, { action: "set", prompt: "x", description: "x", in: "600" }, /`--in 600` is not a duration — give a number with its unit/)
+    await refused(15, { action: "set", prompt: "x", description: "x", in: "ten minutes" }, /is not a duration/)
+    await refused(6, { action: "set", description: "x", in_seconds: 60 }, /`prompt` is required/)
+    await refused(7, { action: "set", prompt: "x", description: "x", at: "2020-01-01T00:00:00Z" }, /at least 10s in the future/)
+    await refused(8, { action: "set", prompt: "x", description: "x", at: "next tuesday" }, /must be an ISO-8601 instant/)
+    // The human's name for it is required, and one line of a few words.
+    await refused(16, { action: "set", prompt: "x", in_seconds: 60 }, /`description` is required to set a timer/)
+    await refused(17, { action: "set", prompt: "x", description: "   ", in_seconds: 60 }, /`description` is required to set a timer/)
+    await refused(18, { action: "set", prompt: "x", description: "y".repeat(121), in_seconds: 60 }, /at most 120/)
     await refused(9, { action: "cancel" }, /`id` is required/)
     await refused(10, { action: "snooze" }, /`action` must be one of/)
 

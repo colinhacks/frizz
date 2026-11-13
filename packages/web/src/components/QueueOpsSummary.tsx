@@ -8,7 +8,7 @@ import { panelWidthOn } from "../lib/overlaySurface.ts"
 import { extendTrail, trailHeadingInto, type PointerSample } from "../lib/pointerAim.ts"
 import { queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
-import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
+import { commandWatchLabel, commandWatchStatus, commandWatchTitle, timerWatchLabel, timerWatchStatus, timerWatchTitle } from "./AwaitingBackgroundCard.tsx"
 import { HumanTodoList } from "./AwaitingSteps.tsx"
 import { BackgroundOpsStrip } from "./ChatView.tsx"
 import { ChildOpRow } from "./ChildOpRow.tsx"
@@ -17,7 +17,7 @@ import { ChildThreadRows } from "./ChildThreadRows.tsx"
 import { useChildThreads } from "../hooks.ts"
 import { QueueSubAgentLines } from "./QueueSubAgentLines.tsx"
 import { useSurfaceOpsThread } from "./ThreadSurface.tsx"
-import { pushMonitorDrawer } from "../store.ts"
+import { pushMonitorDrawer, pushTimerDrawer } from "../store.ts"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 
 // THE QUEUE CARD'S LIVE OPS, CONDENSED: one line of counts at the right, just above the docked prompt
@@ -434,9 +434,9 @@ function Dot({ hue, states }: { hue: "agent" | "shell" | "github"; states: reado
 // panel on the line speaks one row. Their readings are the awaiting card's (CommandWatchRow, TimerRow):
 // a command watch's cadence beside how long it has watched, as a PR row's check count sits beside its
 // age, and a timer's countdown alone — beside it, the time since it was set would read as a second clock.
-// A persistent watch's row opens its drawer (MonitorSheet), as a shell's does — its stop lives there, beside what
-// it printed. A plain command watch and a timer have no drawer, so their rows are not buttons, and none
-// carries a ×.
+// Every row opens its drawer, as a shell's does (2026-11-12; until then only a persistent monitor's did):
+// a monitor's (MonitorSheet — a persistent one's stop lives there, beside what it printed) and a timer's
+// (TimerSheet). None carries a ×.
 function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" | "timer" }) {
   const now = useNowMs()
   const { commands, timers } = threadOps(thread)
@@ -453,18 +453,19 @@ function WaitPanelRows({ thread, kind }: { thread: ThreadView; kind: "command" |
               startedAt={watch.createdAt}
               counter={commandWatchStatus(watch)}
               title={commandWatchTitle(watch, now)}
-              onOpen={watch.command?.monitor ? () => pushMonitorDrawer(thread.id, watch.target, { label: commandWatchLabel(watch) }) : undefined}
+              onOpen={() => pushMonitorDrawer(thread.id, watch.target, { label: commandWatchLabel(watch) })}
             />
           ))
         : timers.map((watch) => (
             <ChildOpRow
               key={watch.id}
               kind="TIMER"
-              label={watch.timer?.prompt?.split("\n")[0] || watch.target}
+              label={timerWatchLabel(watch)}
               state="running"
               density="panel"
               counter={timerWatchStatus(watch, now)}
               title={timerWatchTitle(watch)}
+              onOpen={() => pushTimerDrawer(thread.id, watch.target, { label: timerWatchLabel(watch) })}
             />
           ))}
     </div>

@@ -86,6 +86,7 @@ export const SubAgentSheet = lazySurface("SubAgentSheet", () => null)
 export const ThreadDrawer = lazySurface("ThreadDrawer", () => null)
 export const BackgroundShellSheet = lazySurface("BackgroundShellSheet", () => null)
 export const MonitorSheet = lazySurface("MonitorSheet", () => null)
+export const TimerSheet = lazySurface("TimerSheet", () => null)
 // The rail beside an open thread in the pane: it stands beside the thread, so it arrives with it.
 export const SidePane = lazySurface("SidePane", () => null)
 // The full-screen page. main.tsx fetches the chunk at boot on its URL, so this is the board's loader only

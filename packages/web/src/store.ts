@@ -82,10 +82,10 @@ export const store = proxy({
   // same entry so App can render its sheet without a board lookup after the operation finishes.
   drawers: [] as {
     id: number
-    kind: "thread" | "doc" | "subagent" | "shell" | "monitor" | "markdown"
+    kind: "thread" | "doc" | "subagent" | "shell" | "monitor" | "timer" | "markdown"
     slug: string
     routed?: boolean // URL/deep-link-created thread: visible on first paint, never an invisible animated backdrop
-    subId?: string // subagent/shell: the launch tool_use id (the RPC handle + dedupe key); monitor: its `cmw_…` id
+    subId?: string // subagent/shell: the launch tool_use id (the RPC handle + dedupe key); monitor: its `cmw_…` id; timer: its `tmr_…` id
     label?: string // subagent: the dispatch description (header title) / markdown: the basename
     path?: string // markdown: the absolute file path
     subagentType?: string // subagent: the model+effort cell tag
@@ -199,7 +199,7 @@ type Drawer = (typeof store.drawers)[number]
 function sameDrawer(a: Drawer, b: Pick<Drawer, "kind" | "slug" | "path" | "subId">): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === "markdown") return a.path === b.path
-  if (a.kind === "subagent" || a.kind === "shell" || a.kind === "monitor") return a.subId === b.subId
+  if (a.kind === "subagent" || a.kind === "shell" || a.kind === "monitor" || a.kind === "timer") return a.subId === b.subId
   return a.slug === b.slug
 }
 
@@ -212,7 +212,7 @@ function stacksOver(below: Drawer, next: Pick<Drawer, "kind" | "slug">): boolean
   // prose the link was read from. It stacks over anything, its own kind included — following a doc's
   // link to a sibling doc and pressing Esc to come back is the whole point of a reader.
   if (next.kind === "markdown") return true
-  if (next.kind === "subagent" || next.kind === "shell" || next.kind === "monitor") return (below.kind === "thread" || below.kind === "doc") && below.slug === next.slug
+  if (next.kind === "subagent" || next.kind === "shell" || next.kind === "monitor" || next.kind === "timer") return (below.kind === "thread" || below.kind === "doc") && below.slug === next.slug
   if (next.kind === "doc") return below.kind === "thread" && below.slug === next.slug
   if (next.kind === "thread") {
     if (below.kind === "doc" && below.slug === next.slug) return true
@@ -298,6 +298,11 @@ export function pushBackgroundShellDrawer(slug: string, id: string, opts: { labe
 /** A monitor's drawer (MonitorSheet): its script and what it printed, stacked over its thread like a shell's. */
 export function pushMonitorDrawer(slug: string, id: string, opts: { label: string }): void {
   openOrRaiseDrawer({ kind: "monitor", slug, subId: id, label: opts.label })
+}
+
+/** A timer's drawer (TimerSheet): what it is for, when it fires and its prompt, stacked like a monitor's. */
+export function pushTimerDrawer(slug: string, id: string, opts: { label: string }): void {
+  openOrRaiseDrawer({ kind: "timer", slug, subId: id, label: opts.label })
 }
 
 // Open a thread from a listing/notification click-through. On a desktop board it opens in the pane

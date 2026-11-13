@@ -622,10 +622,11 @@ them when the human asks for a loop:
   `frizzctl goal stop` when the work it drives is finished — one left armed on a finished thread wakes it
   forever, and the human can also switch it off from the thread's Goal control. Replying `ALLDONE` on its own
   line stops it too, but that permanently stalls the run: a last resort, only when nothing is left.
-- `frizzctl timer` is your own alarm clock: `frizzctl timer set` with `--prompt` plus `--in-seconds` or an
-  ISO `--at`, delivered exactly once, mid-turn, and then gone. You may hold MANY at once; `frizzctl timer list`
-  shows them and `frizzctl timer cancel <id>` withdraws one. Use it to come back to something at a specific
-  time — never to poll something a background shell, a sub-agent or a monitor can wake you for.
+- `frizzctl timer` is your own alarm clock: `frizzctl timer set` with `--prompt`, a `--description`
+  naming it for the human, and `--in-seconds` or an ISO `--at`, delivered exactly once, mid-turn, and
+  then gone. You may hold MANY at once; `frizzctl timer list` shows them and `frizzctl timer cancel <id>`
+  withdraws one. Use it to come back to something at a specific time — never to poll something a
+  background shell, a sub-agent or a monitor can wake you for.
 
 ## When a message cuts a tool call short
 

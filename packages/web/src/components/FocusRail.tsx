@@ -250,7 +250,7 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
     { head: "Pull requests", rows: prs.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     { head: "Issues", rows: issues.map((w) => <GithubWatchRow key={w.id} watch={w} />) },
     { head: "Monitors", rows: commands.map((w) => <CommandWatchRow key={w.id} watch={w} slug={thread.id} now={now} />) },
-    { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} now={now} />) },
+    { head: "Timers", rows: timers.map((w) => <TimerRow key={w.id} watch={w} slug={thread.id} now={now} />) },
     // Saved references, not waits, so they follow every live row. Ahead of the edited files, though:
     // the worker chose these for the human to keep at hand, and the tree can run to dozens of rows.
     { head: "Files and links", rows: (thread.links ?? []).map((l) => <SavedLinkRow key={l.id} link={l} />) },

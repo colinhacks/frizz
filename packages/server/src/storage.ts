@@ -426,6 +426,9 @@ export interface ThreadTimerRow {
   id: string
   thread_slug: string
   prompt: string
+  /** What the timer is for, in a few words, for the human: the row's name and its drawer's title
+   *  (2026-11-12). Null on a timer set before the column, or by a worker whose tool sent none. */
+  description: string | null
   fire_at: number
   state: "armed" | "fired" | "cancelled"
   created_at: number
@@ -493,7 +496,8 @@ export interface CommandWatchRow {
    *  the script ended, and `passed` is its state once the script ended on its own — the state CHECK
    *  predates monitors, and every live file has it, so the word is reused rather than the table rebuilt. */
   kind: "check" | "monitor"
-  /** A monitor's label, in the worker's words. Null on a check, and on a monitor registered without one. */
+  /** What it watches, in the worker's words: the row's name and its drawer's title. A check took one
+   *  too from 2026-11-12; null on a row registered before that, or without one. */
   description: string | null
   /** A monitor's events so far, and the newest one. Zero and null on a check. */
   events: number
@@ -819,7 +823,7 @@ export interface Storage {
   // ---- ONE-OFF TIMERS (scheduler SOURCE 6) -------------------------------------------------------
   // Arm one. `id` is minted by the caller so the row and the scheduler's delivery id agree without a
   // read-back. Slug-keyed for the same reason the recurring prompt's worker path is.
-  armThreadTimer(timer: { id: string; slug: string; prompt: string; fireAtMs: number; createdAtMs: number }): void
+  armThreadTimer(timer: { id: string; slug: string; prompt: string; description?: string | null; fireAtMs: number; createdAtMs: number }): void
   // A thread's timers, newest deadline last. `armedOnly` is what the worker's tool reads back; the full
   // set is for tests and diagnostics.
   listThreadTimers(slug: string, opts?: { armedOnly?: boolean }): ThreadTimerRow[]
@@ -866,7 +870,7 @@ export interface Storage {
   // Slug-keyed for the timers' reason. `id` is minted by the caller so the row and the scheduler's
   // delivery ids agree without a read-back. `firstRun` is the registration's own check, recorded on the
   // row it armed so the read-back and the cadence both start from it.
-  armCommandWatch(watch: { id: string; slug: string; command: string; everyMs: number; createdAtMs: number; expiresAtMs: number; firstRun?: CommandWatchRunRecord }): CommandWatchRow
+  armCommandWatch(watch: { id: string; slug: string; command: string; description?: string | null; everyMs: number; createdAtMs: number; expiresAtMs: number; firstRun?: CommandWatchRunRecord }): CommandWatchRow
   /** A thread's command watches, oldest first; `armedOnly` is what the worker reads back. */
   listCommandWatches(slug: string, opts?: { armedOnly?: boolean }): CommandWatchRow[]
   /** Every thread's ARMED command watches at once, keyed by slug — the board's read (see groupBySlug). */
@@ -1571,6 +1575,9 @@ export function ensureStorageSchema(db: Database): void {
     ["command_watch", "events INTEGER NOT NULL DEFAULT 0"], ["command_watch", "last_event_at INTEGER"],
     ["command_watch", "last_event TEXT"], ["command_watch", "pid INTEGER"],
     ["command_watch", "pid_started_at INTEGER"],
+    // `thread_timer.description` (2026-11-12): a timer's name for the human, which its prompt (written
+    // to the worker's future self) is not.
+    ["thread_timer", "description TEXT"],
   ] as const) {
     try {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`)
@@ -2096,8 +2103,8 @@ export function createStorage(source: string | Database, projectId: string): Sto
   `)
   // ---- ONE-OFF TIMERS ----------------------------------------------------------------------------
   const armTimerStmt = scope.prepare(`
-    INSERT INTO thread_timer (project_id, id, thread_slug, prompt, fire_at, state, created_at, settled_at)
-    VALUES (@project_id, @id, @slug, @prompt, @fireAtMs, 'armed', @createdAtMs, NULL)
+    INSERT INTO thread_timer (project_id, id, thread_slug, prompt, description, fire_at, state, created_at, settled_at)
+    VALUES (@project_id, @id, @slug, @prompt, @description, @fireAtMs, 'armed', @createdAtMs, NULL)
   `)
   const timersBySlugStmt = scope.prepare<[string], ThreadTimerRow>(
     "SELECT * FROM thread_timer WHERE project_id = @project_id AND thread_slug = ? ORDER BY fire_at, id",
@@ -2178,12 +2185,12 @@ export function createStorage(source: string | Database, projectId: string): Sto
   const prWatchCursorStmt = scope.prepare("UPDATE pr_watch SET cursor = ? WHERE project_id = @project_id AND id = ? AND state = 'armed'")
   const delPrWatches = scope.prepare("DELETE FROM pr_watch WHERE project_id = @project_id AND thread_slug = ?")
   const armCommandWatchStmt = scope.prepare<{
-    id: string; slug: string; command: string; everyMs: number; createdAtMs: number; expiresAtMs: number
+    id: string; slug: string; command: string; description: string | null; everyMs: number; createdAtMs: number; expiresAtMs: number
     runs: number; lastRunAt: number | null; lastOutcome: string | null; lastExit: number | null; lastOutput: string | null
   }, CommandWatchRow>(`
-    INSERT INTO command_watch (project_id, id, thread_slug, command, every_ms, state, created_at, expires_at, settled_at,
+    INSERT INTO command_watch (project_id, id, thread_slug, command, description, every_ms, state, created_at, expires_at, settled_at,
                                runs, last_run_at, last_outcome, last_exit, last_output)
-    VALUES (@project_id, @id, @slug, @command, @everyMs, 'armed', @createdAtMs, @expiresAtMs, NULL,
+    VALUES (@project_id, @id, @slug, @command, @description, @everyMs, 'armed', @createdAtMs, @expiresAtMs, NULL,
             @runs, @lastRunAt, @lastOutcome, @lastExit, @lastOutput)
     RETURNING *
   `)
@@ -3091,6 +3098,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
         id: watch.id,
         slug: watch.slug,
         command: watch.command,
+        description: watch.description?.trim() || null,
         everyMs: watch.everyMs,
         createdAtMs: watch.createdAtMs,
         expiresAtMs: watch.expiresAtMs,
@@ -3185,7 +3193,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     listSubAgentSteers: (slug, subAgentId) => listSubAgentSteersStmt.all(slug, subAgentId),
     dropThreadWatch: (slug, id, settledAtMs) => dropThreadWatchStmt.run(settledAtMs, id, slug).changes === 1,
     settleThreadWatch: (id, settledAtMs, state = "settled") => settleThreadWatchStmt.run(state, settledAtMs, id).changes === 1,
-    armThreadTimer: (timer) => void armTimerStmt.run(timer),
+    armThreadTimer: (timer) => void armTimerStmt.run({ ...timer, description: timer.description?.trim() || null }),
     listThreadTimers: (slug, opts) =>
       (opts?.armedOnly ? armedTimersBySlugStmt : timersBySlugStmt).all(slug),
     armedThreadTimersBySlug: () => registryBySlug("thread_timer", () => groupBySlug(armedTimersStmt.all()), sameRows),

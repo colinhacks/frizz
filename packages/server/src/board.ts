@@ -936,7 +936,7 @@ export function fenceWatchViews(
   /** This thread's ARMED TIMERS — the `thread_timer` rows a `timers:` fence entry is checked against.
    *  Rows for the same reason the PR registrations above get them, fence or no fence: an armed timer
    *  WILL fire and wake the thread, so it is live work the strip must list. */
-  armedTimers: readonly { id: string; prompt: string; fireAt: string; createdAt: string }[] = [],
+  armedTimers: readonly { id: string; prompt: string; description?: string | null; fireAt: string; createdAt: string }[] = [],
   /** This thread's ARMED `thread_watch` rows — a wait the worker REGISTERED rather than declared. Rows
    *  for the same reason the two registries above get them: the row outlives the message that made it,
    *  so it is live work the strip must list whether or not any fence still mentions it.
@@ -968,7 +968,7 @@ export function fenceWatchViews(
       createdAt: t.createdAt,
       // Always present, unlike the github half above: a timer that exists is fully known — there is no
       // poller to wait for. The prompt is the row's NAME client-side (a `tmr_…` id names nothing).
-      timer: { fireAt: t.fireAt, prompt: t.prompt },
+      timer: { fireAt: t.fireAt, prompt: t.prompt, ...(t.description ? { description: t.description } : {}) },
     })
   }
   for (const w of armedCommands) {
@@ -984,6 +984,7 @@ export function fenceWatchViews(
       // `frizzctl monitor` name one cadence and one last check.
       command: {
         command: w.command,
+        ...(w.description ? { description: w.description } : {}),
         every: formatElapsed(w.every_ms),
         expiresAt: new Date(w.expires_at).toISOString(),
         runs: w.runs,
@@ -2073,6 +2074,7 @@ function sessionThreadView(
   const armedTimers = (registries.timers.get(row.slug) ?? []).map((t) => ({
     id: t.id,
     prompt: t.prompt,
+    description: t.description,
     fireAt: new Date(t.fire_at).toISOString(),
     createdAt: new Date(t.created_at).toISOString(),
   }))

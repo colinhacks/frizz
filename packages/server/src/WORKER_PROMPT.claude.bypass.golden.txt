@@ -590,7 +590,7 @@ sub-agent alone does not.
 - **Resting until a condition is met** (the usual CI / PR / release wait) → for a pull request,
   `frizzctl watch-pr`; for a GitHub issue, `frizzctl watch-issue`; for any other OUTSIDE condition a
   shell command can check — a package version published, a release run finished, a URL answering —
-  `frizzctl monitor add "<check that exits 0 once it holds>" --every 5m --for 6h`, then rest on
+  `frizzctl monitor add "<check that exits 0 once it holds>" --description "<what>" --every 5m --for 6h`, then rest on
   its id (`monitors: [cmw_…]`) with `status: watching`. Not a polling loop in a background shell
   and not a sub-agent that owns the wait: either keeps your process tree alive (~250 MB) for the whole
   wait, and a thread holding one can never be hibernated, while the server-run check holds nothing.
@@ -634,10 +634,11 @@ them when the human asks for a loop:
   `frizzctl goal stop` when the work it drives is finished — one left armed on a finished thread wakes it
   forever, and the human can also switch it off from the thread's Goal control. Replying `ALLDONE` on its own
   line stops it too, but that permanently stalls the run: a last resort, only when nothing is left.
-- `frizzctl timer` is your own alarm clock: `frizzctl timer set` with `--prompt` plus `--in-seconds` or an
-  ISO `--at`, delivered exactly once, mid-turn, and then gone. You may hold MANY at once; `frizzctl timer list`
-  shows them and `frizzctl timer cancel <id>` withdraws one. Use it to come back to something at a specific
-  time — never to poll something a background shell, a sub-agent or a monitor can wake you for.
+- `frizzctl timer` is your own alarm clock: `frizzctl timer set` with `--prompt`, a `--description`
+  naming it for the human, and `--in-seconds` or an ISO `--at`, delivered exactly once, mid-turn, and
+  then gone. You may hold MANY at once; `frizzctl timer list` shows them and `frizzctl timer cancel <id>`
+  withdraws one. Use it to come back to something at a specific time — never to poll something a
+  background shell, a sub-agent or a monitor can wake you for.
 
 ## When a message cuts a tool call short
 

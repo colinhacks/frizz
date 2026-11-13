@@ -267,3 +267,69 @@ test("an archived or unknown thread cannot register one", async () => {
     await assert.rejects(h.router.addOwnCommandWatch.handler({ input: { slug: "nobody", command: NPM, every: "5m", for: "6h" } }), /not registered/)
   } finally { h.close() }
 })
+
+// A NAME FOR THE HUMAN (2026-11-12): a check takes a description as a persistent monitor does, and its
+// drawer reads the check itself — its cadence, its runs, and what its last run printed.
+test("a check's description is stored, read back and named by `activity`, and its drawer reads its last check", async () => {
+  const h = harness()
+  try {
+    h.storage.upsertSession(row("t"))
+    h.storage.upsertSession(row("other"))
+    const added = await h.router.addOwnCommandWatch.handler({ input: { slug: "t", command: NPM, description: " frizz 0.13.12\n on npm ", every: "5m", for: "6h" } })
+    assert.equal(added.watches[0].description, "frizz 0.13.12 on npm", "squeezed onto one line")
+    const listed = await h.router.listOwnCommandWatches.handler({ input: { slug: "t" } })
+    assert.equal(listed.watches[0].description, "frizz 0.13.12 on npm")
+    const activity = await h.router.listOwnThreadActivity.handler({ input: { slug: "t" } })
+    assert.deepEqual(activity.activity.map((a) => [a.kind, a.label]), [["command", "frizz 0.13.12 on npm"]])
+
+    const drawer = await h.router.monitorOutput.handler({ input: { slug: "t", id: added.id! } })
+    assert.equal(drawer.state, "running")
+    assert.equal(drawer.command, NPM)
+    assert.equal(drawer.description, "frizz 0.13.12 on npm")
+    assert.equal(drawer.output, "not yet", "the last check's output stands in for a log")
+    assert.equal(drawer.stoppable, false, "a check has no human stop")
+    assert.equal(drawer.check?.every, "5m")
+    assert.equal(drawer.check?.runs, 1)
+    assert.deepEqual(drawer.check?.lastRun && { outcome: drawer.check.lastRun.outcome, exitCode: drawer.check.lastRun.exitCode }, { outcome: "exit", exitCode: 1 })
+
+    // Another thread's drawer cannot read it, and a dropped one still reads, as how it ended.
+    assert.equal((await h.router.monitorOutput.handler({ input: { slug: "other", id: added.id! } })).state, "gone")
+    await h.router.dropOwnCommandWatch.handler({ input: { slug: "t", id: added.id! } })
+    const ended = await h.router.monitorOutput.handler({ input: { slug: "t", id: added.id! } })
+    assert.equal(ended.state, "ended")
+    assert.equal(ended.ended, "dropped")
+
+    // A worker whose tool predates the field still registers, named by its command.
+    const unnamed = await h.router.addOwnCommandWatch.handler({ input: { slug: "t", command: "curl -fsS http://localhost:1/health", every: "5m", for: "1h" } })
+    assert.equal(unnamed.watches.find((w) => w.id === unnamed.id)?.description, undefined)
+  } finally { h.close() }
+})
+
+test("a timer's description is stored and read back, and its drawer reads the row in every state", async () => {
+  const h = harness()
+  try {
+    h.storage.upsertSession(row("t"))
+    h.storage.upsertSession(row("other"))
+    const fireAt = new Date(Date.now() + 3_600_000).toISOString()
+    const set = await h.router.setOwnThreadTimer.handler({ input: { slug: "t", prompt: "Re-run the preflight against abc123 and report", description: "Re-run the\n release preflight", fireAt } })
+    assert.equal(set.timers[0].description, "Re-run the release preflight")
+    const activity = await h.router.listOwnThreadActivity.handler({ input: { slug: "t" } })
+    assert.deepEqual(activity.activity.map((a) => [a.kind, a.label]), [["timer", "Re-run the release preflight"]])
+
+    const drawer = await h.router.threadTimer.handler({ input: { slug: "t", id: set.id } })
+    assert.deepEqual(drawer && { description: drawer.description, prompt: drawer.prompt, fireAt: drawer.fireAt, state: drawer.state, settledAt: drawer.settledAt }, {
+      description: "Re-run the release preflight", prompt: "Re-run the preflight against abc123 and report", fireAt, state: "armed", settledAt: null,
+    })
+    assert.equal(await h.router.threadTimer.handler({ input: { slug: "other", id: set.id } }), null, "another thread cannot read it")
+
+    await h.router.cancelOwnThreadTimer.handler({ input: { slug: "t", id: set.id } })
+    const cancelled = await h.router.threadTimer.handler({ input: { slug: "t", id: set.id } })
+    assert.equal(cancelled?.state, "cancelled")
+    assert.ok(cancelled?.settledAt)
+
+    // Optional on the wire: an older worker's timer has none, and its drawer still reads.
+    const old = await h.router.setOwnThreadTimer.handler({ input: { slug: "t", prompt: "look again", fireAt } })
+    assert.equal(old.timers[0].description, undefined)
+    assert.equal((await h.router.threadTimer.handler({ input: { slug: "t", id: old.id } }))?.description, null)
+  } finally { h.close() }
+})

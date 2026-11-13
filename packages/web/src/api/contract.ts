@@ -164,6 +164,25 @@ export interface MonitorOutput {
   events: number
   startedAt: string | null
   stoppable: boolean
+  /** A CHECK's own readings (`frizzctl monitor add --every`); null on a persistent monitor. The output above
+   *  is then what its last check printed. Absent from a server that predates checks opening a drawer. */
+  check?: {
+    every: string
+    runs: number
+    expiresAt: string
+    lastRun: { at: string; outcome: "exit" | "timeout" | "signal" | "error"; exitCode: number | null } | null
+  } | null
+}
+
+/** A timer's drawer (`threadTimer`): what it is for, when it fires, and the prompt it will deliver. */
+export interface ThreadTimerDetail {
+  id: string
+  description: string | null
+  prompt: string
+  fireAt: string
+  createdAt: string
+  settledAt: string | null
+  state: "armed" | "fired" | "cancelled"
 }
 
 export interface RpcCallOpts {
@@ -197,6 +216,7 @@ export interface Api {
   backgroundShellOutput(input: { slug: string; id: string }): Promise<{ command: string | null; output: string; truncated: boolean; state: "running" | "done" | "gone"; stoppable: boolean; stopNote: string | null }>
   monitorOutput(input: { slug: string; id: string }): Promise<MonitorOutput>
   stopMonitor(input: { slug: string; id: string }): Promise<{ stopped: boolean }>
+  threadTimer(input: { slug: string; id: string }): Promise<ThreadTimerDetail | null>
   // The ops strip's live output counter, batched over every shell row it is showing. `lines: null` is
   // "no readable output yet" (a shell still between its tool_use and its launch ack) — never zero, and
   // never an omission, which would stop the poll before the path ever arrived.
@@ -477,6 +497,7 @@ export const PROCEDURES = {
   backgroundShellOutput: "query",
   monitorOutput: "query",
   stopMonitor: "mutation",
+  threadTimer: "query",
   backgroundShellActivity: "query",
   stopBackgroundOp: "mutation",
   pendingInteractions: "query",

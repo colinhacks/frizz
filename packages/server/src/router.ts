@@ -1967,6 +1967,7 @@ export function createRouter(ctx: AppContext) {
     return {
       id: w.id,
       command: w.command,
+      ...(w.description ? { description: w.description } : {}),
       every: formatCommandWatchDuration(w.every_ms),
       state: w.state,
       createdAt: new Date(w.created_at).toISOString(),
@@ -2158,6 +2159,7 @@ export function createRouter(ctx: AppContext) {
     return ctx.storage.listThreadTimers(slug, { armedOnly: true }).map((t) => ({
       id: t.id,
       prompt: t.prompt,
+      ...(t.description ? { description: t.description } : {}),
       fireAt: new Date(t.fire_at).toISOString(),
       state: t.state,
       createdAt: new Date(t.created_at).toISOString(),
@@ -4033,6 +4035,8 @@ export function createRouter(ctx: AppContext) {
           id,
           slug: input.slug,
           prompt: input.prompt,
+          // One line: it is a row's name and a drawer's title (addOwnMonitor squeezes its own the same way).
+          description: input.description?.replace(/\s+/g, " ") || null,
           fireAtMs: Date.parse(input.fireAt),
           createdAtMs: Date.now(),
         })
@@ -4100,7 +4104,7 @@ export function createRouter(ctx: AppContext) {
         }
         for (const t of ctx.storage.listThreadTimers(input.slug, { armedOnly: true })) {
           activity.push({
-            kind: "timer", id: t.id, label: t.prompt.trim().replace(/\s+/g, " ").slice(0, 120),
+            kind: "timer", id: t.id, label: (t.description ?? t.prompt).trim().replace(/\s+/g, " ").slice(0, 120),
             since: new Date(t.created_at).toISOString(), until: new Date(t.fire_at).toISOString(),
           })
         }
@@ -4113,7 +4117,7 @@ export function createRouter(ctx: AppContext) {
         }
         for (const w of ctx.storage.listCommandWatches(input.slug, { armedOnly: true })) {
           activity.push({
-            kind: "command", id: w.id, label: w.command.trim().replace(/\s+/g, " ").slice(0, 120),
+            kind: "command", id: w.id, label: (w.description ?? w.command).trim().replace(/\s+/g, " ").slice(0, 120),
             since: new Date(w.created_at).toISOString(), until: new Date(w.expires_at).toISOString(),
           })
         }
@@ -4361,6 +4365,7 @@ export function createRouter(ctx: AppContext) {
         ctx.storage.clearThreadDone(input.slug)
         ctx.storage.armCommandWatch({
           id, slug: input.slug, command, everyMs, createdAtMs: now, expiresAtMs: now + forMs,
+          description: input.description?.replace(/\s+/g, " ") || null,
           // A first check cut short by the registration's own short timeout is NOT recorded: the
           // scheduler runs it again at once with the full timeout, rather than a cadence from now.
           ...(first && first.outcome !== "timeout"
@@ -4398,6 +4403,11 @@ export function createRouter(ctx: AppContext) {
     // A MONITOR'S DRAWER (2026-11-03): its script and everything it printed, the way a background shell's
     // drawer reads its output file. The log is written by the monitor's own process (command-watch.ts
     // monitorOutputSink); `ended` says how a monitor that is no longer running stopped.
+    //
+    // A CHECK opens the same drawer (2026-11-12; until then its row opened nothing): its command, and in
+    // place of a log the output of its LAST check, which is all the server keeps of one — the tail each run
+    // overwrites (COMMAND_WATCH_OUTPUT_MAX_BYTES). `check` carries what only a check has, and is null on a
+    // persistent monitor. A check has no human stop: nothing tells its worker it was stopped.
     monitorOutput: query({
       input: z.object({ slug: ThreadSlug, id: z.string() }).strict(),
       output: z.object({
@@ -4410,14 +4420,41 @@ export function createRouter(ctx: AppContext) {
         events: z.number(),
         startedAt: z.string().nullable(),
         stoppable: z.boolean(),
+        check: z.object({
+          every: z.string(),
+          runs: z.number(),
+          expiresAt: z.string(),
+          lastRun: z.object({ at: z.string(), outcome: z.enum(["exit", "timeout", "signal", "error"]), exitCode: z.number().nullable() }).nullable(),
+        }).nullable().optional(),
       }),
       handler: async ({ input }) => {
         const w = ctx.storage.getCommandWatch(input.id)
-        if (!w || w.kind !== "monitor" || w.thread_slug !== input.slug) {
-          return { command: null, description: null, output: "", truncated: false, state: "gone" as const, ended: null, events: 0, startedAt: null, stoppable: false }
+        if (!w || w.thread_slug !== input.slug) {
+          return { command: null, description: null, output: "", truncated: false, state: "gone" as const, ended: null, events: 0, startedAt: null, stoppable: false, check: null }
+        }
+        const running = w.state === "armed"
+        if (w.kind === "check") {
+          return {
+            command: w.command,
+            description: w.description,
+            output: w.last_output ?? "",
+            truncated: false,
+            state: running ? "running" as const : "ended" as const,
+            ended: running ? null : w.state === "passed" ? "passed" : w.state === "cancelled" ? "stopped" : w.state,
+            events: 0,
+            startedAt: new Date(w.created_at).toISOString(),
+            stoppable: false,
+            check: {
+              every: formatCommandWatchDuration(w.every_ms),
+              runs: w.runs,
+              expiresAt: new Date(w.expires_at).toISOString(),
+              lastRun: w.last_run_at !== null && w.last_outcome
+                ? { at: new Date(w.last_run_at).toISOString(), outcome: w.last_outcome, exitCode: w.last_exit }
+                : null,
+            },
+          }
         }
         const content = readBackgroundShellOutput(monitorOutputPath(join(ctx.project.stateDir, "monitors"), w.id))
-        const running = w.state === "armed"
         return {
           command: w.command,
           description: w.description,
@@ -4427,6 +4464,36 @@ export function createRouter(ctx: AppContext) {
           events: w.events,
           startedAt: new Date(w.created_at).toISOString(),
           stoppable: running,
+          check: null,
+        }
+      },
+    }),
+
+    // A TIMER'S DRAWER (2026-11-12): what it is for, when it fires, and the prompt the worker will be sent.
+    // Read from the row rather than the board, so the drawer still reads after the timer fires or is
+    // cancelled — the board lists only armed ones.
+    threadTimer: query({
+      input: z.object({ slug: ThreadSlug, id: z.string() }).strict(),
+      output: z.object({
+        id: z.string(),
+        description: z.string().nullable(),
+        prompt: z.string(),
+        fireAt: z.string(),
+        createdAt: z.string(),
+        settledAt: z.string().nullable(),
+        state: z.enum(["armed", "fired", "cancelled"]),
+      }).nullable(),
+      handler: async ({ input }) => {
+        const t = ctx.storage.getThreadTimer(input.id)
+        if (!t || t.thread_slug !== input.slug) return null
+        return {
+          id: t.id,
+          description: t.description,
+          prompt: t.prompt,
+          fireAt: new Date(t.fire_at).toISOString(),
+          createdAt: new Date(t.created_at).toISOString(),
+          settledAt: t.settled_at === null ? null : new Date(t.settled_at).toISOString(),
+          state: t.state,
         }
       },
     }),

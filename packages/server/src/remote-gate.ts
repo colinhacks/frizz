@@ -68,6 +68,7 @@ export const REMOTE_ACCESS = {
   backgroundShellOutput: "allow",
   backgroundShellActivity: "allow",
   monitorOutput: "allow",
+  threadTimer: "allow",
   projectsList: "allow",
   projectsRailCounts: "allow",
 
