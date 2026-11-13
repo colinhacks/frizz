@@ -335,6 +335,18 @@ test("a wake carrying CI and review activity yields both parts", () => {
   }, "a machine-facing tail must not cost the divider")
 })
 
+test("red beside workflows held for approval never says every check has finished", () => {
+  const text = prWatchWakeMessage({
+    target: "nubjs/nub#587",
+    checks: { verdict: "failing", passed: 0, failed: 1, failing: ["cla"], running: 0, gated: 2, gating: ["ci", "e2e"] },
+  })
+  assert.doesNotMatch(text, /Every check has finished/)
+  assert.match(text, /Nothing else is running, but 2 workflows are held for a maintainer's approval and have not run: ci, e2e\./)
+  assert.deepEqual(parsePrWatchWake(text), { ref: "nubjs/nub#587", kind: "ci", verdict: "failing", failing: ["cla"] })
+  const one = prWatchWakeMessage({ target: "nubjs/nub#587", checks: { verdict: "failing", passed: 0, failed: 1, failing: ["cla"], running: 0, gated: 1 } })
+  assert.match(one, /1 workflow is held for a maintainer's approval and has not run\./)
+})
+
 test("a red wake's running count costs neither the CI part nor the steer beside it", () => {
   for (const running of [2, 0]) {
     const text = prWatchWakeMessage({
