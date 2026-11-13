@@ -335,6 +335,32 @@ test("a wake carrying CI and review activity yields both parts", () => {
   }, "a machine-facing tail must not cost the divider")
 })
 
+test("red beside workflows held for approval never says every check has finished", () => {
+  const text = prWatchWakeMessage({
+    target: "nubjs/nub#587",
+    checks: { verdict: "failing", passed: 0, failed: 1, failing: ["cla"], running: 0, gated: 2, gating: ["ci", "e2e"] },
+  })
+  assert.doesNotMatch(text, /Every check has finished/)
+  assert.match(text, /Nothing else is running, but 2 workflows are held for a maintainer's approval and have not run: ci, e2e\./)
+  assert.deepEqual(parsePrWatchWake(text), { ref: "nubjs/nub#587", kind: "ci", verdict: "failing", failing: ["cla"] })
+  const one = prWatchWakeMessage({ target: "nubjs/nub#587", checks: { verdict: "failing", passed: 0, failed: 1, failing: ["cla"], running: 0, gated: 1 } })
+  assert.match(one, /1 workflow is held for a maintainer's approval and has not run\./)
+})
+
+test("a red wake's running count costs neither the CI part nor the steer beside it", () => {
+  for (const running of [2, 0]) {
+    const text = prWatchWakeMessage({
+      target: "nubjs/nub#587",
+      checks: { verdict: "failing", passed: 1, failed: 1, failing: ["build"], running },
+      review: formatGithubWakeSteer(single),
+    })
+    assert.match(text, running ? /2 checks still running/ : /Every check has finished\./)
+    assert.deepEqual(parsePrWatchWake(text), { ref: "nubjs/nub#587", kind: "ci", verdict: "failing", failing: ["build"] })
+    const rest = text.split("\n").filter((line) => !parsePrWatchWake(line)).join("\n")
+    assert.deepEqual(parseGithubWakeSteer(rest), single, "the steer still leads what is left once the CI line comes off")
+  }
+})
+
 // The trailer, the review steer and ordinary agent prose are all NOT status lines. A false positive here
 // puts a divider on a message that never said a PR finished, which is worse than the card it replaces.
 test("text with no pr-watch status line parses as none", () => {
