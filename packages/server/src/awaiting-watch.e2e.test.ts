@@ -24,7 +24,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createStorage, type SessionRow } from "./storage.ts"
 import { createTailer } from "./tailer.ts"
-import { createScheduler, NEW_HEAD_CI_WAIT_MS } from "./scheduler.ts"
+import { createScheduler, failureSignature, NEW_HEAD_CI_WAIT_MS } from "./scheduler.ts"
 import { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
 import { GITHUB_STATUS_SETTING, readGithubStatusBook } from "./awaiting.ts"
@@ -509,6 +509,37 @@ test("a red reading says once when its last running check finishes, and not for 
     await h.tick()
     assert.deepEqual(h.delivered, [], "a settled red reading stays quiet")
   } finally { h.close() }
+})
+
+// THE UPGRADE. A cursor written before the running flag holds the same stamp the red reading still has,
+// and cannot say whether checks were running under it. The first poll records that and says nothing,
+// whether CI has finished or not; a watcher upgraded while CI was still running hears it finish once.
+test("a red cursor from before the running flag stays quiet on upgrade, and still hears CI finish", async () => {
+  const red = { status: "COMPLETED", conclusion: "FAILURE", name: "lint", detailsUrl: "https://gh/runs/1/job/1" }
+  const legacy = JSON.stringify({ seen: [], checks: `sha-aaa:failing:${failureSignature([red])}`, report: 2 })
+  const build = (status: string) => ({ status, ...(status === "COMPLETED" ? { conclusion: "SUCCESS" } : {}), name: "build", detailsUrl: "https://gh/runs/1/job/2" })
+
+  const finished = await prHarness()
+  try {
+    finished.storage.setPrWatchCursor("prw_1", legacy)
+    finished.setChecks([red, build("COMPLETED")])
+    await finished.tick()
+    await finished.tick()
+    assert.deepEqual(finished.delivered, [], "CI had already finished red: the verdict was said, and nothing has moved")
+  } finally { finished.close() }
+
+  const running = await prHarness()
+  try {
+    running.storage.setPrWatchCursor("prw_1", legacy)
+    running.setChecks([red, build("IN_PROGRESS")])
+    await running.tick()
+    assert.deepEqual(running.delivered, [], "the first poll after the upgrade records the baseline")
+
+    running.setChecks([red, build("COMPLETED")])
+    await running.tick()
+    assert.equal(running.delivered.length, 1, "the baseline said checks were running, so their finishing is news")
+    assert.match(running.delivered[0], /Every check has finished/)
+  } finally { running.close() }
 })
 
 test("a SECOND CI failure on a new commit is reported, and a re-poll of the same commit is not", async () => {

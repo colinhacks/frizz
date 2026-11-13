@@ -1742,7 +1742,7 @@ export function prWatchWakeMessage(input: {
     gating?: string[]
     /** `failing` only: how many checks were still running. A red verdict is reported at the first red
      *  job, so without this the worker cannot tell "CI is done and red" from "red so far". Absent on a
-     *  report held across the 2026-10-29 upgrade, which then says neither. */
+     *  report held across the 2026-11-12 upgrade, which then says neither. */
     running?: number
   }
   /** What changed about the PR itself — a conflict appearing, a label moving, a reviewer being asked.

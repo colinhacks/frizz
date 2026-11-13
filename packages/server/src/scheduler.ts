@@ -3325,7 +3325,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     seen: string[]
     checks?: string
     /** Whether checks were still running under the `checks` stamp. Absent means "not known" (a cursor
-     *  written before 2026-10-29), which records a baseline and says nothing, like `labels`. */
+     *  written before 2026-11-12), which records a baseline and says nothing, like `labels`. */
     running?: boolean
     report?: number
     held?: PrWatchHeld
