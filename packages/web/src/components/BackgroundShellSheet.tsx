@@ -12,6 +12,7 @@ import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { BLOCK_RADIUS } from "./TranscriptCard.tsx"
 import { CodeBody } from "./CodeBody.tsx"
 import { DrawerStopCheck } from "./DrawerStopCheck.tsx"
+import { DrawerField } from "./ui/DrawerField.tsx"
 import { LiveDot } from "./LiveDot.tsx"
 
 // Shared by the command block and its no-command fallback so the two cannot drift apart.
@@ -88,7 +89,11 @@ export function BackgroundShellSheet({
       depth={depth}
       widthDepth={widthDepth}
       kind="background-shell"
-      title={label}
+      // A Claude Code Monitor's label is its required `description`, so its drawer reads as a Frizz
+      // monitor's does: the kind in the header, the description as the first field. A shell's label may
+      // be a summary of its command rather than anything the worker wrote, so it stays the title.
+      title={isMonitor ? "Monitor" : label}
+      description={isMonitor ? label : undefined}
       icon={isMonitor
         ? <Radio aria-hidden size={14} className="shrink-0 text-muted-60" />
         : <TerminalSquare aria-hidden size={14} className="shrink-0 text-muted-60" />}
@@ -182,7 +187,10 @@ export function MonitorSheet({
       depth={depth}
       widthDepth={widthDepth}
       kind="monitor"
-      title={data?.description || label}
+      // The kind in the header and the description as the first field, as a timer's drawer. A monitor
+      // registered before descriptions were asked for (2026-11-12) has none, so its label stays the title.
+      title={data && !data.description ? label : "Monitor"}
+      description={data?.description || undefined}
       icon={check
         ? <RefreshCw aria-hidden size={14} className="shrink-0 text-muted-60" />
         : <Radio aria-hidden size={14} className="shrink-0 text-muted-60" />}
@@ -251,6 +259,7 @@ function OutputSheet({
   emptyText,
   outputHeading = "Output",
   outputNote,
+  description,
   intro,
   stop,
   footer,
@@ -276,7 +285,10 @@ function OutputSheet({
   outputHeading?: string
   /** A reading beside that heading — a check's "exited 1 · 3m ago". */
   outputNote?: string
-  /** One sentence over the command saying what Frizz does with it (a monitor's drawer). */
+  /** The worker's description, the drawer's first field — set where the header names the kind instead
+   *  (a monitor's drawer), so it is not drawn twice. */
+  description?: string
+  /** One sentence under the command saying what Frizz does with it (a monitor's drawer). */
   intro?: string
   stop?: { label: string; stopping: boolean; onStop: () => void }
   footer?: string
@@ -330,16 +342,19 @@ function OutputSheet({
               // state the real situation in the output pane — the <pre> itself lays out a full 512 KB in <35ms,
               // so nothing here is slow to render; the wait is always for the data, and we say so.
               <div className="flex flex-col gap-5">
-                {intro && <p {...attr("intro")} className="text-[12.5px] leading-relaxed text-muted-70">{intro}</p>}
-                <section>
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <h2 className="petite-caps text-[10px] text-muted-65">Command</h2>
-                    {command && (
-                      <button type="button" onClick={copyCommand} className="button-outline flex items-center gap-1 rounded px-1.5 py-1 text-[10.5px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60">
-                        <Copy aria-hidden size={11} /> Copy
-                      </button>
-                    )}
-                  </div>
+                {description && (
+                  <DrawerField label="Description">
+                    <p {...attr("description")} className="text-[14px] leading-relaxed text-fg">{description}</p>
+                  </DrawerField>
+                )}
+                <DrawerField
+                  label="Command"
+                  aside={command && (
+                    <button type="button" onClick={copyCommand} className="button-outline flex items-center gap-1 rounded px-1.5 py-1 text-[10.5px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60">
+                      <Copy aria-hidden size={11} /> Copy
+                    </button>
+                  )}
+                >
                   {/* Highlighted only when there IS a command: the fallbacks below are prose, and
                       painting "Command unavailable for this background operation." in shell grammar
                       would colour a sentence as though it were a script. */}
@@ -348,14 +363,21 @@ function OutputSheet({
                   ) : (
                     <pre {...attr("command")} className={commandBlockClass}>{loading ? "Loading…" : noCommandText}</pre>
                   )}
-                </section>
-                <section>
-                  <div className="mb-2 flex items-center gap-2">
-                    <h2 className="petite-caps text-[10px] text-muted-65">{outputHeading}</h2>
-                    {running && <LiveDot aria-hidden hue="shell" data-running-indicator={kind === "monitor" ? "monitor-drawer" : "shell-drawer"} />}
-                    {outputNote && <span {...attr("output-note")} className="text-[10.5px] text-muted-60">{outputNote}</span>}
-                    {truncated && <span className="text-[10.5px] text-muted-50">Showing latest 512 KB</span>}
-                  </div>
+                  {/* Helper text under the value, as a form's: "this" is the command just above it. A line
+                      of its own between two fields read as a field with no label. */}
+                  {intro && <p {...attr("intro")} className="mt-2 text-[12.5px] leading-relaxed text-muted-60">{intro}</p>}
+                </DrawerField>
+                <DrawerField
+                  label={outputHeading}
+                  asideAlign="inline"
+                  aside={(running || outputNote || truncated) && (
+                    <>
+                      {running && <LiveDot aria-hidden hue="shell" data-running-indicator={kind === "monitor" ? "monitor-drawer" : "shell-drawer"} />}
+                      {outputNote && <span {...attr("output-note")} className="text-[12px] text-muted-60">{outputNote}</span>}
+                      {truncated && <span className="text-[12px] text-muted-50">Showing latest 512 KB</span>}
+                    </>
+                  )}
+                >
                   {output ? (
                     <pre {...attr("output")} className={`font-mono-keep min-h-40 whitespace-pre-wrap break-words ${BLOCK_RADIUS} border border-border bg-inset px-4 py-3 text-[12px] leading-relaxed text-fg/85`}>{output}</pre>
                   ) : (
@@ -363,7 +385,7 @@ function OutputSheet({
                       {emptyText}
                     </div>
                   )}
-                </section>
+                </DrawerField>
               </div>
             )}
           </div>

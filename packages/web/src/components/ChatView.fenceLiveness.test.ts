@@ -262,8 +262,11 @@ test("the resting card owns the heading, the glyph, the prose and the chips", ()
   // at all — the reader is what it waits on — and neither does a `watching` rest (2026-10-05): its worker
   // already parked it in Snoozed, which is the park the button would make. Nor does a fence handed in from
   // the transcript (2026-10-28): that is an earlier fence, a held handoff above the resting card, and the
-  // rest has one Snooze, on the card that states it.
-  assert.match(code, /const snoozable = thread !== undefined && fence === undefined && steps\.length === 0 && thread\.waitStatus !== "watching" && showsRestingCard\(thread\) && threadLifecycleAvailability\(thread\)\.snooze/)
+  // rest has one Snooze, on the card that states it. The `watching` rest takes the same gates and STATES
+  // its park where the Snooze would be (2026-11-13), so the two branches share one predicate.
+  assert.match(code, /const restVerbs = thread !== undefined && fence === undefined && steps\.length === 0 && showsRestingCard\(thread\) && threadLifecycleAvailability\(thread\)\.snooze/)
+  assert.match(code, /const parkedByWorker = restVerbs && thread\.waitStatus === "watching"/)
+  assert.match(code, /const snoozable = restVerbs && !parkedByWorker/)
   assert.match(code, /const stepsLive = thread !== undefined && restingOnSteps\(thread, steps\)/)
   // Nothing else may key on the runtime. A second `showsRestingCard` call inside this card is how a
   // heading, a glyph or a truncation rule would start varying with it again.
