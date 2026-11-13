@@ -1,6 +1,6 @@
 {
   "name": "frizz-server",
-  "version": "0.15.53",
+  "version": "0.15.54",
   "private": false,
   "description": "Replaceable Frizz server runtime",
   "license": "MIT",
