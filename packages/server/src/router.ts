@@ -2919,12 +2919,19 @@ export function createRouter(ctx: AppContext) {
 
     // A live/recent background shell's command and combined process output. The tailer supplies the
     // scoped path; the reader caps the response so long-lived watchers/dev servers stay cheap.
+    //
+    // A Claude Code MONITOR answers here too, with no output file: `events` is what it delivered to the
+    // worker, oldest first, each with the instant it arrived, and `eventsDropped` how many earlier ones
+    // the tailer's caps let go (tailer.ts collectMonitorEvents). `events` is null for every other shell,
+    // which is how the drawer tells the two apart.
     backgroundShellOutput: query({
       input: z.object({ slug: ThreadSlug, id: z.string() }).strict(),
       output: z.object({
         command: z.string().nullable(),
         output: z.string(),
         truncated: z.boolean(),
+        events: z.array(z.object({ text: z.string(), at: z.string().nullable() })).nullable(),
+        eventsDropped: z.number(),
         state: z.enum(["running", "done", "gone"]),
         // The same pair `subAgentTranscript` carries, for the same reason: the drawer renders a Stop
         // button if and only if this is true, and states `stopNote` in its place when a running shell
@@ -2934,7 +2941,7 @@ export function createRouter(ctx: AppContext) {
       }),
       handler: async ({ input }) => {
         const info = ctx.tailer.backgroundShell?.(input.slug, input.id)
-        if (!info) return { command: null, output: "", truncated: false, state: "gone" as const, stoppable: false, stopNote: null }
+        if (!info) return { command: null, output: "", truncated: false, events: null, eventsDropped: 0, state: "gone" as const, stoppable: false, stopNote: null }
         // Only ever the task's own output file: the path began as text in a tool result (tailer.ts
         // launchOutputFile), and this answer goes to a read-and-answer session too.
         const outputFile = readableTaskOutput(info.outputFile)
@@ -2943,6 +2950,8 @@ export function createRouter(ctx: AppContext) {
         return {
           command: info.command ?? null,
           ...content,
+          events: info.monitor ? info.monitor.events.map((e) => ({ text: e.text, at: e.at ?? null })) : null,
+          eventsDropped: info.monitor?.dropped ?? 0,
           state: info.state,
           stoppable: stop.sessionId !== null,
           stopNote: stop.sessionId === null ? stop.note : null,
@@ -2987,6 +2996,12 @@ export function createRouter(ctx: AppContext) {
         for (const id of input.ids) {
           const info = ctx.tailer.backgroundShell?.(input.slug, id)
           if (!info) continue
+          // A Monitor counts EVENTS here, every one it delivered including any the tailer no longer
+          // keeps; its row knows it is a Monitor (BgShellView.monitor) and labels the number so.
+          if (info.monitor) {
+            shells.push({ id, lines: info.monitor.events.length + info.monitor.dropped, running: info.state === "running" })
+            continue
+          }
           const outputFile = readableTaskOutput(info.outputFile)
           const lines = outputFile ? backgroundShellLineCount(outputFile) : undefined
           shells.push({ id, lines: lines ?? null, running: info.state === "running" })

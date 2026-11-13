@@ -89,7 +89,7 @@ import { FOREGROUND_MARK_AFTER_MS, foregroundToolIsRunning, hasRunningToolIndica
 import { formatRuntimeElapsed, formatToolDuration } from "../lib/durationLabels.ts"
 import { githubRefUrl } from "../lib/githubRef.ts"
 import { useNowMs } from "../lib/liveClock.ts"
-import { CHILD_OPEN_TITLE, CHILD_RESTED_DOT_CLASS, CHILD_RESTED_TITLE, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, checksCounterLabel, childOpSubtree, issueCounterLabel, shellLinesLabel, visibleChildOps, type TranscriptShellRecord } from "../lib/childOps.ts"
+import { CHILD_OPEN_TITLE, CHILD_RESTED_DOT_CLASS, CHILD_RESTED_TITLE, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, checksCounterLabel, childOpSubtree, issueCounterLabel, monitorEventsLabel, shellLinesLabel, visibleChildOps, type TranscriptShellRecord } from "../lib/childOps.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
 import { agentCompletionCall, subAgentCompletionOutcome } from "../lib/subAgentCompletion.ts"
 import { agentReading } from "../lib/agentReading.ts"
@@ -4833,13 +4833,14 @@ export function BackgroundOpsStrip({
           startedAt={s.startedAt}
           // Absent until the first poll answers, and permanently absent for a shell whose output frizz
           // cannot read — never a fabricated 0 for a number we do not have.
-          counter={s.id ? shellLinesLabel(shellLines.get(s.id)) : undefined}
-          counterTitle="Lines of output so far — open the row to read them"
+          counter={s.id ? (s.monitor ? monitorEventsLabel : shellLinesLabel)(shellLines.get(s.id)) : undefined}
+          counterTitle={s.monitor ? "Events delivered so far — open the row to read them" : "Lines of output so far — open the row to read them"}
           // A codex shell has an id (its `processId`, which is what its × addresses) but no readable
           // output — codex keeps that inside its own session. So the two affordances part company
           // here: the row still stops, and it renders non-interactive rather than opening a drawer
           // that could only report "unavailable".
-          onOpen={s.id && !s.outputUnavailable ? () => pushBackgroundShellDrawer(slug, s.id!, { label: s.label, startedAt: s.startedAt }) : undefined}
+          // A Claude Code Monitor (`s.monitor`) opens the same drawer onto the events it delivered.
+          onOpen={s.id && !s.outputUnavailable ? () => pushBackgroundShellDrawer(slug, s.id!, { label: s.label, startedAt: s.startedAt, monitor: s.monitor }) : undefined}
           onDismiss={childOpDismisser(slug, s, "SHELL")}
           // Overriding the row's default open-tooltip only when there IS a watcher: an unwatched shell
           // keeps exactly the row it has always had, so the marker is the exception rather than a new

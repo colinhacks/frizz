@@ -90,6 +90,7 @@ export const store = proxy({
     path?: string // markdown: the absolute file path
     subagentType?: string // subagent: the model+effort cell tag
     startedAt?: string // subagent: ISO8601 dispatch time (drives the header's running elapsed)
+    monitor?: boolean // shell: a Claude Code Monitor, so its drawer reads as one before its first fetch
     openedAt?: number // bumped when an existing logical layer is focused/reopened
     closing?: boolean // set the instant this layer's slide-OUT begins, so URL/topThreadSlug stop
     // counting it before its 210ms removal (prevents a phantom /thread history push when a view
@@ -291,8 +292,8 @@ export function pushSubAgentDrawer(slug: string, subId: string, opts: { label: s
   openOrRaiseDrawer({ kind: "subagent", slug, subId, label: opts.label, subagentType: opts.subagentType, startedAt: opts.startedAt })
 }
 
-export function pushBackgroundShellDrawer(slug: string, id: string, opts: { label: string; startedAt?: string }): void {
-  openOrRaiseDrawer({ kind: "shell", slug, subId: id, label: opts.label, startedAt: opts.startedAt })
+export function pushBackgroundShellDrawer(slug: string, id: string, opts: { label: string; startedAt?: string; monitor?: boolean }): void {
+  openOrRaiseDrawer({ kind: "shell", slug, subId: id, label: opts.label, startedAt: opts.startedAt, ...(opts.monitor ? { monitor: true } : {}) })
 }
 
 /** A monitor's drawer (MonitorSheet): its script and what it printed, stacked over its thread like a shell's. */

@@ -808,8 +808,8 @@ export function BgShellRow({ shell, slug, now, testId, onDismiss, watched }: {
       testId={testId ?? shell.id ?? shell.label}
       mark={<TerminalSquare size={12} className={`${ON_CAP} ${running ? "text-shell" : "text-muted-60"}`} />}
       name={shell.label}
-      onOpen={openable ? () => pushBackgroundShellDrawer(slug, shell.id!, { label: shell.label, startedAt: shell.startedAt }) : undefined}
-      title={[openable ? `Read this shell's output — ${state}` : running ? shell.label : `${shell.label} — ${state}`, watched ? SHELL_WATCHED_NOTE : null].filter(Boolean).join("\n")}
+      onOpen={openable ? () => pushBackgroundShellDrawer(slug, shell.id!, { label: shell.label, startedAt: shell.startedAt, monitor: shell.monitor }) : undefined}
+      title={[openable ? `${shell.monitor ? "Read this monitor's events" : "Read this shell's output"} — ${state}` : running ? shell.label : `${shell.label} — ${state}`, watched ? SHELL_WATCHED_NOTE : null].filter(Boolean).join("\n")}
       // The elapsed time alone (maintainer 2026-10-08: "We need to be picky about what we include as the
       // light gray metadata"). The mark already says which: shell blue while it runs, grey once the OS
       // confirms it gone, and the tooltip spells it out.

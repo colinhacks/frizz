@@ -105,6 +105,7 @@ export function DrawerStack({ onEscapeAtRest }: { onEscapeAtRest?: () => void } 
             shellId={d.subId ?? ""}
             label={d.label ?? "Background shell"}
             startedAt={d.startedAt}
+            monitor={d.monitor}
             depth={i}
             widthDepth={widthDepth}
           />

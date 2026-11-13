@@ -194,7 +194,7 @@ export interface Api {
   // flat, so anything less orphans the grandchildren. `descendantsStopped` counts the extra tasks
   // ended; `note` narrates the fan-out, including any descendant that could NOT be stopped.
   subAgentStop(input: { slug: string; id: string }): Promise<{ stopped: boolean; descendantsStopped: number; note: string | null }>
-  backgroundShellOutput(input: { slug: string; id: string }): Promise<{ command: string | null; output: string; truncated: boolean; state: "running" | "done" | "gone"; stoppable: boolean; stopNote: string | null }>
+  backgroundShellOutput(input: { slug: string; id: string }): Promise<{ command: string | null; output: string; truncated: boolean; events: { text: string; at: string | null }[] | null; eventsDropped: number; state: "running" | "done" | "gone"; stoppable: boolean; stopNote: string | null }>
   monitorOutput(input: { slug: string; id: string }): Promise<MonitorOutput>
   stopMonitor(input: { slug: string; id: string }): Promise<{ stopped: boolean }>
   // The ops strip's live output counter, batched over every shell row it is showing. `lines: null` is

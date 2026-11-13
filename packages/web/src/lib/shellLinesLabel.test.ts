@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { shellLinesLabel } from "./childOps.ts"
+import { monitorEventsLabel, shellLinesLabel } from "./childOps.ts"
 
 // The live counter on a background shell row. Its one real design decision is that ZERO is a reading
 // and not an absence — see the note above shellLinesLabel — so that is what most of this pins.
@@ -24,4 +24,12 @@ test("no number ⇒ no reading — a shell whose output frizz cannot read shows 
   assert.equal(shellLinesLabel(undefined), undefined)
   assert.equal(shellLinesLabel(Number.NaN), undefined)
   assert.equal(shellLinesLabel(-1), undefined)
+})
+
+// A Claude Code Monitor's row counts the events it delivered, on the same terms: zero is a reading.
+test("a Monitor's counter reads in events", () => {
+  assert.equal(monitorEventsLabel(0), "0 events")
+  assert.equal(monitorEventsLabel(1), "1 event")
+  assert.equal(monitorEventsLabel(10), "10 events")
+  assert.equal(monitorEventsLabel(undefined), undefined)
 })

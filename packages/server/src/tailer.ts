@@ -851,9 +851,12 @@ interface SubAgentEntry {
   // Transcript SCHEMA of `outputFile` when it isn't Claude's own JSONL. A codex sub-agent's output file
   // is the CHILD's codex rollout, which the drill-in drawer must parse with the codex reader instead.
   outputFormat?: "codex" | "opencode"
-  // A `Monitor`, which is a shell op with NO output file: its ack names only a task ("Monitor started
-  // (task …)"), and every event it produces arrives as a notification to the worker. Its row therefore
-  // carries no drill-in — the drawer could only ever say "No output yet." for the Monitor's whole life.
+  // A `Monitor`, which is a shell op with no output file frizz can keep: its ack names only a task
+  // ("Monitor started (task …)"), and every event it produces arrives as a notification to the worker.
+  // The drawer reads those events instead (TailState.monitorEvents, collected by collectMonitorEvents).
+  // Claude Code does write a `tasks/<id>.output` while it runs, but the completion notification is the
+  // only thing that names it and the file is gone once the Monitor ends (checked 2026-11-12 on the
+  // reylo threads), so the transcript is the one record that survives.
   monitor?: true
   // The RUNTIME task id (Bash "…with ID: <id>", Monitor "(task <id>…)", Agent "agentId: <id>"), parsed
   // from the launch ack. This is the ONE identifier a `TaskStop` references (its `input.task_id`) and
@@ -897,8 +900,20 @@ export interface BgShellView {
   /** The runtime's own background-task handle — the id the MODEL was given, and therefore the one a
    *  `shell` watcher is registered against. Full contract on the shared schema. */
   taskId?: string
-  /** No output file to drill into — a Monitor (see SubAgentEntry.monitor), or a codex exec. */
+  /** No output to drill into — a codex exec. */
   outputUnavailable?: boolean
+  /** A Claude Code `Monitor`: its drawer shows the events it delivered (see SubAgentEntry.monitor), and
+   *  its activity counter counts events rather than lines. */
+  monitor?: boolean
+}
+
+/** What the background-shell drawer reads for one shell (Tailer.backgroundShell). */
+export interface BackgroundShellInfo {
+  command?: string
+  outputFile?: string
+  state: "running" | "done"
+  /** A Claude Code Monitor: the events it delivered so far, oldest first (see collectMonitorEvents). */
+  monitor?: { events: MonitorEvent[]; dropped: number }
 }
 
 /** A background shell that has FINISHED, in the shape the scheduler's watcher pass matches against.
@@ -965,10 +980,37 @@ interface RetiredShell {
   // was told: the runtime delivers a shell's completion only to a RUNNING turn, so a shell that
   // finished after the agent's last word was never reported to anyone. See the shell-completion wake.
   finishedAt?: string
+  // A Monitor's row (SubAgentEntry.monitor): its drawer keeps showing the events after it ends.
+  monitor?: true
+}
+
+// One event a Claude Code `Monitor` delivered to the worker, as the drawer shows it: the `<event>` text
+// with the notification's HTML escaping undone, and the instant its first carrier was written.
+export interface MonitorEvent {
+  text: string
+  at?: string
+}
+
+// Every event one Monitor task has delivered, newest last (see collectMonitorEvents).
+interface MonitorEventLog {
+  events: MonitorEvent[]
+  // Events trimmed off the front by the caps below, so the drawer can say some are missing.
+  dropped: number
+  // The dedupe. Block fingerprint → the copies of it seen, per carrier, each named by its record's
+  // timestamp, and how many events that block has been recorded as. See collectMonitorEvents.
+  seen: Map<string, { recorded: number; copies: { [carrier: string]: string[] } }>
 }
 // How many terminal sub-agents to retain per thread for drawer review (newest-wins ring).
 const RETAINED_SUBAGENTS_MAX = 20
 const RETAINED_SHELLS_MAX = 20
+// How much of a Monitor's event history the fold keeps (TailState.monitorEvents). The state is cached
+// whole on every flush, so these bound it: a persistent Monitor on a chatty log can deliver thousands of
+// events, and one event can be a multi-line batch. The oldest go first, and the drawer says how many.
+const MONITOR_LOGS_MAX = 8 // Monitor tasks per thread
+const MONITOR_EVENTS_MAX = 200 // events per Monitor
+const MONITOR_EVENT_CHARS_MAX = 4000 // characters of one event
+const MONITOR_LOG_CHARS_MAX = 48_000 // characters of one Monitor's events together
+const MONITOR_SEEN_MAX = 400 // dedupe fingerprints per Monitor
 // How many fenced messages the fold keeps for the question registrar. The registrar runs every scheduler
 // tick, so it only ever needs the messages written since the last one; the rest of the ring is what a
 // refold after a restart replays, and replaying a fence whose row exists is a no-op.
@@ -1083,6 +1125,11 @@ export interface TailState extends FoldState {
   codexSubAgents?: CodexSubAgentTracker
   // completed shells retained so an already-open output drawer can render the terminal tail.
   retiredShells: Map<string, RetiredShell>
+  // Monitor TASK id → the events it delivered, for the Monitor's drawer. Keyed by task id rather than
+  // hung off the live entry because an event's first carrier (the queue-operation) can be written BEFORE
+  // the launch that names the task, and because a Monitor's events must outlive its live row. Bounded
+  // (MONITOR_* above); absent until the first event lands.
+  monitorEvents?: Map<string, MonitorEventLog>
   // Dispatch tool_use ids the operator has RETIRED with the × — read from the registry at prime and
   // added to on every dismiss. The fold consults it before it may mint a live op, which is the ONLY
   // thing that keeps a killed shell dead: the kill leaves no record in the transcript and none on
@@ -1175,6 +1222,7 @@ interface Record {
   customTitle?: string // present only on custom-title records (written by /rename)
   permissionMode?: unknown // present only on Claude permission-mode sidecars
   content?: unknown // top-level string on queue-operation records — carries the <task-notification> XML
+  operation?: unknown // on queue-operation records: "enqueue", "remove", …
   // On a `user` record that carries a tool_result: the harness's own structured account of that result.
   // An object for a Bash call (`stdout`, `stderr`, `interrupted`, and `backgroundTaskId` when the
   // command is running detached), a string for an error. See backgroundHandoff.
@@ -1999,7 +2047,7 @@ function retireLive(state: TailState, entry: SubAgentEntry, finishedAt: string |
   state.subAgents.delete(entry.toolUseId)
   if (entry.kind === "shell") {
     state.retiredShells.delete(entry.toolUseId)
-    state.retiredShells.set(entry.toolUseId, { toolUseId: entry.toolUseId, command: entry.command, outputFile: entry.outputFile, status, taskId: entry.taskId, label: entry.label, finishedAt })
+    state.retiredShells.set(entry.toolUseId, { toolUseId: entry.toolUseId, command: entry.command, outputFile: entry.outputFile, status, taskId: entry.taskId, label: entry.label, finishedAt, ...(entry.monitor ? { monitor: true as const } : {}) })
     while (state.retiredShells.size > RETAINED_SHELLS_MAX) {
       const oldest = state.retiredShells.keys().next().value
       if (oldest === undefined) break
@@ -2545,6 +2593,121 @@ function trackCompletions(state: TailState, rec: Record): void {
   }
 }
 
+// THE EVENTS A CLAUDE CODE `Monitor` DELIVERED, kept for its drawer. A Monitor has no output file frizz
+// can keep (see SubAgentEntry.monitor): each batch of lines its script prints reaches the worker as a
+// `<task-notification>` carrying `<task-id>`, a `<summary>` and an `<event>`. Three kinds of block carry
+// one: a progress event (`Monitor event: "…"`, no `<status>`), the Monitor's own expiry
+// (isMonitorTimeoutEvent, no `<status>`), and the end of its stream (`Monitor "…" stream ended`,
+// `<status>completed</status>`), whose `<event>` holds whatever was printed last and is left out when
+// nothing was. All three are kept, in the order they were written.
+//
+// THE SAME BLOCK RIDES UP TO THREE CARRIERS (see notificationText): the queue-operation `enqueue`, then
+// either the inline `queued_command` attachment or a `user` record, then the queue-operation `remove`.
+// The copies are byte-identical and their timestamps differ, so each event is counted once per carrier
+// and recorded as many times as the carrier that has seen it most: a block seen twice in `enqueue` is two
+// events (a script that printed the same line twice), seen once in each of three carriers is one. A copy
+// is named by its record's timestamp, so a replayed record (same timestamp) is never a second copy.
+// Measured on a real reylo thread (e21652a1, task b1zy0xrln): 10 events reached the transcript as 26
+// carrier copies, and the Monitor's own expiry notice counts "9 events delivered" before it.
+//
+// THE QUEUE-OPERATION CAN LAND BEFORE THE LAUNCH (see trackCompletions), so events are keyed by task id
+// alone and never wait for the row: the log exists before the ack that names the task, and the drawer
+// joins them by `taskId` when it asks. The root transcript also carries the queue-operations of a
+// SUB-AGENT's own Monitors, which this thread never shows; they cost a slot and are evicted first.
+function collectMonitorEvents(state: TailState, rec: Record): void {
+  if (rec.type !== "queue-operation" && rec.type !== "user" && rec.type !== "attachment") return
+  const raw = notificationText(rec)
+  if (!raw || !raw.includes("<event>")) return
+  const carrier = rec.type === "queue-operation" ? `queue:${typeof rec.operation === "string" ? rec.operation : ""}` : rec.type
+  const at = typeof rec.timestamp === "string" ? rec.timestamp : undefined
+  for (const block of raw.match(/<task-notification>[\s\S]*?<\/task-notification>/g) ?? []) {
+    const event = block.match(/<event>([\s\S]*?)<\/event>/)?.[1]
+    const taskId = block.match(/<task-id>([^<]*)<\/task-id>/)?.[1]?.trim()
+    if (event === undefined || !taskId) continue
+    const text = unescapeNotificationText(event).replace(/\s+$/, "")
+    if (!text.trim()) continue
+    const logs = (state.monitorEvents ??= new Map())
+    let log = logs.get(taskId)
+    if (log) logs.delete(taskId) // re-inserted below: the map's order is "least recently heard from" first
+    else log = { events: [], dropped: 0, seen: new Map() }
+    logs.set(taskId, log)
+    const fingerprint = createHash("sha1").update(block).digest("hex").slice(0, 16)
+    const seen = log.seen.get(fingerprint) ?? { recorded: 0, copies: {} }
+    log.seen.delete(fingerprint)
+    log.seen.set(fingerprint, seen)
+    const copies = (seen.copies[carrier] ??= [])
+    // A copy with no timestamp cannot be told from a replay, so it always counts.
+    const name = at ?? `#${copies.length}`
+    if (copies.includes(name)) continue
+    copies.push(name)
+    if (copies.length > seen.recorded) {
+      seen.recorded = copies.length
+      insertMonitorEvent(log, { text: capMonitorEvent(text), ...(at ? { at } : {}) })
+    }
+    while (log.seen.size > MONITOR_SEEN_MAX) {
+      const oldest = log.seen.keys().next().value
+      if (oldest === undefined) break
+      log.seen.delete(oldest)
+    }
+    boundMonitorLogs(state, logs)
+  }
+}
+
+// In timestamp order, which is not file order: one event's first copy can sit later in the file than
+// the next event's (the queue-operation flush again). Then the caps, oldest first.
+function insertMonitorEvent(log: MonitorEventLog, event: MonitorEvent): void {
+  let i = log.events.length
+  if (event.at) while (i > 0 && (log.events[i - 1].at ?? "") > event.at) i--
+  log.events.splice(i, 0, event)
+  let chars = 0
+  for (const e of log.events) chars += e.text.length
+  while (log.events.length > 1 && (log.events.length > MONITOR_EVENTS_MAX || chars > MONITOR_LOG_CHARS_MAX)) {
+    chars -= log.events.shift()!.text.length
+    log.dropped++
+  }
+}
+
+function capMonitorEvent(text: string): string {
+  if (text.length <= MONITOR_EVENT_CHARS_MAX) return text
+  return `${text.slice(0, MONITOR_EVENT_CHARS_MAX)}\n… ${text.length - MONITOR_EVENT_CHARS_MAX} more characters not kept`
+}
+
+// Over the cap, the log of a task this thread does not show goes first (a sub-agent's Monitor, whose
+// queue-operations land in the root transcript), then the one heard from least recently.
+function boundMonitorLogs(state: TailState, logs: Map<string, MonitorEventLog>): void {
+  while (logs.size > MONITOR_LOGS_MAX) {
+    let victim: string | undefined
+    for (const taskId of logs.keys()) {
+      if (!isOwnMonitorTask(state, taskId)) {
+        victim = taskId
+        break
+      }
+    }
+    victim ??= logs.keys().next().value
+    if (victim === undefined) break
+    logs.delete(victim)
+  }
+}
+
+function isOwnMonitorTask(state: TailState, taskId: string): boolean {
+  for (const e of state.subAgents.values()) if (e.monitor && e.taskId === taskId) return true
+  for (const r of state.retiredShells.values()) if (r.monitor && r.taskId === taskId) return true
+  return false
+}
+
+// The notification XML escapes its text (`&lt;==` in a `tail -f` header). One pass, so an escaped
+// ampersand followed by `lt;` stays `&lt;` instead of becoming `<`.
+const NOTIFICATION_ENTITIES: { [entity: string]: string } = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'", "#39": "'" }
+export function unescapeNotificationText(text: string): string {
+  return text.replace(/&(lt|gt|amp|quot|apos|#39);/g, (_m, name: string) => NOTIFICATION_ENTITIES[name] ?? _m)
+}
+
+/** The events a Monitor task has delivered, oldest first, and how many earlier ones were not kept. */
+export function monitorEventsOf(state: Pick<TailState, "monitorEvents">, taskId: string | undefined): { events: MonitorEvent[]; dropped: number } {
+  const log = taskId ? state.monitorEvents?.get(taskId) : undefined
+  return log ? { events: log.events.map((e) => ({ ...e })), dropped: log.dropped } : { events: [], dropped: 0 }
+}
+
 // Account for whether each terminal completion report actually reached the MODEL, as opposed to merely
 // being accepted into the runtime's queue. See report-delivery.ts for why those are different things
 // and for the corpus that showed a third of them never making the second hop.
@@ -2974,6 +3137,8 @@ export function applyRecord(state: TailState, rec: Record): void {
   // carrier — see notificationText), so it's checked for EVERY record regardless of type (the helper
   // self-guards on shape + tracked ids).
   trackCompletions(state, rec)
+  // …and a Monitor's events ride the same carriers, kept for its drawer.
+  collectMonitorEvents(state, rec)
   // A repair frizz injected earlier carries no <task-notification>, so it needs its own pass.
   trackRelayEchoes(state, rec)
 }
@@ -3399,7 +3564,8 @@ export interface Tailer {
   // have it, and a server without it degrades to the old stop-one-row behaviour.
   subAgentDescendantTasks?(slug: string, id: string): string[]
   // Read-only background-shell drawer lookup. Output content stays server-side until the scoped query.
-  backgroundShell?(slug: string, id: string): { command?: string; outputFile?: string; state: "running" | "done" } | undefined
+  // A Claude Code Monitor has no output file and answers `monitor` instead: the events it delivered.
+  backgroundShell?(slug: string, id: string): BackgroundShellInfo | undefined
   // "Is the process that owned this thread's background ops gone?" — ONE authority for a question three
   // runtimes answer differently, already computed once per tick as `paneDead` (see paneDeadForRow): a
   // broker whose daemon record fails its pid probe, an app-server codex row frizz stopped, or a
@@ -4193,6 +4359,8 @@ export function createTailer(deps: TailerDeps): Tailer {
   // for the surfaced view. Undefined before the path resolves or when the file no longer stats — the
   // caller then simply omits lastActivityAt (an absent reading is correct; a fabricated one is not).
   function entryLastActivity(state: TailState, e: SubAgentEntry): string | undefined {
+    // A Monitor writes nothing frizz can stat; the instant of its newest event is the same reading.
+    if (e.monitor) return e.taskId ? state.monitorEvents?.get(e.taskId)?.events.at(-1)?.at : undefined
     const path = entryTranscript(state, e)
     if (!path) return undefined
     const m = mtimeMs(path)
@@ -4307,7 +4475,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // positively confirmed nobody is running. `ToolStatusMeta` and the drawer have rendered a "stale"
       // shell all along; nothing ever produced one, because this was a literal "running".
       const shellState = shellIsGone(e, state.sessionId) ? "stale" as const : "running" as const
-      out.push({ label: e.label, startedAt: e.startedAt, state: shellState, id: e.toolUseId, ...(e.taskId ? { stoppable: true, taskId: e.taskId } : {}), ...(lastActivityAt ? { lastActivityAt } : {}), ...(e.monitor ? { outputUnavailable: true } : {}) })
+      out.push({ label: e.label, startedAt: e.startedAt, state: shellState, id: e.toolUseId, ...(e.taskId ? { stoppable: true, taskId: e.taskId } : {}), ...(lastActivityAt ? { lastActivityAt } : {}), ...(e.monitor ? { monitor: true } : {}) })
     }
     return out
   }
@@ -4922,15 +5090,15 @@ export function createTailer(deps: TailerDeps): Tailer {
     return false
   }
 
-  function backgroundShellLookup(slug: string, id: string): { command?: string; outputFile?: string; state: "running" | "done" } | undefined {
+  function backgroundShellLookup(slug: string, id: string): BackgroundShellInfo | undefined {
     const state = states.get(slug)
     if (!state || !registeredStateIsCurrent(state)) return undefined
     const live = state.subAgents.get(id)
     if (live?.kind === "shell") {
-      return { command: live.command, outputFile: live.outputFile, state: state.paneDead ? "done" : "running" }
+      return { command: live.command, outputFile: live.outputFile, state: state.paneDead ? "done" : "running", ...(live.monitor ? { monitor: monitorEventsOf(state, live.taskId) } : {}) }
     }
     const dead = state.retiredShells.get(id)
-    if (dead) return { command: dead.command, outputFile: dead.outputFile, state: "done" }
+    if (dead) return { command: dead.command, outputFile: dead.outputFile, state: "done", ...(dead.monitor ? { monitor: monitorEventsOf(state, dead.taskId) } : {}) }
     return undefined
   }
 

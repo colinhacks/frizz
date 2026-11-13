@@ -442,6 +442,11 @@ export const BgShellView = z.object({
   // A positive flag for the EXCEPTION rather than a `readable` that every existing row would have to
   // start setting: an old snapshot then keeps its drill-in instead of silently losing it.
   outputUnavailable: z.boolean().optional(),
+  // A Claude Code `Monitor` rather than a background Bash. It has no output file either, but frizz keeps
+  // the events it delivered to the worker, so its row opens the same drawer onto those, and the row's
+  // live counter counts events instead of lines. Until 2026-11-12 a Monitor was `outputUnavailable` and
+  // its row opened nothing.
+  monitor: z.boolean().optional(),
   // The command this shell runs, when frizz knows it independently of the label. Set only on a CODEX
   // row, where it is the ONE thing the board's copy of the shell and the transcript's copy share — see
   // lib/childOps.ts mergeBackgroundShells, which reconciles the two on it. A Claude row leaves it
