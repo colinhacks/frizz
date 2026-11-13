@@ -142,6 +142,16 @@ const monitorRow = (id: string, description?: string): ThreadWatchView => ({
   command: { command: "tail -n0 -F app.log", every: "0s", expiresAt: "2026-11-04T00:00:00.000Z", runs: 0, monitor: { events: 0, ...(description ? { description } : {}) } },
 })
 
+test("a lone check is named by its description too (2026-11-12), and one without stays a monitor", () => {
+  const check = (id: string, description?: string): ThreadWatchView => ({
+    id: `command:t:${id}`, kind: "command", target: id, state: "armed", createdAt: "2026-11-12T00:00:00.000Z",
+    command: { command: "npm view frizz@0.15.54 version", ...(description ? { description } : {}), every: "5m", expiresAt: "2026-11-13T00:00:00.000Z", runs: 1 },
+  })
+  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_chk" }], [check("cmw_chk", "frizz 0.15.54 on npm")]), "waiting on the monitor “frizz 0.15.54 on npm”")
+  assert.equal(hintGloss([{ kind: "command", value: "cmw_chk" }], [check("cmw_chk", "frizz 0.15.54 on npm")]), "Monitor: frizz 0.15.54 on npm")
+  assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_old" }], [check("cmw_old")]), "waiting on a monitor")
+})
+
 test("a lone persistent monitor in the fence is named by its description", () => {
   const watches = [monitorRow("cmw_mon", "Errors in app.log"), { ...monitorRow("cmw_chk"), command: { command: "curl -sf x", every: "5m", expiresAt: "2026-11-04T00:00:00.000Z", runs: 1 } }]
   assert.equal(awaitingWaitClause([{ kind: "command", value: "cmw_mon" }], watches), "waiting on the monitor “Errors in app.log”")

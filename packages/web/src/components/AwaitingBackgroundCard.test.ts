@@ -230,6 +230,12 @@ test("a park on a command watch alone rows the command, its cadence and its last
   assert.match(tip, /24 checks so far\. The last, [45]m ago, exited 1\./)
   assert.match(tip, /active: Layout shift when a send ends a rest/)
   assert.equal(hasAwaitingWaitRows(t), true)
+  // A check opens the monitor's drawer too (2026-11-12), and its description names the row when it has one.
+  assert.match(html, /data-wait-kind="command"[\s\S]*?lucide-chevron-right/)
+  const described = { ...commandWatch(), command: { ...commandWatch().command, description: "Other agents idle" } }
+  const named = render({ ...t, watches: [described] }).replace(/<[^>]+>/g, " ")
+  assert.match(named, /Other agents idle/)
+  assert.doesNotMatch(named, /node others-idle\.mjs/, "the command is the drawer's, not the row's")
 })
 
 test("a command watch's row name cuts long absolute paths to their last segment, and nothing else", () => {
@@ -268,17 +274,22 @@ test("every kind the thread declared gets a row, under its own heading", () => {
 
 // THE FOURTH KIND (maintainer 2026-08-24: this card "enumerates all of the pull requests and the
 // background shells … I don't understand why timer isn't represented in the same way"). The row's NAME
-// is the timer's own prompt — the id names nothing to a human — and its status counts down to the fire
-// instant. Non-interactive by the settled id-less policy: nothing to open, so no chevron and no control.
-test("an armed timer gets a row: named by its prompt, counting down, non-interactive", () => {
+// is the worker's description of it — else its prompt's first line, all a row had before descriptions
+// (2026-11-12) — and its status counts down to the fire instant. It opens the timer's drawer, as a
+// shell's row opens its output: it was non-interactive until 2026-11-12.
+test("an armed timer gets a row: named by its description, counting down, opening its drawer", () => {
   const t = { ...thread([], []), watches: [timerWatch()] } as NonNullable<Parameters<typeof AwaitingBackgroundCard>[0]["thread"]>
   const body = text(t)
   assert.match(body, /Timers/)
-  assert.match(body, /Re-check: tip quiet, install green/)
+  assert.match(body, /Re-check: tip quiet, install green/, "no description: the prompt's first line")
   assert.match(render(t), /data-wait-status[^>]*>in 3[34]m</, "the Timers heading carries the verb")
   const rows = renderToStaticMarkup(createElement(AwaitingWaitTable, { thread: t, divider: false }))
-  assert.doesNotMatch(rows, /lucide-chevron-right/, "nothing to open, so no chevron")
-  assert.doesNotMatch(rows, /<a |<button/, "no dead link and no disabled control either")
+  assert.match(rows, /lucide-chevron-right/, "it opens a drawer, so it wears the chevron")
+  assert.match(rows, /<button[^>]*title="Read this timer’s prompt|<button[^>]*title="Read this timer&#x27;s prompt/)
+  const described = { ...timerWatch(), timer: { ...timerWatch().timer, prompt: "Re-run the preflight against abc123, then report what changed", description: "Re-run the release preflight" } }
+  const named = text({ ...thread([], []), watches: [described] } as NonNullable<Parameters<typeof AwaitingBackgroundCard>[0]["thread"]>)
+  assert.match(named, /Re-run the release preflight/)
+  assert.doesNotMatch(named, /against abc123/, "the prompt is the drawer's, not the row's")
   // A DUE-BUT-UNDELIVERED timer (the scheduler's tick runs seconds behind the instant) says so in the
   // present progressive rather than counting to zero or negative.
   assert.match(text({ ...thread([], []), watches: [timerWatch(-1)] } as Parameters<typeof AwaitingBackgroundCard>[0]["thread"]), /firing…/)
