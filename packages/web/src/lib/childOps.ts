@@ -124,6 +124,14 @@ export function shellLinesLabel(lines: number | undefined): string | undefined {
   return `${compactCount(lines) ?? "0"} lines`
 }
 
+// The same counter on a Claude Code MONITOR's row (BgShellView.monitor), where the server counts the
+// events it delivered rather than lines (router backgroundShellActivity). Zero is a reading here too.
+export function monitorEventsLabel(events: number | undefined): string | undefined {
+  if (typeof events !== "number" || !Number.isFinite(events) || events < 0) return undefined
+  if (events === 1) return "1 event"
+  return `${compactCount(events) ?? "0"} events`
+}
+
 // THE SAME COUNTER, FOR A WATCHED PR — what its CI says, in the width the shell row's line count gets.
 //
 // It exists because the full reading had only one home. `checkCountLine` renders "1 failing, 2 in

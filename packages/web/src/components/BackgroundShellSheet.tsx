@@ -4,6 +4,7 @@ import { Copy, Radio, RefreshCw, TerminalSquare } from "lucide-react"
 import { showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { useBackgroundShellOutput, useMonitorOutput } from "../hooks.ts"
+import { monitorEventsText } from "../lib/monitorEventsText.ts"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
 import { elapsedSince, formatAgo } from "../lib/durationLabels.ts"
 import { Sheet } from "./ui/Sheet.tsx"
@@ -22,6 +23,7 @@ export function BackgroundShellSheet({
   shellId,
   label,
   startedAt,
+  monitor: monitorHint,
   depth,
   widthDepth,
 }: {
@@ -30,6 +32,8 @@ export function BackgroundShellSheet({
   shellId: string
   label: string
   startedAt?: string
+  /** The row was a Claude Code Monitor (BgShellView.monitor), so the header reads as one before the first fetch. */
+  monitor?: boolean
   depth: number
   widthDepth: number
 }) {
@@ -38,9 +42,21 @@ export function BackgroundShellSheet({
   const [stopping, setStopping] = useState(false)
   const qc = useQueryClient()
 
+  // A CLAUDE CODE MONITOR opens this drawer too (2026-11-12). It has no output file; what it has is the
+  // events it delivered to the worker, which the server keeps from the transcript and answers as `events`
+  // (null for every other shell). They render as the output does, one per entry, each led by the time it
+  // arrived (lib/monitorEventsText), under an "Events" heading. Not MonitorSheet, which is the drawer for
+  // a monitor FRIZZ runs (command-watch.ts) and reads a log the server writes itself.
+  const events = query.data?.events
+  const isMonitor = events != null || monitorHint === true
+  const eventCount = events ? events.length + (query.data?.eventsDropped ?? 0) : 0
+  const eventsLabel = events ? `${eventCount} event${eventCount === 1 ? "" : "s"}` : ""
+
   const age = elapsedSince(startedAt)
-  const stateLabel = state === "running" ? `running${age ? ` ${age}` : ""}` : state === "done" ? "finished" : state === "gone" ? "unavailable" : ""
+  const baseStateLabel = state === "running" ? `running${age ? ` ${age}` : ""}` : state === "done" ? "finished" : state === "gone" ? "unavailable" : ""
+  const stateLabel = isMonitor && eventsLabel && state !== "gone" ? [baseStateLabel, eventsLabel].filter(Boolean).join(" · ") : baseStateLabel
   const unavailable = query.isError || state === "gone"
+  const noun = isMonitor ? "Monitor" : "Background shell"
 
   // KILL THE SHELL FROM THE DRAWER — the surface where a wedged watcher is actually diagnosed. The ops
   // strip's × does the same thing in one click, but you only know a shell is stuck AFTER reading its
@@ -56,12 +72,12 @@ export function BackgroundShellSheet({
       .then(({ note }) => {
         // A shell has no subtree, so `note` can only carry the one failure that is specific to it: the
         // process is dead but the WORKER could not be told, and is still waiting on it.
-        if (note) showToast(`Background shell stopped. ${note}`, { duration: 7000 })
-        else showToast("Background shell stopped — the worker was told")
+        if (note) showToast(`${noun} stopped. ${note}`, { duration: 7000 })
+        else showToast(`${noun} stopped — the worker was told`)
         void qc.invalidateQueries({ queryKey: ["backgroundShellOutput", slug, shellId] })
       })
       .catch((error: unknown) => {
-        showToast(error instanceof Error ? error.message : "Could not stop this background shell")
+        showToast(error instanceof Error ? error.message : `Could not stop this ${noun.toLowerCase()}`)
       })
       .finally(() => setStopping(false))
   }
@@ -73,18 +89,23 @@ export function BackgroundShellSheet({
       widthDepth={widthDepth}
       kind="background-shell"
       title={label}
-      icon={<TerminalSquare aria-hidden size={14} className="shrink-0 text-muted-60" />}
+      icon={isMonitor
+        ? <Radio aria-hidden size={14} className="shrink-0 text-muted-60" />
+        : <TerminalSquare aria-hidden size={14} className="shrink-0 text-muted-60" />}
       stateLabel={stateLabel}
       command={query.data?.command}
-      output={query.data?.output ?? ""}
+      output={events ? monitorEventsText(events, query.data?.eventsDropped ?? 0) : query.data?.output ?? ""}
+      outputHeading={isMonitor ? "Events" : undefined}
       truncated={query.data?.truncated === true}
       running={state === "running"}
       loading={query.isLoading}
       unavailable={unavailable}
-      unavailableText="Background shell output is no longer available."
-      noCommandText="Command unavailable for this background operation."
-      emptyText={state === "done" ? "No output was captured." : "No output yet."}
-      stop={!unavailable && query.data?.stoppable ? { label: "Stop shell", stopping, onStop: stop } : undefined}
+      unavailableText={isMonitor ? "This monitor's events are no longer available." : "Background shell output is no longer available."}
+      noCommandText={isMonitor ? "Command unavailable for this monitor." : "Command unavailable for this background operation."}
+      emptyText={isMonitor
+        ? (state === "done" ? "It delivered no events." : "No events yet.")
+        : (state === "done" ? "No output was captured." : "No output yet.")}
+      stop={!unavailable && query.data?.stoppable ? { label: isMonitor ? "Stop monitor" : "Stop shell", stopping, onStop: stop } : undefined}
       // A RUNNING shell frizz cannot reach states why where nothing offers to stop it, because "no
       // control and no explanation" is what sent the maintainer looking for a stop in the first place.
       // A finished shell needs neither (its state readout already says "finished").

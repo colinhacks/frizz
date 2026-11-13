@@ -1794,16 +1794,19 @@ test("tailer: a shell's view carries the runtime's own background-task id, not j
   assert.equal(shell?.id, "toolu_sh", "…alongside the launch id, which is what the two copies of a row reconcile on")
 })
 
-// A MONITOR HAS NO OUTPUT FILE — its events reach the worker as notifications — so its row must not offer
-// a drill-in that can only ever read "No output yet.". A background Bash beside it keeps its drill-in.
-test("tailer: a Monitor's shell row is marked output-unavailable; a background Bash's is not", () => {
+// A MONITOR HAS NO OUTPUT FILE — its events reach the worker as notifications — so its row is marked a
+// Monitor (not output-unavailable), and the drawer lookup answers the events it delivered. After the
+// Monitor ends its row leaves the live view and the lookup still resolves, with every event it printed.
+test("tailer: a Monitor's row opens onto its events, before and after it ends; a background Bash's is unchanged", () => {
   const h = harness()
   h.storage.upsertSession(row())
+  const event = (at: string, text: string) => JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp: at, content: `<task-notification>\n<task-id>mon12</task-id>\n<summary>Monitor event: "Watch PR checks"</summary>\n<event>${text}</event>\n</task-notification>` })
   const lines = [
     IN_FLIGHT,
     JSON.stringify(monitorUse("toolu_mon", "Watch PR checks", "gh pr checks 443 --watch")),
     JSON.stringify(resultText("toolu_mon", "Monitor started (task mon12, timeout 3600000ms). You will be notified on each event.")),
     JSON.stringify(bashBg("toolu_sh", "Watch CI", "gh run watch")),
+    event("2026-07-01T00:00:03.000Z", "build &amp;&amp; test: pass"),
   ]
   fixture(h.logDir, "sid", lines)
   const t = createTailer({
@@ -1819,8 +1822,25 @@ test("tailer: a Monitor's shell row is marked output-unavailable; a background B
   h.clock.ms = Date.parse("2026-07-01T00:01:00.000Z")
   t.tick()
   const shells = t.get("t")?.bgShells ?? []
-  assert.equal(shells.find((s) => s.id === "toolu_mon")?.outputUnavailable, true)
-  assert.equal(shells.find((s) => s.id === "toolu_sh")?.outputUnavailable, undefined)
+  const mon = shells.find((s) => s.id === "toolu_mon")
+  assert.equal(mon?.monitor, true)
+  assert.equal(mon?.outputUnavailable, undefined, "a Monitor's row opens its drawer")
+  assert.equal(mon?.lastActivityAt, "2026-07-01T00:00:03.000Z", "its newest event is its last activity")
+  assert.equal(shells.find((s) => s.id === "toolu_sh")?.monitor, undefined)
+  assert.deepEqual(t.backgroundShell?.("t", "toolu_mon"), {
+    command: "gh pr checks 443 --watch",
+    outputFile: undefined,
+    state: "running",
+    monitor: { events: [{ text: "build && test: pass", at: "2026-07-01T00:00:03.000Z" }], dropped: 0 },
+  })
+  assert.equal(t.backgroundShell?.("t", "toolu_sh")?.monitor, undefined, "a background Bash answers its output file, not events")
+
+  appendFileSync(join(h.logDir, "sid.jsonl"), event("2026-07-01T00:30:00.000Z", "[Monitor expired after 30m with 1 events delivered. Re-arm it if you still need the watch.]") + "\n")
+  t.tick()
+  assert.equal(t.get("t")?.bgShells.some((s) => s.id === "toolu_mon"), false, "the expiry ends the row")
+  const ended = t.backgroundShell?.("t", "toolu_mon")
+  assert.equal(ended?.state, "done")
+  assert.deepEqual(ended?.monitor?.events.map((e) => e.text), ["build && test: pass", "[Monitor expired after 30m with 1 events delivered. Re-arm it if you still need the watch.]"])
 })
 
 test("tailer: a dead pane clears its background shells — a shell cannot outlive the agent process", () => {
