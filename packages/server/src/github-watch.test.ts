@@ -107,6 +107,25 @@ test("the `gh run list` fallback's lower-case failures are NAMED, as the batched
   assert.deepEqual(s.failing, ["lint", "CI"], "the red run is named; the gated one is not a failure in either casing")
 })
 
+// A RUN GOES RED ONLY ONCE ITS LAST JOB HAS FINISHED, so a reading taken after that has the red job in the
+// rollup and its own workflow red beside it. The shape a real run on colinhacks/ci-testing#2 served
+// (2026-11-12): naming both listed one failure twice. A red run with no red job of its own still counts.
+test("a red workflow beside its own red job is one failure, and is named once", () => {
+  for (const served of ["checkSuites", "workflowRuns"] as const) {
+    const s = githubWatchStatus(pr({
+      rollup: [
+        check({ status: "COMPLETED", conclusion: "FAILURE", name: "test", workflowName: "ci" }),
+        check({ status: "COMPLETED", conclusion: "SUCCESS", name: "check", workflowName: "ci" }),
+      ],
+      [served]: [
+        { status: "COMPLETED", conclusion: "FAILURE", name: "ci", workflowName: "ci" },
+        { status: "COMPLETED", conclusion: "STARTUP_FAILURE", name: "release-lint", workflowName: "release-lint" },
+      ],
+    }), AT)
+    assert.deepEqual(s.failing, ["test", "release-lint"], `${served}: the job names its workflow; the run that never started a job is named itself`)
+  }
+})
+
 test("a rollup that only skipped has run nothing, so it is `none` rather than green", () => {
   const s = githubWatchStatus(pr({
     rollup: [
