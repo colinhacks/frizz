@@ -71,6 +71,9 @@ test("a planted .git file with an admin folder of its own, naming a registered r
   const m = machine()
   const planted = join(m.root, "planted")
   const admin = join(m.root, "forged-admin")
+  // A real worktree first, so the repository's `worktrees/` exists and the refusal has to come from where
+  // the admin folder sits rather than from that folder being missing.
+  git(m.registered, "worktree", "add", "-q", "-b", "elsewhere", join(m.root, "elsewhere"))
   mkdirSync(planted)
   mkdirSync(admin)
   // Every link checks out: the `.git` names the admin folder, which names the `.git` back and the
