@@ -37,6 +37,7 @@ import type { Storage } from "./storage.ts"
 import { CLAUDE_WORKER_ENV, type AgentBackend, type NormalizedEvent } from "./backend/types.ts"
 import { parseDeliveryLedger, projectDeliveryLedger, suppressCancelledDeliveries, attachmentPromptText, isPromptDeliveryAttachment } from "./delivery-ledger.ts"
 import { editedFilesOf } from "./edited-files.ts"
+import { underAnyRoot, worktreeChanges } from "./worktree-changes.ts"
 import { takeLoopTurn } from "./loop-turns.ts"
 import { repoCarriedEditedFiles } from "./repo-files.ts"
 import { stripDeliveryMarkers } from "./delivery-marker.ts"
@@ -5105,7 +5106,16 @@ export async function readLatestThreadTranscriptPageWithFiles(
 ): Promise<TranscriptPage> {
   const { page, projected } = latestThreadPage(project, storage, slug, backendFor)
   if (!projected) return page
-  return { ...page, editedFiles: await repoCarriedEditedFiles(project.dir, editedFilesOf(projected, project.dir)) }
+  // The checkouts this thread registered as its own each get a "Changes" group read off git
+  // (worktree-changes.ts), and a file the transcript shows it writing under one of them is in that group
+  // instead of this list.
+  const worktrees = storage.listThreadWorktrees(slug)
+  const roots = worktrees.map((worktree) => worktree.path)
+  const [editedFiles, changes] = await Promise.all([
+    repoCarriedEditedFiles(project.dir, editedFilesOf(projected, project.dir).filter((file) => !underAnyRoot(file.path, roots))),
+    Promise.all(worktrees.map((worktree) => worktreeChanges(worktree.path, worktree.base ?? undefined))),
+  ])
+  return { ...page, editedFiles, ...(changes.length > 0 ? { worktreeChanges: changes } : {}) }
 }
 
 function latestThreadPage(

@@ -1,4 +1,4 @@
-import { readFileSync, statSync, type Stats } from "node:fs"
+import { readFileSync, realpathSync, statSync, type Stats } from "node:fs"
 
 import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -59,6 +59,12 @@ import {
   UpsertOwnLinkResult,
   DropOwnLinkInput,
   DropOwnLinkResult,
+  AddOwnWorktreeInput,
+  AddOwnWorktreeResult,
+  DropOwnWorktreeInput,
+  DropOwnWorktreeResult,
+  ListOwnWorktreesInput,
+  OwnWorktreesResult,
   OwnThreadTimersResult,
   TIMER_MAX_ARMED,
   type ThreadTimerView,
@@ -223,6 +229,7 @@ import { readSubAgentContextUsage, readSubAgentLastActivityAt } from "./subagent
 import { openExternalUrl } from "./open-external.ts"
 import { openLocalFile, readLocalMarkdown, resolveOpenableFile, readLocalTextFile } from "./local-file.ts"
 import { openableFileRoots } from "./project.ts"
+import { registeredCheckoutRoot, registeredWorktreeRoots, resolvesToCommit } from "./worktree-changes.ts"
 import { resolveThreadLink, threadLinkView } from "./thread-links.ts"
 import { listBoardThreads } from "./thread-listing.ts"
 import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
@@ -246,7 +253,7 @@ import { liveThreadsForBackend, runProviderLogout } from "./backend/account-acti
 import { threadProfileOptions, validateThreadProfile } from "./backend/thread-profiles.ts"
 import { adoptionRuntimeBinding, type AdoptionPaneLookup, type ExpectedAdoptionPane } from "./adoption-recovery.ts"
 import { parseIssueRef, parsePrRef, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING } from "./awaiting.ts"
-import { isBrokerClaudeRow, type CommandWatchRow, type SessionRow, type Storage, type SubAgentSteerRow, type ThreadQuestionRow } from "./storage.ts"
+import { isBrokerClaudeRow, type CommandWatchRow, type SessionRow, type Storage, type SubAgentSteerRow, type ThreadQuestionRow, type ThreadWorktreeRow } from "./storage.ts"
 import { childOfRow, syncQuestionFences } from "./question-fences.ts"
 import { liveChildThreads } from "./child-threads.ts"
 import type { SessionTelemetry } from "./tailer.ts"
@@ -937,7 +944,10 @@ export function createRouter(ctx: AppContext) {
   const frizzDir = join(ctx.project.dir, ".frizz")
   // Roots for the file-OPEN action + the inline-code path classifier (see openableFileRoots): shared so
   // a path the resolver blesses is exactly a path the open action will accept.
-  const openRoots = openableFileRoots(ctx.project)
+  // Read per call: a checkout a thread registers is a root from that moment (worktree-changes.ts).
+  const openRoots = () => openableFileRoots(ctx.project, registeredWorktreeRoots(ctx.storage))
+  const worktreeView = (row: ThreadWorktreeRow) => ({ id: row.id, path: row.path, ...(row.base ? { base: row.base } : {}) })
+  const ownWorktrees = (slug: string) => ctx.storage.listThreadWorktrees(slug).map(worktreeView)
 
   // THE AUDIT TRAIL (audit.ts): every procedure that adds or removes a project, starts a worker, or
   // puts words in front of one records who asked — through this, so each records the same way. This
@@ -4161,7 +4171,12 @@ export function createRouter(ctx: AppContext) {
         // The WATCHES are already readable: each armed one rides its live item as `watchId`, and the
         // scheduler settles a watch the tick its target stops being live, so an armed row always has an
         // item to ride. The QUESTIONS had nowhere at all — hence their own list.
-        return { activity, questions: openQuestionViews(input.slug), links: ctx.storage.listThreadLinks(input.slug).map(threadLinkView) }
+        return {
+          activity,
+          questions: openQuestionViews(input.slug),
+          links: ctx.storage.listThreadLinks(input.slug).map(threadLinkView),
+          worktrees: ownWorktrees(input.slug),
+        }
       },
     }),
 
@@ -4202,7 +4217,7 @@ export function createRouter(ctx: AppContext) {
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
         if (row.state === "archived" || row.archived === 1) throw new RpcRefusal("Reopen this thread before registering a link")
-        const destination = resolveThreadLink(input.target, ctx.project.dir, openRoots)
+        const destination = resolveThreadLink(input.target, ctx.project.dir, openRoots())
         const link = ctx.storage.upsertThreadLink({
           id: `lnk_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
           slug: input.slug, label: input.label, ...destination, createdAtMs: Date.now(),
@@ -4220,6 +4235,51 @@ export function createRouter(ctx: AppContext) {
         if (dropped) ctx.board.refresh()
         return { dropped }
       },
+    }),
+
+    // `frizzctl worktree`: a checkout the worker names as its own, whose changes the rail reads off git
+    // (worktree-changes.ts). It names a checkout that exists — Frizz creates none — and the path is checked
+    // to be the top folder of a git checkout, so a worker cannot hand the file readers `/` or its home.
+    addOwnWorktree: mutation({
+      input: AddOwnWorktreeInput,
+      output: AddOwnWorktreeResult,
+      handler: async ({ input }) => {
+        const row = ctx.storage.getSession(input.slug)
+        if (!row) throw new RpcRefusal(`thread ${input.slug} is not registered`)
+        if (row.state === "archived" || row.archived === 1) throw new RpcRefusal("Reopen this thread before registering a checkout")
+        let root: string
+        try {
+          root = registeredCheckoutRoot(input.path)
+        } catch (error) {
+          throw new RpcRefusal(error instanceof Error ? error.message : String(error))
+        }
+        if (input.base && !(await resolvesToCommit(root, input.base))) {
+          throw new RpcRefusal(`\`${input.base}\` names no commit in \`${root}\`. Give a branch, tag or sha that checkout has.`)
+        }
+        const { row: saved, existed } = ctx.storage.upsertThreadWorktree({
+          id: `wtr_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+          slug: input.slug, path: root, base: input.base ?? null, createdAtMs: Date.now(),
+        })
+        return { worktree: worktreeView(saved), alreadyRegistered: existed, worktrees: ownWorktrees(input.slug) }
+      },
+    }),
+    dropOwnWorktree: mutation({
+      input: DropOwnWorktreeInput,
+      output: DropOwnWorktreeResult,
+      handler: async ({ input }) => {
+        // By id, by the path as registered, or by the path as given now — a checkout spelled through a
+        // symlink (macOS `/tmp`) is the same checkout.
+        let real: string | undefined
+        try { real = realpathSync(input.target) } catch { real = undefined }
+        const dropped = ctx.storage.dropThreadWorktree(input.slug, input.target) ||
+          (real !== undefined && real !== input.target && ctx.storage.dropThreadWorktree(input.slug, real))
+        return { dropped, worktrees: ownWorktrees(input.slug) }
+      },
+    }),
+    listOwnWorktrees: mutation({
+      input: ListOwnWorktreesInput,
+      output: OwnWorktreesResult,
+      handler: async ({ input }) => ({ worktrees: ownWorktrees(input.slug) }),
     }),
 
     // ---- REGISTERED PR WATCHERS (add / drop / list) ---------------------------------------------
@@ -5033,7 +5093,7 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => openLocalFile(
         input.path,
         ctx.getSettings().localFileOpener ?? "system",
-        openRoots,
+        openRoots(),
         { forceSystem: input.image === true },
       ),
     }),
@@ -5046,7 +5106,7 @@ export function createRouter(ctx: AppContext) {
     localMarkdown: query({
       input: z.object({ path: z.string().max(4096) }).strict(),
       output: z.object({ path: z.string(), markdown: z.string(), truncated: z.boolean() }),
-      handler: async ({ input }) => readLocalMarkdown(input.path, openRoots),
+      handler: async ({ input }) => readLocalMarkdown(input.path, openRoots()),
     }),
 
     // A file's SOURCE, for the fullscreen page's file viewer. The SAME openable roots as the Markdown
@@ -5055,7 +5115,7 @@ export function createRouter(ctx: AppContext) {
     localFile: query({
       input: z.object({ path: z.string().max(4096) }).strict(),
       output: z.object({ path: z.string(), text: z.string(), truncated: z.boolean(), binary: z.boolean(), modifiedAt: z.number() }),
-      handler: async ({ input }) => readLocalTextFile(input.path, openRoots),
+      handler: async ({ input }) => readLocalTextFile(input.path, openRoots()),
     }),
 
     // Batch-classify path REFERENCES (as they appear in inline code) → their canonical openable path, or
@@ -5070,9 +5130,10 @@ export function createRouter(ctx: AppContext) {
         // A confined reader learns about the files it could open, and no others (remote-reads.ts).
         const confined = accessOf(currentRequestOrigin()) === "read-and-answer"
         const dirs = confined ? remoteProjectDirs(ctx.project.dir) : []
+        const roots = openRoots()
         const resolved = input.paths.map((raw) => {
           if (!memo.has(raw)) {
-            const path = resolveOpenableFile(raw, ctx.project.dir, openRoots)
+            const path = resolveOpenableFile(raw, ctx.project.dir, roots)
             memo.set(raw, path && (!confined || remoteReadablePath(path, dirs)) ? path : null)
           }
           return { input: raw, path: memo.get(raw) ?? null }

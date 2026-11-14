@@ -18,6 +18,12 @@ import type {
   UpsertOwnLinkResult,
   DropOwnLinkInput,
   DropOwnLinkResult,
+  AddOwnWorktreeInput,
+  AddOwnWorktreeResult,
+  DropOwnWorktreeInput,
+  DropOwnWorktreeResult,
+  ListOwnWorktreesInput,
+  OwnWorktreesResult,
   BoardSnapshot,
   BoardState,
   BoardDeltasInput,
@@ -323,6 +329,9 @@ export interface Api {
   addOwnWatch(input: AddOwnWatchInput): Promise<AddOwnWatchResult>
   upsertOwnLink(input: UpsertOwnLinkInput): Promise<UpsertOwnLinkResult>
   dropOwnLink(input: DropOwnLinkInput): Promise<DropOwnLinkResult>
+  addOwnWorktree(input: AddOwnWorktreeInput): Promise<AddOwnWorktreeResult>
+  dropOwnWorktree(input: DropOwnWorktreeInput): Promise<DropOwnWorktreeResult>
+  listOwnWorktrees(input: ListOwnWorktreesInput): Promise<OwnWorktreesResult>
   dropOwnWatch(input: DropOwnWatchInput): Promise<DropOwnWatchResult>
   // THE WORKER'S REGISTERED QUESTIONS. `ask`/`unask` are the worker's and are declared here for the
   // drift gate alone; the two below ARE called from the browser — they are what the question card does.
@@ -550,6 +559,9 @@ export const PROCEDURES = {
   addOwnWatch: "mutation",
   upsertOwnLink: "mutation",
   dropOwnLink: "mutation",
+  addOwnWorktree: "mutation",
+  dropOwnWorktree: "mutation",
+  listOwnWorktrees: "mutation",
   dropOwnWatch: "mutation",
   ask: "mutation",
   unask: "mutation",

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import fs, { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import fs, { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { syncBuiltinESMExports } from "node:module"
 import { createHash } from "node:crypto"
 import { homedir, tmpdir } from "node:os"
@@ -371,6 +371,55 @@ test("only the read that asks for the rail's files pays for git, and git drops w
     assert.equal(readLatestThreadTranscriptPage(project, h.store, "t").editedFiles, undefined)
     const page = await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")
     assert.deepEqual(page.editedFiles?.map((f) => f.path), [kept])
+  } finally {
+    __clearTranscriptCacheForTests()
+    rmSync(dir, { recursive: true, force: true })
+    h.cleanup()
+  }
+})
+
+test("a checkout the thread registered gets git's changes, and its files leave the edited files for them", async () => {
+  const h = harness()
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "frizz-page-worktree-")))
+  try {
+    const repo = join(dir, "repo")
+    mkdirSync(repo)
+    const run = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" })
+    run(repo, "init", "-q", "-b", "main")
+    run(repo, "config", "user.email", "t@example.com")
+    run(repo, "config", "user.name", "t")
+    run(repo, "config", "commit.gpgsign", "false")
+    writeFileSync(join(repo, "a.ts"), "a\n")
+    run(repo, "add", ".")
+    run(repo, "commit", "-qm", "init")
+    const worktree = join(dir, "effort")
+    run(repo, "worktree", "add", "-q", "-b", "effort", worktree)
+    const inProject = join(repo, "a.ts")
+    const inWorktree = join(worktree, "a.ts")
+    const generated = join(worktree, "generated.ts")
+    writeFileSync(inProject, "a\nproject\n")
+    writeFileSync(inWorktree, "a\nworktree\n")
+    // Written by no tool call the transcript shows: a codegen step, a sub-agent.
+    writeFileSync(generated, "g\n")
+    const write = (id: string, file_path: string) => JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-10T18:00:01.000Z",
+      message: { id, content: [{ type: "tool_use", id: `tu-${id}`, name: "Write", input: { file_path, content: "x" } }] },
+    })
+    writeFileSync(h.path, [USER("go"), write("a", inProject), write("b", inWorktree)].join("\n") + "\n")
+    const project = { ...h.project, dir: repo } as Project
+
+    const before = await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")
+    assert.deepEqual(before.editedFiles?.map((f) => f.path).sort(), [inProject, inWorktree].sort())
+    assert.equal(before.worktreeChanges, undefined, "nothing registered, no Changes group")
+
+    h.store.upsertThreadWorktree({ id: "wtr_1", slug: "t", path: worktree, base: null, createdAtMs: 1 })
+    const page = await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")
+    assert.deepEqual(page.editedFiles?.map((f) => f.path), [inProject], "the worktree's file moved to its group")
+    assert.equal(page.worktreeChanges?.length, 1)
+    assert.equal(page.worktreeChanges![0].root, worktree)
+    assert.equal(page.worktreeChanges![0].base, "main")
+    assert.deepEqual(page.worktreeChanges![0].files.map((f) => [f.path, f.status]).sort(), [[inWorktree, "modified"], [generated, "added"]].sort())
   } finally {
     __clearTranscriptCacheForTests()
     rmSync(dir, { recursive: true, force: true })

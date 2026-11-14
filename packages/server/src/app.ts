@@ -20,6 +20,7 @@ import { callerAccess, refuseRemoteRoute, remoteGate, remoteRouteAllowed } from 
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { LAUNCH_ROUTE_PATH, LAUNCH_ROUTE_PROTOCOL, LAUNCH_TOKEN_HEADER, parseLaunchRouteRequest, routeLaunch } from "./launch-routing.ts"
 import { openableFileRoots, resolveProject } from "./project.ts"
+import { registeredWorktreeRoots } from "./worktree-changes.ts"
 import { ProjectServedElsewhereError, projectServedElsewhere } from "./project-serving.ts"
 
 export { resolveLocalImage } from "./local-image.ts"
@@ -243,7 +244,7 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
     let file
     try {
       if (accessIn(c) === "read-and-answer" && !mayReadRemotely(c.req.query("path") ?? "")) return c.text("404", 404)
-      file = resolveServedLocalFile(c.req.query("path") ?? "", openableFileRoots(ctx.project))
+      file = resolveServedLocalFile(c.req.query("path") ?? "", openableFileRoots(ctx.project, registeredWorktreeRoots(ctx.storage)))
     } catch {
       return c.text("404", 404)
     }

@@ -28,6 +28,7 @@ import {
 } from "./shutdown.ts"
 import { openableFileRoots, projectLaunchTarget, resolveProject, type Project, projectFromRegistryEntry } from "./project.ts"
 import { resolveWatchableLocalFile } from "./local-file.ts"
+import { registeredWorktreeRoots } from "./worktree-changes.ts"
 import { watchLocalFile } from "./local-file-watch.ts"
 import {
   acquireProjectLaunchOwner,
@@ -793,7 +794,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // both readers, plus the Markdown reader's canonical-extension check) and watched by CANONICAL
     // path, so a symlinked `.md` and its target are one watch.
     watchFile: (path: string, onChange: () => void) =>
-      watchLocalFile(resolveWatchableLocalFile(path, openableFileRoots(c.project)), onChange),
+      watchLocalFile(resolveWatchableLocalFile(path, openableFileRoots(c.project, registeredWorktreeRoots(c.storage))), onChange),
     mayReadRemotely: (path: string) => remoteReadablePath(path, remoteProjectDirs(c.project.dir)) !== null,
     refusedRemotely: (request: { stamp: string | undefined; userAgent: string | undefined }, detail: Record<string, unknown>) => auditRemoteRefusal(c.audit, request, detail, { id: c.project.id, dir: c.project.dir }),
   })

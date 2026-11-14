@@ -70,7 +70,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     rpc.send({ jsonrpc: "2.0", method: "notifications/initialized" })
     rpc.send({ jsonrpc: "2.0", id: 2, method: "tools/list" })
     const list = await rpc.next(2)
-    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ["spawn_thread", "goal", "timer", "watch_pr", "watch", "unwatch", "ask", "unask", "done", "title", "activity", "link", "unlink", "watch_issue", "secret", "steer", "watch_command", "monitor", "threads", "spawn_child", "mcp"])
+    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ["spawn_thread", "goal", "timer", "watch_pr", "watch", "unwatch", "ask", "unask", "done", "title", "activity", "link", "unlink", "watch_issue", "secret", "steer", "watch_command", "monitor", "threads", "spawn_child", "mcp", "worktree"])
     assert.deepEqual(list.result.tools.find((t: { name: string }) => t.name === "link").inputSchema.required, ["label", "target"])
     assert.deepEqual(list.result.tools.find((t: { name: string }) => t.name === "unlink").inputSchema.required, ["id"])
     for (const required of ["prompt", "model", "effort"]) {
@@ -142,7 +142,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     // `wch_…` id of any watch holding one. It takes NOTHING: there is no thread parameter and no filter,
     // because the only correct answer is "everything you have running", and a worker that has lost its
     // ids cannot be trusted to name them.
-    assert.equal(list.result.tools.length, 21)
+    assert.equal(list.result.tools.length, 22)
     // `monitor` (2026-10-11 as `watch_command`) — `action` alone is required, and NO thread parameter: the
     // command runs for the calling thread only, under that thread's own permission gate.
     assert.deepEqual(list.result.tools[17].inputSchema.required, ["action"])

@@ -31,13 +31,16 @@ import { isRooted, relativeTo, splitPath } from "./paths.ts"
 
 // A directory's `path` is its segments from the tree's root, joined with `/` — unique where `name` is
 // not: `one/lib` and `two/lib` both draw a row named `lib` at the same depth, and the rail keys on it.
-export type EditedFileTreeNode =
-  | { kind: "dir"; name: string; path: string; depth: number; children: EditedFileTreeNode[] }
-  | { kind: "file"; name: string; depth: number; file: EditedFile }
+//
+// GENERIC IN THE ROW, not the file: the rail draws a registered checkout's "Changes" (git's rows,
+// WorktreeChangedFile) with the same tree, rooted at that checkout as the edited files are at the project.
+export type EditedFileTreeNode<F extends { path: string } = EditedFile> =
+  | { kind: "dir"; name: string; path: string; depth: number; children: EditedFileTreeNode<F>[] }
+  | { kind: "file"; name: string; depth: number; file: F }
 
-type Dir = { dirs: Map<string, Dir>; files: Map<string, EditedFile> }
+type Dir<F> = { dirs: Map<string, Dir<F>>; files: Map<string, F> }
 
-function newDir(): Dir {
+function newDir<F>(): Dir<F> {
   return { dirs: new Map(), files: new Map() }
 }
 
@@ -61,8 +64,8 @@ export function editedFileSegments(path: string, projectDir?: string, homeDir?: 
 
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
 
-function emit(dir: Dir, depth: number, parent = ""): EditedFileTreeNode[] {
-  const out: EditedFileTreeNode[] = []
+function emit<F extends { path: string }>(dir: Dir<F>, depth: number, parent = ""): EditedFileTreeNode<F>[] {
+  const out: EditedFileTreeNode<F>[] = []
   for (const name of [...dir.dirs.keys()].sort(byName)) {
     let node = dir.dirs.get(name)!
     let label = name
@@ -83,8 +86,8 @@ function emit(dir: Dir, depth: number, parent = ""): EditedFileTreeNode[] {
   return out
 }
 
-export function editedFileTree(files: readonly EditedFile[], projectDir?: string, homeDir?: string): EditedFileTreeNode[] {
-  const root = newDir()
+export function editedFileTree<F extends { path: string } = EditedFile>(files: readonly F[], projectDir?: string, homeDir?: string): EditedFileTreeNode<F>[] {
+  const root = newDir<F>()
   for (const file of files) {
     const segments = editedFileSegments(file.path, projectDir, homeDir)
     if (segments.length === 0) continue
@@ -92,7 +95,7 @@ export function editedFileTree(files: readonly EditedFile[], projectDir?: string
     for (const segment of segments.slice(0, -1)) {
       let next = dir.dirs.get(segment)
       if (!next) {
-        next = newDir()
+        next = newDir<F>()
         dir.dirs.set(segment, next)
       }
       dir = next
@@ -103,9 +106,9 @@ export function editedFileTree(files: readonly EditedFile[], projectDir?: string
 }
 
 // The tree in row order — what the rail renders, top to bottom.
-export function flattenEditedFileTree(nodes: readonly EditedFileTreeNode[]): EditedFileTreeNode[] {
-  const out: EditedFileTreeNode[] = []
-  const walk = (list: readonly EditedFileTreeNode[]) => {
+export function flattenEditedFileTree<F extends { path: string }>(nodes: readonly EditedFileTreeNode<F>[]): EditedFileTreeNode<F>[] {
+  const out: EditedFileTreeNode<F>[] = []
+  const walk = (list: readonly EditedFileTreeNode<F>[]) => {
     for (const node of list) {
       out.push(node)
       if (node.kind === "dir") walk(node.children)

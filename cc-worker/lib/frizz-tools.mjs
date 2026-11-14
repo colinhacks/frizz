@@ -27,7 +27,7 @@
  * environment the worker was started with, which is what stops one thread acting as another.
  */
 import { readFileSync, readdirSync } from "node:fs"
-import { basename, dirname, join } from "node:path"
+import { basename, dirname, join, resolve as resolvePath } from "node:path"
 
 // Comfortably above a codex dispatch's bounded rollout-discovery wait (~15s) so a legitimate slow
 // dispatch is never aborted client-side (which would make the worker think it failed and retry,
@@ -865,6 +865,54 @@ const UNLINK = {
   },
 }
 
+// A CHECKOUT THIS THREAD WORKS IN, REGISTERED AS ITS OWN (2026-11-14). The rail then shows what git says
+// changed in it, rooted at the checkout — see packages/server/src/worktree-changes.ts. It names one that
+// exists: Frizz makes no checkout, because how a user isolates work is theirs to choose.
+const WORKTREE = {
+  name: "worktree",
+  description:
+    "REGISTER A CHECKOUT YOU WORK IN AS THIS THREAD'S OWN, so the human sees what changed in it. Whenever you " +
+    "work in a checkout other than the project's own — a git worktree, a separate clone, wherever you or the " +
+    "project put it — register it once you have made it. The side rail then shows a \"Changes\" group for it, " +
+    "read off git: every file that differs from where its branch left the base, committed or not, untracked " +
+    "files included, with git's line counts and paths relative to the checkout. That counts what your tool " +
+    "calls do not show: a codegen step, a formatter, a `git mv`, a sub-agent's edits. Its files open in the " +
+    "file viewer wherever the checkout sits on disk.\n\n" +
+    "REGISTER ONLY A CHECKOUT THIS THREAD WORKS IN ALONE. Git cannot say who changed a file, so a checkout " +
+    "others also edit — usually the project's own — would show their work as yours.\n\n" +
+    "`--base` names what the work is measured from: a branch, tag or sha the checkout has. Leave it out and " +
+    "it is the repository's default branch — its local branch where one exists, so commits landed locally " +
+    "and not yet pushed do not count as yours. Registering a checkout again keeps its row and takes a new " +
+    "`--base` if you give one.\n\n" +
+    "Nothing is created, moved or deleted on disk, and a registration never holds the thread open or blocks " +
+    "done. `unregister` takes the checkout's path or its `wtr_…` id; do that when you remove the checkout. " +
+    "`list`, and `frizzctl activity`, read registrations back.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["register", "unregister", "list"],
+        description: "`register` a checkout (idempotent per path); `unregister` one by path or id; `list` what is registered. Every action answers with the full list.",
+      },
+      path: {
+        type: "string",
+        description: "For `register`: the checkout's top folder. A relative path is resolved against your working directory.",
+      },
+      base: {
+        type: "string",
+        description: "For `register`, optional: the branch, tag or sha the checkout's work is measured from. Default: the repository's default branch.",
+      },
+      target: {
+        type: "string",
+        description: "For `unregister`: the checkout's path or its `wtr_…` id.",
+      },
+    },
+    required: ["action"],
+    additionalProperties: false,
+  },
+}
+
 // RETIRED (2026-11-06): `frizzctl watch-command` is `frizzctl monitor` now. The two shared a table, an id and
 // a fence key, and for an hour on 2026-11-06 they were one command under this name with `--persistent`;
 // then the maintainer named it: "I want them to be called monitors. That's a better name." It stays in the
@@ -1041,7 +1089,7 @@ const THREADS = {
 // WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER, WATCH_COMMAND, MONITOR and THREADS after it: the tool list is
 // read by position in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
 // breaks nothing.
-const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD, MCP]
+const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD, MCP, WORKTREE]
 
 /** @type {Record<string, (args: Record<string, unknown>) => Promise<string>>} */
 const HANDLERS = {
@@ -1061,6 +1109,7 @@ const HANDLERS = {
   [ACTIVITY.name]: activity,
   [LINK.name]: link,
   [UNLINK.name]: unlink,
+  [WORKTREE.name]: worktree,
   [MCP.name]: mcp,
   [STEER.name]: steer,
   [WATCH_COMMAND.name]: watchCommand,
@@ -1238,6 +1287,47 @@ async function unlink(args) {
   return result?.dropped ? `Removed registration ${id}. No file was deleted and no server was stopped.` : `No registration ${id} on this thread.`
 }
 
+/** The registered checkouts, one per line, as `worktree list` and every other action answer.
+ * @param {any} result @returns {string} */
+function worktreeList(result) {
+  const worktrees = Array.isArray(result?.worktrees) ? result.worktrees : []
+  if (worktrees.length === 0) return "No checkouts registered on this thread."
+  return "Registered checkouts (the rail shows each one's changes):\n" +
+    worktrees.map((w) => `  ${w.id}  ${w.path}${w.base ? `  (measured from ${w.base})` : ""}`).join("\n")
+}
+
+/** The `worktree` handler: `frizzctl worktree register|unregister|list`.
+ * @param {Record<string, unknown>} args @returns {Promise<string>} */
+async function worktree(args) {
+  const slug = threadSlug()
+  const action = actionOf("worktree", args.action)
+  if (action === "list") return worktreeList((await callRpc("listOwnWorktrees", { slug }))?.result)
+  if (action === "unregister") {
+    const raw = typeof args.target === "string" ? args.target.trim() : typeof args.path === "string" ? args.path.trim() : ""
+    if (!raw) throw new Error("give the checkout's path or its `wtr_…` id — `frizzctl worktree list` shows both")
+    const target = /^wtr_/.test(raw) ? raw : resolvePath(raw)
+    const result = (await callRpc("dropOwnWorktree", { slug, target }))?.result
+    const head = result?.dropped
+      ? `Unregistered ${raw}. Its changes leave the rail; nothing on disk was touched.`
+      : `No checkout ${raw} is registered on this thread.`
+    return `${head}\n\n${worktreeList(result)}`
+  }
+  if (action !== "register") throw new Error("`action` must be one of \"register\", \"unregister\" or \"list\"")
+  const raw = typeof args.path === "string" ? args.path.trim() : ""
+  if (!raw) throw new Error("`path` is required — the top folder of the checkout you work in")
+  const base = typeof args.base === "string" && args.base.trim() ? args.base.trim() : undefined
+  // Resolved HERE, against the worker's own working directory: the server cannot know where a relative
+  // path was written from.
+  const result = (await callRpc("addOwnWorktree", { slug, path: resolvePath(raw), ...(base ? { base } : {}) }))?.result
+  const saved = result?.worktree
+  if (!saved?.id) throw new Error("Frizz did not return the registration")
+  const measured = saved.base ? `measured from ${saved.base}` : "measured from the repository's default branch"
+  const head = result.alreadyRegistered
+    ? `Already registered as ${saved.id} (${measured}); the rail keeps showing its changes.`
+    : `Registered ${saved.path} as ${saved.id}, ${measured}. The rail shows what git says changed there, and its files open in the viewer. Run \`frizzctl worktree unregister ${saved.id}\` when you remove the checkout.`
+  return `${head}\n\n${worktreeList(result)}`
+}
+
 /** The `mcp` handler: `frizzctl mcp reload`.
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function mcp(args) {
@@ -1315,8 +1405,11 @@ async function activity() {
   const items = Array.isArray(result?.activity) ? result.activity : []
   const questions = Array.isArray(result?.questions) ? result.questions : []
   const links = Array.isArray(result?.links) ? result.links : []
-  const linksBlock = links.length === 0 ? "" : "\n\nSaved links and files (not running work; remove with `frizzctl unlink <id>`):\n" +
-    links.map((link) => `  ${link.id}  ${link.kind}: ${link.label}\n    ${link.target}`).join("\n")
+  const worktrees = Array.isArray(result?.worktrees) ? result.worktrees : []
+  const linksBlock = (links.length === 0 ? "" : "\n\nSaved links and files (not running work; remove with `frizzctl unlink <id>`):\n" +
+    links.map((link) => `  ${link.id}  ${link.kind}: ${link.label}\n    ${link.target}`).join("\n")) +
+    (worktrees.length === 0 ? "" : "\n\nRegistered checkouts (not running work; remove with `frizzctl worktree unregister <id>`):\n" +
+      worktrees.map((w) => `  ${w.id}  ${w.path}${w.base ? `  (measured from ${w.base})` : ""}`).join("\n"))
   // THE QUESTIONS GET THEIR OWN SECTION, because they are not running work: a question waits on a
   // person. Each is listed by the worker's own id (its fence's `id:`), the one `unask` takes and a
   // reference fence names; a `qst_…` row `frizzctl ask` registered has no other. Since 2026-10-13 no
@@ -2725,6 +2818,19 @@ const CLI = {
     summary: "Remove a saved link or file",
     positional: ["id"],
     examples: ["frizzctl unlink lnk_ab12cd34"],
+  },
+  worktree: {
+    group: "This thread",
+    summary: "Register a checkout you work in, so the rail shows what changed in it",
+    positional: ["action"],
+    alias: { drop: "unregister", remove: "unregister", rm: "unregister", forget: "unregister" },
+    then: { register: ["path"], unregister: ["target"] },
+    examples: [
+      "frizzctl worktree register /abs/path/to/checkout",
+      "frizzctl worktree register ../app-fix-login --base main",
+      "frizzctl worktree list",
+      "frizzctl worktree unregister wtr_ab12cd34ef56",
+    ],
   },
   mcp: {
     group: "This thread",

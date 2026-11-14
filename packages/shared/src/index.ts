@@ -4337,6 +4337,45 @@ export type DropOwnLinkInput = z.infer<typeof DropOwnLinkInput>
 export const DropOwnLinkResult = z.object({ dropped: z.boolean() }).strict()
 export type DropOwnLinkResult = z.infer<typeof DropOwnLinkResult>
 
+// A CHECKOUT A WORKER REGISTERED AS ITS OWN (`frizzctl worktree register`, maintainer 2026-11-14: "a tool
+// for registering a worktree root so the sidebar can show changes scoped to the current worktree"). Any git
+// checkout's top folder — a linked worktree, a separate clone, wherever the user's own habits put it; Frizz
+// creates none ("different users have different approaches. that's up to the user"). `base` is the ref the
+// rail diffs it against, as the worker gave it; absent, the repository's default branch.
+export const ThreadWorktreeView = z.object({
+  id: z.string(),
+  path: z.string(),
+  base: z.string().optional(),
+}).strict()
+export type ThreadWorktreeView = z.infer<typeof ThreadWorktreeView>
+
+// A revision as git takes one (`main`, `origin/main`, `HEAD~3`, a sha), and nothing git's own option parser
+// could read as a flag: no leading `-`, no whitespace or control characters. It only ever reaches git as one
+// argument of an exec, never through a shell.
+const GitRevision = z.string().trim().min(1).max(256).regex(/^(?!-)[^\x00-\x20\x7f]+$/)
+
+export const AddOwnWorktreeInput = z.object({
+  slug: ThreadSlug,
+  path: z.string().trim().min(1).max(4096).regex(/^[^\x00-\x1f\x7f]+$/),
+  base: GitRevision.optional(),
+}).strict()
+export type AddOwnWorktreeInput = z.infer<typeof AddOwnWorktreeInput>
+export const OwnWorktreesResult = z.object({ worktrees: z.array(ThreadWorktreeView) }).strict()
+export type OwnWorktreesResult = z.infer<typeof OwnWorktreesResult>
+export const AddOwnWorktreeResult = OwnWorktreesResult.extend({
+  worktree: ThreadWorktreeView,
+  /** The same checkout was registered already; its row was kept, with `base` updated if one was given. */
+  alreadyRegistered: z.boolean(),
+}).strict()
+export type AddOwnWorktreeResult = z.infer<typeof AddOwnWorktreeResult>
+/** `target` is a registration's `wtr_…` id or the checkout's path, as the worker has either to hand. */
+export const DropOwnWorktreeInput = z.object({ slug: ThreadSlug, target: z.string().trim().min(1).max(4096) }).strict()
+export type DropOwnWorktreeInput = z.infer<typeof DropOwnWorktreeInput>
+export const DropOwnWorktreeResult = OwnWorktreesResult.extend({ dropped: z.boolean() }).strict()
+export type DropOwnWorktreeResult = z.infer<typeof DropOwnWorktreeResult>
+export const ListOwnWorktreesInput = z.object({ slug: ThreadSlug }).strict()
+export type ListOwnWorktreesInput = z.infer<typeof ListOwnWorktreesInput>
+
 // One sidebar row: frizz board thread + runtime overlay.
 /**
  * The in-flight tool call a board row can name: the tool, the model's own one-line `description` (a
@@ -6005,6 +6044,8 @@ export type ListOwnThreadActivityInput = z.infer<typeof ListOwnThreadActivityInp
 export const OwnThreadActivityResult = z.object({
   activity: z.array(ThreadActivityItem),
   links: z.array(ThreadLinkView).optional(),
+  /** The checkouts this thread registered as its own (`frizzctl worktree register`). */
+  worktrees: z.array(ThreadWorktreeView).optional(),
   /** Every question still owed an answer. NOT a `ThreadActivityItem` and deliberately its own list: a
    *  question is not running work, it waits on a PERSON, and there is no `questions:` key in the awaiting
    *  fence for it to be written into. Until 2026-08-28 a worker could read its open questions back only
@@ -7902,6 +7943,30 @@ export const EditedFile = z.object({
 }).strict()
 export type EditedFile = z.infer<typeof EditedFile>
 
+// ONE FILE GIT SAYS DIFFERS in a registered checkout: the working tree against where its branch left the
+// base, untracked files included. Unlike an EditedFile it is read off git, not the transcript — a checkout
+// one thread registered as its own is the one place git can say which work is that thread's (server
+// worktree-changes.ts) — so it counts what no tool call shows: a codegen step, a formatter, a sub-agent.
+export const WorktreeChangedFile = z.object({
+  path: z.string().min(1),
+  status: z.enum(["added", "modified", "deleted"]),
+  added: z.number().int().nonnegative().optional(),
+  removed: z.number().int().nonnegative().optional(),
+}).strict()
+export type WorktreeChangedFile = z.infer<typeof WorktreeChangedFile>
+
+// One registered checkout's "Changes" group on the rail. `base` is the ref the diff was taken against, or
+// absent when there was none to find and the list is the uncommitted work alone. `error` stands in for the
+// files when git could not answer (the checkout was removed, the base does not exist) — said, not hidden.
+export const WorktreeChanges = z.object({
+  root: z.string().min(1),
+  base: z.string().optional(),
+  files: z.array(WorktreeChangedFile),
+  truncated: z.boolean().optional(),
+  error: z.string().optional(),
+}).strict()
+export type WorktreeChanges = z.infer<typeof WorktreeChanges>
+
 export const TranscriptPage = z.object({
   messages: z.array(TranscriptMessage),
   beforeCursor: TranscriptPageCursor.nullable(),
@@ -7910,6 +7975,9 @@ export const TranscriptPage = z.object({
   transcriptKey: z.string().min(1).max(256),
   // The LATEST page only (see EditedFile); an earlier page is settled history and carries none.
   editedFiles: z.array(EditedFile).optional(),
+  // The latest page only, one per checkout the thread registered (see WorktreeChanges). A file the
+  // transcript shows the worker writing under one of them is in that group and not in `editedFiles`.
+  worktreeChanges: z.array(WorktreeChanges).optional(),
 }).strict()
 export type TranscriptPage = z.infer<typeof TranscriptPage>
 

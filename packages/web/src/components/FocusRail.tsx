@@ -1,8 +1,8 @@
-import { ExternalLink, FileDiff, FileText, Folder } from "lucide-react"
+import { ExternalLink, FileDiff, FileMinus, FilePlus, FileText, Folder } from "lucide-react"
 import { useEffect, useMemo, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useSnapshot } from "valtio"
-import { isDirectSubAgent, type EditedFile, type ThreadLinkView, type ThreadView } from "@frizz/shared"
+import { isDirectSubAgent, type EditedFile, type ThreadLinkView, type ThreadView, type WorktreeChangedFile, type WorktreeChanges } from "@frizz/shared"
 import { useChildThreads, useHomeDir, useProjectDir, useTranscript } from "../hooks.ts"
 import { shellWatched, threadOps } from "../lib/threadOps.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
@@ -11,7 +11,7 @@ import { newestFileChangeKey } from "../lib/editedFilesRefresh.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
 import { prewarmLocalFile } from "../lib/localFileHighlight.ts"
 import { useNowMs } from "../lib/liveClock.ts"
-import { tildePath } from "../lib/paths.ts"
+import { splitPath, tildePath } from "../lib/paths.ts"
 import { prefs } from "../lib/prefs.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { AgentRow, BgShellRow, ChildThreadRow, CommandWatchRow, GithubWatchRow, ON_CAP, ROW_INSET, TimerRow, WaitGrid, WaitRow, type WaitGroup } from "./AwaitingBackgroundCard.tsx"
@@ -94,7 +94,49 @@ function EditedFileTree({ files }: { files: readonly EditedFile[] }) {
   )
 }
 
-function FileRow({ file, name, depth, homeDir }: { file: EditedFile; name: string; depth: number; homeDir: string | undefined }) {
+// A registered checkout's changes (worktree-changes.ts on the server): the same tree, rooted at the
+// checkout instead of the project, over git's rows instead of the transcript's. A deleted file is a row —
+// a Changes list that hid deletions would misstate the diff — but one with nothing to open.
+function ChangesTree({ changes }: { changes: WorktreeChanges }) {
+  const homeDir = useHomeDir()
+  const rows = flattenEditedFileTree(editedFileTree(changes.files, changes.root, homeDir))
+  const note = changes.error ?? (changes.files.length === 0 ? `No changes${changes.base ? ` from ${changes.base}` : ""} yet` : undefined)
+  return (
+    <div data-worktree-changes={changes.root} className="flex flex-col gap-y-px">
+      {note && <div data-worktree-note className="pr-2 text-[12px] leading-5 text-muted-50" style={{ paddingLeft: ROW_INSET }}>{note}</div>}
+      {rows.map((node) =>
+        node.kind === "dir"
+          ? <DirRow key={`d:${node.path}`} name={node.name} depth={node.depth} />
+          : <FileRow key={node.file.path} file={node.file} name={node.name} depth={node.depth} homeDir={homeDir} status={node.file.status} />,
+      )}
+      {changes.truncated && <div className="pr-2 text-[12px] leading-5 text-muted-50" style={{ paddingLeft: ROW_INSET }}>Only the first {changes.files.length} are listed</div>}
+    </div>
+  )
+}
+
+// The group's heading names the checkout by its folder, the way a worktree is spoken of; two that share a
+// folder name keep the parent too, so the headings (which key the grid) stay distinct.
+function changesHeads(changes: readonly WorktreeChanges[]): string[] {
+  const tail = (root: string, n: number) => splitPath(root).slice(-n).join("/")
+  return changes.map((c) => {
+    const short = tail(c.root, 1)
+    const clash = changes.some((other) => other !== c && tail(other.root, 1) === short)
+    return `Changes in ${clash ? tail(c.root, 2) : short}`
+  })
+}
+
+const FILE_MARK = { added: FilePlus, deleted: FileMinus, modified: FileDiff } as const
+
+function FileRow({ file, name, depth, homeDir, status }: {
+  file: Pick<EditedFile, "path" | "added" | "removed">
+  name: string
+  depth: number
+  homeDir: string | undefined
+  /** Git's verdict, on a Changes row; an edited-files row has none and draws as modified. */
+  status?: WorktreeChangedFile["status"]
+}) {
+  const Mark = FILE_MARK[status ?? "modified"]
+  const gone = status === "deleted"
   // EAGER READ ON HOVER (maintainer 2026-09-01): the pointer resting on a row is the earliest honest
   // signal that this file is the next one to open, and it buys the whole server round trip plus the
   // highlight pass before the click. The viewer then mounts against a warm cache and paints on the
@@ -114,16 +156,17 @@ function FileRow({ file, name, depth, homeDir }: { file: EditedFile; name: strin
       testId={file.path}
       // -mr-[2px]: this glyph inks only 9 of its 12 box px (1.5px dead each side), so the row's ml-1.5
       // drew 8.33px of ink to the name where the card's rows draw ~6.5 (ink-gaps, dsf 6). The trim
-      // lands it at 6.33, the same reading as the directory row above it.
-      mark={<FileDiff size={12} className={`${ON_CAP} -mr-[2px] text-muted-60`} />}
+      // lands it at 6.33, the same reading as the directory row above it. FilePlus and FileMinus draw the
+      // same page outline, so the same trim holds for a Changes row's added and deleted marks.
+      mark={<Mark size={12} className={`${ON_CAP} -mr-[2px] text-muted-60`} />}
       // The basename is the name and the directory row above it says where; the full path is the
       // tooltip, its home written as `~` the way the tree writes it. A 340px rail truncates from the
       // end, and a repo path truncated from the end lost exactly the part that names the file.
       name={name}
       indent={depth * TREE_INDENT}
-      onOpen={() => openLocalPath(file.path)}
-      onPrewarm={() => prewarmLocalFile(client, file.path)}
-      title={tildePath(file.path, homeDir)}
+      onOpen={gone ? undefined : () => openLocalPath(file.path)}
+      onPrewarm={gone ? undefined : () => prewarmLocalFile(client, file.path)}
+      title={gone ? `${tildePath(file.path, homeDir)} (deleted)` : tildePath(file.path, homeDir)}
       status={
         <>
           {(file.added ?? 0) > 0 && <span style={{ color: PRIMER.fgSuccess }}>+{file.added}</span>}
@@ -217,6 +260,9 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
   // Shared with ChatView's own subscription (same key), so this adds no request and no poll.
   const transcript = useTranscript(thread.id, { poll: false })
   const files = transcript.data?.editedFiles ?? []
+  const changes = transcript.data?.worktreeChanges ?? []
+  const changeHeads = changesHeads(changes)
+  const homeDir = useHomeDir()
   const changeKey = useMemo(() => newestFileChangeKey(transcript.data?.messages ?? []), [transcript.data?.messages])
   useEditedFilesRefresh(thread.id, transcript.data !== undefined, changeKey, thread.runtime === "running" || thread.runtime === "spawning")
   // THE ROWS ARE lib/threadOps' — what the line of counts over the prompt box and its panels list, by the
@@ -254,6 +300,16 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
     // Saved references, not waits, so they follow every live row. Ahead of the edited files, though:
     // the worker chose these for the human to keep at hand, and the tree can run to dozens of rows.
     { head: "Files and links", rows: (thread.links ?? []).map((l) => <SavedLinkRow key={l.id} link={l} />) },
+    // One group per checkout the thread registered (frizzctl worktree), read off git. They share the
+    // edited files' fold: both are the thread's files, and a reader who folds one wants the rail for its waits.
+    ...changes.map((c, i) => ({
+      head: changeHeads[i],
+      title: c.base ? `${tildePath(c.root, homeDir)}\nCompared with ${c.base}` : tildePath(c.root, homeDir),
+      rows: [<ChangesTree key={c.root} changes={c} />],
+      count: c.files.length,
+      collapsed: railFilesCollapsed,
+      onToggle: () => (prefs.railFilesCollapsed = !prefs.railFilesCollapsed),
+    })),
     {
       head: "Edited files",
       // One entry of the table, holding the whole tree (its own column, its own indents).

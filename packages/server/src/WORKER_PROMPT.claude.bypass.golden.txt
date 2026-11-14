@@ -512,6 +512,10 @@ checkout and no `.gitignore` needs an edit.
 
 - **A project that names its own worktree location or command keeps it.** That is a project norm, and
   it outranks this default.
+- **Register it the moment you have made it: `frizzctl worktree register <path>`.** Any checkout this
+  thread works in alone, wherever it lives and however it was made — a worktree, a separate clone. The
+  human's rail then shows what git says changed in it, and its files open in their viewer. Unregister
+  it when you remove it.
 - **Install its dependencies before you trust a result from it.** It sits inside the project, so a
   checkout with nothing installed can resolve the PARENT checkout's packages and quietly test the
   wrong code.

@@ -2,9 +2,9 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer, type Server } from "node:http"
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { delimiter, join } from "node:path"
+import { delimiter, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 // @ts-expect-error — the worker plugin is plain .mjs shipped loose beside the server; it has no types.
 import { CLI, TOOLS } from "../../../cc-worker/lib/frizz-tools.mjs"
@@ -33,6 +33,9 @@ function plausible(procedure: string, body: any): unknown {
     case "spawnChild": return { slug: "spawned-child", sessionId: "sid-spawned-child" }
     case "upsertOwnLink": return { link: { id: "lnk_1", kind: "url", label: body.label, target: body.target } }
     case "dropOwnLink": return { dropped: true }
+    case "addOwnWorktree": return { worktree: { id: "wtr_1", path: body.path, ...(body.base ? { base: body.base } : {}) }, alreadyRegistered: false, worktrees: [{ id: "wtr_1", path: body.path }] }
+    case "dropOwnWorktree": return { dropped: true, worktrees: [] }
+    case "listOwnWorktrees": return { worktrees: [] }
     case "listThreads": return { project: { slug: "frizz", id: "proj-1", name: "frizz" }, threads: [], counts: { rested: 0, active: 0, snoozed: 0, done: 0 } }
     case "setOwnThreadTitle": return { accepted: true, title: body.title }
     case "mcpReload": return { backend: "claude", agent: "Claude Code", supported: true, thread: { added: [], removed: [], changed: [], unchanged: 0, errors: {}, unapproved: [] }, others: { reloaded: 0, stale: 0, failed: 0 }, servers: [] }
@@ -1025,4 +1028,20 @@ test("`mcp reload` reloads as the calling thread and prints what changed, what f
   } finally {
     fake.close()
   }
+})
+
+test("worktree register sends the checkout's path resolved against the worker's own directory", async () => {
+  const fake = await fakeFrizz()
+  try {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "frizzctl-worktree-")))
+    const ran = await run(["worktree", "register", "../sibling-checkout", "--base", "main"], { env: worker(fake), cwd })
+    assert.equal(ran.code, 0, ran.stderr)
+    const call = fake.seen.find((s) => s.url.endsWith("/rpc/addOwnWorktree"))
+    assert.deepEqual(call?.body, { slug: "the-caller", path: join(dirname(cwd), "sibling-checkout"), base: "main" })
+    assert.match(ran.stdout, /^Registered .*sibling-checkout as wtr_1, measured from main\./)
+
+    const dropped = await run(["worktree", "rm", "wtr_1"], { env: worker(fake), cwd })
+    assert.equal(dropped.code, 0, dropped.stderr)
+    assert.deepEqual(fake.seen.find((s) => s.url.endsWith("/rpc/dropOwnWorktree"))?.body, { slug: "the-caller", target: "wtr_1" })
+  } finally { fake.close() }
 })

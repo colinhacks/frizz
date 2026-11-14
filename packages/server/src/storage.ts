@@ -538,6 +538,15 @@ export interface ThreadLinkRow {
   created_at: number
 }
 
+/** A checkout a thread registered as its own (`frizzctl worktree register`). `path` is canonical. */
+export interface ThreadWorktreeRow {
+  id: string
+  thread_slug: string
+  path: string
+  base: string | null
+  created_at: number
+}
+
 /** A worker's registered WATCH on its own running work — a background shell it launched or a sub-agent
  *  it dispatched (plans/rest-by-registration.md, 2026-08-26).
  *
@@ -901,6 +910,14 @@ export interface Storage {
   listThreadLinks(slug: string): ThreadLinkRow[]
   threadLinksBySlug(): ReadonlyMap<string, readonly ThreadLinkRow[]>
   dropThreadLink(slug: string, id: string): boolean
+  // A checkout is a stable slot per thread: registering it again keeps the row, and a `base` given
+  // replaces the one it had (none given keeps it).
+  upsertThreadWorktree(worktree: { id: string; slug: string; path: string; base: string | null; createdAtMs: number }): { row: ThreadWorktreeRow; existed: boolean }
+  listThreadWorktrees(slug: string): ThreadWorktreeRow[]
+  /** Every thread's, for the file readers' roots: a registered checkout's files open from any of the project's surfaces. */
+  allThreadWorktrees(): ThreadWorktreeRow[]
+  /** By `wtr_…` id or by path. */
+  dropThreadWorktree(slug: string, idOrPath: string): boolean
   /** Tick or untick one box on the human's to-do list. */
   setHumanTodo(slug: string, itemId: string, done: boolean, atMs: number): void
   /** A send told the worker these ticks. Writes the ticks too, so the report stands even if it overtook
@@ -1420,6 +1437,17 @@ export const STORAGE_SCHEMA = `
       created_at  INTEGER NOT NULL,
       UNIQUE (project_id, thread_slug, label)
     );
+    -- Checkouts a thread registered as its own (2026-11-14, worktree-changes.ts). Like a saved link, no
+    -- liveness and no expiry: the rail diffs each one on read, and one removed from disk says so there.
+    CREATE TABLE IF NOT EXISTS thread_worktree (
+      id          TEXT PRIMARY KEY,
+      project_id  TEXT NOT NULL,
+      thread_slug TEXT NOT NULL,
+      path        TEXT NOT NULL,
+      base        TEXT,
+      created_at  INTEGER NOT NULL,
+      UNIQUE (project_id, thread_slug, path)
+    );
     -- What the human has ticked on a thread's to-do list (2026-11-09, human-todos.ts). The list itself is
     -- folded from the transcript, and this is the part of it a transcript cannot hold. A row for a step
     -- no fence lists any more is a few stale bytes that nothing reads.
@@ -1544,7 +1572,7 @@ export const STORAGE_SCHEMA = `
 export const STORAGE_TABLES = [
   "session", "settings", "tombstone", "adoption_claim", "adoption_retired_attempt", "retired_op",
   "thread_timer", "pr_watch", "thread_watch", "thread_question", "thread_done", "subagent_steer", "thread_link",
-  "command_watch", "thread_human_todo",
+  "command_watch", "thread_human_todo", "thread_worktree",
 ] as const
 
 /** Idempotent; run by every createStorage and by frizz-db.ts before an import. */
@@ -2259,6 +2287,25 @@ export function createStorage(source: string | Database, projectId: string): Sto
   )
   const dropThreadLinkStmt = scope.prepare("DELETE FROM thread_link WHERE project_id = @project_id AND thread_slug = ? AND id = ?")
   const delThreadLinks = scope.prepare("DELETE FROM thread_link WHERE project_id = @project_id AND thread_slug = ?")
+  const findThreadWorktreeStmt = scope.prepare<[string, string], ThreadWorktreeRow>(
+    "SELECT * FROM thread_worktree WHERE project_id = @project_id AND thread_slug = ? AND path = ?",
+  )
+  const insertThreadWorktreeStmt = scope.prepare<{ id: string; slug: string; path: string; base: string | null; createdAtMs: number }, ThreadWorktreeRow>(`
+    INSERT INTO thread_worktree (project_id, id, thread_slug, path, base, created_at)
+    VALUES (@project_id, @id, @slug, @path, @base, @createdAtMs)
+    ON CONFLICT (project_id, thread_slug, path) DO UPDATE SET base = COALESCE(excluded.base, thread_worktree.base)
+    RETURNING *
+  `)
+  const threadWorktreesStmt = scope.prepare<[], ThreadWorktreeRow>(
+    "SELECT * FROM thread_worktree WHERE project_id = @project_id ORDER BY created_at, rowid",
+  )
+  const threadWorktreesBySlugStmt = scope.prepare<[string], ThreadWorktreeRow>(
+    "SELECT * FROM thread_worktree WHERE project_id = @project_id AND thread_slug = ? ORDER BY created_at, rowid",
+  )
+  const dropThreadWorktreeStmt = scope.prepare(
+    "DELETE FROM thread_worktree WHERE project_id = @project_id AND thread_slug = ? AND (id = ? OR path = ?)",
+  )
+  const delThreadWorktrees = scope.prepare("DELETE FROM thread_worktree WHERE project_id = @project_id AND thread_slug = ?")
   const setHumanTodoStmt = scope.prepare<[string, string, number | null]>(`
     INSERT INTO thread_human_todo (project_id, thread_slug, item_id, done_at) VALUES (@project_id, ?, ?, ?)
     ON CONFLICT (project_id, thread_slug, item_id) DO UPDATE SET done_at = excluded.done_at
@@ -2479,6 +2526,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     delCommandWatches.run(existing.slug)
     delThreadWatches.run(existing.slug)
     delThreadLinks.run(existing.slug)
+    delThreadWorktrees.run(existing.slug)
     delHumanTodos.run(existing.slug)
     delThreadQuestions.run(existing.slug)
     delThreadDone.run(existing.slug)
@@ -3135,6 +3183,13 @@ export function createStorage(source: string | Database, projectId: string): Sto
     listThreadLinks: (slug) => threadLinksBySlugStmt.all(slug),
     threadLinksBySlug: () => registryBySlug("thread_link", () => groupBySlug(threadLinksStmt.all()), sameRows),
     dropThreadLink: (slug, id) => dropThreadLinkStmt.run(slug, id).changes === 1,
+    upsertThreadWorktree: (worktree) => {
+      const existed = findThreadWorktreeStmt.get(worktree.slug, worktree.path) !== undefined
+      return { row: insertThreadWorktreeStmt.get(worktree)!, existed }
+    },
+    listThreadWorktrees: (slug) => threadWorktreesBySlugStmt.all(slug),
+    allThreadWorktrees: () => threadWorktreesStmt.all(),
+    dropThreadWorktree: (slug, idOrPath) => dropThreadWorktreeStmt.run(slug, idOrPath, idOrPath).changes > 0,
     setHumanTodo: (slug, itemId, done, atMs) => void setHumanTodoStmt.run(slug, itemId, done ? atMs : null),
     reportHumanTodos: db.transaction((slug: string, todos: readonly { id: string; done: boolean }[], atMs: number) => {
       for (const todo of todos) reportHumanTodoStmt.run(slug, todo.id, todo.done ? atMs : null, todo.done ? atMs : null)

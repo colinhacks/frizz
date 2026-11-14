@@ -68,9 +68,12 @@ export function trustedLocalFileRoots(project: Pick<Project, "dir" | "stateDir">
 // like ~/.claude/CLAUDE.md opens, while system trees (/etc, /usr, …) stay out. Opening spawns the desktop
 // opener (no bytes enter the page) and is still realpath-confined by the caller's isUnder check — never
 // the whole filesystem. homedir() subsumes ~/Screenshots and an in-home project/attachments dir; the temp
-// trees and an out-of-home checkout are kept explicit via the trusted set.
-export function openableFileRoots(project: Pick<Project, "dir" | "stateDir">): string[] {
-  return [homedir(), ...trustedLocalFileRoots(project)]
+// trees and an out-of-home checkout are kept explicit via the trusted set. `registered` is every checkout a
+// thread of this project registered as its own (worktree-changes.ts): its rail lists their files, which
+// have to open wherever the checkout sits. A remote reader limited to read and answer never reaches these
+// roots; remote-reads.ts is its gate.
+export function openableFileRoots(project: Pick<Project, "dir" | "stateDir">, registered: readonly string[] = []): string[] {
+  return [homedir(), ...trustedLocalFileRoots(project), ...registered]
 }
 
 function isNotGitRepositoryError(error: unknown): boolean {

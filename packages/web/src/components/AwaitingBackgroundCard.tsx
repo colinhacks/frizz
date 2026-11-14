@@ -1133,6 +1133,8 @@ function awaitingWaitGroups(thread: Pick<ThreadView, "id" | "subAgents" | "bgShe
  *  never hidden, because a hidden live wait is the thing this table exists to stop. */
 export interface WaitGroup {
   head: string
+  /** The heading's tooltip, for what its few words cannot carry (a Changes group's checkout and base). */
+  title?: string
   rows: ReactNode[]
   count?: number
   collapsed?: boolean
@@ -1152,10 +1154,11 @@ function GroupHeading({ group, first }: { group: WaitGroup; first: boolean }) {
   // was one line; once names wrap, a two-line row is 40px tall and 10px no longer read as a section
   // break (maintainer 2026-10-08: "We need more spacing between sections").
   const cls = `px-2 text-[10.5px] uppercase tracking-wide text-muted-45 ${first ? "" : "mt-4"}`
-  if (!group.onToggle) return <div className={cls}>{group.head}</div>
+  if (!group.onToggle) return <div className={cls} title={group.title}>{group.head}</div>
   return (
     <button
       type="button"
+      title={group.title}
       onClick={group.onToggle}
       aria-expanded={!group.collapsed}
       onMouseDown={(e) => e.stopPropagation()}
