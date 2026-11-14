@@ -22,7 +22,7 @@
 //
 // Hiding the rest is safe because a sign-off is the whole handoff now: it replaces the one before it and
 // names every open question (server scheduler SOURCE 18). The transcript still never folds a message that
-// holds a live question card (ChatView's rows), as a net under a worker that broke the rule.
+// holds a question's home card (ChatView's rows), as a net under a worker that broke the rule.
 //
 // Pure index logic: the transcript decides which of a range's rows fold (never a live card, and only
 // where something is hidden), and draws the hairline.

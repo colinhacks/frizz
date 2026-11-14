@@ -149,7 +149,6 @@ test("nothing handed to every message changes on a push that did not move it", (
   const shell = sources.get(SHELL)!
   assert.match(shell, /const openQuestions = useShared\(source\.openQuestions, replaceEqualDeep\)/, "the rows the board hands over are shared by content, once")
   assert.match(shell, /const fenceQuestions = useSameWhileEqual\(useFenceQuestions\(/)
-  assert.match(shell, /const homes = useSameWhileEqual\(useMemo\(\(\) => questionHomes\(/)
   // The message asks whether the prompt box sends through the handle's own context, never the scope's.
   const sends = sources.get("lib/sendScope.tsx")!
   assert.match(sends.slice(sends.indexOf("export function usePromptBoxSends")), /^export function usePromptBoxSends\(\): boolean \{\n  const composer = useContext\(ComposerSendContext\)/)

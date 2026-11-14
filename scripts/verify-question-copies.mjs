@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-// VERIFY: every ```question fence that names a registered question draws it — the real card where the
-// question's card is, and a read-only COPY everywhere else (ChatView's question-fence path, 2026-11-06).
+// VERIFY: every ```question fence that names a registered question draws it (ChatView's question-fence
+// path): an OPEN question its live, answerable card at every fence naming it (2026-11-14), and an answered
+// or closed one its card where it stood and a read-only COPY at every other fence (2026-11-06).
 //
-// Before this, a question drew ONE card, in the newest message naming it, and every older fence naming it
-// drew nothing: a worker that re-listed its open questions at each rest left the previous rest's lead-ins
-// ("When the gateway gains HTTP:") over empty space. The maintainer chose a full read-only copy.
+// Before 2026-11-06 a question drew ONE card, in the newest message naming it, and every older fence naming
+// it drew nothing: a worker that re-listed its open questions at each rest left the previous rest's lead-ins
+// ("When the gateway gains HTTP:") over empty space. The maintainer chose a full read-only copy, and on
+// 2026-11-14 took the grey off an open one: "There's no reason to automatically gray out a question just
+// because it's been reiterated by a later sign-off message."
 //
 // The worker is scripts/scripted-claude.mjs behind the REAL broker, so the questions are registered by the
 // server from the worker's own fences, withdrawn by its own `frizzctl unask`, and answered through the real
@@ -13,9 +16,9 @@
 //   1. asks alpha, beta and gamma        2. references all three        3. withdraws gamma, references alpha
 //   …with beta answered between 2 and 3. Then, on the full-screen thread page, top to bottom:
 //
-//   message 1: alpha → open copy    beta → answered copy    gamma → the closed card that asked it
-//   message 2: alpha → open copy    beta → its answered card    gamma → closed copy
-//   message 3: alpha → the live, answerable card
+//   message 1: alpha → live    beta → answered copy       gamma → the closed card that asked it
+//   message 2: alpha → live    beta → its answered card    gamma → closed copy
+//   message 3: alpha → live
 //
 // Boot a stack with the scripted worker, from a shell with no Frizz worker variables, on a throwaway repo:
 //
@@ -99,6 +102,18 @@ await api.mutate("followUp", { slug, sessionId, message: "Withdraw" })
 await until("gamma to be withdrawn", async () => (await openIds(slug)) === "alpha")
 await until("the last rest", () => said(slug, "Alpha once more:"))
 
+// A queued thread opens in the board's pane from the human's latest message (ChatView's queue window), so
+// the cards above it are drawn only once the window is opened back to the start.
+const openWhole = async (page) => {
+  for (let i = 0; i < 10; i++) {
+    const more = await page.$("[data-load-earlier]")
+    if (!more) return
+    await more.click()
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new Error("the transcript kept offering earlier messages")
+}
+
 const browser = await launchHeadless()
 const errors = []
 try {
@@ -106,6 +121,7 @@ try {
   page.on("pageerror", (e) => errors.push(String(e)))
   await page.setViewport({ width: 1100, height: 3200, deviceScaleFactor: 2 })
   await page.goto(`${base}/project/${flags.slug}/thread/${slug}`, { waitUntil: "networkidle2" })
+  await openWhole(page)
   // Every question card the page draws, in document order: what it is, and which question.
   const read = () => page.$$eval("article[data-question-id], article[data-question-copy], article[data-question-fence]", (cards) => cards.map((el) => {
     const what = el.hasAttribute("data-question-copy")
@@ -117,8 +133,8 @@ try {
     return `${which}: ${what}`
   }))
   const expected = [
-    "alpha: open copy", "beta: answered copy", "gamma: withdrawn",
-    "alpha: open copy", "beta: answered", "gamma: withdrawn copy",
+    "alpha: live", "beta: answered copy", "gamma: withdrawn",
+    "alpha: live", "beta: answered", "gamma: withdrawn copy",
     "alpha: live",
   ]
   let seen = []
@@ -132,8 +148,13 @@ try {
   // A copy is not answerable: no option on it is a button that stages a pick, and only the live card offers ×.
   assert.equal(await page.$$eval("article[data-question-copy] [data-dismiss-question]", (els) => els.length), 0)
   assert.equal(await page.$$eval("article[data-question-copy] textarea", (els) => els.length), 0)
-  // The one card focus and navigation reach is the live one.
-  assert.equal(await page.$$eval("article[data-question-id]:not([data-settled-question])", (els) => els.length), 1)
+  // An open question is never drawn as a copy: each of alpha's three fences draws it answerable, none greyed.
+  assert.equal(await page.$$eval("article[data-question-copy][data-question-open]", (els) => els.length), 0)
+  assert.deepEqual(await page.$$eval("article[data-question-id]:not([data-settled-question])", (els) => els.map((el) => ({
+    alpha: el.textContent.includes("Which alpha should ship?"),
+    options: el.querySelectorAll("[data-question-option]").length,
+    greyed: Number(getComputedStyle(el).opacity) < 1,
+  }))), Array(3).fill({ alpha: true, options: 2, greyed: false }))
   if (flags.shots) {
     mkdirSync(flags.shots, { recursive: true })
     const column = await page.$("[data-question-copy]")

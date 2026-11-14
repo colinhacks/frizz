@@ -426,11 +426,12 @@ export function SettledQuestionStack({ questions, className = "" }: { questions:
 
 // ---- THE QUESTION FENCE: what a fence's `id:` resolves against ----
 
-/** A registered row as a ```question fence's id resolves it: its minted id, and its tree for the handles
- *  — or, for a question that CLOSED without an answer, its one handle and which way it closed (the board's
- *  compact `closedQuestions`; the fence itself carries what was asked). */
+/** A registered row as a ```question fence's id resolves it: the open or answered row itself, whose id and
+ *  tree carry its names and which an open fence draws live — or, for a question that CLOSED without an
+ *  answer, its one handle and which way it closed (the board's compact `closedQuestions`; the fence itself
+ *  carries what was asked). */
 export type FenceQuestionRow =
-  | (Pick<RegisteredQuestionView, "id" | "spec"> & { closed?: undefined })
+  | (RegisteredQuestionView & { closed?: undefined })
   // `asked`: what it asked (useClosedQuestionSpecs), for the copy an `id:`-only fence draws. Not `spec`,
   // which would make every handle in its tree a name for it (lib/questionShadow questionNames).
   | { id: string; spec?: undefined; handle: string; closed: ClosedQuestionView["state"]; asked?: AskedQuestion }
@@ -551,28 +552,6 @@ export function ClosedQuestionCard({ spec, state, copyOf }: { spec: AskedQuestio
   )
 }
 const NOT_ANSWERED = { chosenIdxs: [] }
-
-/** AN OPEN QUESTION, AT A FENCE THAT NAMED IT BEFORE THE HUMAN'S LAST TURN. Until 2026-11-06 a question
- *  drew ONE answerable card, in the newest message naming it (lib/questionShadow placeQuestions), so every
- *  older fence naming it — the ask itself, and each `id:`-only reference the worker wrote at a later rest — drew nothing, and a
- *  handoff that set a question up ("When the gateway gains HTTP:") ended on empty space once the next
- *  handoff named it again (maintainer 2026-11-06, of five such slots in one message: "Have we started
- *  removing the rendered versions of questions…?"). Offered a one-line row or a full copy, the maintainer
- *  chose the full copy. So the slot draws the root card READ-ONLY and greyed, its kind line saying where
- *  the answer goes, and carries no `data-question-id`, which marks the answerable cards.
- *
- *  Since 2026-11-10 a copy is drawn only at a fence from BEFORE the human's last turn: every message naming
- *  the question since then draws it live (placeQuestions), so a write-up and the recap after it both stay
- *  answerable. `above` (the live card is above this copy) is kept for a surface whose window cut the live
- *  cards away; on 2026-11-09, for one day, it was what every recap drew. */
-export function OpenQuestionCopyCard({ q, above }: { q: Pick<RegisteredQuestionView, "id" | "spec">; above?: boolean }) {
-  const question = useMemo(() => toParsedQuestion(q.spec).question, [q.spec])
-  return (
-    <article data-question-copy={q.id} data-question-open={above ? "above" : "below"} aria-label={above ? "Open question, answered further up" : "Open question, answered further down"} className="flex min-w-0 flex-col gap-2 opacity-60">
-      <QuestionBlockCard question={question} label={above ? "Still open, answer it above" : "Still open, answer it below"} />
-    </article>
-  )
-}
 
 /** A ```question fence that asked nothing, drawn as the question it would have been: one the server
  *  REFUSED to register (lib/questionBlocks `refusedAsk`: its id was spent, its parent settled, the thread

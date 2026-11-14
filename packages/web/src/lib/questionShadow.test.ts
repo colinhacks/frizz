@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fenceRestatesRegistered, fenceStandsFor, markerIdsIn, placedFrom, placementNamesIn, placeQuestions, questionHomes, questionNames, registeredStandingAt, resolveQuestionName } from "./questionShadow.ts"
+import { fenceRestatesRegistered, fenceStandsFor, markerIdsIn, placedFrom, placementNamesIn, placeQuestions, questionNames, registeredStandingAt, resolveQuestionName } from "./questionShadow.ts"
 import { questionClaims, questionsByAnchor } from "./questionAnchor.ts"
 import { type MessageSegment, splitQuestionBlocks } from "./questionBlocks.ts"
 
@@ -334,9 +334,10 @@ test("a row known only by its handle — a question that closed without an answe
 })
 
 // ---- A RECAP AFTER A WAKE (2026-11-09, 2026-11-10, 2026-11-11) ----
-// Since 2026-11-11 a sign-off is the whole handoff and replaces the one before it, so the card is live in
-// ONE message: the newest sign-off naming it in the stretch, and every other naming draws the copy. The
-// history below is why the stretch boundary is the human's turn.
+// Since 2026-11-11 a sign-off is the whole handoff and replaces the one before it, so the card's HOME is
+// ONE message: the newest sign-off naming it in the stretch. Since 2026-11-14 every other naming draws it
+// live as well (ChatView), so the home is what a fold keeps and where the Send goes. The history below is
+// why the stretch boundary is the human's turn.
 // The worker wrote a write-up with its questions interleaved in the prose, each under the paragraph it
 // decides. Before the human read it, another thread's steer woke the worker, Frizz corrected the park it
 // rested on, and the worker rested again on a short note listing every open question as an `id:` reference
@@ -348,8 +349,8 @@ test("a row known only by its handle — a question that closed without an answe
 // and the next day a triage thread re-listing one open question in each of a dozen reports showed it greyed
 // in the report the maintainer was reading, twelve hours below its card (2026-11-10: "That question is
 // grayed out. But I haven't sent any messages in the meantime"). So every message naming an open question
-// since the human's last turn draws it live, sharing one answer; only a naming from before that turn draws
-// the read-only copy.
+// since the human's last turn drew it live, sharing one answer, and only a naming from before that turn drew
+// the read-only copy (until 2026-11-14, when that copy went too).
 
 const STEER = { role: "user", at: at(8), text: "<thread-message from-thread=\"docs\" from-title=\"Docs\">\nThe page moved.\n</thread-message>", sessionPeer: { name: "Docs", thread: { slug: "docs", title: "Docs" } } }
 const CORRECTION = { role: "user", at: at(9), text: "⚠️ Your ```awaiting fence names only pull requests that wait on this side.", wake: true as const }
@@ -357,7 +358,7 @@ const REPORT = { role: "user", at: at(9), text: "The audit is done.", peerFrom: 
 const RECAP = { role: "assistant", at: at(10), text: `Nothing has changed. This is what's open:\n\n${REF_FENCE("settings-store")}` }
 const WOKEN = [...ASKED, STEER, CORRECTION, REPORT, RECAP]
 
-test("a recap written after a wake, before the human's next turn, takes the card: one live copy, the newest", () => {
+test("a recap written after a wake, before the human's next turn, takes the card's home: the newest naming", () => {
   assert.deepEqual([...placeQuestions(WOKEN, [FENCED_ROW]).placed.keys()], [5])
   assert.equal(questionClaims(WOKEN).get("settings-store"), 1, "the write-up keeps the claim")
   assert.deepEqual([...questionsByAnchor(WOKEN, [FENCED_ROW]).keys()], [1])
@@ -380,7 +381,7 @@ test("the newest SIGN-OFF naming a question holds its card, not narration writte
 
 test("the human's next turn ends the hold: a reference after it takes the card", () => {
   const later = [...WOKEN, { role: "user", at: at(12), text: "Go with the docs." }, { role: "assistant", at: at(14), text: `Docs are in:\n\n${REF_FENCE("settings-store")}` }]
-  assert.deepEqual([...placeQuestions(later, [FENCED_ROW]).placed.keys()], [7], "the write-up and the recap draw copies now")
+  assert.deepEqual([...placeQuestions(later, [FENCED_ROW]).placed.keys()], [7], "the write-up and the recap are no longer its home")
   assert.equal(questionClaims(later).get("settings-store"), 7)
 })
 
@@ -389,11 +390,4 @@ test("an answer to another question counts as the human's turn, as the queue car
   // and the queue card opens on it — so the card a later rest names moves inside that window.
   const answered = { role: "user", at: at(8), wake: true as const, text: "Answers to earlier questions:\n1. “Ship the docs first?” → Yes" }
   assert.deepEqual([...placeQuestions([...ASKED, answered, RECAP], [FENCED_ROW]).placed.keys()], [3])
-})
-
-test("a copy points at the NEWEST live card, which is below every copy", () => {
-  const placement = placeQuestions(WOKEN, [FENCED_ROW])
-  assert.equal(questionHomes(WOKEN, [FENCED_ROW], placement).get(FENCED_ROW.id), 5)
-  const typed = [...WOKEN, { role: "user", at: at(12), text: "Go with the docs." }, { role: "assistant", at: at(14), text: REF_FENCE("settings-store") }]
-  assert.equal(questionHomes(typed, [FENCED_ROW], placeQuestions(typed, [FENCED_ROW])).get(FENCED_ROW.id), 7, "the write-up at 1 points down at it")
 })

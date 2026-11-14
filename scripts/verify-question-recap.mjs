@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // VERIFY: a recap the worker writes after a WAKE, before the human's next turn, draws each open question
 // LIVE beside the write-up that set it up, and the two cards share one answer (lib/questionShadow
-// placeQuestions, 2026-11-10). Only after a turn the human puts in does an older naming draw the read-only
-// copy.
+// placeQuestions, 2026-11-10). After a turn the human puts in, every naming still draws it live (2026-11-14:
+// until then an older naming drew a read-only copy there).
 //
 // The report it reproduces: a write-up with six questions interleaved in its prose; another thread's steer
 // woke the worker; it rested again on a two-line note re-listing all six as `id:` references; all six
@@ -20,7 +20,7 @@
 //
 //   after 2: write-up alpha live, beta live; recap alpha live, beta live
 //   a pick on the recap's beta shows on the write-up's beta; Enter in the prompt box answers it once
-//   after 3: write-up alpha copy ↓, beta answered; recap alpha copy ↓, beta answered; turn 3 alpha live
+//   after 3: write-up alpha live, beta answered copy; recap alpha live, beta answered; turn 3 alpha live
 //
 // Boot a stack with the scheduler armed and the scripted worker, from a shell with no Frizz worker
 // variables, on a throwaway repo:
@@ -64,7 +64,7 @@ writeFileSync(turns, JSON.stringify({
   think: 200,
   turns: [
     { name: "write-up", on: "Start",
-      tools: [{ command: "frizzctl timer set --in-seconds 10 --prompt 'Check the nightly build'", description: "Setting a timer" }],
+      tools: [{ command: "frizzctl timer set --in-seconds 10 --prompt 'Check the nightly build' --description 'Check the nightly build'", description: "Setting a timer" }],
       text: [
         "Two calls are left before the settings work lands.",
         "Alpha lead-in: the store decides how settings survive a crash mid-write.",
@@ -121,8 +121,9 @@ const readCards = (page, root) => page.evaluate((root) => {
     const key = row?.getAttribute("data-transcript-source-id") ?? "?"
     if (!rows.includes(key)) rows.push(key)
     const which = /Which (\w+) should ship\?/.exec(el.textContent ?? "")?.[1] ?? "?"
+    // A copy is only ever of a question that is no longer open: an open one draws live at every naming.
     const what = el.hasAttribute("data-question-copy")
-      ? `copy ${el.getAttribute("data-question-open") === "above" ? "↑" : "↓"}${el.hasAttribute("data-settled-question") ? " answered" : ""}`
+      ? (el.hasAttribute("data-settled-question") ? "answered copy" : "copy")
       : el.hasAttribute("data-settled-question") ? "answered" : "live"
     return { which, what, row: rows.indexOf(key) }
   })
@@ -141,6 +142,17 @@ const readCards = (page, root) => page.evaluate((root) => {
   return { cards: out.map((c) => `${c.which}@${c.row}: ${c.what}`), order }
 }, root)
 
+// A queued thread opens in the board's pane from the human's latest message (ChatView's queue window), so
+// the cards above it are drawn only once the window is opened back to the start.
+const openWhole = async (page) => {
+  for (let i = 0; i < 10; i++) {
+    const more = await page.$("[data-load-earlier]")
+    if (!more) return
+    await more.click()
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new Error("the transcript kept offering earlier messages")
+}
 const PAGE_ROOT = "body"
 const COMPOSER = "textarea[data-surface='chatComposer']"
 const errors = []
@@ -221,13 +233,54 @@ try {
   step(`beta settled with ${JSON.stringify(answer?.answer)}; sends on the wire: ${JSON.stringify(answerCalls)}`)
   assert.match(JSON.stringify(answer?.answer), /Beta two/)
   assert.equal(answerCalls.length, 1, "one send")
-  await settleTo("the thread after answering beta", PAGE_ROOT, ["alpha@0: live", "beta@0: answered", "alpha@1: live", "beta@1: answered"])
+  // Answered, beta stands where its card's home was, the recap, and the write-up draws its answered copy.
+  await settleTo("the thread after answering beta", PAGE_ROOT, ["alpha@0: live", "beta@0: answered copy", "alpha@1: live", "beta@1: answered"])
 
-  // THE HUMAN TYPES, and the worker names alpha again: now the older namings are copies pointing down.
+  // THE HUMAN TYPES, and the worker names alpha again: the older namings stay live, never greyed.
   await api.mutate("followUp", { slug, sessionId, message: "Move alpha" })
   await until("the turn after the human's reply", () => said(slug, "Alpha again, now that you have replied:"))
   await page.reload({ waitUntil: "networkidle2" })
-  await settleTo("the thread after the human's reply", PAGE_ROOT, ["alpha@0: copy ↓", "beta@0: answered", "alpha@1: copy ↓", "beta@1: answered", "alpha@2: live"])
+  await openWhole(page)
+  await settleTo("the thread after the human's reply", PAGE_ROOT, ["alpha@0: live", "beta@0: answered copy", "alpha@1: live", "beta@1: answered", "alpha@2: live"])
+  // The write-up's alpha, the one a later sign-off named again, answers for all three: a pick there shows
+  // on every alpha card, and the one send settles it.
+  const writeUpAlphaOption = () => page.$$eval("article[data-question-id]", (cards) => {
+    const first = cards.find((el) => el.textContent.includes("Which alpha should ship?"))
+    const option = [...(first?.querySelectorAll("[data-question-option]") ?? [])].find((o) => o.textContent.includes("Alpha two"))
+    const el = option?.querySelector("button") ?? option
+    el?.scrollIntoView({ block: "center" })
+    const r = el?.getBoundingClientRect()
+    return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null
+  })
+  const allAlphaPicked = async () => { const p = await pressed("alpha"); return p.length === 3 && p.every((x) => /Alpha two/.test(x)) }
+  for (let attempt = 0; attempt < 5 && !(await allAlphaPicked()); attempt++) {
+    if ((await pressed("alpha")).some((x) => x)) break
+    await new Promise((r) => setTimeout(r, 400))
+    const target = await writeUpAlphaOption()
+    assert.ok(target, "the write-up's alpha card has an Alpha two option to pick")
+    await page.mouse.click(target.x, target.y)
+    await new Promise((r) => setTimeout(r, 600))
+  }
+  await until("the write-up's pick to show on all three alpha cards", allAlphaPicked, 10_000)
+  step(`pressed on each alpha card: ${JSON.stringify(await pressed("alpha"))}`)
+  if (flags.shots) {
+    const clip = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll("article[data-question-id], article[data-question-copy]")]
+      const lead = [...document.querySelectorAll("p")].find((p) => p.textContent.includes("Two calls are left"))
+      const first = (lead ?? cards[0]).getBoundingClientRect()
+      const last = cards[cards.length - 1].getBoundingClientRect()
+      return { x: Math.max(0, first.left - 30), y: Math.max(0, first.top + window.scrollY - 20), width: Math.min(900, last.right - first.left + 60), height: last.bottom - first.top + 50 }
+    })
+    await page.screenshot({ path: join(flags.shots, "after-reply-all-live.png"), clip, captureBeyondViewport: false })
+  }
+  await page.click(COMPOSER)
+  await page.waitForFunction((c) => document.querySelector(c) === document.activeElement, {}, COMPOSER)
+  await page.keyboard.press("Enter")
+  await until("alpha to settle", async () => (await openIds(slug)) === "", 30_000)
+  const alpha = (await api.query("threadSettledQuestions", { slug })).questions.find((q) => q.spec?.handle === "alpha")
+  step(`alpha settled with ${JSON.stringify(alpha?.answer)}; sends on the wire: ${JSON.stringify(answerCalls)}`)
+  assert.match(JSON.stringify(alpha?.answer), /Alpha two/)
+  assert.equal(answerCalls.length, 2, "one send for alpha, after beta's")
   assert.deepEqual(errors, [], "the page raised no errors")
   console.log("ok — a wake-driven recap draws the questions live beside the write-up, sharing one answer")
 } finally {

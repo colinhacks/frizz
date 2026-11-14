@@ -99,7 +99,7 @@ import { ChildOpRow } from "./ChildOpRow.tsx"
 import { ThreadLinks } from "./ThreadLinks.tsx"
 import { TRANSCRIPT_META_LABEL_CLASS, transcriptMetaChevronClass } from "../lib/transcriptMetaLabels.ts"
 import { InteractionStack } from "./InteractionCards.tsx"
-import { answeredRow, ClosedQuestionCard, InvalidQuestionFence, OpenQuestionCopyCard, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
+import { answeredRow, ClosedQuestionCard, InvalidQuestionFence, RefusedQuestionCard, RefusedQuestionReference, RegisteredQuestionCard, RegisteredQuestionStack, SettledQuestionCard, SettledQuestionStack, UnregisteredQuestionCard, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 // The shared card chrome and THE question card both live in their own modules now, so every
 // surface can render them without importing the thread view. QuestionBlockCard in particular is
 // shared with the native-AskUserQuestion path, which reaches it through InteractionCards.tsx —
@@ -1023,8 +1023,9 @@ function VirtualizedThreadTranscript({
       if (group) next.push({ key: `questions:${row.key}`, kind: "questions", questions: group, send: questionGroups.sendRows.has(i) })
     }
     // A row a fold never hides: one an open question's stack (or its rest's Send) hangs off, or a message
-    // with a live card placed inside it. A worker held to the whole-handoff rule names every open question
-    // in its sign-off, so this only catches one that did not.
+    // holding a question's HOME card (lib/questionShadow placeQuestions). Every other naming draws the card
+    // live too, and folds freely: the home is the newest sign-off naming it. A worker held to the
+    // whole-handoff rule names every open question in its sign-off, so this only catches one that did not.
     const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex)
     // Which runs of rows each range hides, first: a shut fold's LEAD (the worker's first words) is drawn as
     // its words alone, its tool calls counted on the hairline under it, so the lead's row has to know.
@@ -3742,8 +3743,6 @@ export function ThreadMessage({ m, index, showSendButton }: { m: ChatMessage; in
       placed={t.placement.placed.get(index)}
       settledPlaced={t.settledPlacement.placed.get(index)}
       fenceQuestions={t.fenceQuestions}
-      index={index}
-      questionHomes={t.questionHomes}
     />
   )
 }
@@ -3779,12 +3778,13 @@ export function ThreadMessage({ m, index, showSendButton }: { m: ChatMessage; in
 // agent message ever carries it, so the memo boundary holds for every other row.
 // `fenceQuestions` — EVERY registered row the thread knows, open and answered — present exactly when the
 // thread speaks THE QUESTION FENCE (dispatched after QUESTION_FENCE_RETIRED_AT; useFenceQuestions). Its
-// presence switches the splitter to that grammar, and a fence's `id:` resolves against it: a row placed
-// here draws in the fence's slot, a row drawn elsewhere draws nothing here, and an ask that names no row
-// yet draws read-only from its own bytes. One array per surface, memoized, so the memo boundary holds.
+// presence switches the splitter to that grammar, and a fence's `id:` resolves against it: an open row
+// draws its live card in the fence's slot, an answered or closed one its greyed card, and an ask that
+// names no row yet draws read-only from its own bytes. One array per surface, memoized, so the memo
+// boundary holds.
 // `stepsDone` — what the human's reply to this message's rest on steps said was done (lib/stepsAnswer
 // stepsDoneReplies), which its settled steps card draws ticked. Absent on every other row.
-type MessageProps = { m: ChatMessage; answering?: MessageAnswering; paired?: PairedAnswer[] | null; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; index?: number; questionHomes?: ReadonlyMap<string, number>; restingCardShown?: boolean; stepsDone?: StepsReply }
+type MessageProps = { m: ChatMessage; answering?: MessageAnswering; paired?: PairedAnswer[] | null; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; restingCardShown?: boolean; stepsDone?: StepsReply }
 // EVERY MESSAGE SAYS WHEN IT WAS SAID ON HOVER — `Today at 8:33 AM` as the browser's own tooltip
 // (lib/messageTime). Here, around every branch of the body, so a bubble, a prose turn, a tool run and a
 // hairline all carry it on every surface, the sub-agent sheet's included. `contents` keeps the wrapper
@@ -3814,7 +3814,7 @@ function ThreadProviderErrorCard({ error }: { error: ProviderError }) {
   return <ProviderErrorCard error={error} provider={provider} />
 }
 
-function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, index, questionHomes, restingCardShown, stepsDone }: MessageProps) {
+function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, restingCardShown, stepsDone }: MessageProps) {
   // ANSWERING ON A PHONE happens in a sheet, one question at a time (MobileAnswerSheet) — the cards in
   // the transcript stay READ-ONLY there, so the questions are still visible in the context that
   // produced them but a 44pt-thumb answer never has to land on a 24pt chip inside a scrolling message.
@@ -4044,10 +4044,10 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
           // By the row the name meant IN THIS MESSAGE: an id asked again once its question settled names a
           // newer row, and this message's fence still draws the one it asked (lib/questionOwners).
           const row = resolveQuestionName(followsUp ? followsUp.parent : seg.fence.id, fenceQuestions ?? [], m.questionOwners)
-          // EVERY FENCE NAMING A ROW DRAWS IT, ONCE PER MESSAGE: the real card where the question's card
-          // is, and a read-only COPY everywhere else (maintainer 2026-11-06, choosing the full copy over a
-          // one-line row). Until then only the card's own slot drew anything, so each handoff that named an
-          // open question again took its card and left the previous handoff's lead-in over empty space.
+          // EVERY FENCE NAMING A ROW DRAWS IT, ONCE PER MESSAGE (maintainer 2026-11-06, choosing the full
+          // card over a one-line row). Until then only the card's own slot drew anything, so each handoff
+          // that named an open question again took its card and left the previous handoff's lead-in over
+          // empty space.
           if (row && placedDrawn.has(row.id)) continue
           if (row?.closed) {
             // CLOSED WITHOUT AN ANSWER — dismissed or withdrawn. The fence that asked it draws the question
@@ -4064,8 +4064,8 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
           }
           if (row) {
             placedDrawn.add(row.id)
-            // Placed in THIS message (the newest one naming it from its claiming rest on): the live card.
-            // Answered here: its settled card.
+            // Placed in THIS message (its home, the newest sign-off naming it): the live card. Answered
+            // here: its settled card.
             const placedHere = placed?.find((q) => q.id === row.id)
             if (placedHere) {
               push(<RegisteredQuestionCard key={`${keyBase}-${fi}-q${si}`} q={placedHere} />)
@@ -4076,14 +4076,16 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
               push(<SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={settledHere} />)
               continue
             }
-            // Anywhere else — a fence from before the human's last turn, since every naming after it is
-            // placed (lib/questionShadow placeQuestions): the copy. Answered, as its settled card stands;
-            // open, read-only, pointing down at the live card.
+            // Anywhere else: answered, the settled card's read-only copy. OPEN, the live card again, sharing
+            // the one answer (RegisteredQuestionCards' answering state is keyed by the row): a later sign-off
+            // naming the question again says it is still open, which is no reason to grey it where it was
+            // asked (maintainer 2026-11-14). From 2026-11-06 an open question drew a greyed copy here saying
+            // "answer it below"; its home (lib/questionShadow placeQuestions) is now only the message the
+            // fold never hides and the rest whose stack carries the Send.
             const answered = answeredRow(row)
-            const home = questionHomes?.get(row.id)
             push(answered
               ? <SettledQuestionCard key={`${keyBase}-${fi}-q${si}`} s={answered} copy />
-              : <OpenQuestionCopyCard key={`${keyBase}-${fi}-q${si}`} q={row} above={home !== undefined && index !== undefined && home < index} />)
+              : <RegisteredQuestionCard key={`${keyBase}-${fi}-q${si}`} q={row} />)
             continue
           }
           // AN ASK WITH NO ROW YET — the server registers a second or two behind the transcript, and never

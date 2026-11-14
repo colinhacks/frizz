@@ -434,7 +434,7 @@ const CASES = [
       const w = await t.worker("stands", [
         {
           name: "arms a timer and asks", on: FIRST,
-          tools: [{ command: `frizzctl timer set --in-seconds ${TIMER_S} --prompt 'Check whether the nightly build finished'`, description: "Set a timer" }],
+          tools: [{ command: `frizzctl timer set --in-seconds ${TIMER_S} --prompt 'Check whether the nightly build finished' --description 'Check the nightly build'`, description: "Set a timer" }],
           text: `The retry policy is the open call.\n\n${choice("retry-policy", question, ["Exponential backoff", "Fixed interval"])}`,
         },
         { name: "woken by its timer, says nothing of the question", on: TIMER_TRAILER, text: "The nightly build finished green; nothing changes for the retry work." },
@@ -655,7 +655,7 @@ const CASES = [
       // Way out one: asked, woken by a timer, finished the work, signed off done — by command, which
       // refuses, and then by fence, which cannot be refused. The correction's reply withdraws the question.
       const w = await t.worker("unask", [
-        { name: "asks and arms a timer", on: FIRST, tools: [{ command: `frizzctl timer set --in-seconds ${TIMER_S} --prompt 'Check whether the import finished'`, description: "Set a timer" }], text: `The store is the open call; the import runs meanwhile.\n\n${ask}` },
+        { name: "asks and arms a timer", on: FIRST, tools: [{ command: `frizzctl timer set --in-seconds ${TIMER_S} --prompt 'Check whether the import finished' --description 'Check the import'`, description: "Set a timer" }], text: `The store is the open call; the import runs meanwhile.\n\n${ask}` },
         { name: "woken by its timer, tries the command, then signs off done by fence", on: TIMER_TRAILER, tools: [{ command: `frizzctl done --body ${quote(body)}`, description: "Sign off with the question open" }], text: `The import finished while the question sat open.\n\n${doneFence}` },
         { name: "withdraws the question and signs off done again", on: DONE_FENCE_CORRECTION_LEAD, tools: [t.hold("out"), { command: "frizzctl unask store", description: "Withdraw the question" }], text: `SQLite it is: the importer already writes there, so the question is withdrawn.\n\n${doneFence}` },
       ])

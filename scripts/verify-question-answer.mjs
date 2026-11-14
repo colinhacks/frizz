@@ -62,7 +62,7 @@ writeFileSync(turns, JSON.stringify({
   think: 200,
   turns: [
     { name: "write-up", on: "Start",
-      tools: [{ command: "frizzctl timer set --in-seconds 10 --prompt 'Check the nightly build'", description: "Setting a timer" }],
+      tools: [{ command: "frizzctl timer set --in-seconds 10 --prompt 'Check the nightly build' --description 'Check the nightly build'", description: "Setting a timer" }],
       text: [
         "Store lead-in: how settings survive a crash.",
         fence("id: store", "kind: choice", "question: Which store should ship?", "options:", "  - label: SQLite", "    recommended: true", "  - label: JSON file"),
@@ -121,7 +121,7 @@ const readCards = (page) => page.evaluate((NAMES) => {
     const name = NAMES.find(([needle]) => el.textContent.includes(needle))?.[1] ?? "?"
     const what = el.hasAttribute("data-question-closed")
       ? (el.hasAttribute("data-question-copy") ? "closed copy" : "closed")
-      : el.hasAttribute("data-question-copy") ? "copy" : el.hasAttribute("data-settled-question") ? "answered" : "live"
+      : el.hasAttribute("data-question-copy") ? (el.hasAttribute("data-settled-question") ? "answered copy" : "copy") : el.hasAttribute("data-settled-question") ? "answered" : "live"
     return `${name}@${rows.indexOf(key)}: ${what}`
   })
 }, NAMES)
@@ -259,7 +259,14 @@ try {
   assert.ok(!delivered.includes(SECRET), "the secret never reaches the transcript")
   step("the worker received every answer, the secret by reference only")
   await page.reload({ waitUntil: "networkidle2" })
-  await expectCards("after a reload, every copy answered", staged("answered"))
+  // Rested on the answer, the thread opens in the board's pane from the human's latest message (ChatView's
+  // queue window): open it back to the start, or the cards above that message are not drawn.
+  for (let i = 0; i < 10 && (await page.$("[data-load-earlier]")); i++) {
+    await (await page.$("[data-load-earlier]"))?.click()
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  // Answered, each stands where its card's home was, the recap, and the write-up draws its answered copy.
+  await expectCards("after a reload, every copy answered", [...KINDS.slice(0, 4).map((k) => `${k}@0: answered copy`), "gamma@0: closed", ...KINDS.slice(0, 4).map((k) => `${k}@1: answered`), "gamma@1: closed copy"])
   assert.ok(!(await page.evaluate(() => document.body.innerText)).includes(SECRET), "the secret is drawn nowhere")
   if (flags.shots) await page.screenshot({ path: join(flags.shots, "question-answer-sent.png"), captureBeyondViewport: false })
   assert.deepEqual(errors, [], "the page raised no errors")

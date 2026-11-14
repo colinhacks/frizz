@@ -236,19 +236,27 @@ export function markerIdsIn(text: string): string[] {
   return splitQuestionBlocks(text).flatMap((seg) => seg.kind === "question" && seg.registeredId && seg.text.trim() === "" ? [seg.registeredId] : [])
 }
 
-/** Where each registered question renders, given what the messages from its claiming rest onward
- *  actually wrote: ONE message, the newest SIGN-OFF naming it since the human's last turn before the
+/** Where each registered question's card is at HOME, given what the messages from its claiming rest
+ *  onward actually wrote: ONE message, the newest SIGN-OFF naming it since the human's last turn before the
  *  newest message naming it (`signOff`, server sign-offs.ts), or the newest naming of that stretch when no
- *  sign-off in it names the question. Every other naming draws the read-only copy pointing at it. A
- *  question no loaded message names is absent from `placed` and renders at its anchor. Human turns never
- *  place anything — a wake carries no marker of the worker's.
+ *  sign-off in it names the question. A question no loaded message names is absent from `placed` and
+ *  renders at its anchor. Human turns never place anything — a wake carries no marker of the worker's.
  *
- *  ONE LIVE CARD, IN THE NEWEST SIGN-OFF (2026-11-11). A sign-off is the whole handoff now and replaces the
- *  one before it: it names every open question (scheduler SOURCE 18 refuses one that does not), and the
- *  board folds everything since the human's last message behind one row except that sign-off
- *  (lib/stretchFolds). So its cards are the ones the human answers, and an earlier naming in the same
- *  stretch is a copy (maintainer 2026-11-11: "That way, there's only one copy of each question"). A naming
- *  that is no sign-off (narration mid-turn) never takes the card from one that is.
+ *  THE HOME IS NOT THE ONLY LIVE CARD (2026-11-14). Every fence naming an open question draws it live and
+ *  answerable, all sharing one answer (ChatView's question-fence path): a later sign-off naming it again
+ *  says it is still open, which is no reason to grey it where it was asked (maintainer 2026-11-14: "There's
+ *  no reason to automatically gray out a question just because it's been reiterated by a later sign-off
+ *  message"). From 2026-11-06 to then, every naming but this one drew a greyed read-only copy. What the
+ *  home still decides: the message a fold never hides (lib/stretchFolds is the net under a sign-off that
+ *  forgot a question), the rest whose stack carries the Send where no prompt box sends, and that the card
+ *  leaves its anchor group.
+ *
+ *  IN THE NEWEST SIGN-OFF (2026-11-11). A sign-off is the whole handoff now and replaces the one before it:
+ *  it names every open question (scheduler SOURCE 18 refuses one that does not), and the board folds
+ *  everything since the human's last message behind one row except that sign-off (lib/stretchFolds). So it
+ *  is the card the human reads, and an earlier naming in the same stretch is folded away (maintainer
+ *  2026-11-11: "That way, there's only one copy of each question"). A naming that is no sign-off
+ *  (narration mid-turn) never takes the home from one that is.
  *
  *  Until 2026-11-09 it was simply the LAST message naming it — the newest handoff, on the reading that an
  *  older placement is history. It is not history while the human has not come back since: the worker had
@@ -308,22 +316,6 @@ export function placeQuestions<Q extends Pick<RegisteredQuestionView, "id"> & { 
     }
   }
   return { placed, placedIds }
-}
-
-/** The message each OPEN question's NEWEST answerable card draws in (its placement) or under (its anchor),
- *  by row id — what a read-only copy elsewhere compares its own message against, to say whether the card
- *  is above it or below it. A copy is only drawn before the human's last turn and every live card after
- *  it, so in practice it says "below"; "above" is kept for a window that cut the live cards away. */
-export function questionHomes<Q extends Pick<RegisteredQuestionView, "id"> & { askedAt: string; spec?: AskedQuestion }>(
-  messages: readonly AnchorMessage[],
-  questions: readonly Q[],
-  placement: QuestionPlacement<Q>,
-): Map<string, number> {
-  const homes = new Map<string, number>()
-  for (const [at, group] of placement.placed) for (const q of group) homes.set(q.id, Math.max(at, homes.get(q.id) ?? at))
-  const unplaced = questions.filter((q) => !placement.placedIds.has(q.id))
-  for (const [anchor, group] of questionsByAnchor(messages, unplaced)) for (const q of group) homes.set(q.id, anchor)
-  return homes
 }
 
 /** The placement as a surface that draws messages from `start` onward can honour it: a card placed by a
