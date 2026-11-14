@@ -23,7 +23,8 @@
     "./dev-child": "./src/dev-child.ts",
     "./boot-progress": "./src/boot-progress.ts",
     "./frizz-paths": "./src/frizz-paths.ts",
-    "./logging": "./src/logging.ts"
+    "./logging": "./src/logging.ts",
+    "./claude-retention": "./src/claude-retention.ts"
   },
   "dependencies": {
     "@frizz/claude-agent-sdk-runtime": "workspace:*",

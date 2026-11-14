@@ -23,3 +23,10 @@ test("a read that came back empty says what the thread is", () => {
   assert.equal(emptyTranscriptState(loaded, { running: false, adoptable: true }), "adopt")
   assert.equal(emptyTranscriptState(loaded, resting), "empty")
 })
+
+test("a history Claude Code's cleanup deleted says so, unless a session is starting over it", () => {
+  const expired = { pending: false, failed: false, expired: true }
+  assert.equal(emptyTranscriptState(expired, resting), "expired", "not: No conversation yet.")
+  assert.equal(emptyTranscriptState(expired, { running: true, adoptable: false }), "starting")
+  assert.equal(emptyTranscriptState({ ...expired, failed: true }, resting), "failed")
+})

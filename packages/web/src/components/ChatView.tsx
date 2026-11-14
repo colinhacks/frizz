@@ -69,6 +69,7 @@ import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
 import { isVisualizationThemeAck, visualizationThemeMessage } from "../lib/visualizationThemeProtocol.ts"
 import { canAdoptThread } from "../lib/adoption.ts"
 import { emptyTranscriptState } from "../lib/emptyTranscript.ts"
+import { ExpiredTranscript } from "./ExpiredTranscript.tsx"
 import { THREAD_HEADER_CLASS, THREAD_HEADER_CONTROLS_CLASS, THREAD_HEADER_TITLE_CLASS } from "../lib/threadHeaderLayout.ts"
 import { SheetClose } from "./ui/SheetHeader.tsx"
 import { ThreadActionBar } from "./ThreadActionBar.tsx"
@@ -310,7 +311,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   // state (not a ref) so the portal renders as soon as the node mounts.
   const [jumpOverlay, setJumpOverlay] = useState<HTMLDivElement | null>(null)
   const count = q.data?.messages.length ?? 0
-  const empty = emptyTranscriptState({ pending: q.isPending, failed: q.isError }, { running, adoptable: canAdoptThread(thread) })
+  const empty = emptyTranscriptState({ pending: q.isPending, failed: q.isError, expired: !!q.data?.expired }, { running, adoptable: canAdoptThread(thread) })
 
   const loadEarlier = useCallback(async () => {
     if (loadingEarlierRef.current) return
@@ -414,13 +415,15 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           surface reached once the drawer and the full-screen page both virtualized. */}
       <div className="flex min-h-full flex-col px-6 py-5">
         <div className="flex-1 flex items-center justify-center text-sm text-muted">
-          {/* Which of the five, and why in that order: lib/emptyTranscript.ts. */}
+          {/* Which of the six, and why in that order: lib/emptyTranscript.ts. */}
           {empty === "loading" ? (
             <span className="flex items-center gap-2"><Dots /> Loading…</span>
           ) : empty === "failed" ? (
             <TranscriptReadFailed error={q.error} retry={() => q.refetch()} />
           ) : empty === "starting" ? (
             <span className="flex items-center gap-2"><Dots /> Session starting…</span>
+          ) : empty === "expired" && q.data?.expired ? (
+            <ExpiredTranscript retentionDays={q.data.expired.retentionDays} />
           ) : empty === "adopt" ? (
             // A thread frizz never originated (pre-existing .frizz board): no session, no
             // transcript. Cold-adopt it — a fresh worker reads the thread FILE and continues;

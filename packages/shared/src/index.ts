@@ -7978,6 +7978,11 @@ export const TranscriptPage = z.object({
   // The latest page only, one per checkout the thread registered (see WorktreeChanges). A file the
   // transcript shows the worker writing under one of them is in that group and not in `editedFiles`.
   worktreeChanges: z.array(WorktreeChanges).optional(),
+  // Set only on an EMPTY latest page of a Claude thread whose session file is gone and whose last
+  // activity is older than Claude Code's `cleanupPeriodDays`: Claude Code's own startup cleanup deleted
+  // the history, and the thread says so instead of "No conversation yet." (server claude-retention.ts).
+  // `source` is the settings file that set the period, null for Claude Code's default.
+  expired: z.object({ retentionDays: z.number().positive(), source: z.string().nullable() }).strict().optional(),
 }).strict()
 export type TranscriptPage = z.infer<typeof TranscriptPage>
 
