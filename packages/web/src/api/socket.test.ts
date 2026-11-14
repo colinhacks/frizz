@@ -269,8 +269,8 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
 
     // A push carrying its PAGE ENVELOPE is the same bounded latest window the HTTP page read returns, and
     // reconciles the same way: the envelope lands beside the messages (a slid window's cursor cannot go
-    // stale), `editedFiles` — which never rides a push — keeps the HTTP copy, and a page that no longer
-    // overlaps what is held (a new transcriptKey) replaces it outright.
+    // stale), `editedFiles` and `worktreeChanges` — which never ride a push — keep the HTTP copy, and a
+    // page that no longer overlaps what is held (a new transcriptKey) replaces it outright.
     const pageKey = JSON.stringify(["transcript", "large-thread"])
     cache.set(pageKey, {
       messages: [{ role: "assistant", text: "small again", tools: [], parts: [] }],
@@ -279,6 +279,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
       reachedTurnBoundary: true,
       transcriptKey: "key-1",
       editedFiles: [{ path: "src/a.ts", edits: 2 }],
+      worktreeChanges: [{ root: "/wt", base: "main", files: [{ path: "/wt/b.ts", status: "added", added: 1 }] }],
     })
     transcriptSocket.message({
       t: "transcript",
@@ -296,6 +297,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
       reachedTurnBoundary: true,
       transcriptKey: "key-1",
       editedFiles: [{ path: "src/a.ts", edits: 2 }],
+      worktreeChanges: [{ root: "/wt", base: "main", files: [{ path: "/wt/b.ts", status: "added", added: 1 }] }],
     })
     transcriptSocket.message({
       t: "transcript",
@@ -310,6 +312,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
       reachedTurnBoundary: true,
       transcriptKey: "key-2",
       editedFiles: [{ path: "src/a.ts", edits: 2 }],
+      worktreeChanges: [{ root: "/wt", base: "main", files: [{ path: "/wt/b.ts", status: "added", added: 1 }] }],
     })
     cache.delete(pageKey)
 

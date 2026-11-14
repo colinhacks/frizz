@@ -440,7 +440,8 @@ test("/_frizz/local-image route plays a video: byte ranges, a HEAD with no body,
 
 test("/_frizz/local-file serves a PDF inline, everything else as a sandboxed download, and nothing outside the roots", async () => {
   const port = 49_236
-  const app = originTestApp(port)
+  // No thread has registered a checkout, so the readers' roots are the directory ones alone.
+  const app = originTestApp(port, undefined, {}, undefined, { storage: { allThreadWorktrees: () => [] } as unknown as AppContext["storage"] })
   const dir = mkdtempSync(join(tmpdir(), "frizz-local-file-route-"))
   const headers = { host: `127.0.0.1:${port}`, "sec-fetch-site": "same-origin" }
   const get = (path: string, init: RequestInit = {}) =>
