@@ -263,6 +263,9 @@ export function makeTranscriptReader(
         hasEarlier: page.hasEarlier,
         reachedTurnBoundary: page.reachedTurnBoundary,
         transcriptKey: page.transcriptKey,
+        // The push replaces the page envelope the HTTP read delivered, so a deleted history has to ride
+        // it too or the first push would put "No conversation yet." back.
+        ...(page.expired ? { expired: page.expired } : {}),
       },
       bytes: read.bytes,
     }

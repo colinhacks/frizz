@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { bindHostIsExposed } from "@frizz/server/local-origin";
 import { liveSessions, loadSessionState, remoteDevicesLine, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
+import { claudeRetentionWarning, claudeTranscriptRetention, claudeUserSettingsFile } from "@frizz/server/claude-retention";
 import {
   establishCloudConfig,
 } from "./cloud.ts";
@@ -842,6 +843,13 @@ async function openOrPrint(
   const warnings: string[] = [];
   if (sandbox) warnings.push(`Sandbox: everything here is throwaway (${sandbox.home}) and is deleted when this terminal closes.`);
   if (sessionNotice && !reused) warnings.push(sessionNotice);
+  // Claude Code deletes an idle session's file after `cleanupPeriodDays`, and with it the thread's whole
+  // conversation; Frizz cannot keep it, only say so while there is still time to raise the period. A
+  // throwaway sandbox has no history worth keeping. It reads the machine-wide period, not the launch
+  // directory's: one Frizz serves every project, and Claude Code's sweep deletes every project's files
+  // whichever directory a process starts in (claude-retention.ts).
+  const retentionWarning = sandbox ? undefined : claudeRetentionWarning(claudeTranscriptRetention({}), claudeUserSettingsFile({}), (path) => tildePath(path, home));
+  if (retentionWarning) warnings.push(retentionWarning);
   if (!readout) {
     // `--status`, internal launches and pipes keep the plain, parseable records.
     console.log(`${reused ? "reusing" : "started"} Frizz for ${workspace.root}`);
