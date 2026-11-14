@@ -71,11 +71,11 @@ export function trustedLocalFileRoots(project: Pick<Project, "dir" | "stateDir">
 // opener (no bytes enter the page) and is still realpath-confined by the caller's isUnder check — never
 // the whole filesystem. homedir() subsumes ~/Screenshots and an in-home project/attachments dir; the temp
 // trees and an out-of-home checkout are kept explicit via the trusted set. `registered` is every checkout a
-// thread of this project registered as its own (worktree-changes.ts): its rail lists their files, which
+// thread of ANY project registered as its own (worktree-changes.ts): its rail lists their files, which
 // have to open wherever the checkout sits. Last, any checkout of a registered project's repository,
-// wherever it is (registered-checkout.ts): a worker's worktree on an external volume. That check is the
-// same for every project, so the Console, which asks whichever project's board holds a path or else the
-// first one (web lib/consoleProjects.ts), gets the same answer from each. A remote reader limited to read
+// wherever it is (registered-checkout.ts): a worker's worktree on an external volume. Both are the same
+// for every project, so the Console, which asks whichever project's board holds a path or else the first
+// one (web lib/consoleProjects.ts), gets the same answer from each. A remote reader limited to read
 // and answer never reaches these roots; remote-reads.ts is its gate.
 export function openableFileRoots(project: Pick<Project, "dir" | "stateDir">, registered: readonly string[] = []): LocalFileRoot[] {
   return [homedir(), ...trustedLocalFileRoots(project), ...registered, (real) => inRegisteredCheckout(real)]

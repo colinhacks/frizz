@@ -91,8 +91,8 @@ function enclosingCheckout(dir: string): string | undefined {
 }
 
 /** Every checkout a thread of this project registered, for the file readers' roots (project.ts). */
-export function registeredWorktreeRoots(storage: Pick<Storage, "allThreadWorktrees">): string[] {
-  return storage.allThreadWorktrees().map((row) => row.path)
+export function registeredWorktreeRoots(storage: Pick<Storage, "registeredCheckoutPaths">): string[] {
+  return storage.registeredCheckoutPaths()
 }
 
 /** Does `base` name a commit in the checkout at `root`? Asked once, at registration, so a typo is refused there. */

@@ -51,7 +51,7 @@ function gateApp(overrides: Partial<AppContext> & { projectDir?: string } = {}) 
       : id === "qst_other" ? { id, thread_slug: "another-thread", state: "open", handle: null, spec: JSON.stringify(CHOICE) } : undefined,
     answerThreadQuestion: (id: string) => { calls.answered.push(id); return true },
     listThreadQuestions: () => [],
-    allThreadWorktrees: () => [],
+    registeredCheckoutPaths: () => [],
   }, { get: (target, name) => (target as Record<string | symbol, unknown>)[name] ?? (() => {}) })
   const ctx = {
     bootId: "gate-test-boot",

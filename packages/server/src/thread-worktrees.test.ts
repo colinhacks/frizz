@@ -76,7 +76,7 @@ test("only the top of a real checkout registers, with a base it has, on an open 
     await assert.rejects(h.register({ slug: "absent", path: h.worktree }), /not registered/)
     h.storage.setState("own", "archived")
     await assert.rejects(h.register({ path: h.worktree }), /Reopen/)
-    assert.deepEqual(h.storage.allThreadWorktrees(), [])
+    assert.deepEqual(h.storage.registeredCheckoutPaths(), [])
   } finally { h.close() }
 })
 
@@ -105,12 +105,17 @@ test("a registration is dropped by id or by any spelling of its path, only by it
   } finally { other.close(); h.close() }
 })
 
-test("a registered checkout is one of the file readers' roots for its project", async () => {
+test("a registered checkout is one of the file readers' roots for every project, not only its own", async () => {
   const h = harness()
+  // Another project on the same machine database. The Console asks the first open project for a path
+  // outside them all (web lib/consoleProjects.ts), so its gate must answer as the registering one does.
+  const other = createStorage(h.path, "worktrees-b")
   try {
     const project = { dir: h.repo, stateDir: h.dir }
-    assert.ok(!openableFileRoots(project, registeredWorktreeRoots(h.storage)).includes(h.worktree))
+    for (const storage of [h.storage, other]) assert.ok(!openableFileRoots(project, registeredWorktreeRoots(storage)).includes(h.worktree))
     await h.register({ path: h.worktree })
-    assert.ok(openableFileRoots(project, registeredWorktreeRoots(h.storage)).includes(h.worktree))
-  } finally { h.close() }
+    for (const storage of [h.storage, other]) assert.ok(openableFileRoots(project, registeredWorktreeRoots(storage)).includes(h.worktree))
+    h.storage.forgetSession("own")
+    assert.ok(!openableFileRoots(project, registeredWorktreeRoots(other)).includes(h.worktree), "the registration went with its thread")
+  } finally { other.close(); h.close() }
 })

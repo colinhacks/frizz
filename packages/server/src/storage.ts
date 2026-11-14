@@ -914,8 +914,11 @@ export interface Storage {
   // replaces the one it had (none given keeps it).
   upsertThreadWorktree(worktree: { id: string; slug: string; path: string; base: string | null; createdAtMs: number }): { row: ThreadWorktreeRow; existed: boolean }
   listThreadWorktrees(slug: string): ThreadWorktreeRow[]
-  /** Every thread's, for the file readers' roots: a registered checkout's files open from any of the project's surfaces. */
-  allThreadWorktrees(): ThreadWorktreeRow[]
+  /** EVERY PROJECT'S registered checkouts, for the file readers' roots (worktree-changes.ts
+   *  registeredWorktreeRoots). Unscoped on purpose: one machine database holds every project (frizz-db.ts),
+   *  and every project's file gate has to answer alike, because the Console sends a path outside every
+   *  project to whichever board is open first (web lib/consoleProjects.ts). */
+  registeredCheckoutPaths(): string[]
   /** By `wtr_…` id or by path. */
   dropThreadWorktree(slug: string, idOrPath: string): boolean
   /** Tick or untick one box on the human's to-do list. */
@@ -2296,9 +2299,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     ON CONFLICT (project_id, thread_slug, path) DO UPDATE SET base = COALESCE(excluded.base, thread_worktree.base)
     RETURNING *
   `)
-  const threadWorktreesStmt = scope.prepare<[], ThreadWorktreeRow>(
-    "SELECT * FROM thread_worktree WHERE project_id = @project_id ORDER BY created_at, rowid",
-  )
+  const registeredCheckoutPathsStmt = db.prepare<[], { path: string }>("SELECT DISTINCT path FROM thread_worktree ORDER BY path")
   const threadWorktreesBySlugStmt = scope.prepare<[string], ThreadWorktreeRow>(
     "SELECT * FROM thread_worktree WHERE project_id = @project_id AND thread_slug = ? ORDER BY created_at, rowid",
   )
@@ -3188,7 +3189,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
       return { row: insertThreadWorktreeStmt.get(worktree)!, existed }
     },
     listThreadWorktrees: (slug) => threadWorktreesBySlugStmt.all(slug),
-    allThreadWorktrees: () => threadWorktreesStmt.all(),
+    registeredCheckoutPaths: () => registeredCheckoutPathsStmt.all().map((row) => row.path),
     dropThreadWorktree: (slug, idOrPath) => dropThreadWorktreeStmt.run(slug, idOrPath, idOrPath).changes > 0,
     setHumanTodo: (slug, itemId, done, atMs) => void setHumanTodoStmt.run(slug, itemId, done ? atMs : null),
     reportHumanTodos: db.transaction((slug: string, todos: readonly { id: string; done: boolean }[], atMs: number) => {
