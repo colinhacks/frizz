@@ -33,7 +33,8 @@ import {
 } from "@frizz/shared"
 import { projectTranscriptSessionPeers, type SessionPeerThread } from "./session-peer.ts"
 import type { Project } from "./project.ts"
-import type { Storage } from "./storage.ts"
+import type { SessionRow, Storage } from "./storage.ts"
+import { claudeTranscriptRetention } from "./claude-retention.ts"
 import { CLAUDE_WORKER_ENV, type AgentBackend, type NormalizedEvent } from "./backend/types.ts"
 import { parseDeliveryLedger, projectDeliveryLedger, suppressCancelledDeliveries, attachmentPromptText, isPromptDeliveryAttachment } from "./delivery-ledger.ts"
 import { editedFilesOf } from "./edited-files.ts"
@@ -5047,10 +5048,30 @@ function emptyTranscriptPage(source?: TranscriptSourceBinding): TranscriptPage {
 // send there is exactly the "my words silently vanished" loss the write-ahead exists to prevent: the
 // ledger kept the text, then this reader dropped it. readThreadTranscript never had the gap (it projects
 // onto `[]` on every branch); the /ws push and the RPC page both read through HERE, so both had it.
-function emptyLatestTranscriptPage(storage: Storage, slug: string, source?: TranscriptSourceBinding): TranscriptPage {
+function emptyLatestTranscriptPage(project: Project, storage: Storage, slug: string, source?: TranscriptSourceBinding): TranscriptPage {
   const page = emptyTranscriptPage(source)
   const row = storage.getSession(slug)
-  return row ? { ...page, messages: projectDeliveryLedger([], parseDeliveryLedger(row.delivery_ledger)) } : page
+  if (!row) return page
+  const messages = projectDeliveryLedger([], parseDeliveryLedger(row.delivery_ledger))
+  const expired = messages.length === 0 && source ? expiredClaudeTranscript(project, row, source) : undefined
+  return { ...page, messages, ...(expired ? { expired } : {}) }
+}
+
+const DAY_MS = 86_400_000
+
+// Did Claude Code's retention cleanup delete this thread's history? Only when the file is ABSENT (an empty
+// file is a session that has not written yet) and the thread has been idle longer than the period that
+// applies to it — so a worker that died before writing, or a file lost some other way, keeps the plain
+// empty state rather than blaming a cleanup that cannot have reached it. Idle is measured from the last
+// rest, the closest thing Frizz records to the file's last write, which is what Claude Code ages it by.
+function expiredClaudeTranscript(project: Project, row: SessionRow, source: TranscriptSourceBinding): TranscriptPage["expired"] {
+  if (source.backend !== "claude" || existsSync(source.path)) return undefined
+  const lastActive = Date.parse(row.rested_at ?? row.spawned_at)
+  // One day is the shortest period Claude Code accepts, so a younger thread needs no settings read.
+  if (!Number.isFinite(lastActive) || Date.now() - lastActive < DAY_MS) return undefined
+  const retention = claudeTranscriptRetention({ cwd: project.dir })
+  if (!retention || Date.now() - lastActive < retention.days * DAY_MS) return undefined
+  return { retentionDays: retention.days, source: retention.source }
 }
 
 /**
@@ -5127,12 +5148,12 @@ function readLatestThreadPage(
 ): { page: TranscriptPage; projected?: readonly TranscriptMessage[]; bytes?: number } {
   const { memo, coldAt } = opts
   let source = sourceForThread(project, storage, slug, backendFor)
-  if (!source) return { page: emptyLatestTranscriptPage(storage, slug) }
+  if (!source) return { page: emptyLatestTranscriptPage(project, storage, slug) }
   let snapshot = fixedSnapshot(source)
   if (!snapshot) {
     const discovered = discoveredClaudeSource(project, storage, slug)
     const discoveredSnapshot = discovered ? fixedSnapshot(discovered) : undefined
-    if (!discoveredSnapshot) return { page: emptyLatestTranscriptPage(storage, slug, source) }
+    if (!discoveredSnapshot) return { page: emptyLatestTranscriptPage(project, storage, slug, source) }
     source = discovered!
     snapshot = discoveredSnapshot
   }

@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { launchApp, launchBrowserTab } from "./browser.ts";
 import { adoptSessionState, liveSessions, loadSessionState, remoteDevicesLine, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
+import { claudeRetentionWarning, claudeTranscriptRetention, claudeUserSettingsFile } from "@frizz/server/claude-retention";
 import { listSessions, signOutSession } from "./sessions-cli.ts";
 import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
 import { createAccessPane, type AccessPane } from "./access-pane.ts";
@@ -472,6 +473,11 @@ async function openOrPrint(port: number, reused: boolean, landing: LaunchRoute):
   if (sandbox) warnings.push(`Sandbox: everything here is throwaway (${sandbox.home}) and is deleted when this terminal closes.`);
   if (sessionNotice && !reused) warnings.push(sessionNotice);
   if (landing.notice) warnings.push(landing.notice);
+  // Claude Code deletes an idle session's file after `cleanupPeriodDays`, and with it the thread's whole
+  // conversation; Frizz cannot keep it, only say so while there is still time to raise the period. The
+  // machine-wide period, as the source launcher reads it (index.ts, claude-retention.ts).
+  const retentionWarning = sandbox ? undefined : claudeRetentionWarning(claudeTranscriptRetention({}), claudeUserSettingsFile({}), (path) => tildePath(path, homedir()));
+  if (retentionWarning) warnings.push(retentionWarning);
   if (!readout) {
     console.log(`${reused ? "reusing" : "started"} Frizz${landing.project ? ` for ${landing.project.dir}` : ""}`);
     console.log(url);

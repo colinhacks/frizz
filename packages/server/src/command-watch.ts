@@ -276,14 +276,19 @@ function sandboxInSettings(raw: string, file: string): string | undefined {
  *  project, user — the four scopes a Frizz worker loads (`settingSources: ["user","project","local"]`,
  *  plus the managed file Claude Code always reads). */
 export function claudeSettingsFiles(where: ClaudeSettingsLocations): string[] {
-  const env = where.env ?? process.env
-  const configDir = env.CLAUDE_CONFIG_DIR?.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(where.home ?? homedir(), ".claude")
   return [
     ...(where.managedPaths ?? CLAUDE_MANAGED_SETTINGS_PATHS),
     join(where.cwd, ".claude", "settings.local.json"),
     join(where.cwd, ".claude", "settings.json"),
-    join(configDir, "settings.json"),
+    claudeUserSettingsFile(where),
   ]
+}
+
+/** The USER scope's settings file, which `CLAUDE_CONFIG_DIR` moves as it moves Claude Code's. */
+export function claudeUserSettingsFile(where: Pick<ClaudeSettingsLocations, "env" | "home">): string {
+  const env = where.env ?? process.env
+  const configDir = env.CLAUDE_CONFIG_DIR?.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(where.home ?? homedir(), ".claude")
+  return join(configDir, "settings.json")
 }
 
 /**

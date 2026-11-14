@@ -7910,6 +7910,11 @@ export const TranscriptPage = z.object({
   transcriptKey: z.string().min(1).max(256),
   // The LATEST page only (see EditedFile); an earlier page is settled history and carries none.
   editedFiles: z.array(EditedFile).optional(),
+  // Set only on an EMPTY latest page of a Claude thread whose session file is gone and whose last
+  // activity is older than Claude Code's `cleanupPeriodDays`: Claude Code's own startup cleanup deleted
+  // the history, and the thread says so instead of "No conversation yet." (server claude-retention.ts).
+  // `source` is the settings file that set the period, null for Claude Code's default.
+  expired: z.object({ retentionDays: z.number().positive(), source: z.string().nullable() }).strict().optional(),
 }).strict()
 export type TranscriptPage = z.infer<typeof TranscriptPage>
 
