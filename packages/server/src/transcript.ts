@@ -38,6 +38,7 @@ import { claudeTranscriptRetention } from "./claude-retention.ts"
 import { CLAUDE_WORKER_ENV, type AgentBackend, type NormalizedEvent } from "./backend/types.ts"
 import { parseDeliveryLedger, projectDeliveryLedger, suppressCancelledDeliveries, attachmentPromptText, isPromptDeliveryAttachment } from "./delivery-ledger.ts"
 import { editedFilesOf } from "./edited-files.ts"
+import { scratchFiles } from "./scratch-files.ts"
 import { underAnyRoot, worktreeChanges } from "./worktree-changes.ts"
 import { takeLoopTurn } from "./loop-turns.ts"
 import { repoCarriedEditedFiles } from "./repo-files.ts"
@@ -5128,15 +5129,17 @@ export async function readLatestThreadTranscriptPageWithFiles(
   const { page, projected } = latestThreadPage(project, storage, slug, backendFor)
   if (!projected) return page
   // The checkouts this thread registered as its own each get a "Changes" group read off git
-  // (worktree-changes.ts), and a file the transcript shows it writing under one of them is in that group
-  // instead of this list.
+  // (worktree-changes.ts), and its scratch directory a group listing the folder (scratch-files.ts). A file
+  // the transcript shows it writing under any of them is in that group instead of this list.
   const worktrees = storage.listThreadWorktrees(slug)
-  const roots = worktrees.map((worktree) => worktree.path)
+  const sessionId = storage.getSession(slug)?.session_id
+  const scratch = sessionId ? scratchFiles(project.dir, sessionId) : undefined
+  const roots = [...worktrees.map((worktree) => worktree.path), ...(scratch ? [scratch.root] : [])]
   const [editedFiles, changes] = await Promise.all([
     repoCarriedEditedFiles(project.dir, editedFilesOf(projected, project.dir).filter((file) => !underAnyRoot(file.path, roots))),
     Promise.all(worktrees.map((worktree) => worktreeChanges(worktree.path, worktree.base ?? undefined))),
   ])
-  return { ...page, editedFiles, ...(changes.length > 0 ? { worktreeChanges: changes } : {}) }
+  return { ...page, editedFiles, ...(changes.length > 0 ? { worktreeChanges: changes } : {}), ...(scratch ? { scratch } : {}) }
 }
 
 function latestThreadPage(

@@ -426,3 +426,40 @@ test("a checkout the thread registered gets git's changes, and its files leave t
     h.cleanup()
   }
 })
+
+test("the thread's scratch directory is a group of its own, listing files no tool call shows", async () => {
+  const h = harness()
+  // Not a git checkout, so nothing but the scratch root keeps a write there out of the edited files.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "frizz-page-scratch-")))
+  try {
+    const project = { ...h.project, dir } as Project
+    const scratch = join(dir, ".frizz", "threads", h.sid)
+    const note = join(scratch, "notes.md")
+    const kept = join(dir, "a.ts")
+    const write = (id: string, file_path: string) => JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-10T18:00:01.000Z",
+      message: { id, content: [{ type: "tool_use", id: `tu-${id}`, name: "Write", input: { file_path, content: "x" } }] },
+    })
+    writeFileSync(h.path, [USER("go"), write("a", note), write("b", kept)].join("\n") + "\n")
+    writeFileSync(kept, "x")
+
+    // No folder, and then an empty one (every thread's, at dispatch): no group.
+    assert.equal((await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")).scratch, undefined)
+    mkdirSync(join(scratch, "shots"), { recursive: true })
+    assert.equal((await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")).scratch, undefined)
+
+    writeFileSync(note, "x")
+    // Saved by a script, which no tool call shows.
+    const shot = join(scratch, "shots", "after.png")
+    writeFileSync(shot, "png")
+    const page = await readLatestThreadTranscriptPageWithFiles(project, h.store, "t")
+    assert.deepEqual(page.editedFiles?.map((f) => f.path), [kept], "the scratch write is in its own group")
+    assert.equal(page.scratch?.root, scratch)
+    assert.deepEqual(page.scratch?.files.map((f) => f.path).sort(), [note, shot].sort())
+  } finally {
+    __clearTranscriptCacheForTests()
+    rmSync(dir, { recursive: true, force: true })
+    h.cleanup()
+  }
+})

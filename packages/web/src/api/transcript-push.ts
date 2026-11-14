@@ -21,12 +21,12 @@ export function writeTranscriptPush(qc: QueryClient | null, key: string, msg: Tr
     // A push that carries its page envelope is the SAME bounded latest window the HTTP page read
     // returns, so it reconciles through the same function the queryFn uses — the envelope (cursor,
     // hasEarlier, transcriptKey) stays as fresh as the messages, and a long thread whose window slid
-    // under a push cannot page "earlier" from a cursor that no longer names its head. `editedFiles` and
-    // `worktreeChanges` never ride a push (see TranscriptPushPage); the rail keeps its last HTTP copy of
-    // each, and dropping one here emptied that group on the first push after a read. A server that
+    // under a push cannot page "earlier" from a cursor that no longer names its head. `editedFiles`,
+    // `worktreeChanges` and `scratch` never ride a push (see TranscriptPushPage); the rail keeps its last HTTP
+    // copy of each, and dropping one here emptied that group on the first push after a read. A server that
     // predates the envelope pushes messages only, and those take the messages-only reconcile.
     const reconciled = msg.page
-      ? reconcileLatestPage(previous, { ...msg.page, messages: msg.messages, editedFiles: previous?.editedFiles, worktreeChanges: previous?.worktreeChanges })
+      ? reconcileLatestPage(previous, { ...msg.page, messages: msg.messages, editedFiles: previous?.editedFiles, worktreeChanges: previous?.worktreeChanges, scratch: previous?.scratch })
       : reconcileLiveMessages(previous, msg.messages)
     return {
       ...reconciled,

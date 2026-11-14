@@ -1,8 +1,8 @@
-import { ExternalLink, FileDiff, FileMinus, FilePlus, FileText, Folder } from "lucide-react"
+import { ExternalLink, File, FileDiff, FileMinus, FilePlus, FileText, Folder } from "lucide-react"
 import { useEffect, useMemo, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useSnapshot } from "valtio"
-import { isDirectSubAgent, type EditedFile, type ThreadLinkView, type ThreadView, type WorktreeChangedFile, type WorktreeChanges } from "@frizz/shared"
+import { isDirectSubAgent, type EditedFile, type ScratchFiles, type ThreadLinkView, type ThreadView, type WorktreeChangedFile, type WorktreeChanges } from "@frizz/shared"
 import { useChildThreads, useHomeDir, useProjectDir, useTranscript } from "../hooks.ts"
 import { shellWatched, threadOps } from "../lib/threadOps.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
@@ -114,6 +114,24 @@ function ChangesTree({ changes }: { changes: WorktreeChanges }) {
   )
 }
 
+// The thread's scratch directory (scratch-files.ts on the server), a root every thread has without asking:
+// the same tree again, rooted at the folder, over a listing rather than a diff. So each row is a plain page
+// with no diffstat, where a Changes row says added, modified or deleted.
+function ScratchTree({ scratch }: { scratch: ScratchFiles }) {
+  const homeDir = useHomeDir()
+  const rows = flattenEditedFileTree(editedFileTree(scratch.files, scratch.root, homeDir))
+  return (
+    <div data-scratch-files={scratch.root} className="flex flex-col gap-y-px">
+      {rows.map((node) =>
+        node.kind === "dir"
+          ? <DirRow key={`d:${node.path}`} name={node.name} depth={node.depth} />
+          : <FileRow key={node.file.path} file={node.file} name={node.name} depth={node.depth} homeDir={homeDir} status="listed" />,
+      )}
+      {scratch.truncated && <div className="pr-2 text-[12px] leading-5 text-muted-50" style={{ paddingLeft: ROW_INSET }}>Only the first {scratch.files.length} are listed</div>}
+    </div>
+  )
+}
+
 // The group's heading names the checkout by its folder, the way a worktree is spoken of; two that share a
 // folder name keep the parent too, so the headings (which key the grid) stay distinct.
 function changesHeads(changes: readonly WorktreeChanges[]): string[] {
@@ -125,15 +143,16 @@ function changesHeads(changes: readonly WorktreeChanges[]): string[] {
   })
 }
 
-const FILE_MARK = { added: FilePlus, deleted: FileMinus, modified: FileDiff } as const
+const FILE_MARK = { added: FilePlus, deleted: FileMinus, modified: FileDiff, listed: File } as const
 
 function FileRow({ file, name, depth, homeDir, status }: {
   file: Pick<EditedFile, "path" | "added" | "removed">
   name: string
   depth: number
   homeDir: string | undefined
-  /** Git's verdict, on a Changes row; an edited-files row has none and draws as modified. */
-  status?: WorktreeChangedFile["status"]
+  /** Git's verdict, on a Changes row; an edited-files row has none and draws as modified. A scratch row is
+   *  `listed`: in the folder, with nothing to compare it against. */
+  status?: WorktreeChangedFile["status"] | "listed"
 }) {
   const Mark = FILE_MARK[status ?? "modified"]
   const gone = status === "deleted"
@@ -157,7 +176,8 @@ function FileRow({ file, name, depth, homeDir, status }: {
       // -mr-[2px]: this glyph inks only 9 of its 12 box px (1.5px dead each side), so the row's ml-1.5
       // drew 8.33px of ink to the name where the card's rows draw ~6.5 (ink-gaps, dsf 6). The trim
       // lands it at 6.33, the same reading as the directory row above it. FilePlus and FileMinus draw the
-      // same page outline, so the same trim holds for a Changes row's added and deleted marks.
+      // same page outline, so the same trim holds for a Changes row's added and deleted marks and a scratch row's
+      // plain page.
       mark={<Mark size={12} className={`${ON_CAP} -mr-[2px] text-muted-60`} />}
       // The basename is the name and the directory row above it says where; the full path is the
       // tooltip, its home written as `~` the way the tree writes it. A 340px rail truncates from the
@@ -261,6 +281,7 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
   const transcript = useTranscript(thread.id, { poll: false })
   const files = transcript.data?.editedFiles ?? []
   const changes = transcript.data?.worktreeChanges ?? []
+  const scratch = transcript.data?.scratch
   const changeHeads = changesHeads(changes)
   const homeDir = useHomeDir()
   const changeKey = useMemo(() => newestFileChangeKey(transcript.data?.messages ?? []), [transcript.data?.messages])
@@ -315,6 +336,16 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
       // One entry of the table, holding the whole tree (its own column, its own indents).
       rows: files.length > 0 ? [<EditedFileTree key="tree" files={files} />] : [],
       count: files.length,
+      collapsed: railFilesCollapsed,
+      onToggle: () => (prefs.railFilesCollapsed = !prefs.railFilesCollapsed),
+    },
+    // Last: the thread's own notes and evidence, after the work they are about. The server sends it only
+    // while the folder holds a file, so a thread that never wrote one shows no group.
+    {
+      head: "Scratch files",
+      title: scratch ? tildePath(scratch.root, homeDir) : undefined,
+      rows: scratch ? [<ScratchTree key="scratch" scratch={scratch} />] : [],
+      count: scratch?.files.length ?? 0,
       collapsed: railFilesCollapsed,
       onToggle: () => (prefs.railFilesCollapsed = !prefs.railFilesCollapsed),
     },

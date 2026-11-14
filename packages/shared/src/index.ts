@@ -7967,6 +7967,17 @@ export const WorktreeChanges = z.object({
 }).strict()
 export type WorktreeChanges = z.infer<typeof WorktreeChanges>
 
+// The thread's SCRATCH DIRECTORY on the rail (`.frizz/threads/<session id>/`, server dispatch.ts), registered
+// as a root of its own without the worker asking (maintainer 2026-11-14). Every file in it is the thread's,
+// so it is a listing of the folder, not a diff: git ignores `.frizz/` and the transcript misses whatever a
+// script wrote there, a screenshot above all. Absent while the folder holds no file (server scratch-files.ts).
+export const ScratchFiles = z.object({
+  root: z.string().min(1),
+  files: z.array(z.object({ path: z.string().min(1) }).strict()),
+  truncated: z.boolean().optional(),
+}).strict()
+export type ScratchFiles = z.infer<typeof ScratchFiles>
+
 export const TranscriptPage = z.object({
   messages: z.array(TranscriptMessage),
   beforeCursor: TranscriptPageCursor.nullable(),
@@ -7978,6 +7989,8 @@ export const TranscriptPage = z.object({
   // The latest page only, one per checkout the thread registered (see WorktreeChanges). A file the
   // transcript shows the worker writing under one of them is in that group and not in `editedFiles`.
   worktreeChanges: z.array(WorktreeChanges).optional(),
+  // The latest page only: the thread's scratch directory (see ScratchFiles). Its files are in no other group.
+  scratch: ScratchFiles.optional(),
   // Set only on an EMPTY latest page of a Claude thread whose session file is gone and whose last
   // activity is older than Claude Code's `cleanupPeriodDays`: Claude Code's own startup cleanup deleted
   // the history, and the thread says so instead of "No conversation yet." (server claude-retention.ts).
@@ -8062,7 +8075,7 @@ export type BoardResyncReason = "boot" | "expired" | "ahead" | "oversized"
 // so the client reconciles both through one function (web: reconcileLatestPage) and a long thread's
 // cursor can never go stale under a push that slid the window. Optional only for a server that predates
 // it — a client then falls back to the messages-only reconcile.
-export type TranscriptPushPage = Omit<TranscriptPage, "messages" | "editedFiles" | "worktreeChanges">
+export type TranscriptPushPage = Omit<TranscriptPage, "messages" | "editedFiles" | "worktreeChanges" | "scratch">
 
 export type SocketServerMsg =
   | { t: "hello"; bootId: string; seq: number }

@@ -269,8 +269,8 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
 
     // A push carrying its PAGE ENVELOPE is the same bounded latest window the HTTP page read returns, and
     // reconciles the same way: the envelope lands beside the messages (a slid window's cursor cannot go
-    // stale), `editedFiles` and `worktreeChanges` — which never ride a push — keep the HTTP copy, and a
-    // page that no longer overlaps what is held (a new transcriptKey) replaces it outright.
+    // stale), `editedFiles`, `worktreeChanges` and `scratch` — which never ride a push — keep the HTTP
+    // copy, and a page that no longer overlaps what is held (a new transcriptKey) replaces it outright.
     const pageKey = JSON.stringify(["transcript", "large-thread"])
     cache.set(pageKey, {
       messages: [{ role: "assistant", text: "small again", tools: [], parts: [] }],
@@ -280,6 +280,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
       transcriptKey: "key-1",
       editedFiles: [{ path: "src/a.ts", edits: 2 }],
       worktreeChanges: [{ root: "/wt", base: "main", files: [{ path: "/wt/b.ts", status: "added", added: 1 }] }],
+      scratch: { root: "/p/.frizz/threads/s", files: [{ path: "/p/.frizz/threads/s/notes.md" }] },
     })
     transcriptSocket.message({
       t: "transcript",
@@ -298,6 +299,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
       transcriptKey: "key-1",
       editedFiles: [{ path: "src/a.ts", edits: 2 }],
       worktreeChanges: [{ root: "/wt", base: "main", files: [{ path: "/wt/b.ts", status: "added", added: 1 }] }],
+      scratch: { root: "/p/.frizz/threads/s", files: [{ path: "/p/.frizz/threads/s/notes.md" }] },
     })
     transcriptSocket.message({
       t: "transcript",
@@ -313,6 +315,7 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
       transcriptKey: "key-2",
       editedFiles: [{ path: "src/a.ts", edits: 2 }],
       worktreeChanges: [{ root: "/wt", base: "main", files: [{ path: "/wt/b.ts", status: "added", added: 1 }] }],
+      scratch: { root: "/p/.frizz/threads/s", files: [{ path: "/p/.frizz/threads/s/notes.md" }] },
     })
     cache.delete(pageKey)
 

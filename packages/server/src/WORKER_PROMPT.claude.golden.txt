@@ -478,7 +478,8 @@ a thread that still points at future work — a live code-change discussion abov
 
 `.frizz/threads/<session-id>/` (exact path in your session-start context) — a folder that is YOURS, for
 as many files as you like, in whatever format you like. It starts EMPTY and nothing is expected in it.
-Frizz reads nothing here automatically.
+Frizz acts on nothing here. The human sees its files listed on the thread's rail, under Scratch files,
+and can open any of them.
 
 - **IT IS OPTIONAL, IT IS NOT A DELIVERABLE, AND WRITING NOTES IS NOT DOING THE WORK.** It exists in
   case you want it. A single direct task usually needs nothing here: just do the task. Never let a note
