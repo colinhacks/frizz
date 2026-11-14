@@ -5070,7 +5070,7 @@ function expiredClaudeTranscript(project: Project, row: SessionRow, source: Tran
   // One day is the shortest period Claude Code accepts, so a younger thread needs no settings read.
   if (!Number.isFinite(lastActive) || Date.now() - lastActive < DAY_MS) return undefined
   const retention = claudeTranscriptRetention({ cwd: project.dir })
-  if (Date.now() - lastActive < retention.days * DAY_MS) return undefined
+  if (!retention || Date.now() - lastActive < retention.days * DAY_MS) return undefined
   return { retentionDays: retention.days, source: retention.source }
 }
 

@@ -2345,14 +2345,23 @@ test("paged reader: a genuinely missing transcript still pages empty — the sib
 // thread's log dir does not exist, which is exactly the deleted state.
 function expiryHarness(cleanupPeriodDays: number) {
   const root = mkdtempSync(join(tmpdir(), "frizz-tx-expired-"))
-  mkdirSync(join(root, ".claude"), { recursive: true })
-  // The LOCAL scope outranks the machine's own user settings, so the test does not read them.
-  writeFileSync(join(root, ".claude", "settings.local.json"), JSON.stringify({ cleanupPeriodDays }))
+  // The USER scope, moved by CLAUDE_CONFIG_DIR so the machine's own settings are never read: the period
+  // that applies is the shorter of the user and project ones, so a real user setting would leak in.
+  const configDir = join(root, "claude-config")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(join(configDir, "settings.json"), JSON.stringify({ cleanupPeriodDays }))
+  const priorConfigDir = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = configDir
   const store = createStorage(join(root, "ui.db"), "p")
   const project = { cwdSlug: `-tmp-frizz-tx-expired-${process.pid}-${Math.random().toString(36).slice(2, 8)}`, dir: root } as unknown as Project
   const sessionId = `expired-${process.pid}-${Math.random().toString(36).slice(2, 10)}`
   const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
-  return { root, store, project, sessionId, daysAgo, cleanup: () => rmSync(root, { recursive: true, force: true }) }
+  const cleanup = () => {
+    if (priorConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = priorConfigDir
+    rmSync(root, { recursive: true, force: true })
+  }
+  return { root, configDir, store, project, sessionId, daysAgo, cleanup }
 }
 
 test("paged reader: a Claude thread idle past cleanupPeriodDays with no session file says its history was cleaned up", () => {
@@ -2362,7 +2371,7 @@ test("paged reader: a Claude thread idle past cleanupPeriodDays with no session 
     h.store.setRestedAt("t", h.daysAgo(45))
     const page = readLatestThreadTranscriptPage(h.project, h.store, "t")
     assert.deepEqual(page.messages, [])
-    assert.deepEqual(page.expired, { retentionDays: 40, source: join(h.root, ".claude", "settings.local.json") })
+    assert.deepEqual(page.expired, { retentionDays: 40, source: join(h.configDir, "settings.json") })
     // The /ws push replaces the envelope the HTTP read delivered, so it has to carry the reading too.
     assert.deepEqual(makeTranscriptReader(h.project, h.store)("t")?.page?.expired, page.expired, "the socket push agrees")
   } finally {
