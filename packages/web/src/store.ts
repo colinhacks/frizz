@@ -61,16 +61,7 @@ export const store = proxy({
   // The modal reads the durable new-thread profile live and carries its own selector for it, so
   // nothing about the dispatch tuple is captured here.
   showGithubPicker: false,
-  // Left-sidebar section collapse (true = collapsed). Every collapsible band starts collapsed, so the
-  // rail opens on the queue: each header's count already says how much is there.
-  // Session-scoped UI state (deliberately not persisted).
-  // `running` is the Running band, on a project's board and in the Console's "By status" view alike.
-  // Nothing in it waits on the rail's reader, so its count is the glance (maintainer 2026-11-11: "make
-  // the running rail collapsible … collapsed by default"); it was a static label until then.
-  // `external` is the External band — the human's own terminals. Collapsed by default like
-  // Snoozed/Done: nothing in it is frizz's work or waiting on the rail's reader, so the count is
-  // the glance.
-  sidebarCollapsed: { running: true, snoozed: true, inactive: true, external: true } as Record<"running" | "snoozed" | "inactive" | "external", boolean>,
+  // (The sidebar's band folds live in lib/sidebarBands.ts, remembered per project, since 2026-11-14.)
   // The SIDE-DRAWER STACK — arbitrary depth. `thread` layers are full thread views (the Open-thread
   // sheet); `doc` layers are the frizz-document markdown; `markdown` layers are the built-in reader for
   // a `.md` FILE on disk, opened from any link to one (on a phone, for any file — as source); `subagent` and `shell` layers are read-only

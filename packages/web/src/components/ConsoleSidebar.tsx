@@ -2,10 +2,10 @@ import { useCallback, useMemo, useRef, type ButtonHTMLAttributes, type ReactNode
 import { useSnapshot } from "valtio"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import type { ProjectCard, ThreadView } from "@frizz/shared"
-import { store } from "../store.ts"
 import { useBoardThreads } from "../hooks.ts"
 import { isConsolePinned, type PinShelf } from "../groups.ts"
 import { prefs } from "../lib/prefs.ts"
+import { toggleBandFold, useBandFolds } from "../lib/sidebarBands.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
 import { useConsoleProjectList } from "../lib/consoleProjects.ts"
@@ -81,11 +81,12 @@ function RowSquare({ project }: { project: ProjectCard | undefined }) {
 }
 
 export function ConsoleSidebar() {
-  const snap = useSnapshot(store)
   // Untracked, like the project rail's (hooks.ts useBoardThreads): this board is EVERY project's.
   const all = useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads()))
   const direction = useSnapshot(prefs).queueOrder
   const group = useConsoleGroup()
+  // "By status"'s Running fold, remembered for the Console like a project's own (lib/sidebarBands.ts).
+  const folds = useBandFolds()
   const { projects, bySlug } = useConsoleProjectList()
   const order = useMemo(() => projects.map((project) => project.slug), [projects])
   const waiting = consoleCardOrder(consoleQueue(all, direction, group), group, order)
@@ -178,18 +179,18 @@ export function ConsoleSidebar() {
                     {queueRows.length > 0 && <SectionHeader label="Queue" count={queueRows.length} />}
                     {queueRows.map((t) => row(t, { square: true, waiting: true }))}
                     {runningCount > 0 && queueRows.length > 0 && <hr className="my-3 border-border/50" />}
-                    {/* Collapsible, collapsed by default, and the same switch as a project board's Running
-                        band (store.sidebarCollapsed.running). "By project" has no Running label to fold:
-                        each block caps its own running rows behind "Show more" (RunningRows). */}
+                    {/* Collapsible, open by default, and remembered for the Console as a project board's
+                        Running fold is for its project (lib/sidebarBands.ts). "By project" has no Running
+                        label to fold: each block caps its own running rows behind "Show more" (RunningRows). */}
                     {runningCount > 0 && (
                       <SectionHeader
                         label="Running"
                         count={runningCount}
-                        collapsed={snap.sidebarCollapsed.running}
-                        onToggle={() => (store.sidebarCollapsed.running = !store.sidebarCollapsed.running)}
+                        collapsed={folds.running}
+                        onToggle={() => toggleBandFold("running")}
                       />
                     )}
-                    {!snap.sidebarCollapsed.running && (
+                    {!folds.running && (
                       <>
                         {/* Newest first, the band's own order: a thread that starts lands at the top. */}
                         {[...starting].reverse().map((entry) => startingRow(entry, { square: true }))}

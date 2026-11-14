@@ -73,7 +73,7 @@ test("a thread that has never produced output falls back rather than printing no
 // some of these snoozes have been snoozed for"). Pinned over the REAL <Sidebar/>, because the bug was
 // never in the row — the band simply did not ask for the column. The spinning row is the control that
 // proves the wiring is per band rather than global.
-test("the Snoozed band dates each row; a spinning row in Active does not", async () => {
+test("the Snoozed band dates each row; a spinning row in Active does not", async (t) => {
   const [{ MemoryRouter }, { Sidebar }, { store }] = await Promise.all([
     import("react-router"),
     import("./Sidebar.tsx"),
@@ -89,8 +89,9 @@ test("the Snoozed band dates each row; a spinning row in Active does not", async
   }
   const running = { ...base, id: "port-the-drivers", title: "Port the drivers", needsYou: false, runtime: "running", lastActivityAt: ago(60_000) }
   store.board = { projectDir: "/fixture", threads: [snoozed, running] } as unknown as typeof store.board
-  store.sidebarCollapsed.snoozed = false
-  store.sidebarCollapsed.running = false
+  const { resetBandFolds, setBandFolded } = await import("../lib/sidebarBands.ts")
+  setBandFolded("snoozed", false)
+  t.after(() => resetBandFolds())
   const html = renderToStaticMarkup(
     createElement(
       QueryClientProvider,

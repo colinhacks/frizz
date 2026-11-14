@@ -31,10 +31,10 @@ export async function checkSurfaceStates({ page, url, font, palette, out, check,
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 })
   await page.goto(url, { waitUntil: "networkidle2" })
   await page.evaluate(async () => {
-    const { store } = await import("/src/store.ts")
-    store.sidebarCollapsed.running = false
-    store.sidebarCollapsed.snoozed = false
-    store.sidebarCollapsed.inactive = false
+    const { setBandFolded } = await import("/src/lib/sidebarBands.ts")
+    setBandFolded("running", false)
+    setBandFolded("snoozed", false)
+    setBandFolded("inactive", false)
   })
   await page.waitForSelector('[data-sidebar-item="theme-snoozed"]')
   await page.waitForSelector('[data-sidebar-item="theme-done"]')

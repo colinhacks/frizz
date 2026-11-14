@@ -8,6 +8,7 @@ import { store, openThread, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
 import { useBoardThreads, useChildThreads } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
+import { toggleBandFold, useBandFolds } from "../lib/sidebarBands.ts"
 import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
 import type { PinShelf } from "../groups.ts"
 import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
@@ -130,7 +131,8 @@ export function Sidebar() {
   // the label prints the agent's own last output — two clocks that disagree whenever a transcript is
   // touched without the agent speaking (a resume that writes a header, a copy, a restore).
   const externalSessions = useMemo(() => orderByInteraction(externalThreads(all)), [all])
-  const collapsed = snap.sidebarCollapsed
+  // Which bands are folded, remembered per project (lib/sidebarBands.ts).
+  const collapsed = useBandFolds()
   const activeThreads = sections.active
   const heldThreads = sections.snoozed
   const inactiveThreads = sections.inactive
@@ -238,10 +240,10 @@ export function Sidebar() {
           {/* RESTED + ACTIVE — two rule-separated bands (see groups.ts orderActive/partitionActive), each
               under a label since 2026-09-19. The QUEUE label is static: you can't hide your queue
               (maintainer: "sidebar labels for pinned, queue, and running … should not be collapsible").
-              RUNNING is COLLAPSIBLE, and collapsed by default, since 2026-11-11 (maintainer: "make the
-              running rail collapsible … collapsed by default"): nothing in it waits on the reader, so
-              its count is the glance, like Snoozed's. A dispatch still ticks that count at the click;
-              its StartingRow is drawn only while the band is open. The labels use the maintainer's own words for the bands —
+              RUNNING is COLLAPSIBLE since 2026-11-11 (maintainer: "make the running rail collapsible"),
+              and OPEN by default since 2026-11-14 ("running should be default open"); every band's fold
+              is remembered per project (lib/sidebarBands.ts). Folded, a dispatch still ticks its count
+              at the click; its StartingRow is drawn only while the band is open. The labels use the maintainer's own words for the bands —
               QUEUE for the cue, RUNNING for the spinning rows — rather than the code's Rested/Active
               keys, because the label is copy the human reads, and "the queue" is what they call it.
               RESTED — the cue — sits FIRST, right under the prompt box (maintainer 2026-08-08), in the
@@ -270,7 +272,7 @@ export function Sidebar() {
                   label="Running"
                   count={runningCount}
                   collapsed={collapsed.running}
-                  onToggle={() => (store.sidebarCollapsed.running = !store.sidebarCollapsed.running)}
+                  onToggle={() => toggleBandFold("running")}
                 />
               )}
               {/* Newest first, the band's own order (orderRunning): a thread that starts lands at the
@@ -300,7 +302,7 @@ export function Sidebar() {
                 label="Snoozed"
                 count={heldThreads.length}
                 collapsed={collapsed.snoozed}
-                onToggle={() => (store.sidebarCollapsed.snoozed = !store.sidebarCollapsed.snoozed)}
+                onToggle={() => toggleBandFold("snoozed")}
               />
               {/* The rest-time column is ON here too (colinhacks/frizz#66: "It's hard for me to know
                   how long some of these snoozes have been snoozed for"). A parked row says nothing else
@@ -327,7 +329,7 @@ export function Sidebar() {
                 label="Done"
                 count={inactiveThreads.length}
                 collapsed={collapsed.inactive}
-                onToggle={() => (store.sidebarCollapsed.inactive = !store.sidebarCollapsed.inactive)}
+                onToggle={() => toggleBandFold("inactive")}
               />
               {!collapsed.inactive && (
                 <DoneBand threads={inactiveThreads} railRef={railRef} activeId={activeId} />
@@ -348,7 +350,7 @@ export function Sidebar() {
                 label="External"
                 count={externalSessions.length}
                 collapsed={collapsed.external}
-                onToggle={() => (store.sidebarCollapsed.external = !store.sidebarCollapsed.external)}
+                onToggle={() => toggleBandFold("external")}
               />
               {/* The rest-time column is ON here, as in the cue and Snoozed, and unlike Done. Every row in
                   this band is by definition at rest, so "how long ago" is the only thing that distinguishes

@@ -98,7 +98,7 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
     page.on("request", (r) => { if (/\/rpc\/reorderConsolePinnedThreads\b/.test(r.url())) reorderCalls.push(new URL(r.url()).pathname.split("/")[2]!) })
     await page.evaluateOnNewDocument(() => localStorage.setItem("frizz:console-group", "status"))
     const rail = "[data-console-sidebar] [data-sidebar-rail]"
-    // The running A3 rows in the Running band, which every load starts collapsed (2026-11-11).
+    // The running A3 rows in the Running band, which opens by default, unless this profile folded it.
     const openRunning = async () => {
       await page.waitForSelector(`${rail} [data-band-header="running"]`, { timeout: 20_000 })
       const folded = await page.$(`${rail} [data-band-header="running"][aria-expanded="false"]`)

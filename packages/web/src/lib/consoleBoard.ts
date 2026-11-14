@@ -4,6 +4,7 @@ import { activeBandThread, boardQueuedThread } from "@frizz/shared"
 import { isConsolePinned, orderByInteraction, orderDone, orderQueue, orderRunning, queued, sectionOf } from "../groups.ts"
 import type { QueueDirection } from "../groups.ts"
 import { isConsolePath } from "./base-path.ts"
+import { CONSOLE_BAND_SCOPE, readBandFolds, setBandFolded, type FoldingBand } from "./sidebarBands.ts"
 import type { PendingDispatchEntry } from "./pendingDispatch.ts"
 import { partitionBoard } from "./boardPartition.ts"
 import { keyProject } from "./threadKey.ts"
@@ -18,6 +19,7 @@ import { keyProject } from "./threadKey.ts"
 // and Snoozed and Done follow Running, as on a project's board. Both are COLLAPSED until opened and then
 // PAGED, BAND_PAGE rows at a time behind "Show more" (maintainer 2026-10-23: "Add both, both collapsed.
 // They'll need pagination"): Done holds every project's history, so it is the longest list on the page.
+// Open or folded is remembered across reloads (lib/sidebarBands.ts); the page count is not.
 // They were left out until then (2026-10-11: "I don't think those are worth including").
 //
 // GROUPED BY PROJECT, each project with anything waiting or running is one block, in the rail's order,
@@ -54,12 +56,23 @@ export type ConsoleFoldedBand = "snoozed" | "done"
 /** How many rows an open Snoozed or Done band shows, and how many more each "Show more" adds. */
 export const BAND_PAGE = 10
 
+// Which of the rail's remembered folds each of these is (lib/sidebarBands.ts): Done is `inactive` there.
+const REMEMBERED_AS: Record<ConsoleFoldedBand, FoldingBand> = { snoozed: "snoozed", done: "inactive" }
+
+// Open or folded is remembered for the Console, as a project's rail remembers its own; how many pages an
+// open band had shown is not, so a reload opens it on its first page.
+function rememberedShown(): Record<ConsoleFoldedBand, number> {
+  if (typeof window === "undefined") return { snoozed: 0, done: 0 }
+  const folds = readBandFolds(CONSOLE_BAND_SCOPE)
+  return { snoozed: folds.snoozed ? 0 : BAND_PAGE, done: folds.inactive ? 0 : BAND_PAGE }
+}
+
 const state = proxy({
   group: typeof window === "undefined" ? ("project" as ConsoleGroup) : readGroup(),
   /** Projects whose running rows are expanded past RUNNING_CAP. This visit's, not remembered. */
   expanded: {} as Record<string, boolean>,
-  /** How many rows each folded band shows; 0 is collapsed, the default. This visit's, not remembered. */
-  shown: { snoozed: 0, done: 0 } as Record<ConsoleFoldedBand, number>,
+  /** How many rows each folded band shows; 0 is collapsed, the default. Open or not is remembered. */
+  shown: rememberedShown(),
 })
 
 export function useConsoleGroup(): ConsoleGroup {
@@ -91,6 +104,7 @@ export function useBandShown(band: ConsoleFoldedBand): number {
 /** Open a folded band on its first page, or collapse it. Collapsing forgets the pages it had shown. */
 export function toggleBand(band: ConsoleFoldedBand): void {
   state.shown[band] = state.shown[band] > 0 ? 0 : BAND_PAGE
+  setBandFolded(REMEMBERED_AS[band], state.shown[band] === 0, CONSOLE_BAND_SCOPE)
 }
 
 /** "Show more": the band's next page. */

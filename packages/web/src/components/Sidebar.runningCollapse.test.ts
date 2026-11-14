@@ -6,12 +6,14 @@ import { MemoryRouter } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardSnapshot, ThreadView } from "@frizz/shared"
 import { store } from "../store.ts"
+import { resetBandFolds, setBandFolded } from "../lib/sidebarBands.ts"
 import { Sidebar } from "./Sidebar.tsx"
 import { TooltipProvider } from "./Tooltip.tsx"
 
-// THE RUNNING BAND FOLDS, AND STARTS FOLDED (maintainer 2026-11-11: "make the running rail collapsible
-// … collapsed by default"). Collapsed, its header still counts the spinning threads, so the glance
-// survives; the rows come back when the header is clicked. The queue above it never folds.
+// THE RUNNING BAND FOLDS (maintainer 2026-11-11: "make the running rail collapsible"), and OPENS by
+// default (2026-11-14: "running should be default open"). Folded, its header still counts the spinning
+// threads, so the glance survives. The queue above it never folds. Which bands are folded is remembered
+// per project (lib/sidebarBands.ts).
 
 const thread = (id: string, over: Partial<ThreadView>) =>
   ({
@@ -53,25 +55,22 @@ function rail(threads: ThreadView[]) {
 
 const board = [thread("waiting", { needsYou: true }), thread("busy-one", { runtime: "running" }), thread("busy-two", { runtime: "running" })]
 
-test("the Running band starts collapsed: its count shows, its rows do not, and the queue stays open", () => {
-  assert.equal(store.sidebarCollapsed.running, true)
+test("the Running band starts open: its rows are drawn under a fold toggle, and the queue stays static", () => {
   const html = rail(board)
   assert.match(html, /data-sidebar-item="waiting"/)
-  // The label is a toggle now, with the count beside it.
-  assert.match(html, /<button[^>]*>(?:(?!<\/button>)[\s\S])*Running(?:(?!<\/button>)[\s\S])*>2<\/span><\/button>/)
-  assert.doesNotMatch(html, /data-sidebar-item="busy-one"/)
-  assert.doesNotMatch(html, /data-sidebar-item="busy-two"/)
+  assert.match(html, /<button[^>]*aria-expanded="true"[^>]*data-band-header="running"/)
+  assert.match(html, /data-sidebar-item="busy-one"/)
+  assert.match(html, /data-sidebar-item="busy-two"/)
   // Queue keeps its static label.
   assert.doesNotMatch(html, /<button[^>]*>(?:(?!<\/button>)[\s\S])*Queue/)
 })
 
-test("opened, the Running band draws its rows", () => {
-  store.sidebarCollapsed.running = false
-  try {
-    const html = rail(board)
-    assert.match(html, /data-sidebar-item="busy-one"/)
-    assert.match(html, /data-sidebar-item="busy-two"/)
-  } finally {
-    store.sidebarCollapsed.running = true
-  }
+test("folded, the Running band keeps its count and drops its rows", (t) => {
+  setBandFolded("running", true)
+  t.after(() => resetBandFolds())
+  const html = rail(board)
+  assert.match(html, /<button[^>]*>(?:(?!<\/button>)[\s\S])*Running(?:(?!<\/button>)[\s\S])*>2<\/span><\/button>/)
+  assert.doesNotMatch(html, /data-sidebar-item="busy-one"/)
+  assert.doesNotMatch(html, /data-sidebar-item="busy-two"/)
+  assert.match(html, /data-sidebar-item="waiting"/)
 })
