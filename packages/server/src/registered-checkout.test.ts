@@ -67,6 +67,30 @@ test("a .git file planted elsewhere cannot borrow a registered worktree's admin 
   assert.throws(() => readLocalTextFile(join(planted, "secret.txt"), m.roots), /trusted roots/)
 })
 
+test("a planted .git file with an admin folder of its own, naming a registered repository, stays outside", () => {
+  const m = machine()
+  const planted = join(m.root, "planted")
+  const admin = join(m.root, "forged-admin")
+  mkdirSync(planted)
+  mkdirSync(admin)
+  // Every link checks out: the `.git` names the admin folder, which names the `.git` back and the
+  // registered repository as its common dir. Only where the admin folder sits gives it away.
+  writeFileSync(join(planted, ".git"), `gitdir: ${admin}\n`)
+  writeFileSync(join(admin, "gitdir"), `${join(planted, ".git")}\n`)
+  writeFileSync(join(admin, "commondir"), `${join(m.registered, ".git")}\n`)
+  writeFileSync(join(planted, "secret.txt"), "not a checkout\n")
+
+  assert.throws(() => readLocalTextFile(join(planted, "secret.txt"), m.roots), /trusted roots/)
+})
+
+test("a registered project whose folder is gone admits nothing around where it was", () => {
+  const m = machine()
+  const outer = repository(join(m.root, "outer"))
+  writeRegistry({ version: 1, projects: [{ id: "029a30af-f126-40e3-b04c-d80e74e3e091", path: join(outer, "deleted"), slug: "deleted", lastOpenedAt: new Date(0).toISOString() }] }, m.home)
+
+  assert.throws(() => readLocalTextFile(join(outer, "src", "app.ts"), m.roots), /trusted roots/)
+})
+
 test("a .git symlinked to a registered checkout's own does not make its folder that checkout", () => {
   const m = machine()
   const worktree = join(m.root, "real")

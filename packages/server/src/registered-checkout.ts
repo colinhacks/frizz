@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { readRegistry } from "./project-registry.ts"
@@ -17,8 +17,10 @@ import { readRegistry } from "./project-registry.ts"
 //
 // The files are git's own (gitrepository-layout(5)): a linked worktree's `.git` is a file naming its
 // admin folder under the main repository's `.git/worktrees/`; that folder's `gitdir` names the `.git`
-// file back, and its `commondir` names the repository. Git itself is never run here, because the
-// directory being asked about is not yet trusted, and a repository's config can make git run a program.
+// file back, and its `commondir` names the repository, whose `worktrees/` it must sit in. Planting a
+// worktree therefore takes a write inside the registered repository's own `.git`, which is already
+// enough to run code through its hooks. Git itself is never run here, because the directory being
+// asked about is not yet trusted, and a repository's config can make git run a program.
 
 /** The path a git link file names, resolved against the file's own folder and canonicalized. */
 function followLink(file: string, prefix = ""): string {
@@ -38,14 +40,21 @@ function repositoryOf(dotGit: string): string | undefined {
     // The back-link. A `.git` file planted anywhere can point at a real worktree's admin folder, but that
     // folder names only the one `.git` file it was made for. A submodule's admin folder has no `gitdir`.
     if (followLink(join(admin, "gitdir")) !== realpathSync(dotGit)) return undefined
-    return followLink(join(admin, "commondir"))
+    const repository = followLink(join(admin, "commondir"))
+    // And the admin folder must be one the repository holds: `git worktree add` makes it in the
+    // repository's own `worktrees/`. One anywhere else is three files anybody could write beside a folder
+    // of theirs, a `commondir` naming a registered repository included, and would admit that folder.
+    return dirname(admin) === realpathSync(join(repository, "worktrees")) ? repository : undefined
   } catch {
     return undefined
   }
 }
 
-/** The repository holding `dir`, or undefined when no `.git` sits at or above it. */
+/** The repository holding `dir`, or undefined when `dir` is gone or no `.git` sits at or above it. */
 function repositoryHolding(dir: string): string | undefined {
+  // A registered project whose folder is gone vouches for nothing: walking up from it would admit
+  // whatever repository happens to hold the place it used to be.
+  if (!existsSync(dir)) return undefined
   for (let at = dir; ; at = dirname(at)) {
     const repository = repositoryOf(join(at, ".git"))
     if (repository) return repository
