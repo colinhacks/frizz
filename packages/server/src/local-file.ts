@@ -49,15 +49,21 @@ function isUnder(real: string, root: string): boolean {
   } catch { return false }
 }
 
+/**
+ * Where a local file may be: a directory it sits under, or a check that admits a canonical path no
+ * directory holds. Tried in order, so a check that reads the disk goes after the directories.
+ */
+export type LocalFileRoot = string | ((real: string) => boolean)
+
 // Canonicalize before containment so a symlink below a trusted root cannot smuggle a path outside.
-// Files only; readers, watchers and openers share the caller's trusted directory roots.
+// Files only; readers, watchers and openers share the caller's trusted roots.
 // The image proxy has its own, deliberately path-unconfined resolver.
-export function resolveLocalFile(rawPath: string, roots: readonly string[]): string {
+export function resolveLocalFile(rawPath: string, roots: readonly LocalFileRoot[]): string {
   rawPath = normalizeLocalPath(rawPath)
   if (!isAbsolute(rawPath)) throw new Error("Local path must be absolute")
   let real: string
   try { real = realpathSync(rawPath) } catch { throw new Error("Local file was not found") }
-  if (!roots.some((root) => isUnder(real, root))) throw new Error("Local file is outside Frizz's trusted roots")
+  if (!roots.some((root) => typeof root === "string" ? isUnder(real, root) : root(real))) throw new Error("Local file is outside Frizz's trusted roots")
   try {
     if (!statSync(real).isFile()) throw new Error("Local path is not a regular file")
   } catch (error) {
@@ -76,7 +82,7 @@ export function resolveLocalFile(rawPath: string, roots: readonly string[]): str
 export function resolveOpenableFile(
   raw: string,
   projectDir: string,
-  roots: readonly string[],
+  roots: readonly LocalFileRoot[],
   home: string = homedir(),
 ): string | null {
   const trimmed = raw.trim().replace(/:\d+(?::\d+)?$/, "")
@@ -184,7 +190,7 @@ export function isBinaryLocalFile(path: string): boolean {
  * printed as its whole body. Same 1 MiB line-boundary truncation as the Markdown reader, and the read
  * stops there too rather than pulling the whole file into memory first.
  */
-export function readLocalTextFile(rawPath: string, roots: readonly string[]): LocalTextRead {
+export function readLocalTextFile(rawPath: string, roots: readonly LocalFileRoot[]): LocalTextRead {
   const path = resolveLocalFile(rawPath, roots)
   const fd = openSync(path, "r")
   try {
@@ -217,7 +223,7 @@ export type ServedLocalFile = { path: string; size: number; name: string; pdf: b
  * Nothing is ever served as a type the page could run: an `.html` under home comes back as a download,
  * never as a document on Frizz's origin (localFileHeaders).
  */
-export function resolveServedLocalFile(rawPath: string, roots: readonly string[]): ServedLocalFile {
+export function resolveServedLocalFile(rawPath: string, roots: readonly LocalFileRoot[]): ServedLocalFile {
   const path = resolveLocalFile(rawPath, roots)
   return { path, size: statSync(path).size, name: basename(path), pdf: PDF_FILE_EXT.test(rawPath.trim()) && PDF_FILE_EXT.test(path) }
 }
@@ -237,7 +243,7 @@ export function localFileHeaders(file: ServedLocalFile): Record<string, string> 
   }
 }
 
-export function readLocalMarkdown(rawPath: string, roots: readonly string[]): LocalMarkdownRead {
+export function readLocalMarkdown(rawPath: string, roots: readonly LocalFileRoot[]): LocalMarkdownRead {
   if (!MARKDOWN_FILE_EXT.test(rawPath.trim())) throw new Error("Local file is not a Markdown file")
   const path = resolveLocalFile(rawPath, roots)
   if (!MARKDOWN_FILE_EXT.test(path)) throw new Error("Local file is not a Markdown file")
@@ -257,7 +263,7 @@ export function readLocalMarkdown(rawPath: string, roots: readonly string[]): Lo
  * but a file the reader is not allowed to read is not one it may be told about either — so a `.md`
  * href whose target is some other file arms nothing, exactly as it reads nothing.
  */
-export function resolveWatchableLocalFile(rawPath: string, roots: readonly string[]): string {
+export function resolveWatchableLocalFile(rawPath: string, roots: readonly LocalFileRoot[]): string {
   const path = resolveLocalFile(rawPath, roots)
   if (MARKDOWN_FILE_EXT.test(rawPath.trim()) && !MARKDOWN_FILE_EXT.test(path)) {
     throw new Error("Local file is not a Markdown file")
@@ -413,7 +419,7 @@ export function runsWhenOpened(path: string, platform: NodeJS.Platform = process
 export async function openLocalFile(
   rawPath: string,
   opener: LocalFileOpener,
-  roots: readonly string[],
+  roots: readonly LocalFileRoot[],
   options: { forceSystem?: boolean; spawn?: LocalFileSpawn } & OpenerCommandOptions = {},
 ): Promise<LocalFileOpenResult> {
   const path = resolveLocalFile(rawPath, roots)

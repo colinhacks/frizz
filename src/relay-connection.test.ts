@@ -122,7 +122,7 @@ test("a dropped connection comes back by itself", async () => {
     assert.equal(h.timers.length, 3, "the keepalive, the settle timer and the retry were not all scheduled");
 
     h.timers[h.timers.length - 1]!();
-    for (let i = 0; i < 50 && h.sockets.length < 2; i++) await new Promise((r) => setImmediate(r));
+    await h.socketAt(1);
     assert.equal(h.sockets.length, 2, "it did not dial again");
   } finally { conn.stop(); }
 });
@@ -144,7 +144,7 @@ test("a socket that was already replaced cannot tear down the live one", async (
   try {
     h.sockets[0]!.fire("close");
     h.timers[0]!();
-    for (let i = 0; i < 50 && h.sockets.length < 2; i++) await new Promise((r) => setImmediate(r));
+    await h.socketAt(1);
     const retriesBefore = h.timers.length;
     h.sockets[0]!.fire("close"); // the stale socket, closing late
     assert.equal(h.timers.length, retriesBefore, "a stale close scheduled another retry");
