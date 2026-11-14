@@ -28,6 +28,7 @@ import {
   readThreadTranscript,
 } from "./transcript.ts"
 import { createStorage, type SessionRow } from "./storage.ts"
+import { makeTranscriptReader } from "./app-socket.ts"
 import { beginDelivery, recordDeliveryFailure } from "./delivery-ledger.ts"
 import { createCodexBackend } from "./backend/codex.ts"
 import { acpTranscriptPath, createAcpBackend } from "./backend/acp-transcript.ts"
@@ -2332,6 +2333,59 @@ test("paged reader: a genuinely missing transcript still pages empty — the sib
     h.store.upsertSession(txRow({ spawned_at: new Date(Date.now() - (DGRACE_MS + 5000)).toISOString() }))
     // No jsonl anywhere, in this bucket or any sibling.
     assert.deepEqual(readLatestThreadTranscriptPage(h.project, h.store, "t").messages, [])
+  } finally {
+    h.cleanup()
+  }
+})
+
+// Claude Code deletes a session file that has gone unwritten for `cleanupPeriodDays` (claude-retention.ts),
+// and the thread opened on "No conversation yet." over a history that had simply been cleaned up. The page
+// says so — with the period that applies, read from the settings rather than assumed — only when the file
+// is gone AND the thread has been idle longer than that period. Nothing here writes under ~/.claude: the
+// thread's log dir does not exist, which is exactly the deleted state.
+function expiryHarness(cleanupPeriodDays: number) {
+  const root = mkdtempSync(join(tmpdir(), "frizz-tx-expired-"))
+  mkdirSync(join(root, ".claude"), { recursive: true })
+  // The LOCAL scope outranks the machine's own user settings, so the test does not read them.
+  writeFileSync(join(root, ".claude", "settings.local.json"), JSON.stringify({ cleanupPeriodDays }))
+  const store = createStorage(join(root, "ui.db"), "p")
+  const project = { cwdSlug: `-tmp-frizz-tx-expired-${process.pid}-${Math.random().toString(36).slice(2, 8)}`, dir: root } as unknown as Project
+  const sessionId = `expired-${process.pid}-${Math.random().toString(36).slice(2, 10)}`
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
+  return { root, store, project, sessionId, daysAgo, cleanup: () => rmSync(root, { recursive: true, force: true }) }
+}
+
+test("paged reader: a Claude thread idle past cleanupPeriodDays with no session file says its history was cleaned up", () => {
+  const h = expiryHarness(40)
+  try {
+    h.store.upsertSession(txRow({ session_id: h.sessionId, spawned_at: h.daysAgo(60) }))
+    h.store.setRestedAt("t", h.daysAgo(45))
+    const page = readLatestThreadTranscriptPage(h.project, h.store, "t")
+    assert.deepEqual(page.messages, [])
+    assert.deepEqual(page.expired, { retentionDays: 40, source: join(h.root, ".claude", "settings.local.json") })
+    // The /ws push replaces the envelope the HTTP read delivered, so it has to carry the reading too.
+    assert.deepEqual(makeTranscriptReader(h.project, h.store)("t")?.page?.expired, page.expired, "the socket push agrees")
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("paged reader: a missing session file on a thread idle for LESS than cleanupPeriodDays is not blamed on the cleanup", () => {
+  const h = expiryHarness(60)
+  try {
+    h.store.upsertSession(txRow({ session_id: h.sessionId, spawned_at: h.daysAgo(90) }))
+    h.store.setRestedAt("t", h.daysAgo(45))
+    assert.equal(readLatestThreadTranscriptPage(h.project, h.store, "t").expired, undefined, "rested 45 days ago, period 60")
+  } finally {
+    h.cleanup()
+  }
+})
+
+test("paged reader: a thread that never rested ages from its spawn", () => {
+  const h = expiryHarness(10)
+  try {
+    h.store.upsertSession(txRow({ session_id: h.sessionId, spawned_at: h.daysAgo(11) }))
+    assert.equal(readLatestThreadTranscriptPage(h.project, h.store, "t").expired?.retentionDays, 10)
   } finally {
     h.cleanup()
   }
