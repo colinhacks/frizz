@@ -20,19 +20,24 @@ work only with its own more-specific route, the way the registrar has one.
 
 ## Deploying
 
-The Vercel project is `frizz` under the `colinhacks-projects` scope, deployed from this directory with the CLI. On the maintainer's Mac the CLI stays signed out and takes its token from Keyward, at one Touch ID per run:
+The Vercel project is `frizz` under the `colinhacks-projects` scope, connected to this repository with `site/` as its root directory.
+
+| Push | Result |
+| --- | --- |
+| To `main`, changing `site/` | Deploys frizz.sh |
+| To another branch, changing `site/` | A preview deployment |
+| Leaving `site/` alone | Skipped by the project's ignored build step, which diffs `site/` against the branch's last deployment |
+
+Pull requests get no Vercel comments. Each build shows up as a `Vercel` status on its commit, which links to the deployment.
+
+Vercel can also build `main` from GitHub without a push, for example after a failed build. On the maintainer's Mac the CLI stays signed out and takes its token from Keyward, at one Touch ID per run:
 
 ```sh
-keyward run --reason "Deploy frizz.sh" VERCEL_TOKEN -- vercel deploy --prod --yes --cwd site --scope colinhacks-projects
+printf '%s' '{"name":"frizz","project":"frizz","target":"production","gitSource":{"type":"github","repoId":1275771523,"ref":"main"}}' \
+  | keyward --reason "Deploy frizz.sh from main" -- vercel api -X POST "/v13/deployments?slug=colinhacks-projects" --input -
 ```
 
-A checkout with no `site/.vercel/` has to link first, the same way:
-
-```sh
-keyward run --reason "Link site/ to the frizz Vercel project" VERCEL_TOKEN -- vercel link --yes --cwd site --project frizz --scope colinhacks-projects
-```
-
-Linking also writes `site/.env.local`, which holds a Vercel token. Delete it afterward. Git ignores it, and on the deploy that created it Vercel left it out of the published site.
+The ignored build step applies here too, so a `main` whose `site/` matches the last deployment is canceled rather than rebuilt. The old `vercel deploy --cwd site` no longer works: with the root directory set to `site`, the CLI looks for `site/site`.
 
 ## Regenerating the screenshots
 
