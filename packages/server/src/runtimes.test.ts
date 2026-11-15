@@ -13,8 +13,9 @@ import { after, before, test } from "node:test"
 import { gzipSync } from "node:zlib"
 import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./backend/codex-app-server.ts"
 import {
-  CLAUDE_AGENT_SDK_VERSION, CLAUDE_CODE_VERSION, describeRuntime, extractNpmTarball, pinnedBinaryPath, provisionRuntime, provisionedBinary,
-  resolveRuntimes, runtimeCoordinates, shouldDeferRuntimes, sweepRuntimes, type RuntimeCoordinates, type ShouldDeferRuntimesDeps,
+  CLAUDE_AGENT_SDK_VERSION, CLAUDE_CODE_VERSION, describeRuntime, extractNpmTarball, pinnedBinaryPath, prepareRuntimes, protectedPins, provisionRuntime,
+  provisionedBinary, recordPin, recordPinAhead, resolveRuntimes, runtimeCoordinates, shouldDeferRuntimes, sweepRuntimes, sweepSuperseded,
+  type RuntimeCoordinates, type ShouldDeferRuntimesDeps,
 } from "./runtimes.ts"
 import { ensureRuntime, isRuntimeDeferred, resetDeferredRuntimes, runtimeDownloads } from "./runtime-deferral.ts"
 import { leaseRuntime, liveRuntimeLeases, runtimeVersionDir } from "./runtime-lease.ts"
@@ -285,7 +286,9 @@ test("provision: the final rename survives a transient EPERM (Windows audit 2026
     /EPERM/u,
   )
   assert.equal(stuckAttempts, 5)
-  assert.deepEqual(readdirSync(join(stuck, "claude")), [], "the partial is discarded with the error")
+  // The unpacked directory goes with the error. The verified tarball stays, so the next try unpacks it
+  // again instead of fetching it again.
+  assert.deepEqual(readdirSync(join(stuck, "claude")), [`.partial-${CLAUDE_CODE_VERSION}.tgz`], "only the resumable tarball outlives the error")
   let eexist = 0
   await assert.rejects(
     provisionRuntime("claude", { root: stuck, coordinates: claudeCoords, registry: registry.url, retryDelayMs: 1, rename: () => { eexist++; throw Object.assign(new Error("EEXIST"), { code: "EEXIST" }) } }),
@@ -585,4 +588,217 @@ test("the Codex triple is the package's on every published platform", () => {
   assert.equal(tail("linux", "arm64"), "aarch64-unknown-linux-musl")
   assert.equal(tail("win32", "x64"), "x86_64-pc-windows-msvc")
   assert.equal(tail("win32", "arm64"), "aarch64-pc-windows-msvc")
+})
+
+// --- a registry that misbehaves the way slow networks do ------------------------------------------
+//
+// It answers Range requests the way npm's CDN does (206 with a Content-Range), and each tarball request
+// is handed to `behave`, which decides how much of the body to send and whether to cut or stall after.
+
+interface FlakyRegistry {
+  url: string
+  ranges: Array<string | undefined>
+  close(): Promise<void>
+}
+
+async function flakyRegistry(pkg: string, version: string, tgz: Buffer, behave: (request: number) => { send: number; then: "end" | "cut" | "stall" }): Promise<FlakyRegistry> {
+  const ranges: Array<string | undefined> = []
+  const open = new Set<import("node:net").Socket>()
+  const server = createServer((req, res) => {
+    if (req.url === `/${pkg.replace("/", "%2F")}/${version}`) {
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ dist: { tarball: `${flaky.url}/tgz`, integrity: integrityOf(tgz) } }))
+      return
+    }
+    const range = req.headers.range
+    ranges.push(range)
+    const start = range ? Number(/^bytes=(\d+)-$/u.exec(range)?.[1] ?? 0) : 0
+    if (start >= tgz.length) { res.statusCode = 416; res.end(); return }
+    const plan = behave(ranges.length)
+    const body = tgz.subarray(start)
+    res.statusCode = range ? 206 : 200
+    if (range) res.setHeader("content-range", `bytes ${start}-${tgz.length - 1}/${tgz.length}`)
+    res.setHeader("content-length", String(body.length))
+    res.flushHeaders()
+    res.write(body.subarray(0, Math.min(plan.send, body.length)))
+    if (plan.then === "end" || plan.send >= body.length) res.end(body.subarray(Math.min(plan.send, body.length)))
+    else if (plan.then === "cut") setTimeout(() => res.socket?.destroy(), 20)
+    // "stall": leave the response open and silent until the client gives up on it.
+  })
+  server.on("connection", (socket) => { open.add(socket); socket.on("close", () => open.delete(socket)) })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  const flaky: FlakyRegistry = {
+    url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`,
+    ranges,
+    close: () => new Promise<void>((resolve) => { for (const socket of open) socket.destroy(); server.close(() => resolve()) }),
+  }
+  return flaky
+}
+
+/** A tarball big enough to cut in the middle of: the binary is incompressible bytes. */
+function bulkyClaudeTgz(): Buffer {
+  return tarball([
+    { name: "package/package.json", data: Buffer.from('{"name":"stub"}') },
+    { name: "package/claude", data: Buffer.from("#!/bin/sh\necho bulky\n"), mode: 0o755 },
+    { name: "package/payload.bin", data: Buffer.from(Array.from({ length: 400_000 }, (_, i) => (i * 7919) % 251)) },
+  ])
+}
+
+const fast = { stallReconnectMs: 300, stallGiveUpMs: 60_000, backoffMs: () => 10 }
+
+test("provision: a connection cut mid-download resumes with a Range from the byte it stopped at", async () => {
+  const root = scratch()
+  const tgz = bulkyClaudeTgz()
+  const half = Math.floor(tgz.length / 2)
+  const flaky = await flakyRegistry(claudeCoords.pkg, claudeCoords.packageVersion, tgz, (n) => n === 1 ? { send: half, then: "cut" } : { send: Infinity, then: "end" })
+  const downloads: Array<{ state: string; received: number; total: number; resumedFrom?: number }> = []
+  const got = await provisionRuntime("claude", { root, coordinates: claudeCoords, registry: flaky.url, ...fast, onDownload: (d) => downloads.push(d) })
+  assert.equal(got.fetched, true)
+  assert.ok(existsSync(got.bin))
+  assert.equal(flaky.ranges.length, 2, "one cut request and one resumed request")
+  assert.equal(flaky.ranges[0], undefined, "the first request asks for the whole tarball")
+  const resumedAt = Number(/^bytes=(\d+)-$/u.exec(flaky.ranges[1] ?? "")?.[1])
+  assert.ok(resumedAt > 0 && resumedAt <= half, `the second asks for the rest, from ${resumedAt} (cut at ${half})`)
+  assert.deepEqual(readdirSync(join(root, "claude")), [CLAUDE_CODE_VERSION], "the tarball, its lock and the unpacked partial are gone")
+  assert.equal(downloads.at(-1)?.state, "ready")
+  assert.ok(downloads.some((d) => d.state === "unpacking"))
+  assert.ok(downloads.some((d) => d.state === "downloading" && d.total === tgz.length), "the length is known once the registry answers")
+  await flaky.close()
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("provision: a silent connection is dropped and asked again, and one that never answers gives up keeping its bytes", async () => {
+  // Silent after half: the reconnect asks for the rest and finishes.
+  const root = scratch()
+  const tgz = bulkyClaudeTgz()
+  const half = Math.floor(tgz.length / 2)
+  const quiet = await flakyRegistry(claudeCoords.pkg, claudeCoords.packageVersion, tgz, (n) => n === 1 ? { send: half, then: "stall" } : { send: Infinity, then: "end" })
+  const got = await provisionRuntime("claude", { root, coordinates: claudeCoords, registry: quiet.url, ...fast })
+  assert.ok(existsSync(got.bin))
+  assert.equal(quiet.ranges.length, 2)
+  assert.match(quiet.ranges[1] ?? "", /^bytes=\d+-$/u)
+  await quiet.close()
+  rmSync(root, { recursive: true, force: true })
+
+  // Silent every time: it fails once nothing has arrived for the give-up window, and keeps what it got.
+  const stuckRoot = scratch()
+  const dead = await flakyRegistry(claudeCoords.pkg, claudeCoords.packageVersion, tgz, (n) => n === 1 ? { send: half, then: "stall" } : { send: 0, then: "stall" })
+  await assert.rejects(
+    provisionRuntime("claude", { root: stuckRoot, coordinates: claudeCoords, registry: dead.url, stallReconnectMs: 150, stallGiveUpMs: 700, backoffMs: () => 10 }),
+    /stopped receiving data; .* is kept for the next try/u,
+  )
+  const kept = join(stuckRoot, "claude", `.partial-${CLAUDE_CODE_VERSION}.tgz`)
+  assert.equal(statSync(kept).size, half, "the bytes that did arrive are kept")
+  assert.deepEqual(readdirSync(join(stuckRoot, "claude")).sort(), [`.partial-${CLAUDE_CODE_VERSION}.tgz`], "no lock and no unpacked partial survive")
+  await dead.close()
+
+  // The next attempt, on a healthy connection, fetches only the rest.
+  const healthy = await flakyRegistry(claudeCoords.pkg, claudeCoords.packageVersion, tgz, () => ({ send: Infinity, then: "end" }))
+  const resumed = await provisionRuntime("claude", { root: stuckRoot, coordinates: claudeCoords, registry: healthy.url, ...fast })
+  assert.ok(existsSync(resumed.bin))
+  assert.deepEqual(healthy.ranges, [`bytes=${half}-`])
+  await healthy.close()
+  rmSync(stuckRoot, { recursive: true, force: true })
+})
+
+test("provision: a kept tarball the registry disowns fails its integrity check and is not kept", async () => {
+  const root = scratch()
+  const tgz = bulkyClaudeTgz()
+  mkdirSync(join(root, "claude"), { recursive: true })
+  // Bytes from somewhere else: resuming after them yields a tarball whose hash is wrong.
+  writeFileSync(join(root, "claude", `.partial-${CLAUDE_CODE_VERSION}.tgz`), Buffer.alloc(1000, 7))
+  const flaky = await flakyRegistry(claudeCoords.pkg, claudeCoords.packageVersion, tgz, () => ({ send: Infinity, then: "end" }))
+  await assert.rejects(provisionRuntime("claude", { root, coordinates: claudeCoords, registry: flaky.url, ...fast }), /integrity mismatch/u)
+  assert.deepEqual(readdirSync(join(root, "claude")), [], "a tarball that cannot verify is not resumed again")
+  // So the next attempt starts clean and succeeds.
+  const got = await provisionRuntime("claude", { root, coordinates: claudeCoords, registry: flaky.url, ...fast })
+  assert.ok(existsSync(got.bin))
+  await flaky.close()
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("sweep: the pins of the last two releases booted are kept, and a pin downloaded ahead of an update", () => {
+  const root = scratch()
+  for (const label of ["2.1.300", "2.1.322", "2.1.325", "2.1.330"]) provisionedDir(root, "claude", label, "claude")
+  // 0.15.52 booted on 2.1.322, then 0.15.55 on 2.1.325: the sweep 0.15.55 runs keeps 2.1.322.
+  assert.equal(recordPin("claude", root, "2.1.322"), undefined)
+  assert.equal(recordPin("claude", root, "2.1.325"), "2.1.322")
+  const sweep = sweepSuperseded("claude", root, "2.1.325", {})
+  void sweep
+  assert.ok(existsSync(join(root, "claude", "2.1.322")), "the previous release's pin survives the update's sweep")
+  assert.ok(existsSync(join(root, "claude", "2.1.330")) === false, "an unrecorded pin is retired as before")
+  assert.ok(existsSync(join(root, "claude", "2.1.300")) === false)
+  // A pin fetched ahead of the next update is held for the boot that will use it.
+  provisionedDir(root, "claude", "2.1.340", "claude")
+  recordPinAhead("claude", root, "2.1.340")
+  sweepSuperseded("claude", root, "2.1.325", {})
+  assert.ok(existsSync(join(root, "claude", "2.1.340")))
+  assert.deepEqual(protectedPins("claude", root).sort(), ["2.1.322", "2.1.325", "2.1.340"])
+  // Booting on it ends the hold; the release two back is then the one retired.
+  recordPin("claude", root, "2.1.340")
+  sweepSuperseded("claude", root, "2.1.340", {})
+  assert.deepEqual(readdirSync(join(root, "claude")).sort(), ["2.1.325", "2.1.340"])
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("open now: the boot stops waiting on a slow download, and the first thread waits for the same one", async (t) => {
+  t.after(resetDeferredRuntimes)
+  const root = scratch()
+  const claude = runtimeCoordinates("claude")!
+  const codex = runtimeCoordinates("codex")!
+  const tgz = tarball([
+    { name: `package/${claude.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 },
+    { name: "package/payload.bin", data: Buffer.from(Array.from({ length: 400_000 }, (_, i) => (i * 7919) % 251)) },
+  ])
+  // Half now, then silence until `release()` lets the reconnect through.
+  let released = false
+  const slow = await flakyRegistry(claude.pkg, claude.packageVersion, tgz, (n) => n === 1 ? { send: Math.floor(tgz.length / 2), then: "stall" } : released ? { send: Infinity, then: "end" } : { send: 0, then: "stall" })
+  let openNow!: () => void
+  const asked = new Promise<void>((resolve) => { openNow = resolve })
+  const downloads: string[] = []
+  const resolving = resolveRuntimes({
+    env: {}, root, registry: slow.url, defer: { claude: false, codex: true }, openNow: asked, ...fast,
+    onDownload: (d) => downloads.push(d.state),
+  })
+  while (!downloads.includes("downloading")) await new Promise((resolve) => setTimeout(resolve, 10))
+  openNow()
+  const got = await resolving
+  assert.equal(got.claude.source, "deferred")
+  assert.equal(got.claude.downloading, true)
+  assert.equal(got.claude.bin, pinnedBinaryPath("claude", root, claude))
+  assert.equal(isRuntimeDeferred("claude"), true, "nothing may start Claude Code until the download lands")
+  assert.equal(got.codex.source, "deferred", "a signed-out backend is unaffected")
+  void codex
+  // The first thread on it waits for the download that was already running, not a new one.
+  const waiting = ensureRuntime("claude")
+  const before = slow.ranges.length
+  released = true
+  await waiting
+  assert.equal(existsSync(got.claude.bin), true)
+  assert.equal(isRuntimeDeferred("claude"), false)
+  assert.ok(slow.ranges.slice(before).every((range) => range !== undefined), "every later request resumed the same tarball")
+  assert.ok(liveRuntimeLeases(join(root, "claude", claude.label)).length > 0, "the landed pin is leased like a boot's")
+  await slow.close()
+  rmSync(root, { recursive: true, force: true })
+})
+
+test("prepare: downloads what the next boot needs, sweeps nothing, and leaves signed-out backends alone", async () => {
+  const root = scratch()
+  const claude = runtimeCoordinates("claude")!
+  const codex = runtimeCoordinates("codex")!
+  provisionedDir(root, "claude", "2.1.100", "claude")
+  registry.set(claude.pkg, claude.packageVersion, tarball([{ name: `package/${claude.binary}`, data: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]))
+  const before = registry.requests.length
+  const states: string[] = []
+  const got = await prepareRuntimes({ env: {}, root, registry: registry.url, defer: { claude: false, codex: true }, onDownload: (d) => states.push(`${d.backend}:${d.state}`) })
+  assert.equal(got.claude?.fetched, true)
+  assert.equal(got.codex, undefined)
+  assert.equal(existsSync(join(root, "codex")), false, "Codex was not asked for")
+  assert.ok(registry.requests.slice(before).every((url) => !url.includes("codex")))
+  assert.ok(existsSync(join(root, "claude", "2.1.100")), "nothing is swept: the release still serving may run it")
+  assert.ok(states.includes("claude:ready"))
+  assert.ok(protectedPins("claude", root).includes(claude.label), "the fetched pin is held until a boot uses it")
+  void codex
+  rmSync(root, { recursive: true, force: true })
 })

@@ -60,9 +60,9 @@
 // server now leases the pin it resolved and each detached daemon leases the binary it runs
 // (runtime-lease.ts); sweepRuntimes skips a version directory with a live lease and logs why.
 
-import { createHash } from "node:crypto"
+import { createHash, type Hash } from "node:crypto"
 import {
-  chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync,
+  chmodSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync,
   writeFileSync, writeSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
@@ -74,7 +74,7 @@ import { findOnPath } from "./backend/acp-agents.ts"
 import { readClaudeAuthState, readClaudeOtherCredential, readCodexAuthState } from "./backend/auth-status.ts"
 import { CODEX_APP_SERVER_SUPPORTED_VERSION } from "./backend/codex-app-server.ts"
 import { frizzRoots } from "./frizz-paths.ts"
-import { deferRuntime } from "./runtime-deferral.ts"
+import { adoptRuntimeDownload, deferRuntime } from "./runtime-deferral.ts"
 import { leaseRuntime, liveRuntimeLeases } from "./runtime-lease.ts"
 
 /** The Claude Agent SDK Frizz bundles. Must equal packages/claude-agent-sdk-runtime's dependency. */
@@ -109,6 +109,10 @@ export interface ResolvedRuntime {
   version: string
   /** Why a fallback happened, for the log and the diagnostics surface. */
   note?: string
+  /** This boot downloaded the pin (it was not on disk already). */
+  fetched?: true
+  /** A deferred pin whose download is already running, because the board opened before it finished. */
+  downloading?: true
 }
 
 export interface ResolvedRuntimes {
@@ -477,6 +481,14 @@ export interface ProvisionOptions {
   /** Registry base — a test points it at a local server. */
   registry?: string
   onProgress?: (message: string) => void
+  /** The same progress as numbers, for a progress bar (RuntimeDownload). */
+  onDownload?: (download: RuntimeDownload) => void
+  /** Drop a connection that has sent nothing for this long, and ask again from where it stopped. */
+  stallReconnectMs?: number
+  /** Fail once nothing has arrived for this long; what did arrive stays on disk for the next try. */
+  stallGiveUpMs?: number
+  /** The wait before reconnecting after the `attempt`th connection was lost (tests make it short). */
+  backoffMs?: (attempt: number) => number
   /** The final `renameSync(partial, finalDir)` — a test makes it fail the way Windows does. */
   rename?: (from: string, to: string) => void
   /** Pause between rename attempts (see RENAME_ATTEMPTS). */
@@ -527,13 +539,189 @@ function describeBytes(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)} MB`
 }
 
+/** What one pin's download is doing, for a progress bar rather than a log line. */
+export interface RuntimeDownload {
+  backend: RuntimeBackend
+  label: string
+  state: "resolving" | "downloading" | "stalled" | "unpacking" | "ready"
+  /** Compressed bytes on disk so far, an earlier interrupted attempt's included. */
+  received: number
+  /** The tarball's length, or 0 when the registry names none. */
+  total: number
+  /** Bytes per second over the last few seconds; 0 until there is a reading. */
+  bytesPerSecond: number
+  /** How long since the last byte arrived, once that is long enough to call the download stalled. */
+  stalledForMs?: number
+  /** Bytes an earlier attempt left on disk, which this download did not fetch again. */
+  resumedFrom?: number
+}
+
+// THE DOWNLOAD SURVIVES A SLOW OR DROPPED CONNECTION (2026-11-15). Until then the tarball streamed
+// straight into gunzip and the extractor, so none of it was kept as a tarball: a connection that
+// dropped at 300 of 348 MB, or a boot the launcher killed for taking too long, started from zero the
+// next time. On the maintainer's ~500 KB/s connection that turned one update into a ten-minute outage,
+// and a slower connection could have looped forever. Now the compressed bytes land in
+// `.partial-<label>.tgz` first (the sweep's `.partial-` rule keeps it for a day, then retires it), a
+// later attempt asks the registry for the rest with a Range header, and only a complete, verified
+// tarball is unpacked.
+//
+// A connection that goes quiet is not waited on: after STALL_RECONNECT_MS without a byte the request
+// is dropped and made again from where it stopped, and after STALL_GIVE_UP_MS without one the download
+// fails (a boot then falls back to PATH as it always has, and the bytes stay for the next try). The
+// manifest request is not retried, so a machine with no network at all fails as fast as it did before.
+const STALL_NOTICE_MS = 10_000
+const STALL_RECONNECT_MS = 30_000
+const STALL_GIVE_UP_MS = 5 * 60_000
+const SPEED_WINDOW_MS = 5_000
+const REPORT_EVERY_MS = 500
+
+/** Hash a file already on disk, for a download that resumes after it. */
+async function hashFile(path: string, hash: Hash): Promise<void> {
+  await pipeline(createReadStream(path), new Writable({ write(chunk: Buffer, _encoding, callback) { hash.update(chunk); callback() } }))
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM" }
+}
+
+/**
+ * Claim the shared tarball for one label, or learn that a live process holds it. Two processes
+ * provisioning one pin at once (a dev child beside a stable one) must not append to one file; the
+ * second downloads into a private file and simply does not resume. A dead holder's claim is taken over.
+ */
+function claimTarball(lock: string): boolean {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(lock, "wx")
+      writeSync(fd, String(process.pid))
+      closeSync(fd)
+      return true
+    } catch (err) {
+      if (errorCode(err) !== "EEXIST") return false
+      let holder = Number.NaN
+      try { holder = Number.parseInt(readFileSync(lock, "utf8").trim(), 10) } catch { /* removed meanwhile */ }
+      if (Number.isInteger(holder) && holder !== process.pid && pidAlive(holder)) return false
+      rmSync(lock, { force: true })
+    }
+  }
+  return false
+}
+
+interface TarballDownload {
+  url: string
+  file: string
+  integrity: string
+  fetch: typeof globalThis.fetch
+  report: (state: "downloading" | "stalled", fields: Omit<RuntimeDownload, "backend" | "label" | "state">) => void
+  stallReconnectMs: number
+  stallGiveUpMs: number
+  /** How long to wait before attempt `n + 1` after attempt `n` lost its connection. */
+  backoffMs: (attempt: number) => number
+}
+
+/** Fetch `url` into `file`, resuming whatever is already there, and verify all of it. */
+async function downloadTarball(options: TarballDownload): Promise<void> {
+  const { file } = options
+  let hash = createHash("sha512")
+  let received = existsSync(file) ? statSync(file).size : 0
+  const resumedFrom = received > 0 ? received : undefined
+  if (received > 0) await hashFile(file, hash)
+  let total = 0
+  let lastByteAt = Date.now()
+  let samples: Array<[number, number]> = [[lastByteAt, received]]
+  const report = () => {
+    const now = Date.now()
+    samples.push([now, received])
+    while (samples.length > 2 && now - samples[1]![0] >= SPEED_WINDOW_MS) samples.shift()
+    const [at, bytes] = samples[0]!
+    const quiet = now - lastByteAt
+    const stalled = quiet >= STALL_NOTICE_MS
+    options.report(stalled ? "stalled" : "downloading", {
+      received,
+      total,
+      bytesPerSecond: stalled || now - at < 1000 ? 0 : Math.max(0, Math.round(((received - bytes) * 1000) / (now - at))),
+      ...(stalled ? { stalledForMs: quiet } : {}),
+      ...(resumedFrom ? { resumedFrom } : {}),
+    })
+  }
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController()
+    let fd: number | undefined
+    const ticker = setInterval(() => {
+      report()
+      if (Date.now() - lastByteAt >= options.stallReconnectMs) controller.abort(new Error("no data"))
+    }, REPORT_EVERY_MS)
+    let complete = false
+    try {
+      const response = await options.fetch(options.url, {
+        signal: controller.signal,
+        ...(received > 0 ? { headers: { range: `bytes=${received}-` } } : {}),
+      })
+      if (response.status === 416 && received > 0) {
+        // Nothing lies past what is on disk: an earlier attempt got all of it. The hash decides.
+        complete = true
+      } else {
+        if (!response.ok || !response.body) throw new RegistryRefusal(`tarball download answered ${response.status}`)
+        const range = /^bytes (\d+)-\d+\/(\d+)$/u.exec(response.headers.get("content-range") ?? "")
+        if (response.status === 206 && range && Number(range[1]) === received) {
+          total = Number(range[2])
+        } else {
+          // The whole tarball (a registry that ignores Range, or a 200 to a first request): whatever is
+          // on disk is superseded by it.
+          if (received > 0) {
+            hash = createHash("sha512")
+            received = 0
+            samples = [[Date.now(), 0]]
+          }
+          total = Number(response.headers.get("content-length") ?? 0)
+        }
+        fd = openSync(file, received > 0 ? "a" : "w")
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          writeSync(fd, value)
+          hash.update(value)
+          received += value.length
+          lastByteAt = Date.now()
+        }
+        complete = total === 0 || received >= total
+      }
+    } catch (err) {
+      // What the registry meant (a 404, a 500) is final. A dropped or silent connection is not.
+      if (err instanceof RegistryRefusal) throw err
+    } finally {
+      clearInterval(ticker)
+      if (fd !== undefined) closeSync(fd)
+    }
+    if (complete) break
+    if (Date.now() - lastByteAt >= options.stallGiveUpMs) {
+      throw new Error(`the download stopped receiving data; ${describeBytes(received)}${total ? ` of ${describeBytes(total)}` : ""} is kept for the next try`)
+    }
+    const until = Date.now() + options.backoffMs(attempt)
+    while (Date.now() < until) {
+      report()
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.max(1, Math.min(REPORT_EVERY_MS, until - Date.now()))))
+    }
+  }
+  report()
+  const digest = `sha512-${hash.digest("base64")}`
+  if (digest !== options.integrity) {
+    rmSync(file, { force: true })
+    throw new Error(`integrity mismatch for ${options.url}: expected ${options.integrity}, got ${digest}`)
+  }
+}
+
+/** An answer the registry meant, which retrying will not change. */
+class RegistryRefusal extends Error {}
+
 /**
  * Make sure one backend's pin is on disk, fetching it from the registry when it is not.
  *
- * Idempotent and crash-safe: the work happens in a `.partial-<label>-<pid>` sibling and is renamed
- * into place only after the integrity check and the binary lookup both pass. Two servers racing the
- * same pin (a dev child beside a stable one) each build their own partial; the second rename finds the
- * directory already there and simply uses it.
+ * Idempotent and crash-safe: the tarball is downloaded to `.partial-<label>.tgz` (resumable, above),
+ * then unpacked into a `.partial-<label>-<pid>` sibling that is renamed into place only after the
+ * integrity check and the binary lookup both pass. Two servers racing the same pin each build their
+ * own directory; the second rename finds the version already there and simply uses it.
  */
 export async function provisionRuntime(backend: RuntimeBackend, options: ProvisionOptions): Promise<Provisioned> {
   const { root, coordinates } = options
@@ -543,16 +731,20 @@ export async function provisionRuntime(backend: RuntimeBackend, options: Provisi
   const fetchImpl = options.fetch ?? globalThis.fetch
   const registry = options.registry ?? REGISTRY
   const progress = options.onProgress ?? (() => {})
+  const download = (state: RuntimeDownload["state"], fields: Partial<Omit<RuntimeDownload, "backend" | "label" | "state">> = {}) =>
+    options.onDownload?.({ backend, label: coordinates.label, state, received: 0, total: 0, bytesPerSecond: 0, ...fields })
   const backendDir = join(root, backend)
   const finalDir = join(backendDir, coordinates.label)
   const partial = join(backendDir, `.partial-${coordinates.label}-${process.pid}`)
   mkdirSync(backendDir, { recursive: true })
-  rmSync(partial, { recursive: true, force: true })
-  mkdirSync(partial)
+  const lock = join(backendDir, `.partial-${coordinates.label}.tgz.lock`)
+  const shared = claimTarball(lock)
+  const tarballFile = shared ? join(backendDir, `.partial-${coordinates.label}.tgz`) : join(backendDir, `.partial-${coordinates.label}-${process.pid}.tgz`)
 
   try {
     const manifestUrl = `${registry}/${coordinates.pkg.replace("/", "%2F")}/${coordinates.packageVersion}`
     progress(`resolving ${coordinates.pkg}@${coordinates.packageVersion}`)
+    download("resolving")
     const manifestResponse = await fetchImpl(manifestUrl)
     if (!manifestResponse.ok) throw new Error(`registry answered ${manifestResponse.status} for ${coordinates.pkg}@${coordinates.packageVersion}`)
     const manifest = (await manifestResponse.json()) as { dist?: { tarball?: string; integrity?: string } }
@@ -560,34 +752,34 @@ export async function provisionRuntime(backend: RuntimeBackend, options: Provisi
     const integrity = manifest.dist?.integrity
     if (!tarball || !integrity?.startsWith("sha512-")) throw new Error(`registry manifest for ${coordinates.pkg}@${coordinates.packageVersion} carries no sha512 tarball`)
 
-    const response = await fetchImpl(tarball)
-    if (!response.ok || !response.body) throw new Error(`tarball download answered ${response.status}`)
-    const total = Number(response.headers.get("content-length") ?? 0)
-    const hash = createHash("sha512")
-    let seen = 0
-    let lastReport = 0
-    const hasher = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        hash.update(chunk)
-        seen += chunk.length
+    let lastLine = 0
+    await downloadTarball({
+      url: tarball,
+      file: tarballFile,
+      integrity,
+      fetch: fetchImpl,
+      stallReconnectMs: options.stallReconnectMs ?? STALL_RECONNECT_MS,
+      stallGiveUpMs: options.stallGiveUpMs ?? STALL_GIVE_UP_MS,
+      backoffMs: options.backoffMs ?? ((attempt) => Math.min(15_000, 1000 * 2 ** attempt)),
+      report: (state, fields) => {
+        download(state, fields)
+        // The log line keeps its old words: runtimeDownloadNote and the launcher's readout read them.
         const now = Date.now()
-        if (now - lastReport > 500) {
-          lastReport = now
-          progress(total > 0
-            ? `downloading ${describeBytes(total)}, ${Math.min(99, Math.floor((seen / total) * 100))}%`
-            : `downloading, ${describeBytes(seen)} so far`)
-        }
-        callback(null, chunk)
+        if (now - lastLine < REPORT_EVERY_MS) return
+        lastLine = now
+        const quiet = fields.stalledForMs ? `, no data for ${Math.round(fields.stalledForMs / 1000)}s` : ""
+        progress(fields.total > 0
+          ? `downloading ${describeBytes(fields.total)}, ${Math.min(99, Math.floor((fields.received / fields.total) * 100))}%${quiet}`
+          : `downloading, ${describeBytes(fields.received)} so far${quiet}`)
       },
     })
-    progress(total > 0 ? `downloading ${describeBytes(total)}` : "downloading")
-    // The hash is taken over the COMPRESSED bytes, which is what the registry's integrity names, and
-    // the extraction runs on the same pass — so the verdict arrives after the files are written and
-    // a mismatch discards the whole partial directory, never a file of it.
-    await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), hasher, createGunzip(), new TarExtractor(partial))
-    const digest = `sha512-${hash.digest("base64")}`
-    if (digest !== integrity) throw new Error(`integrity mismatch for ${tarball}: expected ${integrity}, got ${digest}`)
 
+    // Unpacked from the verified file, never from the network, so a torn download cannot reach here.
+    progress("unpacking")
+    download("unpacking")
+    rmSync(partial, { recursive: true, force: true })
+    mkdirSync(partial)
+    await pipeline(createReadStream(tarballFile), createGunzip(), new TarExtractor(partial))
     const bin = locateBinary(partial, backend, coordinates.binary)
     if (!bin) throw new Error(`${coordinates.pkg}@${coordinates.packageVersion} unpacked without a ${coordinates.binary} binary`)
     if (process.platform !== "win32") chmodSync(bin, 0o755)
@@ -615,13 +807,20 @@ export async function provisionRuntime(backend: RuntimeBackend, options: Provisi
       const theirs = provisionedBinary(backend, root, coordinates.label)
       if (!theirs) throw err
       rmSync(partial, { recursive: true, force: true })
+      rmSync(tarballFile, { force: true })
       return { bin: theirs, label: coordinates.label, fetched: false }
     }
+    rmSync(tarballFile, { force: true })
     progress("ready")
+    download("ready")
     return { bin: join(finalDir, marker.binary), label: coordinates.label, fetched: true }
   } catch (err) {
     rmSync(partial, { recursive: true, force: true })
+    // A private tarball cannot be resumed by anyone, so it goes; the shared one is the point of keeping.
+    if (!shared) rmSync(tarballFile, { force: true })
     throw err
+  } finally {
+    if (shared) rmSync(lock, { force: true })
   }
 }
 
@@ -711,14 +910,26 @@ export interface ResolveRuntimesOptions {
   log?: (level: "info" | "warn", message: string) => void
   /** Boot-progress hook; the message names the backend. */
   onProgress?: (backend: RuntimeBackend, message: string) => void
+  /** The same progress as numbers, for the restart page's bars. */
+  onDownload?: (download: RuntimeDownload) => void
   /**
    * Fetch nothing now for these backends: register the pin to come down on its first thread
    * (runtime-deferral.ts). `true` is both of them.
    */
   defer?: boolean | Partial<DeferRuntimes>
+  /**
+   * Settles when the operator asks the boot to stop waiting ("Open Frizz now" on the restart page). A
+   * pin still downloading then becomes a deferred one whose download carries on in the background,
+   * and the first thread on that backend waits for the same download rather than starting another.
+   */
+  openNow?: Promise<void>
   /** Seams for the Windows failure modes (tests): see ProvisionOptions.rename and SweepRuntimesDeps.rm. */
   rename?: ProvisionOptions["rename"]
   rm?: SweepRuntimesDeps["rm"]
+  /** Download seams (tests): see ProvisionOptions. */
+  stallReconnectMs?: number
+  stallGiveUpMs?: number
+  backoffMs?: (attempt: number) => number
 }
 
 async function resolveOne(backend: RuntimeBackend, explicit: string | undefined, options: ResolveRuntimesOptions): Promise<ResolvedRuntime> {
@@ -736,26 +947,54 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
   }
   const root = options.root ?? runtimesRoot(env)
   const registry = options.registry ?? env[RUNTIMES_REGISTRY_ENV]
-  const provision = (onProgress: (message: string) => void) => provisionRuntime(backend, {
-    root, coordinates, fetch: options.fetch, registry, rename: options.rename, onProgress,
+  const provision = (onProgress: (message: string) => void, onDownload?: (download: RuntimeDownload) => void) => provisionRuntime(backend, {
+    root, coordinates, fetch: options.fetch, registry, rename: options.rename, onProgress, onDownload,
+    stallReconnectMs: options.stallReconnectMs, stallGiveUpMs: options.stallGiveUpMs, backoffMs: options.backoffMs,
   })
+  // Before the sweep: it is what tells the sweep which pin the release before this one booted on.
+  recordPin(backend, root, coordinates.label)
+  const bin = provisionedBinary(backend, root, coordinates.label) ?? pinnedBinaryPath(backend, root, coordinates)
+  // What a deferred pin does on its first need: the same download, then the same lease a boot takes.
+  const deferredProvision = async (onProgress: (message: string) => void, onDownload?: (download: RuntimeDownload) => void) => {
+    const provisioned = await provision(onProgress, onDownload)
+    if (provisioned.fetched) log("info", `runtimes: provisioned ${backend} ${provisioned.label} at ${provisioned.bin}`)
+    // The consumers have held `bin` since boot, so a package laid out differently must say so here.
+    if (provisioned.bin !== bin) throw new Error(`${coordinates.pkg} unpacked its binary at ${provisioned.bin}, not ${bin}`)
+    leaseRuntime(provisioned.bin, "server")
+  }
   if (typeof options.defer === "object" ? options.defer[backend] : options.defer) {
-    const bin = provisionedBinary(backend, root, coordinates.label) ?? pinnedBinaryPath(backend, root, coordinates)
-    deferRuntime(backend, async (onProgress) => {
-      const provisioned = await provision(onProgress)
-      if (provisioned.fetched) log("info", `runtimes: provisioned ${backend} ${provisioned.label} at ${provisioned.bin}`)
-      // The consumers have held `bin` since boot, so a package laid out differently must say so here.
-      if (provisioned.bin !== bin) throw new Error(`${coordinates.pkg} unpacked its binary at ${provisioned.bin}, not ${bin}`)
-      leaseRuntime(provisioned.bin, "server")
-    })
+    deferRuntime(backend, deferredProvision)
     // A recorded later build is kept for the boot that provisions: this one starts nothing on it.
     const recorded = backend === "claude" ? readClaudeFloat(root, coordinates.label)?.label : undefined
     sweepSuperseded(backend, root, recorded ? [coordinates.label, recorded] : coordinates.label, options)
     return { bin, source: "deferred", version: coordinates.label }
   }
+  // Where this download reports. "Open Frizz now" moves it from the boot's readout to the deferred
+  // runtime's own, which is what the composer and the board read once the server is up.
+  const sink = {
+    progress: (message: string) => options.onProgress?.(backend, message),
+    download: (download: RuntimeDownload) => options.onDownload?.(download),
+  }
+  const running = provision((message) => sink.progress(message), (download) => sink.download(download))
   let provisioned: Provisioned
   try {
-    provisioned = await provision((message) => options.onProgress?.(backend, message))
+    if (options.openNow) {
+      const opened = await Promise.race([running.then(() => false, () => false), options.openNow.then(() => true)])
+      if (opened) {
+        const adopted = adoptRuntimeDownload(backend, deferredProvision, running.then(async (done) => {
+          if (done.fetched) log("info", `runtimes: provisioned ${backend} ${done.label} at ${done.bin} after the board opened`)
+          if (done.bin !== bin) throw new Error(`${coordinates.pkg} unpacked its binary at ${done.bin}, not ${bin}`)
+          leaseRuntime(done.bin, "server")
+        }))
+        sink.progress = adopted.progress
+        sink.download = adopted.download
+        log("info", `runtimes: the board opened before ${backend} ${coordinates.label} finished downloading; it continues in the background`)
+        const recorded = backend === "claude" ? readClaudeFloat(root, coordinates.label)?.label : undefined
+        sweepSuperseded(backend, root, recorded ? [coordinates.label, recorded] : coordinates.label, options)
+        return { bin, source: "deferred", version: coordinates.label, downloading: true, note: "still downloading when the board opened" }
+      }
+    }
+    provisioned = await running
   } catch (err) {
     const note = err instanceof Error ? err.message : String(err)
     log("warn", `runtimes: could not provision ${backend} ${coordinates.label} (${note}); using ${bare} from PATH — the version Frizz was built against is not what will run`)
@@ -770,8 +1009,106 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
   // the pin resolved here is still in use.
   leaseRuntime(floated?.bin ?? provisioned.bin, "server")
   sweepSuperseded(backend, root, floated ? [coordinates.label, floated.label] : coordinates.label, options)
-  if (floated) return { bin: floated.bin, source: "provisioned", version: floated.label, note: `moved past the bundled ${coordinates.label}` }
-  return { bin: provisioned.bin, source: "provisioned", version: provisioned.label }
+  if (floated) return { bin: floated.bin, source: "provisioned", version: floated.label, note: `moved past the bundled ${coordinates.label}`, ...(provisioned.fetched ? { fetched: true } : {}) }
+  return { bin: provisioned.bin, source: "provisioned", version: provisioned.label, ...(provisioned.fetched ? { fetched: true } : {}) }
+}
+
+// THE PREVIOUS RELEASE'S PINS ARE KEPT (2026-11-15). The sweep used to keep only what the booting
+// server would run, so an update deleted the pins of the release before it the moment it booted. When that
+// release came back — a restart onto the pinned bootstrap server, an update undone — it downloaded all
+// of them again: on 2026-11-15 0.15.55 retired Claude Code 2.1.322 (0.15.52's pin; 0.15.52 itself had
+// floated to 2.1.325, so nothing leased it) and the next restart onto 0.15.52 spent eight minutes
+// fetching 320 MB back. So every boot records the pin it booted on, newest first, and every sweep
+// keeps the newest two: this release's and the one before it. A pin downloaded AHEAD of an update
+// (prepareRuntimes) is kept too, for the day it waits to be booted on.
+const PIN_HISTORY = "pin-history.json"
+const PIN_HISTORY_DEPTH = 4
+const PIN_AHEAD_KEPT_MS = 24 * 60 * 60 * 1000
+
+interface PinHistory {
+  booted?: Partial<Record<RuntimeBackend, string[]>>
+  ahead?: Partial<Record<RuntimeBackend, { label: string; at: string }>>
+}
+
+function readPinHistory(root: string): PinHistory {
+  try {
+    const value = JSON.parse(readFileSync(join(root, PIN_HISTORY), "utf8")) as PinHistory
+    return value && typeof value === "object" ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+function writePinHistory(root: string, history: PinHistory): void {
+  try {
+    mkdirSync(root, { recursive: true })
+    const path = join(root, PIN_HISTORY)
+    const partial = `${path}.${process.pid}`
+    writeFileSync(partial, `${JSON.stringify(history, null, 2)}\n`, "utf8")
+    renameSync(partial, path)
+  } catch {
+    // The history only spares a download. Failing to write it costs one, never a boot.
+  }
+}
+
+/** Record that a server booted on `label` for `backend`. Returns the pin booted on before it, if any. */
+export function recordPin(backend: RuntimeBackend, root: string, label: string): string | undefined {
+  const history = readPinHistory(root)
+  const booted = (history.booted?.[backend] ?? []).filter((entry): entry is string => typeof entry === "string")
+  const next = [label, ...booted.filter((entry) => entry !== label)].slice(0, PIN_HISTORY_DEPTH)
+  const ahead = { ...history.ahead }
+  if (ahead[backend]?.label === label) delete ahead[backend]
+  if (next.join() !== booted.join() || ahead[backend] !== history.ahead?.[backend]) writePinHistory(root, { ...history, booted: { ...history.booted, [backend]: next }, ahead })
+  return next[1]
+}
+
+/** Record a pin downloaded ahead of the update that will boot on it, so no sweep retires it meanwhile. */
+export function recordPinAhead(backend: RuntimeBackend, root: string, label: string): void {
+  const history = readPinHistory(root)
+  writePinHistory(root, { ...history, ahead: { ...history.ahead, [backend]: { label, at: new Date().toISOString() } } })
+}
+
+/** The pins every sweep keeps whatever its caller names: the last two booted on, and a fresh one fetched ahead. */
+export function protectedPins(backend: RuntimeBackend, root: string, now = Date.now()): string[] {
+  const history = readPinHistory(root)
+  const kept = (history.booted?.[backend] ?? []).filter((entry): entry is string => typeof entry === "string").slice(0, 2)
+  const ahead = history.ahead?.[backend]
+  if (ahead && typeof ahead.label === "string" && now - Date.parse(ahead.at) < PIN_AHEAD_KEPT_MS) kept.push(ahead.label)
+  // A Claude Code build the previous release floated to is what it would start on, so it is kept with it.
+  if (backend === "claude") for (const label of [...kept]) {
+    const floated = readClaudeFloat(root, label)?.label
+    if (floated) kept.push(floated)
+  }
+  return [...new Set(kept)]
+}
+
+/**
+ * Download what this machine's boot will need, ahead of booting on it — the runtimes an update's new
+ * release pins, while the release before it is still serving (the launcher runs this out of the NEW
+ * release's package, so its pins are the ones that count). Signed-out backends wait for their first
+ * thread exactly as a boot would leave them. Nothing is swept, leased or recorded as booted: no server
+ * runs these yet, and the one that will records them when it boots.
+ */
+export async function prepareRuntimes(options: Omit<ResolveRuntimesOptions, "openNow"> = {}): Promise<Partial<Record<RuntimeBackend, Provisioned>>> {
+  const env = options.env ?? process.env
+  const root = options.root ?? runtimesRoot(env)
+  const registry = options.registry ?? env[RUNTIMES_REGISTRY_ENV]
+  const out: Partial<Record<RuntimeBackend, Provisioned>> = {}
+  await Promise.all((["claude", "codex"] as const).map(async (backend) => {
+    if ((backend === "claude" ? options.claudeBin : options.codexBin) ?? env[backend === "claude" ? CLAUDE_BIN_ENV : CODEX_BIN_ENV]) return
+    if (env[RUNTIMES_MODE_ENV] === "path") return
+    if (typeof options.defer === "object" ? options.defer[backend] : options.defer) return
+    const coordinates = runtimeCoordinates(backend)
+    if (!coordinates) return
+    recordPinAhead(backend, root, coordinates.label)
+    out[backend] = await provisionRuntime(backend, {
+      root, coordinates, fetch: options.fetch, registry, rename: options.rename,
+      onProgress: (message) => options.onProgress?.(backend, message),
+      onDownload: options.onDownload,
+      stallReconnectMs: options.stallReconnectMs, stallGiveUpMs: options.stallGiveUpMs, backoffMs: options.backoffMs,
+    })
+  }))
+  return out
 }
 
 // The sweep is housekeeping and shares NOTHING with the pin: until 2026-09-11 both sat in one
@@ -783,7 +1120,7 @@ async function resolveOne(backend: RuntimeBackend, explicit: string | undefined,
 export function sweepSuperseded(backend: RuntimeBackend, root: string, label: string | readonly string[], options: Pick<ResolveRuntimesOptions, "log" | "rm">): void {
   const log = options.log ?? (() => {})
   try {
-    const sweep = sweepRuntimes(backend, root, label, Date.now(), { rm: options.rm })
+    const sweep = sweepRuntimes(backend, root, [...(typeof label === "string" ? [label] : label), ...protectedPins(backend, root)], Date.now(), { rm: options.rm })
     for (const retired of sweep.removed) log("info", `runtimes: retired ${retired}`)
     for (const { dir, leases, reason } of sweep.kept) {
       const why = reason ?? `still used by ${leases.map((lease) => `${lease.role} pid ${lease.pid}`).join(", ")}`

@@ -16,19 +16,52 @@
 // in the provisioner. One process serves every project and holds one pin per backend, so module state
 // is the right scope.
 
+import type { RuntimeDownload } from "./runtimes.ts"
+
 export type DeferredBackend = "claude" | "codex"
 
+type Provision = (onProgress: (message: string) => void, onDownload?: (download: RuntimeDownload) => void) => Promise<void>
+
 interface Deferred {
-  provision: (onProgress: (message: string) => void) => Promise<void>
+  provision: Provision
   inFlight?: Promise<void>
   /** The provisioner's latest word, while a download runs. */
   progress?: string
+  /** The same, as numbers. */
+  download?: RuntimeDownload
 }
 
 const deferred = new Map<DeferredBackend, Deferred>()
 
-export function deferRuntime(backend: DeferredBackend, provision: Deferred["provision"]): void {
+export function deferRuntime(backend: DeferredBackend, provision: Provision): void {
   deferred.set(backend, { provision })
+}
+
+/**
+ * A pin whose download was already running when the boot stopped waiting for it ("Open Frizz now"):
+ * it becomes a deferred pin whose first need awaits THIS download rather than starting a second one.
+ * Returns where that download should report from now on. A download that fails leaves the backend
+ * deferred, so its first thread tries again, exactly as a deferred pin's own failure does.
+ */
+export function adoptRuntimeDownload(backend: DeferredBackend, provision: Provision, running: Promise<void>): {
+  progress: (message: string) => void
+  download: (download: RuntimeDownload) => void
+} {
+  const entry: Deferred = { provision }
+  deferred.set(backend, entry)
+  entry.inFlight = running
+    .then(() => { if (deferred.get(backend) === entry) deferred.delete(backend) })
+    .finally(() => {
+      entry.inFlight = undefined
+      entry.progress = undefined
+      entry.download = undefined
+    })
+  // Nobody may be waiting on it yet; its rejection is answered by the next ensureRuntime.
+  entry.inFlight.catch(() => {})
+  return {
+    progress: (message) => { if (entry.inFlight) entry.progress = message },
+    download: (download) => { if (entry.inFlight) entry.download = download },
+  }
 }
 
 /** True until this backend's first need has brought its pin down. */
@@ -44,11 +77,12 @@ export function isRuntimeDeferred(backend: DeferredBackend): boolean {
 export function ensureRuntime(backend: DeferredBackend): Promise<void> {
   const entry = deferred.get(backend)
   if (!entry) return Promise.resolve()
-  entry.inFlight ??= entry.provision((message) => { entry.progress = message })
+  entry.inFlight ??= entry.provision((message) => { entry.progress = message }, (download) => { entry.download = download })
     .then(() => { deferred.delete(backend) })
     .finally(() => {
       entry.inFlight = undefined
       entry.progress = undefined
+      entry.download = undefined
     })
   return entry.inFlight
 }
@@ -57,6 +91,13 @@ export function ensureRuntime(backend: DeferredBackend): Promise<void> {
 export function runtimeDownloads(): Partial<Record<DeferredBackend, string>> {
   const out: Partial<Record<DeferredBackend, string>> = {}
   for (const [backend, entry] of deferred) if (entry.inFlight && entry.progress) out[backend] = entry.progress
+  return out
+}
+
+/** The same downloads as numbers, for the board's download chip. Empty when nothing is downloading. */
+export function runtimeDownloadStates(): Partial<Record<DeferredBackend, RuntimeDownload>> {
+  const out: Partial<Record<DeferredBackend, RuntimeDownload>> = {}
+  for (const [backend, entry] of deferred) if (entry.inFlight && entry.download) out[backend] = entry.download
   return out
 }
 
