@@ -557,6 +557,8 @@ export function useUpdateRestart() {
     launcherUpdate: status?.launcherUpdate,
     /** The update downloading ahead of its restart, as the launcher reports it. */
     preparing,
+    /** A click here updates without raising the overlay: the launcher reports the download first. */
+    quiet: updateAvailable && status?.prepareProgress === true,
     shownError,
     outcome,
     dismiss: () => setDismissed(shownError),
@@ -631,7 +633,10 @@ export function RestartFrizzButton() {
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onClick={() => {
-          setOpen(false)
+          // An update that keeps the board up (`quiet`) leaves the popover open under the pointer: it turns
+          // into the download's checklist as soon as the launcher reports one. Anything else closes it,
+          // because the overlay rises (or the page reloads) at once.
+          if (!control.quiet) setOpen(false)
           void control.run()
         }}
       />
