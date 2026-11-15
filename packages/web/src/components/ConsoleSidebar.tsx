@@ -46,8 +46,8 @@ import { StatusRow } from "./StatusRow.tsx"
 // under them, the scroll marker opposite the card being read. What differs is what it holds, and where
 // it sits:
 //   · the status row draws no crumb, only the house that is the way to the grid (StatusRow.tsx); the
-//     PROJECT chip, saying where a new task goes, leads the prompt box's strip, and its menu is the way to
-//     a project (ConsoleProjectChip.tsx);
+//     PROJECT chip, saying where a new task goes, stands in the prompt box's top-right corner, and its menu
+//     is the way to a project (ConsoleProjectChip.tsx);
 //   · "By status" adds Snoozed and Done under Queue and Running, collapsed until opened and paged behind
 //     "Show more" (lib/consoleBoard.ts); "By project" stays Queue and Running alone, what needs the
 //     operator now;

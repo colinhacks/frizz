@@ -6,7 +6,7 @@ import { showToast } from "../store.ts"
 import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
-import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_HEADER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { paneEnabled } from "../store.ts"
@@ -161,6 +161,7 @@ export function Composer({
   maxHeight = 157,
   autoFocus,
   busy,
+  header,
   footer,
   railLead,
   contextTokens,
@@ -185,6 +186,10 @@ export function Composer({
   // While busy the textarea is locked and the send button spins — used for the New-thread dispatch
   // round-trip so the composer commits instantly instead of sitting live during the spawn.
   busy?: boolean
+  // Rendered INSIDE the box along its TOP edge, above the text, on the footer's inset (the Console's project
+  // chip, in the top-right corner: where the prompt goes). Desktop layouts only; a phone layout places its own
+  // controls.
+  header?: React.ReactNode
   // Rendered INSIDE the box along its bottom edge (the dispatch form's inline mode/model/effort
   // readouts). The textarea auto-grows above it; the footer strip is always reserved.
   footer?: React.ReactNode
@@ -235,6 +240,9 @@ export function Composer({
   // box's bottom row). It was 44px there, with 12px under the line; those 4px and the 5px the footer row gave
   // back are the extra space the maintainer read on 2026-11-07.
   const minHeight = minHeightProp ?? (footer ? 40 : 44)
+  // The text's padding, IDENTICAL on the textarea and its marker backdrop. Under a header row the text takes
+  // 8px above it, the 8px it keeps over a footer row below, so the two rows stand off the text alike.
+  const textPadding = `${header ? "pt-2" : "pt-2.5"} ${footer ? "pb-2" : "pb-2.5"}`
   const taRef = useRef<HTMLTextAreaElement>(null)
   const contextRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -977,6 +985,7 @@ export function Composer({
         </div>
       )}
       {suggestMenu}
+      {header && <div className={`flex min-w-0 items-center ${PROMPT_HEADER_ROW}`}>{header}</div>}
       {/* The textarea and its marker backdrop share one box: the wrapper is a plain block (no layout
           change from the bare textarea), the mirror fills it behind the transparent-backgrounded
           textarea, and the padding/typography class string is IDENTICAL on both by construction —
@@ -987,7 +996,7 @@ export function Composer({
             ref={contextRef}
             aria-hidden
             data-composer-context-backdrop
-            className={`pointer-events-none absolute inset-0 select-none overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word] px-3.5 ${footer ? "pt-2.5 pb-2" : "py-2.5"} text-[13px] leading-relaxed text-transparent`}
+            className={`pointer-events-none absolute inset-0 select-none overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word] px-3.5 ${textPadding} text-[13px] leading-relaxed text-transparent`}
             style={footer ? undefined : { paddingRight: rail.reserve }}
           >
             {backdropSegments}
@@ -1035,7 +1044,7 @@ export function Composer({
           // out of every line). Without a footer the box is a single compact row and the right padding is
           // what keeps text from sliding under the floating paperclip/send buttons. `relative` keeps the
           // caret and text painting above the marker backdrop behind it.
-          className={`relative block w-full resize-none bg-transparent px-3.5 ${footer ? "pt-2.5 pb-2" : "py-2.5"} text-[13px] leading-relaxed text-fg outline-none placeholder:text-muted scrollbar-none disabled:opacity-60`}
+          className={`relative block w-full resize-none bg-transparent px-3.5 ${textPadding} text-[13px] leading-relaxed text-fg outline-none placeholder:text-muted scrollbar-none disabled:opacity-60`}
         />
       </div>
       {/* Attachment chips along the bottom row — one square tile per attached file (image thumbnail or

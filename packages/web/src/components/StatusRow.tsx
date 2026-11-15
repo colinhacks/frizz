@@ -57,8 +57,9 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 // when lit, and 10px of ink a side at rest: the slash stands centred between the house and the name.
 
 // THE CONSOLE'S ROW IS THE HOUSE AND THE ICONS, with no crumb: the project chip that says where the prompt
-// goes rides inside the prompt box, first in its strip (maintainer 2026-11-15: "the project dropdown in the
-// 'All projects' view needs to be inside the sidebar prompt box"; ConsoleProjectChip.tsx). The row read
+// goes stands inside the prompt box, in its top-right corner (maintainer 2026-11-15: "the project dropdown
+// in the 'All projects' view needs to be inside the sidebar prompt box … actually top right";
+// ConsoleProjectChip.tsx). The row read
 // `⌂ / All projects ▾` until 2026-10-29, a second project menu over the chip that then rode inside the
 // prompt box, and then the house alone (maintainer 2026-11-01: "keep the home icon!"). From 2026-11-06 the
 // chip stood here, alone and then after the house as `⌂ / ▣ acme ▾`, until it went back into the box.
