@@ -119,10 +119,6 @@ export const PROMPT_ROW_INSET_SINGLE_LINE = 10
 export const PROMPT_BOX_CORNER = "rounded-[14px]"
 /** The footer row: the 24px controls on the 7px inset, below and to the left. */
 export const PROMPT_FOOTER_ROW = "min-h-[31px] pb-[7px] pl-[7px]"
-/** The header row, the footer's mirror: a 24px control on the 7px inset along the top, so a control in either
- *  corner shares its arc's centre with the box corner's, as the footer's chip and Send do (the Console's project
- *  chip, top right: ConsoleProjectChip.tsx). */
-export const PROMPT_HEADER_ROW = "min-h-[31px] pt-[7px] px-[7px]"
 /** A rail mark's square (the Goal, the paperclip, the microphone, the plain send): the chip's height and corner. */
 export const RAIL_MARK_SQUARE = "h-6 w-6 rounded-md"
 

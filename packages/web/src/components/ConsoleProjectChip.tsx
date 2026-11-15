@@ -7,9 +7,7 @@ import { useConsoleProjectList } from "../lib/consoleProjects.ts"
 import { consoleDispatchProject, pickConsoleDispatchProject, useConsoleDispatchPick } from "../lib/consoleDispatchProject.ts"
 import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 import { useIsMobile } from "../lib/mobile.ts"
-import { PROMPT_CONTROL_TYPOGRAPHY_CLASS } from "../lib/promptControlTypography.ts"
 import { ProjectSquare } from "./ProjectRail.tsx"
-import { PROMPT_CONTROL_CELL, PromptControlGroup } from "./ui/PromptControlGroup.tsx"
 
 // THE CONSOLE'S NEW-THREAD TARGET: which project a thread started on the Console runs in, and the chip
 // that says so. One hook for every surface that starts a thread there — the sidebar's prompt box
@@ -18,24 +16,29 @@ import { PROMPT_CONTROL_CELL, PromptControlGroup } from "./ui/PromptControlGroup
 // in <ProjectScope project={project.slug}>: the dispatch, the model lists, the agent-settings gear and
 // an attachment's upload all go to that project.
 //
-// THE CHIP STANDS IN THE BOX'S TOP-RIGHT CORNER, inside it, above the text (maintainer 2026-11-15: "the
-// project dropdown in the 'All projects' view needs to be inside the sidebar prompt box", then of the strip
-// along the bottom, "i think it should be top left", and of the top-left corner, "actually top right"). It
-// stands on the 7px inset the corner controls share (Composer's header row, lib/iconRhythm.ts
-// PROMPT_HEADER_ROW), over Send in the bottom-right corner, in the model pill's shape. It stood just OUTSIDE
-// the box's upper left, in the status row's crumb, from 2026-11-06 to 2026-11-15, and in the bottom strip
-// before that. Its menu picks that project, and each row also opens the project in a new tab.
+// IN A PROMPT BOX THE CHIP IS INLINE, the first thing on the text's first line, and the placeholder and the
+// prompt follow it on that line (maintainer 2026-11-15: "I kind of was imagining a chip in the upper left, but
+// it wouldn't bump [Describe the task] down to a new line. It would kind of be an inline chip"). The composer
+// places it and indents the first line by its width (Composer's `lead`). The same day it had stood first in the
+// box's bottom row, then on a row of its own above the text in either top corner ("These are all pretty bad");
+// from 2026-11-06 it stood just outside the box, in the status row's crumb. Its menu picks that project, and
+// each row also opens the project in a new tab.
 
-/** `enabled` false (a project's own page) reads nothing and names no project. */
-export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard | undefined; chip: ReactNode } {
+/** `enabled` false (a project's own page) reads nothing and names no project. `chip` stands inline in a prompt
+ *  box; `phoneChip` in the phone's new-thread tool row, beside the model chip. */
+export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard | undefined; chip: ReactNode; phoneChip: ReactNode } {
   const { projects } = useConsoleProjectList(enabled)
   const project = consoleDispatchProject(projects, useConsoleDispatchPick())
   // Memoized: the form's footer is memoized on it, and a fresh element per keystroke would rebuild it.
   const chip = useMemo(
-    () => (project ? <ProjectChip project={project} projects={projects} onPick={pickConsoleDispatchProject} /> : null),
+    () => (project ? <ProjectChip variant="inline" project={project} projects={projects} onPick={pickConsoleDispatchProject} /> : null),
     [project, projects],
   )
-  return { project, chip }
+  const phoneChip = useMemo(
+    () => (project ? <ProjectChip variant="phone" project={project} projects={projects} onPick={pickConsoleDispatchProject} /> : null),
+    [project, projects],
+  )
+  return { project, chip, phoneChip }
 }
 
 // On the phone's new-thread page the chip rides beside the phone's model chip (MobileModelSheet.tsx
@@ -43,61 +46,46 @@ export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard
 const PHONE_CHIP =
   "relative inline-flex h-[32px] min-w-0 max-w-[45vw] shrink items-center gap-[6px] rounded-full border border-border-strong bg-bg pl-[7px] pr-[11px] text-left text-[13.5px] font-medium text-fg outline-none after:absolute after:inset-x-0 after:-inset-y-[6px] after:content-[''] active:bg-hover"
 
-// On a desktop the chip is a pill in the model pill's shape: the same 24px hairline (PromptControlGroup), its
-// name in the same petite caps, and no chevron, as the box's other dropdowns have none. `ml-auto` puts it at the
-// row's right end. The row is its own, so the name has the box's whole width before it truncates.
-const DESKTOP_CHIP_SLOT = "ml-auto flex min-w-0 max-w-full"
+// In a prompt box the chip is a token on the text's first line, drawn as the composer's own inline tokens are
+// (a staged `@` reference: Composer's backdrop pill): a filled rounded box with an inset hairline, at the
+// prose's size. It is 20px tall, inside the line's 21px, with its 14px square 3px from each edge it meets. A
+// hover changes the fill and draws no edge. No chevron: the box's other dropdowns have none.
+const INLINE_CHIP =
+  "group inline-flex h-5 min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-md bg-panel-2 pl-[3px] pr-1.5 text-left text-[12.5px] leading-none text-fg/85 outline-none ring-1 ring-inset ring-border transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-border-strong data-[state=open]:bg-hover-strong data-[state=open]:text-fg"
 
-/**
- * The PROJECT chip: where a task typed in this box will run. A phone draws it in its tool row beside the
- * model chip; a desktop, in the box's top-right corner (DESKTOP_CHIP_SLOT).
- */
-function ProjectChip({ project, projects, onPick }: { project: ProjectCard; projects: ProjectCard[]; onPick: (slug: string) => void }) {
+/** The PROJECT chip: where a task typed in this box will run. */
+function ProjectChip({ variant, project, projects, onPick }: { variant: "inline" | "phone"; project: ProjectCard; projects: ProjectCard[]; onPick: (slug: string) => void }) {
   const phone = useIsMobile()
-  const trigger = (
-    <RadixDropdown.Trigger asChild>
-      <button
-        type="button"
-        aria-label={`Project: ${project.name}`}
-        title={`${project.name}: the project a new thread runs in`}
-        data-console-project-chip={project.slug}
-        className={phone ? PHONE_CHIP : `group inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 ${PROMPT_CONTROL_CELL} bg-transparent text-left text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg data-[state=open]:bg-hover-strong data-[state=open]:text-fg ${PROMPT_CONTROL_TYPOGRAPHY_CLASS}`}
-      >
-        {/* `shrink-0`: the square sizes itself by inline style, and a truncating name beside it squeezed it to 10px. */}
-        <span className="shrink-0">
-          <ProjectSquare project={project} size={phone ? 16 : 14} />
-        </span>
-        {phone ? (
-          <>
-            <span className="min-w-0 truncate">{project.name}</span>
-            <ChevronDown aria-hidden size={13} strokeWidth={2.4} className="shrink-0 text-muted" />
-          </>
-        ) : (
-          // Lifted a pixel, as the model pill's value is (ProfileGridSelector): petite caps sit on the baseline.
-          <span className="relative -top-px min-w-0 truncate">{project.name}</span>
-        )}
-      </button>
-    </RadixDropdown.Trigger>
-  )
+  const inline = variant === "inline"
   return (
     <RadixDropdown.Root modal={false}>
-      {phone ? trigger : (
-        <div className={DESKTOP_CHIP_SLOT}>
-          <PromptControlGroup>{trigger}</PromptControlGroup>
-        </div>
-      )}
+      <RadixDropdown.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`Project: ${project.name}`}
+          title={`${project.name}: the project a new thread runs in`}
+          data-console-project-chip={project.slug}
+          className={inline ? INLINE_CHIP : PHONE_CHIP}
+        >
+          {/* `shrink-0`: the square sizes itself by inline style, and a truncating name beside it squeezed it to 10px. */}
+          <span className="shrink-0">
+            <ProjectSquare project={project} size={inline ? 14 : 16} />
+          </span>
+          <span className="min-w-0 truncate">{project.name}</span>
+          {!inline && <ChevronDown aria-hidden size={13} strokeWidth={2.4} className="shrink-0 text-muted" />}
+        </button>
+      </RadixDropdown.Trigger>
       <RadixDropdown.Portal>
-        {/* On a desktop the menu hangs from the chip's right end, its edge on the chip's hairline, since the chip
-            stands in the box's right corner. On a phone `alignOffset` puts the menu's squares under the chip's: a
-            row's square stands 13px inside the menu (its 1px border, 6px of padding and the row's own 6px), and
-            the chip's 6px inside the chip. The width cap gives a long name the room the crumb's menu does
-            (ProjectCrumb.tsx), plus the rail's 36px. The left collision margin is the smaller one so that offset
-            survives a box against the window's edge: when the chip stood in the status row, in the one-thread pane
-            up to 1440px, it started 12px in, the menu 5px, and a margin of 8 pushed the menu 3px right of the
-            chip's square. */}
+        {/* `alignOffset` puts the menu's squares under the chip's: a row's square stands 13px inside the menu
+            (its 1px border, 6px of padding and the row's own 6px), and the inline chip's 3px inside it, the
+            phone chip's 6px. The width cap gives a long name the room the crumb's menu does (ProjectCrumb.tsx),
+            plus the rail's 36px. The left collision margin is the smaller one so that offset survives a box
+            against the window's edge: when the chip stood in the status row, in the one-thread pane up to
+            1440px, it started 12px in, the menu 5px, and a margin of 8 pushed the menu 3px right of the chip's
+            square. */}
         <RadixDropdown.Content
-          align={phone ? "start" : "end"}
-          alignOffset={phone ? -7 : -1}
+          align="start"
+          alignOffset={inline ? -10 : -7}
           side="bottom"
           sideOffset={5}
           collisionPadding={{ top: 8, right: 8, bottom: 8, left: 4 }}

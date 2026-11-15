@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): in the top-right corner of the prompt box it points,
-// inside it, above the text (maintainer 2026-11-15: "the project dropdown in the 'All projects' view needs to
-// be inside the sidebar prompt box … actually top right"), over Send in the bottom-right corner, in the model
-// pill's shape. It stood in the status row above the box from 2026-11-06 to 2026-11-15, which is now the
-// house and the icons. Clicking a row of its menu picks the project a prompt goes to. Each row's arrow, in a rail down the menu's right edge, opens that project in a new tab,
-// and that must not move the pick: the two sit on one line, and a pick nobody meant sends the next thread to
+// THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): inline at the start of the prompt box's first line, the
+// placeholder and the prompt following it on that line (maintainer 2026-11-15: "a chip in the upper left, but it
+// wouldn't bump [Describe the task] down to a new line. It would kind of be an inline chip"). It stood in the
+// status row above the box from 2026-11-06 to 2026-11-15, which is now the house and the icons. Clicking a row
+// of its menu picks the project a prompt goes to. Each row's arrow, in a rail down the menu's right edge, opens
+// that project in a new tab, and that must not move the pick: the two sit on one line, and a pick nobody meant sends the next thread to
 // the wrong project.
 //
 // Real server, two projects (nothing is dispatched):
@@ -17,7 +17,7 @@ const baseUrl = process.env.FRIZZ_CONSOLE_PROJECT_CHIP_E2E_URL
 const CHIP = "[data-console-project-chip]"
 const PICK_KEY = "frizz:console-dispatch-project"
 
-test("the chip stands in the prompt box's top-right corner, and its menu picks a project or opens one in a new tab", { skip: !baseUrl, timeout: 120_000 }, async () => {
+test("the chip stands inline at the start of the prompt box's text, and its menu picks a project or opens one in a new tab", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   // The Console lists the projects the server has opened, and a server opens one on its first read.
@@ -32,32 +32,32 @@ test("the chip stands in the prompt box's top-right corner, and its menu picks a
     await page.goto(`${baseUrl}/console`, { waitUntil: "networkidle2" })
     await page.waitForSelector(`[data-composer-box] ${CHIP}`)
 
-    // In the box's top-right corner, above the text: on Send's inset, its right edge over Send's, in a pill of
-    // the model pill's height and type. The status row above keeps only the house at its left end, and the box
-    // stands as tall as a project's.
+    // On the text's first line, at its left edge, inside the line's band: the textarea indents its first line
+    // past the chip, so the placeholder starts beside it rather than under it. The status row above keeps only
+    // the house at its left end, and the box stands as tall as a project's.
     const place = await page.evaluate((chip) => {
       const box = document.querySelector("[data-composer-box]")!
       const row = document.querySelector("[data-status-row]")!
-      const [own, model] = [...box.querySelectorAll("[data-prompt-control-group]")]
-      const outer = box.getBoundingClientRect()
-      const a = own.getBoundingClientRect()
-      const b = model.getBoundingClientRect()
-      const t = box.querySelector("textarea")!.getBoundingClientRect()
-      const send = [...box.querySelectorAll("button")].at(-1)!.getBoundingClientRect()
+      const text = box.querySelector("textarea")!
+      const style = getComputedStyle(text)
+      const t = text.getBoundingClientRect()
       const button = document.querySelector(chip)!
+      const c = button.getBoundingClientRect()
+      const lineTop = t.top + parseFloat(style.paddingTop)
+      const lineBottom = lineTop + parseFloat(style.lineHeight)
+      const textLeft = t.left + parseFloat(style.paddingLeft)
       return {
         rowLeads: row.firstElementChild!.matches('a[aria-label="Projects"]') && row.firstElementChild!.getAttribute("href") === "/?home=projects",
         rowHasChip: row.querySelector(chip) !== null,
-        ownPill: own.contains(button) && !model.contains(button),
-        aboveText: a.bottom <= t.top,
-        overSend: Math.abs(a.right - send.right) < 0.5 && Math.abs((a.top - outer.top) - (outer.bottom - send.bottom)) < 0.5,
-        modelHeight: a.height === b.height,
-        sameType: getComputedStyle(button.querySelector(".truncate")!).fontVariantCaps === getComputedStyle(model.querySelector(".profile-grid-value")!).fontVariantCaps,
+        inBox: box.contains(button),
+        onFirstLine: c.top >= lineTop - 1 && c.bottom <= lineBottom + 1,
+        onTextEdge: Math.abs(c.left - textLeft) < 0.5,
+        indentClearsChip: Math.abs(textLeft + parseFloat(style.textIndent) - (Math.ceil(c.width) + 6 + c.left)) < 0.5,
         chevrons: button.querySelectorAll("svg").length,
-        height: outer.height,
+        height: box.getBoundingClientRect().height,
       }
     }, CHIP)
-    assert.deepEqual(place, { rowLeads: true, rowHasChip: false, ownPill: true, aboveText: true, overSend: true, modelHeight: true, sameType: true, chevrons: 0, height: 129 })
+    assert.deepEqual(place, { rowLeads: true, rowHasChip: false, inBox: true, onFirstLine: true, onTextEdge: true, indentClearsChip: true, chevrons: 0, height: 129 })
 
     const shown = () => page.$eval(CHIP, (el) => el.getAttribute("data-console-project-chip")!)
     const start = await shown()
@@ -79,20 +79,20 @@ test("the chip stands in the prompt box's top-right corner, and its menu picks a
     })
 
     // The layout chosen on 2026-11-06: the picked row is filled with no check, every row stands as far from
-    // the menu's left edge as from the rail's hairline, and the arrows stand in a rail that runs the menu's full
-    // height. The menu hangs from the chip's right end, its edge on the chip's hairline.
+    // the menu's left edge as from the rail's hairline, the squares sit under the chip's, and the arrows stand
+    // in a rail that runs the menu's full height.
     const layout = await page.evaluate((chip) => {
       const rows = [...document.querySelectorAll("[data-console-project-option]")]
       const menu = rows[0].closest('[role="menu"]')!
       const m = menu.getBoundingClientRect()
       const rail = menu.querySelector(':scope > [aria-hidden="true"]')!.getBoundingClientRect()
-      const chipPill = document.querySelector(chip)!.closest("[data-prompt-control-group]")!.getBoundingClientRect()
+      const chipSquare = document.querySelector(chip)!.firstElementChild!.getBoundingClientRect()
       const border = parseFloat(getComputedStyle(menu).borderLeftWidth)
       return {
         checked: rows.filter((r) => r.getAttribute("aria-checked") === "true").map((r) => r.getAttribute("data-console-project-option")),
         marks: rows.reduce((n, r) => n + r.querySelectorAll("svg").length, 0),
         evenSides: rows.every((r) => Math.abs(r.getBoundingClientRect().left - m.left - border - (rail.left - r.getBoundingClientRect().right)) < 0.5),
-        underChipEnd: Math.abs(m.right - chipPill.right) < 0.5 && m.top > chipPill.bottom,
+        squaresUnderChip: rows.every((r) => Math.abs(r.firstElementChild!.getBoundingClientRect().left - chipSquare.left) < 0.5),
         railFullHeight: Math.abs(rail.top - m.top - border) < 0.5 && Math.abs(m.bottom - border - rail.bottom) < 0.5,
         arrowsInRail: [...document.querySelectorAll("[data-console-project-open]")].every((a) => {
           const b = a.getBoundingClientRect()
@@ -100,7 +100,7 @@ test("the chip stands in the prompt box's top-right corner, and its menu picks a
         }),
       }
     }, CHIP)
-    assert.deepEqual(layout, { checked: [start], marks: 0, evenSides: true, underChipEnd: true, railFullHeight: true, arrowsInRail: true })
+    assert.deepEqual(layout, { checked: [start], marks: 0, evenSides: true, squaresUnderChip: true, railFullHeight: true, arrowsInRail: true })
 
     // The pointer on an arrow lights the arrow alone, never its row.
     await page.hover(link)
@@ -138,7 +138,7 @@ test("the chip stands in the prompt box's top-right corner, and its menu picks a
     await closed()
     assert.equal(await page.evaluate((key) => localStorage.getItem(key), PICK_KEY), other)
 
-    // The dialog's box carries the chip in its top-right corner too, on the same pick.
+    // The dialog's box carries the chip inline too, on the same pick.
     await page.evaluate(async () => {
       const store = "/src/store.ts"
       const { openNewThread } = await import(/* @vite-ignore */ store)
@@ -146,9 +146,9 @@ test("the chip stands in the prompt box's top-right corner, and its menu picks a
     })
     await page.waitForSelector(`[role="dialog"] ${CHIP}[data-console-project-chip="${other}"]`)
     assert.equal(await page.evaluate((chip) => {
-      const box = document.querySelector('[role="dialog"] [data-composer-box]')!
-      const own = box.querySelector(chip)?.getBoundingClientRect()
-      return own !== undefined && own.bottom <= box.querySelector("textarea")!.getBoundingClientRect().top
+      const text = document.querySelector('[role="dialog"] [data-composer-box] textarea')!
+      const own = document.querySelector(`[role="dialog"] ${chip}`)!.getBoundingClientRect()
+      return parseFloat(getComputedStyle(text).textIndent) > own.width && own.top < text.getBoundingClientRect().top + parseFloat(getComputedStyle(text).lineHeight) + 10
     }, CHIP), true)
 
     assert.deepEqual(errors, [])

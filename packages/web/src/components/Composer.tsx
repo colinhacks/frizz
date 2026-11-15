@@ -6,7 +6,7 @@ import { showToast } from "../store.ts"
 import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
-import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_HEADER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { paneEnabled } from "../store.ts"
@@ -22,6 +22,9 @@ import { basename } from "../lib/paths.ts"
 import { useKeyboardInset } from "../lib/keyboardInset.ts"
 import { useFileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
 import { AnchoredLayer, aboveAnchor } from "./ui/AnchoredLayer.tsx"
+
+/** Box px between an inline lead's right edge and the first letter after it (Composer's `lead`). */
+const LEAD_GAP = 6
 
 // The shared prompt composer (the pattern the user called "perfect"): ONE rounded bordered box
 // holding a borderless auto-growing textarea plus a small round accent send button hovering INSIDE
@@ -161,7 +164,7 @@ export function Composer({
   maxHeight = 157,
   autoFocus,
   busy,
-  header,
+  lead,
   footer,
   railLead,
   contextTokens,
@@ -186,10 +189,11 @@ export function Composer({
   // While busy the textarea is locked and the send button spins — used for the New-thread dispatch
   // round-trip so the composer commits instantly instead of sitting live during the spawn.
   busy?: boolean
-  // Rendered INSIDE the box along its TOP edge, above the text, on the footer's inset (the Console's project
-  // chip, in the top-right corner: where the prompt goes). Desktop layouts only; a phone layout places its own
-  // controls.
-  header?: React.ReactNode
+  // A control INLINE at the start of the text's first line (the Console's project chip: where the prompt goes).
+  // The text's first line is indented by its measured width, so the placeholder and the typed prose follow it
+  // on that line and wrap back to the box's left edge under it. Desktop layouts only; a phone layout places its
+  // own controls.
+  lead?: React.ReactNode
   // Rendered INSIDE the box along its bottom edge (the dispatch form's inline mode/model/effort
   // readouts). The textarea auto-grows above it; the footer strip is always reserved.
   footer?: React.ReactNode
@@ -240,9 +244,6 @@ export function Composer({
   // box's bottom row). It was 44px there, with 12px under the line; those 4px and the 5px the footer row gave
   // back are the extra space the maintainer read on 2026-11-07.
   const minHeight = minHeightProp ?? (footer ? 40 : 44)
-  // The text's padding, IDENTICAL on the textarea and its marker backdrop. Under a header row the text takes
-  // 8px above it, the 8px it keeps over a footer row below, so the two rows stand off the text alike.
-  const textPadding = `${header ? "pt-2" : "pt-2.5"} ${footer ? "pb-2" : "pb-2.5"}`
   const taRef = useRef<HTMLTextAreaElement>(null)
   const contextRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -359,6 +360,24 @@ export function Composer({
     return () => intake.set(null)
   }, [intake])
 
+  // THE LEAD'S INDENT: the text's first line starts LEAD_GAP past the lead's right edge. Measured, not set,
+  // because the lead is a project's name, and re-measured when it changes width (another project picked).
+  const leadRef = useRef<HTMLDivElement>(null)
+  const [leadIndent, setLeadIndent] = useState(0)
+  const hasLead = Boolean(lead)
+  useLayoutEffect(() => {
+    const el = leadRef.current
+    if (!el) {
+      setLeadIndent(0)
+      return
+    }
+    const measure = () => setLeadIndent(Math.ceil(el.getBoundingClientRect().width) + LEAD_GAP)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasLead])
+
   // Auto-grow on every value change. A first layout pass
   // can precede font settlement or a narrow drawer's final width, leaving scrollHeight stale and the
   // last wrapped line hidden beneath the in-box controls. Recheck on the next frame and when fonts
@@ -399,7 +418,7 @@ export function Composer({
     // padding class. Some call sites rebuild the footer JSX every parent render (each board tick on
     // an open thread), and depending on the node itself tore down and rebuilt the ResizeObserver +
     // fonts.ready hook on every one of those renders for zero layout change.
-  }, [value, maxHeight, Boolean(footer)])
+  }, [value, maxHeight, Boolean(footer), leadIndent])
 
   // THE TOKEN BACKDROP: a metrics-identical mirror of the prose, absolutely positioned behind the
   // (transparent-backgrounded) textarea, in which everything renders as TRANSPARENT text except that
@@ -428,11 +447,13 @@ export function Composer({
   }, [prose, stagedTokens])
 
   // The mirror rides the textarea's own scroll position (a textarea at maxHeight scrolls its
-  // content; the backdrop must pan with it or the pills detach from their tokens).
+  // content; the backdrop must pan with it or the pills detach from their tokens). So does the lead, which
+  // stands on the first line and leaves the box's top edge with it.
   const syncContextScroll = () => {
     const el = taRef.current
     const backdrop = contextRef.current
     if (el && backdrop) backdrop.scrollTop = el.scrollTop
+    if (el && leadRef.current) leadRef.current.style.transform = el.scrollTop ? `translateY(${-el.scrollTop}px)` : ""
   }
   useLayoutEffect(syncContextScroll)
 
@@ -985,19 +1006,27 @@ export function Composer({
         </div>
       )}
       {suggestMenu}
-      {header && <div className={`flex min-w-0 items-center ${PROMPT_HEADER_ROW}`}>{header}</div>}
       {/* The textarea and its marker backdrop share one box: the wrapper is a plain block (no layout
           change from the bare textarea), the mirror fills it behind the transparent-backgrounded
           textarea, and the padding/typography class string is IDENTICAL on both by construction —
           any drift between them detaches every pill from its token. */}
       <div className="relative">
+        {/* The lead stands on the first line: the line's 21px band, 10px down (the text's `pt-2.5`), its left
+            edge on the text's (`px-3.5`). The clip keeps it inside the box when the text scrolls it away. */}
+        {lead && (
+          <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden">
+            <div ref={leadRef} data-composer-lead className="pointer-events-auto absolute left-3.5 top-2.5 flex h-[21px] max-w-[60%] items-center">
+              {lead}
+            </div>
+          </div>
+        )}
         {backdropSegments && (
           <div
             ref={contextRef}
             aria-hidden
             data-composer-context-backdrop
-            className={`pointer-events-none absolute inset-0 select-none overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word] px-3.5 ${textPadding} text-[13px] leading-relaxed text-transparent`}
-            style={footer ? undefined : { paddingRight: rail.reserve }}
+            className={`pointer-events-none absolute inset-0 select-none overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word] px-3.5 ${footer ? "pt-2.5 pb-2" : "py-2.5"} text-[13px] leading-relaxed text-transparent`}
+            style={{ paddingRight: footer ? undefined : rail.reserve, textIndent: leadIndent || undefined }}
           >
             {backdropSegments}
           </div>
@@ -1008,7 +1037,7 @@ export function Composer({
           // 1Password's extension offers to create an SSH key on any bare textarea it focuses; this is
           // its documented opt-out. Every prose textarea in the app carries it.
           data-1p-ignore
-          onScroll={backdropSegments ? syncContextScroll : undefined}
+          onScroll={backdropSegments || lead ? syncContextScroll : undefined}
           data-surface={surface}
           // Escape here BLURS (onKeyDown below; on /full it leaves fullscreen instead); the enclosing
           // ThreadSheet reads this to leave the key to us instead of dismissing itself on the same press.
@@ -1038,13 +1067,13 @@ export function Composer({
           placeholder={placeholder}
           rows={1}
           spellCheck={false}
-          style={{ minHeight, maxHeight, paddingRight: footer ? undefined : rail.reserve }}
+          style={{ minHeight, maxHeight, paddingRight: footer ? undefined : rail.reserve, textIndent: leadIndent || undefined }}
           // With a footer strip the box is an INSET-FOOTER layout: the strip below already reserves the
           // vertical band the floating buttons occupy, so the text runs FULL width (no right rail carved
           // out of every line). Without a footer the box is a single compact row and the right padding is
           // what keeps text from sliding under the floating paperclip/send buttons. `relative` keeps the
           // caret and text painting above the marker backdrop behind it.
-          className={`relative block w-full resize-none bg-transparent px-3.5 ${textPadding} text-[13px] leading-relaxed text-fg outline-none placeholder:text-muted scrollbar-none disabled:opacity-60`}
+          className={`relative block w-full resize-none bg-transparent px-3.5 ${footer ? "pt-2.5 pb-2" : "py-2.5"} text-[13px] leading-relaxed text-fg outline-none placeholder:text-muted scrollbar-none disabled:opacity-60`}
         />
       </div>
       {/* Attachment chips along the bottom row — one square tile per attached file (image thumbnail or
