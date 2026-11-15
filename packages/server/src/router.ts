@@ -204,7 +204,8 @@ import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command
 import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
 import { hasLaunchPrefix } from "./backend/launch-prefix.ts"
 import { withDefaultAgentProfile } from "./dispatch-preferences.ts"
-import { runtimeDownloads } from "./runtime-deferral.ts"
+import { runtimeDownloads, runtimeDownloadStates } from "./runtime-deferral.ts"
+import { runtimeDownloadChips } from "./boot-view.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
 import { appServerTurnStalled, registeredDoneFence, resolveLiveWatchTarget, resolveRecurringPrompt, resolveSessionTitle } from "./board.ts"
@@ -5345,6 +5346,19 @@ export function createRouter(ctx: AppContext) {
     runtimeDownloads: query({
       output: z.object({ claude: z.string().optional(), codex: z.string().optional() }),
       handler: async () => runtimeDownloads(),
+    }),
+    // The same downloads for the status row's chip, once the board opened without them ("Open Frizz
+    // now" on the restart screen). The chip asks once as the board loads and then only while one is out.
+    runtimeDownloadChips: query({
+      output: z.array(z.object({
+        backend: z.enum(["claude", "codex"]),
+        name: z.string(),
+        state: z.enum(["live", "stalled"]),
+        fraction: z.number().optional(),
+        reading: z.string(),
+        detail: z.string(),
+      })),
+      handler: async () => runtimeDownloadChips(runtimeDownloadStates()),
     }),
     acpAgents: query({
       output: z.array(AcpAgent),

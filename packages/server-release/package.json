@@ -19,7 +19,8 @@
   ],
   "frizzServer": {
     "protocol": 1,
-    "dataEpoch": 1
+    "dataEpoch": 1,
+    "provisionRuntimes": 1
   },
   "optionalDependencies": {
     "@parcel/watcher-darwin-x64": "2.5.6",

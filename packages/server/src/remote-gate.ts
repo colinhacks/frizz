@@ -76,6 +76,7 @@ export const REMOTE_ACCESS = {
   settingsGet: "allow",
   dispatchPreferencesGet: "allow",
   runtimeDownloads: "allow",
+  runtimeDownloadChips: "allow",
   codexModels: "allow",
   acpAgents: "allow",
   quota: (input: { force?: unknown } | undefined) => input?.force ? onThisMachine("Refreshing the quota") : null,

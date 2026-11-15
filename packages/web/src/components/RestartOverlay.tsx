@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { AlertTriangle, RefreshCw, X } from "lucide-react"
+import type { BootView } from "@frizz/shared"
 import { Z_RESTART } from "../lib/layers.ts"
+import { requestFrizzOpenNow } from "../api/restart.ts"
+import { BootProgressCard } from "./BootProgress.tsx"
 
 // The default copy shown while the supervisor rebuilds and promotes a fresh Frizz artifact. The
 // supervisor may hand us a more specific `message`; when it does we show that as the sub-line.
@@ -30,6 +33,10 @@ export function stalledRestartCopy(silentFor: string | undefined): string {
 //    outside the page, and PageFrame swallows it for as long as this overlay blocks (PageFrame.tsx).
 // The rpc-layer mutation gate remains as a final backstop; between these, the "Frizz is restarting"
 // red error is unreachable through ordinary interaction.
+//
+// The progress card is the one exception, because it carries a button of its own ("Open Frizz now"):
+// Tab cycles among the card's own buttons instead of leaving it, and Enter reaches whichever of them has
+// focus. Focus still can never leave the card.
 function swallowsInteractionKey(event: KeyboardEvent): boolean {
   if (event.key === "Tab" || event.key === "Enter") return true
   const meta = event.metaKey || event.ctrlKey
@@ -58,6 +65,7 @@ export function RestartOverlay({
   message,
   stalled = false,
   silentFor,
+  progress,
 }: {
   open: boolean
   message?: string | null
@@ -65,15 +73,23 @@ export function RestartOverlay({
   stalled?: boolean
   /** How long nothing has answered, already spelled in the house grammar (`3m`). */
   silentFor?: string
+  /** What the restart is doing, when the launcher reports it (api/restart.ts `progress`): drawn as a checklist. */
+  progress?: BootView
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
   // Dismissal is per stall: a board that answers again and then goes silent again earns a fresh notice.
   const [dismissed, setDismissed] = useState(false)
+  // "Open Frizz now", from the click until the boot reports `opening` (or the launcher refuses).
+  const [openNow, setOpenNow] = useState<{ sent: boolean; error?: string }>({ sent: false })
   const blocking = open && !stalled
 
   useEffect(() => {
     if (!stalled) setDismissed(false)
   }, [stalled])
+
+  useEffect(() => {
+    if (!open) setOpenNow({ sent: false })
+  }, [open])
 
   useEffect(() => {
     if (!blocking) return
@@ -83,6 +99,18 @@ export function RestartOverlay({
     if (active instanceof HTMLElement) active.blur()
     cardRef.current?.focus({ preventScroll: true })
     const guard = (event: KeyboardEvent) => {
+      const card = cardRef.current
+      const buttons = card ? Array.from(card.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")) : []
+      if (event.key === "Tab" && buttons.length > 0) {
+        // Cycle within the card: from the card itself or the last button to the first, and back.
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        const next = event.shiftKey ? (at <= 0 ? buttons.length - 1 : at - 1) : (at + 1) % buttons.length
+        buttons[next]?.focus()
+        return
+      }
+      if (event.key === "Enter" && buttons.includes(document.activeElement as HTMLButtonElement)) return
       if (!swallowsInteractionKey(event)) return
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -121,6 +149,26 @@ export function RestartOverlay({
           </div>
           <p aria-live="polite" className="mt-2.5 text-[12px] leading-relaxed text-muted">{stalledRestartCopy(silentFor)}</p>
         </div>
+      </div>
+    )
+  }
+
+  if (progress) {
+    const requestOpenNow = () => {
+      setOpenNow({ sent: true })
+      void requestFrizzOpenNow().then((answer) => {
+        if (!answer.ok) setOpenNow({ sent: false, error: answer.message })
+      })
+    }
+    return (
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={progress.title}
+        // The same blocking scrim as the card below: see its comment.
+        className={`pointer-events-auto fixed inset-0 ${Z_RESTART} flex items-center justify-center bg-scrim-55 px-4 backdrop-blur-md backdrop-saturate-150`}
+      >
+        <BootProgressCard view={progress} cardRef={cardRef} onOpenNow={requestOpenNow} openNowSent={openNow.sent} openNowError={openNow.error} />
       </div>
     )
   }

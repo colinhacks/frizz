@@ -30,7 +30,8 @@ import type { RelayAccess } from "@frizz/shared"
 import { auditLogPathForStateDir, fileAuditLog } from "./audit.ts"
 import { RestartSupervisorProxy, type RestartResult } from "./restart-supervisor.ts"
 import { log as frizzLog } from "./logging.ts"
-import { BOOT_HARD_TIMEOUT_MS, BOOT_STALL_TIMEOUT_MS, readBootProgress } from "./boot-progress.ts"
+import { BOOT_HARD_TIMEOUT_MS, BOOT_STALL_TIMEOUT_MS, bootIsDownloading, readBootProgress, requestBootOpenNow, type BootRuntime } from "./boot-progress.ts"
+import { bootView, type BootView, type BootViewKind } from "./boot-view.ts"
 
 export const DEV_RESTART_DEBOUNCE_MS = 180
 export const DEV_CRASH_STABLE_MS = 5000
@@ -178,8 +179,17 @@ export interface DevSupervisorOptions {
   commitUpdate?: () => Promise<void> | void
   /** Candidate boot stall window for `updateMode: "child"`; injectable for real-child fixtures. */
   updateReadyTimeoutMs?: number
-  /** Hard ceiling even if candidate boot progress keeps advancing. */
+  /**
+   * Hard ceiling even if candidate boot progress keeps advancing. Time the boot spends downloading a
+   * runtime is not counted against it (boot-progress.ts bootIsDownloading).
+   */
   updateHardTimeoutMs?: number
+  /**
+   * What an update's prepare phase is downloading while the old release still serves, for the board's
+   * update button: the release being installed, when the prepare began, and each runtime it fetches
+   * in a boot's own shape. Undefined outside a prepare. A cheap read of state the launcher holds.
+   */
+  updateProgress?: () => UpdatePrepareProgress | undefined
   /** Required healthy interval before committing a child update; injectable for real-child fixtures. */
   updateStabilizeMs?: number
   /** Cheap CACHED "is a newer artifact actually available" read; see RestartSupervisorProxy. */
@@ -228,6 +238,14 @@ export interface DevSupervisorOptions {
    * raw mode has to put it back here (PaneHost.reclaim).
    */
   onChildExit?: () => void
+}
+
+export interface UpdatePrepareProgress {
+  version: string
+  startedAt: number
+  /** The release's own package is on disk (the npm install is over). */
+  installed: boolean
+  runtimes: Partial<Record<"claude" | "codex", BootRuntime>>
 }
 
 export interface DevSupervisor {
@@ -601,6 +619,19 @@ class Supervisor implements DevSupervisor {
   private booted = false
   /** When the restart currently in flight began, so its "ready" beat can report a duration. */
   private restartStartedAt: number | undefined
+  /**
+   * The restart the recovery page is drawing: what kind, since when, what was stopped and how long that
+   * took, and the boot an "Open Frizz now" was sent to. Null while the board is serving.
+   */
+  private restartView: {
+    kind: BootViewKind
+    startedAt: number
+    version?: string
+    stopped?: { version?: string; ms: number } | "stopping"
+    openNowFor?: number
+  } | null = null
+  private readonly updateProgress?: () => UpdatePrepareProgress | undefined
+  private readonly targetVersion?: () => string | undefined
   /** Last beat emitted, so a transition reported twice is printed once. */
   private lastActivity: string | undefined
   private readonly publicProxy: RestartSupervisorProxy
@@ -680,6 +711,8 @@ class Supervisor implements DevSupervisor {
     this.commitUpdate = opts.commitUpdate
     this.updateReadyTimeoutMs = Math.max(1, opts.updateReadyTimeoutMs ?? STABLE_UPDATE_READY_TIMEOUT_MS)
     this.updateHardTimeoutMs = Math.max(1, opts.updateHardTimeoutMs ?? BOOT_HARD_TIMEOUT_MS)
+    this.updateProgress = opts.updateProgress
+    this.targetVersion = opts.updateVersion
     this.updateStabilizeMs = Math.max(0, opts.updateStabilizeMs ?? STABLE_UPDATE_STABILIZE_MS)
     this.rollbackUpdate = opts.rollbackUpdate
     this.revertUpdate = opts.revertUpdate
@@ -707,16 +740,22 @@ class Supervisor implements DevSupervisor {
       rejectedUpdate: opts.rejectedUpdate,
       launcherUpdate: opts.launcherUpdate,
       dev: opts.dev,
+      prepareProgress: opts.updateProgress !== undefined,
       status: () => {
         // The proxy reports THIS answer, not its own acknowledged transition, while an update is in
         // flight: only this supervisor knows when the prepare phase ends and the drain begins.
-        if (this.handoffDraining || this.browserRestart || this.restartRunning) return { state: "restarting" as const }
+        if (this.handoffDraining || this.browserRestart || this.restartRunning) {
+          const progress = this.restartProgress()
+          return { state: "restarting" as const, ...(progress ? { progress } : {}) }
+        }
         const failed = this.child === null && this.boot === null
         const artifactDigest = this.activeChildEnvironment.FRIZZ_STABLE_ARTIFACT
+        const preparing = this.prepareProgress()
         return failed
           ? { state: "failed" as const, message: "Frizz application server is not ready", ...(artifactDigest ? { artifactDigest } : {}) }
-          : { state: "ready" as const, ...(artifactDigest ? { artifactDigest } : {}) }
+          : { state: "ready" as const, ...(artifactDigest ? { artifactDigest } : {}), ...(preparing ? { progress: preparing } : {}) }
       },
+      openNow: () => this.openNow(),
     })
     this.firstBoot = new Promise<DevBoot>((resolveFirstBoot) => {
       this.resolveFirstBoot = resolveFirstBoot
@@ -728,6 +767,59 @@ class Supervisor implements DevSupervisor {
 
   currentBoot(): DevBoot | null {
     return this.boot
+  }
+
+  /** The checklist the recovery page draws while a restart is in flight (boot-view.ts). */
+  private restartProgress(): BootView | undefined {
+    const view = this.restartView
+    if (!view) return undefined
+    const pid = this.child?.pid
+    // Only THIS boot's file: a leftover from the server before it, or a dead boot, must not read as progress.
+    const raw = pid !== undefined ? readBootProgress(this.launchTarget.stateDir) : null
+    return bootView({
+      kind: view.kind,
+      ...(view.version ? { version: view.version } : {}),
+      startedAt: view.startedAt,
+      now: Date.now(),
+      ...(view.stopped ? { stopped: view.stopped } : {}),
+      progress: raw && raw.pid === pid ? raw : null,
+      openNowRequested: pid !== undefined && view.openNowFor === pid,
+    })
+  }
+
+  /** What an update is downloading while the old release still serves, for the board's update button. */
+  private prepareProgress(): BootView | undefined {
+    if (!this.updateChildRunning || this.restartView) return undefined
+    const prepare = this.updateProgress?.()
+    if (!prepare) return undefined
+    return bootView({ kind: "prepare", version: prepare.version, startedAt: prepare.startedAt, now: Date.now(), progress: null, installed: prepare.installed, runtimes: prepare.runtimes })
+  }
+
+  /**
+   * "Open Frizz now" from the recovery page: ask the booting server to stop waiting on its runtime
+   * download (boot-progress.ts requestBootOpenNow). The boot decides; this only delivers the request.
+   */
+  private openNow(): { ok: boolean; message?: string } {
+    const pid = this.child?.pid
+    if (!this.restartView || pid === undefined || this.boot) return { ok: false, message: "Frizz is not starting right now" }
+    try {
+      requestBootOpenNow(this.launchTarget.stateDir, pid)
+    } catch (error) {
+      return { ok: false, message: `could not ask the server to open: ${error instanceof Error ? error.message : error}` }
+    }
+    this.restartView.openNowFor = pid
+    this.logLine(`[frizz] asked the booting server (pid ${pid}) to open before its download finishes`)
+    return { ok: true }
+  }
+
+  /** Stop the running child, recording what was stopped and how long it took for the recovery page. */
+  private async stopChildForRestart(): Promise<void> {
+    if (!this.child) return
+    const version = this.servingVersion()
+    const startedAt = Date.now()
+    if (this.restartView) this.restartView.stopped = "stopping"
+    await this.stopChild()
+    if (this.restartView) this.restartView.stopped = { ...(version ? { version } : {}), ms: Date.now() - startedAt }
   }
 
   /** Mint a single-use access link for the public origin, or null when none is declared. */
@@ -875,13 +967,15 @@ class Supervisor implements DevSupervisor {
     let completeRestart!: () => void
     const completion = new Promise<void>((resolveCompletion) => { completeRestart = resolveCompletion })
     this.restartCompletion = completion
+    // One restart as the page tells it, however many times a source edit makes the loop below go round.
+    this.restartView = { kind: this.booted || this.child ? "restart" : "start", startedAt: Date.now() }
     try {
       let shouldReloadLauncher = false
       do {
         this.restartAgain = false
         shouldReloadLauncher ||= this.reloadLauncher
         this.reloadLauncher = false
-        await this.stopChild()
+        await this.stopChildForRestart()
         // An update can arrive while a watcher restart is between its drain and spawn. It owns the
         // next child slot, so this older restart must finish without creating another generation.
         if (!this.closed && !this.updateChildRunning) {
@@ -923,10 +1017,19 @@ class Supervisor implements DevSupervisor {
     const work = (async (): Promise<RestartResult> => {
       this.lastRestartFailure = undefined
       this.requestRestart("Restart Frizz requested from browser", true)
-      const deadline = Date.now() + 30_000
+      // Thirty seconds WITHOUT PROGRESS, not thirty seconds: a boot downloading a runtime reports every
+      // half second for as long as it takes, and calling that "did not become ready" showed the failure
+      // card over a boot that was fine (2026-11-15).
+      let deadline = Date.now() + 30_000
+      let lastStep = -1
       while (!this.closed && Date.now() < deadline) {
         const boot = this.boot
         if (boot && (!previousBoot || boot.bootId !== previousBoot)) return { state: "ready" }
+        const progress = readBootProgress(this.launchTarget.stateDir)
+        if (progress && progress.pid === this.child?.pid && progress.step > lastStep) {
+          lastStep = progress.step
+          deadline = Date.now() + 30_000
+        }
         if (this.lastRestartFailure) {
           this.writeStatus("failed", this.lastRestartFailure, null)
           return { state: "failed", message: this.lastRestartFailure }
@@ -935,7 +1038,7 @@ class Supervisor implements DevSupervisor {
       }
       const message = this.closed
         ? "Frizz supervisor stopped while restarting"
-        : "Frizz application server did not become ready within 30 seconds"
+        : "Frizz application server made no boot progress for 30 seconds"
       this.writeStatus("failed", message)
       return { state: "failed", message }
     })().finally(() => { this.browserRestart = null })
@@ -1024,7 +1127,9 @@ class Supervisor implements DevSupervisor {
       // Do not run two server children. The old generation owns the shared runtime resources until
       // this exact drain completes; only then may the prepared launch provider select its candidate.
       this.handoffDraining = true
-      await this.stopChild()
+      const target = this.targetVersion?.()
+      this.restartView = { kind: "update", startedAt: Date.now(), ...(target ? { version: target } : {}) }
+      await this.stopChildForRestart()
       if (this.closed) return this.failChildUpdate("Frizz supervisor stopped while starting the update", true)
       const ready = await this.spawnChild({
         updateCandidate: true,
@@ -1325,17 +1430,26 @@ class Supervisor implements DevSupervisor {
         // more time; a stale/foreign progress file must never keep a stuck candidate alive.
         const stallMs = options.readinessTimeoutMs
         const hardMs = options.hardTimeoutMs ?? BOOT_HARD_TIMEOUT_MS
-        const hardDeadline = Date.now() + hardMs
+        // The hard ceiling moves out by every moment the boot spends downloading a runtime: a slow
+        // connection is not a wedged server, and killing the boot started its download over — on a
+        // slow enough connection, forever (2026-11-15). The stall window below still applies.
+        let hardDeadline = Date.now() + hardMs
         let stallDeadline = Date.now() + stallMs
         let lastStep = -1
         let lastPhase: string | undefined
+        let lastCheck = Date.now()
+        let downloading = false
         const checkProgress = () => {
           if (spawnSettled) return
           const now = Date.now()
+          if (downloading) hardDeadline += now - lastCheck
+          lastCheck = now
           const progress = readBootProgress(this.launchTarget.stateDir)
-          if (progress && progress.pid === child.pid && progress.step > lastStep) {
-            lastStep = progress.step
-            lastPhase = progress.phase
+          const ours = progress && progress.pid === child.pid ? progress : null
+          downloading = bootIsDownloading(ours)
+          if (ours && ours.step > lastStep) {
+            lastStep = ours.step
+            lastPhase = ours.phase
             stallDeadline = now + stallMs
           }
           if (now < stallDeadline && now < hardDeadline) {
@@ -1383,6 +1497,7 @@ class Supervisor implements DevSupervisor {
         started = true
         const boot = { pid: message.pid, port: this.port, bootId: message.bootId }
         this.boot = boot
+        this.restartView = null
         this.activeChildEnvironment = launch?.environment ?? this.childEnvironment()
         this.lastRestartFailure = undefined
         this.resolveFirstBoot(boot)

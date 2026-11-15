@@ -471,18 +471,23 @@ export function MobileUpdateRow() {
   if (!control.visible) return null
   // The launcher installed this version and went back from it: the row says so, with the step it undid.
   const undone = control.current ? control.rejected : undefined
-  const label = control.busy
-    ? control.update ? "Updating…" : "Restarting…"
-    : undone ? UPDATE_UNDONE : control.current ? "Frizz is up to date" : control.update ? "Update Frizz" : "Restart Frizz"
-  const newer = control.update ? control.updateVersion : undefined
+  // Downloading ahead of the restart: the row is the launcher's title, with the live step's reading.
+  const preparing = control.preparing
+  const label = preparing
+    ? preparing.title
+    : control.busy
+      ? control.update ? "Updating…" : "Restarting…"
+      : undone ? UPDATE_UNDONE : control.current ? "Frizz is up to date" : control.update ? "Update Frizz" : "Restart Frizz"
+  const reading = preparing?.steps.find((step) => step.state === "live" || step.state === "stalled")?.note
+  const newer = control.update && !preparing ? control.updateVersion : undefined
   return (
     <div data-mobile-update>
       <MobileSection label="Version">
         <button
           type="button"
           data-mobile-update-row
-          disabled={control.busy || control.current}
-          aria-busy={control.busy || undefined}
+          disabled={control.busy || control.current || preparing !== undefined}
+          aria-busy={control.busy || preparing !== undefined || undefined}
           onClick={() => void control.run()}
           // Muted, not faded, when inert: opacity would fade the row's rule with its words.
           className={`${MOBILE_ROW} w-full text-left active:bg-hover disabled:text-muted`}
@@ -493,7 +498,9 @@ export function MobileUpdateRow() {
               <span data-mobile-update-row-notification aria-hidden className={UPDATE_DOT} />
             ) : null}
           </span>
-          {newer && control.version ? (
+          {preparing ? (
+            reading ? <span data-mobile-update-reading className="shrink-0 text-[14px] tabular-nums text-muted">{reading}</span> : null
+          ) : newer && control.version ? (
             <span data-mobile-update-step className="shrink-0 text-[14px] tabular-nums text-muted">
               {control.version} → {newer}
             </span>

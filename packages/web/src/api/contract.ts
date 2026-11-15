@@ -156,6 +156,7 @@ import type {
   DropOwnPrWatchResult,
   ListOwnPrWatchesInput,
   OwnPrWatchesResult,
+  RuntimeDownloadChip,
 } from "@frizz/shared"
 
 // Per-call transport options — declared here (not in rpc.ts) only because two procedures name it in
@@ -467,6 +468,7 @@ export interface Api {
   settingsReset(input: Record<never, never>): Promise<Settings>
   dispatchPreferencesGet(): Promise<DispatchPreferences>
   runtimeDownloads(): Promise<{ claude?: string; codex?: string }>
+  runtimeDownloadChips(): Promise<RuntimeDownloadChip[]>
   dispatchPreferenceSet(input: SetDispatchPreferenceInput): Promise<DispatchPreferences>
   // The shipped GitHub batch-dispatch prompt template — the Settings UI prefills its editor from this
   // and resets to it (an empty githubPrompt setting = the server default). One template, issues and PRs.
@@ -620,6 +622,7 @@ export const PROCEDURES = {
   settingsReset: "mutation",
   dispatchPreferencesGet: "query",
   runtimeDownloads: "query",
+  runtimeDownloadChips: "query",
   dispatchPreferenceSet: "mutation",
   githubPromptDefaults: "query",
   githubStatus: "query",

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync,
@@ -8,6 +8,7 @@ import { readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
+import type { ProvisionAheadEvent } from "@frizz/server/provision-ahead";
 import { compareReleaseVersions } from "./production-update.ts";
 
 /** Bump the data epoch BEFORE introducing writes an older server cannot safely read. */
@@ -31,6 +32,11 @@ export interface ServerGeneration extends ServerReleaseSpec {
   id: string;
   root: string;
   entry: string;
+  /**
+   * The release can fetch its own runtimes ahead of booting (its package.json declares
+   * `frizzServer.provisionRuntimes`), so an update downloads them while the release before it serves.
+   */
+  provisionRuntimes: boolean;
 }
 
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
@@ -128,7 +134,61 @@ export function validateServerGeneration(
   containedFile(root, "web-dist/index.html");
   containedFile(root, "runtime/board/index.mjs");
   containedFile(root, "runtime/cc-worker/.claude-plugin/plugin.json");
-  return { ...spec, id, root: realpathSync(root), entry };
+  return { ...spec, id, root: realpathSync(root), entry, provisionRuntimes: metadata.provisionRuntimes === 1 };
+}
+
+/**
+ * Download the Claude Code and Codex a release pins, out of that release's own package, while the
+ * release before it keeps serving (2026-11-15). An update used to stop the old server first and let
+ * the new one download at boot, which on a slow connection was the whole board down for the whole
+ * download. Runs the release's ordinary entry with FRIZZ_PROVISION_RUNTIMES_ONLY=1, so the pins and the
+ * download code are the new release's, and reports each line it prints. Only for a release that
+ * declares it (`generation.provisionRuntimes`): an older one would ignore the variable and boot a server.
+ */
+export function prepareGenerationRuntimes(
+  generation: ServerGeneration,
+  options: { env?: NodeJS.ProcessEnv; onEvent?: (event: ProvisionAheadEvent) => void; spawnProcess?: typeof spawn } = {},
+): Promise<void> {
+  return new Promise((resolvePrepared, rejectPrepared) => {
+    const child = (options.spawnProcess ?? spawn)(process.execPath, [generation.entry], {
+      cwd: generation.root,
+      env: { ...(options.env ?? process.env), ...serverGenerationLaunch(generation).environment, FRIZZ_PROVISION_RUNTIMES_ONLY: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let buffered = "";
+    let stderr = "";
+    let failure: string | undefined;
+    let done = false;
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      buffered += chunk;
+      let newline = buffered.indexOf("\n");
+      while (newline !== -1) {
+        const line = buffered.slice(0, newline).trim();
+        buffered = buffered.slice(newline + 1);
+        newline = buffered.indexOf("\n");
+        if (!line) continue;
+        let event: ProvisionAheadEvent;
+        try {
+          event = JSON.parse(line) as ProvisionAheadEvent;
+        } catch {
+          continue;
+        }
+        if (event.type === "error") failure = event.message;
+        if (event.type === "done") done = true;
+        try { options.onEvent?.(event); } catch { /* a reporter's fault is not the download's */ }
+      }
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
+    child.once("error", (error) => rejectPrepared(new Error(`could not start ${generation.version}'s download: ${error.message}`)));
+    child.once("exit", (code, signal) => {
+      if (code === 0 && done) return resolvePrepared();
+      const why = failure ?? (stderr.trim().split("\n").slice(-3).join(" ") || (signal ? `stopped by ${signal}` : `exited with code ${code}`));
+      rejectPrepared(new Error(`Frizz ${generation.version} could not download its runtimes: ${why}`));
+    });
+  });
 }
 
 export function serverGenerationLaunch(generation: ServerGeneration): { entry: string; environment: NodeJS.ProcessEnv } {

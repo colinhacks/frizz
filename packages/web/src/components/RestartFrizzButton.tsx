@@ -1,10 +1,12 @@
 import React, { useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { useSnapshot } from "valtio"
-import { AlertTriangle, Check, RefreshCw, Undo2, X } from "lucide-react"
+import { AlertTriangle, Check, Download, RefreshCw, Undo2, X } from "lucide-react"
+import type { BootView } from "@frizz/shared"
 import {
   canRestart,
   canUpdateRestart,
   FRIZZ_SUPERVISOR_STATUS_WAKE_EVENT,
+  isPreparingUpdate,
   RELOAD_AFTER_UPDATE_RESTART,
   requestFrizzRestart,
   requestFrizzUpdateRestart,
@@ -19,6 +21,7 @@ import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { showToast, store } from "../store.ts"
 import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
 import { AnchoredLayer, type AnchorRect, type LayerSize, type Viewport } from "./ui/AnchoredLayer.tsx"
+import { BootSteps, bootViewFraction } from "./BootProgress.tsx"
 
 // RefreshCw's arrowheads advance clockwise, matching Tailwind's clockwise animate-spin keyframes.
 // Keep this exported contract covered by the focused component test when either icon or animation changes.
@@ -68,6 +71,8 @@ export const UPDATE_UNDONE = "Update undone"
 // on the phone's row: a phone cannot stop the terminal Frizz runs in.
 const launcherCopy = (latest: string) =>
   `The npx frizz command has a newer version, ${latest}. Stop Frizz and run npx frizz again to get it.`
+// While an update downloads ahead of its restart (FrizzSupervisorStatus.progress, kind "prepare").
+export const PREPARING_COPY = "Frizz keeps running while this downloads. The restart afterwards takes a few seconds."
 const undoneCopy = (rejected: string, version: string | undefined) =>
   `Frizz ${rejected} kept stopping after it was installed, so ${version ?? "the version before it"} is running again. The next version will be offered here.`
 
@@ -176,6 +181,7 @@ export function UpdateRestartPopover({
   updateVersion,
   rejected,
   launcherUpdate,
+  preparing,
 }: {
   open: boolean
   update: boolean
@@ -189,8 +195,34 @@ export function UpdateRestartPopover({
   rejected?: string
   /** A newer version of the launcher itself, which only starting Frizz again installs. */
   launcherUpdate?: string
+  /** The update is downloading ahead of its restart: the launcher's checklist instead of the verb. */
+  preparing?: BootView
 }) {
   if (!open) return null
+  if (preparing) {
+    return (
+      <div
+        id="update-restart-popover"
+        role="tooltip"
+        aria-label={preparing.title}
+        data-preparing
+        className={`${ANCHORED_PANEL} ${POPOVER_WIDTH} ${PANEL_SURFACE} border border-border-strong`}
+      >
+        <span aria-hidden="true" className={`${PANEL_ARROW} border-border-strong`} />
+        <div className="relative flex items-center gap-2.5">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-fg/10 text-fg">
+            <Download aria-hidden="true" size={14} strokeWidth={2.25} />
+          </span>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-[13px] font-semibold tracking-[-0.01em] text-fg">{preparing.title}</span>
+            {version && updateVersion ? <span className="font-mono text-[11px] leading-snug text-muted">{`${version} → ${updateVersion}`}</span> : null}
+          </div>
+        </div>
+        <BootSteps steps={preparing.steps} className="relative mt-3 leading-[1.55]" />
+        <p className="relative mt-2.5 text-[12px] leading-relaxed text-muted">{PREPARING_COPY}</p>
+      </div>
+    )
+  }
   const undone = current ? rejected : undefined
   const action = undone ? UPDATE_UNDONE : current ? "Frizz is up to date" : update ? "Update Frizz" : "Restart Frizz"
   // Name the newer version only on the verb that installs it: in plain-restart mode the board is
@@ -291,12 +323,15 @@ export function RestartActionButton({
   version,
   updateVersion,
   rejected,
+  preparing,
   onFocus,
   onBlur,
   onClick,
 }: {
   update: boolean
   busy: boolean
+  /** The update is downloading ahead of its restart: the button carries its progress and takes no click. */
+  preparing?: BootView
   /** Nothing to install: greyed and inert, but still focusable and hoverable so its popover can say why. */
   current?: boolean
   /** A version the launcher installed and went back from: the greyed control is named for that instead. */
@@ -309,6 +344,24 @@ export function RestartActionButton({
   onBlur?: () => void
   onClick: () => void
 }) {
+  if (preparing) {
+    return (
+      <button
+        type="button"
+        aria-describedby="update-restart-popover"
+        aria-label={preparing.title}
+        // Not `disabled`: the popover with the checklist hangs off this button's focus and hover. A click
+        // does nothing — the update is already under way — so it paints no hover fill either.
+        aria-disabled
+        data-preparing
+        className={`relative ${STATUS_ROW_ACTION} cursor-default hover:bg-transparent`}
+        onFocus={onFocus}
+        onBlur={onBlur}
+      >
+        <PrepareRing fraction={bootViewFraction(preparing)} />
+      </button>
+    )
+  }
   return (
     <button
       type="button"
@@ -336,6 +389,37 @@ export function RestartActionButton({
         <span aria-hidden="true" className="absolute right-[2px] top-[2px] h-[4px] w-[4px] rounded-full bg-accent" />
       )}
     </button>
+  )
+}
+
+// THE RING AN UPDATE WEARS WHILE IT DOWNLOADS AHEAD OF ITS RESTART, so the button reads from across the
+// board. A download arrow inside a thin ring that fills with the live step's bar; with no total yet (the
+// release's own npm install, a registry that sends no length) a quarter arc turns instead.
+// The arrow is 11px, three under the row's 14: inside a ring at the row's full icon size it would touch
+// the ring. The ring's 20px span stays inside the 24px hover square.
+const RING_RADIUS = 9.25
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+function PrepareRing({ fraction }: { fraction: number | undefined }) {
+  const known = typeof fraction === "number"
+  const filled = known ? Math.max(0.02, Math.min(1, fraction)) : 0.25
+  return (
+    <span className="relative flex h-5 w-5 items-center justify-center" data-prepare-ring={known ? Math.round(filled * 100) : "indeterminate"}>
+      <svg aria-hidden="true" viewBox="0 0 20 20" className={`absolute inset-0 h-5 w-5 -rotate-90${known ? "" : " animate-spin"}`}>
+        <circle cx="10" cy="10" r={RING_RADIUS} fill="none" stroke="currentColor" strokeOpacity="0.16" strokeWidth="1.5" />
+        <circle
+          cx="10"
+          cy="10"
+          r={RING_RADIUS}
+          fill="none"
+          className="stroke-accent transition-[stroke-dashoffset] duration-[400ms]"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeDasharray={RING_CIRCUMFERENCE}
+          strokeDashoffset={RING_CIRCUMFERENCE * (1 - filled)}
+        />
+      </svg>
+      <Download aria-hidden="true" size={11} strokeWidth={2.5} />
+    </span>
   )
 }
 
@@ -371,6 +455,8 @@ export function useUpdateRestart() {
   const status = useSupervisorStatus().data ?? null
   const updateAvailable = canUpdateRestart(status)
   const versions = { version: status?.version, updateVersion: status?.updateVersion }
+  // An update downloading ahead of its restart, from whichever tab started it: every open tab shows it.
+  const preparing = isPreparingUpdate(status) ? status?.progress : undefined
 
   // A failure the SUPERVISOR reports (a build that won't compile, an artifact that won't promote)
   // never reaches the click handler's catch — the POST was accepted, and the overlay simply drops
@@ -390,16 +476,23 @@ export function useUpdateRestart() {
   // Greyed once it says the running version is the newest. A click in flight or a failure on screen
   // keeps the control live, so the answer that flips `updateAvailable` cannot grey out the spinner or
   // leave the failure card hanging off an inert control.
-  const current = !updateAvailable && !busy && !shownError
+  const current = !updateAvailable && !busy && !shownError && !preparing
 
   const updateAndRestart = async () => {
-    if (busy || current) return
+    if (busy || current || preparing) return
     requested.current = { version: status?.version }
     setBusy(true)
     setError(undefined)
     setDismissed(undefined)
     const destination = `${window.location.pathname}${window.location.search}${window.location.hash}`
-    if (updateAvailable) {
+    // A launcher that reports its prepare phase (`prepareProgress`) keeps the board serving through it,
+    // so the click raises no overlay: the button shows the download, and the overlay rises when the
+    // launcher actually stops the server. The attempt is recorded all the same, so no "ready" read
+    // before the restart can reload this tab onto the old bundle.
+    const quiet = updateAvailable && status?.prepareProgress === true
+    if (quiet) {
+      store.controlPlaneRestartAttempt = { startedAt: Date.now(), ackedAt: null, build: frizzBuildIdentity(status) }
+    } else if (updateAvailable) {
       // Raise the blocking overlay the instant the click lands — the update-restart POST can round-trip
       // slowly while the supervisor spins up the candidate build, and the user must see the block now,
       // not a second later. The recorded attempt holds it across the pre-ack window and withholds the
@@ -435,7 +528,9 @@ export function useUpdateRestart() {
         window.location.replace(destination)
       }
     } catch (caught) {
-      if (updateAvailable) {
+      if (quiet) {
+        store.controlPlaneRestartAttempt = null
+      } else if (updateAvailable) {
         store.controlPlaneRestartAttempt = null
         store.controlPlaneState = "ready"
         store.controlPlaneMessage = null
@@ -460,6 +555,8 @@ export function useUpdateRestart() {
     rejected: status?.rejectedUpdate,
     /** A newer launcher version than the one running, when npm has one. */
     launcherUpdate: status?.launcherUpdate,
+    /** The update downloading ahead of its restart, as the launcher reports it. */
+    preparing,
     shownError,
     outcome,
     dismiss: () => setDismissed(shownError),
@@ -524,6 +621,7 @@ export function RestartFrizzButton() {
         version={control.version}
         updateVersion={control.updateVersion}
         rejected={control.rejected}
+        preparing={control.preparing}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onClick={() => {
@@ -537,7 +635,7 @@ export function RestartFrizzButton() {
         </AnchoredPanel>
       ) : open ? (
         <AnchoredPanel>
-          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} rejected={control.rejected} launcherUpdate={control.launcherUpdate} />
+          <UpdateRestartPopover open update={control.update} current={control.current} version={control.version} updateVersion={control.updateVersion} rejected={control.rejected} launcherUpdate={control.launcherUpdate} preparing={control.preparing} />
         </AnchoredPanel>
       ) : null}
     </div>

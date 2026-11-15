@@ -66,9 +66,9 @@ import {
   readProjectLaunchOwner,
   tryAcquireProjectLaunchOwner,
 } from "@frizz/server/project-launch";
-import { createSupervisorShutdownHandler, startDevSupervisor } from "@frizz/server/dev-supervisor";
+import { createSupervisorShutdownHandler, startDevSupervisor, type UpdatePrepareProgress } from "@frizz/server/dev-supervisor";
 import { planRegistryUpdate, PRODUCTION_PRINT_LAUNCHER_FLAG, PRODUCTION_REEXEC_FLAG, reexecArgv } from "./production-update.ts";
-import { describeGenerationSweep, npmServerPackageInstaller, serverGenerationLaunch, serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore, type ServerGeneration } from "./server-release.ts";
+import { describeGenerationSweep, npmServerPackageInstaller, prepareGenerationRuntimes, serverGenerationLaunch, serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore, type ServerGeneration } from "./server-release.ts";
 import { acquireStableServerOwner, publishStableServerAddress, readStableServerOwner, releaseStableServerOwner, type ServerOwnerLease } from "./server-owner.ts";
 import { offerPath, type LaunchRoute } from "@frizz/server/launch-routing";
 import { GLOBAL_INSTALL_ENV, isGlobalInstall, keepUpdateHint } from "./production-update.ts";
@@ -551,6 +551,9 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   // A release this launcher went back from. It is not offered or installed again while this launcher
   // runs: it would only stop the same way. In memory only, so starting Frizz again offers it once more.
   let rejected: string | undefined;
+  // What an update is downloading while the release before it still serves, for the board's update
+  // button (dev-supervisor.ts updateProgress). Undefined outside that download.
+  let preparing: UpdatePrepareProgress | undefined;
   onPrepared();
   // Once a release is committed, the ones nothing runs from any more go (ServerReleaseStore.sweep).
   // In the background and never fatal: it is housekeeping, and this process is the listener.
@@ -674,6 +677,7 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
     version: () => active.version,
     launcherVersion: PACKAGE_VERSION,
     updateVersion: () => updateVersion,
+    updateProgress: () => preparing,
     // The terminal that owns the board says so when the board goes down and comes back. Everything
     // here is triggered from a browser tab or by a crash, so without this the foreground process is
     // the last place to learn what happened to it.
@@ -696,7 +700,36 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
         logger.info("launcher", `update: installing Frizz server ${plan.latestVersion} while ${active.version} serves`);
         // Install while the current server serves. Selection remains provisional until the new
         // child is ready; the durable launcher, listener, terminal and tunnels never move.
-        pending = await store.prepare(plan.latestVersion);
+        const version = plan.latestVersion;
+        preparing = { version, startedAt: Date.now(), installed: false, runtimes: {} };
+        try {
+          pending = await store.prepare(version);
+          preparing.installed = true;
+          // And download the runtimes it pins while the current server still serves, so the restart
+          // that follows waits on nothing but the boot. An older release cannot do this, and boots as
+          // it always has: downloading what it needs before it serves.
+          if (pending.provisionRuntimes) {
+            logger.info("launcher", `update: downloading the runtimes Frizz server ${version} pins while ${active.version} serves`);
+            await prepareGenerationRuntimes(pending, {
+              env,
+              onEvent: (event) => {
+                if (!preparing) return;
+                if (event.type === "plan") {
+                  for (const [backend, runtime] of Object.entries(event.runtimes) as Array<["claude" | "codex", { label: string; present: boolean }]>)
+                    preparing.runtimes[backend] = { label: runtime.label, state: runtime.present ? "ready" : "checking" };
+                } else if (event.type === "download") {
+                  const { backend, label, state, received, total, bytesPerSecond, stalledForMs, resumedFrom } = event;
+                  preparing.runtimes[backend] = state === "ready"
+                    ? { label, state: "ready", fetched: true }
+                    : { label, state, received, total, bytesPerSecond, stalledForMs, resumedFrom };
+                  if (state === "ready") logger.info("launcher", `update: downloaded ${backend} ${label} ahead of Frizz server ${version}`);
+                }
+              },
+            });
+          }
+        } finally {
+          preparing = undefined;
+        }
         return { state: "ready" as const, message: `Frizz ${plan.latestVersion} is installed and compatible` };
       } catch (error) {
         return { state: "failed" as const, message: error instanceof Error ? error.message : String(error) };

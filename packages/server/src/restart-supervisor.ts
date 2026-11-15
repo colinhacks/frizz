@@ -33,6 +33,7 @@ import { projectStateDir } from "./frizz-paths.ts"
 import { localImageHeaders, localImageStream, resolveLocalImage } from "./local-image.ts"
 import { findProjectBySegment } from "./project-registry.ts"
 import { recoveryPage, unauthorizedPage, unlistedHostPage } from "./supervisor-pages.ts"
+import type { BootView } from "./boot-view.ts"
 import { CALLER_HEADER, encodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog, type CallerVia } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
 import { FRIZZ_ROUTE_PREFIX, frizzRoute, type RelayAccess } from "@frizz/shared"
@@ -41,6 +42,8 @@ export const SUPERVISOR_CONTROL_PREFIX = "/_frizz/control"
 export const SUPERVISOR_RESTART_PATH = `${SUPERVISOR_CONTROL_PREFIX}/restart`
 export const SUPERVISOR_UPDATE_RESTART_PATH = `${SUPERVISOR_CONTROL_PREFIX}/update-restart`
 export const SUPERVISOR_STATUS_PATH = `${SUPERVISOR_CONTROL_PREFIX}/status`
+/** Ask a boot that is waiting on a runtime download to open without it ("Open Frizz now"). */
+export const SUPERVISOR_OPEN_NOW_PATH = `${SUPERVISOR_CONTROL_PREFIX}/open-now`
 export const SUPERVISOR_ACCESS_CODE_PATH = `${SUPERVISOR_CONTROL_PREFIX}/access-code`
 /** List the devices holding a session, and sign one (or all) of them out. */
 export const SUPERVISOR_SESSIONS_PATH = `${SUPERVISOR_CONTROL_PREFIX}/sessions`
@@ -169,13 +172,25 @@ export interface RestartSupervisorProxyOptions {
    */
   dev?: boolean
   /**
+   * An update reports its prepare phase as `progress` (kind "prepare") — the registry launcher's npm
+   * install and the runtimes it downloads ahead of the restart — so the board keeps serving through it
+   * and shows the progress on its update button instead of raising the restart overlay at the click.
+   * Sent as `prepareProgress: true`; frizz-dev's source build reports nothing and keeps the overlay.
+   */
+  prepareProgress?: boolean
+  /**
    * Status is intentionally available without a child, for a useful recovery UI.
    *
    * While an UPDATE is in flight this answer is reported as-is (see `status()` below), so a delegate
    * that wires `updateRestart` must itself say "restarting" from the moment it starts draining the
    * old child — the proxy cannot see that moment, only the promise around the whole action.
    */
-  status?: () => { state: RestartControlState; message?: string; artifactDigest?: string }
+  status?: () => { state: RestartControlState; message?: string; artifactDigest?: string; progress?: BootView }
+  /**
+   * "Open Frizz now": the boot in flight stops waiting on its runtime download. Omitted by a supervisor
+   * that cannot ask its child, which then answers 409.
+   */
+  openNow?: () => { ok: boolean; message?: string }
 }
 
 function responseJson(res: ServerResponse, status: number, value: unknown): void {
@@ -261,6 +276,7 @@ const MACHINE_ONLY_CONTROL_PATHS: ReadonlySet<string> = new Set([
 const FULL_CONTROL_PATHS: ReadonlySet<string> = new Set([
   SUPERVISOR_RESTART_PATH,
   SUPERVISOR_UPDATE_RESTART_PATH,
+  SUPERVISOR_OPEN_NOW_PATH,
 ])
 
 // `/_frizz/local-image` AND `/_frizz/<project>/local-image` — the client builds it from `apiBase()`,
@@ -578,7 +594,7 @@ export class RestartSupervisorProxy {
     await Promise.all(closed)
   }
 
-  private status(): { state: RestartControlState; message?: string; artifactDigest?: string; preparing?: boolean; updateRestart: boolean; updateAvailable?: boolean; version?: string; launcherVersion?: string; updateVersion?: string; rejectedUpdate?: string; launcherUpdate?: string; dev?: boolean } {
+  private status(): { state: RestartControlState; message?: string; artifactDigest?: string; progress?: BootView; preparing?: boolean; prepareProgress?: boolean; updateRestart: boolean; updateAvailable?: boolean; version?: string; launcherVersion?: string; updateVersion?: string; rejectedUpdate?: string; launcherUpdate?: string; dev?: boolean } {
     const delegated = this.options.status?.()
     const updateVersion = this.options.updateVersion?.()
     const rejectedUpdate = this.options.rejectedUpdate?.()
@@ -622,6 +638,7 @@ export class RestartSupervisorProxy {
       // Sent only when TRUE, so a published Frizz's payload is byte-identical to what it sends today
       // and an older client is unaffected. Absent therefore means "not a development build".
       ...(this.options.dev ? { dev: true } : {}),
+      ...(this.options.prepareProgress ? { prepareProgress: true } : {}),
     }
   }
 
@@ -771,6 +788,11 @@ export class RestartSupervisorProxy {
         // whichever way it was reached. It is a fact about THIS request, never about the board.
         ...(this.carriesRemoteSession(req) ? { remoteSession: true, remoteHost: remoteHostLabel(), remoteAccess: this.remoteAccess(req) } : {}),
       })
+      return
+    }
+    if (pathname === SUPERVISOR_OPEN_NOW_PATH && req.method === "POST") {
+      const answer = this.options.openNow?.() ?? { ok: false, message: "this launcher cannot open a boot early" }
+      responseJson(res, answer.ok ? 202 : 409, { protocol: SUPERVISOR_CONTROL_PROTOCOL, ...answer })
       return
     }
     if ((pathname !== SUPERVISOR_RESTART_PATH && pathname !== SUPERVISOR_UPDATE_RESTART_PATH) || req.method !== "POST") {

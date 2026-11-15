@@ -6,6 +6,7 @@ import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
 import { projectSlug } from "../lib/base-path.ts"
 import { projectIdentity } from "./Sidebar.tsx"
 import { RestartFrizzButton } from "./RestartFrizzButton.tsx"
+import { RuntimeDownloadChips } from "./RuntimeDownloadChips.tsx"
 import { ProjectCrumb } from "./ProjectCrumb.tsx"
 import { PROJECTS_HREF } from "../lib/homeView.ts"
 import { GithubTrigger } from "./GithubTrigger.tsx"
@@ -84,6 +85,8 @@ export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
       <div className="ml-auto flex shrink-0 items-center gap-3">
         {/* Greyed when there is no update to install; null only before a supervisor has answered, when
             the gap collapses and the row stays even. */}
+        {/* A runtime the board opened without ("Open Frizz now"), still downloading: nothing otherwise. */}
+        <RuntimeDownloadChips />
         <RestartFrizzButton />
         {/* Not on the Console: the picker it opens is one project's, mounted by that project's page. */}
         {!onConsole && <GithubTrigger />}

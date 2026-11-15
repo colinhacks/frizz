@@ -22,6 +22,8 @@
     "./dev-supervisor": "./src/dev-supervisor.ts",
     "./dev-child": "./src/dev-child.ts",
     "./boot-progress": "./src/boot-progress.ts",
+    "./boot-view": "./src/boot-view.ts",
+    "./provision-ahead": "./src/provision-ahead.ts",
     "./frizz-paths": "./src/frizz-paths.ts",
     "./logging": "./src/logging.ts",
     "./claude-retention": "./src/claude-retention.ts"

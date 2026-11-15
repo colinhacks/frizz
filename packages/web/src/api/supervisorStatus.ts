@@ -1,5 +1,5 @@
 import { queryOptions, useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { FRIZZ_SUPERVISOR_STATUS_WAKE_EVENT, getFrizzSupervisorStatus, type FrizzSupervisorStatus, type StampedSupervisorStatus } from "./restart.ts"
+import { FRIZZ_SUPERVISOR_STATUS_WAKE_EVENT, getFrizzSupervisorStatus, isPreparingUpdate, type FrizzSupervisorStatus, type StampedSupervisorStatus } from "./restart.ts"
 import { isLoopbackUrl } from "../lib/mobileThread.ts"
 import { store } from "../store.ts"
 
@@ -21,6 +21,9 @@ import { store } from "../store.ts"
 // control action dispatches.
 const AT_REST_MS = 8_000
 const HANDOFF_MS = 500
+// An update downloading ahead of its restart can take many minutes on a slow connection. Once a second
+// keeps the button's ring and byte count moving without a request every 500ms for all of it.
+const PREPARING_MS = 1_000
 
 export const SUPERVISOR_STATUS_KEY = ["supervisorStatus"] as const
 
@@ -28,8 +31,14 @@ export const SUPERVISOR_STATUS_KEY = ["supervisorStatus"] as const
  * Fast while a transition is in flight — server-confirmed, OR optimistically raised by the button that
  * asked for it, which is the window where the supervisor has not yet answered but the overlay is up.
  */
-export function supervisorPollMs(state: FrizzSupervisorStatus["state"] | undefined, restartPending: boolean): number {
-  return state === "restarting" || restartPending ? HANDOFF_MS : AT_REST_MS
+export function supervisorPollMs(state: FrizzSupervisorStatus["state"] | undefined, restartPending: boolean, preparing = false): number {
+  if (state === "restarting") return HANDOFF_MS
+  if (preparing) return PREPARING_MS
+  return restartPending ? HANDOFF_MS : AT_REST_MS
+}
+
+function pollMs(data: FrizzSupervisorStatus | null | undefined): number {
+  return supervisorPollMs(data?.state, store.controlPlaneRestartAttempt !== null, isPreparingUpdate(data))
 }
 
 export const supervisorStatusQueryOptions = queryOptions({
@@ -49,13 +58,13 @@ export const supervisorStatusQueryOptions = queryOptions({
   // nothing to retry, and — unlike the module-level promise this replaces — nothing caches that window
   // for the life of the page either. The next poll is the retry, which is how a dev-only verb reappears
   // once a supervisor that was mid-restart at page load comes back.
-  refetchInterval: (query) => supervisorPollMs(query.state.data?.state, store.controlPlaneRestartAttempt !== null),
+  refetchInterval: (query) => pollMs(query.state.data),
   // Freshness tracks the poll's own period, which is what makes sharing the key actually share the READ.
   // Without it, react-query treats the entry as stale the instant it lands, so every observer arriving
   // LATER than the last answer refetches on mount — and the dev-build verb's observer is a thread-footer
   // one, one per queue card. That rebuilds the same fan-out one mount at a time. A mount inside the
   // period has nothing to add: the poll is already asking on schedule.
-  staleTime: (query) => supervisorPollMs(query.state.data?.state, store.controlPlaneRestartAttempt !== null),
+  staleTime: (query) => pollMs(query.state.data),
 })
 
 export function useSupervisorStatus(): UseQueryResult<StampedSupervisorStatus | null> {

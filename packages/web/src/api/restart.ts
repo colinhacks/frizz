@@ -1,3 +1,5 @@
+import type { BootView } from "@frizz/shared"
+
 export interface RestartFrizzResult {
   protocol: 1
   state: "ready" | "restarting" | "failed"
@@ -52,6 +54,20 @@ export interface FrizzSupervisorStatus {
    * nextControlPlane), and this field exists here so a test can spell the real answer.
    */
   preparing?: boolean
+  /**
+   * What a restart, an update or an update's download is doing, as the launcher derives it
+   * (server/src/boot-view.ts): a title, a checklist of steps with byte counts and time left, and
+   * whether "Open Frizz now" is offered. Sent beside "restarting" while a server boots, and beside a
+   * `preparing` "ready" (kind "prepare") while an update downloads ahead of its restart. Absent from a
+   * launcher older than 2026-11-15, which the overlay and the button still handle as they always did.
+   */
+  progress?: BootView
+  /**
+   * This launcher reports an update's prepare phase as `progress`, so the board keeps serving through it
+   * rather than raising the restart overlay at the click. Sent only when true; frizz-dev's source build
+   * reports no progress and keeps the overlay.
+   */
+  prepareProgress?: boolean
   /**
    * Is this Frizz a DEVELOPMENT build — launched from a source checkout by `frizz-dev` or `pnpm dev`,
    * rather than the published `frizz` bin? Sent only when true, so absent means "no".
@@ -229,9 +245,22 @@ export function answerFollowsAck(attempt: RestartAttempt, answer: Pick<StampedSu
  * prepare phase (or a stale read) and keeps the hold; anything requested before the ack, whatever it
  * says, belongs to the world before this attempt and is ignored.
  */
-export function nextControlPlane(prev: ControlPlane, answer: Pick<StampedSupervisorStatus, "state" | "message" | "requestedAt" | "artifactDigest" | "version">): ControlPlane {
+export function nextControlPlane(prev: ControlPlane, answer: Pick<StampedSupervisorStatus, "state" | "message" | "requestedAt" | "artifactDigest" | "version" | "progress">): ControlPlane {
+  // An update DOWNLOADING AHEAD of its restart (2026-11-15): the old server is untouched and serving,
+  // and the launcher says so with a "prepare" view. The board is believed "ready" for as long as that
+  // lasts — no overlay, writes allowed — while the attempt stays held, so this "ready" can neither
+  // settle it nor reload the tab onto the old bundle (readyBelieved). The drain's "restarting" settles
+  // it as before.
+  if (prev.attempt && answerFollowsAck(prev.attempt, answer) && isPreparingUpdate(answer)) {
+    return { state: "ready", message: null, attempt: prev.attempt }
+  }
   if (prev.attempt && !(answerFollowsAck(prev.attempt, answer) && answerSettles(prev.attempt, answer))) return prev
   return { state: answer.state, message: answer.message ?? null, attempt: null }
+}
+
+/** Is the launcher getting an update ready while the running server keeps serving? */
+export function isPreparingUpdate(status: Pick<FrizzSupervisorStatus, "state" | "progress"> | null | undefined): boolean {
+  return status?.state === "ready" && status.progress?.kind === "prepare"
 }
 
 /** A post-ack answer speaks for the attempt when it is not "ready", or when it is a different build's "ready". */
@@ -309,6 +338,22 @@ async function requestFrizzRestartAction(path: "/_frizz/control/restart" | "/_fr
   }
   if (result.state === "failed") throw new Error(result.message ?? "Frizz did not become ready")
   return result
+}
+
+/**
+ * "Open Frizz now": the boot in flight stops waiting on a slow runtime download and finishes it in the
+ * background. The launcher answers 202 when it delivered the request and 409 when there is no boot to
+ * ask (or it predates the control); the boot itself decides, and the next status poll says what it did.
+ */
+export async function requestFrizzOpenNow(fetcher: typeof fetch = fetch): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const response = await fetcher("/_frizz/control/open-now", { method: "POST", headers: { "cache-control": "no-store" } })
+    const body = await response.json().catch(() => null) as { ok?: boolean; message?: string } | null
+    if (response.ok && body?.ok !== false) return { ok: true }
+    return { ok: false, message: body?.message ?? "The launcher did not take the request." }
+  } catch {
+    return { ok: false, message: "The launcher did not answer." }
+  }
 }
 
 /** Restarts the currently promoted artifact through any protocol-compatible supervisor. */

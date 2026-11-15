@@ -28,6 +28,13 @@ process.on("unhandledRejection", (reason) => {
   frizzLog.error("dev-child", `unhandled rejection: ${reason instanceof Error ? reason.stack ?? reason.message : reason}`)
 })
 
+// An update's download-ahead (provision-ahead.ts) runs this same entry with one variable set: fetch
+// the release's runtimes, report, exit. Before anything below, which would start a server.
+if (process.env.FRIZZ_PROVISION_RUNTIMES_ONLY === "1") {
+  const { runProvisionAhead } = await import("./provision-ahead.ts")
+  process.exit(await runProvisionAhead())
+}
+
 const rawPort = process.env.FRIZZ_DEV_PORT
 const port = Number(rawPort)
 if (!Number.isInteger(port) || port < 1 || port > 65535) {

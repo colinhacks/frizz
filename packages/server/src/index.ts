@@ -48,9 +48,9 @@ import { auditRemoteRefusal, callerAccess, isRemoteCaller } from "./remote-gate.
 import { remoteRefusedMessage } from "./remote-refusal.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { pidIsAlive } from "./project-identity.ts"
-import { createBootProgressPublisher } from "./boot-progress.ts"
+import { createBootProgressPublisher, watchBootOpenNow, type BootRuntime } from "./boot-progress.ts"
 import { log as frizzLog } from "./logging.ts"
-import { claudeFloatEnabled, describeRuntime, resolveRuntimes, RUNTIMES_REGISTRY_ENV, runtimesRoot, shouldDeferRuntimes, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
+import { CLAUDE_CODE_VERSION, CODEX_VERSION, claudeFloatEnabled, describeRuntime, resolveRuntimes, RUNTIMES_REGISTRY_ENV, runtimesRoot, shouldDeferRuntimes, type ResolvedRuntime, type ResolvedRuntimes, type ResolveRuntimesOptions } from "./runtimes.ts"
 import { createClaudeFloat, type ClaudeFloat } from "./claude-float.ts"
 import { runtimeVersionDir } from "./runtime-lease.ts"
 import { readClaudeModels } from "./backend/claude-models.ts"
@@ -602,6 +602,17 @@ export function describeServerStart(env: NodeJS.ProcessEnv, dev: boolean, runtim
  * runtimes 612ms, tailer producer 420ms, database 31ms`. Durations in the house spelling
  * (web lib/durationLabels.ts). Exported for its test.
  */
+/** A resolved runtime as the restart page's checklist reads it once the runtimes phase is over. */
+export function bootRuntimeOf(resolved: ResolvedRuntime): BootRuntime {
+  const label = resolved.version === "unknown" ? "" : resolved.version
+  switch (resolved.source) {
+    case "provisioned": return { label, state: "ready", ...(resolved.fetched ? { fetched: true } : {}) }
+    case "override": return { label, state: "ready" }
+    case "deferred": return { label, state: resolved.downloading ? "background" : "deferred" }
+    case "path": return { label, state: "path" }
+  }
+}
+
 export function describeBootTimings(totalMs: number, phases: ReadonlyArray<readonly [string, number]>): string {
   const spell = (ms: number) => (ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(2)}s`)
   const worth = phases.filter(([, ms]) => ms >= 10).sort((a, b) => b[1] - a[1])
@@ -1047,13 +1058,39 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // with a warning rather than refusing to boot (runtimes.ts). A backend this machine is signed out
     // of fetches nothing here, and its pin waits for its first thread: shouldDeferRuntimes says which,
     // and why Claude Code waits less readily than Codex.
-    runtimes = await phase("runtimes", async () => runtime.resolveRuntimes({
-      claudeBin: opts.claudeBin,
-      codexBin: opts.codexBin,
-      defer: await shouldDeferRuntimes(),
-      log: (level, message) => frizzLog[level]("server", message),
-      onProgress: (backend, message) => bootProgress(`runtimes: ${backend} ${message}`),
-    }))
+    //
+    // The restart page draws this phase as a checklist with a progress bar per download, so the boot
+    // reports each backend's state as numbers too (bootProgress.detail), and it offers "Open Frizz
+    // now": a request the launcher leaves in the state dir, which stops this phase waiting on a
+    // download that then finishes in the background (runtimes.ts, openNow).
+    runtimes = await phase("runtimes", async () => {
+      const defer = await shouldDeferRuntimes()
+      const pins = { claude: CLAUDE_CODE_VERSION, codex: CODEX_VERSION }
+      const explicit = { claude: opts.claudeBin ?? process.env.FRIZZ_CLAUDE_BIN, codex: opts.codexBin ?? process.env.FRIZZ_CODEX_BIN }
+      bootProgress.detail({
+        openNow: true,
+        runtimes: Object.fromEntries((["claude", "codex"] as const)
+          .filter((backend) => !defer[backend] && !explicit[backend])
+          .map((backend) => [backend, { label: pins[backend], state: "checking" as const }])),
+      })
+      const openNow = watchBootOpenNow(project.stateDir, process.pid)
+      try {
+        const resolved = await runtime.resolveRuntimes({
+          claudeBin: opts.claudeBin,
+          codexBin: opts.codexBin,
+          defer,
+          openNow: openNow.requested,
+          log: (level, message) => frizzLog[level]("server", message),
+          onProgress: (backend, message) => bootProgress(`runtimes: ${backend} ${message}`),
+          onDownload: ({ backend, label, state, received, total, bytesPerSecond, stalledForMs, resumedFrom }) =>
+            bootProgress.detail({ runtimes: { [backend]: { label, state, received, total, bytesPerSecond, stalledForMs, resumedFrom } } }),
+        })
+        bootProgress.detail({ runtimes: Object.fromEntries((["claude", "codex"] as const).map((backend) => [backend, bootRuntimeOf(resolved[backend])])) })
+        return resolved
+      } finally {
+        openNow.stop()
+      }
+    })
     for (const backend of ["claude", "codex"] as const) frizzLog.info("server", `runtimes: ${describeRuntime(backend, runtimes[backend])}`)
     // A provisioned Claude Code must not update itself out from under the pin. Every worker, and every
     // `claude auth status` / `claude auth login` Frizz runs, inherits the server's environment.
@@ -1139,6 +1176,7 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
     // "wedged" instead of guessing with a stopwatch.
     await phase("tailer producer", () => ctx!.tailer.start((done, total) => {
       bootProgress(`tailer producer ${done}/${total}`)
+      bootProgress.detail({ threads: { done, total } })
     }))
     if (process.env.FRIZZ_WAKERS_OFF !== "1") {
       await phase("wake scheduler", () => ctx!.scheduler.start())

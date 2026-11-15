@@ -32,7 +32,7 @@ import {
   normalizeBindHost,
   normalizePublicOrigin,
 } from "@frizz/server/local-origin";
-import { BOOT_HARD_TIMEOUT_MS, BOOT_STALL_TIMEOUT_MS, readBootProgress } from "@frizz/server/boot-progress";
+import { BOOT_HARD_TIMEOUT_MS, BOOT_STALL_TIMEOUT_MS, bootIsDownloading, readBootProgress } from "@frizz/server/boot-progress";
 import { frizzPaths, launchHostDir, projectStateDir } from "@frizz/server/frizz-paths";
 import { claimIdentityPath } from "./identity.ts";
 import {
@@ -1132,20 +1132,28 @@ export async function waitForWorkspace(
   options: WaitForWorkspaceOptions = {}
 ): Promise<FrizzHealth> {
   const started = Date.now();
-  const hardDeadline = started + (options.hardTimeoutMs ?? LAUNCH_HARD_TIMEOUT_MS);
+  // Moved out by every moment the boot spends downloading a runtime: a first boot on a slow connection
+  // fetches several hundred MB, and giving up on it exited the launcher mid-download (2026-11-15).
+  let hardDeadline = started + (options.hardTimeoutMs ?? LAUNCH_HARD_TIMEOUT_MS);
   let stallDeadline = started + timeoutMs;
   let lastStep = -1;
   let lastPhase: string | undefined;
+  let lastCheck = started;
+  let downloading = false;
   for (;;) {
     const health = await probeFrizz(port, expected);
     if (health) return health;
+    if (downloading) hardDeadline += Date.now() - lastCheck;
+    lastCheck = Date.now();
     if (options.stateDir) {
       const progress = readBootProgress(options.stateDir);
+      const live = progress && pidIsAlive(progress.pid) ? progress : null;
+      downloading = bootIsDownloading(live);
       // Only a live publisher's ADVANCING counter buys patience. A leftover file from a dead boot has
       // no live pid; a stuck one stops advancing. Either way the stall window closes on schedule.
-      if (progress && progress.step > lastStep && pidIsAlive(progress.pid)) {
-        lastStep = progress.step;
-        lastPhase = progress.phase;
+      if (live && live.step > lastStep) {
+        lastStep = live.step;
+        lastPhase = live.phase;
         stallDeadline = Date.now() + timeoutMs;
       }
     }

@@ -19,6 +19,7 @@ import {
 } from "../api/restart.ts"
 import { formatCompactElapsed } from "../lib/durationLabels.ts"
 import { RestartOverlay } from "./RestartOverlay.tsx"
+import type { BootView } from "@frizz/shared"
 
 // THE FRAME BOTH PAGE SHELLS STAND IN: what a tab does about the SERVER it is talking to, whichever
 // page it is showing. The app has two shells — the board (App.tsx, the Console included) and the
@@ -37,7 +38,7 @@ import { RestartOverlay } from "./RestartOverlay.tsx"
 // server on every page belongs here. (The all-projects grid is not one of the two and has never
 // followed a restart.)
 export function PageFrame({ className, style, children }: { className: string; style?: CSSProperties; children: ReactNode }) {
-  const { restarting, message, hold } = useControlPlane()
+  const { restarting, message, hold, progress } = useControlPlane()
   // The overlay BLOCKS until the hold stalls; past that it is a notice over a page that is interactive
   // again (RestartOverlay.tsx).
   const blocking = restarting && !hold.stalled
@@ -50,6 +51,7 @@ export function PageFrame({ className, style, children }: { className: string; s
         message={message}
         stalled={hold.stalled}
         silentFor={hold.silentSince === null ? undefined : formatCompactElapsed(hold.silentForMs)}
+        progress={progress}
       />
       {/* While restarting, the whole page subtree goes inert so nothing behind the scrim is focusable or
           clickable; the overlay above is a sibling OUTSIDE it so it stays interactive. Once the hold has
@@ -63,7 +65,7 @@ export function PageFrame({ className, style, children }: { className: string; s
   )
 }
 
-function useControlPlane(): { restarting: boolean; message: string | null; hold: RestartHold } {
+function useControlPlane(): { restarting: boolean; message: string | null; hold: RestartHold; progress: BootView | undefined } {
   const snap = useSnapshot(store)
   // The public supervisor survives replacement of the app child. It is consequently the only
   // trustworthy transition signal: an old child can still say ready while the next artifact builds.
@@ -144,7 +146,10 @@ function useControlPlane(): { restarting: boolean; message: string | null; hold:
     // interval loop it replaces did — the reload destination is armed between two reads, so a run keyed
     // on the status object could miss it.
   }, [supervisorStatus, supervisorAnsweredAt])
-  return { restarting: snap.controlPlaneState === "restarting", message: snap.controlPlaneMessage, hold }
+  // The checklist the launcher reports while a server boots (api/restart.ts `progress`). Only a
+  // "restarting" answer's: an update's "prepare" view rides on "ready" and belongs to the update button.
+  const progress = supervisorStatus?.state === "restarting" ? supervisorStatus.progress : undefined
+  return { restarting: snap.controlPlaneState === "restarting", message: snap.controlPlaneMessage, hold, progress }
 }
 
 // ESCAPE DOES NOTHING UNDER THE BLOCK. `inert` keeps focus and the pointer out of the page, but the

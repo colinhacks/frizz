@@ -7539,6 +7539,7 @@ export type BoardDeltasResult = z.infer<typeof BoardDeltasResult>
 
 // Pure delta engine + client apply/decision helpers (kept in a sibling module, re-exported here so
 // `@frizz/shared` stays the single entry point).
+export * from "./boot-view.ts"
 export * from "./claim.ts"
 export * from "./claude-editions.ts"
 export * from "./code-fences.ts"
