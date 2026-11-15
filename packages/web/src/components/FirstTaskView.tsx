@@ -13,8 +13,8 @@ import { StatusRow } from "./StatusRow.tsx"
 // the one-thread pane (ThreadPane.tsx).
 //
 // The Console gets it too, on a machine that has never run a thread in any project (maintainer 2026-11-10).
-// Its status row is the Console's — the house, then the chip naming the project a task goes to — so the
-// one box still says where it sends.
+// Its status row is the Console's, the house and the icons, and its box carries the chip naming the project
+// a task goes to, as the Console's sidebar box does, so the one box still says where it sends.
 //
 // This was the queue's column (TodosView.tsx) until the one-thread pane replaced the queue's cards on
 // 2026-11-09; the cards went on 2026-11-10 (maintainer: "Delete it"). Its empty-inbox state is the pane's
@@ -59,9 +59,9 @@ function ConsoleFirstDispatch() {
   const { project, chip } = useConsoleDispatchTarget()
   return (
     <>
-      <StatusRow onConsole projectChip={chip} />
+      <StatusRow onConsole />
       <ProjectScope project={project?.slug}>
-        <DispatchForm autoFocus pendingCard="float" />
+        <DispatchForm autoFocus projectPicker={chip} pendingCard="float" />
       </ProjectScope>
     </>
   )

@@ -223,7 +223,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
   // element is rebuilt exactly when durable preference data or the model catalogue changes.
   const footer = useMemo(() => {
     if (!resolved) {
-      return (
+      const loading = (
         <PromptControlGroup>
           <ProfileGridSelector
             groups={[]}
@@ -235,12 +235,21 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
           />
         </PromptControlGroup>
       )
+      // The project chip answers to no profile, so it stands from the first paint, as it did in the status row.
+      if (!projectPicker) return loading
+      return (
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          {projectPicker}
+          {loading}
+        </div>
+      )
     }
     const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp)
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
-      // `gap-1.5` for the phone's tool row, where the project chip and the model chip stand side by side
-      // and can wrap. On a desktop the strip is the one line below.
+      // `gap-1.5` between the pills, across and down: on the Console the project chip leads the strip, and
+      // where the box is too narrow for it beside the model it takes a line of its own above
+      // (ConsoleProjectChip.tsx). The phone's tool row wraps its chips the same way.
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {projectPicker}
         {/* The dropdowns and the marks that answer to them hold ONE line, on which the model name truncates,
@@ -337,17 +346,20 @@ export function DispatchForm(props: DispatchFormProps) {
 function LocalDispatchForm({
   autoFocus,
   onDispatched,
+  projectPicker,
   pendingCard = true,
 }: {
   autoFocus?: boolean
   onDispatched?: () => void
+  /** The Console's project chip, first in the box's strip. The dispatch goes to the enclosing ProjectScope. */
+  projectPicker?: ReactNode
   /** Draw the "Starting thread…" card under the box while the dispatch call runs. Off (`false`) where the
    *  surface shows the pending thread itself: a project's sidebar and the Console's draw it as a Running
    *  row (lib/pendingDispatch). `"float"` draws it OUT OF FLOW, hung under the form: for a form that is
    *  centred in its page, where a card in flow would lift everything above it by half its own height. */
   pendingCard?: boolean | "float"
 }) {
-  const form = useDispatchForm(onDispatched, undefined, NEW_THREAD_MARKS)
+  const form = useDispatchForm(onDispatched, projectPicker, NEW_THREAD_MARKS)
   return (
     <div className={`w-full flex flex-col gap-3 ${pendingCard === "float" ? "relative" : ""}`}>
       <Composer
@@ -477,9 +489,9 @@ function LocalPhoneNewThreadPage({ onDispatched, projectPicker, project }: { onD
 //
 // On the Console (⌘K → "New thread", and the phone's New thread button) the page names no project, so
 // the form runs inside the scope of the project the chip names (ConsoleProjectChip.tsx) — without it the
-// dispatch was refused and an attachment was uploaded to the LAUNCHING project first. The chip stands where
-// the sidebar's does, at the box's upper left: here that is the title's line, since a dialog has no status
-// row. A phone has neither, so its page keeps the chip in the tool row, beside the model chip it matches.
+// dispatch was refused and an attachment was uploaded to the LAUNCHING project first. The chip rides inside
+// the box, first in its strip, as the sidebar's does; a phone's page keeps it in the tool row, beside the
+// model chip it matches.
 export function NewThreadDialog({ onClose }: { onClose: () => void }) {
   const isMobile = useIsMobile()
   const onConsole = isConsolePath()
@@ -496,12 +508,7 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
     <>
       {/* No status row here, so the GitHub picker's door takes the title's line. */}
       <div className="mb-1 flex min-h-6 items-center justify-between gap-3">
-        {/* The chip takes the title's 14px rather than its row's 12px: centred side by side at two sizes, the
-            two names' baselines sat 1.5px apart. */}
-        <div className="flex min-w-0 items-center gap-3 text-[14px]">
-          <RadixDialog.Title className="shrink-0 font-medium">New thread</RadixDialog.Title>
-          {target.chip}
-        </div>
+        <RadixDialog.Title className="text-[14px] font-medium">New thread</RadixDialog.Title>
         <div className="flex shrink-0 items-center gap-3"><GithubTrigger /></div>
       </div>
       {/* No "Starting thread…" card: the dialog is centred, so the card arriving in flow grew it by 74px
@@ -509,7 +516,7 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
           dialog closed (2026-10-13, the call answering at +461ms). Floated, it would hang off the
           panel's edge. The rail behind the scrim draws the thread as the Running row it becomes
           (lib/pendingDispatch), and the toast and the Send spinner say it is starting. */}
-      <DispatchForm autoFocus onDispatched={onClose} pendingCard={false} />
+      <DispatchForm autoFocus onDispatched={onClose} projectPicker={target.chip} pendingCard={false} />
     </>
   )
   useEffect(() => () => {

@@ -45,8 +45,9 @@ import { StatusRow } from "./StatusRow.tsx"
 // The same column as a project's (Sidebar.tsx): the status row and the prompt box at its top, the rows
 // under them, the scroll marker opposite the card being read. What differs is what it holds, and where
 // it sits:
-//   · the status row's crumb is the PROJECT chip, saying where a new task goes, after the house that is
-//     the way to the grid (StatusRow.tsx); the chip's menu is the way to a project;
+//   · the status row draws no crumb, only the house that is the way to the grid (StatusRow.tsx); the
+//     PROJECT chip, saying where a new task goes, leads the prompt box's strip, and its menu is the way to
+//     a project (ConsoleProjectChip.tsx);
 //   · "By status" adds Snoozed and Done under Queue and Running, collapsed until opened and paged behind
 //     "Show more" (lib/consoleBoard.ts); "By project" stays Queue and Running alone, what needs the
 //     operator now;
@@ -365,15 +366,15 @@ function FoldedBand({ band, label, rule, threads, render }: { band: ConsoleFolde
   )
 }
 
-/** The status row and the prompt box under it, pointed at the project the row's chip names (components/ConsoleProjectChip.tsx). */
+/** The status row and the prompt box under it, pointed at the project its chip names (components/ConsoleProjectChip.tsx). */
 function ConsoleDispatch() {
   const { project, chip } = useConsoleDispatchTarget()
   return (
     <>
-      <StatusRow onConsole projectChip={chip} />
+      <StatusRow onConsole />
       <ProjectScope project={project?.slug}>
         {/* No "Starting thread…" card under this box: the rail draws the pending thread itself (above). */}
-        <DispatchForm pendingCard={false} />
+        <DispatchForm projectPicker={chip} pendingCard={false} />
       </ProjectScope>
     </>
   )

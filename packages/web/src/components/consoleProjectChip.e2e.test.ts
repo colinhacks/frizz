@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-// THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): the status row's crumb, after the house, over the
-// prompt box it points. It led the row alone from 2026-11-06 until the Projects | Console pill above it went on
-// 2026-11-10, and the house came back as the way out. Clicking a row of its menu picks the project a
-// prompt goes to. Each row's arrow, in a rail down the menu's right edge, opens that project in a new tab,
+// THE CONSOLE'S PROJECT CHIP (ConsoleProjectChip.tsx): first in the strip along the bottom of the prompt box
+// it points (maintainer 2026-11-15: "the project dropdown in the 'All projects' view needs to be inside the
+// sidebar prompt box"), in the shape of the model pill beside it. It stood in the status row above the box
+// from 2026-11-06 to 2026-11-15, which is now the house and the icons. Clicking a row of its menu picks the
+// project a prompt goes to. Each row's arrow, in a rail down the menu's right edge, opens that project in a new tab,
 // and that must not move the pick: the two sit on one line, and a pick nobody meant sends the next thread to
 // the wrong project.
 //
@@ -16,7 +17,7 @@ const baseUrl = process.env.FRIZZ_CONSOLE_PROJECT_CHIP_E2E_URL
 const CHIP = "[data-console-project-chip]"
 const PICK_KEY = "frizz:console-dispatch-project"
 
-test("the chip follows the house in the status row, and its menu picks a project or opens one in a new tab", { skip: !baseUrl, timeout: 120_000 }, async () => {
+test("the chip leads the prompt box's strip, and its menu picks a project or opens one in a new tab", { skip: !baseUrl, timeout: 120_000 }, async () => {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   // The Console lists the projects the server has opened, and a server opens one on its first read.
@@ -29,22 +30,27 @@ test("the chip follows the house in the status row, and its menu picks a project
     page.on("pageerror", (e) => errors.push(String(e)))
     await page.setViewport({ width: 1440, height: 900 })
     await page.goto(`${baseUrl}/console`, { waitUntil: "networkidle2" })
-    await page.waitForSelector(`[data-status-row] ${CHIP}`)
+    await page.waitForSelector(`[data-composer-box] ${CHIP}`)
 
+    // In the box, ahead of the model pill and on its line, in a pill of the same height and type. The status
+    // row above keeps only the house at its left end.
     const place = await page.evaluate((chip) => {
       const box = document.querySelector("[data-composer-box]")!
       const row = document.querySelector("[data-status-row]")!
-      const crumb = row.firstElementChild!
-      const [house, slash, last] = [...crumb.children]
+      const [own, model] = [...box.querySelectorAll("[data-prompt-control-group]")]
+      const a = own.getBoundingClientRect()
+      const b = model.getBoundingClientRect()
+      const button = document.querySelector(chip)!
       return {
-        houseLeads: house.matches('a[aria-label="Projects"]') && house.getAttribute("href") === "/?home=projects",
-        slash: slash.textContent,
-        chipFollows: last.querySelector(chip) !== null,
-        inBox: box.querySelector(chip) !== null,
-        above: crumb.getBoundingClientRect().bottom <= box.getBoundingClientRect().top,
+        rowLeads: row.firstElementChild!.matches('a[aria-label="Projects"]') && row.firstElementChild!.getAttribute("href") === "/?home=projects",
+        rowHasChip: row.querySelector(chip) !== null,
+        ownPill: own.contains(button) && !model.contains(button),
+        aheadOnOneLine: a.right <= b.left && Math.abs(a.top - b.top) < 0.5 && a.height === b.height,
+        sameType: getComputedStyle(button.querySelector(".truncate")!).fontVariantCaps === getComputedStyle(model.querySelector(".profile-grid-value")!).fontVariantCaps,
+        chevrons: button.querySelectorAll("svg").length,
       }
     }, CHIP)
-    assert.deepEqual(place, { houseLeads: true, slash: "/", chipFollows: true, inBox: false, above: true })
+    assert.deepEqual(place, { rowLeads: true, rowHasChip: false, ownPill: true, aheadOnOneLine: true, sameType: true, chevrons: 0 })
 
     const shown = () => page.$eval(CHIP, (el) => el.getAttribute("data-console-project-chip")!)
     const start = await shown()
@@ -125,21 +131,14 @@ test("the chip follows the house in the status row, and its menu picks a project
     await closed()
     assert.equal(await page.evaluate((key) => localStorage.getItem(key), PICK_KEY), other)
 
-    // The dialog has no status row: the chip stands on its title's line, over the box, on the same pick.
+    // The dialog's box carries the chip in its strip too, on the same pick.
     await page.evaluate(async () => {
       const store = "/src/store.ts"
       const { openNewThread } = await import(/* @vite-ignore */ store)
       openNewThread()
     })
     await page.waitForSelector(`[role="dialog"] ${CHIP}[data-console-project-chip="${other}"]`)
-    const dialog = await page.evaluate((chip) => {
-      const box = document.querySelector('[role="dialog"] [data-composer-box]')!
-      return {
-        inBox: box.querySelector(chip) !== null,
-        above: document.querySelector(`[role="dialog"] ${chip}`)!.getBoundingClientRect().bottom <= box.getBoundingClientRect().top,
-      }
-    }, CHIP)
-    assert.deepEqual(dialog, { inBox: false, above: true })
+    assert.equal(await page.evaluate((chip) => document.querySelector('[role="dialog"] [data-composer-box]')!.querySelector(chip) !== null, CHIP), true)
 
     assert.deepEqual(errors, [])
   } finally {

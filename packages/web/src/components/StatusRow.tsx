@@ -1,5 +1,4 @@
 import { House, Settings as SettingsIcon } from "lucide-react"
-import type { ReactNode } from "react"
 import { Link } from "react-router"
 import { store } from "../store.ts"
 import { useBoard } from "../hooks.ts"
@@ -57,21 +56,20 @@ import { GithubTrigger } from "./GithubTrigger.tsx"
 // this spacing. UIs are conflicting here"). `gap-2.5` leaves 4px between the slash and either surface
 // when lit, and 10px of ink a side at rest: the slash stands centred between the house and the name.
 
-// THE CONSOLE'S CRUMB IS THE PROJECT CHIP, after the same house: `⌂ / ▣ acme ▾`. The chip picks where the
-// prompt below it goes, and each row of its menu opens that project in a new tab (ConsoleProjectChip.tsx).
-// The row read `⌂ / All projects ▾` until 2026-10-29, a second project menu over the chip that then rode
-// inside the prompt box, and then the house alone (maintainer 2026-11-01: "keep the home icon!"). From
-// 2026-11-06 the chip stood alone (maintainer: "we drop the home icon from console"), because a Projects |
-// Console pill above the row was the way to the grid; the pill went on 2026-11-10, and the house came back
-// as the way out.
+// THE CONSOLE'S ROW IS THE HOUSE AND THE ICONS, with no crumb: the project chip that says where the prompt
+// goes rides inside the prompt box, first in its strip (maintainer 2026-11-15: "the project dropdown in the
+// 'All projects' view needs to be inside the sidebar prompt box"; ConsoleProjectChip.tsx). The row read
+// `⌂ / All projects ▾` until 2026-10-29, a second project menu over the chip that then rode inside the
+// prompt box, and then the house alone (maintainer 2026-11-01: "keep the home icon!"). From 2026-11-06 the
+// chip stood here, alone and then after the house as `⌂ / ▣ acme ▾`, until it went back into the box.
 
 /**
- * Takes nothing beyond the Console's flag and its chip, and reads its live values itself. Its call sites
- * are leaves of very different trees — the sidebar column and the fresh-project centered box — and the
- * second one (FirstTaskView) subscribes to no store state of its own. valtio's useSnapshot tracks the
- * properties actually READ, so this re-renders on a board change and on nothing else.
+ * Takes nothing beyond the Console's flag, and reads its live values itself. Its call sites are leaves of
+ * very different trees — the sidebar column and the fresh-project centered box — and the second one
+ * (FirstTaskView) subscribes to no store state of its own. valtio's useSnapshot tracks the properties
+ * actually READ, so this re-renders on a board change and on nothing else.
  */
-export function StatusRow({ onConsole = false, projectChip }: { onConsole?: boolean; projectChip?: ReactNode } = {}) {
+export function StatusRow({ onConsole = false }: { onConsole?: boolean } = {}) {
   return (
     <div
       data-status-row
@@ -80,7 +78,7 @@ export function StatusRow({ onConsole = false, projectChip }: { onConsole?: bool
       // block rather than a strip parked above a box.
       className="mb-2.5 flex min-w-0 items-center gap-3 text-[12px]"
     >
-      {onConsole ? <ConsoleBreadcrumb chip={projectChip} /> : <Breadcrumb />}
+      {onConsole ? <HomeLink /> : <Breadcrumb />}
       {/* THE ICONS, right-justified, with settings in the corner. Each is shrink-0, so the crumb gives way
           before any of them does. */}
       <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -146,19 +144,8 @@ function Breadcrumb() {
   )
 }
 
-/** The Console's: the way out, and the chip saying which project the prompt box sends to. */
-function ConsoleBreadcrumb({ chip }: { chip: ReactNode }) {
-  return (
-    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2.5">
-      <HomeLink />
-      <span aria-hidden="true" className="shrink-0 select-none text-muted-45">/</span>
-      <span className="flex min-w-0 items-center">{chip}</span>
-    </nav>
-  )
-}
-
 /**
- * THE DOOR OUT, and the breadcrumb's root. A 24px target like the icons at the other end, trimmed onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the
+ * THE DOOR OUT, and the breadcrumb's root — on the Console, the whole of the row's left end. A 24px target like the icons at the other end, trimmed onto its ink by STATUS_ROW_ACTION's own `-mx-1.5` alone: the
  * house's ink then starts on the composer's outer border edge, as the gear's ends on it at the row's other
  * end (both measured 2026-10-26, 0px). It carried an extra `-ml-px` until then, which did not ADD to the
  * trim but REPLACED it — `margin-left` outranks `margin-inline` in the stylesheet — and left the house 5px

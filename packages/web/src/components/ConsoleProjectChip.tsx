@@ -7,8 +7,9 @@ import { useConsoleProjectList } from "../lib/consoleProjects.ts"
 import { consoleDispatchProject, pickConsoleDispatchProject, useConsoleDispatchPick } from "../lib/consoleDispatchProject.ts"
 import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 import { useIsMobile } from "../lib/mobile.ts"
-import { STATUS_ROW_CRUMB, STATUS_ROW_CRUMB_CHEVRON } from "../lib/statusRow.ts"
+import { PROMPT_CONTROL_TYPOGRAPHY_CLASS } from "../lib/promptControlTypography.ts"
 import { ProjectSquare } from "./ProjectRail.tsx"
+import { PROMPT_CONTROL_CELL, PromptControlGroup } from "./ui/PromptControlGroup.tsx"
 
 // THE CONSOLE'S NEW-THREAD TARGET: which project a thread started on the Console runs in, and the chip
 // that says so. One hook for every surface that starts a thread there — the sidebar's prompt box
@@ -17,10 +18,11 @@ import { ProjectSquare } from "./ProjectRail.tsx"
 // in <ProjectScope project={project.slug}>: the dispatch, the model lists, the agent-settings gear and
 // an attachment's upload all go to that project.
 //
-// THE CHIP STANDS AT THE UPPER LEFT OF THE BOX IT POINTS, not inside it (maintainer 2026-11-06: "the project
-// chip should show up to the upper left in the console"): it says where the prompt goes, and the strip
-// inside the box is what the prompt runs on. Its menu picks that project, and each row also opens the project
-// in a new tab, the way to a project's page now that the Console's status row draws no house.
+// THE CHIP RIDES INSIDE THE BOX IT POINTS, first in the strip along its bottom edge (maintainer 2026-11-15:
+// "the project dropdown in the 'All projects' view needs to be inside the sidebar prompt box"). It stood
+// at the box's upper left, in the status row's crumb, from 2026-11-06 (maintainer then: "the project chip
+// should show up to the upper left in the console"), and in the strip before that. Its menu picks that
+// project, and each row also opens the project in a new tab.
 
 /** `enabled` false (a project's own page) reads nothing and names no project. */
 export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard | undefined; chip: ReactNode } {
@@ -39,45 +41,62 @@ export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard
 const PHONE_CHIP =
   "relative inline-flex h-[32px] min-w-0 max-w-[45vw] shrink items-center gap-[6px] rounded-full border border-border-strong bg-bg pl-[7px] pr-[11px] text-left text-[13.5px] font-medium text-fg outline-none after:absolute after:inset-x-0 after:-inset-y-[6px] after:content-[''] active:bg-hover"
 
+// On a desktop the chip is a pill of its own in the box's strip, ahead of the model's: the same 24px
+// hairline shape (PromptControlGroup), its name in the same petite caps, and no chevron, as the dropdowns
+// beside it have none. Its own pill, not a third cell of the model's: the project is where the thread runs,
+// the model what it runs on, and a joined pill can only truncate the model where this one can wrap.
+//
+// IT GIVES WAY BEFORE IT WRAPS. `flex-[1_1_6rem]` with `max-w-max` lays the pill out at 6rem when the strip
+// decides what fits on a line, then lets it grow to its whole name, so a long name truncates beside the model
+// pill rather than taking a second line, until the strip is too narrow even for 6rem (the sidebar's 272px floor).
+// There it wraps onto a line of its own, which it may fill.
+const DESKTOP_CHIP_SLOT = "flex min-w-0 max-w-max flex-[1_1_6rem]"
+
 /**
- * The PROJECT chip: where a task typed in the box below it will run. On a desktop it takes the breadcrumb's
- * shape, because it stands where a project page's breadcrumb does (lib/statusRow.ts): loose, with no border,
- * lit on hover, its square starting on the composer's left edge. It keeps a chevron where the dropdowns inside
- * the box have none: nothing else on this row says that it opens.
+ * The PROJECT chip: where a task typed in this box will run. A phone draws it in its tool row beside the
+ * model chip; a desktop, first in the box's strip (DESKTOP_CHIP_SLOT).
  */
 function ProjectChip({ project, projects, onPick }: { project: ProjectCard; projects: ProjectCard[]; onPick: (slug: string) => void }) {
   const phone = useIsMobile()
+  const trigger = (
+    <RadixDropdown.Trigger asChild>
+      <button
+        type="button"
+        aria-label={`Project: ${project.name}`}
+        title={`${project.name}: the project a new thread runs in`}
+        data-console-project-chip={project.slug}
+        className={phone ? PHONE_CHIP : `group inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 ${PROMPT_CONTROL_CELL} bg-transparent text-left text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg data-[state=open]:bg-hover-strong data-[state=open]:text-fg ${PROMPT_CONTROL_TYPOGRAPHY_CLASS}`}
+      >
+        {/* `shrink-0`: the square sizes itself by inline style, and a truncating name beside it squeezed it to 10px. */}
+        <span className="shrink-0">
+          <ProjectSquare project={project} size={phone ? 16 : 14} />
+        </span>
+        {phone ? (
+          <>
+            <span className="min-w-0 truncate">{project.name}</span>
+            <ChevronDown aria-hidden size={13} strokeWidth={2.4} className="shrink-0 text-muted" />
+          </>
+        ) : (
+          // Lifted a pixel, as the model pill's value is (ProfileGridSelector): petite caps sit on the baseline.
+          <span className="relative -top-px min-w-0 truncate">{project.name}</span>
+        )}
+      </button>
+    </RadixDropdown.Trigger>
+  )
   return (
     <RadixDropdown.Root modal={false}>
-      <RadixDropdown.Trigger asChild>
-        <button
-          type="button"
-          aria-label={`Project: ${project.name}`}
-          title="The project a new thread runs in"
-          data-console-project-chip={project.slug}
-          className={phone ? PHONE_CHIP : `${STATUS_ROW_CRUMB} gap-1.5`}
-        >
-          <ProjectSquare project={project} size={16} />
-          {phone ? (
-            <>
-              <span className="min-w-0 truncate">{project.name}</span>
-              <ChevronDown aria-hidden size={13} strokeWidth={2.4} className="shrink-0 text-muted" />
-            </>
-          ) : (
-            <span className="flex min-w-0 items-baseline gap-1">
-              <span className="min-w-0 truncate">{project.name}</span>
-              <ChevronDown aria-hidden className={STATUS_ROW_CRUMB_CHEVRON} />
-            </span>
-          )}
-        </button>
-      </RadixDropdown.Trigger>
+      {phone ? trigger : (
+        <div className={DESKTOP_CHIP_SLOT}>
+          <PromptControlGroup>{trigger}</PromptControlGroup>
+        </div>
+      )}
       <RadixDropdown.Portal>
         {/* `alignOffset` puts the menu's squares under the chip's: a row's square stands 13px inside the menu
             (its 1px border, 6px of padding and the row's own 6px), and the chip's 6px inside the chip. The width
             cap gives a long name the room the crumb's menu does (ProjectCrumb.tsx), plus the rail's 36px.
-            The left collision margin is the smaller one so that offset survives a sidebar against the window's
-            edge: in the one-thread pane up to 1440px the chip starts 12px in, the menu 5px, and a margin of 8
-            pushed it 3px right of the chip's square. */}
+            The left collision margin is the smaller one so that offset survives a box against the window's edge:
+            when the chip stood in the status row, in the one-thread pane up to 1440px, it started 12px in, the
+            menu 5px, and a margin of 8 pushed the menu 3px right of the chip's square. */}
         <RadixDropdown.Content
           align="start"
           alignOffset={-7}

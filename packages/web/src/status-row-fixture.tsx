@@ -156,10 +156,15 @@ store.board = (identityMode === "loading"
         : { projectName: "frizz", projectLabel: "colinhacks/frizz", githubRepo: "colinhacks/frizz", projectSlug: "frizz", threads: [] }) as never
 const width = Number(params.get("width") ?? 489)
 
-/** The Console's row, with the chip ConsoleSidebar.tsx gives it. */
-function ConsoleRow() {
+/** The Console's row and box, with the chip ConsoleSidebar.tsx gives the box. */
+function ConsoleRowAndBox() {
   const { chip } = useConsoleDispatchTarget()
-  return <StatusRow onConsole projectChip={chip} />
+  return (
+    <>
+      <StatusRow onConsole />
+      <DispatchForm projectPicker={chip} pendingCard={false} />
+    </>
+  )
 }
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -175,8 +180,12 @@ createRoot(document.getElementById("root")!).render(
         {/* The sidebar column's real width at a 1440px viewport by default, so the row's split reads at the
             measure it actually ships at; `?width=272` is the column's floor. */}
         <div style={{ width }}>
-          {identityMode === "console" ? <ConsoleRow /> : <StatusRow />}
-          <DispatchForm pendingCard={false} />
+          {identityMode === "console" ? <ConsoleRowAndBox /> : (
+            <>
+              <StatusRow />
+              <DispatchForm pendingCard={false} />
+            </>
+          )}
         </div>
       </main>
       </TooltipProvider>

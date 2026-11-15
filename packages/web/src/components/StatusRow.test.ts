@@ -46,7 +46,7 @@ function render(
     createElement(
       QueryClientProvider,
       { client },
-      createElement(MemoryRouter, null, createElement<NonNullable<ComponentProps<typeof StatusRow>>>(StatusRow, options.onConsole ? { onConsole: true, projectChip: createElement("button", { "data-chip": "" }) } : null)),
+      createElement(MemoryRouter, null, createElement<NonNullable<ComponentProps<typeof StatusRow>>>(StatusRow, options.onConsole ? { onConsole: true } : null)),
     ),
   )
 }
@@ -134,18 +134,17 @@ test("a cold board still reserves the crumb's measure, and says it is loading", 
   assert.match(html, /aria-label="Projects"/)
 })
 
-test("the Console's crumb is the project chip, after the house", () => {
-  // The chip stood alone from 2026-11-06 ("we drop the home icon from console"), while a Projects | Console
-  // pill above the row was the way to the grid. The pill went on 2026-11-10, so the house is the way out.
+test("the Console's row is the house and the icons, with no crumb: the project chip rides in the prompt box", () => {
+  // The chip stood in this row from 2026-11-06, alone and then after the house, until it moved into the
+  // prompt box's strip (maintainer 2026-11-15: "the project dropdown in the 'All projects' view needs to be
+  // inside the sidebar prompt box"). consoleProjectChip.e2e.test.ts pins where it went.
   const html = render("colinhacks/frizz", { onConsole: true })
   const home = html.indexOf('aria-label="Projects"')
-  const slash = html.indexOf('<span aria-hidden="true" class="shrink-0 select-none text-muted-45">/</span>')
-  const chip = html.indexOf("data-chip")
-  assert.ok(home >= 0 && slash > home && chip > slash, "the house, the slash, then the chip")
-  assert.match(html, /<nav aria-label="Breadcrumb" class="flex min-w-0 items-center gap-2\.5">/)
+  assert.ok(home >= 0 && home < html.indexOf('aria-label="Settings"'), "the house leads, the icons follow")
   assert.match(html, /<a [^>]*href="\/\?home=projects"[^>]*aria-label="Projects"|<a [^>]*aria-label="Projects"[^>]*href="\/\?home=projects"/, "the house goes to the grid, never the kept Console")
-  assert.doesNotMatch(html, /data-project-crumb/, "the chip, not a project's crumb")
-  assert.ok(chip < html.indexOf('aria-label="Settings"'), "the chip leads, the icons follow")
+  assert.doesNotMatch(html, /data-project-crumb/, "no project's crumb")
+  assert.doesNotMatch(html, /data-console-project-chip/, "no project chip")
+  assert.doesNotMatch(html, /aria-label="Breadcrumb"|select-none text-muted-45">\/</, "no breadcrumb and no slash after the house")
   assert.match(html, /ml-auto/, "the icons keep the right end")
 })
 

@@ -9,12 +9,12 @@ import test from "node:test"
 //   · The grid's way to the Console is the All projects tile, second after "Add a project" (ProjectGrid.tsx
 //     AllProjectsTile), drawn once there are two projects: with one, the Console is that project's board
 //     again. It is a link, so ⌘-click works. The house is "Projects", so the two names never cross.
-//   · The Console's way out is the house at the head of its status row, before the project chip, and like
-//     every house it goes to the grid even while the Console is the kept home.
+//   · The Console's way out is the house at the head of its status row, and like every house it goes to the
+//     grid even while the Console is the kept home.
 //   · A bare `/` forwards to a kept Console; the launcher's `/?add=<dir>` offer does not.
 //   · The grid's icons stand in the middle of the page when they do not fill a row.
 //   · A Console over projects that have never run a thread is the centred first-task box, as a new project's
-//     board is (maintainer 2026-11-10), with the Console's house and chip over it. The first task sent from it
+//     board is (maintainer 2026-11-10), with the Console's house over it and the chip inside it. The first task sent from it
 //     goes to the project the chip names, and the Console becomes the sidebar and the pane, a reload included.
 //   · With no project at all, `/console` forwards to the grid's welcome, which keeps the grid as home.
 //
@@ -87,22 +87,24 @@ test("no switcher: the grid links to the Console once there are two projects, an
     assert.equal(await kept(page), "console", "arriving on the Console keeps it as home")
 
     // No project has run a thread: the Console is the centred first-task box, not a sidebar beside an empty
-    // inbox, and its status row is the house, the slash, then the project chip.
+    // inbox. Its status row leads with the house, and the project chip rides inside the box once the project
+    // list has answered.
+    await page.waitForSelector("[data-composer-box] [data-console-project-chip]")
     const firstTask = await page.evaluate(() => {
       const box = document.querySelector("[data-composer-box]")!.getBoundingClientRect()
       return {
         sidebar: document.querySelector("[data-console-sidebar]") !== null,
         heading: [...document.querySelectorAll("h2")].some((h) => h.textContent === "What should the agent do?"),
         centreOffset: (box.left + box.right) / 2 - innerWidth / 2,
-        row: [...document.querySelector("[data-status-row] nav[aria-label='Breadcrumb']")!.children].map((el) =>
-          el.matches("a[aria-label='Projects']") ? "house" : el.textContent === "/" ? "/" : el.querySelector("[data-console-project-chip]") ? "chip" : "?",
-        ),
+        houseLeads: document.querySelector("[data-status-row]")!.firstElementChild!.matches("a[aria-label='Projects']"),
+        chipInBox: document.querySelector("[data-composer-box] [data-console-project-chip]") !== null,
+        chipInRow: document.querySelector("[data-status-row] [data-console-project-chip]") !== null,
       }
     })
     assert.equal(firstTask.sidebar, false, "no sidebar on a Console with no thread")
     assert.equal(firstTask.heading, true)
     assert.ok(Math.abs(firstTask.centreOffset) < 1, `the prompt box stands in the middle of the page (off by ${firstTask.centreOffset})`)
-    assert.deepEqual(firstTask.row, ["house", "/", "chip"])
+    assert.deepEqual([firstTask.houseLeads, firstTask.chipInBox, firstTask.chipInRow], [true, true, false])
     assert.equal(await page.$eval(HOUSE, (a) => a.getAttribute("href")), "/?home=projects")
 
     // A bare `/` forwards to the kept Console; the launcher's offer to add a folder does not.
