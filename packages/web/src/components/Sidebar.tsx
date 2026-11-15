@@ -19,6 +19,7 @@ import { ChildOpRow } from "./ChildOpRow.tsx"
 import { ChildThreadRows } from "./ChildThreadRows.tsx"
 import { ExpandThreadLink } from "./ExpandThreadLink.tsx"
 import { visibleChildOps } from "../lib/childOps.ts"
+import { railChildThread } from "../lib/childThreads.ts"
 import { childOpDismisser } from "../lib/dismissChildOp.ts"
 import { MarkAsButton } from "./MarkAsButton.tsx"
 import { DispatchForm } from "./NewThreadModal.tsx"
@@ -1129,10 +1130,12 @@ function childOpTitle(s: { label: string; subagentType?: string }): string {
 //
 // The thread's CHILD THREADS follow its sub-agents here (ChildThreadRows): a child is no row of its own on
 // the board (shared drawnUnderParent), so under its parent is where the rail draws it. Read untracked
-// (hooks.ts useChildThreads), so a row re-renders only when one of ITS children changes.
+// (hooks.ts useChildThreads), so a row re-renders only when one of ITS children changes. Like a sub-agent,
+// a child rows here only while it has something going on of its own (lib/childThreads railChildThread):
+// one resting on a handoff to its parent drops off the rail and stays on the parent's own surfaces.
 export function SubAgentRows({ t }: { t: ThreadView }) {
   const subs = visibleChildOps(t.subAgents ?? [], "rail")
-  const childThreads = useChildThreads(t.id)
+  const childThreads = useChildThreads(t.id).filter(railChildThread)
   if (subs.length === 0 && childThreads.length === 0) return null
   return (
     <div className="flex flex-col">

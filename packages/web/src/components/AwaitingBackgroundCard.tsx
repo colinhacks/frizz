@@ -34,7 +34,7 @@ import { localFileDragProps } from "../lib/localFileDrag.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
 import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, CHILD_THREAD_WAITING, CHILD_THREAD_WAITING_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
-import { childThreadStartedAt, childThreadState } from "../lib/childThreads.ts"
+import { childThreadStartedAt, childThreadState, childThreadWaiting } from "../lib/childThreads.ts"
 import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
 import { useChildThreads } from "../hooks.ts"
 import { compactElapsedSince, formatCompactElapsed } from "../lib/durationLabels.ts"
@@ -1020,7 +1020,7 @@ export function ChildThreadRow({ child, now }: { child: ThreadView; now: number 
   const mark = state === "running"
     ? <Spinner tone="border-accent" />
     : <span aria-hidden className={`inline-block size-3 p-[3px] ${ON_CAP}`}><span className={state === "stale" ? CHILD_STALE_DOT_CLASS : CHILD_RESTED_DOT_CLASS} /></span>
-  const waiting = state === "rested" && !child.needsYou && child.waitStatus !== undefined
+  const waiting = childThreadWaiting(child)
   const status = child.needsYou ? CHILD_THREAD_NEEDS_YOU : state === "running" ? elapsed : state === "stale" ? "stale" : waiting ? CHILD_THREAD_WAITING : "rested"
   return (
     <WaitRow

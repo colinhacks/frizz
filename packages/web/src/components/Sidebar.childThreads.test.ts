@@ -8,8 +8,10 @@ import { TooltipProvider } from "./Tooltip.tsx"
 
 // CHILD THREADS ON THE RAIL, over the REAL <Sidebar/>: a child is no row of its own (shared
 // drawnUnderParent), and is drawn as an indented child row under its parent, after the parent's
-// sub-agents (SubAgentRows → ChildThreadRows). A child at a hard gate is the exception the human must
-// answer: it rows in the queue AND stays listed under its parent.
+// sub-agents (SubAgentRows → ChildThreadRows) — but only while it has something going on of its own
+// (lib/childThreads railChildThread). A child resting on a handoff to its parent drops off the rail. A
+// child at a hard gate is the exception the human must answer: it rows in the queue AND stays listed
+// under its parent.
 
 const base = {
   kind: "session",
@@ -54,7 +56,7 @@ test("a child is drawn under its parent and nowhere else on the rail", async () 
   assert.doesNotMatch(html, /data-sidebar-item="write-docs"/, "no row of its own")
   const under = html.slice(html.indexOf('data-sidebar-item="ship-the-port"'))
   assert.match(under, /aria-label="Open child thread: Fix the CI matrix"/)
-  assert.match(under, /aria-label="Open child thread: Write the docs"/)
+  assert.doesNotMatch(html, /Write the docs/, "a child resting on its handoff is not drawn on the rail at all")
   // Marked as the parent's own row, so the parent's drawer stacks the child rather than dismissing.
   assert.match(under, /data-subagent-parent="ship-the-port"/)
   // The Running band counts the parent alone.
@@ -67,4 +69,22 @@ test("a child at a hard gate queues on its own row and stays listed under its pa
   assert.match(html, /data-sidebar-item="approve-push"/, "it rows in the queue")
   assert.match(html, /aria-label="Open child thread: Approve the push"/, "and under its parent")
   assert.match(html, />needs you</)
+})
+
+test("a resting child stays under its parent only while it crashed or waits on something of its own", async () => {
+  const crashed = { ...base, id: "port-tests", title: "Port the tests", parentSlug: "ship-the-port", runtime: "exited", crashed: true } as ThreadView
+  const parked = { ...base, id: "land-pr", title: "Land the PR", parentSlug: "ship-the-port", waitStatus: "watching" } as ThreadView
+  const html = await rail([parent, handedOff, crashed, parked])
+  const under = html.slice(html.indexOf('data-sidebar-item="ship-the-port"'))
+  assert.match(under, /aria-label="Open child thread: Port the tests"/)
+  assert.match(under, /aria-label="Open child thread: Land the PR"/)
+  assert.match(under, />waiting</, "a child parked on its own wait says so")
+  assert.doesNotMatch(html, /Write the docs/)
+})
+
+test("a parent whose only children rest on their handoffs draws no child rows", async () => {
+  const resting = { ...parent, runtime: "turn-idle" } as ThreadView
+  const html = await rail([resting, handedOff, { ...handedOff, id: "write-tests", title: "Write the tests" } as ThreadView])
+  assert.match(html, /data-sidebar-item="ship-the-port"/)
+  assert.doesNotMatch(html, /Open child thread/)
 })

@@ -5,7 +5,7 @@ import { isConsolePinned, isPinned, queued, sectionThreads } from "../groups.ts"
 import { consoleDone, consolePinned, consoleQueue, consoleRunning, consoleSnoozed } from "./consoleBoard.ts"
 import { phoneBands } from "./mobileTriage.ts"
 import { settledThread } from "./boardPartition.ts"
-import { childThreadIndex, childThreadsOf, childThreadStartedAt, childThreadState } from "./childThreads.ts"
+import { childThreadIndex, childThreadsOf, childThreadStartedAt, childThreadState, childThreadWaiting, railChildThread } from "./childThreads.ts"
 import { queueOpsCounts } from "./queueOpsCounts.ts"
 import { threadOps } from "./threadOps.ts"
 
@@ -150,4 +150,12 @@ test("the ops over a prompt box count the children threadOps lists, beside the s
   assert.equal(`${child.n} ${child.many}`, "2 child threads")
   assert.deepEqual(child.states, ["running", "rested"])
   assert.equal(queueOpsCounts(parent).some((c) => c.key === "child"), false, "an empty kind is dropped")
+})
+
+test("the sidebar draws a child only while it has something going on of its own", () => {
+  const onRail = [...childShapes, gated].filter(railChildThread)
+  assert.deepEqual(ids(onRail), ["c-running", "c-quiet-park", "c-crashed", "c-perm-prompt"])
+  assert.deepEqual(ids([...childShapes, gated].filter(childThreadWaiting)), ["c-quiet-park"], "only the child parked on a wait of its own reads waiting")
+  // The parent's own surfaces still list every open child, resting on a handoff or not.
+  assert.ok(ids(childThreadsOf([parent, ...childShapes], "parent")).includes("c-handoff"))
 })

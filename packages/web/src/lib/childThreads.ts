@@ -16,10 +16,30 @@ import { partitionBoard } from "./boardPartition.ts"
 // reached from its parent's transcript), unless it is actively running — a running thread is never
 // hidden as finished (shared isActivelyRunning's rule for Done). A child at a hard gate is listed here
 // AND queues as a card of its own: under its parent the row says the parent's work is held on the human.
+//
+// THE SIDEBAR IS THE ONE EXCEPTION (railChildThread): it draws a child only while it has something going
+// on of its own, the way it draws a sub-agent only while it runs or after it crashed. A child resting on a
+// handoff to its parent is the parent's business by then, and the parent's own row says what that waits
+// on. Five children resting a day on the questions their parent relayed drew five dim rows with hollow
+// marks there, which read as frozen sub-agents (maintainer 2026-11-15: "5 frozen subagents in sidebar.
+// why?", then picked hiding them). The counts over the parent's prompt box and its full page's rail
+// still list every open child.
 
 /** Is this child still listed under its parent? */
 export function listedChildThread(t: ThreadView): boolean {
   return t.state !== "archived" || isActivelyRunning(t)
+}
+
+/** Is this listed child also drawn on the SIDEBAR, under its parent's row? Only while it is working, has
+ *  crashed, rests on a wait of its own (its PR's CI, its timer: `waitStatus`), or is held on the human. */
+export function railChildThread(t: ThreadView): boolean {
+  return childThreadState(t) !== "rested" || t.needsYou === true || t.waitStatus !== undefined
+}
+
+/** Is this child at rest on a wait of its OWN — a quiet `working`/`watching` park on its PR's CI or its
+ *  timer — rather than on a handoff? Its rows read "waiting" (childOps CHILD_THREAD_WAITING). */
+export function childThreadWaiting(t: ThreadView): boolean {
+  return childThreadState(t) === "rested" && !t.needsYou && t.waitStatus !== undefined
 }
 
 /** A child's row state, in the child-row vocabulary (ChildOpRow): `running` while it works — its turn in
