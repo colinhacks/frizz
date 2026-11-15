@@ -7,9 +7,11 @@ import {
   getFrizzSupervisorStatus,
   IDLE_RESTART_HOLD,
   isDevFrizzBuild,
+  isPreparingUpdate,
   nextControlPlane,
   nextRestartHold,
   readyBelieved,
+  requestFrizzOpenNow,
   requestFrizzRestart,
   requestFrizzUpdateRestart,
   RESTART_HOLD_DEADLINE_MS,
@@ -298,4 +300,55 @@ test("a post-ack ready naming a different build settles the attempt; the same bu
   // No identity recorded at the click: only a non-ready settles, as before.
   const blind = { ...pending, attempt: { startedAt: 1_000, ackedAt: 1_500 } }
   assert.equal(nextControlPlane(blind, successor), blind)
+})
+
+// An update that downloads ahead of its restart keeps the old server serving for as long as that takes —
+// minutes on a slow connection — and the launcher says so with a "prepare" view (2026-11-15). The board
+// has to stay usable through it: believed "ready", no overlay, writes allowed. The attempt stays held,
+// so that "ready" can neither settle it nor reload the tab onto the old bundle.
+test("an update downloading ahead of its restart keeps the board ready and the attempt held", () => {
+  const prepare = { kind: "prepare" as const, title: "Getting 0.15.56 ready", elapsedMs: 4_000, steps: [], openNow: false }
+  const attempt = { startedAt: CLICK, ackedAt: ACK, build: "npm:frizz@0.15.55" }
+  // The quiet click recorded the attempt and left the board "ready"; the optimistic one raised it to "restarting".
+  for (const before of ["ready", "restarting"] as const) {
+    const pending: ControlPlane = { state: before, message: null, attempt }
+    const downloading = answer("ready", ACK + 10, { preparing: true, version: "0.15.55", artifactDigest: "npm:frizz@0.15.55", progress: prepare })
+    assert.equal(isPreparingUpdate(downloading), true)
+    const plane = nextControlPlane(pending, downloading)
+    assert.deepEqual(plane, { state: "ready", message: null, attempt }, `from ${before}`)
+    assert.equal(readyBelieved(plane, downloading), false, "the destination is not consumed")
+    // The launcher stops the old server: the attempt settles exactly as before.
+    assert.deepEqual(nextControlPlane(plane, answer("restarting", ACK + 60_000)), { state: "restarting", message: null, attempt: null })
+    // A failed download fails the update, the old server still serving.
+    assert.deepEqual(
+      nextControlPlane(plane, answer("failed", ACK + 60_000, { message: "Frizz 0.15.56 could not download its runtimes" })),
+      { state: "failed", message: "Frizz 0.15.56 could not download its runtimes", attempt: null },
+    )
+  }
+  // Before the ack nothing speaks for the attempt, a prepare view included.
+  const unacked: ControlPlane = { state: "ready", message: null, attempt: { ...attempt, ackedAt: null } }
+  assert.equal(nextControlPlane(unacked, answer("ready", CLICK + 10, { progress: prepare })), unacked)
+  // A boot's view on "restarting" is not a prepare, and frizz-dev's bare `preparing` stamp keeps today's hold.
+  assert.equal(isPreparingUpdate(answer("restarting", 1, { progress: { ...prepare, kind: "update" } })), false)
+  assert.equal(isPreparingUpdate(answer("ready", 1, { preparing: true })), false)
+  const devHold: ControlPlane = { state: "restarting", message: null, attempt }
+  assert.equal(nextControlPlane(devHold, answer("ready", ACK + 10, { preparing: true })), devHold)
+})
+
+test("open now reports what the launcher said, and never throws", async () => {
+  const calls: Array<[string, RequestInit | undefined]> = []
+  const fetcher = (answerWith: Response | Error) => (async (url: string, init?: RequestInit) => {
+    calls.push([url, init])
+    if (answerWith instanceof Error) throw answerWith
+    return answerWith
+  }) as unknown as typeof fetch
+  assert.deepEqual(await requestFrizzOpenNow(fetcher(response(JSON.stringify({ protocol: 1, ok: true }), 202))), { ok: true })
+  assert.equal(calls[0]?.[0], "/_frizz/control/open-now")
+  assert.equal(calls[0]?.[1]?.method, "POST")
+  assert.deepEqual(
+    await requestFrizzOpenNow(fetcher(response(JSON.stringify({ protocol: 1, ok: false, message: "the boot already finished" }), 409))),
+    { ok: false, message: "the boot already finished" },
+  )
+  assert.deepEqual(await requestFrizzOpenNow(fetcher(response("<html>", 404, "text/html"))), { ok: false, message: "The launcher did not take the request." })
+  assert.deepEqual(await requestFrizzOpenNow(fetcher(new Error("offline"))), { ok: false, message: "The launcher did not answer." })
 })

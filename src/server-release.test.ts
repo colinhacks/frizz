@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import {
-  describeGenerationSweep, GENERATION_MIN_AGE_MS, npmServerPackageInstaller, resolveNpmCli, runningCommands, serverGenerationLaunch,
+  describeGenerationSweep, GENERATION_MIN_AGE_MS, npmServerPackageInstaller, prepareGenerationRuntimes, resolveNpmCli, runningCommands, serverGenerationLaunch,
   serverReleaseMinimum, serverReleaseSpec, ServerReleaseStore,
   validateServerGeneration, type ServerCompatibility, type ServerGeneration, type ServerPackageInstaller, type ServerReleaseSpec,
 } from "./server-release.ts";
@@ -564,4 +564,42 @@ test("a generation a real process was started from is kept while it runs and rem
 
 test("Windows, whose processes this cannot list, is told so rather than given an empty list", async () => {
   assert.equal(await runningCommands("win32"), undefined);
+});
+
+// An update downloads the new release's runtimes while the release before it serves (2026-11-15). The
+// launcher runs the new release's own entry with FRIZZ_PROVISION_RUNTIMES_ONLY and reads its progress
+// off stdout, one JSON event per line; only a release that declares it can do this.
+test("a release that declares it downloads its runtimes ahead, reporting each step, and a failure says why", async (t) => {
+  const { store } = setup(t);
+  const generation = await store.prepare("1.1.0");
+  assert.equal(generation.provisionRuntimes, false, "a release that does not declare it is booted as it always was");
+  const declaring = JSON.parse(readFileSync(join(generation.root, "package.json"), "utf8"));
+  declaring.frizzServer.provisionRuntimes = 1;
+  writeFileSync(join(generation.root, "package.json"), JSON.stringify(declaring));
+  assert.equal(validateServerGeneration(generation.root, { ...baseline, version: "1.1.0" }, generation.id).provisionRuntimes, true);
+
+  // The release's entry, standing in for dist/dev-child.js: it must see the variable and the release's
+  // own environment, and it must not be asked to serve.
+  const script = (body: string) => writeFileSync(generation.entry, `
+    if (process.env.FRIZZ_PROVISION_RUNTIMES_ONLY !== "1" || !process.env.FRIZZ_STABLE_ARTIFACT?.endsWith("@1.1.0")) process.exit(9)
+    if (process.env.FRIZZ_DEV_PORT) process.exit(8)
+    const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n")
+    ${body}
+  `);
+  script(`
+    emit({ type: "plan", runtimes: { claude: { label: "2.1.325", present: true }, codex: { label: "0.169.0", present: false } } })
+    process.stdout.write("not json\\n")
+    emit({ type: "download", backend: "codex", label: "0.169.0", state: "downloading", received: 10, total: 20, bytesPerSecond: 5 })
+    emit({ type: "download", backend: "codex", label: "0.169.0", state: "ready", received: 20, total: 20, bytesPerSecond: 5 })
+    emit({ type: "done" })
+  `);
+  const events: string[] = [];
+  await prepareGenerationRuntimes(generation, { env: { ...process.env, FRIZZ_DEV_PORT: "" }, onEvent: (event) => events.push(event.type === "download" ? `${event.type}:${event.state}` : event.type) });
+  assert.deepEqual(events, ["plan", "download:downloading", "download:ready", "done"]);
+
+  script(`emit({ type: "error", message: "the registry answered 503" }); process.exit(1)`);
+  await assert.rejects(prepareGenerationRuntimes(generation), /Frizz 1\.1\.0 could not download its runtimes: the registry answered 503/u);
+  // Exiting cleanly without saying it finished is not success either.
+  script(`emit({ type: "plan", runtimes: {} })`);
+  await assert.rejects(prepareGenerationRuntimes(generation), /could not download its runtimes: exited with code 0/u);
 });

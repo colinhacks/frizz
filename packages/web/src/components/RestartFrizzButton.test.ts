@@ -4,7 +4,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { SUPERVISOR_STATUS_KEY } from "../api/supervisorStatus.ts"
-import { anchoredPanelPlacement, isBadgeRelease, PANEL_ARROW_GEOMETRY, showsUpdateBadge, RestartActionButton, RestartFailureNotice, RestartFrizzButton, UPDATE_RESTART_ICON_ROTATION, UpdateRestartPopover } from "./RestartFrizzButton.tsx"
+import { anchoredPanelPlacement, isBadgeRelease, PANEL_ARROW_GEOMETRY, PREPARING_COPY, showsUpdateBadge, RestartActionButton, RestartFailureNotice, RestartFrizzButton, UPDATE_RESTART_ICON_ROTATION, UpdateRestartPopover } from "./RestartFrizzButton.tsx"
 
 test("Update Frizz presents one calm sentence whose highlight is that threads are untouched", () => {
   const html = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: true }))
@@ -354,4 +354,45 @@ test("neither desktop panel stacks itself; both are lifted out of the sidebar by
     assert.ok(surface, "surface rendered")
     assert.doesNotMatch(surface, /(^| )(sm:)?(fixed|absolute)( |$)|(^| )(sm:)?z-/, surface)
   }
+})
+
+const preparing = {
+  kind: "prepare" as const,
+  title: "Getting 0.15.56 ready",
+  elapsedMs: 90_000,
+  steps: [
+    { key: "release", label: "Frizz", version: "0.15.56", state: "done" as const, note: "installed" },
+    { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "live" as const, note: "41%", fraction: 0.41, meta: "143 of 348 MB · 520 KB/s · about 7m left" },
+  ],
+  openNow: false,
+}
+
+// The board stays up while an update downloads ahead of its restart (2026-11-15): the button carries the
+// download's progress so it reads from across the board, and its popover is the launcher's checklist.
+test("an update downloading ahead wears a ring that fills with it, and takes no click", () => {
+  const html = renderToStaticMarkup(createElement(RestartActionButton, { update: true, busy: false, preparing, version: "0.15.55", updateVersion: "0.15.56", onClick: () => { throw new Error("clicked") } }))
+  assert.match(html, /aria-label="Getting 0.15.56 ready"/)
+  assert.match(html, /aria-disabled="true"/)
+  assert.doesNotMatch(html, / disabled=""/, "not natively disabled: the popover hangs off its hover and focus")
+  assert.match(html, /data-prepare-ring="41"/)
+  assert.doesNotMatch(html, /bg-accent" \/>/, "no release-line dot while it downloads")
+  // The release's own npm install has no size: the ring turns instead of filling.
+  const installing = renderToStaticMarkup(createElement(RestartActionButton, {
+    update: true,
+    busy: false,
+    preparing: { ...preparing, steps: [{ key: "release", label: "Frizz", version: "0.15.56", state: "live" as const, note: "installing" }] },
+    onClick: () => undefined,
+  }))
+  assert.match(installing, /data-prepare-ring="indeterminate"/)
+  assert.match(installing, /animate-spin/)
+})
+
+test("the popover while an update downloads ahead is its checklist and one sentence", () => {
+  const html = renderToStaticMarkup(createElement(UpdateRestartPopover, { open: true, update: true, version: "0.15.55", updateVersion: "0.15.56", preparing }))
+  assert.match(html, /Getting 0.15.56 ready/)
+  assert.match(html, /0\.15\.55 → 0\.15\.56/)
+  assert.deepEqual([...html.matchAll(/data-step="([^"]+)" data-state="([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`), ["release:done", "codex:live"])
+  assert.match(html, /143 of 348 MB · 520 KB\/s · about 7m left/)
+  assert.ok(html.includes(PREPARING_COPY))
+  assert.doesNotMatch(html, /Update Frizz|<button/)
 })

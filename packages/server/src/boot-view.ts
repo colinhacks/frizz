@@ -203,8 +203,8 @@ export function bootView(input: BootViewInput): BootView {
   }
 
   if (!progress) {
-    // Forked, and not far enough into its boot to say anything yet.
-    steps.push({ key: "start", label: "Starting the server", state: "live" })
+    // Forked, and not far enough into its boot to say anything yet (or still waiting on the stop).
+    steps.push({ key: "start", label: "Starting the server", state: input.stopped === "stopping" ? "todo" : "live" })
   } else {
     const threads = detail?.threads ?? (() => {
       const match = /^tailer producer (\d+)\/(\d+)$/u.exec(progress.phase)
@@ -213,7 +213,7 @@ export function bootView(input: BootViewInput): BootView {
     const pastRuntimes = !waitingOnRuntimes && progress.phase !== "launch ownership" && progress.phase !== "runtimes" && !progress.phase.startsWith("runtimes:")
     steps.push({
       key: "threads",
-      label: "Load threads",
+      label: pastRuntimes ? "Loading threads" : "Load threads",
       state: pastRuntimes ? "live" : "todo",
       ...(pastRuntimes && threads && threads.total > 0
         ? { note: `${count.format(threads.done)} of ${count.format(threads.total)}`, fraction: Math.min(1, threads.done / threads.total) }

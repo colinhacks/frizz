@@ -32,6 +32,9 @@ import "./styles.css"
 //                                    which names the page rather than a project.
 //   ?width=272                     — the column's width. 489 is the sidebar at a 1440px viewport; 272 is
 //                                    its floor in the tablet band, where the crumb is what gives way.
+//   ?download=live|stalled|connecting — a runtime the board opened without ("Open Frizz now"), still
+//                                    downloading: the chip before the update button.
+//   ?update=preparing|installing   — an update downloading ahead of its restart: the button's ring.
 //   ?font=mono                     — the stylesheet still keys its sans rules on html[data-font]; the
 //                                    product pins sans, so mono is only for the day that attribute goes.
 
@@ -112,12 +115,45 @@ const projects = [
   projectCard("gone", "gone", { stale: true }),
 ]
 
+const download = params.get("download")
+const downloadChips = download === "live"
+  ? [{ backend: "codex", name: "Codex", state: "live", fraction: 0.64, reading: "64% · 3m", detail: "Downloading Codex 0.169.0: 223 of 348 MB · 700 KB/s · about 3m left. A new Codex thread waits for it." }]
+  : download === "stalled"
+    ? [{ backend: "codex", name: "Codex", state: "stalled", fraction: 0.64, reading: "stalled", detail: "Downloading Codex 0.169.0: No data for 42s · 223 MB kept. A new Codex thread waits for it." }]
+    : download === "connecting"
+      ? [{ backend: "codex", name: "Codex", state: "live", reading: "connecting", detail: "Downloading Codex 0.169.0. A new Codex thread waits for it." }]
+      : []
+const update = params.get("update")
+const updateStatus = update
+  ? {
+      version: "0.15.55",
+      updateVersion: "0.15.56",
+      updateAvailable: true,
+      prepareProgress: true,
+      preparing: true,
+      progress: {
+        kind: "prepare",
+        title: "Getting 0.15.56 ready",
+        elapsedMs: 90_000,
+        openNow: false,
+        steps: update === "installing"
+          ? [{ key: "release", label: "Frizz", version: "0.15.56", state: "live", note: "installing" }]
+          : [
+              { key: "release", label: "Frizz", version: "0.15.56", state: "done", note: "installed" },
+              { key: "claude", label: "Claude Code", version: "2.1.325", state: "done", note: "on this Mac" },
+              { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "live", note: "41%", fraction: 0.41, meta: "143 of 348 MB · 520 KB/s · about 7m left" },
+            ],
+      },
+    }
+  : {}
+
 const nativeFetch = window.fetch.bind(window)
 window.fetch = async (input, init) => {
   const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
   const url = new URL(requestUrl, window.location.href)
   const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
-  if (url.pathname === "/_frizz/control/status") return json({ protocol: 1, state: "ready", updateRestart: true })
+  if (url.pathname === "/_frizz/control/status") return json({ protocol: 1, state: "ready", updateRestart: true, ...updateStatus })
+  if (url.pathname === "/_frizz/rpc/runtimeDownloadChips") return json({ result: downloadChips })
   // Every RPC response is the {result} envelope, never the payload bare.
   if (url.pathname === "/_frizz/rpc/quota") return json({ result: quota })
   if (url.pathname === "/_frizz/rpc/authStatus") return json({ result: auth })

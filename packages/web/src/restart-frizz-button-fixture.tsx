@@ -9,10 +9,50 @@ import { store } from "./store.ts"
 // switchable: ?font=mono for the mono stack, sans otherwise (the setting most real windows run).
 const params = new URLSearchParams(window.location.search)
 document.documentElement.dataset.font = params.get("font") === "mono" ? "mono" : "sans"
+// ?preparing is an update downloading ahead of its restart (the button's ring and its checklist popover);
+// ?overlay=slow|stalled|opening|quick|threads|stopping is the restart overlay with the launcher's checklist.
 // ?versionless drops the registry launcher's version fields, i.e. the frizz-dev / legacy popover.
 const versions = params.has("versionless")
   ? {}
   : { version: "0.4.2", updateVersion: params.has("patch") ? "0.4.3" : "0.5.0", launcherVersion: "0.13.0" }
+
+const PREPARE_VIEW = {
+  kind: "prepare",
+  title: "Getting 0.5.0 ready",
+  elapsedMs: 90_000,
+  openNow: false,
+  steps: [
+    { key: "release", label: "Frizz", version: "0.5.0", state: "done", note: "installed" },
+    { key: "claude", label: "Claude Code", version: "2.1.325", state: "done", note: "on this Mac" },
+    { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "live", note: "41%", fraction: 0.41, meta: "143 of 348 MB · 520 KB/s · about 7m left" },
+  ],
+}
+
+// The restart overlay's checklist in each state the launcher reports (server/src/boot-view.ts).
+const stop = { key: "stop", label: "Stopped", version: "0.4.2", state: "done", note: "900ms" } as const
+const claudeReady = { key: "claude", label: "Claude Code", version: "2.1.325", state: "done", note: "on this Mac" } as const
+const threadsTodo = { key: "threads", label: "Load threads", state: "todo" } as const
+const OVERLAYS: Record<string, unknown> = {
+  stopping: { kind: "restart", title: "Restarting Frizz", elapsedMs: 1_000, openNow: false, steps: [{ key: "stop", label: "Stopping the server", state: "live" }, { key: "start", label: "Starting the server", state: "todo" }] },
+  quick: { kind: "restart", title: "Restarting Frizz", elapsedMs: 2_000, openNow: false, steps: [{ ...stop, label: "Stopped the server", version: undefined }, claudeReady, { key: "threads", label: "Loading threads", state: "live", note: "1,240 of 4,880", fraction: 0.254 }] },
+  threads: { kind: "update", title: "Updating Frizz to 0.5.0", elapsedMs: 41_000, openNow: false, steps: [stop, claudeReady, { key: "codex", label: "Codex", version: "0.169.0", state: "done", note: "downloaded" }, { key: "threads", label: "Loading threads", state: "live", note: "3,902 of 4,880", fraction: 0.8 }] },
+  slow: {
+    kind: "update", title: "Updating Frizz to 0.5.0", elapsedMs: 192_000, openNow: true, hint: "slow", downloading: ["Codex"],
+    steps: [stop, claudeReady, { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "live", note: "60%", fraction: 0.61, meta: "212 of 348 MB · 480 KB/s · about 5m left" }, threadsTodo],
+    callout: { lead: "This connection is slow.", text: "Frizz can open now and finish Codex in the background. A new Codex thread waits for it; everything else works right away." },
+  },
+  stalled: {
+    kind: "update", title: "Updating Frizz to 0.5.0", elapsedMs: 268_000, openNow: true, hint: "stalled", downloading: ["Codex"],
+    steps: [stop, claudeReady, { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "stalled", note: "60%", fraction: 0.61, meta: "No data for 42s · 212 MB kept" }, threadsTodo],
+    callout: { lead: "The download stopped receiving data.", text: "It picks up where it stopped when the connection comes back. Frizz can open without it in the meantime." },
+  },
+  opening: {
+    kind: "update", title: "Updating Frizz to 0.5.0", elapsedMs: 201_000, openNow: false, opening: true, downloading: ["Codex"],
+    steps: [stop, claudeReady, { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "live", note: "62%", fraction: 0.62, meta: "216 of 348 MB · 480 KB/s · about 5m left" }, threadsTodo],
+    callout: { text: "Opening Frizz. Codex keeps downloading in the background." },
+  },
+}
+const overlay = params.get("overlay")
 
 const nativeFetch = window.fetch.bind(window)
 window.fetch = async (input, init) => {
@@ -25,7 +65,8 @@ window.fetch = async (input, init) => {
       : { updateAvailable: !params.has("current"), ...versions }
     // ?launcher adds a newer launcher than the one running, in whichever state the rest of the query asks for.
     const launcher = params.has("launcher") ? { launcherUpdate: "0.13.2" } : {}
-    return new Response(JSON.stringify({ protocol: 1, state: "ready", updateRestart: true, ...offer, ...launcher }), {
+    const preparing = params.has("preparing") ? { prepareProgress: true, preparing: true, progress: PREPARE_VIEW } : {}
+    return new Response(JSON.stringify({ protocol: 1, state: "ready", updateRestart: true, ...offer, ...launcher, ...preparing }), {
       headers: { "content-type": "application/json" },
     })
   }
@@ -69,7 +110,7 @@ function Fixture() {
   const restarting = snap.controlPlaneState === "restarting"
   return (
     <main className="min-h-screen bg-bg p-3 sm:p-8">
-      <RestartOverlay open={restarting} message={snap.controlPlaneMessage} />
+      <RestartOverlay open={restarting || overlay !== null} message={snap.controlPlaneMessage} progress={overlay ? OVERLAYS[overlay] as never : undefined} />
       <div inert={restarting}>
         {/* A focusable background control so QA can prove Tab cannot reach behind the scrim. */}
         <button type="button" data-testid="decoy" className="mb-4 rounded border border-border px-2 py-1">decoy</button>

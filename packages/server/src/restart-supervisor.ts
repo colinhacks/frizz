@@ -264,6 +264,7 @@ function isControlRequest(req: IncomingMessage): boolean {
     || url.pathname === SUPERVISOR_ACCESS_CODE_PATH
     || url.pathname === SUPERVISOR_SESSIONS_PATH
     || url.pathname === SUPERVISOR_SIGN_OUT_PATH
+    || url.pathname === SUPERVISOR_OPEN_NOW_PATH
 }
 
 /** Who may sign in, and who stays signed in, is the machine's to say: a session is not presence on it. */

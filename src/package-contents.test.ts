@@ -80,7 +80,9 @@ test("the shell bootstraps the versioned public server contract", () => {
     dataEpoch: 1,
   });
   assert.equal(serverManifest.name, "frizz-server");
-  assert.deepEqual(serverManifest.frizzServer, { protocol: 1, dataEpoch: 1 });
+  // `provisionRuntimes`: this release can download its runtimes ahead of booting, so an update fetches
+  // them while the release before it still serves (server-release.ts prepareGenerationRuntimes).
+  assert.deepEqual(serverManifest.frizzServer, { protocol: 1, dataEpoch: 1, provisionRuntimes: 1 });
   // The launcher parses both at every start and refuses a minimum its own pin does not meet, so a
   // manifest that would stop every launch has to fail here, before it is published.
   assert.equal(serverReleaseSpec(manifest).version, "0.15.55");

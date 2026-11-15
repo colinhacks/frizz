@@ -15,6 +15,7 @@ import {
   SUPERVISOR_ACCESS_CODE_PATH,
   SUPERVISOR_SESSIONS_PATH,
   SUPERVISOR_SIGN_OUT_PATH,
+  SUPERVISOR_OPEN_NOW_PATH,
   type RestartResult,
 } from "./restart-supervisor.ts"
 import { fileSessionDirectory, loadOrCreateSessionKey, readSessionEpoch, rotateSessionKey, SESSION_EPOCH } from "./access-codes.ts"
@@ -371,6 +372,83 @@ test("update acknowledgement is accepted, but status follows the owner delegate 
     assert.equal("preparing" in settled, false, "the stamp is an in-flight qualifier, not a state")
   } finally {
     await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+// What a restart or an update is doing rides on the status the page already polls (2026-11-15): the
+// delegate's `progress` beside "restarting" while a server boots, and beside the stamped "ready" while an
+// update downloads ahead of its restart. `prepareProgress` tells the board an update will report that,
+// so its click raises no overlay; frizz-dev reports none and keeps it.
+test("status carries the delegate's progress, and says when an update's prepare phase reports it", async () => {
+  const current = await child("serving")
+  const port = await freePort()
+  const view = (kind: "prepare" | "restart") => ({ kind, title: kind === "prepare" ? "Getting 0.15.56 ready" : "Restarting Frizz", elapsedMs: 1_000, steps: [], openNow: false })
+  let delegated: { state: "ready" | "restarting"; progress?: ReturnType<typeof view> } = { state: "ready" }
+  let release!: (result: RestartResult) => void
+  const proxy = new RestartSupervisorProxy({
+    port,
+    childPort: () => current.port,
+    status: () => delegated,
+    restart: async () => ({ state: "ready" }),
+    updateRestart: () => new Promise<RestartResult>((resolve) => { release = resolve }),
+    prepareProgress: true,
+  })
+  const devPort = await freePort()
+  const dev = new RestartSupervisorProxy({ port: devPort, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  try {
+    await proxy.listen()
+    await dev.listen()
+    assert.equal(JSON.parse((await get(port, SUPERVISOR_STATUS_PATH)).body).prepareProgress, true)
+    assert.equal("prepareProgress" in JSON.parse((await get(devPort, SUPERVISOR_STATUS_PATH)).body), false, "frizz-dev's payload is unchanged")
+    assert.equal((await get(port, SUPERVISOR_UPDATE_RESTART_PATH, "POST")).status, 202)
+    delegated = { state: "ready", progress: view("prepare") }
+    const preparing = JSON.parse((await get(port, SUPERVISOR_STATUS_PATH)).body)
+    assert.equal(preparing.state, "ready")
+    assert.equal(preparing.preparing, true)
+    assert.equal(preparing.progress.title, "Getting 0.15.56 ready")
+    delegated = { state: "restarting", progress: view("restart") }
+    const booting = JSON.parse((await get(port, SUPERVISOR_STATUS_PATH)).body)
+    assert.equal(booting.state, "restarting")
+    assert.equal(booting.progress.kind, "restart")
+    release({ state: "ready" })
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await dev.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
+  }
+})
+
+test("open now is a POST the launcher answers 202 when it asked the boot, 409 when it could not", async () => {
+  const current = await child("booting")
+  const port = await freePort()
+  const asked: number[] = []
+  let answer = { ok: true } as { ok: boolean; message?: string }
+  const proxy = new RestartSupervisorProxy({
+    port,
+    childPort: () => current.port,
+    restart: async () => ({ state: "ready" }),
+    openNow: () => { asked.push(Date.now()); return answer },
+  })
+  const oldPort = await freePort()
+  const old = new RestartSupervisorProxy({ port: oldPort, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  try {
+    await proxy.listen()
+    await old.listen()
+    const accepted = await get(port, SUPERVISOR_OPEN_NOW_PATH, "POST")
+    assert.equal(accepted.status, 202)
+    assert.equal(JSON.parse(accepted.body).ok, true)
+    answer = { ok: false, message: "no boot is waiting on a download" }
+    const refused = await get(port, SUPERVISOR_OPEN_NOW_PATH, "POST")
+    assert.equal(refused.status, 409)
+    assert.equal(JSON.parse(refused.body).message, "no boot is waiting on a download")
+    assert.equal(asked.length, 2)
+    assert.notEqual((await get(port, SUPERVISOR_OPEN_NOW_PATH, "GET")).status, 202, "only a POST asks")
+    assert.equal(asked.length, 2)
+    assert.equal((await get(oldPort, SUPERVISOR_OPEN_NOW_PATH, "POST")).status, 409, "a launcher that cannot ask its child says so")
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await old.close().catch(() => undefined)
     await current.close().catch(() => undefined)
   }
 })

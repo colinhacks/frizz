@@ -903,8 +903,12 @@ test("child updates wait for advancing candidate boot progress, but bound stalls
       if (process.env.FRIZZ_STABLE_ARTIFACT === "old") ready()
       else {
         let foreignStep = 0
+        let rows = 0
         const publish = () => {
-          if (${JSON.stringify(mode)} === "foreign") {
+          // Endless progress OUTSIDE a download: a boot downloading a runtime is exempt from the hard
+          // cap (2026-11-15, the test after this one), so the bound is pinned on a boot that is not.
+          if (${JSON.stringify(mode)} === "endless") progress("tailer producer " + (++rows) + "/1000000")
+          else if (${JSON.stringify(mode)} === "foreign") {
             // Never publish the candidate's real PID first: the supervisor can observe that
             // intermediate file before a rewrite and correctly count it as genuine progress.
             const file = bootProgressPath(target.stateDir)
@@ -943,9 +947,114 @@ test("child updates wait for advancing candidate boot progress, but bound stalls
       assert.equal(commits, mode === "slow" ? 1 : 0, mode)
       assert.equal(rollbacks, mode === "slow" ? 0 : 1, mode)
       assert.equal(result.artifactDigest, mode === "slow" ? "new" : "old", mode)
-      if (mode === "endless") assert.ok(result.message!.includes(`did not become ready within ${hard}ms; last boot step: runtimes: downloading`), result.message)
+      if (mode === "endless") assert.ok(result.message!.includes(`did not become ready within ${hard}ms; last boot step: tailer producer`), result.message)
       if (mode === "stalled") assert.ok(result.message!.includes(`no boot progress for ${stall}ms; last boot step: runtimes: downloading`), result.message)
       if (mode === "foreign") assert.equal(result.message, `update candidate made no boot progress for ${stall}ms`)
+    } finally {
+      await supervisor?.close()
+      owner.release()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  }
+})
+
+// A slow connection is not a wedged server (2026-11-15). A candidate whose boot is downloading a runtime
+// may outlast the ten-minute cap, and the restart screen draws the download as it goes; asked to open
+// now, the candidate stops waiting and the update completes. Either way the old release is not kept.
+test("a candidate downloading a runtime outlasts the hard cap, reports its progress, and can open now", { timeout: 180_000 }, async () => {
+  const stall = await stallDeadlineMs()
+  const hard = stall * 3
+  for (const mode of ["outlasts", "open-now"] as const) {
+    const workspace = mkdtempSync(join(tmpdir(), `frizz-update-download-${mode}-`))
+    const stateDir = join(workspace, ".state")
+    mkdirSync(stateDir)
+    const childEntry = join(workspace, "child.mjs")
+    const progressUrl = pathToFileURL(join(import.meta.dirname, "boot-progress.ts")).href
+    writeFileSync(childEntry, `
+      import { createBootProgressPublisher, watchBootOpenNow } from ${JSON.stringify(progressUrl)}
+      import { registerProjectLaunchDelegate, projectLaunchOwnerTokenFromEnvironment, projectLaunchTargetFromEnvironment } from ${JSON.stringify(projectLaunchUrl)}
+      const target = projectLaunchTargetFromEnvironment(process.env)
+      const delegate = registerProjectLaunchDelegate(target, projectLaunchOwnerTokenFromEnvironment(process.env))
+      const progress = createBootProgressPublisher(target.stateDir, 0)
+      const ready = () => {
+        progress.done()
+        process.send?.({ type: "frizz-ready", pid: delegate.pid, processStart: delegate.processStart, port: Number(process.env.FRIZZ_DEV_PORT), bootId: String(process.pid) })
+      }
+      const stop = () => { progress.done(); delegate.release(); process.exit(0) }
+      process.once("SIGTERM", stop); process.once("disconnect", stop)
+      setInterval(() => {}, 1000)
+      if (process.env.FRIZZ_STABLE_ARTIFACT === "old") ready()
+      else {
+        progress("runtimes")
+        let received = 0
+        const tick = setInterval(() => {
+          received += 1_000_000
+          progress.detail({ openNow: true, runtimes: { codex: { label: "0.169.0", state: "downloading", received, total: 348_000_000, bytesPerSecond: 100_000 } } })
+        }, 50)
+        const finish = () => { clearInterval(tick); progress.detail({ runtimes: { codex: { label: "0.169.0", state: "background" } } }); ready() }
+        if (${JSON.stringify(mode)} === "open-now") watchBootOpenNow(target.stateDir, process.pid, 20).requested.then(finish)
+        else setTimeout(finish, ${hard * 2})
+      }
+    `)
+    const target = { projectId: randomUUID(), projectDir: workspace, stateDir }
+    const owner = acquireProjectLaunchOwner(target, "supervisor")
+    const port = await freeSupervisorPort()
+    let selected = "old"
+    let commits = 0
+    let rollbacks = 0
+    let supervisor: DevSupervisor | undefined
+    try {
+      supervisor = await startDevSupervisor({
+        port, cwd: workspace, stateDir, launchTarget: target, launchOwnerToken: owner.token, watch: false,
+        childLaunchProvider: () => ({ entry: childEntry, environment: { FRIZZ_STABLE_ARTIFACT: selected } }),
+        updateMode: "child", updateReadyTimeoutMs: stall, updateHardTimeoutMs: hard, updateStabilizeMs: 20,
+        updateVersion: () => "0.15.56",
+        updateRestart: async () => { selected = "new"; return { state: "ready" } },
+        commitUpdate: () => { commits++ },
+        rollbackUpdate: () => { rollbacks++; selected = "old" },
+        log: () => {}, error: () => {},
+      })
+      await supervisor.firstBoot
+      const origin = `http://127.0.0.1:${port}`
+      type Status = { state: string; artifactDigest?: string; message?: string; progress?: { kind: string; title: string; openNow: boolean; opening?: boolean; steps: Array<{ key: string; state: string; label: string; note?: string; meta?: string }> } }
+      const status = async () => await (await fetch(`${origin}/_frizz/control/status`, { headers: { origin } })).json() as Status
+      assert.equal((await fetch(`${origin}/_frizz/control/update-restart`, { method: "POST", headers: { origin } })).status, 202)
+      // The restart screen's checklist, while the candidate downloads.
+      const booting = await eventually(async () => {
+        const observed = await status()
+        return observed.progress?.steps.some((step) => step.key === "codex" && step.state === "live") ? observed : undefined
+      }, `${mode}: the download in the status`)
+      assert.equal(booting.state, "restarting")
+      assert.equal(booting.progress!.kind, "update")
+      assert.equal(booting.progress!.title, "Updating Frizz to 0.15.56")
+      assert.equal(booting.progress!.steps[0]!.key, "stop")
+      assert.equal(booting.progress!.steps[0]!.state, "done", "the old server's stop is behind it")
+      const codex = booting.progress!.steps.find((step) => step.key === "codex")!
+      assert.equal(codex.label, "Downloading Codex")
+      assert.match(codex.meta!, /of 348 MB · 100 KB\/s · about \d+m left/u)
+      assert.equal(booting.progress!.openNow, true, "a download minutes from done is worth offering")
+      if (mode === "open-now") {
+        const asked = await fetch(`${origin}/_frizz/control/open-now`, { method: "POST", headers: { origin } })
+        assert.equal(asked.status, 202)
+        // A second ask while the boot is still picking it up is answered the same way, and harmless.
+      } else {
+        // Past the hard cap, still downloading, still alive.
+        await delay(hard + stall)
+        const midway = await status()
+        assert.equal(midway.state, "restarting", midway.message)
+        assert.equal(commits, 0)
+        assert.equal(rollbacks, 0)
+      }
+      const settled = await eventually(async () => {
+        const observed = await status()
+        return observed.state === "ready" && observed.artifactDigest === "new" ? observed : observed.state === "failed" ? observed : undefined
+      }, `${mode}: the candidate's verdict`, 60_000)
+      assert.equal(settled.state, "ready", settled.message)
+      assert.equal(commits, 1, mode)
+      assert.equal(rollbacks, 0, mode)
+      assert.equal(settled.progress, undefined, "a settled board reports no progress")
+      // Open now once nothing is booting: refused, not queued for some later boot.
+      assert.equal((await fetch(`${origin}/_frizz/control/open-now`, { method: "POST", headers: { origin } })).status, 409)
     } finally {
       await supervisor?.close()
       owner.release()

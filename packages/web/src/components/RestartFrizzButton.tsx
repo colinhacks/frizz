@@ -613,7 +613,13 @@ export function RestartFrizzButton() {
   return (
     // React routes enter/leave through the component tree, so the portaled panels still count as inside
     // this wrapper: a pointer that reaches the popover keeps it open, exactly as when it was a DOM child.
-    <div onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    //
+    // `mx-1` while an update downloads ahead: the ring paints 20px of ink where the row's trim
+    // (STATUS_ROW_ACTION's `-mx-1.5`) assumes a 12px glyph, so its ink overhangs this wrapper by 4px a
+    // side and sat 8px from its neighbours' against the row's 12px. The margin goes on the WRAPPER, not
+    // the button, because the panels anchor to it: the ring's centre stays 6px into it, where
+    // PANEL_ARROW_GEOMETRY.markCentre points the arrow.
+    <div className={control.preparing ? "mx-1" : undefined} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <RestartActionButton
         update={control.update}
         busy={control.busy}

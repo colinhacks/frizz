@@ -71,3 +71,50 @@ test("the stalled copy still reads when no silence has been measured yet", () =>
 test("closed is closed in the stalled shape too", () => {
   assert.equal(renderToStaticMarkup(createElement(RestartOverlay, { open: false, stalled: true })), "")
 })
+
+const slowUpdate = {
+  kind: "update" as const,
+  title: "Updating Frizz to 0.15.56",
+  elapsedMs: 192_000,
+  steps: [
+    { key: "stop", label: "Stopped", version: "0.15.55", state: "done" as const, note: "900ms" },
+    { key: "codex", label: "Downloading Codex", version: "0.169.0", state: "live" as const, note: "60%", fraction: 0.6, meta: "212 of 348 MB · 480 KB/s · about 5m left" },
+    { key: "threads", label: "Load threads", state: "todo" as const },
+  ],
+  openNow: true,
+  hint: "slow" as const,
+  downloading: ["Codex"],
+  callout: { lead: "This connection is slow.", text: "Frizz can open now and finish Codex in the background." },
+}
+
+test("with the launcher's progress the overlay is the restart screen's checklist, still a hard block", () => {
+  const html = renderToStaticMarkup(createElement(RestartOverlay, { open: true, progress: slowUpdate }))
+  assert.match(html, /role="alertdialog"/)
+  assert.match(html, /fixed inset-0/)
+  assert.match(html, /aria-label="Updating Frizz to 0.15.56"/)
+  assert.match(html, /3m 12s/, "the elapsed clock")
+  assert.match(html, /Running threads keep working\. The board opens when it is ready\./)
+  assert.deepEqual([...html.matchAll(/data-step="([^"]+)" data-state="([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`), ["stop:done", "codex:live", "threads:todo"])
+  assert.match(html, /212 of 348 MB · 480 KB\/s · about 5m left/)
+  assert.match(html, /width:60\.0%/)
+  assert.match(html, /<b class="font-semibold text-fg">This connection is slow\. <\/b>Frizz can open now/)
+  assert.match(html, /data-open-now="true"[^>]*>Open Frizz now</)
+  assert.doesNotMatch(html, /Updating and restarting Frizz/, "not the old spinner card")
+})
+
+test("a quick restart's checklist offers nothing, and a request on its way reads as opening", () => {
+  const quick = renderToStaticMarkup(createElement(RestartOverlay, { open: true, progress: { ...slowUpdate, openNow: false, callout: undefined, hint: undefined } }))
+  assert.doesNotMatch(quick, /data-boot-callout|Open Frizz now/)
+  const opening = renderToStaticMarkup(createElement(RestartOverlay, {
+    open: true,
+    progress: { ...slowUpdate, openNow: false, opening: true, callout: { text: "Opening Frizz. Codex keeps downloading in the background." } },
+  }))
+  assert.match(opening, /Opening Frizz\. Codex keeps downloading in the background\./)
+  assert.match(opening, /disabled=""[^>]*>Opening</)
+})
+
+test("past the deadline the stalled notice wins over a stale checklist", () => {
+  const html = renderToStaticMarkup(createElement(RestartOverlay, { open: true, stalled: true, silentFor: "3m", progress: slowUpdate }))
+  assert.match(html, new RegExp(STALLED_HEADING))
+  assert.doesNotMatch(html, /data-boot-progress/)
+})

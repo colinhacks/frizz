@@ -2350,6 +2350,41 @@ test("waitForWorkspace: a boot that STOPS reporting fails inside the stall windo
   }
 });
 
+// A first boot on a slow connection downloads several hundred MB before it serves, and giving up on it
+// exited the launcher mid-download (2026-11-15). Time spent downloading is not counted against the hard
+// cap; endless progress anywhere else still is.
+test("waitForWorkspace: a boot downloading a runtime outlasts the hard cap; one loading threads does not", async () => {
+  for (const downloading of [true, false]) {
+    const stateDir = mkdtempSync(join(tmpdir(), "frizz-bootprogress-"));
+    const port = await freePort();
+    try {
+      let step = 0;
+      const ticking = setInterval(() => {
+        step++;
+        const record = downloading
+          ? { pid: process.pid, step, phase: "runtimes", at: new Date().toISOString(), detail: { runtimes: { codex: { label: "0.169.0", state: "downloading", received: step, total: 1_000 } } } }
+          : { pid: process.pid, step, phase: `tailer producer ${step}/100000`, at: new Date().toISOString() };
+        writeFileSync(join(stateDir, "boot.progress"), JSON.stringify(record));
+      }, 40);
+      const started = Date.now();
+      const waiting = waitForWorkspace(port, { projectId: "p", projectDir: "/p" }, 400, { stateDir, hardTimeoutMs: 500 });
+      if (downloading) {
+        // Three times the hard cap, still waiting.
+        const outcome = await Promise.race([waiting.then(() => "healthy", () => "gave up"), delay(1_500).then(() => "waiting")]);
+        assert.equal(outcome, "waiting");
+        clearInterval(ticking);
+        await assert.rejects(waiting, /stopped making progress/, "the stall window still closes once the download goes quiet");
+      } else {
+        await assert.rejects(waiting, /did not become healthy/);
+        assert.ok(Date.now() - started < 1_400, "endless progress outside a download is still capped");
+        clearInterval(ticking);
+      }
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }
+});
+
 test("waitForWorkspace: with no state dir the historical flat deadline is unchanged", async () => {
   const port = await freePort();
   const started = Date.now();

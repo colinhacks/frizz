@@ -91,6 +91,10 @@ test("the poll runs gently at rest and promptly across a handoff", () => {
   assert.equal(supervisorPollMs("restarting", false), 500)
   // The optimistic window: the button raised the overlay, the supervisor has not confirmed it yet.
   assert.equal(supervisorPollMs("ready", true), 500)
+  // An update downloading ahead of its restart: once a second keeps the ring moving through many minutes.
+  assert.equal(supervisorPollMs("ready", false, true), 1_000)
+  assert.equal(supervisorPollMs("ready", true, true), 1_000, "the clicking tab's held attempt does not double it")
+  assert.equal(supervisorPollMs("restarting", true, true), 500, "the drain itself is still a handoff")
 })
 
 test("a page offers less only on a session limited to read and answer", () => {

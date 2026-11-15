@@ -116,7 +116,9 @@ export function BootProgressCard({
       ref={cardRef}
       tabIndex={-1}
       data-boot-progress={view.kind}
-      className="w-[min(26rem,calc(100vw-2rem))] rounded-2xl border border-border-strong bg-elevated p-5 text-left text-[12.5px] leading-[1.55] text-fg shadow-2xl shadow-shadow-ink/60 outline-none"
+      // 28rem, two over the plain restart card: the sentence under the title fits one line, and a
+      // download's line of bytes, speed and time left fits beside nothing.
+      className="w-[min(28rem,calc(100vw-2rem))] rounded-2xl border border-border-strong bg-elevated p-5 text-left text-[12.5px] leading-[1.55] text-fg shadow-2xl shadow-shadow-ink/60 outline-none"
     >
       <h2 className="flex items-baseline gap-2.5 text-[15px] font-semibold tracking-[-0.01em] text-fg">
         {/* A baseline-aligned item with no text of its own contributes its border-box BOTTOM as its
