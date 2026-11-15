@@ -223,7 +223,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
   // element is rebuilt exactly when durable preference data or the model catalogue changes.
   const footer = useMemo(() => {
     if (!resolved) {
-      const loading = (
+      return (
         <PromptControlGroup>
           <ProfileGridSelector
             groups={[]}
@@ -235,21 +235,13 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
           />
         </PromptControlGroup>
       )
-      // The project chip answers to no profile, so it stands from the first paint, as it did in the status row.
-      if (!projectPicker) return loading
-      return (
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          {projectPicker}
-          {loading}
-        </div>
-      )
     }
     const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp)
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
-      // `gap-1.5` between the pills, across and down: on the Console the project chip leads the strip, and
-      // where the box is too narrow for it beside the model it takes a line of its own above
-      // (ConsoleProjectChip.tsx). The phone's tool row wraps its chips the same way.
+      // `gap-1.5` for the phone's tool row, where the project chip and the model chip stand side by side
+      // and can wrap. On a desktop the strip is the one line below, and the project chip has a row of its
+      // own at the top of the box (LocalDispatchForm).
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {projectPicker}
         {/* The dropdowns and the marks that answer to them hold ONE line, on which the model name truncates,
@@ -351,7 +343,7 @@ function LocalDispatchForm({
 }: {
   autoFocus?: boolean
   onDispatched?: () => void
-  /** The Console's project chip, first in the box's strip. The dispatch goes to the enclosing ProjectScope. */
+  /** The Console's project chip, in the box's top-right corner. The dispatch goes to the enclosing ProjectScope. */
   projectPicker?: ReactNode
   /** Draw the "Starting thread…" card under the box while the dispatch call runs. Off (`false`) where the
    *  surface shows the pending thread itself: a project's sidebar and the Console's draw it as a Running
@@ -359,7 +351,7 @@ function LocalDispatchForm({
    *  centred in its page, where a card in flow would lift everything above it by half its own height. */
   pendingCard?: boolean | "float"
 }) {
-  const form = useDispatchForm(onDispatched, projectPicker, NEW_THREAD_MARKS)
+  const form = useDispatchForm(onDispatched, undefined, NEW_THREAD_MARKS)
   return (
     <div className={`w-full flex flex-col gap-3 ${pendingCard === "float" ? "relative" : ""}`}>
       <Composer
@@ -369,9 +361,12 @@ function LocalDispatchForm({
         onChange={form.setPrompt}
         onSubmit={form.submit}
         placeholder="Describe the task…"
-        minHeight={96}
+        // Under the chip's 31px row the text gives that much up, so the empty box stands as tall as a
+        // project's: 129px in the sidebar.
+        minHeight={projectPicker ? 65 : 96}
         maxHeight={277}
         busy={form.busy}
+        header={projectPicker}
         footer={form.footer}
       />
       {form.error && (
@@ -489,9 +484,9 @@ function LocalPhoneNewThreadPage({ onDispatched, projectPicker, project }: { onD
 //
 // On the Console (⌘K → "New thread", and the phone's New thread button) the page names no project, so
 // the form runs inside the scope of the project the chip names (ConsoleProjectChip.tsx) — without it the
-// dispatch was refused and an attachment was uploaded to the LAUNCHING project first. The chip rides inside
-// the box, first in its strip, as the sidebar's does; a phone's page keeps it in the tool row, beside the
-// model chip it matches.
+// dispatch was refused and an attachment was uploaded to the LAUNCHING project first. The chip stands in the
+// box's top-right corner, as the sidebar's does; a phone's page keeps it in the tool row, beside the model
+// chip it matches.
 export function NewThreadDialog({ onClose }: { onClose: () => void }) {
   const isMobile = useIsMobile()
   const onConsole = isConsolePath()

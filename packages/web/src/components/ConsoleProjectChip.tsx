@@ -18,11 +18,13 @@ import { PROMPT_CONTROL_CELL, PromptControlGroup } from "./ui/PromptControlGroup
 // in <ProjectScope project={project.slug}>: the dispatch, the model lists, the agent-settings gear and
 // an attachment's upload all go to that project.
 //
-// THE CHIP RIDES INSIDE THE BOX IT POINTS, first in the strip along its bottom edge (maintainer 2026-11-15:
-// "the project dropdown in the 'All projects' view needs to be inside the sidebar prompt box"). It stood
-// at the box's upper left, in the status row's crumb, from 2026-11-06 (maintainer then: "the project chip
-// should show up to the upper left in the console"), and in the strip before that. Its menu picks that
-// project, and each row also opens the project in a new tab.
+// THE CHIP STANDS IN THE BOX'S TOP-RIGHT CORNER, inside it, above the text (maintainer 2026-11-15: "the
+// project dropdown in the 'All projects' view needs to be inside the sidebar prompt box", then of the strip
+// along the bottom, "i think it should be top left", and of the top-left corner, "actually top right"). It
+// stands on the 7px inset the corner controls share (Composer's header row, lib/iconRhythm.ts
+// PROMPT_HEADER_ROW), over Send in the bottom-right corner, in the model pill's shape. It stood just OUTSIDE
+// the box's upper left, in the status row's crumb, from 2026-11-06 to 2026-11-15, and in the bottom strip
+// before that. Its menu picks that project, and each row also opens the project in a new tab.
 
 /** `enabled` false (a project's own page) reads nothing and names no project. */
 export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard | undefined; chip: ReactNode } {
@@ -41,20 +43,14 @@ export function useConsoleDispatchTarget(enabled = true): { project: ProjectCard
 const PHONE_CHIP =
   "relative inline-flex h-[32px] min-w-0 max-w-[45vw] shrink items-center gap-[6px] rounded-full border border-border-strong bg-bg pl-[7px] pr-[11px] text-left text-[13.5px] font-medium text-fg outline-none after:absolute after:inset-x-0 after:-inset-y-[6px] after:content-[''] active:bg-hover"
 
-// On a desktop the chip is a pill of its own in the box's strip, ahead of the model's: the same 24px
-// hairline shape (PromptControlGroup), its name in the same petite caps, and no chevron, as the dropdowns
-// beside it have none. Its own pill, not a third cell of the model's: the project is where the thread runs,
-// the model what it runs on, and a joined pill can only truncate the model where this one can wrap.
-//
-// IT GIVES WAY BEFORE IT WRAPS. `flex-[1_1_6rem]` with `max-w-max` lays the pill out at 6rem when the strip
-// decides what fits on a line, then lets it grow to its whole name, so a long name truncates beside the model
-// pill rather than taking a second line, until the strip is too narrow even for 6rem (the sidebar's 272px floor).
-// There it wraps onto a line of its own, which it may fill.
-const DESKTOP_CHIP_SLOT = "flex min-w-0 max-w-max flex-[1_1_6rem]"
+// On a desktop the chip is a pill in the model pill's shape: the same 24px hairline (PromptControlGroup), its
+// name in the same petite caps, and no chevron, as the box's other dropdowns have none. `ml-auto` puts it at the
+// row's right end. The row is its own, so the name has the box's whole width before it truncates.
+const DESKTOP_CHIP_SLOT = "ml-auto flex min-w-0 max-w-full"
 
 /**
  * The PROJECT chip: where a task typed in this box will run. A phone draws it in its tool row beside the
- * model chip; a desktop, first in the box's strip (DESKTOP_CHIP_SLOT).
+ * model chip; a desktop, in the box's top-right corner (DESKTOP_CHIP_SLOT).
  */
 function ProjectChip({ project, projects, onPick }: { project: ProjectCard; projects: ProjectCard[]; onPick: (slug: string) => void }) {
   const phone = useIsMobile()
@@ -91,15 +87,17 @@ function ProjectChip({ project, projects, onPick }: { project: ProjectCard; proj
         </div>
       )}
       <RadixDropdown.Portal>
-        {/* `alignOffset` puts the menu's squares under the chip's: a row's square stands 13px inside the menu
-            (its 1px border, 6px of padding and the row's own 6px), and the chip's 6px inside the chip. The width
-            cap gives a long name the room the crumb's menu does (ProjectCrumb.tsx), plus the rail's 36px.
-            The left collision margin is the smaller one so that offset survives a box against the window's edge:
-            when the chip stood in the status row, in the one-thread pane up to 1440px, it started 12px in, the
-            menu 5px, and a margin of 8 pushed the menu 3px right of the chip's square. */}
+        {/* On a desktop the menu hangs from the chip's right end, its edge on the chip's hairline, since the chip
+            stands in the box's right corner. On a phone `alignOffset` puts the menu's squares under the chip's: a
+            row's square stands 13px inside the menu (its 1px border, 6px of padding and the row's own 6px), and
+            the chip's 6px inside the chip. The width cap gives a long name the room the crumb's menu does
+            (ProjectCrumb.tsx), plus the rail's 36px. The left collision margin is the smaller one so that offset
+            survives a box against the window's edge: when the chip stood in the status row, in the one-thread pane
+            up to 1440px, it started 12px in, the menu 5px, and a margin of 8 pushed the menu 3px right of the
+            chip's square. */}
         <RadixDropdown.Content
-          align="start"
-          alignOffset={-7}
+          align={phone ? "start" : "end"}
+          alignOffset={phone ? -7 : -1}
           side="bottom"
           sideOffset={5}
           collisionPadding={{ top: 8, right: 8, bottom: 8, left: 4 }}
