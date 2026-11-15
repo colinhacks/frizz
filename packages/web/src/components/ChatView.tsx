@@ -4286,6 +4286,8 @@ export function BlockFile({ path }: { path: string }) {
       type="button"
       className={`local-file-action inline-flex max-w-full items-center gap-1.5 ${BLOCK_RADIUS} border border-border bg-panel-2 px-3 py-1.5 text-left align-top no-underline hover:border-accent`}
       data-local-path={path}
+      // Drags out as its file; the delegated listener writes it (lib/localFileDrag.ts).
+      draggable
       title={path}
     >
       <FileText size={14} strokeWidth={2} className="shrink-0 text-muted" />

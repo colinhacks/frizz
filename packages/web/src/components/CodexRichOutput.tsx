@@ -94,7 +94,7 @@ function CodeCommentCard({ directive }: { directive: CodexHostDirective }) {
     <Card directive={directive} icon={<MessageSquareCode size={15} />} title={text(attrs, "title") ?? "Review finding"} meta={priority === undefined ? undefined : `P${priority}`}>
       {text(attrs, "body") && <Detail>{text(attrs, "body")}</Detail>}
       {file ? (
-        <button type="button" className="local-file-action ml-6 mt-1 max-w-[calc(100%-1.5rem)] break-all text-left font-mono-keep text-[11px] leading-4 text-accent underline decoration-dotted underline-offset-2" data-local-path={file} title={location}>
+        <button type="button" className="local-file-action ml-6 mt-1 max-w-[calc(100%-1.5rem)] break-all text-left font-mono-keep text-[11px] leading-4 text-accent underline decoration-dotted underline-offset-2" data-local-path={file} draggable title={location}>
           {location}
         </button>
       ) : <Detail mono>{location}</Detail>}

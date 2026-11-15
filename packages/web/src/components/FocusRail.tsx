@@ -185,6 +185,7 @@ function FileRow({ file, name, depth, homeDir, status }: {
       name={name}
       indent={depth * TREE_INDENT}
       onOpen={gone ? undefined : () => openLocalPath(file.path)}
+      dragPath={gone ? undefined : file.path}
       onPrewarm={gone ? undefined : () => prewarmLocalFile(client, file.path)}
       title={gone ? `${tildePath(file.path, homeDir)} (deleted)` : tildePath(file.path, homeDir)}
       status={
@@ -232,6 +233,7 @@ function SavedLinkRow({ link }: { link: ThreadLinkView }) {
       mark={<FileText size={12} className={`${ON_CAP} text-muted-60`} />}
       name={link.label}
       onOpen={() => openLocalPath(link.target)}
+      dragPath={link.target}
       onPrewarm={() => prewarmLocalFile(client, link.target)}
       title={tildePath(link.target, homeDir)}
       status={null}

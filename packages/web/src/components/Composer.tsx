@@ -17,6 +17,7 @@ import { DictationLevel } from "./DictationLevel.tsx"
 import { apiBase, projectApiBase } from "../lib/base-path.ts"
 import { useProjectScope } from "../lib/projectScope.tsx"
 import { localImageUrl } from "../lib/markdownTargets.ts"
+import { localFileDragProps } from "../lib/localFileDrag.ts"
 import { basename } from "../lib/paths.ts"
 import { useKeyboardInset } from "../lib/keyboardInset.ts"
 import { useFileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
@@ -1197,7 +1198,9 @@ function AttachmentChip({
   const ext = (base.includes(".") ? base.split(".").pop()! : "").toUpperCase()
   const asImage = attachment.kind === "image" && !broken
   return (
-    <div className="group/att relative h-11 w-11" title={base}>
+    // The tile drags out as its file (lib/localFileDrag.ts): the attachment is a real file on this
+    // machine, and the tile is the only handle on it until the message is sent.
+    <div className="group/att relative h-11 w-11" title={base} {...localFileDragProps(attachment.path)}>
       {asImage ? (
         <img
           src={localImageUrl(attachment.path)}

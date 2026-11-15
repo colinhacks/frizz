@@ -3,6 +3,7 @@ import type { TranscriptEdit } from "@frizz/shared"
 import { renderDiff, type DiffHunk } from "../lib/diff/index.ts"
 import "../lib/diff/diff.css"
 import { openLocalPath } from "../lib/local-file-links.ts"
+import { localFileDragProps } from "../lib/localFileDrag.ts"
 import { ToolDisclosureHeader } from "./ToolDisclosureHeader.ts"
 import { shortenTarget, ToolPathText } from "./ToolRow.tsx"
 
@@ -25,6 +26,7 @@ export function PathLink({ path, className = "", children }: { path: string; cla
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); openLocalPath(path) }}
+      {...localFileDragProps(path)}
       title={path}
       className={`font-mono-keep block max-w-full cursor-pointer truncate text-left hover:underline hover:text-fg/80 ${className}`}
     >

@@ -152,6 +152,9 @@ export async function resolveUnknown(scope: ResolveScope, paths: string[]): Prom
 
 function decorate(code: Element, openPath: string): void {
   code.setAttribute("data-local-path", openPath)
+  // Drags out as its file (lib/localFileDrag.ts), as a link would. Like a link, it is then selected by
+  // a double-click rather than by a drag that starts inside it.
+  code.setAttribute("draggable", "true")
   code.setAttribute("title", `Open ${openPath}`)
   code.classList.add("local-file-code")
 }

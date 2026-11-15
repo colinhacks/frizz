@@ -2,6 +2,7 @@ import { ExternalLink, FileText } from "lucide-react"
 import type { ThreadLinkView } from "@frizz/shared"
 import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_KIND_TAG_CLASS, CHILD_MARK_SLOT_CLASS, PANEL_ROW_MARK_SLOT_CLASS } from "../lib/childOps.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
+import { localFileDragProps } from "../lib/localFileDrag.ts"
 
 // The activity-row grammar, without a liveness marker or a trailing open icon — and the SAME grammar,
 // column for column: a File/Link row renders under the ⤷ AGENT / ⤷ SHELL rows and the eye runs down one
@@ -54,7 +55,7 @@ function PanelLinks({ links }: { links: readonly ThreadLinkView[] }) {
         return isUrl ? (
           <a key={link.id} data-thread-link={link.id} href={link.target} target="_blank" rel="noopener noreferrer" title={link.target} className={PANEL_ROW} onClick={(event) => event.stopPropagation()}>{content}</a>
         ) : (
-          <button key={link.id} data-thread-link={link.id} type="button" title={link.target} className={`${PANEL_ROW} cursor-pointer`} onClick={(event) => { event.stopPropagation(); openLocalPath(link.target) }}>{content}</button>
+          <button key={link.id} data-thread-link={link.id} type="button" title={link.target} className={`${PANEL_ROW} cursor-pointer`} onClick={(event) => { event.stopPropagation(); openLocalPath(link.target) }} {...localFileDragProps(link.target)}>{content}</button>
         )
       })}
     </div>
@@ -84,7 +85,7 @@ export function ThreadLinks({ links, panel = false }: { links: readonly ThreadLi
         return isUrl ? (
           <a key={link.id} data-thread-link={link.id} href={link.target} target="_blank" rel="noopener noreferrer" title={link.target} className={ROW} onClick={(event) => event.stopPropagation()}>{content}</a>
         ) : (
-          <button key={link.id} data-thread-link={link.id} type="button" title={link.target} className={`${ROW} cursor-pointer`} onClick={(event) => { event.stopPropagation(); openLocalPath(link.target) }}>{content}</button>
+          <button key={link.id} data-thread-link={link.id} type="button" title={link.target} className={`${ROW} cursor-pointer`} onClick={(event) => { event.stopPropagation(); openLocalPath(link.target) }} {...localFileDragProps(link.target)}>{content}</button>
         )
       })}
     </div>

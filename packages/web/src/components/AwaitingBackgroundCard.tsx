@@ -30,6 +30,7 @@ import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, C
 import { githubReadingStale, shortCommit, type AwaitingHint, type GithubIssueStatus, type GithubWatchStatus, type ThreadView, type ThreadWatchView } from "@frizz/shared"
 import { awaitingFenceTitle, awaitingStepItems, awaitingSteps, commandRunClause, displayTitle, isDirectSubAgent } from "@frizz/shared"
 import { githubRefUrl } from "../lib/githubRef.ts"
+import { localFileDragProps } from "../lib/localFileDrag.ts"
 import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { AWAITING_KIND, AWAITING_NO_PROSE, awaitingDefersToQuestions, awaitingProseBlock, prWatchRefs, SHELLS_KIND, STEPS_KIND } from "../lib/awaitingPresentation.ts"
 import { CHILD_DISMISS_NOUN, CHILD_DISMISS_TITLE, CHILD_DISMISS_VERB, CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, CHILD_THREAD_NEEDS_YOU, CHILD_THREAD_RESTED_TITLE, CHILD_THREAD_STALE_TITLE, CHILD_THREAD_WAITING, CHILD_THREAD_WAITING_TITLE, checksCounterLabel, issueCounterLabel } from "../lib/childOps.ts"
@@ -523,11 +524,13 @@ function Chevron() {
   return <ChevronRight size={13} aria-hidden className={`${ON_CAP} ml-[3px] -mr-[4px] text-muted-35 transition-colors group-hover:text-muted-70`} />
 }
 
-export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, title, testKind, testId, indent, dismiss, oneLine }: {
+export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, title, testKind, testId, indent, dismiss, oneLine, dragPath }: {
   mark: ReactNode
   name: string
   status: ReactNode
   onOpen?: () => void
+  /** The local file this row stands for, so the row drags out as that file (lib/localFileDrag.ts). */
+  dragPath?: string
   /** The ops strip's stop/clear × (ChildOpRow), for the rows that REPLACE that strip: the /full rail's
    *  sub-agents and shells (maintainer 2026-07-30: "the X button to stop a sub-agent should show up
    *  everywhere sub-agents are listed"). Absent ⇒ no ×; the card leaves it to the strip beneath it. */
@@ -577,6 +580,7 @@ export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, ti
         type="button"
         onClick={onOpen}
         onMouseDown={(e) => e.stopPropagation()}
+        {...(dragPath ? localFileDragProps(dragPath) : {})}
         title={title}
         className={`${nameClass} ${STRETCH} text-left group-hover:underline group-hover:decoration-fg/40 group-hover:underline-offset-2`}
       >

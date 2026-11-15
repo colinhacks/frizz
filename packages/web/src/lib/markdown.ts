@@ -494,7 +494,11 @@ function walk(node: ParentNode, ctx: WalkContext) {
           button.type = "button"
           button.className = "local-file-action"
           button.title = readable ? `Read ${target.display}` : target.display
-          if (target.filePath) button.setAttribute("data-local-path", target.filePath)
+          if (target.filePath) {
+            button.setAttribute("data-local-path", target.filePath)
+            // A button does not drag by default; this one drags out as its file (lib/localFileDrag.ts).
+            button.setAttribute("draggable", "true")
+          }
           while (el.firstChild) button.append(el.firstChild)
           el.replaceWith(button)
           // The button is ours; what moved into it is the author's, and this loop is over a snapshot

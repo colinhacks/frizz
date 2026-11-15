@@ -3,6 +3,7 @@ import { fileRpc, localFileUrl } from "./consoleProjects.ts"
 import { openLightbox, pushMarkdownDrawer, showToast, store } from "../store.ts"
 import { copyTextToClipboard } from "./clipboard.ts"
 import { lightboxImageFor } from "./lightbox.ts"
+import { installLocalFileDragOut } from "./localFileDrag.ts"
 import { localFileQuery } from "./localFileQuery.ts"
 import { browserShowsPdf, isLightboxPath, isLocalHtmlFile, isLocalMarkdownFile, isLocalPdfFile, localImageUrl } from "./markdownTargets.ts"
 import { basename } from "./paths.ts"
@@ -27,9 +28,12 @@ export function installLocalFileLinkInterceptor(client?: QueryClient): () => voi
   const failed = imageFailureHandler()
   // `error` does NOT bubble, so the delegated listener has to run in the CAPTURE phase.
   document.addEventListener("error", failed, true)
+  // The same elements drag out as their files, into Finder, Mail, Notes (lib/localFileDrag.ts).
+  const removeDragOut = installLocalFileDragOut()
   return () => {
     document.removeEventListener("click", handler)
     document.removeEventListener("error", failed, true)
+    removeDragOut()
   }
 }
 
