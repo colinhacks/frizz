@@ -236,6 +236,9 @@ export const draftKey = {
   dispatch: (projectDir: string | undefined) => `dispatch:${projectDraftScope(projectDir)}:new`,
   followUp: (projectDir: string | undefined, slug: string, sessionId?: string) => `followup:${threadDraftScope(projectDir, slug)}:${encodeURIComponent(sessionId ?? "unowned")}`,
   adopt: (projectDir: string | undefined, slug: string) => `adopt:${threadDraftScope(projectDir, slug)}`,
+  // The thread's PENDING INLINE COMMENTS, as one JSON list (lib/transcriptComments.ts). No session in the
+  // key: a comment is on a passage of the transcript, which a resumed session still draws.
+  comments: (projectDir: string | undefined, slug: string) => `comments:${threadDraftScope(projectDir, slug)}`,
   answer: (projectDir: string | undefined, slug: string, sessionId: string | undefined, messageId: string, block: number) => `answer:${threadDraftScope(projectDir, slug)}:${encodeURIComponent(sessionId ?? "unowned")}:${encodeURIComponent(messageId)}:${block}`,
   interaction: (projectDir: string | undefined, projectId: string, slug: string, sessionId: string, epoch: number, id: string, field: string) => `interaction:${projectDraftScope(projectDir)}:${encodeURIComponent(projectId)}:${draftSlug(projectDir, slug)}:${encodeURIComponent(sessionId)}:${epoch}:${encodeURIComponent(id)}:${encodeURIComponent(field)}`,
   // A REGISTERED question's free-text box. Keyed by the question's own durable id and its node path in

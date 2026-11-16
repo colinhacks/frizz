@@ -27,7 +27,7 @@ const SHELL = "components/ThreadSurface.tsx"
 
 test("the thread's contexts, its answering controller and its drop zone are wired in the shell alone", () => {
   // What the shell provides — a provider anywhere else is a second, partial shell.
-  for (const provider of ["ThreadSlugContext.Provider", "QueueDismissContext.Provider", "SendScopeContext.Provider", "ComposerSendContext.Provider", "<RegisteredAnsweringProvider"]) {
+  for (const provider of ["ThreadSlugContext.Provider", "QueueDismissContext.Provider", "SendScopeContext.Provider", "ComposerSendContext.Provider", "<RegisteredAnsweringProvider", "<TranscriptCommentsProvider", "<TranscriptCommentLayer"]) {
     assert.deepEqual(filesWith(provider), [SHELL], `${provider} is mounted by ThreadSurface, for every surface at once`)
   }
   // What the shell calls — each also appears in the module that defines it.
@@ -35,6 +35,7 @@ test("the thread's contexts, its answering controller and its drop zone are wire
   assert.deepEqual(filesWith("useSendScope("), [SHELL, "lib/sendScope.tsx"].sort())
   assert.deepEqual(filesWith("useComposerSendHandle("), [SHELL, "lib/sendScope.tsx"].sort())
   assert.deepEqual(filesWith("useFileIntakeHandle("), [SHELL, "lib/fileDrop.ts"].sort())
+  assert.deepEqual(filesWith("useTranscriptCommentsController("), ["components/TranscriptComments.tsx", SHELL].sort())
   // A drop zone is the thread surface's, or a prompt box's own where the box is not a thread's.
   assert.deepEqual(filesWith("useFileDropZone("), ["components/Composer.tsx", SHELL, "lib/fileDrop.ts"].sort())
 })

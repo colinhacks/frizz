@@ -247,6 +247,11 @@
   --frizz-attention-detail: var(--color-amber-200);
   --frizz-attention: #e0ae5d; /* L 0.78 C 0.115 H 78 */
   --frizz-attention-fill: #e29e47; /* L 0.75 C 0.13 H 70 */
+  /* A PENDING INLINE COMMENT'S HIGHLIGHT (components/TranscriptComments.tsx): a highlighter over the
+     passage, not a selection, so literal yellow in both palettes (light mode's accent is blue). The
+     active reading is the one whose words are showing, or the passage being written on. */
+  --frizz-comment: rgb(232 185 35 / 0.17);
+  --frizz-comment-active: rgb(232 185 35 / 0.34);
   /* The five `> [!TYPE]` callout inks (styles.css § Callouts). Not the status tokens: amber-400 and
      red-400 lay outside sRGB and were the brightest of the set, so a P3 screen painted the warning more
      vivid than any hex (maintainer 2026-10-19: "Why does this look so saturated?"). One OKLCH lightness
@@ -434,6 +439,8 @@
   --frizz-attention-detail: #745000;
   --frizz-attention: #825700;
   --frizz-attention-fill: #9a6700;
+  --frizz-comment: rgb(250 214 60 / 0.3);
+  --frizz-comment-active: rgb(250 204 21 / 0.55);
   --frizz-callout-note: #35659d;
   --frizz-callout-tip: #277447;
   --frizz-callout-important: #615c8d;
@@ -608,6 +615,8 @@
     --frizz-attention-detail: #745000;
     --frizz-attention: #825700;
     --frizz-attention-fill: #9a6700;
+    --frizz-comment: rgb(250 214 60 / 0.3);
+    --frizz-comment-active: rgb(250 204 21 / 0.55);
     --frizz-callout-note: #35659d;
     --frizz-callout-tip: #277447;
     --frizz-callout-important: #615c8d;

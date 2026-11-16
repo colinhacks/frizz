@@ -761,6 +761,19 @@ a[href] {
   color: inherit;
 }
 
+/* PENDING INLINE COMMENTS (components/TranscriptComments.tsx), painted through the CSS Custom Highlight
+   API over the prose's own text, so nothing is spliced into HTML React owns. A passage under the
+   pointer takes the pointer cursor: a click pins its comment open. */
+::highlight(frizz-comment) {
+  background-color: var(--frizz-comment);
+}
+::highlight(frizz-comment-active) {
+  background-color: var(--frizz-comment-active);
+}
+[data-comment-hover] {
+  cursor: pointer;
+}
+
 /* THE PAGE LOADER (FrizzLoader.tsx): the fff mark writes itself, holds, and lifts off the way it came.
    With `pathLength=1` and a dash pattern of `1 1`, an offset of 1 shows none of the stroke, 0 all of it,
    and -1 none again with the pen gone off the far end; the pattern repeats every 2, so -1 and 1 are the

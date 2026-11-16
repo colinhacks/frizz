@@ -36,6 +36,8 @@ import { previousUserBoundary } from "../lib/transcriptPagination.ts"
 import { FrizzWake } from "./FrizzWake.tsx"
 import { LinkifiedText } from "./LinkifiedText.tsx"
 import { parseSentContext, splitProseByTokens, tokenLabel, type SentContextItem } from "../lib/composerContext.ts"
+import { parseSentComments } from "../lib/transcriptComments.ts"
+import { SentCommentsList } from "./TranscriptComments.tsx"
 import { AnswersCard } from "./AnswersCard.tsx"
 import { DividerHint, DividerQuotedTitle, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
 import { usePromptBoxSends } from "../lib/sendScope.tsx"
@@ -3633,6 +3635,10 @@ function UserBubble({ text, rawText, queued, held, deliveryUnconfirmed, delivery
   // ⌘I selected context, recovered from the serialization the composer sent. Null for everything
   // else — including pre-footnote-era sends, which keep their plain-text rendering.
   const sentContext = useMemo(() => parseSentContext(prose), [prose])
+  // Inline comments the send carried (lib/transcriptComments): the words above them are the note, drawn
+  // as the bubble always draws words, and each comment goes under the passage it quotes.
+  const sentComments = useMemo(() => parseSentComments(sentContext ? sentContext.body : prose), [sentContext, prose])
+  const note = sentComments ? sentComments.note : sentContext ? sentContext.body : prose
   return (
     // `self-end` must stay on THIS node: the parent scroll container is a flex column and the bubble's
     // right-justification depends on being its direct child (see the group-container note above the
@@ -3673,7 +3679,8 @@ function UserBubble({ text, rawText, queued, held, deliveryUnconfirmed, delivery
               click/keydown propagation, so a link inside a QUEUED bubble opens instead of unqueueing.
               A message carrying ⌘I context renders its references as chips instead (SentContextBody);
               the unqueue payload above stays the whole serialized text either way. */}
-          {sentContext ? <SentContextBody body={sentContext.body} items={sentContext.items} /> : <LinkifiedText text={prose} />}
+          {note.trim() !== "" && (sentContext ? <SentContextBody body={note} items={sentContext.items} /> : <LinkifiedText text={note} />)}
+          {sentComments && <SentCommentsList items={sentComments.items} divided={note.trim() !== ""} />}
         </div>
       )}
       {/* Below the words, mirroring the composer (prose in the textarea, chips along its bottom edge) —
@@ -4208,8 +4215,9 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
   // No gap on the container — between-block spacing is entirely the explicit VSpace elements.
   // `data-frizz-msg` stamps this root with the message's own `sourceId`: a stable per-message handle for
   // an inspector or an e2e selector, distinct from the pagination-anchor attribute (see the anchor test).
+  // `data-commentable` says its prose takes inline comments (TranscriptComments), which anchor on that id.
   return (
-    <div data-frizz-msg={m.sourceId} className="flex flex-col text-[13px] min-w-0">
+    <div data-frizz-msg={m.sourceId} data-commentable="" className="flex flex-col text-[13px] min-w-0">
       {withSpacers(blocks, pictureAwareGap(pictureEdges, STEP))}
       {answerSheetOpen && answering && askBlocks.length > 0 ? (
         <MobileAnswerSheet blocks={askBlocks} answering={answering} onClose={() => setAnswerSheetOpen(false)} />

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, type ComponentPropsWithRef, type ReactElement } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ComponentPropsWithRef, type ReactElement } from "react"
 import { questionFencesLive } from "@frizz/shared"
 import type { BgShellView, RegisteredQuestionView, ThreadView } from "@frizz/shared"
 import type { ChatMessage } from "../hooks.ts"
@@ -25,6 +25,7 @@ import { replaceEqualDeep } from "@tanstack/react-query"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
 import { transcriptBackgroundShells, withoutLiveTranscriptBackgroundTools } from "../lib/transcriptShells.ts"
 import { showsRestingCard } from "./AwaitingBackgroundCard.tsx"
+import { TranscriptCommentLayer, TranscriptCommentsProvider, useTranscriptCommentsController, type TranscriptComments } from "./TranscriptComments.tsx"
 import { useThreadPageZone } from "./ThreadPageZone.tsx"
 import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useFenceQuestions, useQuestionOwners, useRefusedFences, useClosedQuestionSpecs, useSettledQuestions, type FenceQuestionRow, type SettledQuestion } from "./RegisteredQuestionCards.tsx"
 
@@ -45,7 +46,9 @@ import { RegisteredAnsweringProvider, openQuestionsOf, useArrivedQuestions, useF
 //   · the thread's slug, for everything in the transcript that acts on its thread (ThreadSlugContext),
 //   · how the surface leaves the page when its thread is handed back, where it does (QueueDismissContext),
 //   · ⌘⏎ with nothing typed pressing Send now under the queued messages, from anywhere in the surface
-//     (lib/sendNowKey).
+//     (lib/sendNowKey),
+//   · inline comments: a passage of an agent message selected and commented on, painted over its prose
+//     while it waits, and carried by the prompt box's next send (TranscriptComments).
 //
 // It exists because those were wired by hand in each shell, so a feature built in one was simply absent
 // from the other and nothing said so: a file dropped anywhere on a queue card went into its prompt box
@@ -212,6 +215,8 @@ export interface ThreadSurfaceState {
   fileOver: boolean
   /** The queued tail, as the one Send now under it reads it (QueuedRunContext). */
   queuedRun: QueuedRun
+  /** The pending inline comments on this thread's transcript, which the prompt box's send carries. */
+  comments: TranscriptComments
   /** The rest is `<ThreadSurface>`'s wiring, not a caller's. */
   exit: SurfaceExit | null
   sendScope: SendScope
@@ -312,6 +317,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const opsThread = useOpsHeldForTranscript(thread, messages)
   const run = useMemo(() => queuedRunOf(messages), [messages])
   const queuedRun = useMemo<QueuedRun>(() => ({ held: run.held, steered: run.steered }), [run.held, run.steered])
+  const comments = useTranscriptCommentsController(slug, messages)
   const transcript = useMemo<ThreadTranscript>(
     () => ({
       thread,
@@ -348,7 +354,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   // Stable while the two callbacks are, so the fence buttons reading it do not re-render every frame.
   const sent = exit?.sent
   const stableExit = useMemo<SurfaceExit | null>(() => (dismiss && cancel ? { dismiss, cancel, sent } : null), [dismiss, cancel, sent])
-  return { slug, answering, transcript, promptBoxSends, fileOver: drop.over, queuedRun, exit: stableExit, sendScope, zone: drop.handlers, box }
+  return { slug, answering, transcript, promptBoxSends, fileOver: drop.over, queuedRun, comments, exit: stableExit, sendScope, zone: drop.handlers, box }
 }
 
 /** The surface's root element, inside everything the shell provides. Every other prop is the root
@@ -366,6 +372,15 @@ export function ThreadSurface({
   // ⌘⏎ for Send now, after whatever the surface itself does with the key.
   const sendNowKey = useSendNowKey(surface.slug, surface.queuedRun)
   const zone = surface.zone
+  // The comment layer reads the surface's own element: the selection it takes a comment on, and the
+  // passages it paints, are this surface's and no other's.
+  const [element, setElement] = useState<HTMLDivElement | null>(null)
+  const forwarded = root.ref
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    setElement(node)
+    if (typeof forwarded === "function") forwarded(node)
+    else if (forwarded) forwarded.current = node
+  }, [forwarded])
   useEffect(() => {
     if (!pageZone) return
     pageZone.current = zone
@@ -383,9 +398,12 @@ export function ThreadSurface({
             <ThreadTranscriptContext.Provider value={surface.transcript}>
               <QueuedRunContext.Provider value={surface.queuedRun}>
                 <ThreadSurfaceBoxContext.Provider value={surface.box}>
-                  <div {...root} {...(pageZone ? null : zone)} data-thread-surface={surface.slug} onKeyDown={(e) => { root.onKeyDown?.(e); sendNowKey(e) }}>
-                    {children}
-                  </div>
+                  <TranscriptCommentsProvider value={surface.comments}>
+                    <div {...root} {...(pageZone ? null : zone)} data-thread-surface={surface.slug} ref={ref} onKeyDown={(e) => { root.onKeyDown?.(e); sendNowKey(e) }}>
+                      {children}
+                      <TranscriptCommentLayer root={element} />
+                    </div>
+                  </TranscriptCommentsProvider>
                 </ThreadSurfaceBoxContext.Provider>
               </QueuedRunContext.Provider>
             </ThreadTranscriptContext.Provider>

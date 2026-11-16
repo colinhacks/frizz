@@ -66,8 +66,11 @@ export function useSendMode(): SendMode {
  *  is then a note on the answers, whichever way they go. An open question with nothing staged makes
  *  the box the way AROUND it. Otherwise it names how the ticked row will send, which only differs from
  *  an ordinary reply while there is a turn to queue behind. */
-export function sendPlaceholder(input: { staged: number; openQuestions: boolean; running: boolean; mode: SendMode; steerable?: boolean }): string {
+export function sendPlaceholder(input: { staged: number; comments?: number; openQuestions: boolean; running: boolean; mode: SendMode; steerable?: boolean }): string {
   if (input.staged > 0) return input.staged === 1 ? "Add a note to send with your answer…" : `Add a note to send with your ${input.staged} answers…`
+  // Inline comments on the transcript wait for this box's next send, and the words typed here go on top.
+  const comments = input.comments ?? 0
+  if (comments > 0) return comments === 1 ? "Add a note to send with your comment…" : `Add a note to send with your ${comments} comments…`
   if (input.openQuestions) return "Or skip the questions and reply…"
   if (input.running && input.steerable === false) return "Queue a message for when this turn ends…"
   if (input.running && input.mode === "queue") return "Queue a message for when the agent rests…"

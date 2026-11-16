@@ -30,6 +30,8 @@ import { sendPlaceholder, setSendMode, useSendMode } from "../lib/sendMode.ts"
 import { QueueDismissContext } from "../lib/threadContexts.ts"
 import { QueuedRunContext } from "../lib/threadContexts.ts"
 import { useThreadSurfaceBox } from "./ThreadSurface.tsx"
+import { PendingCommentsCount, useTranscriptComments } from "./TranscriptComments.tsx"
+import { buildMessageWithComments } from "../lib/transcriptComments.ts"
 
 // THE prompt box for a registered thread — the single block every "steer this thread" surface renders.
 // The <Composer> leaf was already shared; the ~14 lines AROUND it were not, and the queue card's copy had
@@ -163,7 +165,11 @@ function LocalThreadComposerBox({
   // …and the ticks on the human's to-do list, which are answered the same way (lib/stepsAnswer). It reads
   // the thread rather than a context: the list is the thread's, whichever surface drew the box.
   const stepsAnswer = useStepsAnswer(thread)
-  const staged = (registered?.staged ?? 0) + (scope?.fencedCount ?? 0) + (stepsAnswer.staged ? 1 : 0)
+  // …and the inline comments on the transcript (TranscriptComments), which ride every send from this box.
+  const transcriptComments = useTranscriptComments()
+  const pendingComments = transcriptComments?.comments.length ?? 0
+  const answersStaged = (registered?.staged ?? 0) + (scope?.fencedCount ?? 0) + (stepsAnswer.staged ? 1 : 0)
+  const staged = answersStaged + pendingComments
   // "A turn is in flight" — the only time sending as a steer and sending to the queue differ…
   const running = thread?.runtime === "running"
   // …or messages already queued, which a new one waits behind even with the agent at rest: the queue
@@ -184,7 +190,7 @@ function LocalThreadComposerBox({
   // and with the menu shut this line is also what says how the button will send (sendPlaceholder).
   const placeholder = thread?.foreign
     ? "Send a message to take over this session…"
-    : sendPlaceholder({ staged, openQuestions: Boolean(thread?.pendingQuestion) || (thread ? hasStandingQuestion(thread) : false), running: behind, mode, steerable })
+    : sendPlaceholder({ staged: answersStaged, comments: pendingComments, openQuestions: Boolean(thread?.pendingQuestion) || (thread ? hasStandingQuestion(thread) : false), running: behind, mode, steerable })
   const projectDir = useProjectDir()
   const key = draftKey.followUp(projectDir, slug, thread?.sessionId)
   const [message, setMessage, clearMessage] = useDraft(key)
@@ -235,11 +241,12 @@ function LocalThreadComposerBox({
     const fenced = phoneBar ? null : scope?.takeFenced() ?? null
     // On the phone the list keeps its own Send, as the questions keep their sheet.
     const steps = phoneBar ? null : stepsAnswer.take()
-    if (!text && !answers && !fenced && !steps) return
+    const commentsWaiting = (transcriptComments?.comments.length ?? 0) > 0
+    if (!text && !answers && !fenced && !steps && !commentsWaiting) return
     // `/login` / `/logout` are frizz-owned account actions for THIS thread's backend — invoked
     // locally, never delivered to the worker as a prompt (a leading slash is not a stable provider
     // command transport across the live-paste vs dead-resume lifecycles).
-    const alias = parseAccountAlias(text)
+    const alias = commentsWaiting ? null : parseAccountAlias(text)
     if (alias) {
       clearMessage()
       if (thread?.backend === "acp") {
@@ -258,7 +265,11 @@ function LocalThreadComposerBox({
     // Staged ⌘I context items ride the send: serialized into the text (before any trailing
     // attachment paths) and cleared with it — restored on a rejected send exactly like the draft.
     const context = takeContextItems(slug)
-    const typed = text ? buildMessageWithContext(text, context, projectDir) : ""
+    // Pending inline comments go under the typed words, the words as the note on top of them; the ⌘I
+    // context follows, under both, as it always has.
+    const comments = transcriptComments?.take() ?? []
+    const withComments = buildMessageWithComments(text, comments)
+    const typed = withComments ? buildMessageWithContext(withComments, context, projectDir) : ""
     // Ticks on the list open the reply, with the typed words under them.
     const note = steps ? steps.compose(typed) : typed
     // ONE TURN. Fenced answers are composed here and the typed words go under them as the note; the
@@ -298,6 +309,7 @@ function LocalThreadComposerBox({
       onRollback: (failure) => {
         mergeIntoDraft(key, message)
         restoreContextItems(slug, context)
+        if (comments.length) transcriptComments?.restore(comments)
         noteFailedDraftOrigin(key, { ...failure, text: message })
         answers?.onRollback(failure.kept)
         fenced?.onRollback()
@@ -324,6 +336,13 @@ function LocalThreadComposerBox({
   if (phoneBar) {
     return (
       <div data-thread-composer-box={SURFACE} data-thread-action-bar="" data-phone-thread-bar="">
+        {/* The phone draws no line of counts (ChatView), so the pending comments get one of their own. */}
+        {pendingComments > 0 && (
+          <div className="-mb-1 flex h-8 items-baseline px-2.5">
+            <span aria-hidden className="h-[calc(16px_+_0.5cap)] w-0 shrink-0" />
+            <PendingCommentsCount />
+          </div>
+        )}
         <Composer
           contextTokens={contextTokens}
           id={id}

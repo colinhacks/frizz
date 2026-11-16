@@ -17,6 +17,7 @@ import { ChildThreadRows } from "./ChildThreadRows.tsx"
 import { useChildThreads } from "../hooks.ts"
 import { QueueSubAgentLines } from "./QueueSubAgentLines.tsx"
 import { useSurfaceOpsThread } from "./ThreadSurface.tsx"
+import { PendingCommentsCount, useTranscriptComments } from "./TranscriptComments.tsx"
 import { pushMonitorDrawer, pushTimerDrawer } from "../store.ts"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 
@@ -165,7 +166,11 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], only }: 
     clearTimeout(swapTimer.current)
     setOpenKind(null)
   }, [gone])
-  if (groups.length === 0) return null
+  // THE HUMAN'S OWN OUTSTANDING WORK OPENS THE LINE: the inline comments waiting for the next send, on
+  // the left, with the agent's live work on the right (the mockup's reading, 2026-10-01: "what this run
+  // has outstanding — yours on the left, the worker's on the right").
+  const pendingComments = useTranscriptComments()?.comments.length ?? 0
+  if (groups.length === 0 && pendingComments === 0) return null
   const openNow = (kind: QueueOpsKind) => {
     clearTimeout(closeTimer.current)
     clearTimeout(swapTimer.current)
@@ -212,6 +217,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], only }: 
     // strut's `cap` is the counts' own.
     <div data-queue-ops-summary ref={line} className="-mt-3 flex h-8 min-w-0 items-baseline justify-end text-[11.5px]">
       <span aria-hidden className="h-[calc(16px_+_0.5cap)] w-0 shrink-0" />
+      <PendingCommentsCount />
       {groups.map((group) => (
         <OpsCount
           key={group.key}
