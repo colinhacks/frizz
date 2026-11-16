@@ -115,13 +115,19 @@ function serverFixture(version, fault) {
   if (fault === "epoch") manifest.frizzServer.dataEpoch++
   if (fault === "protocol") manifest.frizzServer.protocol++
   const entry = join(directory, "dist/dev-child.js")
+  // The proof wraps a SERVER boot. Since 2026-11-15 an update also runs the new release's entry with
+  // FRIZZ_PROVISION_RUNTIMES_ONLY=1 and no IPC channel, to download its runtimes while the old server
+  // serves (src/server-release.ts prepareGenerationRuntimes); that run is not a server, has no
+  // process.send to wrap, and must not count as one overlapping the server it runs beside.
   const instrumentation = `
 import {appendFileSync as _proofAppend,readFileSync as _proofRead} from 'node:fs';
+if (process.env.FRIZZ_PROVISION_RUNTIMES_ONLY !== '1') {
 const _proof = (event) => _proofAppend(process.env.FRIZZ_TEST_CHILD_EVENTS, JSON.stringify({event,pid:process.pid,parent:process.ppid,version:${JSON.stringify(version)},node:process.version,at:Date.now()})+'\\n');
 for (const row of _proofRead(process.env.FRIZZ_TEST_CHILD_EVENTS,'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse)) {if(row.event==='start' && row.pid!==process.pid) {try{process.kill(row.pid,0);_proof('overlapping-server')}catch{}}}
 _proof('start'); process.on('exit',()=>_proof('exit'));
 const _send = process.send.bind(process); process.send=(message,...args)=>{if(message.type==='frizz-ready'){_proof('ready');${fault === "crash" ? "setTimeout(()=>process.exit(86),100);" : fault === "late-crash" ? "setTimeout(()=>process.exit(87),3000);" : ""}} return _send(message,...args)};
 ${fault === "exit" ? "throw new Error('INJECTED_BOOT_FAILURE');" : ""}
+}
 `
   let contents = readFileSync(entry, "utf8")
   if (fault === "hang") {
@@ -509,7 +515,10 @@ try {
       await until("candidate stalled before ready", () => children().some((event) => event.event === "start" && event.version === version))
       await secondLaunch(0)
     }
-    const failed = await until(reason, async () => { const value = await status(); return value.state === "failed" && value })
+    // Each candidate now runs its download-ahead pass before it boots (src/server-release.ts
+    // prepareGenerationRuntimes), so a boot timeout is install + that pass + the 30s stall window:
+    // 75s and more under the load this Mac often carries (2026-11-16), past the default 90s.
+    const failed = await until(reason, async () => { const value = await status(); return value.state === "failed" && value }, 180_000)
     assert.equal(failed.version, "0.13.1")
     assert.equal(selected().version, "0.13.1")
     assert.equal(alive(initialPid), true)
