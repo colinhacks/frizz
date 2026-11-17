@@ -11,9 +11,15 @@
  * The zone is `localhost` rather than `frizz.sh`, so `ada.localhost` is a valid board name and
  * resolves to loopback without touching DNS or needing the wildcard route. That is the only
  * difference from production, and it exercises the same hostname-parsing code.
+ *
+ * `wrangler dev` here is not the relay's pinned wrangler (which only uploads; a deployed Worker runs on
+ * Cloudflare's runtime). 4.147's local entry worker ends a response body that errors as though it had
+ * finished, dropping what was queued, so a body cut short reads as whole there while a deployed Worker cuts
+ * the connection. 4.162 passes the error on (measured 2026-11-16). `RELAY_E2E_WRANGLER=wrangler@<version>`
+ * picks another.
  */
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { brotliCompressSync } from "node:zlib";
 import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -111,7 +117,7 @@ try {
 
   dev = spawn(
     "nubx",
-    ["-y", "wrangler", "dev", "-c", devConfig, "--port", String(DEV_PORT), "--ip", "127.0.0.1", "--persist-to", state],
+    ["-y", process.env.RELAY_E2E_WRANGLER ?? "wrangler@4.162.0", "dev", "-c", devConfig, "--port", String(DEV_PORT), "--ip", "127.0.0.1", "--persist-to", state],
     // Its OWN process group, so cleanup reaches the whole tree: a signal to `nubx` alone left `wrangler`
     // and its `workerd` serving the port after the run, and the next run timed out waiting to listen.
     { cwd: join(repo, "packages/relay"), stdio: ["ignore", "pipe", "pipe"], detached: true },
@@ -137,6 +143,21 @@ try {
   // A claimed name with no board behind it is a DIFFERENT answer, and a visitor can act on it.
   const offline = await fetch(at("ada"));
   check("a claimed name with no board says so", offline.status === 502, `HTTP ${offline.status}`);
+  // A PAGE LOAD that meets it gets a page that loads the board again by itself: a line of plain text ran
+  // nothing, and a board opened from a phone's home screen has no reload button.
+  // node:http, not fetch: fetch adds its own `sec-fetch-mode: cors`, so no fetch reads as a page load.
+  const offlinePage = await new Promise((resolve, reject) => {
+    const req = httpRequest(at("ada"), { headers: { "sec-fetch-mode": "navigate", accept: "text/html" } }, (res) => {
+      let html = "";
+      res.on("data", (d) => (html += d));
+      res.on("end", () => resolve({ status: res.statusCode, type: res.headers["content-type"] ?? "", html }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+  check("a page load with no board gets a page that tries again by itself",
+    offlinePage.status === 502 && offlinePage.type.startsWith("text/html") && offlinePage.html.includes("location.reload()"),
+    `HTTP ${offlinePage.status} ${offlinePage.type}`);
 
   // A real board on loopback.
   boardServer = createServer((req, res) => {
@@ -185,6 +206,13 @@ try {
     if (req.url?.startsWith("/empty")) {
       res.writeHead(204);
       res.end();
+      return;
+    }
+    if (req.url?.startsWith("/halfway")) {
+      // A body the board's own server breaks off part-way, with no content-length to give it away.
+      res.writeHead(200, { "content-type": "text/plain", etag: '"half"' });
+      res.write("first half;");
+      setTimeout(() => res.destroy(), 200);
       return;
     }
     if (req.url?.startsWith("/slow")) {
@@ -283,6 +311,22 @@ try {
   check("every set-cookie survives the hop, not only the first", setCookies.length === 2, JSON.stringify(setCookies));
   const ranged = await settled("206", fetch(at("ada", "/ranged"), { headers: { range: "bytes=0-3" }, signal: AbortSignal.timeout(10_000) }));
   check("a 206 partial body arrives as 206", ranged.res?.status === 206 && ranged.text === "BOAR", ranged.res ? `HTTP ${ranged.res.status} ${JSON.stringify(ranged.text)}` : ranged.text);
+
+  // A BODY BROKEN OFF PART-WAY must fail the visitor's read. Ended cleanly, a short body reads as whole and a
+  // browser caches it with its ETag: a script cut that way came back as a 304 on every later load.
+  const halfway = await fetch(at("ada", "/halfway"), { signal: AbortSignal.timeout(20_000) }).then(
+    async (res) => {
+      try {
+        return { status: res.status, text: await res.text() };
+      } catch (error) {
+        return { status: res.status, failed: String(error?.cause?.message ?? error?.message ?? error) };
+      }
+    },
+    (error) => ({ status: 0, text: `<no answer: ${error.name}>` }),
+  );
+  check("a body the board breaks off part-way fails the visitor's read, not ends short",
+    halfway.status === 200 && halfway.failed !== undefined,
+    halfway.failed ? `read failed: ${halfway.failed}` : `HTTP ${halfway.status}, read ${JSON.stringify(halfway.text)} as whole`);
 
   // The seam that a request/response relay would fail: an SSE body has to arrive as it is produced.
   const stream = await fetch(at("ada", "/events"));

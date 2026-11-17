@@ -398,25 +398,50 @@ test("a peer that never finishes a message is dropped rather than buffered forev
   assert.deepEqual(visitor.received, ["after"])
 })
 
-test("a board that disconnects ENDS every started stream, not just the pending heads", async () => {
+test("a board that disconnects CUTS every started stream, not just the pending heads", async () => {
   // The head's promise settled long ago, so failAll's reject is a no-op for a streaming response —
   // ending the stream is the ONLY way the visitor's response ever terminates. Before this, a dead
   // board left every relayed SSE response open indefinitely, and those orphans held the Durable
-  // Object awake (and billed) for days.
+  // Object awake (and billed) for days. And it is cut, never ended as though whole: the body is short.
   const board = fakeSocket()
   const relay = new BoardSocket()
   relay.attach(board.socket)
 
-  let ended = false
+  const ended: Array<string | undefined> = []
   const pending = relay.request(
     { method: "GET", url: "https://ada.frizz.sh/events", headers: [] },
-    { push: () => {}, end: () => { ended = true } }
+    { push: () => {}, end: (cut) => void ended.push(cut) }
   )
   relay.handleFrame(serializeFrame({ t: "res", id: board.lastId(), status: 200, headers: [], end: false }))
   await pending
 
   relay.detach(board.socket)
-  assert.equal(ended, true, "the board disconnected and the stream was left open")
+  assert.equal(ended.length, 1, "the board disconnected and the stream was left open")
+  assert.equal(ended[0], "the board disconnected", "a body cut short was ended as though whole")
+})
+
+test("a body the board's own response broke off is cut, and one it finished is ended", async () => {
+  // 2026-11-16: a script cut part-way reached the browser as a whole response with no content-length to
+  // contradict it, was cached with its ETag, and came back as a 304 on every later load: a blank board.
+  const board = fakeSocket()
+  const relay = new BoardSocket()
+  relay.attach(board.socket)
+  const ends: Array<string | undefined> = []
+  const stream = { push: () => {}, end: (cut?: string) => void ends.push(cut) }
+
+  const broken = relay.request({ method: "GET", url: "https://ada.frizz.sh/assets/a.js", headers: [] }, stream)
+  const brokenId = board.lastId()
+  relay.handleFrame(serializeFrame({ t: "res", id: brokenId, status: 200, headers: [], end: false }))
+  await broken
+  relay.handleFrame(serializeFrame({ t: "res-end", id: brokenId, aborted: true }))
+
+  const whole = relay.request({ method: "GET", url: "https://ada.frizz.sh/assets/b.js", headers: [] }, stream)
+  const wholeId = board.lastId()
+  relay.handleFrame(serializeFrame({ t: "res", id: wholeId, status: 200, headers: [], end: false }))
+  await whole
+  relay.handleFrame(serializeFrame({ t: "res-end", id: wholeId }))
+
+  assert.deepEqual(ends, ["the board's answer broke off", undefined])
 })
 
 test("a stream nobody feeds is ended, and the board is told to stop producing", async () => {
@@ -437,11 +462,14 @@ test("a stream nobody feeds is ended, and the board is told to stop producing", 
   // The idle timer is the LAST one armed: the head's own timeout precedes it.
   fire[fire.length - 1]!()
   assert.equal(ended, true, "an idle stream was not ended")
+  // A chunk for the id it just cancelled does not cancel it again.
+  const sentBefore = board.sent.length
   const cancel = parseFrame(board.sent[board.sent.length - 1]!)
   assert.deepEqual(cancel, { t: "req-cancel", id }, "the board was left producing for nobody")
 
   // And a late chunk for the abandoned id is ignored, not delivered to a closed stream.
   relay.handleFrame(serializeFrame({ t: "res-chunk", id, data: encodeBody(text("late")) }))
+  assert.equal(board.sent.length, sentBefore, "one cancel, not one per chunk")
 })
 
 test("a chunk re-arms the idle bound, so a LIVE stream is never cut", async () => {
@@ -526,6 +554,7 @@ function fakeClock() {
       },
       clearTimer: (handle: unknown) => void timers.delete(handle as number),
     },
+    armed: () => timers.size,
     advance(ms: number) {
       now += ms
       for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
@@ -690,4 +719,185 @@ test("a request made in the moment the board is away is held for it, even one no
   answer(relay, second)
   assert.equal((await pending).status, 200)
   assert.deepEqual(first.sent, [])
+})
+
+test("a page held across a reconnect is never sent to a board of another key", async () => {
+  // Its validators were filtered for the first key's board and its answer would be tagged with that key
+  // (visitor-headers.ts), so sending it to the next holder of the name would let that board answer 304 to
+  // a copy the first one served. It fails instead, and the visitor's next request starts clean.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(fakeSocket().socket, "key-a")
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/assets/app.js", headers: [["if-none-match", '"v1"']] })
+
+  const other = fakeSocket()
+  relay.attach(other.socket, "key-b")
+  await assert.rejects(pending, /key changed/)
+  assert.deepEqual(other.sent, [], "a request framed for one key went to another key's board")
+
+  // The same key coming back is a reconnect, and the request goes through.
+  const again = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  const same = fakeSocket()
+  relay.attach(same.socket, "key-b")
+  answer(relay, same)
+  assert.equal((await again).status, 200)
+})
+
+test("a second head for one request is ignored, and its stream still ends when the board ends it", async () => {
+  // Taking the second head dropped the entry with its stream open, so the visitor's response, and the
+  // Durable Object, stayed open with nothing left to end them.
+  const board = fakeSocket()
+  const relay = new BoardSocket()
+  relay.attach(board.socket)
+  let ended = false
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/_frizz/events", headers: [] }, { push: () => {}, end: () => { ended = true } })
+  const id = board.lastId()
+  relay.handleFrame(serializeFrame({ t: "res", id, status: 200, headers: [], end: false }))
+  await pending
+  relay.handleFrame(serializeFrame({ t: "res", id, status: 200, headers: [], end: true }))
+  assert.equal(ended, false)
+  relay.handleFrame(serializeFrame({ t: "res-end", id }))
+  assert.equal(ended, true, "the stream was orphaned by the second head")
+})
+
+test("a frame from a socket that is no longer the board's is not heard", async () => {
+  // A replaced socket stays open until its far end answers the close, which a previous holder of the name
+  // need never do, and ids run in sequence, so it could answer the next visitor's request under its id.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const old = fakeSocket()
+  relay.attach(old.socket, "key-a")
+  const current = fakeSocket()
+  relay.attach(current.socket, "key-a")
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  const forged = serializeFrame({ t: "res", id: current.lastId(), status: 200, headers: [], body: encodeBody(text("forged")), end: true })
+  relay.handleFrame(forged, old.socket)
+  relay.handleFrame(serializeFrame({ t: "res", id: current.lastId(), status: 200, headers: [], body: encodeBody(text("page")), end: true }), current.socket)
+  const response = await pending
+  assert.equal(new TextDecoder().decode(response.body!), "page")
+})
+
+test("a sign-in link's GET is never sent twice", async () => {
+  // The board redeems the code on the GET that carries it. Sent again after a drop, it is answered "This
+  // link was already used" by a board that has just signed the phone in.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const first = fakeSocket()
+  relay.attach(first.socket)
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/?frizz_code=abc", headers: [] })
+  relay.detach(first.socket)
+  await assert.rejects(pending, /disconnected/)
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  assert.deepEqual(second.sent, [])
+})
+
+test("a request framed for one key is refused by a board of another, and never sent to it", async () => {
+  const relay = new BoardSocket(fakeClock().options)
+  const board = fakeSocket()
+  relay.attach(board.socket, "key-b")
+  await assert.rejects(relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] }, undefined, "key-a"), /key changed/)
+  assert.deepEqual(board.sent, [])
+})
+
+test("a board whose key lost the name fails what it had at once, and nothing waits for it", async () => {
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const board = fakeSocket()
+  relay.attach(board.socket, "key-a")
+  const inFlight = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  relay.retire(board.socket, "the board's key changed")
+  await assert.rejects(inFlight, /key changed/)
+  await assert.rejects(relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] }), /not connected/)
+  assert.equal(await relay.whenConnected(), false, "a visitor was held for a board that will not be let back in")
+  assert.equal(clock.armed(), 0)
+})
+
+test("a board lost while nothing held its socket is still waited for", async () => {
+  // The Durable Object was asleep, and the socket's close is what woke it.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  relay.noteLost()
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  const board = fakeSocket()
+  relay.attach(board.socket)
+  answer(relay, board)
+  assert.equal((await pending).status, 200)
+})
+
+test("what the board still produces for a request the relay gave up on is cancelled", async () => {
+  // Each such chunk wakes, and bills, the Durable Object until the socket goes.
+  const clock = fakeClock()
+  const relay = new BoardSocket({ ...clock.options, requestTimeoutMs: 1000 })
+  const board = fakeSocket()
+  relay.attach(board.socket)
+  relay.handleFrame(serializeFrame({ t: "res-chunk", id: "rgone-1", data: encodeBody(text("x")) }))
+  relay.handleFrame(serializeFrame({ t: "res-chunk", id: "rgone-1", data: encodeBody(text("y")) }))
+  assert.deepEqual(board.sent.map((d) => parseFrame(d)), [{ t: "req-cancel", id: "rgone-1" }])
+
+  const late = relay.request({ method: "GET", url: "https://ada.frizz.sh/events", headers: [] })
+  const id = board.lastId()
+  clock.advance(1000)
+  await assert.rejects(late, /in time/)
+  assert.deepEqual(parseFrame(board.sent.at(-1)!), { t: "req-cancel", id }, "a missed deadline left the board's request running")
+})
+
+test("a terminal the relay no longer knows is closed on the board", async () => {
+  // A board-side terminal left open holds one of its RELAY_MAX_OPEN_SOCKETS for good: 64 of them and every
+  // new terminal is refused.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const board = fakeSocket()
+  relay.attach(board.socket)
+  relay.handleFrame(serializeFrame({ t: "ws-msg", id: "wgone-1", data: "output" }))
+  relay.handleFrame(serializeFrame({ t: "ws-ack", id: "wgone-2", ok: true }))
+  assert.deepEqual(board.sent.map((d) => parseFrame(d)), [{ t: "ws-close", id: "wgone-1" }, { t: "ws-close", id: "wgone-2" }])
+
+  // And a terminal the board did open leaves no timer behind, which would hold the object awake.
+  const opening = relay.openWebSocket({ url: "https://ada.frizz.sh/terminal", headers: [] }, fakeVisitor().socket)
+  relay.handleFrame(serializeFrame({ t: "ws-ack", id: board.lastId(), ok: true }))
+  assert.ok(await opening)
+  assert.equal(clock.armed(), 0)
+})
+
+test("a terminal the board had not answered when its socket went is opened again on the next one", async () => {
+  // A refused upgrade costs more than a page's 504: the app reads one as "this server has no /ws" and stays
+  // on its fallback feed for the rest of the page.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const first = fakeSocket()
+  relay.attach(first.socket, "key-a")
+  const opening = relay.openWebSocket({ url: "https://ada.frizz.sh/ws", headers: [] }, fakeVisitor().socket)
+  const firstId = first.lastId()
+  relay.detach(first.socket)
+
+  const second = fakeSocket()
+  relay.attach(second.socket, "key-a")
+  const again = parseFrame(second.sent[0]!) as { t: string; id: string; url: string }
+  assert.equal(again.t, "ws-open")
+  assert.equal(again.url, "https://ada.frizz.sh/ws")
+  assert.notEqual(again.id, firstId)
+  relay.handleFrame(serializeFrame({ t: "ws-ack", id: again.id, ok: true }))
+  assert.equal(await opening, again.id, "the visitor was linked to an id the board never opened")
+  assert.equal(clock.armed(), 0)
+})
+
+test("a terminal waiting for a board that does not come back, or comes back as another key, is refused", async () => {
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const board = fakeSocket()
+  relay.attach(board.socket, "key-a")
+  const lost = relay.openWebSocket({ url: "https://ada.frizz.sh/ws", headers: [] }, fakeVisitor().socket)
+  relay.detach(board.socket)
+  clock.advance(10_000)
+  assert.equal(await lost, null)
+
+  relay.attach(board.socket, "key-a")
+  const moved = relay.openWebSocket({ url: "https://ada.frizz.sh/ws", headers: [] }, fakeVisitor().socket)
+  relay.detach(board.socket)
+  const other = fakeSocket()
+  relay.attach(other.socket, "key-b")
+  assert.equal(await moved, null)
+  assert.deepEqual(other.sent, [], "a terminal asked for under one key was opened by another key's board")
+  assert.equal(clock.armed(), 0)
 })

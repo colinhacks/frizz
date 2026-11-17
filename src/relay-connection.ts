@@ -51,6 +51,8 @@ export interface RelayConnectionOptions {
 export interface RelaySocket {
   send(data: string): void;
   close(): void;
+  /** Bytes queued and not yet sent. Every WebSocket in the platform has it; a test's fake may not. */
+  readonly bufferedAmount?: number;
   addEventListener(type: "open", listener: () => void): void;
   addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
   addEventListener(type: "close", listener: (event?: { code?: number; reason?: unknown }) => void): void;
@@ -106,6 +108,11 @@ export const RELAY_KEEPALIVE_INTERVAL_MS = 20_000;
  * How long a ping may go unanswered before the socket is declared dead. The relay's auto-response comes
  * back in one round trip (about 100ms measured from a home connection), so five seconds is a dead socket
  * or a network too broken to serve a visitor anyway, never a slow answer.
+ *
+ * Measured from when the ping can have LEFT, not from when it was queued: it shares the socket with every
+ * answer the board sends, so behind a few megabytes of a visitor's download on a slow uplink it waits its
+ * turn for seconds. So the deadline starts over while the socket is still sending what was queued before it,
+ * and anything at all arriving from the relay counts as the answer, since a busy relay is plainly there.
  */
 export const RELAY_PONG_DEADLINE_MS = 5_000;
 
@@ -152,6 +159,8 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
   /** The deadline for the ping in flight. See RELAY_PONG_DEADLINE_MS. */
   let pongHandle: unknown;
   let awaitingPong = false;
+  /** Every byte handed to the socket to send, so the pong deadline can tell what has gone out. */
+  let queuedBytes = 0;
 
   const clearPongDeadline = () => {
     if (pongHandle !== undefined) {
@@ -179,7 +188,10 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
 
   const send = (frame: RelayUpFrame) => {
     try {
-      socket?.send(serializeFrame(frame));
+      if (!socket) return;
+      const data = serializeFrame(frame);
+      socket.send(data);
+      queuedBytes += data.length;
     } catch {
       // The socket died between the request arriving and its answer. The relay fails the request on
       // its side when the connection drops, so there is nothing useful to do here.
@@ -289,11 +301,36 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
         // Already gone.
       }
     };
+    /**
+     * The ping's deadline, started over while the `ahead` bytes queued before it (the ping's own included)
+     * are still going out and some went out since. Answers keep being queued BEHIND the ping meanwhile, so
+     * what went out is worked out from what was queued, not read off the buffer.
+     */
+    const armPongDeadline = (ahead: number) => {
+      const buffered = next.bufferedAmount ?? 0;
+      const mark = queuedBytes;
+      pongHandle = setTimer(() => {
+        pongHandle = undefined;
+        if (stopped || socket !== next || !awaitingPong) return;
+        const sent = buffered + (queuedBytes - mark) - (next.bufferedAmount ?? 0);
+        if (ahead > 0 && sent > 0) {
+          armPongDeadline(Math.max(0, ahead - sent));
+          return;
+        }
+        dead();
+      }, RELAY_PONG_DEADLINE_MS);
+    };
     const beat = () => {
       if (stopped || socket !== next) return;
-      // The pong deadline normally catches a silent socket first; this is the backstop for a deadline
-      // that never fired.
       if (awaitingPong) {
+        // Still sending what was queued ahead of the ping, and the deadline is watching that: no second
+        // ping behind the first.
+        if (pongHandle !== undefined && (next.bufferedAmount ?? 0) > 0) {
+          keepaliveHandle = setTimer(beat, RELAY_KEEPALIVE_INTERVAL_MS);
+          return;
+        }
+        // The pong deadline normally catches a silent socket first; this is the backstop for a deadline
+        // that never fired.
         dead();
         return;
       }
@@ -302,13 +339,11 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
         // The CONSTANT, not a locally built frame: the relay's auto-response matches these exact
         // bytes, which is what lets it answer without waking the Durable Object.
         next.send(RELAY_KEEPALIVE_PING);
+        queuedBytes += RELAY_KEEPALIVE_PING.length;
       } catch {
         // The close event will follow and reconnect from there.
       }
-      pongHandle = setTimer(() => {
-        pongHandle = undefined;
-        if (!stopped && socket === next && awaitingPong) dead();
-      }, RELAY_PONG_DEADLINE_MS);
+      armPongDeadline(next.bufferedAmount ?? 0);
       keepaliveHandle = setTimer(beat, RELAY_KEEPALIVE_INTERVAL_MS);
     };
 
@@ -326,6 +361,11 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
     });
 
     next.addEventListener("message", (event) => {
+      // Anything from the relay answers the ping: see RELAY_PONG_DEADLINE_MS.
+      if (socket === next && awaitingPong) {
+        awaitingPong = false;
+        clearPongDeadline();
+      }
       if (typeof event.data !== "string") return;
       // ONE BAD FRAME COSTS ONE FRAME. Whoever writes to this socket must not be able to end the
       // process serving every other visitor by sending something this code did not expect.

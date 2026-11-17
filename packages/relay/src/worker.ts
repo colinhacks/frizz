@@ -1,5 +1,7 @@
 import {
   importClaimPublicKey,
+  isNavigation,
+  relayUnavailablePage,
   RELAY_KEEPALIVE_PING,
   RELAY_KEEPALIVE_PONG,
   relayHandshakeInput,
@@ -158,6 +160,18 @@ export function visitorResponseInit(status: number, headers: Array<[string, stri
   return encoded ? { status, headers, encodeBody: "manual" } : { status, headers }
 }
 
+/**
+ * The relay's own answer when it cannot serve a request: a page that loads the board again by itself for a
+ * page load (relayUnavailablePage), plain text for anything else, which the app reads as a failed request.
+ */
+function unavailable(request: Request, status: number, text: string, page: { headline: string; detail: string }): Response {
+  const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" }
+  if (isNavigation(request.method, request.headers)) {
+    return new Response(relayUnavailablePage(page.headline, page.detail), { status, headers: { ...headers, "content-type": "text/html; charset=utf-8" } })
+  }
+  return new Response(text, { status, headers: { ...headers, "content-type": "text/plain; charset=utf-8" } })
+}
+
 /** Statuses the Fetch spec forbids a body on; `new Response(body, { status })` throws for them. */
 const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 204, 205, 304])
 
@@ -264,9 +278,11 @@ export class Board {
     // as a 504 and a board told it had been displaced, with no other connection anywhere).
     let newest: { ws: WorkerWebSocket; role: SocketRole } | null = null
     const older: WorkerWebSocket[] = []
+    const visitors: string[] = []
     for (const ws of this.state.getWebSockets()) {
       const role = this.roleOf(ws)
       if (role?.role !== "board") {
+        if (role?.role === "visitor" && role.id) visitors.push(role.id)
         try {
           ws.close(1012, "the relay restarted")
         } catch {
@@ -284,8 +300,11 @@ export class Board {
       newest = { ws, role }
     }
     if (newest) {
-      this.relay.attach(this.adapterFor(newest.ws))
+      this.relay.attach(this.adapterFor(newest.ws), newest.role.pubkey ?? null)
       this.board = { ws: newest.ws, pubkey: newest.role.pubkey ?? null }
+      // The board still holds a terminal for each visitor just closed. Its visitor may never answer the
+      // close, so the close event that would tell the board may never come.
+      for (const id of visitors) this.relay.closeWebSocket(id)
     }
     for (const ws of older) {
       try {
@@ -301,22 +320,33 @@ export class Board {
     this.restore()
     if (typeof message !== "string") return
     const role = this.roleOf(ws)
-    if (role?.role === "board") this.relay.handleFrame(message)
+    // Heard only from the board attached now: see BoardSocket.handleFrame.
+    if (role?.role === "board") this.relay.handleFrame(message, this.adapterFor(ws))
     else if (role?.role === "visitor" && role.id) this.relay.sendWebSocketMessage(role.id, message)
   }
 
-  webSocketClose(ws: WorkerWebSocket): void {
+  async webSocketClose(ws: WorkerWebSocket): Promise<void> {
     this.restore()
     const role = this.roleOf(ws)
     if (role?.role === "board") {
-      this.relay.detach(this.adapterFor(ws))
-      if (this.board?.ws === ws) this.board = null
+      if (this.board?.ws === ws) {
+        this.board = null
+        this.relay.detach(this.adapterFor(ws))
+        return
+      }
+      // CLOSED BEFORE THIS INSTANCE HELD IT: the close is what woke the object, and restore() skipped a socket
+      // already closed. Cloudflare cuts a hibernated board's socket that way, and the board is back within
+      // seconds, so a visitor in the gap waits for it rather than being told it is not running. Only the
+      // board's latest socket counts: an older one closing late says nothing about the board.
+      if (this.board || !role.pubkey || role.issuedAt === undefined) return
+      const latest = await this.state.storage.get<number>(handshakeKey(role.pubkey))
+      if (latest === role.issuedAt) this.relay.noteLost()
     }
     else if (role?.role === "visitor" && role.id) this.relay.closeWebSocket(role.id)
   }
 
-  webSocketError(ws: WorkerWebSocket): void {
-    this.webSocketClose(ws)
+  async webSocketError(ws: WorkerWebSocket): Promise<void> {
+    await this.webSocketClose(ws)
   }
 
   /**
@@ -327,7 +357,7 @@ export class Board {
     const board = this.board
     if (!board || (owner !== null && board.pubkey === owner)) return
     this.board = null
-    this.relay.detach(this.adapterFor(board.ws))
+    this.relay.retire(this.adapterFor(board.ws), "the board's key changed")
     try {
       board.ws.close(4003, "this name now belongs to another key")
     } catch {
@@ -364,7 +394,10 @@ export class Board {
       // reproduce it, which is why the whole local suite stayed green through it.
       this.state.acceptWebSocket(server, ["board"])
       server.serializeAttachment({ role: "board", pubkey: owner, issuedAt } satisfies SocketRole)
-      this.relay.attach(this.adapterFor(server))
+      // A board of ANOTHER key is told the name moved (4003), not that it was replaced: "replaced" tells its
+      // operator their key may have been copied.
+      this.dropBoardUnlessOwner(owner)
+      this.relay.attach(this.adapterFor(server), owner)
       this.board = { ws: server, pubkey: owner }
       return new Response(null, { status: 101, webSocket: pair[0]! })
     }
@@ -372,9 +405,14 @@ export class Board {
     this.dropBoardUnlessOwner(owner)
     // A board whose socket went a moment ago is nearly always back within a second or two, and a visitor
     // who arrived in that gap waits for it rather than being told it is not running (BOARD_RETURN_GRACE_MS).
-    const boardHere = this.relay.connected || (await this.relay.whenConnected())
-    // After the wait: the board that answers may be one that dialled in during it.
-    const keyTag = keyTagOf(this.board?.pubkey ?? "")
+    if (!this.relay.connected) await this.relay.whenConnected()
+    // AND THE OWNER AGAIN, AFTER THE WAIT. The board that dialled in during it proved a key when it
+    // connected, but KV is eventually consistent, so it can be the name's previous key, let back in by a colo
+    // still caching the old claim. Sending this visitor's request to it hands it their session cookie.
+    this.dropBoardUnlessOwner(owner)
+    const boardHere = this.relay.connected
+    const boardKey = this.board?.pubkey ?? null
+    const keyTag = keyTagOf(boardKey ?? "")
 
     // A visitor's WebSocket — a terminal. The board opens its own end locally and the two are linked
     // frame by frame. Without this a relayed board renders and streams but cannot be worked in, which
@@ -403,9 +441,9 @@ export class Board {
     if (!boardHere) {
       // The name exists but nothing is serving it. Said plainly, because "this board is offline" is a
       // different problem from "no such board" and the visitor can act on one of them.
-      return new Response("This Frizz board is not running right now.", {
-        status: 502,
-        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      return unavailable(request, 502, "This Frizz board is not running right now.", {
+        headline: "This Frizz board is not running right now.",
+        detail: "This page tries again on its own.",
       })
     }
 
@@ -436,8 +474,11 @@ export class Board {
               visitorGone = true
             })
           },
-          end: () => void writer.close().catch(() => {}),
-        }
+          // A body cut short ERRORS the visitor's response, which a browser neither shows as whole nor
+          // caches. Closing it would hand over a short body that reads as complete (RelayedStream).
+          end: (cut) => void (cut === undefined ? writer.close() : writer.abort(new Error(cut))).catch(() => {}),
+        },
+        boardKey
       )
       // No body to stream, so answer with none. A null-body status MUST — the Response constructor
       // throws on one given any body, even an empty stream, so a browser revalidating a page it still
@@ -457,9 +498,10 @@ export class Board {
       return new Response(readable, visitorResponseInit(response.status, headersForVisitor(response.headers, keyTag)))
     } catch (error) {
       void writer.close().catch(() => {})
-      return new Response(`The board did not answer: ${error instanceof Error ? error.message : error}`, {
-        status: 504,
-        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      const reason = error instanceof Error ? error.message : String(error)
+      return unavailable(request, 504, `The board did not answer: ${reason}`, {
+        headline: "The board did not answer.",
+        detail: `${reason.charAt(0).toUpperCase()}${reason.slice(1)}. This page tries again on its own.`,
       })
     }
   }

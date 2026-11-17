@@ -442,3 +442,53 @@ test("the relay closing a current board for a reason is said once, and an ordina
     assert.equal(h.status.filter((s) => s.startsWith("displaced")).length, 2, "the control: a plain drop is not news");
   } finally { conn.stop(); }
 });
+
+test("a ping queued behind an upload still going out is not taken for a dead socket", async () => {
+  // The ping shares the socket with the board's answers: behind a few megabytes on a slow uplink it waits
+  // its turn for seconds, and a five-second deadline counted from the queue dropped a healthy socket in the
+  // middle of the download.
+  const identity = await generateClaimIdentity();
+  const h = harness();
+  const conn = await h.start(identity);
+  try {
+    let buffered = 4_000_000;
+    Object.defineProperty(h.sockets[0]!.socket, "bufferedAmount", { get: () => buffered });
+    h.sockets[0]!.fire("open");
+    h.timers[h.timers.length - 2]!(); // the beat: pings behind 4MB, arms the deadline and the next beat
+    buffered = 1_000_000; // 3MB went out
+    h.timers[h.timers.length - 2]!(); // the deadline: still sending, so it starts over
+    assert.ok(!h.status.some((s) => s.startsWith("disconnected")), "a socket still sending was dropped");
+    buffered = 0; // the rest, and the ping, went out
+    h.timers.at(-1)!(); // the deadline again: the ping has only just left, so one more round trip
+    assert.ok(!h.status.some((s) => s.startsWith("disconnected")), "a ping that had just left was given no time");
+    h.timers.at(-1)!(); // and no pong in that round trip either
+    assert.ok(h.status.some((s) => s.startsWith("disconnected")), "a socket that answered nothing was believed");
+  } finally { conn.stop(); }
+});
+
+test("a socket whose queue stops going out is dropped", async () => {
+  const identity = await generateClaimIdentity();
+  const h = harness();
+  const conn = await h.start(identity);
+  try {
+    Object.defineProperty(h.sockets[0]!.socket, "bufferedAmount", { get: () => 4_000_000 });
+    h.sockets[0]!.fire("open");
+    h.timers[h.timers.length - 2]!();
+    h.timers[h.timers.length - 2]!(); // nothing went out in the whole deadline
+    assert.ok(h.status.some((s) => s.startsWith("disconnected")));
+  } finally { conn.stop(); }
+});
+
+test("anything arriving from the relay answers the ping", async () => {
+  // The relay's pong queues behind a visitor's upload coming down: what is arriving proves the socket.
+  const identity = await generateClaimIdentity();
+  const h = harness();
+  const conn = await h.start(identity);
+  try {
+    h.sockets[0]!.fire("open");
+    h.timers[h.timers.length - 2]!();
+    h.sockets[0]!.fire("message", { data: serializeFrame({ t: "ws-msg", id: "wnone", data: "x" }) });
+    h.timers[h.timers.length - 2]!(); // the deadline
+    assert.ok(!h.status.some((s) => s.startsWith("disconnected")));
+  } finally { conn.stop(); }
+});

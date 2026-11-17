@@ -50,8 +50,11 @@ export type RelayUpFrame =
     }
   /** A chunk of a streamed body — how SSE reaches a visitor at all. */
   | { t: "res-chunk"; id: string; data: string }
-  /** The streamed body is finished. */
-  | { t: "res-end"; id: string }
+  /**
+   * The streamed body is finished. `aborted`: it broke off before its end (the board's own response failed),
+   * so the visitor's copy is short and must fail, never end as though whole.
+   */
+  | { t: "res-end"; id: string; aborted?: boolean }
   /** The board accepted (or refused) the nested WebSocket. */
   | { t: "ws-ack"; id: string; ok: boolean; status?: number }
   | { t: "ws-msg"; id: string; data: string; binary?: boolean; more?: boolean }
@@ -254,3 +257,50 @@ export function relayHandshakeInput(name: string, pubkey: string, issuedAt: numb
  * and pick listed options on cards. Unset means full control.
  */
 export type RelayAccess = "full" | "read-and-answer"
+
+/**
+ * Whether a relayed request is a page load (the browser navigating), from its method and headers. Every
+ * browser Frizz supports sends `Sec-Fetch-Mode`; `Accept` covers one that does not.
+ */
+export function isNavigation(method: string, headers: Iterable<[string, string]>): boolean {
+  if (method.toUpperCase() !== "GET") return false
+  let accept = ""
+  for (const [name, value] of headers) {
+    const lower = name.toLowerCase()
+    if (lower === "sec-fetch-mode") return value === "navigate"
+    if (lower === "accept") accept = value
+  }
+  return accept.includes("text/html")
+}
+
+const escapeHtml = (text: string): string =>
+  text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
+
+/**
+ * The page a browser gets instead of the board when a page load fails at the relay or on the board's way to
+ * it, and which loads the board again by itself.
+ *
+ * A failed load used to be a line of plain text. Nothing on it ran, and a board opened from the home screen
+ * has no reload button, so the phone stayed on "The board did not answer" until the app was killed. This
+ * reloads on a backoff (1s, doubling, to 30s, for about five minutes of failures in a row), at once when the
+ * page comes back into view or the network returns, and on the button.
+ */
+export function relayUnavailablePage(headline: string, detail: string): string {
+  const script =
+    `(()=>{const k="frizz-relay-retry",now=Date.now();let s=null;try{s=JSON.parse(sessionStorage.getItem(k)||"null")}catch{}` +
+    `const n=s&&now-s.at<120000?s.n+1:0;try{sessionStorage.setItem(k,JSON.stringify({n,at:now}))}catch{}` +
+    `const go=()=>location.reload();let t=n<12?setTimeout(go,Math.min(30000,1000*2**n)*(0.75+Math.random()/2)):0;` +
+    `document.getElementById("retry").addEventListener("click",go);addEventListener("online",go);` +
+    `document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){clearTimeout(t);t=setTimeout(go,300)}})})()`
+  return (
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">` +
+    `<title>Frizz</title><style>` +
+    `body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box;` +
+    `font:15px/1.5 system-ui,-apple-system,sans-serif;background:Canvas;color:CanvasText}` +
+    `main{max-width:28rem}p{margin:0 0 12px}.detail{opacity:.65;font-size:13px}` +
+    `button{font:inherit;font-size:14px;padding:6px 14px;border-radius:6px;border:1px solid;background:none;color:inherit}` +
+    `</style></head><body><main><p>${escapeHtml(headline)}</p><p class="detail">${escapeHtml(detail)}</p>` +
+    `<button type="button" id="retry">Try again</button></main><script>${script}</script></body></html>`
+  )
+}
