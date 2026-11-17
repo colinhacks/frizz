@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { Page } from "puppeteer"
 
 // THE RAIL HOLDS STILL WHILE THE HUMAN DISPATCHES. Runtime coverage for what it did instead, recorded
 // frame by frame on 2026-10-13 against a stack whose worker is the scripted Claude:
@@ -18,6 +19,9 @@ import test from "node:test"
 // It also pinned the queue's cards beside the rail — the scroll marker's handover on a send, the
 // stacked layout's scroll anchor, and the reader held through a card arriving above them — until the
 // one-thread pane replaced the cards (2026-11-09) and they went (2026-11-10).
+//
+// And once the row lands, the thread it stands for is the one open: its row is the pane's (2026-11-17,
+// lib/openStartedThread). On the Console that is the thread's key, though the call answers with its slug.
 //
 // Skipped unless a Vite URL serving the fixtures is provided (same pattern as the other *.e2e.test.ts
 // here): `nub run test:e2e -- queueRailSettle.e2e.test.ts`, or start `vite` in packages/web and set
@@ -95,15 +99,23 @@ test("a dispatch from the prompt box adds one Running row at the click — no ro
     assert.deepEqual(wrong.slice(0, 4), [], "the stand-in and the real row were drawn together, or neither was")
     assert.deepEqual([...new Set(frames.slice(from).map((f) => f.runningCount))], ["1"], "the Running count changed while the thread was starting")
 
+    // The thread it started is the one open (lib/openStartedThread): its row is the pane's.
+    assert.equal(await markedRow(page), "started-thread")
+
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
   }
 })
 
+/** The row the board's pane marks as the thread on screen, once a dispatch has landed. */
+function markedRow(page: Page): Promise<string | null> {
+  return page.evaluate(() => document.querySelector('[aria-current="location"]')?.closest<HTMLElement>("[data-sidebar-item]")?.dataset.sidebarItem ?? null)
+}
+
 // The Console's rail, either grouping. `pick` is the project the prompt box's chip points at.
 type ConsoleFrame = { t: number; tops: Record<string, number>; starting: number | null; startingIn: string | null; real: number | null; realIn: string | null; card: boolean }
-async function recordConsoleDispatch(group: "status" | "project", pick: string): Promise<{ frames: ConsoleFrame[]; errors: string[] }> {
+async function recordConsoleDispatch(group: "status" | "project", pick: string): Promise<{ frames: ConsoleFrame[]; errors: string[]; opened: string | null }> {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
   const errors: string[] = []
@@ -148,7 +160,7 @@ async function recordConsoleDispatch(group: "status" | "project", pick: string):
     await page.waitForSelector('[data-sidebar-item$="~started-thread"]', { timeout: 5_000 })
     await new Promise((r) => setTimeout(r, 1000))
     const frames = (await page.evaluate(() => (window as unknown as { __consoleFrames: unknown[] }).__consoleFrames)) as ConsoleFrame[]
-    return { frames, errors }
+    return { frames, errors, opened: await markedRow(page) }
   } finally {
     await browser.close()
   }
@@ -181,11 +193,13 @@ test("the Console, by status: a dispatch is one Running row at the click, and on
   skip: !baseUrl,
   timeout: 60_000,
 }, async () => {
-  const { frames, errors } = await recordConsoleDispatch("status", "beta")
+  const { frames, errors, opened } = await recordConsoleDispatch("status", "beta")
   const { moved } = assertOneArrival(frames)
   // The new row leads the Running band; the two rows already running step down under it. The Queue
   // band above, its label, the Running label and the view chips are where they were.
   assert.deepEqual(moved.sort(), ["row:alpha~long-job-alpha", "row:beta~long-job-beta"], "something other than the Running rows under the new one moved")
+  // The call answers with the bare slug and the board names the thread by its key: the key is what opens.
+  assert.equal(opened, "beta~started-thread")
   assert.deepEqual(errors, [])
 })
 

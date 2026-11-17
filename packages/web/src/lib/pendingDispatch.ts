@@ -92,8 +92,12 @@ export function dispatchFailed(key: number): void {
  * on which of the two a caller was handed.
  */
 function landedId(entry: PendingDispatchEntry): string | undefined {
-  if (entry.slug === undefined) return undefined
-  return entry.project === undefined || splitThreadKey(entry.slug) ? entry.slug : threadKey(entry.project, entry.slug)
+  return entry.slug === undefined ? undefined : dispatchedThreadId(entry.project, entry.slug)
+}
+
+/** The board id of the thread a dispatch to `project` (undefined on a project's own page) answered with. */
+export function dispatchedThreadId(project: string | undefined, slug: string): string {
+  return project === undefined || splitThreadKey(slug) ? slug : threadKey(project, slug)
 }
 
 /**

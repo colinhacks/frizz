@@ -28,7 +28,8 @@ import { X } from "lucide-react"
 import { isConsolePath } from "../lib/base-path.ts"
 import { ProjectScope, scopedKey, useProjectScope } from "../lib/projectScope.tsx"
 import { runtimeDownloadNote } from "../lib/signIn.ts"
-import { beginDispatch, dispatchAnswered, dispatchFailed } from "../lib/pendingDispatch.ts"
+import { beginDispatch, dispatchAnswered, dispatchedThreadId, dispatchFailed } from "../lib/pendingDispatch.ts"
+import { openStartedThread, screenNow } from "../lib/openStartedThread.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 
@@ -96,16 +97,20 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
   const [logoutFor, setLogoutFor] = useState<AccountBackend | null>(null)
   const gatedInputRef = useRef<DispatchInput | null>(null)
 
-  // Dispatch does NOT navigate anywhere: you stay on the queue, the new thread appears in the
-  // sidebar, and the toast walks through the lifecycle — an immediate spinner while the server
-  // waits out session startup, then a link that opens the thread in the side drawer.
+  // The thread a dispatch starts OPENS, where a click on its row would open it, as soon as the board
+  // holds it (lib/openStartedThread). Until then the rail draws it as the Running row it is about to
+  // become and a toast spins while the server waits out session startup. A human who picked another
+  // thread meanwhile is left where they are, and the toast links the new one instead.
   const dispatch = useMutation({
     mutationFn: (input: DispatchInput) => rpcFor(project).dispatch(input),
     onMutate: (input) => {
       showToast("Starting thread…", { spinner: true, sticky: true })
       // Told to the rail too, which draws the thread as the Running row it is about to become
       // (lib/pendingDispatch). The board's ids are read as they stand at the click, not subscribed to.
-      return { pendingKey: beginDispatch({ project, backend: input.backend ?? "claude", model: input.model ?? "" }, new Set((store.board?.threads ?? []).map((t) => t.id))) }
+      return {
+        pendingKey: beginDispatch({ project, backend: input.backend ?? "claude", model: input.model ?? "" }, new Set((store.board?.threads ?? []).map((t) => t.id))),
+        screen: screenNow(),
+      }
     },
     onSuccess: (res, _input, context) => {
       if (context) dispatchAnswered(context.pendingKey, res.slug)
@@ -113,7 +118,9 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
       // server acknowledges it, preventing an optimistic card + server card duplicate.
       setPendingDispatch(null)
       onDispatched?.()
-      showToast("Thread started", { link: { label: "Open thread", slug: res.slug } })
+      // The thread opening is the confirmation, so the spinning toast simply goes.
+      if (context && openStartedThread(dispatchedThreadId(project, res.slug), context.screen)) store.toast = null
+      else showToast("Thread started", { link: { label: "Open thread", slug: res.slug } })
     },
     onError: (e, input, context) => {
       if (context) dispatchFailed(context.pendingKey)
