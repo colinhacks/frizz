@@ -19,7 +19,7 @@ import { restatedByRestingCard } from "../lib/restatedFences.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { ComposerSendContext, SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
-import { latestSignOffs } from "../lib/signOffs.ts"
+import { latestSignOffs, restingDoneIndex } from "../lib/signOffs.ts"
 import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
 import { replaceEqualDeep } from "@tanstack/react-query"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
@@ -170,6 +170,11 @@ export interface ThreadTranscript {
    *  do the emptiness predicates — a settled fence that handed the human steps keeps its card, a stated
    *  one does not. */
   hidesAwaiting: (index: number) => readonly [stale: boolean, stated: boolean]
+  /** The message whose ```done card draws Mark as done, or -1: on a thread at rest that ended on a done
+   *  fence, that one, or the sign-off it only repeated (lib/signOffs restingDoneIndex). Every other done
+   *  card is a record the thread has moved past, and draws its card without the verb. The fold never hides
+   *  it (ChatView's `keeps`). */
+  doneIdx: number
   /** What the human's reply said was done, by the message whose rest on steps it answered
    *  (lib/stepsAnswer stepsDoneReplies), so that message's settled steps card can draw it ticked. */
   stepsDone: ReadonlyMap<number, StepsReply>
@@ -300,6 +305,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
   const restingShown = showsRestingCard(thread)
   const restingFence = restingShown && thread?.lastFence?.kind === "awaiting" ? thread.lastFence : undefined
   const restated = useMemo(() => restatedByRestingCard(messages, awaitingCut, restingFence), [messages, awaitingCut, restingFence])
+  const doneIdx = useMemo(() => (running ? -1 : restingDoneIndex(messages, lastAgentIdx, lastHumanTurnIndex(messages))), [running, messages, lastAgentIdx])
   const fencesLive = questionFencesLive(thread?.spawnedAt)
   const closedSpecs = useClosedQuestionSpecs(thread)
   // Two values go to EVERY message whole; the rest are maps a message reads its own entry of.
@@ -329,6 +335,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       restingShown,
       restated,
       hidesAwaiting: (index) => [awaitingCut >= 0 && index < awaitingCut && index !== heldIdx, (index === lastAgentIdx && restingShown) || restated.has(index)] as const,
+      doneIdx,
       stepsDone,
       openQuestions,
       fencesLive,
@@ -341,7 +348,7 @@ export function useThreadSurface(source: ThreadSurfaceSource, options: ThreadSur
       answeringForMessage,
       opsThread,
     }),
-    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, restated, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
+    [thread, messages, running, lastAgentIdx, awaitingCut, heldIdx, restingShown, restated, doneIdx, stepsDone, openQuestions, fencesLive, fenceQuestions, shadowedByMessage, placement, settledPlacement, paired, inFlightAnswers, answeringForMessage, opsThread],
   )
 
   // The surface is the zone and its prompt box the intake (lib/fileDrop). Files given while no box is

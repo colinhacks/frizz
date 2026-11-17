@@ -282,7 +282,15 @@ test("the resting card owns the heading, the glyph, the prose and the chips", ()
 // replied to, a frame after the reply's bubble: 3 geometry states for one send (2026-10-13,
 // scripts/layout-timeline.mjs), 2 with the verb gated here.
 test("a done card draws Mark as done only while the thread rests on it", () => {
-  assert.match(renderText(), /<FenceCard[\s\S]*?pastRest=\{staleAwaiting\}/, "the message tells the card the thread has moved past it")
+  assert.match(renderText(), /<FenceCard[\s\S]*?pastRest=\{doneLive === undefined \? staleAwaiting : !doneLive\}/, "the message tells the card the thread has moved past it")
+  // ON A THREAD SURFACE THE SURFACE SAYS WHICH CARD THAT IS (2026-11-16). A rest that repeats the done
+  // sign-off word for word leaves the sign-off standing (server sign-offs.ts) and is folded under it, so
+  // the verb rides on the sign-off's card, not on the last message's (lib/signOffs restingDoneIndex)…
+  const shell = readFileSync(new URL("./ThreadSurface.tsx", import.meta.url), "utf8")
+  assert.match(shell, /const doneIdx = useMemo\(\(\) => \(running \? -1 : restingDoneIndex\(messages, lastAgentIdx, lastHumanTurnIndex\(messages\)\)\)/)
+  assert.match(source, /doneLive=\{index === t\.doneIdx\}/, "ThreadMessage hands each row its answer")
+  // …and no fold hides that card.
+  assert.match(source, /const keeps = \(i: number\) => [^\n]*\|\| messageRows\[i\]\.messageIndex === doneIdx\n/)
   const card = source.match(/export function FenceCard[\s\S]*?\n}\n/)?.[0]
   assert.ok(card, "FenceCard must exist")
   assert.match(card, /const markDone = doneThread && !isMobile && !pastRest \? \(/, "a card the thread has moved past draws no verb")

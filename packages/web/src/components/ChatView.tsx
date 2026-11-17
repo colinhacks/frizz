@@ -905,7 +905,7 @@ function VirtualizedThreadTranscript({
   // `messages` here is the presentation list, which shares its indices with
   // the list the model was built over.
   const transcript = useThreadTranscript()
-  const { thread, running, lastAgentIdx, awaitingCut, restingShown, restated, heldIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
+  const { thread, running, lastAgentIdx, awaitingCut, restingShown, restated, heldIdx, doneIdx, paired, inFlightAnswers, settledPlacement, openQuestions } = transcript
   // A marker in a message above the window has no message to render in, so its card goes back to its
   // anchor group.
   const placement = useMemo(() => placedFrom(transcript.placement, windowStart), [transcript.placement, windowStart])
@@ -1028,7 +1028,10 @@ function VirtualizedThreadTranscript({
     // holding a question's HOME card (lib/questionShadow placeQuestions). Every other naming draws the card
     // live too, and folds freely: the home is the newest sign-off naming it. A worker held to the
     // whole-handoff rule names every open question in its sign-off, so this only catches one that did not.
-    const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex)
+    // Nor the done card Mark as done rides on (ThreadTranscript doneIdx): it is the sign-off the fold keeps
+    // already, except where a thread ended on an empty ```done after a sign-off of another kind, and then
+    // the card that files the thread away is the one the reader needs in view.
+    const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex) || messageRows[i].messageIndex === doneIdx
     // Which runs of rows each range hides, first: a shut fold's LEAD (the worker's first words) is drawn as
     // its words alone, its tool calls counted on the hairline under it, so the lead's row has to know.
     const shut = new Map<number, { end: number; key: string; range: FoldRange; to: number }>()
@@ -1091,7 +1094,7 @@ function VirtualizedThreadTranscript({
     })
     if (previousQueued) next.push({ key: "queued-send-now", kind: "queued-send-now" })
     return next
-  }, [beforeCursor, earlierError, folds, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, openFolds, placement, questionGroups, settledByRow, transportFallback, windowStart])
+  }, [beforeCursor, doneIdx, earlierError, folds, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, openFolds, placement, questionGroups, settledByRow, transportFallback, windowStart])
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
@@ -3744,6 +3747,7 @@ export function ThreadMessage({ m, index, showSendButton }: { m: ChatMessage; in
       answering={t.fencesLive ? t.answeringForMessage(m) : undefined}
       paired={t.paired[index]}
       staleAwaiting={staleAwaiting}
+      doneLive={index === t.doneIdx}
       restingCardShown={restingCardShown}
       stepsDone={t.stepsDone.get(index)}
       shadowedBy={t.shadowedByMessage.get(index)}
@@ -3791,7 +3795,10 @@ export function ThreadMessage({ m, index, showSendButton }: { m: ChatMessage; in
 // boundary holds.
 // `stepsDone` — what the human's reply to this message's rest on steps said was done (lib/stepsAnswer
 // stepsDoneReplies), which its settled steps card draws ticked. Absent on every other row.
-type MessageProps = { m: ChatMessage; answering?: MessageAnswering; paired?: PairedAnswer[] | null; showSendButton?: boolean; staleAwaiting?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; restingCardShown?: boolean; stepsDone?: StepsReply }
+// `doneLive` — the thread rests on THIS message's ```done card, so it draws Mark as done (ThreadTranscript
+// doneIdx). A thread surface passes it on every row; absent, the card keeps the verb exactly while its
+// awaiting fence would be live (`staleAwaiting`), which is the rule for every other transcript.
+type MessageProps = { m: ChatMessage; answering?: MessageAnswering; paired?: PairedAnswer[] | null; showSendButton?: boolean; staleAwaiting?: boolean; doneLive?: boolean; shadowedBy?: readonly RegisteredQuestionView[]; placed?: readonly RegisteredQuestionView[]; settledPlaced?: readonly SettledQuestion[]; fenceQuestions?: readonly FenceQuestionRow[]; restingCardShown?: boolean; stepsDone?: StepsReply }
 // EVERY MESSAGE SAYS WHEN IT WAS SAID ON HOVER — `Today at 8:33 AM` as the browser's own tooltip
 // (lib/messageTime). Here, around every branch of the body, so a bubble, a prose turn, a tool run and a
 // hairline all carry it on every surface, the sub-agent sheet's included. `contents` keeps the wrapper
@@ -3821,7 +3828,7 @@ function ThreadProviderErrorCard({ error }: { error: ProviderError }) {
   return <ProviderErrorCard error={error} provider={provider} />
 }
 
-function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shadowedBy, placed, settledPlaced, fenceQuestions, restingCardShown, stepsDone }: MessageProps) {
+function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, doneLive, shadowedBy, placed, settledPlaced, fenceQuestions, restingCardShown, stepsDone }: MessageProps) {
   // ANSWERING ON A PHONE happens in a sheet, one question at a time (MobileAnswerSheet) — the cards in
   // the transcript stay READ-ONLY there, so the questions are still visible in the context that
   // produced them but a 44pt-thumb answer never has to land on a 24pt chip inside a scrolling message.
@@ -3990,7 +3997,7 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, shad
             fenceKind={fseg.fenceKind}
             body={fseg.body}
             hints={fseg.hints}
-            pastRest={staleAwaiting}
+            pastRest={doneLive === undefined ? staleAwaiting : !doneLive}
           />,
         )
         continue

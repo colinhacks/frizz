@@ -12,6 +12,7 @@
 // Pure index logic over the structural minimum.
 
 import { SIGNOFF_NUDGE_MARKER } from "@frizz/shared"
+import { splitFenceBlocks } from "./fenceBlocks.ts"
 
 export interface SignOffMsgLike {
   role: string
@@ -49,4 +50,20 @@ export function latestSignOffs(messages: readonly SignOffMsgLike[], from: number
     at = before
   }
   return out.reverse()
+}
+
+const carriesDone = (m: SignOffMsgLike) => splitFenceBlocks(m.text).some((s) => s.kind === "fence" && s.fenceKind === "done")
+
+/** THE DONE CARD MARK AS DONE RIDES ON, on a thread at rest: the message `last` (the last thing the agent
+ *  said) when it ends on a ```done fence, or -1 when it does not. Unless that rest only repeated the newest
+ *  sign-off — the same done fence again, word for word, or an empty one — which the server reads as leaving
+ *  the sign-off before it standing (server sign-offs.ts). Then it is THAT sign-off's done card: the one the
+ *  fold keeps in view (lib/stretchFolds), with the repeat folded under it. A reylo thread ended on two such
+ *  repeats, each woken by another thread's note, and the verb rode on the last one, folded, while the card
+ *  in view drew none (maintainer 2026-11-16: "It's showing me a done card from earlier in the thread that
+ *  doesn't even contain the Mark as done button"). */
+export function restingDoneIndex(messages: readonly SignOffMsgLike[], last: number, from: number): number {
+  if (last < 0 || !carriesDone(messages[last])) return -1
+  const standing = latestSignOffs(messages, from).at(-1)
+  return standing !== undefined && standing < last && carriesDone(messages[standing]) ? standing : last
 }
