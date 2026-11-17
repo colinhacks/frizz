@@ -55,8 +55,9 @@ test("a report the send composes is not typing, under any answers, unless words 
   assert.equal(isHumanTypedMessage(withStepsReport(SOME, "The prompt never came.")), true)
   assert.equal(isHumanTypedMessage(withAnswersNote(FENCED, withStepsReport(ALL, "Used the bot account."))), true)
   assert.equal(isHumanTypedMessage(withAnswersNote(REGISTERED, FENCED)), false, "two sets of answers and nothing typed is not typing either")
-  assert.deepEqual(stepsReportOf(withStepsReport(SOME, "")), { all: false, note: "" })
-  assert.deepEqual(stepsReportOf(withStepsReport(ALL, "Used the bot account.")), { all: true, note: "Used the bot account." })
+  assert.deepEqual(stepsReportOf(withStepsReport(SOME, "")), { all: false, rows: SOME, note: "" })
+  assert.deepEqual(stepsReportOf(withStepsReport(SOME, "The prompt never came.")), { all: false, rows: SOME, note: "The prompt never came." })
+  assert.deepEqual(stepsReportOf(withStepsReport(ALL, "Used the bot account.")), { all: true, rows: [], note: "Used the bot account." })
   for (const typed of ["Done.", "Done, thanks", "Done 1 of 2: nearly", "Ship it"]) {
     assert.equal(stepsReportOf(typed), null, typed)
     assert.equal(isHumanTypedMessage(typed), true, typed)

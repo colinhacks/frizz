@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { Check, ListChecks } from "lucide-react"
 import { answersForDisplay, splitAnswerPicks, type PairedAnswer } from "../lib/answersMessage.ts"
 import { LinkifiedText } from "./LinkifiedText.tsx"
@@ -14,37 +15,45 @@ import { BLOCK_RADIUS, CardContent, CardHead } from "./TranscriptCard.tsx"
 // disappears and comes back.
 export function AnswersCard({ answers, queued, sourceId }: { answers: PairedAnswer[]; queued?: boolean; sourceId?: string }) {
   return (
-    <div data-frizz-msg={sourceId} data-answers-card className={`self-end flex w-full max-w-[85%] flex-col items-end ${queued ? "opacity-50" : ""}`}>
-      <div className={`w-full min-w-0 ${BLOCK_RADIUS} rounded-br-sm border border-border-strong bg-elevated p-4`}>
-        <CardHead icon={ListChecks} label="Answers" />
-        <CardContent>
-          <div className="flex flex-col gap-2.5">
-            {answersForDisplay(answers).map((a, i) => (
-              // A FOLLOW-UP sits under the answer that opened it, behind the same rule every nested
-              // question in this app wears (RegisteredQuestionCards). The wire form is flat — an
-              // indented line there reads as a continuation of the row above (see questionAnswerMessage)
-              // — so this indent is the only place the tree survives into the reading.
-              //
-              // THE WORKER'S ID FOR THE QUESTION IS NOT DRAWN. A fence-asked question's row carries it
-              // on the wire (shared answerRowId) so the worker can tell two same-worded questions
-              // apart; the human asked nothing by id, and reads the question restated right here. It
-              // stays on the row as an attribute, for a verifier and for whoever inspects the card.
-              <div key={i} data-answer-id={a.handle} className={a.followUp ? "ml-3 flex flex-col gap-1 border-l border-border pl-3" : "flex flex-col gap-1"}>
-                {a.question && (
-                  <div title={a.question} className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] text-[11px] leading-snug text-muted">
-                    {a.question}
-                  </div>
-                )}
-                <div className="flex items-start gap-2">
-                  {!a.question && (
-                    <span className="mt-1.5 shrink-0 text-[10px] uppercase tabular-nums tracking-wide text-muted-70">{a.n}</span>
-                  )}
-                  <AnswerChips answer={a.answer} />
-                </div>
+    <ReplyCard label="Answers" queued={queued} sourceId={sourceId} data-answers-card>
+      <div className="flex flex-col gap-2.5">
+        {answersForDisplay(answers).map((a, i) => (
+          // A FOLLOW-UP sits under the answer that opened it, behind the same rule every nested
+          // question in this app wears (RegisteredQuestionCards). The wire form is flat — an
+          // indented line there reads as a continuation of the row above (see questionAnswerMessage)
+          // — so this indent is the only place the tree survives into the reading.
+          //
+          // THE WORKER'S ID FOR THE QUESTION IS NOT DRAWN. A fence-asked question's row carries it
+          // on the wire (shared answerRowId) so the worker can tell two same-worded questions
+          // apart; the human asked nothing by id, and reads the question restated right here. It
+          // stays on the row as an attribute, for a verifier and for whoever inspects the card.
+          <div key={i} data-answer-id={a.handle} className={a.followUp ? "ml-3 flex flex-col gap-1 border-l border-border pl-3" : "flex flex-col gap-1"}>
+            {a.question && (
+              <div title={a.question} className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] text-[11px] leading-snug text-muted">
+                {a.question}
               </div>
-            ))}
+            )}
+            <div className="flex items-start gap-2">
+              {!a.question && (
+                <span className="mt-1.5 shrink-0 text-[10px] uppercase tabular-nums tracking-wide text-muted-70">{a.n}</span>
+              )}
+              <AnswerChips answer={a.answer} />
+            </div>
           </div>
-        </CardContent>
+        ))}
+      </div>
+    </ReplyCard>
+  )
+}
+
+/** The frame of a reply the human answered a card with, on their side of the conversation: the Answers
+ *  card, and the to-do list's report (AwaitingSteps StepsReportCard). */
+export function ReplyCard({ label, queued, sourceId, children, ...data }: { label: string; queued?: boolean; sourceId?: string; children: ReactNode } & { [attr: `data-${string}`]: boolean }) {
+  return (
+    <div {...data} data-frizz-msg={sourceId} className={`self-end flex w-full max-w-[85%] flex-col items-end ${queued ? "opacity-50" : ""}`}>
+      <div className={`w-full min-w-0 ${BLOCK_RADIUS} rounded-br-sm border border-border-strong bg-elevated p-4`}>
+        <CardHead icon={ListChecks} label={label} />
+        <CardContent>{children}</CardContent>
       </div>
     </div>
   )

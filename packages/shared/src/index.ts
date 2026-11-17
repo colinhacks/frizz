@@ -4142,15 +4142,20 @@ export function repliesStepsDone(text: string): boolean {
 
 /** A STEPS REPORT, the reply the to-do list's send composes (web stepsAnswer withStepsReport): the bare
  *  word when every step is done, or "Done 2 of 3:" over its checklist, with whatever the human typed under
- *  it as `note`. Null for anything else. Read on the human's own words (wordsUnderAnswers). */
-export function stepsReportOf(said: string): { all: boolean; note: string } | null {
+ *  it as `note`. Null for anything else. Read on the human's own words (wordsUnderAnswers). `rows` is the
+ *  checklist, in the order it was sent, and empty for the bare word. */
+export function stepsReportOf(said: string): { all: boolean; rows: { text: string; done: boolean }[]; note: string } | null {
   const text = said.trim()
-  if (text === STEPS_DONE || text.startsWith(`${STEPS_DONE}\n\n`)) return { all: true, note: text.slice(STEPS_DONE.length).trim() }
-  const [head, ...rows] = text.split("\n")
+  if (text === STEPS_DONE || text.startsWith(`${STEPS_DONE}\n\n`)) return { all: true, rows: [], note: text.slice(STEPS_DONE.length).trim() }
+  const [head, ...lines] = text.split("\n")
   if (!new RegExp(`^${STEPS_DONE} \\d+ of \\d+:$`).test(head)) return null
-  let n = 0
-  while (n < rows.length && /^- \[( |x)\] /.test(rows[n])) n++
-  return n > 0 ? { all: false, note: rows.slice(n).join("\n").trim() } : null
+  const rows: { text: string; done: boolean }[] = []
+  for (const line of lines) {
+    const row = /^- \[( |x)\] (.*)$/.exec(line)
+    if (!row) break
+    rows.push({ text: row[2], done: row[1] === "x" })
+  }
+  return rows.length > 0 ? { all: false, rows, note: lines.slice(rows.length).join("\n").trim() } : null
 }
 
 /** What the human wrote themselves, under any answers that rode the same send. */

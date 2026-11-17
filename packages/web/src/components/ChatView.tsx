@@ -4,7 +4,7 @@ import { subscribe, useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, ChevronsUpDown, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon, type LucideProps } from "lucide-react"
-import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP, stepsReportOf } from "@frizz/shared"
 import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, ProviderError, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
 import { store, threadBySlug, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
 import { useBackgroundShellLines, useProjectDir, useThreadSnapshot, useTranscript, type ChatMessage, type TranscriptData } from "../hooks.ts"
@@ -39,6 +39,7 @@ import { parseSentContext, splitProseByTokens, tokenLabel, type SentContextItem 
 import { parseSentComments } from "../lib/transcriptComments.ts"
 import { SentCommentsList } from "./TranscriptComments.tsx"
 import { AnswersCard } from "./AnswersCard.tsx"
+import { StepsReportCard } from "./AwaitingSteps.tsx"
 import { DividerHint, DividerQuotedTitle, WAKE_DIVIDER_WIDE_ONLY, WakeDivider } from "./WakeDivider.tsx"
 import { usePromptBoxSends } from "../lib/sendScope.tsx"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
@@ -3607,6 +3608,8 @@ function AnswersWithNote({ m, answers, note }: { m: ChatMessage; answers: Paired
     if (!noteText) return null
     const inner = depth < 2 ? parseAnswersCard(noteText) : null
     if (inner) return <>{<AnswersCard answers={inner} queued={m.queued} />}{body(answersNote(noteText), depth + 1)}</>
+    const report = partialStepsReport(noteText)
+    if (report) return <>{<StepsReportCard rows={report.rows} queued={m.queued} />}{report.note && <UserBubble text={report.note} rawText={m.text} queued={m.queued} />}</>
     // No deliveryId: the bubble is half of a send, and taking back half of it is not a thing.
     return <UserBubble text={noteText} rawText={m.text} queued={m.queued} />
   }
@@ -3618,6 +3621,14 @@ function AnswersWithNote({ m, answers, note }: { m: ChatMessage; answers: Paired
       {body(note, 0)}
     </div>
   )
+}
+
+// A STEPS REPORT THAT SAYS SOME OF THE LIST IS DONE draws as the to-do list's reply card, with the words
+// typed under it in their own bubble (AwaitingSteps StepsReportCard). The bare `Done` is the word typing
+// it would send, and stays a bubble.
+function partialStepsReport(text: string): { rows: { text: string; done: boolean }[]; note: string } | null {
+  const report = stepsReportOf(text)
+  return report && !report.all ? report : null
 }
 
 function UserBubble({ text, rawText, queued, held, deliveryUnconfirmed, deliveryFailed, deliveryError, deliveryId, sourceId }: { text: string; rawText?: string; queued?: boolean; held?: boolean; deliveryUnconfirmed?: boolean; deliveryFailed?: boolean; deliveryError?: string; deliveryId?: string; sourceId?: string }) {
@@ -3881,6 +3892,17 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, done
       const note = answersNote(text)
       if (!note && m.deliveryState !== "held") return <AnswersCard answers={answers} queued={m.queued} sourceId={m.sourceId} />
       return <AnswersWithNote m={m} answers={answers} note={note} />
+    }
+    // The to-do list's report, as the answers above: a failed send keeps the plain bubble and its Retry.
+    const report = m.deliveryState !== "failed" ? partialStepsReport(text) : null
+    if (report && !report.note) return <StepsReportCard rows={report.rows} queued={m.queued} sourceId={m.sourceId} />
+    if (report) {
+      return (
+        <div data-frizz-msg={m.sourceId} className="flex w-full flex-col gap-2 self-end">
+          <StepsReportCard rows={report.rows} queued={m.queued} />
+          <UserBubble text={report.note} rawText={m.text} queued={m.queued} />
+        </div>
+      )
     }
     // A scheduler wake is recorded as a user turn because it is pasted into the worker's composer —
     // but FRIZZ wrote it, not the human, so it must not wear the human's off-white right-justified

@@ -168,6 +168,26 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
     // PART OF THE LIST reported: the record says which part, and the part still owed is still a box.
     assert.deepEqual((await read("partial")).cards, [{ ...stepsCard, ticks: [true, false], controls: 1, send: false }], "the reported step is the record, the owed one a box")
 
+    // …AND THE REPLY ITSELF draws as the list it reported, not its wire text (2026-11-17, maintainer: "it
+    // comes back looking so shitty"): the count, a box per step in the order sent, and the words typed
+    // under it in a bubble of their own.
+    const reply = async (at: string) => {
+      await read(at)
+      return page.evaluate(() => {
+        const card = document.querySelector("[data-steps-report]") as HTMLElement | null
+        return {
+          title: card?.innerText.trim().split("\n")[0],
+          steps: [...(card?.querySelectorAll(".frizz-todo-text") ?? [])].map((row) => (row as HTMLElement).innerText.trim()),
+          ticks: [...(card?.querySelectorAll("[role=checkbox]") ?? [])].map((box) => box.getAttribute("aria-checked") === "true"),
+          wire: document.body.innerText.includes("- [x]") || document.body.innerText.includes("Done 1 of 2:"),
+          note: document.body.innerText.includes("The browser prompt never came up."),
+        }
+      })
+    }
+    const report = { title: "Done 1 of 2", steps: STEPS, ticks: [true, false], wire: false }
+    assert.deepEqual(await reply("partial"), { ...report, note: false })
+    assert.deepEqual(await reply("partial&note=1"), { ...report, note: true })
+
     // THE THREAD MOVED ON to a later rest: still there, still ticked, beside the new resting card.
     const moved = await read("moved")
     assert.equal(moved.cards.length, 2, "the settled steps card and the new resting card")

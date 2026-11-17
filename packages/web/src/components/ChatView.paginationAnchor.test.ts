@@ -34,6 +34,8 @@ test("every rendered message variant still carries its own data-frizz-msg handle
   // needed to draw the human's answer while it was still in flight to the worker.
   // …and, since 2026-10-11, answers sent with a note: one message drawn as a card and a bubble, whose
   // shared wrapper carries the handle (AnswersWithNote) so neither half claims it alone.
+  // …and, since 2026-11-17, a to-do list's report sent with a note, the same way (its card alone stamps
+  // through ReplyCard, the frame it shares with the answers card).
   const hosts = sources.reduce((n, source) => n + [...source.matchAll(/data-frizz-msg=\{(?:m\.)?sourceId\}/g)].length, 0)
-  assert.equal(hosts, 7, "each rendered message variant must stamp its own sourceId")
+  assert.equal(hosts, 8, "each rendered message variant must stamp its own sourceId")
 })

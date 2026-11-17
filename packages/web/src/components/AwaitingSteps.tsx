@@ -6,10 +6,10 @@
 // all or nothing and forgot itself at every new fence. The list itself is the server's (human-todos.ts),
 // and the ticks and what a send says are lib/stepsAnswer.
 //
-// Three shapes of it live here: the resting card's (LiveSteps), the flat one every other surface lists
-// (HumanTodoList: the panel over the prompt box, the full-screen rail, the phone's ⋯ sheet), and the
+// Four shapes of it live here: the resting card's (LiveSteps), the flat one every other surface lists
+// (HumanTodoList: the panel over the prompt box, the full-screen rail, the phone's ⋯ sheet), the
 // settled card's record of one past rest (StepsList), whose boxes are controls only for what the list
-// still owes.
+// still owes, and the human's reply (StepsReportCard), what one send said.
 import { useContext, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react"
 import { Check } from "lucide-react"
 import type { AwaitingStep, HumanTodo } from "@frizz/shared"
@@ -20,6 +20,7 @@ import { SendScopeContext, usePromptBoxSends } from "../lib/sendScope.tsx"
 import { sameStep, tickHumanTodo, useHumanTodos, useStepsAnswer, type StepsReply } from "../lib/stepsAnswer.ts"
 import { ThreadSlugContext } from "../lib/threadContexts.ts"
 import { useMarkdownHtml } from "../lib/useMarkdown.ts"
+import { ReplyCard } from "./AnswersCard.tsx"
 import { LinkedHtml } from "./LinkedHtml.tsx"
 import { CARD_PRIMARY_ACTION, CardActions, WRAP_ANYWHERE } from "./TranscriptCard.tsx"
 
@@ -70,6 +71,24 @@ export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; don
   )
   if (!thread || !rows.some(({ todo }) => todo && owed(todo))) return <div data-awaiting-steps className={LIST_FRAME}>{list()}</div>
   return <TickFrame thread={thread}>{list}</TickFrame>
+}
+
+/** THE REPORT A SEND CARRIED, on the human's side of the conversation: "Done 1 of 4" over the boxes it
+ *  sent, ticked as it said, in the order it said them. It is the to-do list's answer the way the Answers
+ *  card is a question's, so it wears that card's frame and this list's rows. It was the wire text in a
+ *  bubble until 2026-11-17, every `- [ ]` and `- [x]` printed as typed (maintainer: "it comes back
+ *  looking so shitty"). A report of every step done is the bare word, and stays the bubble typing it
+ *  would draw. */
+export function StepsReportCard({ rows, queued, sourceId }: { rows: readonly { text: string; done: boolean }[]; queued?: boolean; sourceId?: string }) {
+  return (
+    <ReplyCard label={`Done ${rows.filter((row) => row.done).length} of ${rows.length}`} queued={queued} sourceId={sourceId} data-steps-report>
+      <div className={LIST_FRAME}>
+        <ul className="frizz-todos">
+          {rows.map((row, i) => <RecordRow key={i} step={{ text: row.text }} done={row.done} />)}
+        </ul>
+      </div>
+    </ReplyCard>
+  )
 }
 
 /** The boxes the send that reported this rest's own steps also reported: the newest report among them

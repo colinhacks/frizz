@@ -19,7 +19,7 @@ import "./styles.css"
 //   ?at=asked    the human replied in words instead of ticking a box, and the worker is mid-turn: both
 //                steps are still owed on the list, so the settled card's boxes still tick it
 //   ?at=partial  the human reported one step of the two done, and the worker is mid-turn: the second
-//                is still owed
+//                is still owed (`&note=1`: with words typed under the report)
 //   ?at=carried-rest  a box ticked at an EARLIER steps rest and never sent rides on the next rest's card
 //                beside its own two steps (the nub thread of 2026-11-11)
 //   ?at=carried  all three sent with one "Done", which the worker took in mid-turn: it had just woken on
@@ -89,7 +89,7 @@ const messages: TranscriptMessage[] = CARRIED ? carriedMessages : [
   human("u1", "Cut the acme 4.2.0 release.", 40),
   say("a1", `Building the release artifacts.\n\n${SHELL_FENCE}`, 38),
   say("a2", `The build is green.\n\n${STEPS_FENCE}`, 20),
-  ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : AT === "partial" ? "Done 1 of 2:\n- [x] Run `npm login --auth-type=web` in a terminal on this machine.\n- [ ] Approve the browser prompt with the **acme-bot** account." : "Done", 5)]),
+  ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : AT === "partial" ? `Done 1 of 2:\n- [x] Run \`npm login --auth-type=web\` in a terminal on this machine.\n- [ ] Approve the browser prompt with the **acme-bot** account.${PARAMS.get("note") ? "\n\nThe browser prompt never came up." : ""}` : "Done", 5)]),
   ...(AT === "moved" ? [say("a3", LATER_FENCE, 1)] : []),
 ]
 
