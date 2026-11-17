@@ -282,6 +282,23 @@ test("a board socket whose close woke the object is waited for, as it would be h
   assert.equal(await response.text(), "BOARD")
 })
 
+test("a socket's own close is answered, so its far end is not left waiting for the edge to cut it", async () => {
+  // On the live relay nothing answered: a board that closed its socket sat in CLOSING for about 10s, until
+  // the edge ended the connection with 1006, and could not redial in the meantime.
+  const { board, connect } = liveBoard()
+  const socket = await connect("key-a", 100)
+  await board.webSocketClose(socket as unknown as WorkerWebSocket, 4000, "going")
+  assert.deepEqual(socket.closed, { code: 4000, reason: "going" })
+
+  const live = new ListedSocket(1, { role: "board", pubkey: "key-a", issuedAt: 100 })
+  const visitor = new ListedSocket(2, { role: "visitor", id: "wabc-1" })
+  const woken = wokenBoard([visitor, live])
+  // A Close frame with no status reads as 1005, which a Close frame may not carry back.
+  await woken.webSocketClose(visitor as unknown as WorkerWebSocket, 1005, "")
+  assert.deepEqual(visitor.closed, { code: 1000, reason: "" })
+  assert.deepEqual(parseFrame(live.sent.at(-1)!), { t: "ws-close", id: "wabc-1" }, "and the board still hears the terminal closed")
+})
+
 test("an old board socket closing late says nothing about the board, and a visitor is not held for it", async () => {
   const stale = new ListedSocket(3, { role: "board", pubkey: "key-a", issuedAt: 100 })
   const { board } = liveBoard([stale], { "handshake-issued:key-a": 300 })

@@ -271,6 +271,7 @@ async function main() {
   const statePath = process.env.RELAY_PROBE_STATE?.trim() || join(frizzPaths().state, "relay-live-probe.json");
   const board = await startToyBoard();
   let connection = null;
+  let socket = null;
   try {
     const { identity, name } = await probeIdentity(statePath);
     const claim = await claimName({ name, port: board.port, identity });
@@ -286,6 +287,11 @@ async function main() {
         relayOrigin: origin,
         boardOrigin: `http://127.0.0.1:${board.port}`,
         publicOrigin: origin,
+        socketFactory: (url) => {
+          const ws = new WebSocket(url);
+          ws.addEventListener("open", () => { socket = ws; });
+          return ws;
+        },
         onStatus: (status) => {
           if (status === "connected") { clearTimeout(timer); resolve(); }
         },
@@ -293,7 +299,25 @@ async function main() {
     });
     check("the live relay accepts the board's socket", true, origin);
 
-    await probeRelay(origin, { board, check, depart: () => connection.stop() });
+    // THE RELAY ANSWERS THE BOARD'S OWN CLOSE. Only the real edge showed this one: on 2026-11-17 a board
+    // that closed its socket heard nothing back, sat in CLOSING until the edge cut the connection about
+    // 10s later (1006), and could not redial in between (packages/relay/src/worker.ts webSocketClose).
+    let answered = null;
+    await probeRelay(origin, {
+      board,
+      check,
+      depart: () => {
+        const leaving = socket;
+        const started = Date.now();
+        answered = new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(null), 5_000);
+          leaving?.addEventListener("close", (event) => { clearTimeout(timer); resolve({ ms: Date.now() - started, code: event.code }); });
+        });
+        connection.stop();
+      },
+    });
+    const reply = await answered;
+    check("the relay answers the board's own close", reply !== null && reply.code !== 1006, reply ? `closed in ${reply.ms}ms, code ${reply.code}` : "no answer within 5s");
   } catch (error) {
     check("the probe ran to the end", false, error instanceof Error ? error.message : String(error));
   } finally {

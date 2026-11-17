@@ -204,6 +204,8 @@ const WEBSOCKET_OPEN = 1
 
 /** Where the Durable Object keeps the newest handshake it accepted from a key (`Board.fetch`). */
 const handshakeKey = (pubkey: string) => `handshake-issued:${pubkey}`
+/** Close codes a Close frame may not carry: no status, an abnormal end, a failed TLS handshake. */
+const RESERVED_CLOSE_CODES: ReadonlySet<number> = new Set([1004, 1005, 1006, 1015])
 
 export class Board {
   private readonly relay = new BoardSocket({
@@ -325,8 +327,17 @@ export class Board {
     else if (role?.role === "visitor" && role.id) this.relay.sendWebSocketMessage(role.id, message)
   }
 
-  async webSocketClose(ws: WorkerWebSocket): Promise<void> {
+  async webSocketClose(ws: WorkerWebSocket, code?: number, reason?: string): Promise<void> {
     this.restore()
+    // ANSWER THE CLOSE (2026-11-17). Cloudflare's docs say the runtime has replied to a Close frame itself
+    // since compatibility date 2026-04-07, but on the live relay it did not, for a board's socket and with
+    // any code: the far end sat in CLOSING until the edge cut the connection about 10s later (1006), and a
+    // board that closed its own socket could not redial until then. Their docs call this reply safe either way.
+    try {
+      ws.close(code !== undefined && code >= 1000 && code < 5000 && !RESERVED_CLOSE_CODES.has(code) ? code : 1000, reason ?? "")
+    } catch {
+      // Already closed.
+    }
     const role = this.roleOf(ws)
     if (role?.role === "board") {
       if (this.board?.ws === ws) {
