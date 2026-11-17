@@ -271,6 +271,11 @@
   --frizz-callout-important: #aea9e5;
   --frizz-callout-warning: #d7a955;
   --frizz-callout-caution: #f1938d;
+  /* A callout's FILL: its ink mixed this far into this ground (styles.css § Callouts). Dark washes the
+     raised panel, because a wash over the darker canvas fill landed within a hair of a message panel's
+     own colour and the box all but vanished; light washes the canvas fill, which reads against white. */
+  --frizz-callout-ground: var(--frizz-panel-2);
+  --frizz-callout-wash: 8%;
   /* The rest of the status set (see its comment above). planned and permission-edit leave violet-400
      and purple-400 for the Important callout's blue-violet hue, 290, for the reason given there. */
   --frizz-success: #6ad58b; /* L 0.79 C 0.145 H 152 */
@@ -451,6 +456,8 @@
   --frizz-callout-important: #615c8d;
   --frizz-callout-warning: #825b00;
   --frizz-callout-caution: #964845;
+  --frizz-callout-ground: var(--frizz-bg);
+  --frizz-callout-wash: 7%;
   --frizz-success: #1a7f37;
   --frizz-planning: #0969da;
   --frizz-planned: #8250df;
@@ -627,6 +634,8 @@
     --frizz-callout-important: #615c8d;
     --frizz-callout-warning: #825b00;
     --frizz-callout-caution: #964845;
+    --frizz-callout-ground: var(--frizz-bg);
+    --frizz-callout-wash: 7%;
     --frizz-success: #1a7f37;
     --frizz-planning: #0969da;
     --frizz-planned: #8250df;

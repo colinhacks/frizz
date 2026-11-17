@@ -80,7 +80,7 @@ try {
         row.scrollIntoView({ block: "center" })
         const r = row.getBoundingClientRect()
         const cs = getComputedStyle(row)
-        // A row with a fill of its own (a callout's header strip) is read INSIDE that fill: from just
+        // A row with a fill of its own (a callout's title was one, in a header strip, until 2026-11-16) is read INSIDE that fill: from just
         // left of the glyph, over the text line only, so neither the strip's rounded corner, its padding
         // nor its hairline is mistaken for ink. The glyph is the `::before`, first in the row, so its
         // box starts at the content edge plus its own (negative) margin.

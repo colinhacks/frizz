@@ -94,21 +94,24 @@ test("callouts, sections and inline keys render, stay sanitized, and a section s
         const icon = getComputedStyle(title, "::before")
         const head = getComputedStyle(title)
         const box = quote.getBoundingClientRect()
-        const strip = title.getBoundingClientRect()
+        const line = title.getBoundingClientRect()
+        const bodyEl = quote.querySelector<HTMLElement>("p:not(.md-callout-title)")!
+        const body = bodyEl.getBoundingClientRect()
+        const panel = getComputedStyle(quote)
         return {
-          frame: getComputedStyle(quote).borderLeftColor,
-          rule: head.borderBottomColor,
+          border: [panel.borderTopWidth, panel.borderRightWidth, panel.borderBottomWidth, panel.borderLeftWidth],
+          fill: panel.backgroundColor,
+          rule: head.borderBottomWidth,
           wash: head.backgroundColor,
           title: head.color,
           icon: icon.backgroundColor,
           glyph: icon.maskImage || icon.webkitMaskImage,
-          body: getComputedStyle(quote.querySelector("p:not(.md-callout-title)")!).color,
-          // The title's own line: the strip less its vertical padding and its hairline.
-          titleLine: strip.height - parseFloat(head.paddingTop) - parseFloat(head.paddingBottom) - parseFloat(head.borderBottomWidth),
-          gap: quote.querySelector("p:not(.md-callout-title)")!.getBoundingClientRect().top - strip.bottom,
-          fontSize: parseFloat(getComputedStyle(quote).fontSize),
-          // How far the strip stands in from the box's outer edges: the 1px border, both sides and top.
-          inset: [strip.left - box.left, box.right - strip.right, strip.top - box.top],
+          body: getComputedStyle(bodyEl).color,
+          titleLine: line.height,
+          gap: body.top - line.bottom,
+          fontSize: parseFloat(panel.fontSize),
+          // The panel's insets: above the title, and left of the body's text.
+          inset: [line.top - box.top, body.left - box.left],
         }
       }
       const empty = document.querySelector<HTMLElement>("[data-case=callout-empty] blockquote")!
@@ -126,8 +129,9 @@ test("callouts, sections and inline keys render, stay sanitized, and a section s
         proseLine: parseFloat(getComputedStyle(prose).lineHeight),
         listed: document.querySelector("[data-case=callout-list] li > blockquote.md-callout-tip > .md-callout-title")?.textContent ?? null,
         empty: empty.children.length,
-        // A callout with no body is its header alone: the box ends at the strip's foot.
+        // A callout with no body is its title alone, inset as evenly below as above.
         emptyFoot: empty.getBoundingClientRect().bottom - empty.querySelector(".md-callout-title")!.getBoundingClientRect().bottom,
+        emptyHead: empty.querySelector(".md-callout-title")!.getBoundingClientRect().top - empty.getBoundingClientRect().top,
         // A code fence, a task list and prose inside one callout.
         blocks: [...document.querySelector("[data-case=callout-blocks] blockquote")!.children].map((child) => child.tagName.toLowerCase()),
         document: {
@@ -137,24 +141,28 @@ test("callouts, sections and inline keys render, stay sanitized, and a section s
       }
     })
     const distinct = (values: string[]) => new Set(values).size
-    // Every part of the box is coded to its type: the frame, the header's wash, the title's ink and the
-    // glyph (styles.css § Callouts). A neutral grey frame around a coloured header read as a foreign box.
-    assert.equal(distinct(callouts.types.map((type) => type.frame)), 5, `each type draws its own frame: ${callouts.types.map((type) => type.frame).join(" ")}`)
-    assert.equal(distinct(callouts.types.map((type) => type.wash)), 5, `each type washes its own header: ${callouts.types.map((type) => type.wash).join(" ")}`)
+    // A callout is a tinted panel (styles.css § Callouts): the box washed in its type's ink, with no
+    // border and no header strip, and the title and glyph in that ink. A tinted frame (2026-10-21) and a
+    // neutral one around a coloured header (2026-10-20) were both drawn and replaced.
+    assert.equal(distinct(callouts.types.map((type) => type.fill)), 5, `each type washes its own panel: ${callouts.types.map((type) => type.fill).join(" ")}`)
     assert.equal(distinct(callouts.types.map((type) => type.title)), 5)
     assert.equal(distinct(callouts.types.map((type) => type.glyph)), 5, "each type carries its own glyph")
     for (const type of callouts.types) {
       assert.match(type.glyph, /^url\("data:image\/svg\+xml/)
-      assert.notEqual(type.wash, "rgba(0, 0, 0, 0)", "the header is washed")
-      assert.equal(type.rule, type.frame, "the line under the header is the frame's own hairline")
+      assert.deepEqual(type.border, ["0px", "0px", "0px", "0px"], "the panel draws no border")
+      assert.equal(type.rule, "0px", "the title draws no rule under it")
+      assert.equal(type.wash, "rgba(0, 0, 0, 0)", "the title has no strip of its own: the panel is the wash")
       assert.equal(type.icon, type.title, "the icon is painted in the title's colour")
       assert.equal(type.body, callouts.proseColor, "a callout's body is prose, not a muted quote")
       // The icon is a 1em box on a 1.7 line: it must not have made the title's line any taller.
       assert.ok(Math.abs(type.titleLine - callouts.proseLine) < 0.05, `the title is one prose line tall (${type.titleLine} vs ${callouts.proseLine})`)
-      assert.ok(Math.abs(type.gap - 0.75 * type.fontSize) < 0.5, `the body sits the box's inset under the header (${type.gap}px)`)
-      assert.ok(type.inset.every((edge) => Math.abs(edge - 1) < 0.01), `the header runs the box's whole inner width, from its top (${type.inset})`)
+      assert.ok(Math.abs(type.gap - 0.35 * type.fontSize) < 0.5, `the body binds to its title, 0.35em under it (${type.gap}px)`)
+      // A code block's insets plus the 1px its border takes, so a callout's text starts where a fence's code does.
+      const edge = 0.75 * type.fontSize + 1
+      assert.ok(Math.abs(type.inset[0] - edge) < 0.5, `the title sits a code block's inset under the panel's top (${type.inset[0]}px)`)
+      assert.ok(Math.abs(type.inset[1] - (type.fontSize + 1)) < 0.5, `the body's text starts where a fence's code does (${type.inset[1]}px)`)
     }
-    assert.ok(Math.abs(callouts.emptyFoot - 1) < 0.01, `a callout with no body ends at its header (${callouts.emptyFoot}px under it)`)
+    assert.ok(Math.abs(callouts.emptyFoot - callouts.emptyHead) < 0.5, `a callout with no body is inset as evenly below its title as above (${callouts.emptyHead}px, ${callouts.emptyFoot}px)`)
     // A plain quote's one class is its copy button's (lib/quoteCopy.ts).
     assert.equal(callouts.plainClass, "md-quote", "an unknown type is left a plain blockquote")
     assert.match(callouts.plainText, /\[!sic\]/)

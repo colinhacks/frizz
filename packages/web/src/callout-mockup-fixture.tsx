@@ -18,6 +18,10 @@ import "./styles.css"
 // weighed, but every shape here is drawn OVER the base styles, and the base is now G — so the other
 // sections no longer show what they showed then. Check out 0fafff76 to see them as they were.
 //
+// SUPERSEDED 2026-11-16: the header bar gave way to a tinted panel with no border and no strip, picked
+// from five edges mocked as one self-contained page over the compiled stylesheet. styles.css § Callouts
+// has the history; every shape below is now drawn over that panel.
+//
 // WHY IT IS SO LOUD (read from the code and the shot on 2026-10-19): the warning's rule, icon and title
 // all paint `--color-attention`, which in dark is Tailwind's `amber-400`, oklch(0.828 0.189 84). That is
 // the brightest colour in the callout set (the other four sit at L 0.69-0.75) and it lies OUTSIDE sRGB,
