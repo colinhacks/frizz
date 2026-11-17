@@ -249,7 +249,8 @@ kbd {
 .lead { margin: 24px 0 0; max-width: 32em; font-size: clamp(18px, 1.35vw, 20px); font-weight: 450; color: var(--ink); letter-spacing: -0.01em; text-wrap: pretty; }
 
 /* Who it is for. */
-.fit { padding: clamp(120px, 13vw, 190px) 0 0; }
+/* Not `.fit`: a narrow-shot feature row is `.row.fit`, and took this section's top padding with it. */
+.fit-sec { padding: clamp(120px, 13vw, 190px) 0 0; }
 .fit-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(40px, 5vw, 80px); align-items: start; }
 .fit-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-2); }
 .fit-list li { position: relative; padding: 26px 0 28px 52px; border-bottom: 1px solid var(--rule); font-size: clamp(22px, 2.05vw, 29px); line-height: 1.24; font-weight: 640; letter-spacing: -0.03em; text-wrap: pretty; }
@@ -263,7 +264,6 @@ kbd {
 .features { display: grid; gap: clamp(96px, 10vw, 144px); margin-top: clamp(72px, 8vw, 112px); }
 .feature h3 { margin: 0; font-size: clamp(26px, 2.5vw, 34px); line-height: 1.1; font-weight: 700; letter-spacing: -0.034em; text-wrap: balance; }
 .feature p { margin: 14px 0 0; font-size: 19px; line-height: 1.48; font-weight: 450; color: var(--ink); letter-spacing: -0.011em; text-wrap: pretty; }
-.feature p.fine { margin-top: 14px; font-size: 15px; font-weight: 400; color: var(--ink-3); letter-spacing: -0.004em; }
 .feature p kbd { font-size: 0.86em; }
 .feature img { width: 100%; border-radius: 14px; background: var(--app); box-shadow: var(--shadow-small); }
 .row { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: clamp(36px, 5vw, 72px); align-items: center; }

@@ -343,7 +343,7 @@ async function seedFeatures() {
   for (const [number, id] of [[391, "a"], [392, "b"], [393, "c"], [394, "d"], [395, "e"]]) execFileSync("sqlite3", ["-cmd", ".timeout 15000", db, watched(number, `prw-${id}`)])
 
   // One pull request from opened to merged, each wake in the words the watcher really sends. These scenes are
-  // archived, like the Markdown ones below, so the queue shot keeps its own threads.
+  // archived, like the Markdown ones below, so they stay out of mobile-app's open threads and its count on the rail.
   const LIFE = "acme/app#412"
   const wake = (id, message) => user(id[1], `${message}\n\n${wakeDeliveryToken(id[0])}`)
   const parkOnLife = ["```awaiting", `prs: [${LIFE}]`, "status: watching", "for: 30d", "```"].join("\n")
@@ -355,8 +355,9 @@ async function seedFeatures() {
       wake(["life-1", 241], prWatchWakeMessage({ target: LIFE, checks: { verdict: "failing", passed: 14, failed: 1, failing: ["lint"], skipped: 0, head: "e4b7a21c90" } })),
       say(239, `One unused import. Pushed the fix.\n\n${parkOnLife}`),
       wake(["life-2", 224], prWatchWakeMessage({ target: LIFE, checks: { verdict: "passing", passed: 15, failed: 0, failing: [], skipped: 0, head: "9c0d3f6a18" } })),
-      wake(["life-3", 120], formatGithubWakeSteer({ ref: LIFE, items: [{ label: "change request", actor: "dana-k", bot: false, at: ago(120) }], omitted: 0 })),
-      say(116, `dana-k wants the cap in config. Moved it and pushed.\n\n${parkOnLife}`),
+      say(223, `CI is green. Waiting on a review.\n\n${parkOnLife}`),
+      wake(["life-3", 120], formatGithubWakeSteer({ ref: LIFE, items: [{ label: "change request", actor: "colinhacks", bot: false, at: ago(120) }], omitted: 0 })),
+      say(116, `colinhacks wants the cap in config. Moved it and pushed.\n\n${parkOnLife}`),
       wake(["life-4", 40], prWatchWakeMessage({ target: LIFE, changes: ["now CONFLICTS with the base branch"] })),
       say(37, `Rebased on main and pushed.\n\n${parkOnLife}`),
       wake(["life-5", 2], prWatchWakeMessage({ target: LIFE, merged: true })),
@@ -383,11 +384,27 @@ async function seedFeatures() {
   }))})`])
 
   // References in prose, for the hovercard. shoot-site answers the card's data, since a sandbox has no GitHub sign-in.
+  // The reference closes the reply, so the card opens over the empty transcript below it rather than over a card.
   write(APP, "hover-refs", {
     title: "Find the cause of the sync crash", rested: 6, archived: true,
     records: [
       user(70, "Find the cause of the sync crash."),
-      say(6, ["The crash and the stall have one cause: a retry fires after the connection has already closed. acme/mobile-app#392 fixes both, so I pointed acme/mobile-app#388 at it and left the crash report open until that merges.", "", "```done", "title: Cause found", "---", "- Traced the crash and the stall to one retry.", "```"].join("\n")),
+      say(6, "The crash and the stall have one cause: a retry fires after the connection has already closed.\n\nacme/mobile-app#392 fixes both, so I pointed acme/mobile-app#388 at it."),
+    ],
+  })
+
+  // A reply worth commenting on, line by line. shoot-site selects its passages and comments on them.
+  write(APP, "review-comments", {
+    title: "Explain the retry change", rested: 5, archived: true,
+    records: [
+      user(40, "Explain the retry change before I merge it."),
+      say(5, [
+        "Retries now stop at the limit in config instead of running forever. The limit defaults to five, and each retry waits twice as long as the one before, up to 30 seconds.",
+        "",
+        "A closed connection now fails at once instead of retrying, so the sync worker no longer crashes when a retry fires after the socket has gone.",
+        "",
+        "The new test covers the limit. The backoff timings are unchanged.",
+      ].join("\n")),
     ],
   })
 

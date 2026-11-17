@@ -63,11 +63,6 @@ const around = (page, selectors, pad = 16) => page.evaluate((selectors, pad) => 
 
 /** The app's sign-in hint lasts 6s on a project page, and a sandbox has no GitHub sign-in. */
 const SIGN_IN_TOAST = 6500
-/** The rail and the sidebar, up to the pane's edge beside them. */
-const leftPanel = (page, height) => page.evaluate((height) => {
-  const sidebar = document.querySelector("[data-pane-sidebar]").getBoundingClientRect()
-  return { x: 0, y: 0, width: Math.round(sidebar.right), height }
-}, height)
 
 /** The thread the board's pane is showing. */
 const PANE = "[data-pane-thread]"
@@ -206,10 +201,10 @@ const HERO = {
         return real(input, init)
       }
     }, [
-      [412, "Rate limiter ignores the per-key override", "dana-k", 6, 4, ["bug", "d73a4a"]],
+      [412, "Rate limiter ignores the per-key override", "colinhacks", 6, 4, ["bug", "d73a4a"]],
       [409, "Add cursor pagination to /v2/events", "mhughes", 3, 11, ["enhancement", "a2eeef"], 418],
       [407, "Webhook retries stop after a 502", "tobiaso", 9, 2, ["bug", "d73a4a"]],
-      [400, "Document the idempotency header", "dana-k", 1, 0, ["docs", "0075ca"]],
+      [400, "Document the idempotency header", "colinhacks", 1, 0, ["docs", "0075ca"]],
       [398, "Receipt bus test times out on CI", "ravi-p", 4, 1, ["flaky", "fbca04"], 416],
       [395, "CSV export drops rows past 10k", "lenaw", 7, 5, ["bug", "d73a4a"]],
       [390, "Support OIDC for service accounts", "mhughes", 12, 18, ["enhancement", "a2eeef"]],
@@ -243,22 +238,37 @@ const HERO = {
 const open = async (page, slug, selector) => {
   await page.goto(thread(APP, slug, true), { waitUntil: "networkidle2" })
   await need(page, selector ?? "[data-composer-box]", 20_000)
-  await settle(1800)
+  // Long enough for the sign-in hint to toast and go, since it draws over the prompt box.
+  await settle(SIGN_IN_TOAST)
   await hideLoadEarlier(page)
 }
 
+/** Where a run of words in the agent's prose sits on the screen, for a drag that selects it. */
+const prose = (page, text) => page.evaluate((text) => {
+  for (const p of document.querySelectorAll("[data-commentable] .md-body p")) {
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const at = node.data.indexOf(text)
+      if (at < 0) continue
+      const range = document.createRange()
+      range.setStart(node, at)
+      range.setEnd(node, at + text.length)
+      const rects = range.getClientRects(), first = rects[0], last = rects[rects.length - 1]
+      return { from: { x: first.left + 1, y: first.top + first.height / 2 }, to: { x: last.right - 1, y: last.top + last.height / 2 } }
+    }
+  }
+  throw new Error(`no ${text} in the agent's prose`)
+}, text)
+/** A real drag, so the browser makes the selection and the app sees the pointer that made it come up. */
+const drag = async (page, { from, to }) => {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move((from.x + to.x) / 2, to.y, { steps: 4 })
+  await page.mouse.move(to.x, to.y, { steps: 4 })
+  await page.mouse.up()
+}
+
 const FEATURES = {
-  // 1680 wide: the pane's sidebar reaches its full 480px there, and 1440 squeezes it to 323.
-  "f-queue": { w: 1680, h: 560, stage: async (page) => {
-    await page.goto(`${base}/project/${APP}`, { waitUntil: "networkidle2" })
-    await need(page, "[data-pane-sidebar] [data-sidebar-item]")
-    await settle(2500)
-    await railCounts(page)
-    // A project on the rail, with the pointer on it: its tooltip names what it has waiting and running.
-    await pointAt(page, await need(page, `a[aria-current="page"][href$="/project/${APP}"]`), 0.42, 0.5)
-    await settle(1500)
-    return leftPanel(page, 560)
-  } },
   "f-question": { w: THREAD_W, h: 548, stage: async (page) => {
     await open(page, "push-provider", "[data-question-id]")
     await (await byText(page, "[data-question-option]", "APNs and FCM")).click()
@@ -341,8 +351,12 @@ const FEATURES = {
     await open(page, "ship-sync", "[data-awaiting-background]")
   } },
   // One PR from opened to merged, with every wake the watcher sent on the way.
-  "f-pr-life": { w: 920, h: 820, stage: async (page) => {
+  "f-pr-life": { w: 920, h: 900, stage: async (page) => {
     await open(page, "pr-life")
+    // The rounds between the first message and the sign-off fold behind one line. The shot is those rounds.
+    await (await need(page, 'button[aria-label$="before the sign-off"]')).click()
+    await page.mouse.move(4, 4)
+    await settle(600)
     const bottom = await page.evaluate(() => [...document.querySelectorAll("[data-frizz-msg]")].at(-1).getBoundingClientRect().bottom)
     return { x: 0, y: 0, width: 920, height: Math.round(bottom) + 16 }
   } },
@@ -356,8 +370,9 @@ const FEATURES = {
     await settle(400)
     return around(page, ["[data-awaiting-background]"], 18)
   } },
-  // The card's data is answered here, since a sandbox has no GitHub sign-in. The hovercard itself is real.
-  "f-hovercard": { w: THREAD_W, h: 520, stage: async (page) => {
+  // The card's data is answered here, since a sandbox has no GitHub sign-in. The hovercard itself is real, and so
+  // is its author: the maintainer's own account and avatar, rather than a made-up handle a stranger owns.
+  "f-hovercard": { w: THREAD_W, h: 560, stage: async (page) => {
     await page.evaluateOnNewDocument((card) => {
       const real = window.fetch.bind(window)
       window.fetch = async (input, init) => {
@@ -369,7 +384,7 @@ const FEATURES = {
       ref: "acme/mobile-app#392", kind: "pr", repo: "acme/mobile-app", url: "https://github.com/acme/mobile-app/pull/392",
       title: "Stop retrying after the connection closes",
       body: "A retry could fire after the socket had already closed, which crashed the sync worker on some devices and stalled it on others. Retries now check the connection first and stop at the limit in config.",
-      state: "OPEN", authorLogin: "dana-k", labels: [{ name: "bug", color: "d73a4a" }, { name: "sync", color: "0e8a16" }],
+      state: "OPEN", authorLogin: "colinhacks", authorAvatar: "https://avatars.githubusercontent.com/u/3084745?v=4", labels: [{ name: "bug", color: "d73a4a" }, { name: "sync", color: "0e8a16" }],
       additions: 84, deletions: 12, changedFiles: 5, comments: 3,
     })
     await open(page, "hover-refs")
@@ -448,6 +463,32 @@ const FEATURES = {
     await open(page, "peer-message", "[data-session-message-toggle]")
     await (await page.$("[data-session-message-toggle]")).click()
     await settle(500)
+  } },
+  // Commenting on an agent's reply: two passages already commented on and lit, a third selected with its comment
+  // typed and the pointer on Add comment. It is the last paragraph, so the editor hangs over the empty transcript.
+  "f-comments": { w: THREAD_W, h: 580, stage: async (page) => {
+    await open(page, "review-comments", "[data-commentable] .md-body p")
+    const comment = async (passage, words, saved) => {
+      await drag(page, await prose(page, passage))
+      await page.waitForSelector("[data-comment-button]", { visible: true, timeout: 5000 })
+      await page.keyboard.down("Meta")
+      await page.keyboard.press("KeyI")
+      await page.keyboard.up("Meta")
+      await page.waitForSelector("[data-comment-editor] textarea", { visible: true, timeout: 5000 })
+      await page.keyboard.type(words)
+      if (!saved) return
+      await page.keyboard.down("Meta")
+      await page.keyboard.press("Enter")
+      await page.keyboard.up("Meta")
+      await page.waitForSelector("[data-comment-editor]", { hidden: true, timeout: 5000 })
+      await page.waitForSelector(`[data-pending-comments='${saved}']`, { timeout: 5000 })
+    }
+    await comment("The limit defaults to five", "Make it three on mobile data.", 1)
+    await comment("fails at once instead of retrying", "Does the user see an error?", 2)
+    await comment("The new test covers the limit", "Add one for the closed connection too.")
+    await settle(300)
+    await pointAt(page, await byText(page, "[data-comment-editor] button", "Add comment"), 0.6, 0.66)
+    await settle(300)
   } },
   // Working through a doc: one passage already referenced in the reply with a comment beside it, the next one selected.
   "f-reader": { w: 1440, h: 860, stage: async (page) => {
