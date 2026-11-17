@@ -406,12 +406,17 @@ test("an untracked send projects as a queued bubble at the tail", () => {
   assert.equal(bubble.deliveryState, "pending")
 })
 
-test("the JSONL's own enqueue bubble is tagged in place, not double-rendered", () => {
+test("the JSONL's own enqueue bubble is tagged, not double-rendered", () => {
   const existing = msg({ queued: true, sourceId: "s:9" })
   const out = projectDeliveryLedger([existing], [item({ state: "enqueued" })])
   assert.equal(out.length, 1)
-  assert.equal(existing.deliveryId, "d-1")
-  assert.equal(existing.deliveryState, "enqueued")
+  assert.equal(out[0].sourceId, "s:9", "the fold's bubble, not a projected one")
+  assert.equal(out[0].deliveryId, "d-1")
+  assert.equal(out[0].deliveryState, "enqueued")
+  // Copy-on-write: the socket's read has already measured this object through its JSON memo, so a tag
+  // written onto it here would go out stale (projectDeliveryLedger).
+  assert.equal(existing.deliveryId, undefined, "the fold's retained object is untouched")
+  assert.equal(existing.deliveryState, undefined)
 })
 
 // THE DOUBLE RENDER (maintainer 2026-08-24, zod `eaf90e17`): the router appends the human-gap clock
@@ -420,14 +425,15 @@ test("the JSONL's own enqueue bubble is tagged in place, not double-rendered", (
 // the projection appended its own delivery:<id> bubble beside the fold's, and both display-strip the
 // note — two identical gray queued bubbles for one send. Built with the real producer so a wording
 // change on humanGapNote cannot silently reopen the gap.
-test("an enqueue bubble carrying the human-gap note is still tagged in place, not double-rendered", () => {
+test("an enqueue bubble carrying the human-gap note is still tagged, not double-rendered", () => {
   const note = humanGapNote(T0, iso(T0 - 5 * 3_600_000))
   assert.ok(note, "the gap producer must emit above its floor")
   const existing = msg({ queued: true, sourceId: "s:9", text: `fix the bug\n\n${note}` })
   const out = projectDeliveryLedger([existing], [item({ state: "enqueued" })])
   assert.equal(out.length, 1, "no second bubble")
-  assert.equal(existing.deliveryId, "d-1")
-  assert.equal(existing.deliveryState, "enqueued")
+  assert.equal(out[0].deliveryId, "d-1")
+  assert.equal(out[0].deliveryState, "enqueued")
+  assert.equal(existing.deliveryId, undefined, "copy-on-write — the fold's retained object is untouched")
 })
 
 // The ghost-styling variant of the same miss: a follow-up landing on an IDLE thread opens `delivered`
@@ -472,7 +478,7 @@ test("two outstanding sends of the SAME text never collapse onto one bubble", ()
   const existing = msg({ queued: true, sourceId: "s:9" })
   const out = projectDeliveryLedger([existing], [item({ id: "d-1", state: "enqueued" }), item({ id: "d-2", state: "enqueued" })])
   assert.equal(out.length, 2, "the second send still gets its own bubble")
-  assert.equal(existing.deliveryId, "d-1", "the rendered bubble belongs to the FIRST send")
+  assert.equal(out[0].deliveryId, "d-1", "the rendered bubble belongs to the FIRST send")
   assert.equal(out[1].sourceId, "delivery:d-2")
   assert.equal(out[1].queued, true)
 })

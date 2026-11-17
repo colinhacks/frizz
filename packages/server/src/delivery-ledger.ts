@@ -1291,17 +1291,20 @@ export function projectDeliveryLedger(messages: TranscriptMessage[], items: Deli
       // otherwise. Transcript text is stripped for display before it reaches here, so in practice this
       // is the text compare — the tag check costs nothing and covers any surface that keeps the raw.
       if (!decodeDeliveryMarkers(m.text).includes(tag) && renderMatchKey(m.text) !== text) continue
+      // COPY-ON-WRITE, always: the bubble is the RETAINED fold's own object. A `delivered` or `failed`
+      // send un-grays it here (the provider took it straight into a turn, while the fold has only seen
+      // its enqueue record — SDK order on an idle submit: enqueue → dequeue → user), and the fold's own
+      // delivery match must still find it queued. A still-waiting send only tags it with its id, and that
+      // tag must not be written in place either: this runs AFTER the socket's read has measured the
+      // window through its JSON memo, which answers a message it already saw in the same read from the
+      // JSON it took then (message-json-memo.ts `#read`). An in-place tag therefore went out WITHOUT the
+      // id, and nothing re-read while the worker sat in a tool call, so the steer's gray bubble could not
+      // be clicked to take it back for exactly as long as it could have been (2026-11-17). It also left
+      // the id on the fold after the ledger item was gone.
       if (m.queued) {
-        if (item.state === "delivered" || item.state === "failed") {
-          // The provider took this send straight into a turn, but the fold has only seen its enqueue
-          // record so far (SDK order on an idle submit: enqueue → dequeue → user). Un-gray the fold's
-          // bubble COPY-ON-WRITE — the object is owned by the retained fold, and the fold's own
-          // delivery match must still find it queued and resolve it in place.
-          messages[i] = { ...m, queued: false, deliveryId: item.id, deliveryState: item.state, ...(item.error ? { deliveryError: item.error } : {}) }
-        } else {
-          m.deliveryId = item.id
-          m.deliveryState = item.state
-        }
+        messages[i] = item.state === "delivered" || item.state === "failed"
+          ? { ...m, queued: false, deliveryId: item.id, deliveryState: item.state, ...(item.error ? { deliveryError: item.error } : {}) }
+          : { ...m, deliveryId: item.id, deliveryState: item.state }
       }
       claimed.add(i)
       handled = true // queued (tagged in place) or already delivered — either way, no projection

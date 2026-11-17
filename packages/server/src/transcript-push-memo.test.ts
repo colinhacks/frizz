@@ -9,6 +9,7 @@ import type { TranscriptMessage } from "@frizz/shared"
 import { makeTranscriptReader, type TranscriptPush } from "./app-socket.ts"
 import { MessageJsonMemo } from "./message-json-memo.ts"
 import { createStorage } from "./storage.ts"
+import { appendDelivery, forgetDelivery } from "./delivery-ledger.ts"
 import type { Project } from "./project.ts"
 
 // A SUBSCRIBED thread's push is read from the retained fold and encoded from the subscription's JSON memo
@@ -181,6 +182,37 @@ test("loading an earlier page between pushes changes nothing the next push sends
       appendFileSync(h.path, lines.slice(i, i + 37).map((l) => l + "\n").join(""))
       push = assertPushIsCold(h, memo, `after ${i + 37} records`)
     }
+  } finally {
+    h.cleanup()
+  }
+})
+
+// THE STEER'S BUBBLE CARRIES ITS DELIVERY ID OVER THE SOCKET. The ledger tags the transcript's own queued
+// bubble with the send's id, and that id is what makes the bubble clickable to take back. The tag used to
+// be written onto the retained fold's message IN PLACE, after the read had already measured the window
+// through the memo — and the memo answers a message it saw earlier in the same read from that read's
+// JSON, so the push went out without the id. Nothing re-read while the worker sat in a tool call, so the
+// gray bubble could not be clicked for exactly the window in which it could still have been taken back.
+test("a steer's queued bubble reaches the push with its delivery id, and the tag never stays on the fold", () => {
+  __clearTranscriptCacheForTests()
+  const h = harness()
+  try {
+    const memo = new MessageJsonMemo()
+    writeFileSync(h.path, [user("start the work"), tool("m1", "b1", "Bash", { command: "sleep 40", description: "Wait" })].map((l) => l + "\n").join(""))
+    assertPushIsCold(h, memo, "a tool call running")
+    const deliveryId = "4f1d2c7a-0b6e-4c11-9d3a-5e8f7a6b2c10"
+    appendDelivery(h.store, "t", { id: deliveryId, text: "actually, stop", state: "enqueued" })
+    // Stamped now: a queued bubble older than the read path's clock backstop is retired as stale.
+    appendFileSync(h.path, JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp: new Date().toISOString(), content: "actually, stop" }) + "\n")
+    const push = assertPushIsCold(h, memo, "the steer enqueued mid-call")
+    const bubble = push.messages.find((m) => m.role === "user" && m.queued)
+    assert.ok(bubble, "the steer draws as a queued bubble")
+    assert.equal(JSON.parse(memo.json(bubble)).deliveryId, deliveryId, "the bubble the socket sends names the send it can take back")
+    // The send leaves the ledger (taken back, or delivered and pruned): the fold's own bubble must not
+    // keep a tag no ledger item backs any more.
+    forgetDelivery(h.store, "t", deliveryId)
+    const after = assertPushIsCold(h, memo, "the ledger item gone")
+    assert.equal(after.messages.find((m) => m.role === "user" && m.queued)?.deliveryId, undefined)
   } finally {
     h.cleanup()
   }
