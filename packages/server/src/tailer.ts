@@ -1443,6 +1443,18 @@ export function hasQuestionBlock(text: string | undefined): boolean {
   return false
 }
 
+/** Does this message ask the human something, in either grammar: the question fence workers ask with now
+ *  (shared questionFenceBlocks, the scanner the registrar reads, so a ````question whose body holds a code
+ *  block and a ~~~question count), or the legacy block above. What a rest SAYS reads this — sign-offs.ts
+ *  readRestMessage, and the fence-alone and restatement checks below — while the legacy pending-question
+ *  flag keeps hasQuestionBlock's one opener. Those readers borrowed that flag until 2026-11-17, so a
+ *  sign-off that asked with four backticks above a `status: working` park read as the park: a reylo thread
+ *  lost both of its sign-offs after the human's answers, and the board folded nothing in that stretch. */
+export function asksQuestion(text: string | undefined): boolean {
+  if (typeof text !== "string") return false
+  return hasQuestionBlock(text) || questionFenceBlocks(text).length > 0
+}
+
 // ---- signal-fence grammar (maintainer-settled) ----
 // Exactly two EXCUSAL fences: ```done and ```awaiting. The fence LANGUAGE is the state; the BODY is
 // the message. WHICH fence a message signals with is @frizz/shared signalFenceOf, the one rule this fold
@@ -1509,7 +1521,7 @@ export function signalFenceAlone(text: string | undefined): boolean {
   const fence = parseSignalFence(text)
   if (!fence || typeof text !== "string") return false
   if (fence.body.trim() !== "" || (fence.kind === "awaiting" && fenceWaitsOnHuman(fence.hints))) return false
-  if (hasQuestionBlock(text)) return false
+  if (asksQuestion(text)) return false
   const norm = text.replace(/\r\n/g, "\n")
   const signal = signalFenceOf(norm)
   return signal !== undefined && norm.slice(0, signal.start).trim() === ""
@@ -1531,7 +1543,7 @@ export function signalFenceText(text: string | undefined): string | undefined {
  *  nothing the sign-off before did not, so that sign-off stands (sign-offs.ts). Only a VERBATIM copy:
  *  a fence that rewords its title or prose is something new. */
 export function restatesSignOff(text: string | undefined, standing: string | undefined): boolean {
-  if (standing === undefined || typeof text !== "string" || hasQuestionBlock(text)) return false
+  if (standing === undefined || typeof text !== "string" || asksQuestion(text)) return false
   const norm = text.replace(/\r\n/g, "\n")
   const signal = signalFenceOf(norm)
   if (!signal || norm.slice(0, signal.start).trim() !== "") return false
@@ -1542,7 +1554,7 @@ export function restatesSignOff(text: string | undefined, standing: string | und
  *  quiet park? The tailer's own reading of a rest, as sign-offs.ts readRestMessage reads it, minus the
  *  bare rest, which a reminder decides later. */
 function signsOffWithFence(text: string): boolean {
-  if (hasQuestionBlock(text)) return true
+  if (asksQuestion(text)) return true
   const fence = parseSignalFence(text)
   if (!fence) return false
   if (fence.kind === "done") return true

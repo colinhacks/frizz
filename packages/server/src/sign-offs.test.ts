@@ -44,6 +44,31 @@ test("a rest is a sign-off unless it is a quiet park", () => {
   assert.equal(readRestMessage({ text: "   " }), undefined)
 })
 
+// The reylo shape (2026-11-17): the worker asks with four backticks, as the contract says to once a question
+// holds a code block, and parks `status: working` on the PR still in CI. The ask makes it a sign-off, in
+// every opener the registrar reads; the legacy pending-question flag knew only three backticks, and read
+// as that flag the rest was its quiet park, so the stretch kept no sign-off and the board folded none of it.
+test("a question in any opener the registrar reads is a sign-off, whatever park follows it", () => {
+  const t4 = "`".repeat(4)
+  const ask = (open: string, close = open) => `CI is still running on acme/app#391, and one call is yours.\n\n${open}question\nid: publish\nkind: choice\nquestion: Publish the crates with 0.8.0?\noptions:\n  - Yes\n  - No\n---\nThe publish runs:\n\n\`\`\`sh\ncargo publish -p reylo\n\`\`\`\n${close}\n\n${WORKING.split("\n\n")[1]}`
+  assert.equal(readRestMessage({ text: ask(t4) }), "signOff")
+  assert.equal(readRestMessage({ text: ask("~~~") }), "signOff")
+  assert.equal(readRestMessage({ text: `Still need this one.\n\n${t4}question\nid: publish\n${t4}\n\n${fence("awaiting", "prs: [acme/app#391]\nstatus: watching\nfor: 7d")}` }), "signOff")
+  // A sample QUOTED inside an outer fence asks nothing: the park is still quiet.
+  assert.equal(readRestMessage({ text: `The grammar:\n\n${t4}md\n\`\`\`question\nid: x\n\`\`\`\n${t4}\n\n${fence("awaiting", "shells: [b1]\nstatus: working\nfor: 2h")}` }), "quiet")
+  const msgs = project(
+    human("Answers to earlier questions:\n1. Merge them."),
+    narrate("Both answers are in. Merging the crates."),
+    rest(WORKING),
+    wake("❌ CI FAILED on acme/app#391"),
+    rest(ask(t4)),
+  )
+  assert.deepEqual(marked(msgs), ["CI is still running on acme/app#391, and one call is yours."])
+  // And a fence after it is no rest on the fence alone: the question is new.
+  const after = project(human("Go."), rest(NEEDS_INPUT), wake("✅"), rest(`${fence("awaiting", "prs: [acme/app#391]\nstatus: needs_input\nfor: 1d")}\n\n${t4}question\nid: publish\nkind: text\nquestion: Which version?\n${t4}`))
+  assert.equal(marked(after).length, 2)
+})
+
 test("the hand-off stays marked when PR-review wakes end in quiet parks after it", () => {
   const msgs = project(
     human("Fix the flaky upload and open a PR."),

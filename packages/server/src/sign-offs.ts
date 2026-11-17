@@ -52,7 +52,7 @@
 // 134 characters), which the rule leaves to the fold. Marking is additive: the afterword stays marked, so
 // nothing that was in view leaves it.
 import { awaitingStatus, awaitingSteps, BURIED_ANSWERS_HEADER, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, signalFenceOf, type TranscriptMessage } from "@frizz/shared"
-import { hasQuestionBlock, parseSignalFence, restatesSignOff, signalFenceAlone, signalFenceText } from "./tailer.ts"
+import { asksQuestion, parseSignalFence, restatesSignOff, signalFenceAlone, signalFenceText } from "./tailer.ts"
 
 /** What one rest said about the human: written for them, a quiet park, or no fence at all. */
 export type RestReading = "signOff" | "quiet" | "bare"
@@ -89,7 +89,7 @@ function humanCameIn(m: TranscriptMessage): boolean {
 /** What the message a turn ended on says, read off its own text. Undefined when it is not prose. */
 export function readRestMessage(m: Pick<TranscriptMessage, "text"> | undefined): RestReading | undefined {
   if (!m || !m.text.trim()) return undefined
-  if (hasQuestionBlock(m.text)) return "signOff"
+  if (asksQuestion(m.text)) return "signOff"
   const fence = parseSignalFence(m.text)
   if (!fence) return "bare"
   if (fence.kind === "done") return "signOff"
